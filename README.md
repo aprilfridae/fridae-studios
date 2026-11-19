@@ -6,11 +6,37 @@ it made.
 
 ## Download
 
-Get **Fridae-Studios.zip** from the [latest release](../../releases/latest),
-unzip it anywhere, and run `Fridae Studios.exe`. After that it updates itself.
+Pick the download for your computer from the [latest release](../../releases/latest):
+
+| Your computer | Download | Status |
+|---|---|---|
+| **Windows** 10 or 11 | `Fridae-Studios.zip` | Supported, updates itself |
+| **macOS** 12+ on Apple Silicon (M1 or newer) | `Fridae-Studios-macOS.dmg` | New, no self-update yet |
+| **Linux** | none | Not available: Roblox Studio has no Linux version |
+
+### Windows
+
+Unzip `Fridae-Studios.zip` anywhere and run `Fridae Studios.exe`. After that it
+updates itself.
 
 Windows may warn the first time because the program is not signed: choose
 "More info", then "Run anyway".
+
+### macOS
+
+Open `Fridae-Studios-macOS.dmg` and drag **Fridae Studios** into Applications.
+
+The app is not signed with an Apple Developer ID, so the first time you open it
+macOS will refuse. Open **System Settings > Privacy & Security**, scroll down,
+and click **Open Anyway** next to Fridae Studios. (Or run
+`xattr -dr com.apple.quarantine "/Applications/Fridae Studios.app"` once in
+Terminal.)
+
+On a Mac:
+- Updates are not automatic yet: download the new `.dmg` when a release comes out.
+- Texture previews and local module loading in Studio are off, because Studio's
+  content folder is inside its signed app.
+- Intel Macs are not built yet.
 
 ## You need
 
@@ -34,7 +60,7 @@ explains anything missing.
 - Runs several chats at once, saves every chat, and can check its own work in
   rounds with the Self-test switch.
 
-`fridae-cli.exe --mcp` is a standard MCP tool server, so the same tools work
+`fridae-cli --mcp` (`fridae-cli.exe` on Windows) is a standard MCP tool server, so the same tools work
 in Cursor, Codex, Gemini CLI and other agents.
 
 ## Credits

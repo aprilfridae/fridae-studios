@@ -6,3 +6,5 @@ config.json
 build/
 dist/
 *.zip
+build-out/
+.venv/

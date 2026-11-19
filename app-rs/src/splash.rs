@@ -18,7 +18,6 @@ use tao::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::windows::WindowExtWindows,
     window::WindowBuilder,
 };
 use wry::{WebContext, WebViewBuilder};
@@ -31,6 +30,18 @@ enum Msg {
 }
 
 /// Wait (up to `secs`) for a process to exit.
+#[cfg(not(windows))]
+fn wait_for_exit(pid: u32, secs: u32) {
+    for _ in 0..secs * 4 {
+        let alive = std::process::Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false);
+        if !alive {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+#[cfg(windows)]
 fn wait_for_exit(pid: u32, secs: u32) {
     #[link(name = "kernel32", kind = "raw-dylib")]
     unsafe extern "system" {
@@ -161,7 +172,11 @@ pub fn run(args: &[String]) {
         let pos = monitor.position();
         window.set_outer_position(tao::dpi::PhysicalPosition::new(pos.x + (m.width as i32 - w.width as i32) / 2, pos.y + (m.height as i32 - w.height as i32) / 2));
     }
-    round_corners(window.hwnd() as isize);
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        round_corners(window.hwnd() as isize);
+    }
     let mut context = WebContext::new(Some(env::temp_dir().join("fridae-update-webview")));
     let view = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_html(page(&version)).build(&window).ok();
     thread::spawn(worker);
@@ -182,6 +197,7 @@ pub fn run(args: &[String]) {
 }
 
 /// Windows 11 rounded corners for the borderless splash.
+#[cfg(windows)]
 fn round_corners(hwnd: isize) {
     #[link(name = "dwmapi", kind = "raw-dylib")]
     unsafe extern "system" {

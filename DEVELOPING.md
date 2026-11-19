@@ -40,7 +40,8 @@ The chat window is a Rust program in `app-rs` (a native WebView2 window showing
 attached and shows the images they return. The tools stay in Python: the window
 starts them as `fridae-cli.exe --mcp` and `fridae-cli.exe --rbx`. `build_exe.bat`
 (or `python build_app.py`) builds both and puts them in one folder; it needs
-Rust and PyInstaller. The packaged app needs no Python or Rust installed; it keeps
+Rust and PyInstaller. On a Mac, `python3 build_mac.py` builds
+`build-out/Fridae-Studios-macOS.dmg` the same way. The packaged app needs no Python or Rust installed; it keeps
 its output in `Documents/Fridae Studios/work`.
 
 ## Using it

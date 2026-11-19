@@ -29,7 +29,6 @@ use tao::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    platform::windows::WindowExtWindows,
     window::{Icon, Theme, WindowBuilder},
 };
 use wry::{WebContext, WebViewBuilder};
@@ -59,6 +58,7 @@ fn find_browser() -> Option<std::path::PathBuf> {
 }
 
 /// Match the title bar to the page (Windows 11).
+#[cfg(windows)]
 fn dark_caption(hwnd: isize) {
     #[link(name = "dwmapi", kind = "raw-dylib")]
     unsafe extern "system" {
@@ -104,7 +104,21 @@ fn self_test(message: &str) {
     agents::shut_down();
 }
 
+/// Apps opened from Finder get a bare PATH; add the places Claude Code, Homebrew and Blender's wrapper live.
+#[cfg(target_os = "macos")]
+fn widen_path() {
+    let home = paths::home_dir();
+    let mut dirs = vec![home.join(".local").join("bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()];
+    dirs.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    if let Ok(p) = env::join_paths(dirs) {
+        // SAFETY: called first thing in main, before any other thread starts
+        unsafe { env::set_var("PATH", p) };
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "macos")]
+    widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)
     let args: Vec<String> = env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--apply-update") {
@@ -149,7 +163,11 @@ fn main() {
         .with_window_icon(icon)
         .build(&event_loop)
         .expect("could not create the window");
-    dark_caption(window.hwnd() as isize);
+    #[cfg(windows)]
+    {
+        use tao::platform::windows::WindowExtWindows;
+        dark_caption(window.hwnd() as isize);
+    }
     let data = if paths::packaged() { PATHS.home.join("webview") } else { paths::work("webview") };
     let mut context = WebContext::new(Some(data));
     let built = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url).build(&window);

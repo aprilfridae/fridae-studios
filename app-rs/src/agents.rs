@@ -1229,8 +1229,12 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
         }}
     });
     // FRIDAE_NO_STUDIO (testing only): a copy of the app that cannot reach the user's open Studio place
-    if paths::studio_mcp().is_some() && std::env::var_os("FRIDAE_NO_STUDIO").is_none() {
-        servers["Roblox_Studio"] = json!({"type": "stdio", "command": "cmd.exe", "args": ["/c", "cd /d %LOCALAPPDATA%\\Roblox && .\\mcp.bat"]});
+    if let Some(studio) = paths::studio_mcp().filter(|_| std::env::var_os("FRIDAE_NO_STUDIO").is_none()) {
+        servers["Roblox_Studio"] = if cfg!(windows) {
+            json!({"type": "stdio", "command": "cmd.exe", "args": ["/c", "cd /d %LOCALAPPDATA%\\Roblox && .\\mcp.bat"]})
+        } else {
+            json!({"type": "stdio", "command": studio.display().to_string(), "args": ["--stdio"]})
+        };
     }
     servers
 }

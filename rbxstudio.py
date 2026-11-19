@@ -41,6 +41,8 @@ def launcher():
     path = os.environ.get("RBXKIT_STUDIO_MCP")
     if not path and os.name == "nt":
         path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Roblox", "mcp.bat")
+    if not path and sys.platform == "darwin":
+        path = "/Applications/RobloxStudio.app/Contents/MacOS/StudioMCP"
     return path if path and os.path.exists(path) else None
 
 
@@ -77,7 +79,8 @@ class Studio:
             raise StudioError("Roblox Studio's MCP server was not found (no mcp.bat in %LOCALAPPDATA%\\Roblox). Install or "
                               "update Roblox Studio and switch on the MCP server in its Assistant settings.")
         cmd = ["cmd.exe", "/c", path] if path.lower().endswith((".bat", ".cmd")) else (
-            [sys.executable, path] if path.lower().endswith(".py") else [path])
+            [sys.executable, path] if path.lower().endswith(".py") else
+            [path, "--stdio"] if os.path.basename(path) == "StudioMCP" else [path])
         try:
             self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                          creationflags=no_window())

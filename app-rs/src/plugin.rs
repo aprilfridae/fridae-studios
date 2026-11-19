@@ -56,6 +56,9 @@ fn token() -> String {
 }
 
 fn plugin_file() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        return paths::home_dir().join("Documents").join("Roblox").join("Plugins").join(FILE_NAME);
+    }
     PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("Roblox").join("Plugins").join(FILE_NAME)
 }
 
@@ -88,6 +91,9 @@ pub fn status() -> Value {
 
 fn studio_running() -> bool {
     // Studio writes this launcher when its connector is on; whether Studio itself is open matters only for the hint we show
+    if !cfg!(windows) {
+        return std::process::Command::new("pgrep").args(["-x", "RobloxStudio"]).output().map(|o| o.status.success()).unwrap_or(false);
+    }
     let mut cmd = std::process::Command::new("tasklist");
     cmd.args(["/FI", "IMAGENAME eq RobloxStudioBeta.exe", "/NH"]);
     paths::quiet(&mut cmd);

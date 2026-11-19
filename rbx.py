@@ -187,6 +187,8 @@ def cmd_doctor(a):
 
     base = os.path.expandvars(r"%LOCALAPPDATA%\Roblox\Versions")
     studio = [d for d in glob.glob(os.path.join(base, "*")) if os.path.exists(os.path.join(d, "RobloxStudioBeta.exe"))]
+    if sys.platform == "darwin" and os.path.exists("/Applications/RobloxStudio.app"):
+        studio = ["/Applications/RobloxStudio.app"]
     lines.append("  [%s] %-18s %s" % ("ok" if studio else "--", "Roblox Studio",
                  "found" if studio else "not found on this computer (needed for texture previews and local module loading)"))
 

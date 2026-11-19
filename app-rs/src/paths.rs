@@ -17,6 +17,7 @@ pub const APP: &str = "Fridae Studios";
 pub const VERSION: &str = env!("FRIDAE_VERSION");
 pub const UPDATE_REPO: &str = env!("FRIDAE_REPO");
 pub const EXE_NAME: &str = "Fridae Studios.exe";
+#[cfg(windows)]
 const NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct Paths {
@@ -29,8 +30,13 @@ pub struct Paths {
 }
 
 pub static PATHS: LazyLock<Paths> = LazyLock::new(|| {
-    let install = env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
-    let cli_exe = Some(install.join("fridae-cli.exe")).filter(|p| p.exists());
+    let mut install = env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+    // the Mac app keeps the packaged tools in Contents/Resources/tools (code signing wants only programs in Contents/MacOS)
+    let mac_tools = install.join("..").join("Resources").join("tools");
+    if cfg!(target_os = "macos") && mac_tools.join("fridae-cli").exists() {
+        install = mac_tools.canonicalize().unwrap_or(mac_tools);
+    }
+    let cli_exe = Some(install.join(if cfg!(windows) { "fridae-cli.exe" } else { "fridae-cli" })).filter(|p| p.exists());
     let has_ui = |p: &Path| p.join("ui").join("index.html").exists();
     let kit = if has_ui(&install.join("_internal")) {
         install.join("_internal")
@@ -60,7 +66,7 @@ pub fn work(name: &str) -> PathBuf {
 pub fn mcp_command() -> Vec<String> {
     match &PATHS.cli_exe {
         Some(exe) => vec![exe.display().to_string(), "--mcp".into()],
-        None => vec!["python".into(), PATHS.kit.join("rbxkit_mcp.py").display().to_string()],
+        None => vec![python().into(), PATHS.kit.join("rbxkit_mcp.py").display().to_string()],
     }
 }
 
@@ -73,7 +79,7 @@ pub fn cli(args: &[&str]) -> Command {
             c
         }
         None => {
-            let mut c = Command::new("python");
+            let mut c = Command::new(python());
             c.arg(PATHS.kit.join("rbx.py"));
             c
         }
@@ -83,6 +89,12 @@ pub fn cli(args: &[&str]) -> Command {
     c
 }
 
+/// The Python program: `python` on Windows, `python3` elsewhere.
+pub fn python() -> &'static str {
+    if cfg!(windows) { "python" } else { "python3" }
+}
+
+#[allow(unused_variables)]
 pub fn quiet(c: &mut Command) {
     #[cfg(windows)]
     {
@@ -124,7 +136,7 @@ pub fn which(name: &str) -> Option<PathBuf> {
 
 /// The Claude Code program, if it is installed.
 pub fn find_agent() -> Option<PathBuf> {
-    which("claude").or_else(|| Some(home_dir().join(".local").join("bin").join("claude.exe")).filter(|p| p.exists()))
+    which("claude").or_else(|| Some(home_dir().join(".local").join("bin").join(if cfg!(windows) { "claude.exe" } else { "claude" })).filter(|p| p.exists()))
 }
 
 /// Antigravity's command-line tool, if it is installed.
@@ -166,6 +178,13 @@ pub fn default_ai() -> String {
 
 /// The launch file Roblox Studio creates when its MCP server is turned on.
 pub fn studio_mcp() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        // on a Mac, Studio ships the server inside its app and writes this folder once it is turned on
+        let exe = PathBuf::from("/Applications/RobloxStudio.app/Contents/MacOS/StudioMCP");
+        return Some(exe).filter(|p| p.exists() && home_dir().join("Library").join("Roblox").join("StudioMCP").exists());
+    }
+    #[allow(unreachable_code)]
     Some(PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("Roblox").join("mcp.bat")).filter(|p| p.exists())
 }
 
@@ -178,6 +197,13 @@ pub fn find_blender() -> Option<PathBuf> {
     }
     if let Some(p) = which("blender") {
         return Some(p);
+    }
+    #[cfg(target_os = "macos")]
+    for app in [PathBuf::from("/Applications/Blender.app"), home_dir().join("Applications").join("Blender.app")] {
+        let exe = app.join("Contents").join("MacOS").join("Blender");
+        if exe.exists() {
+            return Some(exe);
+        }
     }
     let roots = [
         PathBuf::from(r"C:\Program Files\Blender Foundation"),
