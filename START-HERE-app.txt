@@ -1,0 +1,106 @@
+Fridae Studios - an AI helper for building Roblox games
+=======================================================
+
+Double-click  Fridae Studios.exe  and tell it what you want built or tested.
+
+It needs three things on your computer. The dots at the top of the window
+are filled when each one is found; "Setup" explains anything missing.
+
+1. Claude Code, signed in with your own account
+   https://claude.com/claude-code
+   (Fridae Studios has no AI of its own; it drives Claude Code for you.)
+
+2. Blender (any recent version)
+   https://www.blender.org/download/
+
+3. Roblox Studio with its MCP server turned on
+   In Studio: Assistant settings -> turn on the MCP server.
+   Keep Studio open on the place you are working on.
+
+The window uses Microsoft's WebView2, which Windows 10 and 11 already
+include. If it is missing, it opens in Edge or Chrome instead.
+
+Windows may warn the first time you run it, because the program is not
+signed: choose "More info" then "Run anyway".
+
+Press "Guide" at the top of the window for everything it can do and what
+each control is for.
+
+Things to try
+-------------
+  model a street lamp and put it by the spawn
+  make a ground-slam effect
+  render icons for everything in ReplicatedStorage.Items
+  playtest the shop and tell me what breaks
+
+Buttons
+-------
+  Setup          what is installed and what is missing; also connects the
+                 same tools to Cursor, Codex, Gemini CLI and Windsurf
+  Output folder  everything it makes (Documents\Fridae Studios\work)
+  New chat       start another chat on a different task; up to six can be
+                 open and working at the same time. Hover a chat and press
+                 the x to close it
+  Earlier        every chat is saved. Click one under "Earlier" to reopen
+                 it with its messages and the agent's memory; hover it and
+                 press the x twice to delete it for good
+  Self-test      (switch under the message box) makes the agent check its
+                 own work with screenshots and playtests, fix what is
+                 wrong and check again, for up to 5 rounds
+
+  Model          (beside Self-test) picks which Claude model answers:
+                 Fable, Opus, Sonnet or Haiku. It applies from your next
+                 message. Which ones you can use depends on your Claude plan
+
+  Files          drop files anywhere on the window, paste them (Ctrl+V), or
+                 press the picture button. Images, Markdown and text,
+                 code, PDFs, and Word, PowerPoint and Excel files all
+                 work; up to 10 per message, 30 MB each. The agent reads
+                 each one before answering
+
+Updates
+-------
+The program checks for a newer version by itself, downloads it in the
+background, and installs it the next time you start it. A "Restart to
+update" button appears at the top when one is ready. You can turn this off,
+or check by hand, in Setup.
+
+Generated textures
+------------------
+When the agent wants a generated texture it shows you a prompt. Press "Copy
+prompt and open Gemini", paste it into your own Gemini chat, then right-click
+the image it makes and choose Copy image. Fridae Studios notices the copied
+image and carries on by itself. You can also paste or drop the image into
+the window, or press Skip.
+
+Three ways to start it yourself, without waiting for the agent to decide:
+  - Turn on the "Gemini textures" switch under the message box. The agent
+    then asks you for every texture it needs instead of drawing its own.
+  - Say it: a message like "I'm going to generate textures with Gemini"
+    turns that switch on.
+  - Type a command: /texture, /particle or /decal followed by what it
+    shows (for example  /particle jagged impact star). This goes straight
+    to the Gemini prompt with no agent involved, and the finished texture
+    is handed to the agent for whatever you ask next.
+
+If you would rather it be fully automatic, add a Gemini API key in Setup.
+Google charges for that (about 3 cents an image).
+
+It is for textures only (materials, particle sprites, decals), not UI,
+icons, logos or lettering.
+
+Several agents share one Studio place, so they take turns with its single
+playtest and camera. Every agent and every self-test round uses more of
+your Claude usage.
+
+Using another agent instead of the chat window
+----------------------------------------------
+fridae-cli.exe is a standard MCP tool server (it shows up as "rbxkit"). Add it to any agent:
+  command:  <this folder>\fridae-cli.exe
+  args:     --mcp
+Setup > "Connect other agents" does this for you where it can.
+
+Uploading to Roblox
+-------------------
+Studio only uploads files from folders you approve. In Studio open
+Assistant Settings -> MCP Permissions and approve  Documents\Fridae Studios\work

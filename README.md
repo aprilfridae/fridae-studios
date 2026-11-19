@@ -41,3 +41,11 @@ in Cursor, Codex, Gemini CLI and other agents.
 
 Bundled guides and fonts keep their own licences; see `THIRD_PARTY.md` and
 the `licenses` folder inside the app.
+
+## Source
+
+Everything the program is made of is in this repository: the window (Rust, in
+`app-rs`), the page it shows (`ui/index.html`), the tool server and tools
+(Python, `rbxkit_mcp.py` and the `rbx*.py` files), the agent guides (`skills`,
+`guides`, `routing.txt`) and the Studio plugin (`studio/plugin`). See
+[DEVELOPING.md](DEVELOPING.md) for how it fits together and how to build it.

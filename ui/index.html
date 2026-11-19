@@ -1,0 +1,2073 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fridae Studios</title>
+<style>
+@font-face { font-family: "Geist"; src: url("/fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Geist Mono"; src: url("/fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: block; }
+
+/* One greyscale palette, one outline per surface, one radius scale. Every size below is in px and the whole
+   page is scaled with the text-size setting (Ctrl + and Ctrl -), so nothing needs its own size rules. */
+:root {
+  --bg: #0b0b0c;
+  --panel: #111112;
+  --raised: #18181a;
+  --hover: rgba(255, 255, 255, 0.05);
+  --press: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.15);
+  --text: #ececed;
+  --dim: #a0a0a4;
+  --faint: #6a6a6e;
+  --ink: #0b0b0c;
+  --r-s: 8px; --r-m: 12px; --r-l: 16px;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --sans: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Geist Mono", "Cascadia Mono", Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; font-feature-settings: "ss01", "cv11"; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:disabled { cursor: default; }
+input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.5); outline-offset: 2px; border-radius: var(--r-s); }
+::selection { background: rgba(255, 255, 255, 0.22); }
+[hidden] { display: none !important; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); background-clip: content-box; }
+::-webkit-scrollbar-button { display: none; }
+.enter { animation: rise 280ms var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); } 50% { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); } }
+@keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+
+/* ---------- shared controls ---------- */
+.pill { height: 32px; padding: 0 14px; border-radius: 999px; font-size: 13px; background: var(--hover); border: 1px solid var(--line); white-space: nowrap; transition: background-color 140ms ease, transform 120ms var(--ease); }
+.pill:hover { background: var(--press); }
+.pill:active { transform: scale(0.97); }
+.pill:disabled { opacity: 0.45; transform: none; }
+.pill.main { background: var(--text); color: var(--ink); border-color: transparent; font-weight: 500; }
+.pill.main:hover { background: #fff; }
+.pill.on { background: rgba(255, 255, 255, 0.16); border-color: var(--line-strong); }
+.icon { width: 32px; height: 32px; border-radius: var(--r-s); display: grid; place-items: center; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.icon:hover, .icon[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+.linkish { color: var(--text); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.act { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 4px; }
+.sub { font-size: 13px; color: var(--dim); line-height: 1.5; margin: 4px 0 0; }
+.keyrow { display: flex; gap: 8px; margin: 10px 0 4px; }
+.keyrow input, .field { flex: 1; min-width: 0; height: 34px; padding: 0 12px; border-radius: var(--r-s); border: 1px solid var(--line-strong); background: var(--raised); font-size: 13px; outline: none; -webkit-user-select: text; user-select: text; }
+.keyrow input:focus, .field:focus { border-color: rgba(255, 255, 255, 0.35); }
+.switch { display: inline-flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dim); padding: 4px 0; text-align: left; transition: color 140ms ease; }
+.switch:hover { color: var(--text); }
+.switch .track { flex: none; width: 28px; height: 16px; border-radius: 999px; background: var(--press); border: 1px solid var(--line-strong); position: relative; transition: background-color 160ms ease; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); transition: transform 160ms var(--ease), background-color 160ms ease; }
+.switch[aria-checked="true"] { color: var(--text); }
+.switch[aria-checked="true"] .track { background: rgba(255, 255, 255, 0.24); }
+.switch[aria-checked="true"] .knob { transform: translateX(12px); background: var(--text); }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
+.seg button, .tab { height: 26px; padding: 0 12px; border-radius: 999px; font-size: 13px; color: var(--dim); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease; }
+.seg button:hover, .tab:hover { color: var(--text); }
+.seg button.on, .tab.on { background: var(--press); color: var(--text); }
+.tab.missing:not(.on) { opacity: 0.5; }
+.dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.dot.ok { background: var(--text); box-shadow: none; }
+.dot.live { background: var(--text); box-shadow: none; animation: pulse 1.1s ease-in-out infinite; }
+.tag { display: block; text-align: right; font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); margin: 5px 4px 0 0; }
+.g-group { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin: 20px 0 4px; }
+.g-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; align-items: center; width: 100%; text-align: left; padding: 10px 0; border-top: 1px solid var(--line); }
+.g-row b { font-weight: 500; font-size: 14px; }
+.g-row small { grid-column: 1; color: var(--dim); font-size: 13px; line-height: 1.45; }
+.g-row .go { grid-row: 1 / span 2; grid-column: 2; color: var(--faint); transition: color 140ms ease, transform 160ms var(--ease); }
+button.g-row:hover .go { color: var(--text); transform: translate(1px, -1px); }
+div.g-row { cursor: default; }
+
+/* ---------- frame: one top bar, then the view ---------- */
+.app { height: 100%; display: grid; grid-template-rows: 52px minmax(0, 1fr); }
+.top { display: flex; align-items: center; gap: 14px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); }
+.mark { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; letter-spacing: -0.015em; white-space: nowrap; }
+.mark img { width: 20px; height: 20px; display: block; }
+.nav { display: flex; gap: 2px; margin-left: 10px; }
+.nav .tab { height: 30px; padding: 0 13px; font-size: 13.5px; }
+.top .grow { flex: 1; }
+.right { display: flex; align-items: center; gap: 6px; }
+#ai-pick .tab { position: relative; }
+#ai-pick .tab .n { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.upd { height: 30px; padding: 0 13px; border-radius: 999px; font-size: 13px; background: var(--text); color: var(--ink); font-weight: 500; }
+.upd.busy { background: var(--press); color: var(--dim); }
+.conn { display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: var(--r-s); transition: background-color 140ms ease; }
+.conn:hover, .conn[aria-expanded="true"] { background: var(--hover); }
+.meter { height: 32px; padding: 0 10px; border-radius: var(--r-s); font: 500 11.5px/1 var(--mono); letter-spacing: 0.04em; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.meter:hover, .meter[aria-expanded="true"] { background: var(--hover); color: var(--text); }
+#use-pop { width: 320px; }
+.u-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px; border-radius: var(--r-s); font-size: 13.5px; }
+.u-row b { font-weight: 500; }
+.u-row .n { font-family: var(--mono); font-size: 12.5px; color: var(--text); text-align: right; }
+.u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
+.u-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 70px; padding: 4px 8px 0; }
+.u-week span { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 5px; height: 100%; }
+.u-week i { display: block; width: 100%; max-width: 22px; border-radius: 2px; background: var(--dim); }
+.u-week span:last-child i { background: var(--text); }
+.u-week em { font: normal 10px/1 var(--mono); color: var(--faint); }
+.u-note { margin: 4px 8px 6px; color: var(--faint); font-size: 12px; line-height: 1.45; }
+.nightbtn { height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+.nightbtn:hover { color: var(--text); background: var(--hover); }
+.pop { position: absolute; z-index: 40; top: 46px; right: 12px; width: 360px; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity 140ms ease, transform 160ms var(--ease); }
+.pop.on { opacity: 1; transform: none; pointer-events: auto; }
+.pop h5 { margin: 6px 8px 4px; font: 500 10.5px/1.4 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.c-row { display: grid; grid-template-columns: 14px 1fr; gap: 10px; padding: 8px; border-radius: var(--r-s); }
+.c-row .dot { margin-top: 7px; }
+.c-row b { display: block; font-weight: 500; font-size: 13.5px; }
+.c-row small { display: block; color: var(--dim); font-size: 12.5px; line-height: 1.45; }
+.pop .act { margin: 6px 8px 4px; }
+
+/* ---------- chats view ---------- */
+.body { display: grid; grid-template-columns: 252px minmax(0, 1fr); min-height: 0; }
+.rail { border-right: 1px solid var(--line); padding: 12px 10px; overflow-y: auto; min-height: 0; }
+.add { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 36px; margin-bottom: 12px; border-radius: var(--r-m); border: 1px solid var(--line-strong); font-size: 13.5px; transition: background-color 140ms ease; }
+.add:hover { background: var(--hover); }
+.add[disabled] { opacity: 0.4; }
+.rail-head { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); padding: 6px 8px; }
+.agent { position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; align-items: start; width: 100%; text-align: left; padding: 8px 30px 8px 8px; border-radius: var(--r-m); transition: background-color 140ms ease; }
+.agent:hover { background: var(--hover); }
+.agent.on { background: var(--press); }
+.agent .dot { margin-top: 8px; }
+.agent.busy .dot { background: var(--text); box-shadow: none; animation: pulse 1.1s ease-in-out infinite; }
+.agent b { display: block; font-weight: 500; font-size: 13.5px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+.agent.on b { color: var(--text); }
+.agent small { display: block; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent .x { position: absolute; right: 6px; top: 8px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--faint); opacity: 0; transition: opacity 140ms ease, background-color 140ms ease; }
+.agent:hover .x, .agent .x:focus-visible { opacity: 1; }
+.agent .x:hover { background: var(--press); color: var(--text); }
+.agent .x[data-sure] { width: auto; padding: 0 8px; border-radius: 999px; opacity: 1; background: var(--press); color: var(--text); font-size: 11px; white-space: nowrap; }
+#hist-head { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
+.past { display: block; width: 100%; text-align: left; padding: 6px 8px; border-radius: var(--r-s); transition: background-color 140ms ease; }
+.past:hover { background: var(--hover); }
+.past b { display: block; font-weight: 400; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.past:hover b { color: var(--text); }
+.past small { display: block; font-size: 11.5px; color: var(--faint); }
+
+.main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.chathead { display: flex; align-items: center; gap: 10px; padding: 10px 22px; min-height: 52px; border-bottom: 1px solid var(--line); }
+.title { min-width: 0; max-width: 46ch; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 3px 8px; margin-left: -8px; border-radius: var(--r-s); text-align: left; }
+.title:hover { background: var(--hover); }
+.title-edit { width: min(46ch, 50vw); height: 32px; padding: 0 8px; margin-left: -8px; border-radius: var(--r-s); border: 1px solid var(--line-strong); background: var(--raised); font-size: 15px; font-weight: 600; outline: none; }
+.projchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+.projchip:hover { color: var(--text); background: var(--hover); }
+.chathead .meta { margin-left: auto; font-size: 12.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scroll { overflow-y: auto; padding: 24px 22px 12px; min-height: 0; }
+.col { max-width: 800px; margin: 0 auto; }
+.col[hidden] { display: none; }
+
+/* conversation */
+.prose, .you > div, .err, .ask pre, .modal pre, .step, .past b, .agent b, .card-t, .card-n { -webkit-user-select: text; user-select: text; }
+.you { display: flex; flex-direction: column; align-items: flex-end; margin: 24px 0 6px; }
+.you > div { max-width: 82%; padding: 10px 15px; border-radius: var(--r-l) var(--r-l) 4px var(--r-l); white-space: pre-wrap; word-break: break-word; background: var(--raised); border: 1px solid var(--line); }
+.you.queued > div { background: none; border-style: dashed; color: var(--dim); }
+.you.queued .qmeta { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--faint); margin-top: 5px; }
+.you.queued .qmeta button { color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+.you .pics, .you .docs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; margin-bottom: 8px; background: none; border: 0; padding: 0; max-width: 100%; }
+.you .pics img { height: 92px; max-width: 180px; object-fit: cover; border-radius: var(--r-s); border: 1px solid var(--line); cursor: zoom-in; display: block; }
+.you .docs span.d { display: inline-flex; flex-direction: column; gap: 2px; max-width: 220px; padding: 7px 11px; border-radius: var(--r-s); border: 1px solid var(--line); }
+.turn { margin: 14px 0 6px; }
+.label { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+.steps { position: relative; margin: 4px 0 12px; padding-left: 16px; }
+.steps::before { content: ""; position: absolute; left: 2.5px; top: 8px; bottom: 8px; width: 1px; background: var(--line-strong); }
+.step { position: relative; font-size: 13px; color: var(--faint); padding: 2px 0; }
+.step::before { content: ""; position: absolute; left: -16px; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--bg); border: 1px solid var(--faint); }
+.step.live { color: var(--text); }
+.step.live::before { background: var(--text); border-color: var(--text); animation: pulse 1.1s ease-in-out infinite; }
+.steps.done .step, .steps.done::before { display: none; }
+.steps.done.open .step { display: block; }
+.steps.done.open::before { display: block; }
+.fold { display: none; align-items: center; gap: 8px; font-size: 12.5px; color: var(--faint); margin-left: -16px; padding: 2px 8px 2px 0; }
+.fold:hover { color: var(--dim); }
+.steps.done .fold { display: inline-flex; }
+.fold svg { transition: transform 180ms var(--ease); }
+.steps.open .fold svg { transform: rotate(90deg); }
+.shots { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 14px; }
+.shot { border-radius: var(--r-m); overflow: hidden; border: 1px solid var(--line); transition: border-color 160ms ease; }
+.shot:hover { border-color: var(--line-strong); }
+.shot img { display: block; height: 196px; max-width: 100%; background: #1b1b1d; }
+.prose { position: relative; max-width: 70ch; }
+.prose p { margin: 0 0 10px; }
+.prose h3 { font-size: 15px; font-weight: 600; margin: 16px 0 6px; }
+.prose ul, .prose ol { margin: 0 0 10px; padding-left: 20px; }
+.prose li { margin: 3px 0; }
+.prose li::marker { color: var(--faint); }
+.prose strong { font-weight: 600; }
+.prose code { font-family: var(--mono); font-size: 12.5px; padding: 1px 5px; border-radius: 5px; background: var(--hover); border: 1px solid var(--line); word-break: break-all; }
+.prose pre { position: relative; margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r-m); background: var(--panel); border: 1px solid var(--line); overflow-x: auto; }
+.prose pre code { padding: 0; border: 0; background: none; line-height: 1.55; white-space: pre; word-break: normal; }
+.prose table { border-collapse: collapse; margin: 0 0 12px; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.prose th { text-align: left; font-weight: 500; color: var(--dim); }
+.prose th, .prose td { padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.copy { position: absolute; top: -4px; right: -4px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11px; color: var(--dim); background: var(--raised); border: 1px solid var(--line-strong); opacity: 0; transition: opacity 140ms ease; -webkit-user-select: none; user-select: none; }
+.prose:hover > .copy, .copy:focus-visible, .prose pre:hover > .copy { opacity: 1; }
+.prose pre > .copy { top: 6px; right: 6px; }
+.err { margin: 8px 0 12px; padding: 10px 14px; border-left: 2px solid var(--dim); background: var(--hover); border-radius: 0 var(--r-s) var(--r-s) 0; font-size: 14px; white-space: pre-wrap; }
+.ask { position: relative; margin: 8px 0 14px; padding: 14px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 70ch; }
+.ask h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.ask p { margin: 0 0 10px; color: var(--dim); font-size: 13.5px; line-height: 1.5; }
+.ask pre { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 132px; overflow-y: auto; }
+.ask .act { margin: 0; }
+.ask .wait { font-size: 12px; color: var(--dim); margin: 10px 0 0; }
+.ask .wait::after, .now::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4, end) infinite; }
+.ask.done { padding: 9px 14px; }
+.ask.done h4 { margin: 0; font-weight: 500; color: var(--dim); font-size: 13px; }
+.ask.done p, .ask.done pre, .ask.done .act, .ask.done .wait { display: none; }
+.undo-turn { display: inline-block; margin: 2px 0 10px; font-size: 12px; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+.undo-turn:hover { color: var(--text); }
+.undo-turn.said { text-decoration: none; cursor: default; }
+
+/* the first screen of a chat */
+.hello { max-width: 640px; padding-top: 4vh; }
+.hello h1 { font-size: 34px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 600; margin: 12px 0 10px; }
+.hello h1 span { color: var(--dim); }
+.hello .lede { color: var(--dim); max-width: 52ch; margin: 0 0 22px; }
+.sigil { display: block; width: 36px; height: 36px; }
+.hello-needs:empty { display: none; }
+.hello-needs { margin: 0 0 18px; }
+.start { max-width: 60ch; margin: 0 0 22px; }
+.start .sub { margin: 10px 0 0; }
+.start .where { word-break: break-all; }
+.start .warn { color: var(--text); }
+
+/* composer */
+.dock { padding: 8px 22px 14px; }
+.composer { position: relative; max-width: 800px; margin: 0 auto; border-radius: 22px; background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 160ms ease; }
+.composer:focus-within { border-color: rgba(255, 255, 255, 0.28); }
+.composer.drop { border-color: rgba(255, 255, 255, 0.5); }
+.composer .inner { position: relative; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 10px; }
+textarea#box { flex: 1; resize: none; border: 0; outline: 0; background: none; line-height: 1.5; padding: 7px 0; max-height: 200px; min-height: 36px; }
+textarea::placeholder { color: var(--faint); }
+.clip { flex: none; width: 36px; height: 36px; display: grid; place-items: center; color: var(--faint); border-radius: var(--r-m); }
+.clip:hover { color: var(--text); background: var(--hover); }
+.send { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--text); color: var(--ink); transition: transform 140ms var(--ease), background-color 160ms ease; }
+.send:active { transform: scale(0.94); }
+.send[disabled] { background: var(--press); color: var(--faint); }
+.send.stop { background: var(--press); color: var(--text); }
+.send .i-stop, .send.stop .i-send { display: none; }
+.send.stop .i-stop { display: block; }
+.atts { display: none; flex-basis: 100%; flex-wrap: wrap; gap: 8px; padding: 2px 0 6px; }
+.atts.has { display: flex; }
+.att { position: relative; width: 62px; height: 62px; border-radius: var(--r-s); overflow: hidden; border: 1px solid var(--line-strong); background: var(--raised); }
+.att img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.att.wait img { opacity: 0.4; }
+.att.doc { width: auto; max-width: 190px; min-width: 96px; display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 26px 0 11px; }
+.att.doc.wait { opacity: 0.5; }
+.att button { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; background: rgba(11, 11, 12, 0.85); opacity: 0; transition: opacity 140ms ease; }
+.att:hover button, .att button:focus-visible { opacity: 1; }
+.ext { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.fname { font-size: 12.5px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint { max-width: 800px; margin: 8px auto 0; padding: 0 6px; display: flex; align-items: center; gap: 12px; font-size: 12.5px; color: var(--faint); min-height: 26px; }
+.hint #now { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint .now { color: var(--dim); }
+.hint .warn { color: var(--text); }
+.hint .sel { color: var(--dim); }
+.pick { position: relative; }
+.model { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--dim); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease; }
+.model:hover, .model[aria-expanded="true"] { color: var(--text); background: var(--hover); }
+.model svg { transition: transform 160ms var(--ease); }
+.model[aria-expanded="true"] svg { transform: rotate(180deg); }
+.menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; width: 340px; max-height: min(560px, 72vh); overflow-y: auto; padding: 8px; border-radius: var(--r-l);
+  background: var(--raised); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 140ms ease, transform 160ms var(--ease); }
+.menu.on { opacity: 1; transform: none; pointer-events: auto; }
+.menu h5 { margin: 8px 8px 4px; font: 500 10.5px/1.4 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.menu .seg { margin: 2px 6px 6px; display: flex; }
+.menu .seg button { flex: 1; padding: 0 6px; font-size: 12.5px; }
+.menu .switch { display: flex; width: 100%; padding: 7px 8px; border-radius: var(--r-s); }
+.menu .switch:hover { background: var(--hover); }
+.menu .switch small { display: block; font-size: 12px; color: var(--faint); line-height: 1.35; }
+.opt { display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 7px 8px; border-radius: var(--r-s); }
+.opt:hover, .opt:focus-visible { background: var(--hover); outline: none; }
+.opt b { font-weight: 500; font-size: 13.5px; color: var(--text); }
+.opt small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
+.opt .tick { font-size: 11px; visibility: hidden; }
+.opt[aria-selected="true"] .tick { visibility: visible; }
+.slash { position: absolute; left: 8px; bottom: calc(100% + 8px); z-index: 5; min-width: 320px; padding: 6px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); display: none; }
+.slash.on { display: block; }
+.slash button { display: grid; grid-template-columns: 84px 1fr; gap: 10px; width: 100%; text-align: left; padding: 8px 10px; border-radius: var(--r-s); font-size: 13px; }
+.slash button:hover, .slash button.sel { background: var(--hover); }
+.slash code { font-family: var(--mono); font-size: 12px; }
+.slash span { color: var(--dim); }
+.slash .how { padding: 6px 10px 2px; font-size: 11.5px; color: var(--faint); }
+.saytip { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 4; max-width: 62ch; padding: 9px 13px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 13px; line-height: 1.45; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 160ms ease, transform 200ms var(--ease); }
+.saytip.on { opacity: 1; transform: none; }
+
+/* ---------- other views take the whole space under the top bar ---------- */
+#board, #research, #overview { display: none; min-height: 0; }
+body.board #board { display: grid; }
+body.research #research { display: block; }
+body.overview #overview { display: grid; }
+body.board .body, body.research .body, body.overview .body { display: none; }
+
+/* board */
+#board { grid-template-rows: auto minmax(0, 1fr); }
+.bd-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+.bd-head h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+.sel-proj { height: 32px; padding: 0 10px; border-radius: var(--r-s); border: 1px solid var(--line-strong); background: var(--raised); font-size: 13px; outline: none; max-width: 260px; }
+.sel-proj option, .r-sel option { background: #18181a; color: #ececed; }
+.bd-head .sub { margin: 0 0 0 auto; }
+.bd-cols { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); gap: 12px; padding: 16px 22px 22px; overflow: auto; min-height: 0; }
+.bd-col { display: flex; flex-direction: column; min-height: 0; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line); transition: border-color 140ms ease, background-color 140ms ease; }
+.bd-col.over { border-color: rgba(255, 255, 255, 0.4); background: var(--raised); }
+.bd-col header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 12px 14px 8px; }
+.bd-col header b { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.bd-col header span { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.bd-col header small { flex-basis: 100%; font-size: 12px; color: var(--faint); line-height: 1.4; }
+.bd-list { flex: 1; overflow-y: auto; padding: 2px 10px 10px; display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
+.bd-add { margin: 0 10px 10px; }
+.bd-add input { width: 100%; height: 34px; padding: 0 10px; border-radius: var(--r-s); border: 1px dashed var(--line-strong); background: none; font-size: 13px; outline: none; }
+.bd-add input:focus { border-style: solid; border-color: rgba(255, 255, 255, 0.35); background: var(--raised); }
+.card { position: relative; padding: 10px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line); cursor: grab; transition: border-color 140ms ease, transform 140ms var(--ease), opacity 140ms ease; }
+.card:hover { border-color: var(--line-strong); }
+.card.dragging { opacity: 0.4; }
+.card.live { border-color: rgba(255, 255, 255, 0.3); }
+.card-t { font-weight: 500; font-size: 13.5px; line-height: 1.4; word-break: break-word; }
+.card-n { margin-top: 4px; font-size: 12.5px; color: var(--dim); line-height: 1.45; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.card-live { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--text); }
+.card-live span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-m { margin-top: 6px; font-size: 11.5px; color: var(--faint); }
+.card.open { cursor: default; }
+.card .edit { display: grid; gap: 6px; margin-top: 2px; }
+.card .edit input, .card .edit textarea { width: 100%; padding: 6px 8px; border-radius: var(--r-s); border: 1px solid var(--line-strong); background: var(--panel); font-size: 13px; outline: none; resize: vertical; }
+.card .edit .act { margin: 4px 0 0; gap: 6px; }
+.card .edit .pill { height: 28px; padding: 0 11px; font-size: 12.5px; }
+.bd-empty { padding: 60px 22px; max-width: 60ch; }
+.bd-empty h3 { margin: 0 0 6px; font-size: 16px; }
+
+/* research */
+#research { overflow-y: auto; padding: 28px 22px 40px; }
+.r-col { max-width: 960px; margin: 0 auto; }
+.eyebrow { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); }
+.r-col h1 { font-size: 30px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 600; margin: 6px 0 10px; }
+.r-col h1 span { color: var(--dim); }
+.r-col .lede { color: var(--dim); max-width: 62ch; margin: 0 0 18px; }
+.r-col h2 { font-size: 15px; font-weight: 600; margin: 34px 0 4px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.r-col h2 small { font-size: 12px; font-weight: 400; color: var(--faint); }
+.r-find { display: flex; gap: 8px; flex-wrap: wrap; }
+.r-find input { flex: 1; min-width: 240px; height: 38px; padding: 0 14px; border-radius: var(--r-m); border: 1px solid var(--line-strong); background: var(--panel); font-size: 14px; outline: none; -webkit-user-select: text; user-select: text; }
+.r-find input:focus { border-color: rgba(255, 255, 255, 0.35); }
+.r-sel { height: 38px; padding: 0 10px; border-radius: var(--r-m); border: 1px solid var(--line-strong); background: var(--panel); font-size: 13px; outline: none; max-width: 200px; }
+.r-find .pill { height: 38px; padding: 0 18px; }
+.r-note { font-size: 13px; color: var(--dim); margin: 10px 0 0; min-height: 1.4em; }
+.r-ideas { display: grid; gap: 12px; margin-top: 12px; }
+.idea-card { padding: 18px 20px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); -webkit-user-select: text; user-select: text; }
+.idea-card h3 { margin: 0 0 2px; font-size: 18px; font-weight: 600; }
+.idea-card .kind { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.idea-card .pitch { margin: 8px 0 12px; }
+.idea-card dl { margin: 0; display: grid; grid-template-columns: 112px 1fr; gap: 8px 14px; font-size: 13.5px; line-height: 1.5; }
+.idea-card dt { color: var(--faint); font-size: 12px; padding-top: 1px; }
+.idea-card dd { margin: 0; color: var(--dim); }
+.idea-card dd ul { margin: 0; padding-left: 16px; }
+.idea-card .act { margin: 14px 0 0; }
+.r-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 8px; -webkit-user-select: text; user-select: text; }
+.r-table th { text-align: left; font-weight: 500; color: var(--faint); font-size: 12px; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+.r-table td { padding: 7px 12px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--dim); }
+.r-table td:first-child, .r-table td.name { color: var(--text); }
+.r-table .num { text-align: right; padding-right: 18px; }
+.r-signals { margin: 8px 0 0; padding-left: 18px; color: var(--dim); font-size: 13.5px; line-height: 1.55; }
+.r-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.r-limits { font-size: 12.5px; color: var(--faint); max-width: 80ch; margin: 22px 0 0; line-height: 1.5; }
+
+/* overview */
+#overview { grid-template-columns: minmax(0, 1fr) 340px; }
+.o-graph { position: relative; min-width: 0; min-height: 0; }
+.o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.o-graph canvas.over { cursor: pointer; }
+.o-legend { position: absolute; left: 22px; bottom: 16px; font-size: 11.5px; color: var(--faint); line-height: 1.7; pointer-events: none; }
+.o-side { border-left: 1px solid var(--line); padding: 20px 18px 24px; overflow-y: auto; min-height: 0; }
+.o-side h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.o-side .sub { margin: 0 0 14px; }
+.o-row { padding: 11px 0; border-top: 1px solid var(--line); }
+.o-row b { display: block; font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-row small { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; }
+.o-row .doing { color: var(--dim); font-size: 13px; margin-top: 5px; line-height: 1.4; }
+.o-row.busy .doing { color: var(--text); }
+.o-row .act { margin: 8px 0 0; gap: 6px; }
+.o-row .pill { height: 28px; padding: 0 11px; font-size: 12.5px; }
+
+/* ---------- setup, guide and project: panels over the page ---------- */
+.veil { position: fixed; inset: 0; z-index: 30; background: rgba(0, 0, 0, 0.6); opacity: 0; pointer-events: none; transition: opacity 200ms ease; }
+body.setup .veil, body.proj .veil, body.guide .veil { opacity: 1; pointer-events: auto; }
+.modal { position: fixed; z-index: 31; top: 50%; left: 50%; width: min(880px, calc(100vw - 32px)); height: min(680px, calc(100vh - 32px)); transform: translate(-50%, -48%) scale(0.98); opacity: 0; pointer-events: none;
+  border-radius: 20px; background: var(--panel); border: 1px solid var(--line-strong); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); transition: opacity 180ms ease, transform 220ms var(--ease);
+  display: grid; grid-template-columns: 200px minmax(0, 1fr); overflow: hidden; }
+body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: auto; }
+.su-nav { border-right: 1px solid var(--line); padding: 18px 10px; display: flex; flex-direction: column; gap: 2px; }
+.su-nav h2 { margin: 0 8px 14px; font-size: 16px; }
+.su-nav button { text-align: left; height: 34px; padding: 0 10px; border-radius: var(--r-s); font-size: 13.5px; color: var(--dim); }
+.su-nav button:hover { background: var(--hover); color: var(--text); }
+.su-nav button.on { background: var(--press); color: var(--text); }
+.su-nav .ver { margin-top: auto; padding: 0 10px; font-size: 11.5px; color: var(--faint); }
+.su-body { overflow-y: auto; padding: 22px 28px 30px; }
+.su-body section { display: none; }
+.su-body section.on { display: block; }
+.su-body h3 { margin: 26px 0 0; font-size: 14px; font-weight: 600; }
+.su-body h3:first-child { margin-top: 0; }
+.su-body pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
+.su-body pre:empty { display: none; }
+.su-close { position: absolute; top: 12px; right: 12px; }
+.scale-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.scale-row output { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
+.scale-row input[type=range] { flex: 1; max-width: 280px; accent-color: #ececed; }
+.drawer { position: fixed; z-index: 31; top: 10px; right: 10px; bottom: 10px; width: min(440px, calc(100vw - 20px)); border-radius: 20px; background: var(--panel); border: 1px solid var(--line-strong);
+  transform: translateX(calc(100% + 16px)); transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1); display: flex; }
+body.proj #pd, body.guide #gd { transform: none; }
+.drawer .plate { flex: 1; overflow-y: auto; padding: 18px 20px 24px; }
+.drawer header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.drawer header h2 { margin: 0; font-size: 16px; }
+.drawer h3 { font-size: 14px; font-weight: 600; margin: 22px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.drawer pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
+#pd-changes:empty, #pd-out:empty, #pd-log:empty { display: none; }
+#pd-path { word-break: break-all; }
+#pd-out.warn { color: var(--text); }
+.light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 28px; }
+.light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
+.light.on { opacity: 1; pointer-events: auto; }
+
+@media (max-width: 980px) {
+  .top .mark span { display: none; }
+  #ai-pick .tab { padding: 0 9px; }
+  .bd-cols { grid-template-columns: repeat(4, minmax(200px, 240px)); }
+}
+@media (max-width: 760px) {
+  .body { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  #overview { grid-template-columns: 1fr; }
+  .o-side { display: none; }
+  .modal { grid-template-columns: 1fr; }
+  .su-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; }
+  .su-nav h2, .su-nav .ver { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <span class="mark"><img src="/logo.png" alt=""><span>Fridae Studios</span></span>
+    <nav class="nav">
+      <button class="tab on" id="v-chats">Chats</button>
+      <button class="tab" id="v-board" title="Each game's board: what is being worked on, what needs you, what is done">Board</button>
+      <button class="tab" id="v-research" title="Roblox's live charts, and game ideas backed by them">Research</button>
+      <button class="tab" id="v-overview" title="Everything your agents are doing, at a glance">Overview</button>
+    </nav>
+    <span class="grow"></span>
+    <div class="right">
+      <button class="upd" id="b-update" hidden></button>
+      <span class="seg" id="ai-pick" title="Each AI has its own chats. Switch between them here."></span>
+      <button class="meter" id="b-use" aria-expanded="false" title="New tokens used today, across every chat">0 today</button>
+      <button class="conn" id="b-conn" aria-expanded="false" title="What is connected: the AIs, Roblox Studio, the Studio plugin and Blender">
+        <span class="dot" id="c-agent"></span><span class="dot" id="c-studio"></span><span class="dot" id="c-blender"></span>
+      </button>
+      <button class="icon" id="b-guide" aria-label="Guide" title="What it can do, and what each control is for"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="6.3"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.5 1.7c-.5.2-.8.6-.8 1.1v.4"/><circle cx="8" cy="11.4" r=".5" fill="currentColor"/></svg></button>
+      <button class="icon" id="b-setup" aria-label="Setup" title="Setup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
+    </div>
+    <div class="pop" id="use-pop"><h5>Used today</h5><div id="use-rows"></div><h5>Last 7 days</h5><div id="use-week"></div><p class="u-note">New tokens (read, written and cache-stored), counted from what each AI reports after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules, so this is a guide to how hard it is working, not a bill.</p></div>
+    <div class="pop" id="conn-pop"><h5>Connections</h5><div id="needs"></div><div class="act"><button class="pill" id="conn-setup">Open Setup</button></div></div>
+  </header>
+
+  <div class="body">
+    <aside class="rail" aria-label="Chats">
+      <button class="add" id="b-new" title="Start another chat. Chats that are working keep going at the same time."><svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg>New chat</button>
+      <div class="rail-head"><span id="rail-title">Chats</span><span id="rail-count"></span></div>
+      <div id="rail-list"></div>
+      <div class="rail-head" id="hist-head" hidden><span>Earlier</span></div>
+      <div id="hist-list"></div>
+    </aside>
+    <div class="main">
+      <div class="chathead">
+        <button class="title" id="chat-title" title="Rename this chat">New chat</button>
+        <button class="projchip" id="b-proj" hidden title="The game's folder, notes and git history"></button>
+        <button class="nightbtn" id="b-night" hidden title="Put Studio and the project back as they were before the overnight run began">Undo the night</button>
+        <span class="meta" id="chat-meta"></span>
+      </div>
+      <div class="scroll" id="scroll"></div>
+      <div class="dock">
+        <div class="composer"><div class="inner">
+          <div class="atts" id="atts"></div>
+          <button class="clip" id="attach" aria-label="Attach files" title="Attach images or documents. You can also paste them or drop them on the window."><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="2.5"/><circle cx="5.7" cy="6.5" r="1.1"/><path d="M2.5 11.5l3.2-3 2.3 2 2.2-2.4 3.3 3.4"/></svg></button>
+          <input type="file" id="file" multiple hidden>
+          <textarea id="box" rows="1" placeholder="What should we build or test?" autofocus></textarea>
+          <button class="send" id="send" aria-label="Send" disabled>
+            <svg class="i-send" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>
+            <svg class="i-stop" width="12" height="12" viewBox="0 0 12 12"><rect width="12" height="12" rx="2.5" fill="currentColor"/></svg>
+          </button>
+        </div></div>
+        <div class="hint">
+          <span class="pick">
+            <button class="model" id="model" aria-haspopup="dialog" aria-expanded="false" title="Model, effort and modes for your next message"><span id="model-name">Opus</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
+            <div class="menu" id="settings-panel">
+              <h5>Model</h5><div id="model-menu" role="listbox"></div>
+              <h5>Effort</h5><div class="seg" id="effort"></div>
+              <h5>How it works</h5><div class="seg" id="run-mode"></div>
+              <p class="sub" id="run-note" style="margin: 6px 2px 10px"></p>
+              <h5>Extras</h5>
+              <button class="switch" id="selftest" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span><span class="swl">Self-test</span><small>Checks its work with screenshots and playtests and fixes it, up to five rounds.</small></span></button>
+              <button class="switch" id="gemini" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span><span class="swl">Gemini textures</span><small>Asks you for every texture through Gemini instead of drawing its own.</small></span></button>
+            </div>
+          </span>
+          <span id="now"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="board">
+    <div class="bd-head">
+      <h2>Board</h2>
+      <select class="sel-proj" id="bd-proj" title="Each game has its own board"></select>
+      <p class="sub" id="bd-note"></p>
+    </div>
+    <div class="bd-cols" id="bd-cols"></div>
+  </div>
+
+  <div id="overview">
+    <div class="o-graph"><canvas id="o-canvas"></canvas><div class="o-legend">bright: working &nbsp;&middot;&nbsp; grey: open &nbsp;&middot;&nbsp; dim: saved<br>ring: an AI &nbsp;&middot;&nbsp; square: a game project<br>click a chat to open it &nbsp;&middot;&nbsp; drag to arrange &nbsp;&middot;&nbsp; scroll to zoom &nbsp;&middot;&nbsp; double-click to fit</div></div>
+    <div class="o-side">
+      <h2>Overview</h2>
+      <p class="sub" id="o-totals"></p>
+      <div class="act" id="o-actions" hidden><button class="pill" id="o-stop-all">Stop everything</button></div>
+      <div id="o-list"></div>
+    </div>
+  </div>
+  <div id="research"><div class="r-col">
+    <span class="eyebrow">Research</span>
+    <h1>What should we <span>make next?</span></h1>
+    <p class="lede">This reads Roblox's public charts as they are right now, looks for openings in them, and proposes game ideas with the numbers behind each one. You judge the ideas; the data is there so you can check them.</p>
+    <div class="r-find"><input type="text" id="r-focus" placeholder="Anything to steer it? e.g. horror, for phones, two-week build" autocomplete="off"><select class="r-sel" id="r-ai" title="Which AI does the research"></select><select class="r-sel" id="r-model" title="Which model it uses"></select><button class="pill main" id="r-find">Find game ideas</button></div>
+    <p class="r-note" id="r-note"></p>
+    <div id="r-ideas"></div>
+    <h2>The market right now <small id="r-date"></small> <button class="linkish" id="r-refresh">Refresh</button></h2>
+    <p class="r-note" id="r-market-note"></p>
+    <div id="r-market"></div>
+  </div></div>
+</div>
+
+<div class="veil" id="veil"></div>
+<div class="modal" id="sd" role="dialog" aria-label="Setup">
+  <nav class="su-nav" id="su-nav">
+    <h2>Setup</h2>
+    <button data-s="general" class="on">General</button>
+    <button data-s="connections">Connections</button>
+    <button data-s="permissions">Permissions</button>
+    <button data-s="textures">Textures</button>
+    <button data-s="chats">Saved chats</button>
+    <span class="ver" id="su-ver"></span>
+  </nav>
+  <div class="su-body">
+    <button class="icon su-close" id="b-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+    <section data-s="general" class="on">
+      <h3>Text size</h3>
+      <p class="sub">Makes everything in the window bigger or smaller. Ctrl and + or - does the same from anywhere; Ctrl and 0 resets it.</p>
+      <div class="scale-row"><button class="pill" id="sc-down" aria-label="Smaller">A&minus;</button><input type="range" id="sc-range" min="70" max="200" step="5"><button class="pill" id="sc-up" aria-label="Bigger">A+</button><output id="sc-val">100%</output><button class="linkish" id="sc-reset">Reset</button></div>
+      <h3>New chats start on</h3>
+      <p class="sub">Each AI keeps its own list of chats; switch between them at the top right. Chats on different AIs can work at the same time.</p>
+      <div class="r-pills" id="ai-default"></div>
+      <h3>Updates</h3>
+      <p class="sub" id="upd-state"></p>
+      <div class="act"><button class="pill" id="upd-check">Check now</button><button class="switch" id="upd-auto" role="switch" aria-checked="true"><span class="track"><span class="knob"></span></span><span class="swl">Update automatically</span></button></div>
+      <h3>Files</h3>
+      <p class="sub">Models, textures, icons and renders the agents make are saved in one folder.</p>
+      <div class="act"><button class="pill" id="b-out">Open the output folder</button></div>
+    </section>
+    <section data-s="connections">
+      <h3>The AIs</h3>
+      <div id="ai-list"></div>
+      <h3>Roblox Studio plugin</h3>
+      <p class="sub" id="plug-state"></p>
+      <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove</button></div>
+      <h3>Check everything</h3>
+      <p class="sub">Looks for every program the tools use and says how to fix what is missing. Connect other apps adds these tools to Claude Code, Antigravity or Cursor, to use them outside this window.</p>
+      <div class="act"><button class="pill" id="b-check">Run full check</button><button class="pill" id="b-agents">Connect other apps</button></div>
+      <pre id="setup-out"></pre>
+    </section>
+    <section data-s="permissions">
+      <h3>Programs agents may run</h3>
+      <p class="sub" id="cmd-state"></p>
+      <div id="cmd-list"></div>
+      <div class="keyrow"><input type="text" id="cmd-name" placeholder="A program name, like git or python" autocomplete="off" spellcheck="false"><button class="pill" id="cmd-add">Allow</button></div>
+    </section>
+    <section data-s="textures">
+      <h3>Texture generation</h3>
+      <p class="sub" id="gem-state"></p>
+      <div class="keyrow"><input type="password" id="gem-key" placeholder="Gemini API key" autocomplete="off" spellcheck="false"><button class="pill" id="gem-save">Save</button></div>
+      <p class="sub">Without Antigravity, you get the prompt, make the image in your own Gemini chat, and it is picked up when you copy it. A key is only used if you switch it on below; Google then charges about 3 cents an image. The /texture, /particle and /decal commands always use your own chat. Textures only: never UI, icons or lettering.</p>
+      <div class="act"><button class="switch" id="gem-api" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span class="swl">Use my API key (Google charges per image)</span></button><button class="pill" id="gem-clear">Remove key</button></div>
+    </section>
+    <section data-s="chats">
+      <h3>Saved chats</h3>
+      <p class="sub" id="saved-state"></p>
+      <div class="act"><button class="pill" id="saved-manage">Delete a chat</button></div>
+      <div id="saved-panel" hidden>
+        <p class="sub">Closing a chat never deletes it. To delete one, type the word delete here first. A deleted chat can still be put back from the list underneath.</p>
+        <div class="keyrow"><input type="text" id="saved-word" placeholder="Type delete to unlock one deletion" autocomplete="off" spellcheck="false"></div>
+        <div id="saved-list"></div>
+        <div class="g-group" id="saved-gone-head" hidden>Deleted</div>
+        <div id="saved-gone"></div>
+      </div>
+    </section>
+  </div>
+</div>
+<aside class="drawer" id="gd" aria-label="Guide"><div class="plate">
+  <header><h2>Guide</h2><button class="icon" id="gd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
+  <p class="sub">Say what you want in plain words. These are the things it knows how to do; pick one to put an example in the message box.</p>
+  <div id="gd-list"></div>
+  <h3>The controls</h3>
+  <div id="gd-controls"></div>
+</div></aside>
+<aside class="drawer" id="pd" aria-label="Project"><div class="plate">
+  <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
+  <p class="sub" id="pd-path"></p>
+  <div class="act">
+    <button class="pill" id="pd-folder">Open folder</button>
+    <button class="pill" id="pd-bible">Open GAME.md</button>
+    <button class="pill" id="pd-board">Open the board</button>
+  </div>
+  <h3>Git</h3>
+  <p class="sub" id="pd-git"></p>
+  <div class="act" id="pd-norepo" hidden><button class="pill" id="pd-init">Start a git repository</button></div>
+  <div id="pd-repo" hidden>
+    <pre id="pd-changes"></pre>
+    <div class="keyrow"><input type="text" id="pd-msg" placeholder="What changed?" autocomplete="off"><button class="pill" id="pd-commit">Commit</button></div>
+    <div id="pd-ident" hidden>
+      <p class="sub">Git needs a name and email to sign your commits with. They are saved for this project only.</p>
+      <div class="keyrow"><input type="text" id="pd-uname" placeholder="Your name" autocomplete="off"></div>
+      <div class="keyrow"><input type="text" id="pd-email" placeholder="Email" autocomplete="off"><button class="pill" id="pd-ident-save">Save</button></div>
+    </div>
+    <pre id="pd-out"></pre>
+    <h3>History</h3>
+    <pre id="pd-log"></pre>
+    <p class="sub" id="pd-nolog" hidden>Nothing committed yet.</p>
+    <h3>Online copy</h3>
+    <p class="sub">Paste the address of a repository (for example an empty one on GitHub) to keep a copy online. Push uploads this project's files there.</p>
+    <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/game.git" autocomplete="off" spellcheck="false"><button class="pill" id="pd-remote-save">Save</button></div>
+    <div class="act"><button class="pill" id="pd-push">Push</button><button class="pill" id="pd-pull">Pull</button></div>
+  </div>
+</div></aside>
+<div class="light" id="light"><img alt=""></div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get("t") || "";
+const $ = (id) => document.getElementById(id);
+const scroller = $("scroll"), box = $("box"), sendBtn = $("send");
+let after = 0, status = {};
+
+/* The AIs a chat can run on: [id, name, the program behind it, how to get it]. */
+const AIS = [
+  ["claude", "Claude", "Claude Code", "Install Claude Code from claude.com/claude-code and sign in once."],
+  ["gemini", "Gemini", "Google's Antigravity tool", "Install Antigravity's command-line tool (agy) from antigravity.google, then run agy once in a terminal to sign in."],
+  ["chatgpt", "ChatGPT", "OpenAI's Codex tool", "Install it with npm install -g @openai/codex, then run codex login once in a terminal."],
+];
+/* Which AI's chats are showing. Every chat belongs to one AI; the row under the message box switches lists. */
+let viewAi = "claude", viewChosen = false; const lastChat = {};
+try { const saved = localStorage.getItem("view-ai"); if (saved && AIS.some((a) => a[0] === saved)) { viewAi = saved; viewChosen = true; } } catch (e) {}
+
+/* Everything the program can do: [name, what happens, example to put in the message box]. */
+const GUIDE = [
+  ["Start a game", [
+    ["Find a game to make", "The Research tab reads Roblox's live charts and proposes ideas with the numbers behind them.", "@research"],
+    ["Plan a new game", "It asks about the idea one question at a time and writes the plan before building anything.", "This is a new game. Interview me about the idea before building anything."],
+    ["Learn an existing game", "It reads the open place and the project folder, then writes up how the game works.", "Read through this game and write up how it works."],
+  ]],
+  ["Build", [
+    ["3D models", "Modelled in Blender, checked from several angles, then placed in Studio.", "Model a street lamp and put it by the spawn"],
+    ["Menus and HUDs", "Built from native Roblox UI and checked at phone size.", "Build a shop menu that matches the rest of the UI"],
+    ["Visual effects", "Particles, beams and meshes, captured in slow motion to check the timing.", "Make a ground-slam effect with dust and a shockwave"],
+    ["Textures", "It writes the prompt, you make the image in Gemini, and it cleans it up. Type /texture, /particle or /decal.", "/particle soft round glow"],
+    ["Icons", "Renders items from the place as icons with clear backgrounds.", "Render icons for everything in ReplicatedStorage.Items"],
+    ["Animations", "Poses a rig in Blender and brings the animation into Studio.", "Animate a two-handed sword swing for R15"],
+    ["Scripts and systems", "Gameplay code, with saving, security and networking handled properly.", "Add a daily reward that saves between sessions"],
+  ]],
+  ["Test", [
+    ["Playtest", "Plays the game with real clicks and key presses and reads the output.", "Playtest the shop and tell me what breaks"],
+    ["Play like a new player", "Records a first session: time to the first reward, where it got stuck, what was never found.", "Play the first five minutes like a new player and tell me what was confusing"],
+    ["Performance", "Frame time, memory and part counts, compared with what a phone can take.", "Check performance in a playtest and tell me what is over budget"],
+    ["Check a toolbox model", "Scans a model for hidden or risky scripts before you keep it.", "Check the model I have selected for hidden scripts"],
+  ]],
+  ["Design", [
+    ["Balance the numbers", "Simulates prices, rewards and drop rates: how long each unlock takes and where it stalls.", "Simulate our upgrade prices and tell me where progression stalls"],
+    ["Look at the market", "Live player counts and ratings for similar Roblox games.", "Find the most played games like ours and what they do well"],
+    ["Sound", "Finds sounds and measures them, so the loud part lands on the action.", "Add sounds to the sword swing and line them up with the hit"],
+  ]],
+  ["Bigger jobs", [
+    ["Full auto", "Pick Full auto in the menu under the message box and it keeps going by itself without asking permission: it decides, builds, tests, fixes and carries on until the job is done.", "Build a first playable of this game and keep going until it works: "],
+    ["Follow a game's progress", "The Board tab has a board for each game: what is being worked on, what needs you, and what is done. Agents keep it up to date as they work, and you can add, move and hand out cards yourself.", "@board"],
+    ["See everything at once", "The Overview tab draws every chat, helper and project as a live graph, with a list of what each one is doing and a Stop for each.", "@overview"],
+    ["Split the work", "Hands parts of a big job to helper chats that work at the same time, then checks each one.", "Split this into parallel tasks and build it: "],
+    ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
+  ]],
+  ["Safety net", [
+    ["Checkpoint", "Saves every script into the project folder and its history, so changes can be compared and restored.", "Take a checkpoint"],
+    ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
+    ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open; the night's files stay in git history."],
+    ["Usage", "The count at the top is today's tokens across every chat. Click it for each AI and the last seven days."],
+  ]],
+];
+const CONTROLS = [
+  ["Chats, Board, Research, Overview", "Chats is where the building happens. Board shows each game's work in columns. Research suggests what to make from Roblox's live charts. Overview shows every agent at once."],
+  ["Claude / Gemini / ChatGPT (top right)", "Switches between each AI's chats. Chats on different AIs keep working while you look at another; a number beside a name means that many are working there."],
+  ["The dots (top right)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
+  ["The chat's name", "Press it to rename the chat. Next to it is the game the chat belongs to: press that for the game's folder, notes and git history."],
+  ["The menu under the message box", "The model, how much effort it puts in (low to max), and the modes: Autopilot, Self-test and Gemini textures. Applies from your next message."],
+  ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
+  ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
+  ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions go on the board under Needs you instead of stopping it, and when a job is done it picks the next one from the board and GAME.md. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
+  ["Chats, on the left", "Each chat is its own agent. Up to six can work at once. Closing a chat never deletes it: it stays under Earlier and can be reopened. Deleting is only in Setup, under Saved chats, and can be undone."],
+  ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
+  ["Text size", "Ctrl and + or - makes everything bigger or smaller, and Ctrl and 0 resets it. It is also in Setup, under General."],
+  ["Selected in Studio", "With the Studio plugin connected, the line under the message box shows what you have selected. The agent is told, so \"this\" means that."],
+];
+const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l6-6M4.5 3H9v4.5"/></svg></span>';
+/* One row of the guide. Rows with an example are buttons that put it in the message box. */
+function guideRow([name, what, example]) {
+  const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
+  if (example === "@research" || example === "@overview" || example === "@board") row.onclick = () => { closeGuide(); setView(example.slice(1)); };
+  else if (example) row.onclick = () => { closeGuide(); setView("chats"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); };
+  return row;
+}
+function guideList(groups) {
+  const wrap = el("div");
+  for (const [title, items] of groups) { wrap.appendChild(el("div", "g-group", esc(title))); items.forEach((i) => wrap.appendChild(guideRow(i))); }
+  return wrap;
+}
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "X-Token": TOKEN, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  return r.json();
+}
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+/* follow the conversation unless the reader has scrolled up */
+let following = true;
+function atBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80; }
+scroller.addEventListener("scroll", () => { following = atBottom(); });
+function stick(force) { if (force) following = true; if (following) scroller.scrollTop = scroller.scrollHeight; }
+const grow = new ResizeObserver(() => stick());
+
+/* a small, safe markdown renderer: everything is escaped first */
+function inline(s) {
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+function md(src) {
+  const lines = src.replace(/\r/g, "").split("\n"); let out = "", i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^```/.test(line.trim())) { let code = []; i++; while (i < lines.length && !/^```/.test(lines[i].trim())) code.push(lines[i++]); i++; out += "<pre><code>" + esc(code.join("\n")) + "</code></pre>"; continue; }
+    if (/^#{1,4}\s/.test(line)) { out += "<h3>" + inline(line.replace(/^#{1,4}\s+/, "")) + "</h3>"; i++; continue; }
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
+      const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      let t = "<table><tr>" + cells(line).map((c) => "<th>" + inline(c) + "</th>").join("") + "</tr>"; i += 2;
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) t += "<tr>" + cells(lines[i++]).map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>";
+      out += t + "</table>"; continue;
+    }
+    const bullet = /^\s*[-*•]\s+/, num = /^\s*\d+[.)]\s+/;
+    if (bullet.test(line) || num.test(line)) {
+      const ordered = num.test(line), re = ordered ? num : bullet; let items = "";
+      while (i < lines.length && re.test(lines[i])) items += "<li>" + inline(lines[i++].replace(re, "")) + "</li>";
+      out += (ordered ? "<ol>" : "<ul>") + items + (ordered ? "</ol>" : "</ul>"); continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    let para = [line]; i++;
+    while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*[-*•]\s+|\s*\d+[.)]\s+|\s*\|)/.test(lines[i])) para.push(lines[i++]);
+    out += "<p>" + inline(para.join(" ")) + "</p>";
+  }
+  return out;
+}
+
+/* ---------- agents: each has its own conversation column ---------- */
+const agents = new Map();
+let current = null;
+function pane(id) {
+  let p = agents.get(id);
+  if (p) return p;
+  p = { id, name: "New chat", col: el("div", "col"), turn: null, busy: false, now: "", last: "Idle", scroll: 0 };
+  p.col.hidden = true;
+  scroller.appendChild(p.col);
+  grow.observe(p.col);
+  p.row = el("button", "agent idle", '<span class="dot"></span><span><b></b><small></small></span><span class="x" role="button" tabindex="0" aria-label="Close chat" title="Close this chat. It is not deleted: it stays under Earlier."><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></span>');
+  p.row.ondblclick = (ev) => { if (!ev.target.closest(".x")) { select(id); renameChat(); } };
+  p.row.onclick = (ev) => {
+    const x = ev.target.closest(".x");
+    if (!x) return select(id);
+    ev.stopPropagation();
+    if (p.busy && !x.dataset.sure) {
+      const icon = x.innerHTML; x.dataset.sure = "1"; x.textContent = "stop it?";
+      setTimeout(() => { delete x.dataset.sure; x.innerHTML = icon; }, 3000);
+      return;
+    }
+    api("/api/remove", { agent: id });
+  };
+  $("rail-list").appendChild(p.row);
+  agents.set(id, p);
+  hello(p);
+  paintRail();
+  return p;
+}
+function select(id) {
+  const p = agents.get(id); if (!p) return;
+  const old = agents.get(current);
+  if (old) { old.scroll = scroller.scrollTop; old.col.hidden = true; }
+  current = id; p.col.hidden = false;
+  claim(p);
+  if (chatAi(p) !== viewAi) { viewAi = chatAi(p); try { localStorage.setItem("view-ai", viewAi); } catch (e) {} loadHistory(); }
+  lastChat[viewAi] = id;
+  following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
+  following = atBottom();
+  paintRail(); paintComposer(); paintProject(); box.focus();
+}
+function paintRail() {
+  let working = 0;
+  for (const p of agents.values()) {
+    const here = chatAi(p) === viewAi;
+    p.row.className = "agent " + (p.busy ? "busy" : "idle") + (p.id === current ? " on" : "");
+    p.row.hidden = !here;
+    p.row.querySelector("b").textContent = p.name;
+    p.row.querySelector("small").textContent = p.busy ? (p.now || "Starting") : p.last;
+    if (p.busy && here) working++;
+  }
+  $("rail-title").textContent = aiName(viewAi) + " chats";
+  paintHead();
+  $("rail-count").textContent = working ? working + " working" : "";
+  $("b-new").disabled = agents.size >= (status.max_agents || 6);
+}
+function selectionHint() {
+  const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
+  const it = pl.selection.items || []; const first = it[0] ? it[0].path.split(".").pop() + " (" + it[0].class + ")" : "";
+  return '<span class="sel" title="The agent is told what you have selected in Studio.">Selected in Studio: ' + esc(first) + (pl.selection.count > 1 ? " +" + (pl.selection.count - 1) : "") + "</span>";
+}
+function paintComposer() {
+  const p = agents.get(current); const b = !!(p && p.busy);
+  if (typeof paintAiPick === "function") paintAiPick();
+  const something = !!box.value.trim() || (typeof pending !== "undefined" && pending.some((a) => a.name));
+  const stop = b && !something;   /* while it works: with text the button sends (it waits its turn), without it stops */
+  sendBtn.classList.toggle("stop", stop); sendBtn.setAttribute("aria-label", stop ? "Stop" : b ? "Send when it finishes" : "Send");
+  sendBtn.title = stop ? "Stop" : b ? "Send. It waits until the agent finishes, then goes straight to it." : "";
+  sendBtn.disabled = !b && !something;
+  box.placeholder = b ? "Add to it while it works. Sent the moment it finishes." : "What should we build or test?";
+  $("now").innerHTML = b ? '<span class="now">' + esc(p.now || "Starting") + "</span>" : selectionHint();
+}
+/* The bar above the conversation: the chat's name (press to rename) and its game. */
+function paintHead() {
+  const p = agents.get(current), t = $("chat-title");
+  if (t) { t.textContent = p ? p.name : "New chat"; t.hidden = !p; }
+  const meta = $("chat-meta"); if (!meta) return;
+  const nb = $("b-night"); if (nb) nb.hidden = !(p && p.night && !p.nightUndone && !p.busy);
+  meta.textContent = p ? [p.used ? fmtTokens(p.used) + " tokens" : "", aiName(chatAi(p)), p.role === "critic" ? "reviewer" : p.role === "research" ? "researcher" : p.role ? "helper" : "", p.overnight && p.overnight > Date.now() / 1000 ? "overnight until " + new Date(p.overnight * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ") : "";
+}
+function renameChat() {
+  const p = agents.get(current), t = $("chat-title"); if (!p || !t) return;
+  const input = el("input", "title-edit"); input.value = p.name; input.setAttribute("aria-label", "Chat name");
+  t.hidden = true; t.after(input); input.focus(); input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return; done = true;
+    const name = input.value.trim(); input.remove(); t.hidden = false;
+    if (save && name && name !== p.name) { p.name = name; paintRail(); await api("/api/rename", { agent: p.id, name }); }
+  };
+  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.stopPropagation(); finish(false); } };
+  input.onblur = () => finish(true);
+}
+$("chat-title").onclick = renameChat;
+
+/* ---------- earlier chats ---------- */
+function ago(ts) {
+  const s = Date.now() / 1000 - ts;
+  if (s < 90) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  if (s < 86400 * 7) return Math.round(s / 86400) + " d ago";
+  return new Date(ts * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+let histTimer = null;
+let saved = { chats: [], deleted: [] };
+function loadHistory() { clearTimeout(histTimer); histTimer = setTimeout(async () => {
+  let chats = [];
+  try { saved = await api("/api/history"); chats = (saved.chats || []).filter((c) => (c.ai || "claude") === viewAi); } catch (e) { return; }
+  const list = $("hist-list"); list.innerHTML = ""; $("hist-head").hidden = chats.length === 0;
+  chats.forEach((c) => {
+    const row = el("button", "past", "<b></b><small></small>");
+    row.querySelector("b").textContent = c.name;
+    row.querySelector("small").textContent = ago(c.updated);
+    row.title = c.name;
+    row.onclick = async () => { const r = await api("/api/open-chat", { id: c.id }); if (r.ok) { select(r.agent); loadHistory(); } };
+    list.appendChild(row);
+  });
+  if (document.body.classList.contains("setup")) paintSaved();
+}, 120); }
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  try { return (await api("/api/copy", { text })).ok; } catch (e) { return false; }
+}
+function addCopy(node, text) {
+  const b = el("button", "copy", "copy");
+  b.onclick = async (ev) => { ev.stopPropagation(); b.textContent = (await copyText(text)) ? "copied" : "failed"; setTimeout(() => (b.textContent = "copy"), 1400); };
+  node.appendChild(b);
+}
+
+/* ---------- rendering ---------- */
+function hello(p) {
+  const wrap = el("div", "hello enter", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede">Say it in plain words. I work in your open Studio place and in Blender, and I show you what I made before calling it done.</p><div class="hello-needs"></div>');
+  wrap.appendChild(startCard(p));
+  const ideas = guideList([["Things to try", [GUIDE[1][1][0], GUIDE[1][1][2], GUIDE[2][1][0], GUIDE[3][1][0]]]]);
+  const more = el("button", "linkish", "Everything it can do"); more.style.marginTop = "12px";
+  more.onclick = openGuide; ideas.appendChild(more);
+  wrap.appendChild(ideas);
+  p.col.appendChild(wrap);
+  paintNeeds();
+}
+/* ---------- new chat setup: folder and repository, then new game or existing ---------- */
+let projects = { projects: [], default_parent: "", git: false };
+async function loadProjects() {
+  try { projects = await api("/api/projects"); } catch (e) {}
+  for (const p of agents.values()) if (p.start && p.start.step === "folder") p.start.paint();
+}
+function startCard(p) {
+  const card = el("div", "ask start");
+  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, msg: "", paint };
+  p.start = st;
+  const go = (step, msg) => { st.step = step; st.msg = msg || ""; paint(); };
+  async function use(body) {
+    const r = await api("/api/project", Object.assign({ agent: p.id }, body));
+    if (!r.ok) return go(st.step, r.error || "That did not work.");
+    p.project = r.project; paintProject(); loadProjects();
+    go(r.project.bible ? "ready" : "kind", r.project.note || "");
+  }
+  function kickoff(kind) {
+    const text = kind === "new" && p.seed ? "This is a new game, starting from this idea out of market research:\n\n" + p.seed + "\n\nInterview me to sharpen it before building anything."
+      : kind === "new" ? "This is a new game. Interview me about the idea before building anything."
+      : "This is a game I am already working on. Read through it and get up to speed.";
+    api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
+    p.seed = null;
+  }
+  function paint() {
+    const pr = p.project; let h = "";
+    if (st.step === "folder") {
+      h = "<h4>Start a folder for this game?</h4><p>A project folder keeps the game's design notes, its scripts and its history in one place, so every chat about the game starts with the full picture.</p>"
+        + '<div class="act"><button class="pill main" data-a="new">New folder</button><button class="pill" data-a="pick">Existing folder</button><button class="pill" data-a="skip">Skip, just chat</button></div>';
+      if (projects.projects.length) h += '<p class="sub">Or carry on with a game:</p><div class="act">' + projects.projects.slice(0, 6).map((x, i) => '<button class="pill" data-p="' + i + '">' + esc(x.name) + "</button>").join("") + "</div>";
+    } else if (st.step === "new") {
+      h = "<h4>New game folder</h4>"
+        + '<div class="keyrow"><input type="text" data-f="name" placeholder="Name of the game" autocomplete="off" value="' + esc(st.name) + '"></div>'
+        + '<p class="sub where">It goes in ' + esc(st.parent || projects.default_parent) + ' &nbsp;<button class="linkish" data-a="where">Change</button></p>'
+        + (projects.git
+          ? '<div class="act"><button class="switch" data-a="git" role="switch" aria-checked="' + (st.git ? "true" : "false") + '"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div><p class="sub">Git keeps a history of the project that you can look back through and return to.</p>'
+          : '<p class="sub">Git is not installed, so no history is kept. You can add it later from git-scm.com.</p>')
+        + '<div class="act"><button class="pill main" data-a="create">Create</button><button class="pill" data-a="back">Back</button></div>';
+    } else if (st.step === "kind") {
+      h = "<h4>Is this a new game, or one you are already working on?</h4><p>" + esc(pr ? pr.name : "") + (pr && pr.git ? " \u00b7 git repository" : "") + "</p>"
+        + '<div class="act"><button class="pill main" data-a="kn">New game</button><button class="pill" data-a="ke">Already working on it</button></div>'
+        + '<p class="sub">New game: I ask about the idea, one question at a time, and write it up before anything is built. Already working on it: I read through the place and the folder first.</p>';
+    } else {
+      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (pr && pr.bible ? "The game's notes (GAME.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
+        + '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>';
+    }
+    if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
+    card.innerHTML = h;
+    card.querySelectorAll("[data-f]").forEach((i) => { i.oninput = () => (st[i.dataset.f] = i.value); i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); card.querySelector('[data-a="create"]').click(); } }; });
+    card.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => use({ action: "use", path: projects.projects[+b.dataset.p].path })));
+    const acts = {
+      new: () => { go("new"); const i = card.querySelector("input"); if (i) i.focus(); },
+      back: () => go("folder"),
+      skip: () => { card.remove(); p.start = null; box.focus(); },
+      git: () => { st.git = !st.git; paint(); },
+      pick: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) use({ action: "add", path: r.path }); },
+      where: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { st.parent = r.path; paint(); } },
+      create: () => use({ action: "create", name: st.name, parent: st.parent || null, git: st.git && projects.git }),
+      kn: () => kickoff("new"),
+      ke: () => kickoff("existing"),
+    };
+    card.querySelectorAll("[data-a]").forEach((b) => (b.onclick = acts[b.dataset.a]));
+  }
+  paint();
+  return card;
+}
+
+/* ---------- project panel: folder, notes and git ---------- */
+function paintProject() {
+  const p = agents.get(current); const pr = p && p.project; const b = $("b-proj");
+  b.hidden = !pr; if (pr) b.textContent = pr.name;
+  if (!pr) document.body.classList.remove("proj");
+}
+function paintGit(state, r) {
+  const out = $("pd-out");
+  if (r && r.text !== undefined) { out.textContent = r.text; out.classList.toggle("warn", !r.ok); }
+  if (!state) return;
+  $("pd-norepo").hidden = !(state.installed && !state.repo);
+  $("pd-repo").hidden = !state.repo;
+  if (!state.installed) { $("pd-git").textContent = "Git is not installed, so this project has no history. Get it from git-scm.com, then reopen the app."; return; }
+  if (!state.repo) { $("pd-git").textContent = "This folder is not a git repository yet."; return; }
+  const n = state.changes.length;
+  $("pd-git").textContent = "On " + (state.branch || "a new branch") + ". " + (n ? n + (n === 1 ? " file has" : " files have") + " changes that are not committed." : "Everything is committed.");
+  $("pd-changes").textContent = state.changes.slice(0, 40).join("\n") + (n > 40 ? "\n... and " + (n - 40) + " more" : "");
+  $("pd-log").textContent = state.commits.map((c) => c.hash + "  " + c.when + "  " + c.subject).join("\n");
+  $("pd-nolog").hidden = state.commits.length > 0;
+  $("pd-ident").hidden = !!state.identity;
+  if (document.activeElement !== $("pd-remote")) $("pd-remote").value = state.remote || "";
+  $("pd-push").disabled = $("pd-pull").disabled = !state.remote;
+}
+async function git(action, extra) {
+  const p = agents.get(current); if (!p || !p.project) return null;
+  const r = await api("/api/git", Object.assign({ path: p.project.path, action }, extra || {}));
+  paintGit(r.state, action === "status" ? null : r);
+  return r;
+}
+function openProject() {
+  const p = agents.get(current); if (!p || !p.project) return;
+  closeSetup(); closeGuide();
+  $("pd-name").textContent = p.project.name; $("pd-path").textContent = p.project.path; $("pd-out").textContent = "";
+  $("pd-bible").hidden = !p.project.bible;
+  document.body.classList.add("proj"); git("status");
+  api("/api/projects").then((r) => { projects = r; const now = r.projects.find((x) => x.path === p.project.path); if (now) { p.project = now; $("pd-bible").hidden = !now.bible; } });
+}
+const closeProject = () => document.body.classList.remove("proj");
+$("b-proj").onclick = openProject; $("pd-close").onclick = closeProject;
+$("pd-folder").onclick = () => { const p = agents.get(current); if (p && p.project) api("/api/project", { action: "open", path: p.project.path, what: "folder" }); };
+$("pd-bible").onclick = () => { const p = agents.get(current); if (p && p.project) api("/api/project", { action: "open", path: p.project.path, what: "bible" }); };
+$("pd-init").onclick = () => git("init");
+$("pd-board").onclick = () => { const p = agents.get(current); closeProject(); if (p && p.project) boardPath = p.project.path; setView("board"); };
+$("pd-commit").onclick = async () => { const r = await git("commit", { message: $("pd-msg").value }); if (r && r.ok) $("pd-msg").value = ""; };
+$("pd-msg").onkeydown = (e) => { if (e.key === "Enter") $("pd-commit").click(); };
+$("pd-ident-save").onclick = () => git("identity", { name: $("pd-uname").value, email: $("pd-email").value });
+$("pd-remote-save").onclick = () => git("remote", { url: $("pd-remote").value });
+$("pd-push").onclick = async () => { $("pd-out").textContent = "Pushing..."; git("push"); };
+$("pd-pull").onclick = async () => { $("pd-out").textContent = "Pulling..."; git("pull"); };
+
+const NEEDS = [
+  ["agent", "Claude Code", "Signed in and ready.", "Install Claude Code and sign in once: the chat in this window runs on it. Using Antigravity, Cursor or another agent instead? Press Connect other apps in Setup and chat from that app; this dot then stays empty."],
+  ["studio", "Roblox Studio", "Its MCP server is on.", "In Studio, open Assistant settings and turn on the MCP server."],
+  ["blender", "Blender", "Found.", "Install Blender, then press Setup."],
+];
+/* What is connected, as rows: [ok, name, what it means]. */
+function needRows() {
+  const have = (status.ai || {}).installed || {}, pl = status.plugin || {};
+  const rows = AIS.map(([id, name, via, how]) => [!!have[id], name + " \u00b7 " + via, have[id] ? (status.ai && status.ai.default === id ? "Ready. New chats start on it." : "Ready.") : "Not found. " + how]);
+  rows.push([!!status.studio, "Roblox Studio", status.studio ? "Its MCP server is on, so agents can work in your place." : "In Studio, open Assistant settings and turn on the MCP server."]);
+  rows.push([!!pl.connected, "Studio plugin", pl.connected ? "Connected" + (pl.place && pl.place.name ? " to " + pl.place.name : "") + ": the agent sees your selection and new errors, and turns can be undone." : pl.installed ? "Installed. It connects when Studio is open." : "Not installed. Setup, Connections installs it."]);
+  rows.push([!!status.blender, "Blender", status.blender ? "Found. Used for 3D models, icons and animations." : "Not found. Install Blender, then open Setup."]);
+  const working = [...agents.values()].filter((p) => p.busy).length;
+  rows.push([working > 0, working ? working + (working === 1 ? " chat is" : " chats are") + " working" : "No chats are working", working ? "See them all in the Overview tab." : "They show here and in Overview when they start.", working ? "live" : ""]);
+  return rows;
+}
+function rowHtml([ok, name, what, extra]) { return '<div class="c-row"><span class="dot ' + (extra || (ok ? "ok" : "")) + '"></span><div><b>' + esc(name) + "</b><small>" + esc(what) + "</small></div></div>"; }
+function paintNeeds() {
+  const have = (status.ai || {}).installed || {};
+  if (status.studio === undefined) return;
+  $("c-agent").className = "dot" + (have[viewAi] ? " ok" : ""); $("c-studio").className = "dot" + (status.studio ? " ok" : ""); $("c-blender").className = "dot" + (status.blender ? " ok" : "");
+  $("needs").innerHTML = needRows().map(rowHtml).join("");
+  /* a new chat mentions only what is missing for building in Studio */
+  const missing = needRows().filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === viewAi : r[1] === "Roblox Studio"));
+  document.querySelectorAll(".hello-needs").forEach((h) => (h.innerHTML = missing.map(rowHtml).join("")));
+}
+$("b-conn").onclick = (ev) => { ev.stopPropagation(); const on = !$("conn-pop").classList.contains("on"); $("conn-pop").classList.toggle("on", on); $("b-conn").setAttribute("aria-expanded", on ? "true" : "false"); };
+$("conn-setup").onclick = () => { closeConn(); openSetup("connections"); };
+function closeConn() { $("conn-pop").classList.remove("on"); $("b-conn").setAttribute("aria-expanded", "false"); }
+document.addEventListener("click", (ev) => { if (!ev.target.closest("#conn-pop") && !ev.target.closest("#b-conn")) closeConn(); });
+/* ---------- usage meter ---------- */
+function fmtTokens(n) { return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n); }
+let usageTimer = 0;
+function loadUsage() { clearTimeout(usageTimer); usageTimer = setTimeout(paintUsage, 400); }
+async function paintUsage() {
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const today = day.getTime() / 1000, week = today - 6 * 86400;
+  let r; try { r = await api("/api/usage", { since: week }); } catch (e) { return; }
+  const recs = (r && r.records) || [];
+  const sum = (list) => list.reduce((a, x) => ({ total: a.total + (x.total || 0), input: a.input + (x.input || 0), output: a.output + (x.output || 0), cached: a.cached + (x.cache_read || 0), cost: a.cost + (x.cost || 0), turns: a.turns + 1 }), { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0 });
+  const now = recs.filter((x) => x.t >= today), all = sum(now);
+  $("b-use").textContent = fmtTokens(all.total - all.cached) + " today";
+  const rows = AIS.map(([id]) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
+  $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
+    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(s.total - s.cached) + "</span><small>" + s.turns + (s.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " \u00b7 about $" + s.cost.toFixed(2) + " at API prices" : "") + "</small></div>").join("")
+    : '<div class="u-row"><small>Nothing yet today.</small></div>';
+  const days = [];
+  for (let i = 6; i >= 0; i--) { const from = today - i * 86400, s = sum(recs.filter((x) => x.t >= from && x.t < from + 86400)); days.push([new Date(from * 1000).toLocaleDateString([], { weekday: "short" }), s.total - s.cached]); }
+  const top = Math.max(1, ...days.map((d) => d[1]));
+  $("use-week").innerHTML = '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>";
+}
+$("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
+document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
+setInterval(paintUsage, 60000); paintUsage();
+
+/* ---------- undo the night ---------- */
+$("b-night").onclick = () => {
+  const p = agents.get(current); if (!p || !p.night || p.busy) return;
+  p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
+  const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  const what = [p.night.studio ? "every change the agents made in Studio since then, with scripts put back as they were" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
+  const card = el("div", "ask night-ask enter", "<h4>Undo the night?</h4><p></p><div class=\"act\"><button class=\"pill main\">Undo the night</button><button class=\"pill\">Keep it</button></div>");
+  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place.";
+  const [go, keep] = card.querySelectorAll("button");
+  keep.onclick = () => card.remove();
+  go.onclick = async () => {
+    go.disabled = keep.disabled = true; go.textContent = "Undoing...";
+    const r = await api("/api/undo-night", { agent: p.id });
+    card.remove();
+    if (!r || !r.ok) note((r && r.text) || "Could not undo the night.");
+    paintHead();
+  };
+  p.col.appendChild(card); stick(true);
+};
+
+function newTurn(p) {
+  p.turn = el("div", "turn enter");
+  p.turn.appendChild(el("div", "label", esc(p.model || "Claude")));
+  p.col.appendChild(p.turn);
+  p.turn._steps = null;
+}
+function steps(p) {
+  if (!p.turn) newTurn(p);
+  const turn = p.turn;
+  if (!turn._steps || turn.lastElementChild !== turn._steps) {
+    const s = el("div", "steps");
+    const fold = el("button", "fold", '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg><span></span>');
+    fold.onclick = () => s.classList.toggle("open");
+    s.appendChild(fold);
+    turn.appendChild(s); turn._steps = s;
+  }
+  return turn._steps;
+}
+function settle(p) {
+  if (!p.turn) return;
+  p.turn.querySelectorAll(".step.live").forEach((s) => s.classList.remove("live"));
+  p.turn.querySelectorAll(".steps").forEach((s) => {
+    const n = s.querySelectorAll(".step").length;
+    s.querySelector(".fold span").textContent = n + (n === 1 ? " step" : " steps");
+    s.classList.add("done");
+  });
+}
+function onEvent(e) {
+  if (e.kind === "setup") { $("setup-out").textContent = e.text; return; }
+  if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
+  if (!e.agent) return;
+  if (e.kind === "agent_removed") {
+    const p = agents.get(e.agent); if (!p) return;
+    grow.unobserve(p.col); p.col.remove(); p.row.remove(); agents.delete(e.agent);
+    if (current === e.agent) { current = null; if (bootMark !== Infinity) showAi(viewAi); }
+    paintRail(); loadHistory(); return;
+  }
+  const p = pane(e.agent);
+  if (e.kind === "agent_new") {
+    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent;
+    if (!current || (e.id > bootMark && !e.background)) select(p.id);
+    if (pendingSeed && pendingSeed.id === p.id) { p.seed = pendingSeed.text; box.value = "Let's make this: " + pendingSeed.title; fit(); pendingSeed = null; }
+    loadHistory();
+  } else if (e.kind === "ai") {
+    p.ai = e.ai; if (p.id === current && p.ai !== viewAi) select(p.id);
+  } else if (e.kind === "project") {
+    p.project = e;
+    if (p.start) { p.start.step = e.bible ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
+    paintProject();
+  } else if (e.kind === "model") {
+    p.model = e.name;
+    if (p.turn) p.turn.querySelector(".label").textContent = e.name;
+  } else if (e.kind === "texrequest") {
+    if (!p.turn) newTurn(p);
+    const card = el("div", "ask enter", "<h4></h4><p>The first button opens Gemini and pastes this prompt into its message box: press Enter there. Then copy the image it makes (right-click, Copy image). It is picked up here automatically. You can also paste or drop the image into this window. If the prompt does not appear in Gemini, press Ctrl+V.</p><pre></pre><div class=\"act\"><button class=\"pill main\">Open Gemini and paste prompt</button><button class=\"pill\">Copy prompt</button><button class=\"pill\">Skip</button></div><div class=\"wait\">Waiting for the image</div>");
+    card.querySelector("h4").textContent = "Make this texture in Gemini: " + (e.name || "texture");
+    card.querySelector("pre").textContent = e.prompt;
+    const [open, copy, skip] = card.querySelectorAll("button");
+    open.onclick = () => api("/api/texture", { id: e.req, action: "open" });
+    copy.onclick = async () => { await api("/api/texture", { id: e.req, action: "copy" }); copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy prompt"), 1500); };
+    skip.onclick = () => api("/api/texture", { id: e.req, action: "skip" });
+    p.turn.appendChild(card); p.turn._steps = null;
+    p.asks = p.asks || {}; p.asks[e.req] = card; p.now = "Waiting for your image";
+  } else if (e.kind === "texdone") {
+    const card = p.asks && p.asks[e.req];
+    if (card) { card.classList.add("done"); card.querySelector("h4").textContent = e.ok ? "Image received" : "Texture skipped"; delete p.asks[e.req]; }
+  } else if (e.kind === "usage") {
+    p.used = (p.used || 0) + (e.total || 0) - (e.cache_read || 0);
+    if (e.id > bootMark) loadUsage();
+  } else if (e.kind === "night") {
+    p.night = e; p.nightUndone = false;
+    p.col.appendChild(el("span", "tag enter", e.commit || e.studio ? "checkpoint saved \u00b7 undo the night is at the top" : "no checkpoint: no git in the project and Studio not connected"));
+  } else if (e.kind === "night_undone") {
+    p.nightUndone = true;
+    const card = el("div", "ask enter", "<h4>The night was undone</h4><p></p>");
+    card.querySelector("p").textContent = e.text || "";
+    card.querySelector("p").style.whiteSpace = "pre-line";
+    p.col.appendChild(card);
+  } else if (e.kind === "renamed") {
+    p.name = e.name;
+  } else if (e.kind === "queued") {
+    paintQueue(p, e.items || []);
+  } else if (e.kind === "user") {
+    const h = p.col.querySelector(".hello"); if (h) h.remove();
+    p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0; p.steps = 0;
+    p.carried = e.auto ? (p.carried || 0) + 1 : 0;
+    if (e.auto) {
+      const left = p.overnight ? Math.max(0, p.overnight - Date.now() / 1000) : 0;
+      p.col.appendChild(el("span", "tag enter", p.overnight ? "overnight \u00b7 turn " + p.carried + " \u00b7 " + Math.floor(left / 3600) + "h " + Math.floor((left % 3600) / 60) + "m left" : "full auto \u00b7 carrying on by itself (" + p.carried + " of 12)"));
+      paintRail(); if (e.agent === current) { paintComposer(); stick(); } return;
+    }
+    const u = el("div", "you enter");
+    if (e.images && e.images.length) {
+      const pics = el("div", "pics");
+      e.images.forEach((src) => { const im = new Image(); im.src = src + "?t=" + TOKEN; im.alt = "Attached image"; im.onload = () => stick(); im.onclick = () => zoom(im.src); pics.appendChild(im); });
+      u.appendChild(pics);
+    }
+    if (e.files && e.files.length) {
+      const docs = el("div", "docs");
+      e.files.forEach((label) => docs.appendChild(el("span", "d", fileTile(label))));
+      u.appendChild(docs);
+    }
+    u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
+    const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full ? "full auto" : "", e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
+    if (tags) p.col.appendChild(el("span", "tag enter", esc(tags)));
+  } else if (e.kind === "tool") {
+    const s = steps(p);
+    s.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
+    s.appendChild(el("div", "step live enter", esc(e.label)));
+    p.now = e.label; p.steps = (p.steps || 0) + 1;
+    if (e.id > bootMark) { p.recent = (p.recent || []).concat([{ label: e.label, t: Date.now() }]).slice(-4); }
+  } else if (e.kind === "text") {
+    if (!p.turn) newTurn(p);
+    p.turn.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
+    const said = /\n?[ \t]*STATUS:[ \t]*(CONTINUE|DONE|NEEDS YOU[^\n]*)\s*$/i.exec(e.text);
+    const text = said ? e.text.slice(0, said.index).trimEnd() : e.text;
+    if (said) p.status = said[1].trim();
+    const block = el("div", "prose enter", md(text || e.text));
+    addCopy(block, text || e.text);
+    block.querySelectorAll("pre").forEach((pre) => addCopy(pre, pre.textContent));
+    p.turn.appendChild(block); p.turn._steps = null;
+    if (said) { const st = said[1].trim(), up = st.toUpperCase(); p.turn.appendChild(el("span", "tag enter", esc(up === "CONTINUE" ? "autopilot \u00b7 more to do" : up === "DONE" ? "finished and checked" : st.replace(/^needs you:?\s*/i, "needs you: ")))); p.last = up === "DONE" ? "Finished" : up === "CONTINUE" ? "Carrying on" : "Needs you"; }
+    p.now = "Writing";
+  } else if (e.kind === "images") {
+    if (!p.turn) newTurn(p);
+    const g = el("div", "shots enter");
+    e.urls.forEach((u) => { const b = el("button", "shot"); const im = new Image(); im.src = u + "?t=" + TOKEN; im.alt = "Result image"; im.onload = () => stick(); b.appendChild(im); b.onclick = () => zoom(im.src); g.appendChild(b); });
+    p.turn.appendChild(g); p.turn._steps = null;
+  } else if (e.kind === "blocked") {
+    if (!p.turn) newTurn(p);
+    p.turn.appendChild(blockedCard(p, e.commands || [])); p.turn._steps = null;
+    p.last = "Needs you";
+  } else if (e.kind === "error") {
+    if (!p.turn) newTurn(p);
+    p.turn.appendChild(el("div", "err enter", esc(e.text)));
+    p.last = e.text === "Stopped." ? "Stopped" : "Needs attention";
+  } else if (e.kind === "busy") {
+    p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); }
+  } else if (e.kind === "done") {
+    const finished = p.turn;
+    if (finished && e.id > bootMark && status.plugin && status.plugin.connected && finished.querySelector(".step")) {
+      p.col.querySelectorAll(".undo-turn:not(.said)").forEach((x) => x.remove());
+      const u = el("button", "undo-turn", "Undo this turn in Studio");
+      u.title = "Undoes the changes agents made in Studio since this turn began, and puts scripts back as they were. It stops if your own edit is the newest step.";
+      u.onclick = async () => { if (u.classList.contains("said")) return; u.textContent = "Undoing..."; const r = await api("/api/plugin", { action: "revert", agent: p.id }); u.textContent = r.text || "Could not undo."; u.classList.add("said"); };
+      finished.appendChild(u);
+    }
+    settle(p); p.busy = false; p.now = ""; p.turn = null; refresh(); loadHistory();
+    if (p.project && p.id === current && document.body.classList.contains("proj")) git("status");
+  }
+  if (p.qbox && p.qbox.childElementCount && p.col.lastElementChild !== p.qbox) p.col.appendChild(p.qbox);   /* waiting messages stay last */
+  paintRail();
+  if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
+}
+/* Messages sent while the chat was working: shown under the conversation until they go. */
+function paintQueue(p, items) {
+  if (!p.qbox) p.qbox = el("div", "qbox");
+  p.qbox.innerHTML = "";
+  items.forEach((q) => {
+    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">Waiting. Sent the moment it finishes. <button>Remove</button></span>");
+    u.querySelector("div").textContent = q.text;
+    u.querySelector("button").onclick = () => api("/api/unqueue", { agent: p.id, qid: q.qid });
+    p.qbox.appendChild(u);
+  });
+  p.col.appendChild(p.qbox);
+}
+
+/* ---------- actions ---------- */
+function fit() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 168) + "px"; paintComposer(); }
+function send() {
+  const p = agents.get(current); if (!p) return;
+  const text = box.value.trim();
+  if (p.busy && !text && !pending.some((a) => a.name)) { api("/api/stop", { agent: p.id }); return; }
+  const ready = pending.filter((a) => a.name);
+  if (!text && !ready.length) return;
+  if (pending.some((a) => !a.name && !a.failed)) return;  /* an upload is still in flight */
+  const names = ready.map((a) => a.name);
+  box.value = ""; pending = []; paintAtts(); fit();
+  /* a chat started from a researched idea carries the idea's details with its first message */
+  const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
+  api("/api/send", { agent: p.id, text: full, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
+}
+// one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
+// keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
+const RUN_MODES = [
+  ["ask", "Ask me", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
+  ["full", "Full auto", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
+  ["night", "Overnight", "Full auto for up to 24 hours without you: questions go on the board, it picks its own next job, and the computer stays awake. Leave Studio open."],
+];
+let runMode = "ask";
+try {
+  runMode = localStorage.getItem("runmode") || (localStorage.getItem("overnight") === "1" ? "night" : localStorage.getItem("fullauto") === "1" || localStorage.getItem("autopilot") === "1" ? "full" : "ask");
+} catch (e) {}
+if (!RUN_MODES.some((m) => m[0] === runMode)) runMode = "ask";
+let autoPilot = false, overNight = false, fullAuto = false;
+function applyMode() { fullAuto = runMode !== "ask"; overNight = runMode === "night"; autoPilot = false; }
+applyMode();
+let selfTest = false;
+try { selfTest = localStorage.getItem("selftest") === "1"; } catch (e) {}
+function paintSwitch() {
+  $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
+  const seg = $("run-mode"); seg.innerHTML = "";
+  RUN_MODES.forEach(([id, name, note]) => {
+    const b = el("button", id === runMode ? "on" : "", esc(name)); b.title = note;
+    b.onclick = () => {
+      runMode = id; applyMode(); try { localStorage.setItem("runmode", id); } catch (e) {} paintSwitch(); paintModel();
+      say({ ask: "Ask me: it does what you ask, then waits for you.", full: "Full auto: from your next message nothing asks for permission, and it keeps going until the job is done.", night: "Overnight: from your next message it works in full auto for up to 24 hours without you. Leave Studio open. Pressing stop ends it." }[id]);
+    };
+    seg.appendChild(b);
+  });
+  $("run-note").textContent = RUN_MODES.find((m) => m[0] === runMode)[2];
+}
+$("selftest").onclick = () => { selfTest = !selfTest; try { localStorage.setItem("selftest", selfTest ? "1" : "0"); } catch (e) {} paintSwitch(); paintModel();
+  say(selfTest ? "Self-test on: it checks its work with screenshots and playtests and fixes what it finds, up to five rounds." : "Self-test off: it builds, looks once, and reports."); };
+paintSwitch();
+let geminiMode = false;
+try { geminiMode = localStorage.getItem("gemini") === "1"; } catch (e) {}
+function paintGeminiMode() { $("gemini").setAttribute("aria-checked", geminiMode ? "true" : "false"); }
+function setGeminiMode(v) { geminiMode = !!v; try { localStorage.setItem("gemini", geminiMode ? "1" : "0"); } catch (e) {} paintGeminiMode(); if (typeof paintModel === "function") paintModel(); }
+$("gemini").onclick = () => { setGeminiMode(!geminiMode);
+  say(geminiMode ? "Gemini textures on: for each texture it shows you a prompt to run in Gemini and waits for the image." : "Gemini textures off: it draws textures itself unless you ask."); };
+paintGeminiMode();
+
+/* ---------- attachments: paste, drop or pick any file ---------- */
+let pending = [];
+const MAX_ATTACH = 10, MAX_BYTES = 30 * 1024 * 1024;
+const isImage = (f) => !!f.type && f.type.startsWith("image/");
+const extOf = (name) => { const m = /\.([A-Za-z0-9]{1,5})$/.exec(name || ""); return m ? m[1].toLowerCase() : "file"; };
+function fileTile(label) { return '<span class="ext">' + esc(extOf(label)) + '</span><span class="fname">' + esc(label) + "</span>"; }
+function paintAtts() {
+  const tray = $("atts"); tray.innerHTML = ""; tray.classList.toggle("has", pending.length > 0);
+  pending.forEach((a) => {
+    const t = el("div", "att" + (a.image ? "" : " doc") + (a.name ? "" : " wait"));
+    if (a.image) { const im = new Image(); im.src = a.preview; im.alt = "Attached image"; t.appendChild(im); }
+    else t.innerHTML = fileTile(a.label);
+    t.title = a.label;
+    const x = el("button", "", '<svg width="8" height="8" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg>');
+    x.setAttribute("aria-label", "Remove " + a.label);
+    x.onclick = () => { pending = pending.filter((b) => b !== a); paintAtts(); paintComposer(); };
+    t.appendChild(x); tray.appendChild(t);
+  });
+}
+function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ? Object.keys(p.asks) : []; return ids.length ? ids[0] : null; }
+function note(text) { $("now").innerHTML = '<span class="warn">' + esc(text) + "</span>"; setTimeout(paintComposer, 3500); }
+function addFile(file) {
+  if (!file) return;
+  const image = isImage(file);
+  const ask = image ? waitingAsk() : null;
+  if (ask) { const r = new FileReader(); r.onload = () => api("/api/texture", { id: ask, action: "image", data: r.result }); r.readAsDataURL(file); return; }
+  if (pending.length >= MAX_ATTACH) { note("Up to " + MAX_ATTACH + " files per message."); return; }
+  if (file.size > MAX_BYTES) { note((file.name || "That file") + " is over 30 MB."); return; }
+  const a = { image, label: file.name || "pasted image", preview: "", name: null, failed: false };
+  pending.push(a); paintAtts();
+  const reader = new FileReader();
+  reader.onload = async () => {
+    if (image) { a.preview = reader.result; paintAtts(); }
+    try {
+      const r = await api("/api/attach", { data: reader.result, filename: file.name || "" });
+      if (r.ok) { a.name = r.name; a.image = r.kind === "image"; } else a.failed = true;
+    } catch (e) { a.failed = true; }
+    if (a.failed) { pending = pending.filter((b) => b !== a); note("Could not attach " + a.label + "."); }
+    paintAtts(); paintComposer();
+  };
+  reader.onerror = () => { pending = pending.filter((b) => b !== a); paintAtts(); note("Could not read " + a.label + "."); };
+  reader.readAsDataURL(file);
+}
+document.addEventListener("paste", (e) => {
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let took = false;
+  for (const it of items) if (it.kind === "file") { const f = it.getAsFile(); if (f) { addFile(f); took = true; } }
+  if (took) e.preventDefault();
+});
+const composer = document.querySelector(".composer");
+["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; composer.classList.add("drop"); } }));
+["dragleave", "drop"].forEach((n) => document.addEventListener(n, () => composer.classList.remove("drop")));
+document.addEventListener("drop", (e) => { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); [...e.dataTransfer.files].forEach(addFile); });
+$("attach").onclick = () => $("file").click();
+$("file").onchange = (e) => { [...e.target.files].forEach(addFile); e.target.value = ""; };
+
+/* ---------- model, effort and modes: one menu under the message box ---------- */
+const MODELS = [
+  ["fable", "Fable", "Most capable; best for big or tricky builds"],
+  ["opus", "Opus", "Strong all-rounder"],
+  ["sonnet", "Sonnet", "Fast and capable; good everyday choice"],
+  ["haiku", "Haiku", "Fastest and cheapest; small, simple jobs"],
+];
+const EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra"], ["max", "Max"]];
+const EFFORT_NAMES = { low: "low effort", medium: "medium effort", high: "high effort", xhigh: "extra-high effort", max: "max effort" };
+let chosenModel = {}, chosenEffort = {};
+try { chosenModel = JSON.parse(localStorage.getItem("models") || "{}"); chosenEffort = JSON.parse(localStorage.getItem("efforts") || "{}"); } catch (e) {}
+/* Each AI has its own models: Claude's are fixed, Gemini's and ChatGPT's are whatever their tools list on this computer. */
+function modelsFor(ai) {
+  if (ai === "claude") return MODELS;
+  const listed = (((status.ai || {}).models || {})[ai]) || [];
+  return listed.map(([id, name]) => [id, name.replace(/^Gemini /, ""), id]);
+}
+/* The model the next message asks for: the one picked for this AI, else the AI's set default (Opus, Gemini 4 Carbon,
+   the newest GPT Astra). There is no "whatever the program is set to". */
+function modelOf(p) {
+  const ai = chatAi(p), list = modelsFor(ai), pick = chosenModel[ai];
+  if (list.some((m) => m[0] === pick)) return pick;
+  const dflt = ai === "claude" ? "opus" : (((status.ai || {}).default_models || {})[ai]) || "";
+  return list.some((m) => m[0] === dflt) ? dflt : list.length ? list[0][0] : "";
+}
+function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
+const menu = $("settings-panel"), modelBtn = $("model");
+function paintModel() {
+  const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
+  const cur = list.find((m) => m[0] === chosen);
+  const modes = [overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
+  $("model-name").textContent = [cur ? cur[1] : aiName(ai), EFFORT_NAMES[effort]].concat(modes).join(" \u00b7 ");
+  const box0 = $("model-menu"); box0.innerHTML = "";
+  if (!list.length) box0.appendChild(el("p", "sub", "Its model list has not arrived yet.")).style.margin = "0 8px 6px";
+  list.forEach(([id, name, note]) => {
+    const o = el("button", "opt", '<span class="tick">&bull;</span><span><b>' + esc(name) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
+    o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
+    o.onclick = () => { chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
+    box0.appendChild(o);
+  });
+  const seg = $("effort"); seg.innerHTML = "";
+  EFFORTS.forEach(([id, name]) => {
+    const b = el("button", id === effort ? "on" : "", esc(name));
+    b.title = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" }[id];
+    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); };
+    seg.appendChild(b);
+  });
+}
+function closeMenu() { menu.classList.remove("on"); modelBtn.setAttribute("aria-expanded", "false"); }
+modelBtn.onclick = (ev) => { ev.stopPropagation(); const open = !menu.classList.contains("on"); menu.classList.toggle("on", open); modelBtn.setAttribute("aria-expanded", open ? "true" : "false"); };
+document.addEventListener("click", (ev) => { if (!ev.target.closest(".pick")) closeMenu(); });
+paintModel();
+box.addEventListener("input", fit);
+box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+sendBtn.onclick = send;
+$("b-new").onclick = () => api("/api/new", { ai: viewAi });
+$("b-out").onclick = () => api("/api/open", { what: "work" });
+$("gd-list").appendChild(guideList(GUIDE));
+CONTROLS.forEach((c) => $("gd-controls").appendChild(guideRow(c)));
+function openGuide() { closeSetup(); closeProject(); document.body.classList.add("guide"); }
+function closeGuide() { document.body.classList.remove("guide"); }
+$("b-guide").onclick = openGuide; $("gd-close").onclick = closeGuide;
+
+/* ---------- research tab ---------- */
+let view = "chats", research = {}, chartShown = "top-playing-now", pendingSeed = null;
+function setView(v) {
+  view = v;
+  for (const name of ["chats", "board", "research", "overview"]) { if (name !== "chats") document.body.classList.toggle(name, v === name); $("v-" + name).classList.toggle("on", v === name); }
+  if (v !== "chats") { closeSetup(); closeProject(); }
+  if (v === "research") { paintResearchPick(); loadResearch(true); } else if (v === "overview") startOverview(); else if (v === "board") openBoard(); else box.focus();
+}
+$("v-chats").onclick = () => setView("chats"); $("v-board").onclick = () => setView("board"); $("v-research").onclick = () => setView("research"); $("v-overview").onclick = () => setView("overview");
+const big = (n) => n == null ? "?" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
+const old = (d) => d == null ? "?" : d < 60 ? d + " days" : d < 730 ? Math.floor(d / 30) + " months" : Math.floor(d / 365) + " years";
+const pct = (n) => n == null ? "?" : n + "%";
+function table(head, rows) {
+  return '<table class="r-table"><tr>' + head.map((h) => "<th" + (h[1] ? ' class="num"' : "") + ">" + h[0] + "</th>").join("") + "</tr>"
+    + rows.map((r) => "<tr>" + r.map((c, i) => "<td" + (head[i][1] ? ' class="num"' : "") + ">" + esc(String(c)) + "</td>").join("") + "</tr>").join("") + "</table>";
+}
+const gameRows = (games) => games.map((g, i) => [i + 1, g.name, big(g.players), pct(g.likes), g.genre + (g.subgenre ? " / " + g.subgenre : ""), old(g.age_days), big(g.visits)]);
+const GAME_HEAD = [["#"], ["Game"], ["Playing now", 1], ["Likes", 1], ["Genre"], ["Age"], ["Visits", 1]];
+/* the agent's answer: a summary, then one json block of ideas */
+function parseIdeas(text) {
+  const m = /```json\s*([\s\S]*?)```/.exec(text || ""); let ideas = [];
+  if (m) { try { ideas = JSON.parse(m[1]).ideas || []; } catch (e) {} }
+  return { summary: (m ? text.slice(0, m.index) : text || "").trim(), ideas };
+}
+function ideaText(i) {
+  return [i.title + (i.genre ? " (" + i.genre + ")" : ""), i.pitch, "Core loop: " + (i.core_loop || ""), "Why now: " + (i.why_now || ""),
+    "Evidence:\n" + (i.evidence || []).map((x) => "- " + x).join("\n"),
+    "Similar games: " + (i.comparables || []).map((c) => c.name + " (" + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes)").join("; "),
+    "First playable: " + (i.first_playable || ""), "Main risk: " + (i.risk || "")].join("\n");
+}
+function ideaCard(i) {
+  const card = el("div", "idea-card");
+  const dd = (label, html) => html ? "<dt>" + label + "</dt><dd>" + html + "</dd>" : "";
+  card.innerHTML = '<span class="kind">' + esc(i.genre || "idea") + "</span><h3>" + esc(i.title || "Untitled") + '</h3><p class="pitch">' + esc(i.pitch || "") + "</p><dl>"
+    + dd("The loop", esc(i.core_loop || "")) + dd("Why now", esc(i.why_now || ""))
+    + dd("Evidence", (i.evidence || []).length ? "<ul>" + i.evidence.map((x) => "<li>" + esc(String(x)) + "</li>").join("") + "</ul>" : "")
+    + dd("Similar games", (i.comparables || []).length ? "<ul>" + i.comparables.map((c) => "<li>" + esc(c.name || "") + ": " + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes" + (c.note ? ". " + esc(c.note) : "") + "</li>").join("") + "</ul>" : "")
+    + dd("First version", esc(i.first_playable || "")) + dd("Main risk", esc(i.risk || "")) + "</dl>"
+    + '<div class="act"><button class="pill main">Start this game</button><button class="pill">Build it on autopilot</button><button class="pill">Copy</button></div>';
+  const [start, build, copy] = card.querySelectorAll("button");
+  start.title = "Opens a chat with this idea, where you set up a folder and it interviews you before building.";
+  build.title = "Makes a project folder and builds a first playable without asking you anything. Roblox Studio must be open on an empty place.";
+  build.onclick = async () => {
+    const r = await api("/api/new", { ai: viewAi });
+    if (!r.ok) { build.textContent = "All six chats are in use"; return; }
+    const made = await api("/api/project", { agent: r.agent, action: "create", name: i.title || "New game", git: !!projects.git });
+    if (!made.ok) { build.textContent = made.error || "Could not make the folder"; api("/api/remove", { agent: r.agent }); return; }
+    setView("chats"); loadProjects();
+    api("/api/send", { agent: r.agent, autopilot: true, selftest: false, gemini: false, attachments: [], model: null, effort: "high",
+      text: "Build this game as a first playable, without asking me anything. Decide the details yourself and write them into GAME.md first, then build it in the open Studio place, test it, and keep going until it is playable.\n\n" + ideaText(i) });
+  };
+  start.style.cssText = "background: var(--text); color: var(--accent-ink); border-color: transparent; font-weight: 500;";
+  start.onclick = async () => {
+    const r = await api("/api/new", { ai: viewAi });
+    if (!r.ok) { start.textContent = "All six chats are in use"; return; }
+    pendingSeed = { id: r.agent, text: ideaText(i), title: i.title || "this idea" }; setView("chats");
+    const p = agents.get(r.agent); if (p) { p.seed = pendingSeed.text; select(p.id); box.value = "Let's make this: " + pendingSeed.title; fit(); pendingSeed = null; }
+  };
+  copy.onclick = async () => { copy.textContent = (await copyText(ideaText(i))) ? "Copied" : "Could not copy"; setTimeout(() => (copy.textContent = "Copy"), 1500); };
+  return card;
+}
+let paintedIdeas = null, paintedMarket = null;
+function paintResearch() {
+  const r = research, busy = !!r.researching, worker = busy && agents.get(r.researching);
+  $("r-find").disabled = busy; $("r-find").textContent = busy ? "Researching" : "Find game ideas";
+  const note = $("r-note");
+  if (busy) {
+    note.innerHTML = esc("Working: " + ((worker && worker.now) || "starting") + ". This takes a few minutes. ") + '<button class="linkish">Watch it work</button>';
+    note.querySelector("button").onclick = () => { setView("chats"); select(r.researching); };
+  } else note.textContent = r.note || (r.ideas ? "Ideas from " + ago(r.ideas.when) + ". Run it again whenever you like; the charts change daily." : "Nothing researched yet. Press the button and it reads the charts below, digs into the most promising corners, and comes back with five ideas.");
+  if (r.ideas && paintedIdeas !== r.ideas.when) {
+    paintedIdeas = r.ideas.when; const box0 = $("r-ideas"); box0.innerHTML = "";
+    const got = parseIdeas(r.ideas.text);
+    if (got.summary) { const pr = el("div", "prose", md(got.summary)); pr.style.marginTop = "18px"; box0.appendChild(pr); }
+    const list = el("div", "r-ideas"); got.ideas.forEach((i) => list.appendChild(ideaCard(i))); box0.appendChild(list);
+  }
+  const m = r.market;
+  $("r-refresh").textContent = r.refreshing ? "Fetching" : "Refresh"; $("r-refresh").disabled = !!r.refreshing;
+  $("r-date").textContent = m ? "as of " + ago(m.taken) : "";
+  $("r-market-note").textContent = r.refreshing ? "Reading Roblox's charts and looking up each game. This takes about a minute." + (m ? " Showing the last copy meanwhile." : "") : r.error ? "Could not fetch the charts: " + r.error : m ? "" : "No data yet.";
+  if (!m || paintedMarket === m.taken + chartShown) return;
+  paintedMarket = m.taken + chartShown;
+  const chart = m.charts[chartShown] || m.charts["top-playing-now"];
+  const main = ["top-playing-now", "top-trending", "up-and-coming", "top-earning", "top-rated", "top-revisited"].filter((c) => m.charts[c]);
+  const rest = Object.keys(m.charts).filter((c) => !main.includes(c));
+  $("r-market").innerHTML = '<p class="r-note">' + esc(m.games_seen + " games across " + Object.keys(m.charts).length + " charts. " + big(m.players_in_top) + " people are in the top " + m.charts["top-playing-now"].games.length + " games right now; their median like ratio is " + pct(m.median_likes) + ".") + "</p>"
+    + "<h2>Worth a second look <small>reasons to dig, not conclusions</small></h2>" + (m.signals.length ? '<ul class="r-signals">' + m.signals.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>" : '<p class="r-note">Nothing stood out today.</p>')
+    + "<h2>Genres <small>from Top Playing Now. Young means under a year old.</small></h2>"
+    + table([["Genre"], ["Games", 1], ["Playing now", 1], ["Share", 1], ["Likes", 1], ["Biggest game"], ["Young games", 1], ["Their share", 1], ["In Top Earning", 1], ["In Up-and-Coming", 1]],
+      m.genres.map((g) => [g.genre, g.games, big(g.players), g.share + "%", pct(g.likes), g.leader + " (" + g.leader_share + "%)", g.young_games, g.young_share + "%", g.earning, g.rising]))
+    + "<h2>New games already charting <small>under four months old</small></h2>" + (m.rising.length ? table(GAME_HEAD, gameRows(m.rising.slice(0, 15))) : '<p class="r-note">None today.</p>')
+    + "<h2>Charts</h2><div class=\"r-pills\">" + main.concat(rest).map((c) => '<button class="pill' + (c === chartShown ? " on" : "") + '" data-c="' + c + '">' + esc(m.charts[c].name) + "</button>").join("") + "</div>"
+    + table(GAME_HEAD, gameRows(chart.games.slice(0, 30)))
+    + '<p class="r-limits">What these numbers can and cannot say: "playing now" is a count at this moment, not an average. Each chart shows only about its top hundred. A game in a chart has already succeeded, so the ones that failed are invisible. Nothing here measures how long players stay or what a game earns. Data comes from the charts Roblox shows a visitor who is not signed in.</p>';
+  $("r-market").querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => { chartShown = b.dataset.c; paintResearch(); }));
+}
+async function loadResearch(first) {
+  try { const note = research.note; research = await api("/api/research"); research.note = note; } catch (e) { return; }
+  if (first && !research.market && !research.refreshing) { api("/api/research", { action: "refresh" }); research.refreshing = true; }
+  paintResearch();
+}
+$("r-refresh").onclick = async () => { await api("/api/research", { action: "refresh" }); research.refreshing = true; paintResearch(); };
+$("r-find").onclick = async () => {
+  const r = await api("/api/research", { action: "ideas", focus: $("r-focus").value, ai: $("r-ai").value, model: $("r-model").value || null });
+  research.note = r.ok ? "" : (r.error || "Could not start."); if (r.ok) research.researching = r.agent; paintResearch();
+};
+$("r-focus").onkeydown = (e) => { if (e.key === "Enter") $("r-find").click(); };
+/* The AI and model that do the research are chosen here, and remembered. */
+let researchAi = "", researchModel = {};
+try { researchAi = localStorage.getItem("research-ai") || ""; researchModel = JSON.parse(localStorage.getItem("research-model") || "{}"); } catch (e) {}
+function paintResearchPick() {
+  const have = (status.ai || {}).installed || {}, ai = AIS.some((a) => a[0] === researchAi) ? researchAi : viewAi;
+  $("r-ai").innerHTML = AIS.map(([id, name]) => '<option value="' + id + '"' + (id === ai ? " selected" : "") + ">" + esc(name) + (have[id] === false ? " (not set up)" : "") + "</option>").join("");
+  const list = modelsFor(ai), chosen = researchModel[ai] || "";
+  const pick = list.some((m) => m[0] === chosen) ? chosen : modelOf({ ai });
+  $("r-model").innerHTML = list.map(([id, name]) => '<option value="' + esc(id) + '"' + (id === pick ? " selected" : "") + ">" + esc(name) + "</option>").join("");
+  $("r-model").disabled = list.length <= 1;
+}
+$("r-ai").onchange = () => { researchAi = $("r-ai").value; try { localStorage.setItem("research-ai", researchAi); } catch (e) {} paintResearchPick(); };
+$("r-model").onchange = () => { researchModel[$("r-ai").value] = $("r-model").value; try { localStorage.setItem("research-model", JSON.stringify(researchModel)); } catch (e) {} };
+setInterval(() => { if (view === "research" && (research.refreshing || research.researching)) loadResearch(); }, 2500);
+
+/* ---------- overview tab: every agent at a glance, as a graph and a list ---------- */
+const og = { nodes: new Map(), links: [], zoom: 1, panX: 0, panY: 0, hover: null, drag: null, raf: 0, last: 0, mine: false };
+const elapsed = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m " + (s % 60) + "s" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
+/* What should be on the graph right now: an AI for each list in use, each project, each chat, helpers under the
+   chat that started them, saved chats around their AI, and the last few steps of anything that is working. */
+function overviewWanted() {
+  const want = new Map(), links = [];
+  const add = (id, kind, label, extra) => { want.set(id, Object.assign({ id, kind, label }, extra || {})); };
+  const link = (a, b) => { if (want.has(a) && want.has(b)) links.push([a, b]); };
+  const open = [...agents.values()].filter((p) => p.started || p.busy);
+  const savedChats = (saved.chats || []).slice(0, 60);
+  for (const [id, name] of AIS) if (open.some((p) => chatAi(p) === id) || savedChats.some((c) => (c.ai || "claude") === id)) add("ai:" + id, "ai", name);
+  for (const p of open) if (p.project) add("proj:" + p.project.path, "project", p.project.name);
+  for (const p of open) add("chat:" + p.id, "chat", p.name, { pane: p.id, busy: !!p.busy, helper: !!p.role, weight: Math.min(8, (p.steps || 0) / 3) });
+  for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
+  for (const p of open) {
+    if (p.parent && want.has("chat:" + p.parent)) link("chat:" + p.parent, "chat:" + p.id); else link("ai:" + chatAi(p), "chat:" + p.id);
+    if (p.project) link("proj:" + p.project.path, "chat:" + p.id);
+    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, n) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t }); links.push(["chat:" + p.id, id]); });
+  }
+  for (const c of savedChats) link("ai:" + (c.ai || "claude"), "saved:" + c.id);
+  return { want, links };
+}
+function overviewSync() {
+  const { want, links } = overviewWanted();
+  for (const id of [...og.nodes.keys()]) if (!want.has(id)) og.nodes.delete(id);
+  for (const [id, w] of want) {
+    const have = og.nodes.get(id);
+    if (have) Object.assign(have, w);
+    else {
+      /* a new node appears beside what it is tied to, so the picture grows instead of jumping */
+      const tie = links.find((l) => l[1] === id && og.nodes.has(l[0])) || links.find((l) => l[0] === id && og.nodes.has(l[1]));
+      const near = tie ? og.nodes.get(tie[0] === id ? tie[1] : tie[0]) : null, a = Math.random() * 6.283, d = near ? 40 : 120 + Math.random() * 80;
+      og.nodes.set(id, Object.assign({ x: (near ? near.x : 0) + Math.cos(a) * d, y: (near ? near.y : 0) + Math.sin(a) * d, vx: 0, vy: 0 }, w));
+    }
+  }
+  og.links = links.filter((l) => og.nodes.has(l[0]) && og.nodes.has(l[1]));
+}
+const NODE = { ai: 9, project: 7, chat: 6, saved: 3, step: 2.5 };
+const radius = (n) => NODE[n.kind] + (n.weight || 0) * 0.6;
+function overviewStep() {
+  const nodes = [...og.nodes.values()];
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    a.vx -= a.x * 0.0009; a.vy -= a.y * 0.0009;                       /* a gentle pull to the middle */
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j]; let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 0.01;
+      const f = Math.min(3, 2600 / d2), d = Math.sqrt(d2); dx /= d; dy /= d;   /* everything pushes everything else away */
+      a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+    }
+  }
+  for (const [ia, ib] of og.links) {
+    const a = og.nodes.get(ia), b = og.nodes.get(ib); const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    const want = b.kind === "step" ? 46 : b.kind === "saved" ? 84 : 140, f = (d - want) * 0.012;   /* a tie holds two nodes at a set distance */
+    a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+  }
+  for (const n of nodes) { if (og.drag && og.drag.node === n) { n.vx = n.vy = 0; continue; } n.vx *= 0.86; n.vy *= 0.86; n.x += n.vx; n.y += n.vy; }
+}
+function overviewDraw(now) {
+  const cv = $("o-canvas"), box0 = cv.parentNode.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(box0.width * dpr) || cv.height !== Math.round(box0.height * dpr)) { cv.width = Math.round(box0.width * dpr); cv.height = Math.round(box0.height * dpr); }
+  if (!og.mine && og.nodes.size) {
+    let reach = 60; for (const n of og.nodes.values()) reach = Math.max(reach, Math.abs(n.x) + 70, Math.abs(n.y) + 50);
+    const fit = Math.max(0.5, Math.min(1.8, 0.46 * Math.min(box0.width, box0.height) / reach));
+    og.zoom += (fit - og.zoom) * 0.06;
+  }
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box0.width, box0.height);
+  c.translate(box0.width / 2 + og.panX, box0.height / 2 + og.panY); c.scale(og.zoom, og.zoom);
+  const near = new Set(); if (og.hover) { near.add(og.hover.id); og.links.forEach(([a, b]) => { if (a === og.hover.id) near.add(b); if (b === og.hover.id) near.add(a); }); }
+  const lit = (id) => !og.hover || near.has(id);
+  c.lineWidth = 1 / og.zoom;
+  for (const [ia, ib] of og.links) {
+    const a = og.nodes.get(ia), b = og.nodes.get(ib), on = og.hover && near.has(ia) && near.has(ib);
+    c.strokeStyle = "rgba(255,255,255," + (on ? 0.5 : og.hover ? 0.04 : a.busy || b.busy ? 0.22 : 0.1) + ")";
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+  for (const n of og.nodes.values()) {
+    const r = radius(n), dim = lit(n.id) ? 1 : 0.18;
+    const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" ? 0.62 : 0.85;
+    if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
+    c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
+    c.beginPath();
+    if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
+    if (n.kind === "ai") { c.lineWidth = 2 / og.zoom; c.stroke(); c.lineWidth = 1 / og.zoom; } else c.fill();
+    const wordy = n.kind !== "saved" && n.kind !== "step" || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id));
+    if (wordy) {
+      c.font = (n.kind === "ai" || n.kind === "project" ? "500 " : "") + (n.kind === "step" ? 9.5 : 11) / Math.max(0.8, Math.min(1.4, og.zoom)) + "px Geist, 'Segoe UI', sans-serif";
+      c.textAlign = "center"; c.fillStyle = "rgba(236,236,238," + (n === og.hover || n.busy ? 0.95 : n.kind === "step" ? 0.5 : 0.6) * dim + ")";
+      const label = n.label.length > 30 ? n.label.slice(0, 29) + "\u2026" : n.label;
+      c.fillText(label, n.x, n.y + r + 13 / Math.max(0.8, Math.min(1.4, og.zoom)));
+    }
+  }
+}
+function overviewList() {
+  const open = [...agents.values()].filter((p) => p.started || p.busy), working = open.filter((p) => p.busy), n = (saved.chats || []).length;
+  $("o-totals").textContent = (working.length ? working.length + " working" : "Nothing is working") + " \u00b7 " + (open.length - working.length) + " open and idle \u00b7 " + n + " saved";
+  $("o-actions").hidden = working.length === 0;
+  const list = $("o-list"); list.innerHTML = "";
+  if (!open.length) list.appendChild(el("p", "sub", "No chats have started yet. Start one in Chats, or pick an idea in Research and build it on autopilot. Everything that is working shows up here."));
+  open.sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0)).forEach((p) => {
+    const row = el("div", "o-row" + (p.busy ? " busy" : ""), "<b></b><small></small><div class=\"doing\"></div><div class=\"act\"></div>");
+    row.querySelector("b").textContent = p.name;
+    row.querySelector("small").textContent = [aiName(chatAi(p)), p.project ? p.project.name : "", p.role === "critic" ? "reviewer" : p.role === "research" ? "researcher" : p.role ? "helper" : "", p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ");
+    row.querySelector(".doing").textContent = p.busy ? (p.now || "Starting") + " \u00b7 " + elapsed(Date.now() - (p.since || Date.now())) + (p.steps ? " \u00b7 " + p.steps + (p.steps === 1 ? " step" : " steps") : "") : (p.last || "Idle");
+    const act = row.querySelector(".act");
+    const openBtn = el("button", "pill", "Open"); openBtn.onclick = () => { setView("chats"); select(p.id); }; act.appendChild(openBtn);
+    if (p.busy) { const stop = el("button", "pill", "Stop"); stop.onclick = () => api("/api/stop", { agent: p.id }); act.appendChild(stop); }
+    list.appendChild(row);
+  });
+}
+function overviewFrame(now) {
+  if (view !== "overview") { og.raf = 0; return; }
+  if (now - og.last > 900) { og.last = now; overviewSync(); overviewList(); }
+  overviewStep(); overviewDraw(now);
+  og.raf = requestAnimationFrame(overviewFrame);
+}
+function startOverview() { loadHistory(); og.last = 0; if (!og.raf) og.raf = requestAnimationFrame(overviewFrame); }
+/* where the pointer is, in the graph's own coordinates, and which node is under it */
+function overviewAt(ev) {
+  const r = $("o-canvas").getBoundingClientRect(), x = (ev.clientX - r.left - r.width / 2 - og.panX) / og.zoom, y = (ev.clientY - r.top - r.height / 2 - og.panY) / og.zoom;
+  let hit = null, best = 1e9;
+  for (const n of og.nodes.values()) { const d = Math.hypot(n.x - x, n.y - y); if (d < radius(n) + 7 / og.zoom && d < best) { best = d; hit = n; } }
+  return { x, y, hit };
+}
+{
+  const cv = $("o-canvas");
+  cv.addEventListener("mousemove", (ev) => {
+    const at = overviewAt(ev);
+    if (og.drag) { og.drag.moved = true; if (og.drag.node) { og.drag.node.x = at.x; og.drag.node.y = at.y; } else { og.panX += ev.movementX; og.panY += ev.movementY; og.mine = true; } return; }
+    og.hover = at.hit; cv.classList.toggle("over", !!at.hit && (at.hit.kind === "chat" || at.hit.kind === "saved"));
+  });
+  cv.addEventListener("mousedown", (ev) => { og.drag = { node: overviewAt(ev).hit, moved: false }; });
+  window.addEventListener("mouseup", async () => {
+    const d = og.drag; og.drag = null; if (!d || d.moved || !d.node) return;
+    if (d.node.kind === "chat") { setView("chats"); select(d.node.pane); }
+    else if (d.node.kind === "saved") { const r = await api("/api/open-chat", { id: d.node.chat }); if (r.ok) { setView("chats"); select(r.agent); loadHistory(); } }
+  });
+  cv.addEventListener("mouseleave", () => { og.hover = null; });
+  cv.addEventListener("dblclick", () => { og.mine = false; og.panX = og.panY = 0; });   /* double-click: fit it to the space again */
+  cv.addEventListener("wheel", (ev) => { ev.preventDefault(); og.mine = true; og.zoom = Math.max(0.4, Math.min(3, og.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); }, { passive: false });
+}
+$("o-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) api("/api/stop", { agent: p.id }); };
+
+/* typing "/" offers the commands */
+const COMMANDS = [
+  ["/texture", "A surface material that tiles: stone, wood, metal"],
+  ["/particle", "A white shape on clear, for particle effects"],
+  ["/decal", "A coloured picture on clear: a crack, a stain, a sign"],
+];
+const slash = el("div", "slash");
+box.parentNode.style.position = "relative"; box.parentNode.appendChild(slash);
+function paintSlash() {
+  const v = box.value; const typing = /^\/[a-z]*$/i.test(v);
+  const hits = typing ? COMMANDS.filter((c) => c[0].startsWith(v.toLowerCase())) : [];
+  slash.classList.toggle("on", hits.length > 0);
+  slash.innerHTML = "";
+  hits.forEach(([cmd, what], n) => {
+    const b = el("button", n === 0 ? "sel" : "", "<code>" + cmd + "</code><span>" + esc(what) + ". Then say what it shows.</span>");
+    b.onmousedown = (ev) => { ev.preventDefault(); box.value = cmd + " "; fit(); box.focus(); slash.classList.remove("on"); };
+    b.onmousemove = () => markSlash(n);
+    slash.appendChild(b);
+  });
+  if (hits.length) slash.appendChild(el("div", "how", "Up and Down to choose \u00b7 Enter to pick \u00b7 Esc to close"));
+}
+box.addEventListener("input", paintSlash);
+box.addEventListener("blur", () => slash.classList.remove("on"));
+function markSlash(n) {
+  const items = [...slash.querySelectorAll("button")]; if (!items.length) return;
+  const at = (n + items.length) % items.length;
+  items.forEach((b, i) => b.classList.toggle("sel", i === at));
+}
+/* registered in the capture phase, so while the menu is open these keys never reach "Enter sends the message" */
+box.addEventListener("keydown", (e) => {
+  if (!slash.classList.contains("on") || e.isComposing) return;
+  const items = [...slash.querySelectorAll("button")], at = Math.max(0, items.findIndex((b) => b.classList.contains("sel")));
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); markSlash(at + (e.key === "ArrowDown" ? 1 : -1)); }
+  else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); e.stopImmediatePropagation(); items[at].onmousedown(e); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); slash.classList.remove("on"); }
+}, true);
+/* a short explanation that appears above the message box for a few seconds */
+const sayTip = el("div", "saytip");
+{ const c = document.querySelector(".composer"); c.style.position = "relative"; c.appendChild(sayTip); }
+function say(text) { sayTip.textContent = text; sayTip.classList.add("on"); clearTimeout(say.t); say.t = setTimeout(() => sayTip.classList.remove("on"), 6000); }
+
+function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); }
+function setupSection(name) {
+  document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
+  document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));
+}
+document.querySelectorAll("#su-nav [data-s]").forEach((b) => (b.onclick = () => setupSection(b.dataset.s)));
+const closeSetup = () => document.body.classList.remove("setup");
+$("b-setup").onclick = () => { closeProject(); openSetup(); }; $("b-close").onclick = closeSetup; $("veil").onclick = () => { closeSetup(); closeProject(); closeGuide(); };
+
+$("b-check").onclick = () => { $("setup-out").textContent = "Checking..."; api("/api/setup", {}); };
+$("b-agents").onclick = async () => { const r = await api("/api/connect", {}); $("setup-out").textContent = r.text; };
+function zoom(src) { const l = $("light"); l.querySelector("img").src = src; l.classList.add("on"); }
+$("light").onclick = () => $("light").classList.remove("on");
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { $("light").classList.remove("on"); closeSetup(); closeProject(); closeGuide(); closeMenu(); closeConn(); } });
+
+function paintUpdate() {
+  const u = status.update || {}; const b = $("b-update");
+  const texts = {
+    idle: "Version " + (status.version || ""), checking: "Checking for updates...", current: "Version " + (status.version || "") + " is the newest.",
+    available: "Version " + u.latest + " is available." + (u.can_install ? " Press Check now to download it." : " Download it from the releases page."),
+    downloading: "Downloading version " + u.latest + " (" + Math.round((u.progress || 0) * 100) + "%)",
+    ready: "Version " + u.latest + " is downloaded. It installs the next time the app starts, or now if you press Restart to update.",
+    error: "Could not check for updates: " + (u.error || "no connection"),
+  };
+  $("upd-state").textContent = texts[u.status] || texts.idle;
+  $("su-ver").textContent = "Version " + (status.version || "");
+  $("upd-auto").setAttribute("aria-checked", u.auto === false ? "false" : "true");
+  if (u.status === "ready") { b.hidden = false; b.classList.remove("busy"); b.textContent = "Restart to update"; b.title = "Version " + u.latest + (u.notes ? "\n\n" + u.notes : ""); }
+  else if (u.status === "downloading") { b.hidden = false; b.classList.add("busy"); b.textContent = "Updating " + Math.round((u.progress || 0) * 100) + "%"; }
+  else b.hidden = true;
+}
+$("b-update").onclick = async () => {
+  if ((status.update || {}).status !== "ready") return;
+  const working = [...agents.values()].some((p) => p.busy);
+  if (working && !$("b-update").dataset.sure) { $("b-update").dataset.sure = "1"; $("b-update").textContent = "Chats are working. Restart anyway?"; setTimeout(() => { delete $("b-update").dataset.sure; paintUpdate(); }, 4000); return; }
+  $("b-update").textContent = "Restarting..."; await api("/api/update", { action: "install" });
+};
+$("upd-check").onclick = async () => { await api("/api/update", { action: "check" }); setTimeout(refresh, 600); };
+$("upd-auto").onclick = async () => { const on = $("upd-auto").getAttribute("aria-checked") !== "true"; await api("/api/update", { action: "auto", value: on }); refresh(); };
+function paintGemini() { $("gem-state").textContent = ((status.ai || {}).installed || {}).gemini ? "Textures are generated through Antigravity on your own Google account, with nothing extra to pay. If that fails, " + (status.gemini_api ? "your API key is used next." : "you are shown the prompt to run in Gemini yourself.") : status.gemini_api ? "Textures are generated automatically with your API key. Google charges for each one." : "Textures are made through your own Gemini chat, which costs nothing extra." + (status.gemini ? " A key is saved but switched off." : "");
+  $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; }
+$("gem-save").onclick = async () => { const k = $("gem-key").value.trim(); if (!k) return; await api("/api/gemini", { key: k }); $("gem-key").value = ""; refresh(); };
+$("gem-api").onclick = async () => { await api("/api/gemini", { use_api: $("gem-api").getAttribute("aria-checked") !== "true" }); refresh(); };
+$("gem-clear").onclick = async () => { await api("/api/gemini", { key: "" }); refresh(); };
+/* functions, not consts: they are needed while the page is still loading */
+function aiName(id) { return (AIS.find((a) => a[0] === id) || AIS[0])[1]; }
+function chatAi(p) { return (p && p.ai) || viewAi; }
+/* A chat made without an AI (the one the app opens with) joins the list being shown. */
+function claim(p) { if (p && !p.ai && !p.started) { p.ai = viewAi; api("/api/ai", { agent: p.id, choice: viewAi }); } }
+/* Show one AI's chats: the one last used there, else another of its chats, else a new one. */
+function showAi(id) {
+  viewAi = id; viewChosen = true; try { localStorage.setItem("view-ai", id); } catch (e) {}
+  const mine = [...agents.values()].filter((p) => p.ai === id);
+  const target = mine.find((p) => p.id === lastChat[id]) || mine[mine.length - 1];
+  if (target) select(target.id);
+  else { const cur = agents.get(current); if (cur) cur.col.hidden = true; current = null; api("/api/new", { ai: id }); }
+  paintRail(); paintComposer(); loadHistory();
+}
+function paintAiPick() {
+  const have = (status.ai || {}).installed || {};
+  const wrap = $("ai-pick"); wrap.innerHTML = "";
+  AIS.forEach(([id, name]) => {
+    const busy = [...agents.values()].filter((p) => p.ai === id && p.busy).length;
+    const b = el("button", "tab" + (id === viewAi ? " on" : "") + (have[id] === false ? " missing" : ""), esc(name) + (busy && id !== viewAi ? '<span class="n">' + busy + "</span>" : ""));
+    b.title = (id === viewAi ? "Showing your " + name + " chats." : "Show your " + name + " chats.") + (busy && id !== viewAi ? " " + busy + " working." : "")
+      + (have[id] === false ? " " + name + " is not set up on this computer yet: Setup says how." : "");
+    b.onclick = () => { if (id !== viewAi) showAi(id); };
+    wrap.appendChild(b);
+  });
+  if (typeof menu !== "undefined" && !menu.classList.contains("on")) paintModel();
+}
+function paintAi() {
+  const ai = status.ai || {}, have = ai.installed || {};
+  $("ai-default").innerHTML = ""; $("ai-list").innerHTML = "";
+  AIS.forEach(([id, name, via, how]) => {
+    const b = el("button", "pill" + (ai.default === id ? " on" : ""), esc(name));
+    b.onclick = async () => { await api("/api/ai", { choice: id }); await refresh(); if (id !== viewAi) showAi(id); };
+    $("ai-default").appendChild(b);
+    $("ai-list").appendChild(guideRow([name + " \u00b7 " + via, have[id] ? "Found on this computer." + (id === "chatgpt" ? " If it says you are signed out, run codex login once in a terminal." : "") : "Not found. " + how]));
+  });
+  paintAiPick();
+}
+/* Programs agents may run. Claude chats run without anyone watching, so a command the user has not allowed is
+   refused; the chat then shows what was refused and one button to allow that program from now on. */
+function allowed() { return status.commands || []; }
+async function allowCommands(names, allow) {
+  const r = await api("/api/commands", { names, allow });
+  if (r && r.commands) status.commands = r.commands;
+  paintCommands(); return r && r.ok;
+}
+function blockedCard(p, commands) {
+  const names = commands.map((c) => c.name);
+  const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
+  card.querySelector("h4").textContent = "The agent was not allowed to run " + names.join(", ");
+  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Setup). Gemini chats can only use the building tools.";
+  card.querySelector("pre").textContent = commands.map((c) => c.command).join("\n");
+  const [yes, no] = card.querySelectorAll("button");
+  yes.textContent = "Allow " + names.join(", ") + " and carry on";
+  const finish = (said) => { card.classList.add("done"); card.querySelector("h4").textContent = said; card.querySelector(".act").remove(); };
+  if (names.every((n) => allowed().includes(n))) finish("Allowed: " + names.join(", "));
+  yes.onclick = async () => {
+    if (p.busy) { say("Wait for the agent to finish, then allow it."); return; }
+    if (!(await allowCommands(names, true))) return;
+    finish("Allowed: " + names.join(", "));
+    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
+  };
+  no.onclick = () => finish("Not allowed: " + names.join(", "));
+  return card;
+}
+function paintCommands() {
+  const list = allowed();
+  $("cmd-state").textContent = "Claude chats work without anyone watching, so they only run the programs listed here. " + (list.length ? "When one is refused, the chat offers to add it." : "None yet. When an agent is refused one, the chat offers to add it.");
+  $("cmd-list").innerHTML = "";
+  list.forEach((n) => {
+    const r = el("div", "g-row", "<b></b><small>runs without asking, in every Claude chat</small>");
+    r.querySelector("b").textContent = n;
+    const b = el("button", "pill", "Remove"); b.style.gridRow = "1 / span 2"; b.style.gridColumn = "2";
+    b.onclick = () => allowCommands([n], false); r.appendChild(b); $("cmd-list").appendChild(r);
+  });
+}
+$("cmd-add").onclick = async () => { const n = $("cmd-name").value.trim(); if (!n) return; await allowCommands([n], true); $("cmd-name").value = ""; };
+$("cmd-name").onkeydown = (ev) => { if (ev.key === "Enter") $("cmd-add").click(); };
+/* Saved chats: deleting is here and nowhere else, behind a typed word, and it can be undone. */
+function paintSaved() {
+  const all = saved.chats || [], gone = saved.deleted || [];
+  $("saved-state").textContent = all.length + (all.length === 1 ? " chat is" : " chats are") + " saved under Earlier" + (gone.length ? ", and " + gone.length + " deleted " + (gone.length === 1 ? "one" : "ones") + " can be put back." : ".") + " Chats that are open now are not counted.";
+  const unlocked = $("saved-word").value.trim().toLowerCase() === "delete";
+  const row = (c, label, act) => {
+    const r = el("div", "g-row", "<b></b><small></small>");
+    r.querySelector("b").textContent = c.name;
+    r.querySelector("small").textContent = aiName(c.ai || "claude") + " \u00b7 " + ago(c.updated) + " \u00b7 " + c.messages + (c.messages === 1 ? " message" : " messages");
+    const b = el("button", "pill", label); b.style.gridRow = "1 / span 2"; b.style.gridColumn = "2";
+    b.onclick = act; r.appendChild(b); return [r, b];
+  };
+  $("saved-list").innerHTML = "";
+  all.forEach((c) => {
+    const [r, b] = row(c, "Delete", async () => { await api("/api/delete-chat", { id: c.id, confirm: $("saved-word").value }); $("saved-word").value = ""; await reloadSaved(); });
+    b.disabled = !unlocked; b.title = unlocked ? "Move this chat to Deleted." : "Type delete in the box above first.";
+    $("saved-list").appendChild(r);
+  });
+  if (!all.length) $("saved-list").appendChild(el("p", "sub", "No saved chats to delete."));
+  $("saved-gone-head").hidden = gone.length === 0; $("saved-gone").innerHTML = "";
+  gone.forEach((c) => { const [r] = row(c, "Put back", async () => { await api("/api/restore-chat", { id: c.id }); await reloadSaved(); }); $("saved-gone").appendChild(r); });
+}
+async function reloadSaved() { try { saved = await api("/api/history"); } catch (e) {} paintSaved(); loadHistory(); }
+$("saved-manage").onclick = () => { const p = $("saved-panel"); p.hidden = !p.hidden; $("saved-word").value = ""; if (!p.hidden) reloadSaved(); };
+$("saved-word").oninput = paintSaved;
+function paintPlugin(note) {
+  const pl = status.plugin || {}; let t;
+  if (note) t = note;
+  else if (!pl.listening) t = "Another copy of Fridae Studios is already linked to Studio, so this window is not.";
+  else if (pl.connected) t = "Connected to Studio" + (pl.place && pl.place.name ? " (" + pl.place.name + ")" : "") + ". The agent is told what you have selected, sees new errors, and a finished turn can be undone from the chat." + (pl.running_version && pl.running_version !== pl.wanted_version ? " Studio is running an older copy of the plugin: press Update, then restart Studio." : "");
+  else if (pl.installed) t = "Installed" + (pl.current ? "" : " (an older copy: press Update)") + ", but Studio is not connected. " + (pl.studio_running ? "Restart Studio so it loads the plugin. The first time, Studio asks whether the plugin may talk to this app: allow it." : "It connects when Studio is open.");
+  else t = "Not installed. The plugin lets the agent know what you have selected in Studio, shows it new errors, and lets you undo a whole turn. It talks only to this app on this computer.";
+  $("plug-state").textContent = t;
+  $("plug-install").textContent = pl.installed ? (pl.current ? "Reinstall" : "Update") : "Install plugin";
+  $("plug-remove").hidden = !pl.installed;
+}
+$("plug-install").onclick = async () => { const r = await api("/api/plugin", { action: "install" }); await refresh(); if (!r.ok) paintPlugin(r.error || "Could not install the plugin."); };
+$("plug-remove").onclick = async () => { await api("/api/plugin", { action: "remove" }); await refresh(); paintPlugin("Removed. Studio stops using it the next time it starts."); };
+async function refresh() { try { status = await api("/api/status"); paintModel();
+  if (!viewChosen && status.ai && status.ai.default) { viewChosen = true; if (status.ai.default !== viewAi) showAi(status.ai.default); } paintNeeds(); paintRail(); paintGemini(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
+/* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
+let scale = 100;
+try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
+function setScale(v) {
+  scale = Math.max(70, Math.min(200, Math.round(v / 5) * 5));
+  document.documentElement.style.zoom = scale / 100;
+  try { localStorage.setItem("scale", String(scale)); } catch (e) {}
+  $("sc-range").value = scale; $("sc-val").textContent = scale + "%";
+}
+setScale(scale);
+$("sc-range").oninput = () => setScale(+$("sc-range").value);
+$("sc-down").onclick = () => setScale(scale - 10); $("sc-up").onclick = () => setScale(scale + 10); $("sc-reset").onclick = () => setScale(100);
+document.addEventListener("keydown", (e) => {
+  if (!e.ctrlKey || e.altKey) return;
+  if (e.key === "=" || e.key === "+") { e.preventDefault(); setScale(scale + 10); }
+  else if (e.key === "-" || e.key === "_") { e.preventDefault(); setScale(scale - 10); }
+  else if (e.key === "0") { e.preventDefault(); setScale(100); }
+});
+window.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); setScale(scale + (e.deltaY < 0 ? 5 : -5)); } }, { passive: false });
+
+/* ---------- the board: one per game ---------- */
+const COLS = [["todo", "To do", "Planned. Add your own wishes here."], ["doing", "Working on", "What agents are doing now"], ["needs", "Needs you", "Only you can do these"], ["done", "Done", "Finished and checked"]];
+let boardPath = "", boardData = null, boardTimer = 0, boardOpen = null, boardDrag = null, boardSig = "";
+function boardProjects() {
+  const list = (projects.projects || []).slice();
+  for (const p of agents.values()) if (p.project && !list.some((x) => x.path === p.project.path)) list.push(p.project);
+  return list;
+}
+function openBoard() {
+  loadProjects().then(() => {
+    const list = boardProjects(), cur = agents.get(current);
+    if (!list.some((x) => x.path === boardPath)) boardPath = cur && cur.project ? cur.project.path : list.length ? list[0].path : "";
+    paintBoardPick(); loadBoard();
+  });
+  clearInterval(boardTimer); boardTimer = setInterval(() => { if (view === "board") loadBoard(); else clearInterval(boardTimer); }, 1500);
+}
+function paintBoardPick() {
+  const list = boardProjects(), sel = $("bd-proj");
+  sel.innerHTML = list.map((x, i) => '<option value="' + i + '"' + (x.path === boardPath ? " selected" : "") + ">" + esc(x.name) + "</option>").join("");
+  sel.hidden = !list.length;
+  sel.onchange = () => { boardPath = list[+sel.value].path; boardSig = ""; loadBoard(); };
+}
+async function loadBoard() {
+  if (!boardPath) { paintBoard(); return; }
+  try { const r = await api("/api/board", { path: boardPath }); boardData = r.ok ? r : null; } catch (e) { return; }
+  paintBoard();
+}
+function boardAct(body) { return api("/api/board", Object.assign({ path: boardPath }, body)).then((r) => { if (r && r.board) { boardData = r.board; boardSig = ""; paintBoard(); } return r; }); }
+/* the chat behind a card, when it is open in this window */
+function cardChat(c) { return c.chat ? agents.get(c.chat) : null; }
+function paintBoard() {
+  const cols = $("bd-cols");
+  if (!boardPath || !boardData) {
+    $("bd-note").textContent = "";
+    cols.innerHTML = '<div class="bd-empty"><h3>No game yet</h3><p class="sub">Each game has its own board. Start a chat, make a folder for the game when it asks, and its board appears here. Agents put what they are doing on it as they work.</p></div>';
+    cols.style.display = "block"; return;
+  }
+  cols.style.display = "";
+  const cards = boardData.cards || [];
+  /* repaint only when something changed, so a card being edited is not swept away */
+  const live = cards.map((c) => { const p = cardChat(c); return p && p.busy ? c.id + ":" + (p.now || "") : ""; }).join("|");
+  const sig = JSON.stringify(cards) + live;
+  if (sig === boardSig || boardOpen) return; boardSig = sig;
+  const working = cards.filter((c) => { const p = cardChat(c); return c.column === "doing" && p && p.busy; }).length;
+  $("bd-note").textContent = working ? working + (working === 1 ? " agent is" : " agents are") + " working on this game right now." : "Agents move their cards as they work. Drag cards to move them; press one to edit it.";
+  cols.innerHTML = "";
+  COLS.forEach(([key, title, help]) => {
+    const mine = cards.filter((c) => c.column === key);
+    const col = el("section", "bd-col", "<header><b>" + title + "</b><span>" + mine.length + "</span><small>" + help + "</small></header>");
+    const list = el("div", "bd-list");
+    (key === "done" ? mine.slice().reverse() : mine).forEach((c) => list.appendChild(cardEl(c)));
+    col.appendChild(list);
+    if (key === "todo" || key === "needs") {
+      const add = el("div", "bd-add", '<input type="text" placeholder="' + (key === "todo" ? "Add a task" : "Add something you need to do") + '" autocomplete="off">');
+      const input = add.querySelector("input");
+      input.onkeydown = (e) => { if (e.key === "Enter" && input.value.trim()) { boardAct({ action: "add", title: input.value.trim(), column: key }); input.value = ""; } };
+      col.appendChild(add);
+    }
+    col.addEventListener("dragover", (e) => { if (boardDrag) { e.preventDefault(); col.classList.add("over"); } });
+    col.addEventListener("dragleave", () => col.classList.remove("over"));
+    col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("over"); const id = boardDrag; boardDrag = null; if (id) boardAct({ action: "move", id, column: key }); });
+    cols.appendChild(col);
+  });
+}
+function cardEl(c) {
+  const p = cardChat(c), busy = !!(p && p.busy && c.column === "doing");
+  const card = el("article", "card" + (busy ? " live" : ""), '<div class="card-t"></div>' + (c.note ? '<div class="card-n"></div>' : "") + (busy ? '<div class="card-live"><span class="dot live"></span><span></span></div>' : "") + '<div class="card-m"></div>');
+  card.querySelector(".card-t").textContent = c.title;
+  if (c.note) card.querySelector(".card-n").textContent = c.note;
+  if (busy) card.querySelector(".card-live span:last-child").textContent = p.now || "Starting";
+  card.querySelector(".card-m").textContent = [c.by === "you" ? "added by you" : c.by, c.updated ? ago(c.updated) : ""].filter(Boolean).join(" \u00b7 ");
+  card.draggable = true;
+  card.addEventListener("dragstart", (e) => { boardDrag = c.id; card.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", c.id); });
+  card.addEventListener("dragend", () => { card.classList.remove("dragging"); boardDrag = null; });
+  card.onclick = (e) => { if (!card.classList.contains("open") && !e.target.closest("button")) openCard(card, c); };
+  return card;
+}
+/* Editing a card in place: its words, opening its chat, handing it to an agent, or removing it. */
+function openCard(card, c) {
+  boardOpen = c.id; card.classList.add("open"); card.draggable = false;
+  const p = cardChat(c), saved0 = c.chat && (saved.chats || []).some((x) => x.id === c.chat);
+  card.innerHTML = '<div class="edit"><input type="text"><textarea rows="3" placeholder="Details (optional)"></textarea><div class="act"></div></div>';
+  const [title, note] = [card.querySelector("input"), card.querySelector("textarea")];
+  title.value = c.title; note.value = c.note || ""; title.focus();
+  const act = card.querySelector(".act");
+  const close = () => { boardOpen = null; boardSig = ""; paintBoard(); };
+  const btn = (label, cls, fn) => { const b = el("button", "pill" + (cls ? " " + cls : ""), label); b.onclick = fn; act.appendChild(b); return b; };
+  btn("Save", "main", async () => { await boardAct({ action: "edit", id: c.id, title: title.value, note: note.value }); close(); });
+  if (p || saved0) btn("Open its chat", "", async () => { close(); const r = p ? { ok: true, agent: p.id } : await api("/api/open-chat", { id: c.chat }); if (r.ok) { setView("chats"); select(r.agent); } });
+  if (c.column === "todo" || (c.column === "needs" && !c.chat)) btn("Give to a new chat", "", async () => {
+    const r = await api("/api/new", { ai: viewAi }); if (!r.ok) { say("All six chats are in use."); return; }
+    const made = await api("/api/project", { agent: r.agent, action: "use", path: boardPath });
+    if (!made.ok) return;
+    await boardAct({ action: "remove", id: c.id }); boardOpen = null;
+    const q = agents.get(r.agent); if (q && q.start) { q.start.step = "ready"; q.start.paint(); }
+    api("/api/send", { agent: r.agent, text: "From the board: " + title.value.trim() + (note.value.trim() ? "\n\n" + note.value.trim() : ""), selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf({ ai: viewAi }) || null, effort: effortOf({ ai: viewAi }), attachments: [] });
+    setView("chats"); select(r.agent);
+  });
+  const del = btn("Remove", "", async () => { if (!del.dataset.sure) { del.dataset.sure = "1"; del.textContent = "Remove it?"; return; } await boardAct({ action: "remove", id: c.id }); close(); });
+  btn("Cancel", "", close);
+  title.onkeydown = (e) => { if (e.key === "Enter") act.querySelector(".main").click(); else if (e.key === "Escape") { e.stopPropagation(); close(); } };
+}
+
+const ONCE = new URLSearchParams(location.search).has("once");
+const SHOW = new URLSearchParams(location.search).get("show");
+let bootMark = Infinity;  /* agents created after the first batch get selected; replayed ones do not */
+async function poll() {
+  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) onEvent(e); if (SHOW) select(SHOW); stick(true); if (new URLSearchParams(location.search).has("menu")) modelBtn.click(); return; }
+  for (;;) {
+    try {
+      const r = await api("/api/events?after=" + after);
+      const first = after === 0;
+      for (const e of r.events) { after = e.id; onEvent(e); }
+      if (first) { bootMark = after; if (!current || !agents.has(current)) showAi(viewAi); stick(true); }
+    } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
+  }
+}
+refresh(); loadProjects(); poll(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
+if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st === "downloading" || st === "checking") refresh(); }, 1500);
+fit();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+
+GEMINI TEXTURES ARE ON. The user has said they will generate textures with Gemini. For every texture this task needs
+(surface materials, particle sprites, decals), call rbx_generate_texture straight away: do not draw the texture in code, do
+not use a built-in stand-in, and do not ask first. Each call shows the user a prompt and waits for their image, so write one
+clear line saying which texture is coming, then call it. Ask for the textures one at a time, most important first. If the
+user skips one, carry on without it and say which is missing. This is still for textures only, never UI or lettering.

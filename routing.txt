@@ -1,0 +1,42 @@
+Load every guide that is relevant to the request before starting, in one rbx_guide call (pass several names in
+`topics`). Be generous: a guide that might apply is worth reading. `workflow` always, plus:
+- Modelling, building, props, maps: `roblox-world-building`, `lihfolk-worldbuilding` (maps, towns, lobbies, dungeons),
+  `roblox-blender-modeling` (anything modelled in Blender), `roblox-asset-import` (importing FBX/GLB/OBJ), the style guide that matches the game's look (`brutalist-skill` for raw, industrial,
+  blocky or terminal looks; `minimalist-skill` for clean and quiet; `soft-skill` for soft, premium or glossy), and
+  `reference-design-contract` when the user gives a reference image or says "like this".
+- UI: `ui-design`, `roblox-ui`, `web-to-roblox`, the matching style guide, `emil-design-eng`; `redesign-skill` when
+  improving UI that already exists; `sim-ui` ONLY when the user asks for the chunky cartoon simulator look for this game.
+- UI taste, for every UI task: the user is a graphic designer and their games' UI must look designed, clean and tasteful,
+  never generic Roblox "colour slop". Default to a restrained palette (neutrals plus one or two accents taken from the
+  game's art direction), typography and spacing doing the work, thin or no outlines, few effects. No rainbow or
+  per-button gradients, no thick black strokes, no bubbly cartoon fonts, no glossy bevels, no clutter of badges and
+  bursts, unless the user asks for that look for this game. Their own designs (Illustrator or Photoshop exports,
+  mockups, colour values, fonts) are the target and beat every guide: build to them exactly, and ask for exports
+  rather than inventing art.
+- The user says UI looks like slop, vibecoded, AI-made, generic or cheap, or asks to clean up or polish it: `unslop`
+  (with `web-to-roblox` and `ui-design`), run in full on that screen.
+- Visual effects: `vfx`, `vfx-basics`, `lihfolk-vfx` (ability and combat effect recipes), `motion-design`, the matching style guide.
+- Animations and cutscenes: `roblox-characters-animation`, `motion-design`.
+- Playtesting and tests: `playtest`, `roblox-testing`.
+- Any scripting or gameplay code: `roblox-luau`, `roblox-architecture`, `roblox-security`, `roblox-networking`, and the
+  subject guides that apply: `roblox-data-stores` (saving), `roblox-monetization` (passes, products), `roblox-input`,
+  `roblox-npc-ai`, `roblox-physics`, `roblox-audio`, `roblox-text-chat`, `roblox-teleport-matchmaking`,
+  `roblox-game-systems` (combat, inventory, rounds), `roblox-performance`, `roblox-analytics-liveops`,
+  `roblox-open-cloud`, `roblox-tooling` (Rojo, linting). A new system end to end: `roblox-system-builder`; ready-made
+  data, currency, shop, receipts, inventory, eggs, codes, daily rewards, rebirth, quests, leaderboards: `lihfolk-systems`.
+- Something broken, errors, desync, infinite yield, rubber-banding: `roblox-debugging`.
+- Tutorials, onboarding, new players leaving early: `lihfolk-tutorial`.
+- Trend games (Steal a ___, Grow a ___): `roblox-trend-game`.
+- Combat and UI sound effects: `lihfolk-sfx`, with `sound-design`.
+- Scoring generated work against a quality bar (with Self-test, or when asked for a score): `quality-score`.
+- Reviewing code: `roblox-code-review`.
+- Reviewing or polishing finished UI or motion: `unslop`, `emil-design-eng`, `redesign-skill`.
+- A new game or a new idea: `game-brainstorm`, `game-bible`, `game-design`, `market-research`.
+- Starting work on an existing game for the first time: `game-bible`.
+- Any design decision, new feature or system: `game-design`; add `economy-design` when prices, rewards, drop rates or
+  progression numbers are involved.
+- Sounds and music: `sound-design`.
+- Judging whether something is fun, clear or ready: `player-testing`, with `playtest`.
+- Big requests that can be split into parallel work: `producer`. When you were spawned as a reviewer: `critic`.
+Facts that change (limits, quotas, defaults, prices, policy, anything changed in 2025-2026), a bug whose cause is unclear,
+or a topic no guide covers: search LihFolk Vault V2 with `rbx_vault` (one search, then read one section of the best note).

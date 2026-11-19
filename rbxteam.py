@@ -1,0 +1,149 @@
+"""Ask the desktop app to start extra agents, and collect what they report.
+
+The app watches the work folder. This module only writes requests and reads
+results; the app does the rest.
+
+  request   WORK/team-requests/<id>.json   written here (as .tmp, then renamed)
+            {"id", "from", "role": "worker" | "critic", "name", "task", "created"}
+  result    WORK/team-results/<id>.json    written and updated by the app
+            {"id", "agent", "name", "role", "status": "running" | "done" | "refused", "reason", "text"}
+
+A worker does a piece of the job; a critic reviews work and reports problems.
+Agents started this way cannot start more.
+"""
+import os, random, time
+
+from rbxpaths import WORK, KitError, read_json, write_json
+
+REQUESTS = os.path.join(WORK, "team-requests")
+RESULTS = os.path.join(WORK, "team-results")
+ROLES = ("worker", "critic")
+FINISHED = ("done", "refused")
+PICKUP = 15       # seconds to wait for the app to answer a spawn
+MAX_WAIT = 840
+
+
+class TeamError(KitError):
+    pass
+
+
+def _result(rid):
+    data = read_json(os.path.join(RESULTS, rid + ".json"))  # None while missing, or caught halfway through being written
+    return data if isinstance(data, dict) else None
+
+
+def _safe(rid):
+    rid = str(rid or "").strip()
+    if not rid or any(c in rid for c in "/\\:.*?\"<>|"):
+        raise TeamError("\"%s\" is not a task id. Ids look like w1731850000000abcd and come from spawn." % rid)
+    return rid
+
+
+def spawn(role, name, task):
+    mine = (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip().lower()
+    if mine in ROLES:
+        raise TeamError("You were started as a %s by another agent, and such agents may not start more. Do the task "
+                        "yourself and say in your reply what else is needed." % mine)
+    role = str(role or "").strip().lower()
+    if role not in ROLES:
+        raise TeamError("Give 'role': \"worker\" (does a piece of the job) or \"critic\" (reviews work and reports problems).")
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise TeamError("Give 'name': a short title for the agent, such as \"Shop UI\" (34 characters at most).")
+    task = str(task or "").strip()
+    if len(task) < 80:
+        raise TeamError("The task is too short (%d characters; at least 80). The new agent starts knowing nothing: say what "
+                        "to do, where (instance paths, file names), what is already done, what to leave alone, and what to "
+                        "report back." % len(task))
+    rid = "w%d%s" % (int(time.time() * 1000), "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(4)))
+    req = {"id": rid, "from": os.environ.get("RBXKIT_AGENT_ID") or "", "role": role, "name": name[:34], "task": task,
+           "created": time.time()}
+    os.makedirs(REQUESTS, exist_ok=True)
+    path = os.path.join(REQUESTS, rid + ".json")
+    write_json(path, req)
+    deadline = time.time() + PICKUP
+    while time.time() < deadline:
+        res = _result(rid)
+        if res:
+            return rid, res
+        time.sleep(0.25)
+    try:
+        os.remove(path)  # nobody took it: do not leave it to start an agent later, unannounced
+    except OSError:
+        pass
+    return rid, None
+
+
+def known():
+    """Every task that has a result file, oldest first."""
+    try:
+        names = os.listdir(RESULTS)
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        res = _result(n[:-5]) if n.endswith(".json") else None
+        if res:
+            res.setdefault("id", n[:-5])
+            out.append(res)
+    return sorted(out, key=lambda r: str(r.get("id")))
+
+
+def wait(ids, timeout=600):
+    ids = [_safe(i) for i in ids or []]
+    if not ids:
+        raise TeamError("Give 'ids': the task ids to wait for (spawn returns them).")
+    timeout = max(1, min(MAX_WAIT, int(timeout or 600)))
+    deadline = time.time() + timeout
+    while True:
+        res = {i: _result(i) for i in ids}
+        if all(r and r.get("status") in FINISHED for r in res.values()) or time.time() >= deadline:
+            return res
+        time.sleep(0.5)
+
+
+def _line(rid, r):
+    if not r:
+        return "%s  unknown: the app has no record of this task" % rid
+    return "%s  %-8s %-7s %s%s" % (rid, r.get("status") or "?", r.get("role") or "", r.get("name") or "",
+                                   "  (%s)" % r["reason"] if r.get("status") == "refused" and r.get("reason") else "")
+
+
+def run(action, a=None):
+    """Do one action and return the text to show. Raises TeamError with a plain message."""
+    a = a or {}
+    action = (action or "status").lower()
+    if action == "spawn":
+        rid, res = spawn(a.get("role"), a.get("name"), a.get("task"))
+        if res is None:
+            return ("NOT STARTED. The app did not pick up the request within %d seconds, so it was withdrawn. Extra agents "
+                    "only work when this chat runs inside the Fridae Studios app with it open. Carry on by yourself." % PICKUP)
+        status = res.get("status")
+        if status == "refused":
+            return "REFUSED: %s\nThe agent was not started. Carry on by yourself." % (res.get("reason") or "the app gave no reason")
+        return ("id: %s\nstatus: %s\n%s \"%s\" was started. Keep working on your own part, then collect its report with "
+                "rbx_team action 'wait' and ids [\"%s\"]." % (rid, status, (res.get("role") or a.get("role") or "agent").capitalize(),
+                                                            res.get("name") or a.get("name"), rid))
+    if action == "status":
+        ids = [_safe(i) for i in a.get("ids") or []]
+        rows = [(i, _result(i)) for i in ids] if ids else [(str(r.get("id")), r) for r in known()]
+        if not rows:
+            return "No tasks yet. Start one with action 'spawn'."
+        return "id                     status   role    name\n" + "\n".join(_line(i, r) for i, r in rows)
+    if action == "wait":
+        t0 = time.time()
+        res = wait(a.get("ids"), a.get("timeout"))
+        left = [i for i, r in res.items() if not r or r.get("status") not in FINISHED]
+        out = []
+        for i, r in res.items():
+            out.append(_line(i, r))
+            if r and r.get("status") == "done":
+                out.append((r.get("text") or "(the agent finished without a reply)").strip())
+            out.append("")
+        if left:
+            out.append("Still not finished after %d seconds: %s. Call wait again, or carry on and check later with 'status'."
+                       % (time.time() - t0, ", ".join(left)))
+        else:
+            out.append("All finished. Check the work yourself before reporting it as done.")
+        return "\n".join(out)
+    raise TeamError("Unknown action '%s'. Use spawn, status or wait." % action)

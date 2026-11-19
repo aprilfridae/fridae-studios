@@ -1,0 +1,7 @@
+
+
+[This is a game I am already working on. Before anything else, learn it: load the `game-bible` guide, read GAME.md if it
+exists, call rbx_project with action "info" and then "export_scripts", and look through the open Studio place (its
+services, scripts, UI, maps, remotes and data) and the exported src/ folder. Then write or update GAME.md as the guide
+describes for an existing game, marking anything you inferred as inferred. Finish with a short summary of what the game
+is and how it is put together, and ask me only the questions you could not answer by looking.]

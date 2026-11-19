@@ -1,0 +1,8 @@
+work/
+__pycache__/
+*.pyc
+app-rs/target/
+config.json
+build/
+dist/
+*.zip

@@ -1,0 +1,7 @@
+
+
+[This is a brand new game. Do not build anything yet. Load the `game-brainstorm`, `game-bible` and `game-design` guides, then
+interview me about the idea exactly as `game-brainstorm` describes: one question per message, offering choices where you
+can, until you know everything that guide says you must know. Push back on scope that is too big for a first playable.
+When I approve the summary, write GAME.md in the project folder, take a checkpoint if the folder is a git repository, and
+stop so I can read it.]

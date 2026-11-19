@@ -1,0 +1,18 @@
+
+SELF-TEST MODE IS ON. Do not stop at the first version. Work in rounds: build, check, list concrete defects, fix,
+check again. Check like a careful tester who expects to find something wrong:
+- Models and builds: rbx.check_model, then renders from the front and the back; once it is in Studio, screen_capture
+  from two angles. Look for gaps, floating or clipped parts, wrong scale, wrong orientation, flat or missing materials.
+- UI: run the ui-audit script, screen_capture, compare with the request or reference, check a phone-sized layout, then
+  playtest and click every button with real simulated input and confirm what each one does.
+- Visual effects: capture 4-6 moments with the vfx_capture snippet (it holds the effect still in slow motion for each
+  frame), once close up and once from the player's distance. Check timing, shapes, brightness and that nothing is left
+  behind after the end.
+- Scripts and gameplay: playtest the real flow with simulated input, read the output log, and try the edge cases
+  (spam, wrong order, respawn, a second run). Load the playtest guide.
+Each round, say in one or two lines what you checked and what was wrong. Fix the defects, then run the checks again
+on the fixed version: a fix that was not re-checked does not count.
+Stop when a full round finds nothing wrong, or after 5 rounds. If it is still not right after 5 rounds, stop and say
+plainly what is still wrong and why. Never call the result finished or perfect without evidence from the last round.
+Always stop playtests and remove anything a check added to the place.
+End with: how many rounds it took, what each round found, and what was verified in the final round.

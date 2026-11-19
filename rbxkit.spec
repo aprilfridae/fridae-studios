@@ -1,0 +1,23 @@
+# PyInstaller build for rbxkit. Run build_exe.bat.
+# This builds fridae-cli.exe: the tool server and command line that agents start.
+# Run build_app.py (or build_exe.bat), which also builds the window and puts the two together.
+import os
+
+HERE = os.path.abspath(os.getcwd())
+datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "skills", "agents", "rigs", "ui", "licenses", "guides")]
+datas.append((os.path.join(HERE, "README.md"), "."))
+datas.append((os.path.join(HERE, "routing.txt"), "."))
+datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))
+hidden = ["rbx", "rbxtex", "rbximg", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
+          "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxvault"]
+
+a = Analysis(["cli_main.py"], pathex=[HERE], datas=datas, hiddenimports=hidden,
+             excludes=["tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest", "torch", "tensorflow", "webview", "clr"])
+pyz = PYZ(a.pure)
+
+# the window (Fridae Studios.exe) is the Rust program in app-rs; build_app.py puts it beside these tools
+cli = EXE(pyz, a.scripts, [], exclude_binaries=True, name="fridae-cli", console=True, upx=False, icon=os.path.join(HERE, "ui", "fridae.ico"))
+import shutil
+coll = COLLECT(cli, a.binaries, a.datas, name="Fridae Studios", upx=False)
+
+shutil.copyfile(os.path.join(HERE, "START-HERE-app.txt"), os.path.join(DISTPATH, "Fridae Studios", "START HERE.txt"))
