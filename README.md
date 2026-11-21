@@ -63,6 +63,75 @@ explains anything missing.
 `fridae-cli --mcp` (`fridae-cli.exe` on Windows) is a standard MCP tool server, so the same tools work
 in Cursor, Codex, Gemini CLI and other agents.
 
+## Studio mode
+
+Studio mode lets a whole team of AI helpers work on one game while you get on
+with other things. You talk to one **Lead**. It moves the game through six
+stages (idea, design, build, test, launch, promote) and hands each part to an
+expert with a plain job name: Scout, Designer, Coder, UI builder, World
+builder, Effects and sound, Playtester, Device tester, Security reviewer,
+Economy and shop, Icon and thumbnails, Promo maker. You sign off on what they
+make now and then, and the run keeps going.
+
+**Starting a run.** Open a chat for a game (a chat needs a game folder; one
+without a folder can't run Studio), pick **Studio** in the menu under the
+message box, and send your idea in one line, for example "A small obby with
+three checkpoints and a coin shop". Or press **Start a studio run** on one of
+the Research tab's ideas.
+
+**When it stops for you.** By default only twice: to approve the **design
+plan**, and at **ready to publish**, which is a checklist of what you do
+yourself (publish, make it public, set prices live). Fridae never publishes,
+spends money or Robux, or deletes your work. You can change where it stops in
+the Review tab's Run settings.
+
+**The Review tab.** Everything else the experts finish lands in **To look
+at**, with its pictures or clips, while the run carries on. What does stop the
+run is under **Needs your answer**. On each item press **Approve**, or
+**Change** and write a short note: a fresh expert of the same kind redoes the
+work with your note, and the new version replaces the old one in Review.
+**Approve all** signs off everything in To look at at once.
+
+**Pause and Resume.** Pause stops the Lead handing out new work; experts
+already working finish. While a run is paused, your messages to the Lead wait
+until you press Resume. If you quit the app, the run comes back as Paused.
+
+**Undo this run.** The run takes a checkpoint when it starts and after each
+finished stage. Undo this run (in Review's Run settings, or at the top of the
+Lead's chat) goes back to the checkpoint you pick and leaves the run paused.
+- Your project's files can always go back, as long as the game's folder is a
+  git repository (a new game folder made in the app is one; git must be
+  installed). What they were just before the undo is saved in the game's git
+  history first, so nothing is lost.
+- Scripts in Roblox Studio can go back only if Studio has stayed open since
+  that checkpoint and the Fridae Studios plugin is 2.8.0 or newer. Before
+  putting them back, the scripts as they are now are saved under
+  `.fridae/before-undo/` in the game's folder.
+- If Studio is closed or was restarted since then, undo offers to put back the
+  files only.
+
+**It runs on your own AI plan**, and a team uses more of it than one chat.
+In Run settings, **Experts at once** is 2 by default (1 to 4); set it to 1 to
+use less, or Pause the run. Only one expert changes the game in Studio at a
+time, and at most eight chats and helpers work at once in the whole app.
+
+**Make the team your own.** The team list and each expert's instructions are
+plain files in the app's `team` folder: `team/roster.json` and
+`team/experts/<name>.md`. To change them for one game, put a file with the
+same name in that game's `.fridae/team/` folder (for example
+`.fridae/team/experts/designer.md`).
+
+**It learns.** At the end of each stage the Lead writes down one short lesson:
+for this game in `.fridae/lessons.md`, or for every game in
+`studio-lessons.md` in your work folder. It reads them at the start of every
+run. Edit or delete lines whenever you like.
+
+Review pictures and clips stay out of the game's git history (the run writes
+`.fridae/.gitignore`), so the repository stays small enough to push.
+
+Not included yet: live player numbers after launch, a phone remote, and a
+built-in asset library.
+
 ## Promo maker
 
 The Promos tab cuts your gameplay clips into a vertical 1080x1920 video for

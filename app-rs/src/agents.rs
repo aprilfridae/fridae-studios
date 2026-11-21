@@ -203,6 +203,12 @@ const NEXT_STEP: &str = "Carry on with the next step.";
 const TURN_FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
 
 /// The whole of the after-turn decision. `said` is the reply's last line in capitals.
+/// Whether Claude Code's closing "result" event reports a finished turn. "Not logged in" arrives as a result with
+/// is_error set, and must count as a failed turn, not as a reply.
+fn result_ok(e: &Value) -> bool {
+    !e["is_error"].as_bool().unwrap_or(false)
+}
+
 fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) -> Step {
     let studio = mode == Mode::Studio;
     match mode {
@@ -1129,6 +1135,7 @@ impl Agent {
             String::from_utf8_lossy(&s).trim().to_string()
         });
         let mut got_result = false;
+        let mut result_error = false; // the AI answered, but its result says the turn failed (signed out, out of turns...)
         let (mut gemini, mut chatgpt) = (antigravity::Turn::default(), codex::Turn::default());
         if let Some(out) = child.stdout.take() {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
@@ -1227,7 +1234,8 @@ impl Agent {
                         if !blocked.is_empty() {
                             self.put("blocked", json!({"commands": blocked}));
                         }
-                        if e["is_error"].as_bool().unwrap_or(false) {
+                        if !result_ok(&e) {
+                            result_error = true;
                             let msg = e["result"].as_str().or(e["subtype"].as_str()).filter(|s| !s.is_empty()).unwrap_or("The agent stopped with an error.");
                             self.put("error", json!({"text": msg}));
                         }
@@ -1282,7 +1290,8 @@ impl Agent {
             let now = paths::now_secs();
             let night = st.overnight_until > now;
             let mut ls = LoopState { autopilot_left: st.autopilot_left, fails: st.overnight_fails, done: st.overnight_done, night };
-            let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result, &said, &mut ls);
+            // a turn whose result is an error counts as failed, so a signed-out AI ends the loop after three turns
+            let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result && !result_error, &said, &mut ls);
             let step = pause_step(step, paused, &mut st.pause_told, &mut ls);
             st.autopilot_left = ls.autopilot_left;
             st.overnight_fails = ls.fails;
@@ -1323,7 +1332,7 @@ impl Agent {
                 ("needs", Some("Waiting for your answer in Review".to_string()))
             } else if said.starts_with("STATUS: NEEDS YOU") {
                 ("needs", Some(last_line.splitn(2, ':').nth(1).and_then(|r| r.splitn(2, ':').nth(1)).unwrap_or("").trim().to_string()))
-            } else if !got_result {
+            } else if !got_result || result_error {
                 ("needs", Some(format!("It stopped with an error: {first}")))
             } else {
                 ("done", Some(first))
@@ -1929,6 +1938,20 @@ mod tests {
         assert!(matches!(next_step(Mode::Studio, true, "STATUS: DONE", &mut s), Step::CarryOn(_)));
         assert!(matches!(next_step(Mode::Studio, true, "STATUS: DONE", &mut s), Step::End(_)));
         assert!(!s.night);
+    }
+
+    #[test]
+    fn an_error_result_is_a_failed_turn() {
+        let signed_out = json!({"type": "result", "subtype": "success", "is_error": true, "result": "Not logged in · Please run /login"});
+        assert!(!result_ok(&signed_out));
+        assert!(result_ok(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})));
+        assert!(result_ok(&json!({"type": "result", "result": "Done."})));
+        // three such turns in a row end a studio run instead of carrying on for 24 hours
+        let mut ls = LoopState { autopilot_left: 0, fails: 0, done: 0, night: true };
+        let said = "NOT LOGGED IN · PLEASE RUN /LOGIN";
+        assert!(matches!(next_step(Mode::Studio, result_ok(&signed_out), said, &mut ls), Step::CarryOn(_)));
+        assert!(matches!(next_step(Mode::Studio, result_ok(&signed_out), said, &mut ls), Step::CarryOn(_)));
+        assert!(matches!(next_step(Mode::Studio, result_ok(&signed_out), said, &mut ls), Step::End(_)));
     }
 
     #[test]

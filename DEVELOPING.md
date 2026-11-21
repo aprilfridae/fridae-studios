@@ -105,6 +105,83 @@ engine/node/bin/node --experimental-strip-types --test 'promo/src/captions/*.tes
 
 Without the engine the engine-gated tests are skipped, not failed.
 
+## Studio mode
+
+A Studio run is the game's own chat (the Lead) in a run mode built on Overnight's loop, plus helper agents started
+as named experts, plus small files in the project. The spec is
+`docs/superpowers/specs/2026-11-21-studio-mode-design.md`.
+
+**Files in the project** (all JSON writes are atomic, and every read-modify-write holds `<project>/.fridae/.lock`,
+created with O_EXCL, retried for about 5 s and taken over after 10 s; `rbxstage.locked` in Python,
+`app-rs/src/fridae_lock.rs` in Rust):
+- `.fridae/studio.json`: the run (`on`, `stage`, `stages`, `gates`, `max_experts`, `lead`, `idea`, `started`,
+  `paused`, `read_decisions`, `checkpoints`, sometimes `note: "slots"`). Unknown keys are kept by both sides.
+- `.fridae/review/<id>.json` (status `waiting` | `approved` | `changes` | `superseded`) and its media in
+  `.fridae/review/<id>/` (copied in, never decoded). A new run moves old items to `.fridae/review-archive/<started>/`;
+  an undo moves later ones to `review-archive/undo-<stamp>/`.
+- `.fridae/lessons.md`, and `WORK/studio-lessons.md` for every game.
+- `.fridae/.gitignore`, written when a run starts: `review/*/`, `review-archive/`, `before-undo/`, `.lock`, so
+  checkpoint commits never carry media.
+- `.fridae/team/roster.json` and `.fridae/team/experts/<id>.md`: optional per-game overrides of the kit's team.
+
+**The agent side.** `rbxstage.py` is the `rbx_stage` tool (`status`, `stage`, `review`, `decisions`, `lesson`;
+CLI `rbx stage ...`). A gated stage can only be finished once a blocking item of that stage is approved and none is
+still open. `decisions` hands each answer over once (`read_decisions` holds `id:status`). Finishing a stage writes
+`WORK/stage-requests/<id>.json` for the app's checkpoint. `rbxroster.py` loads `team/roster.json` (fields `id, name,
+job, stage, guides, tools, kind, writes`) with the project's overrides merged field by field, and checks every field.
+`rbx_team spawn` takes `expert`: `rbxteam.py` resolves it and puts `expert`, `expert_name`, `expert_text` and `writes`
+in the request; the Lead itself cannot be spawned, and helpers still cannot start helpers.
+
+**The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `team/experts/lead.md` (project copy
+first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
+from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (registered in `rbxkit_mcp.GUIDES`).
+
+**The app side** (`app-rs/src`):
+- `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step`. `STATUS: WAITING`
+  stops the 24-hour clock and emits `studio_waiting`; a user message or a decision resumes it. Three failed turns in
+  a row end the run (a `result` event with `is_error`, such as a signed-out AI, counts as failed). `MAX_AGENTS` is 8.
+- `team.rs`: starts experts (chat titled with the expert's name, `expert_text` appended to the helper prompt) and
+  refuses a second `writes: true` expert per project (in-memory writer place, released when the helper finishes or is
+  stopped or closed). A spawn refused for slots sets `note: "slots"` on the run.
+- `studio_run.rs`: the routes' work. `GET /api/review?path=`, `POST /api/review {path, action: approve | change |
+  approve_all, id?, note?}`, `POST /api/studio-run {path, action: start | resume | pause | settings | undo, ...}`,
+  `GET /media/review/<key>/<id>/<file>` (key = first 12 hex of the SHA-1 of the stored project path; served only for
+  files listed in the item and inside `.fridae/review/`). All need the token, and `path` must be a known project.
+  A decision writes the item and wakes the Lead with `Review: <title> — approved` / `— change: <note>`; while the run
+  is paused the decision is only recorded.
+- `studio_watch.rs`: polls every project's `review/` and `studio.json` (700 ms) and sends `review` / `studio_run`
+  BUS events to the page.
+- `studio_undo.rs`: turns stage requests into checkpoints (git commit of the project + a Studio plugin pin, appended
+  to `checkpoints`), and does `undo`: halt and pause the Lead, refuse while anything in the game is working, commit
+  the current files, save Studio's scripts to `.fridae/before-undo/<time>/` (plugin `sources` → `rbx project
+  save_scripts`), revert Studio to the pin taken exactly at the checkpoint, restore the files as a new commit, rewind
+  the run record and archive later review items. Studio closed while a checkpoint from the chosen one on used it, Studio restarted
+  (no pin), or an old plugin: it refuses and offers `files_only: true`. Script snapshots live in the plugin's memory (plugin 2.8.0 keeps the newest 24 pins).
+- `ui/index.html`: the Review tab, Studio in the run-mode menu, experts by name, the undo picker.
+
+**Testing without an AI.**
+- Python: `python3 -m unittest tests.test_stage tests.test_roster tests.test_team_expert tests.test_project_save
+  tests.test_studio_flow`. `tests/test_studio_flow.py` is a dry run of a Lead through `rbxkit_mcp.handle` with a stub
+  app thread that answers `rbx_team` requests as finished experts.
+- Rust: `cargo test --manifest-path app-rs/Cargo.toml` (loop, studio_run, studio_undo and team tests use temp
+  projects named with spaces and accents; nothing writes to the real work folder).
+- The app by hand, in a scratch folder so the real `Documents/Fridae Studios` is never touched. Make
+  `<scratch>/kit` with symlinks to this repo's `ui`, `team`, `rbxkit_mcp.py` and `rbx.py` and its own `config.json`
+  (`{"chat_ai": "claude", "projects": [{"name": "...", "path": "<scratch game folder>"}]}`; `git init` the game),
+  then run the dev binary:
+
+  ```
+  env -i HOME=<scratch>/home PATH=/usr/bin:/bin TMPDIR=<scratch>/home FRIDAE_KIT=<scratch>/kit \
+    RBXKIT_WORK=<scratch>/work FRIDAE_NO_STUDIO=1 FRIDAE_URL_FILE=<scratch>/url.txt FRIDAE_QUIT_AFTER=2400 \
+    app-rs/target/debug/fridae
+  ```
+
+  `url.txt` gets the page's address with its token; open it in a browser. With that HOME and PATH no AI is found
+  (or Claude Code is signed out), so nothing uses an AI plan; write `studio.json` and review items by hand, or with
+  `python3 rbx.py stage ... --project <game>`, and the page follows them. The packaged app
+  (`build-out/Fridae Studios.app/Contents/MacOS/Fridae Studios`) ignores `FRIDAE_KIT` and keeps its config, games
+  and work folder in `$HOME/Documents/Fridae Studios`, so give it the scratch `HOME` and put `config.json` there.
+
 ## Folders
 
 - `rbx.py`, `rbx*.py`, `blender/` - the tools.
