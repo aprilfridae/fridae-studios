@@ -1,0 +1,50 @@
+{
+  "name": "showcase",
+  "about": "Calm showcase: long gliding shots, soft crossfades, frosted-glass captions in lowercase.",
+  "rhythm": {
+    "shot": [
+      2.5,
+      5.0
+    ],
+    "zoom": "in"
+  },
+  "transitions": {
+    "default": "fade",
+    "set": [
+      "fade",
+      "slide",
+      "cut"
+    ]
+  },
+  "captions": "glass",
+  "grade": {
+    "saturate": 1.02
+  },
+  "title": {
+    "family": "Inter Medium",
+    "file": "Inter-Medium.ttf",
+    "weight": 500,
+    "case": "lower",
+    "size": 6,
+    "lineHeight": 1.15,
+    "letterSpacing": -0.02,
+    "y": 0.45,
+    "color": "#F4EFF1",
+    "accent": "#FFFFFF",
+    "stroke": 0,
+    "strokeColor": "#000000",
+    "shadow": "0 0.04em 0.3em rgba(0,0,0,0.35)",
+    "background": [
+      "#1B2430",
+      "#3C4A5C"
+    ],
+    "anim": "rise"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(20,24,30,0.5)",
+    "ctaFill": "rgba(255,255,255,0.88)",
+    "ctaColor": "#1B2430"
+  },
+  "letterbox": false
+}

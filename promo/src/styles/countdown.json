@@ -1,0 +1,51 @@
+{
+  "name": "countdown",
+  "about": "Top-5 list: each entry opens on a numbered title card, flash transitions, bold captions low in frame.",
+  "rhythm": {
+    "shot": [
+      1.5,
+      3.0
+    ],
+    "zoom": "punch@0.1"
+  },
+  "transitions": {
+    "default": "flash",
+    "set": [
+      "flash",
+      "slide",
+      "cut"
+    ]
+  },
+  "captions": "bottom",
+  "grade": {
+    "saturate": 1.1,
+    "contrast": 1.05
+  },
+  "title": {
+    "family": "Anton",
+    "file": "Anton-Regular.ttf",
+    "weight": 400,
+    "case": "upper",
+    "size": 13,
+    "lineHeight": 1.0,
+    "letterSpacing": -0.01,
+    "y": 0.45,
+    "color": "#FDF018",
+    "accent": "#FDF018",
+    "stroke": 0.04,
+    "strokeColor": "#000000",
+    "shadow": "0 0.05em 0 #000",
+    "background": [
+      "#0A0A0A",
+      "#262626"
+    ],
+    "anim": "count"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(0,0,0,0.6)",
+    "ctaFill": "#FDF018",
+    "ctaColor": "#000000"
+  },
+  "letterbox": false
+}

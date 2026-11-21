@@ -5,7 +5,24 @@
 """
 import json, ntpath, os
 
-STYLES = ("hype", "cinematic", "meme", "countdown", "update-log", "lyric", "showcase", "pov")
+_FALLBACK_STYLES = ("hype", "cinematic", "meme", "countdown", "update-log", "lyric", "showcase", "pov")
+
+
+def _style_names():
+    """Style names = the JSON files in promo/src/styles (one per style); the built-in list if that folder is missing."""
+    try:
+        import rbxpaths
+        folder = os.path.join(rbxpaths.KIT, "promo", "src", "styles")
+        names = sorted(f[:-5] for f in os.listdir(folder) if f.endswith(".json"))
+    except (ImportError, OSError):
+        names = []
+    if not names:
+        return _FALLBACK_STYLES
+    order = [s for s in _FALLBACK_STYLES if s in names]  # keep the familiar order, new styles after
+    return tuple(order + [s for s in names if s not in order])
+
+
+STYLES = _style_names()
 CAPTION_SOURCES = ("voice", "music", "none", "words")
 HIGHLIGHTS = ("auto", "numbers", "off")
 

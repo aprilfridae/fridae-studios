@@ -50,3 +50,19 @@ DataStore safety, performance audit, monetization compliance, UI builder). The L
 https://github.com/heydamir/unslop, licensed CC BY 4.0 (`licenses/unslop-LICENSE.txt`). Changes: an
 "In Roblox" section was added near the top; its Node snapshot and story-video scripts and its HTML examples are
 not included.
+
+## Promo renderer (`promo/`)
+
+- **Subtle** by Refs (refs.video), https://github.com/0xpratzyy/subtle, MIT (`licenses/subtle-LICENSE.txt`,
+  "Copyright (c) 2026 Refs (refs.video)"). The eight caption looks in `promo/src/captions/` (punch, highlighter,
+  karaoke, bottom, impact, glass, ticket, cinema) and the caption rules in `paginate.ts` (numbers as one token,
+  one highlight per page, no page across a cut) are adapted from its styles and scripts; each adapted file
+  carries Subtle's copyright line. Changes: rewritten as one component over pages laid out in Node from font
+  metrics, tuned for 9:16 promos and platform safe areas.
+- **Fonts** in `promo/public/fonts/` (Inter, Montserrat, Poppins, Libre Baskerville, Anton), SIL Open Font
+  License 1.1, licence texts beside them (`OFL-*.txt`). Taken from Subtle's `fonts/` (Inter and Montserrat are
+  static weights Subtle cut from the upstream variable fonts); the others are unchanged Google Fonts files.
+- **Remotion** (`remotion`, `@remotion/*`) is installed by the promo engine, not bundled. Its licence is free for
+  individuals, non-profits and for-profit teams of up to 3 people; larger companies need a Remotion company
+  licence to use the promo maker (https://www.remotion.dev/docs/license).
+- **Mediabunny** (MPL-2.0), installed with the engine, reads clip sizes and lengths in `promo/scripts/render.mjs`.

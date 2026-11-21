@@ -1,0 +1,50 @@
+{
+  "name": "update-log",
+  "about": "Patch-notes promo: slide transitions between features, tilted label captions, stamped UPDATE-style titles.",
+  "rhythm": {
+    "shot": [
+      1.5,
+      2.5
+    ],
+    "zoom": "in"
+  },
+  "transitions": {
+    "default": "slide",
+    "set": [
+      "slide",
+      "cut",
+      "flash"
+    ]
+  },
+  "captions": "ticket",
+  "grade": {
+    "saturate": 1.08
+  },
+  "title": {
+    "family": "Montserrat Black",
+    "file": "Montserrat-Black.ttf",
+    "weight": 900,
+    "case": "upper",
+    "size": 7.5,
+    "lineHeight": 1.02,
+    "letterSpacing": -0.01,
+    "y": 0.45,
+    "color": "#0A0A0A",
+    "accent": "#FDFD01",
+    "stroke": 0,
+    "strokeColor": "#000000",
+    "shadow": "",
+    "background": [
+      "#101418",
+      "#1E2A36"
+    ],
+    "anim": "stamp"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(10,14,20,0.62)",
+    "ctaFill": "#FDFD01",
+    "ctaColor": "#0A0A0A"
+  },
+  "letterbox": false
+}
