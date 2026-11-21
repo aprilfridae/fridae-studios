@@ -30,7 +30,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; font-feature-settings: "ss01", "cv11"; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; font-feature-settings: "ss01", "cv11"; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: default; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -834,7 +834,7 @@ const CONTROLS = [
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions go on the board under Needs you instead of stopping it, and when a job is done it picks the next one from the board and GAME.md. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
   ["Chats, on the left", "Each chat is its own agent. Up to six can work at once. Closing a chat never deletes it: it stays under Earlier and can be reopened. Deleting is only in Setup, under Saved chats, and can be undone."],
   ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
-  ["Text size", "Ctrl and + or - makes everything bigger or smaller, and Ctrl and 0 resets it. It is also in Setup, under General."],
+  ["Text size", "Ctrl (Command on a Mac) and + or - makes everything bigger or smaller, and 0 resets it. It is also in Setup, under General."],
   ["Selected in Studio", "With the Studio plugin connected, the line under the message box shows what you have selected. The agent is told, so \"this\" means that."],
 ];
 const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l6-6M4.5 3H9v4.5"/></svg></span>';
@@ -2395,7 +2395,7 @@ setScale(scale);
 $("sc-range").oninput = () => setScale(+$("sc-range").value);
 $("sc-down").onclick = () => setScale(scale - 10); $("sc-up").onclick = () => setScale(scale + 10); $("sc-reset").onclick = () => setScale(100);
 document.addEventListener("keydown", (e) => {
-  if (!e.ctrlKey || e.altKey) return;
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;   // Ctrl on Windows and Linux, Command on a Mac
   if (e.key === "=" || e.key === "+") { e.preventDefault(); setScale(scale + 10); }
   else if (e.key === "-" || e.key === "_") { e.preventDefault(); setScale(scale - 10); }
   else if (e.key === "0") { e.preventDefault(); setScale(100); }
