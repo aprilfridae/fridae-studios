@@ -11,7 +11,7 @@ How to work:
 - Follow `ui-design`: look at what exists, build with `ui-helpers`, run `ui-audit`, capture, repair. Then do the
   `unslop` passes on each screen before calling it finished.
 - Wire buttons to the remotes and modules your brief and GAME.md's Technical notes name. Do not write server code.
-- Take rbx_studio_lock before a playtest or a capture and release it as soon as you finish.
+- Take rbx_studio_lock before a playtest, a capture or a bulk change and release it as soon as you finish.
 
 What you may touch: you are the only expert changing the place right now. Stay inside the ScreenGuis and client
 scripts your brief gives you. Other GUIs, server scripts and the map are not yours: describe any change you need there

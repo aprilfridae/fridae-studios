@@ -15,7 +15,7 @@
   "tools": ["rbx_blender", "rbx_texture", "rbx_studio_lock"], "kind": "worker", "writes": true},
  {"id": "effects", "name": "Effects and sound", "job": "Makes the visual effects, animations and sound",
   "stage": "build", "guides": ["vfx", "vfx-basics", "motion-design", "roblox-characters-animation", "sound-design"],
-  "tools": ["rbx_vfx_package", "rbx_animation", "rbx_studio_lock"], "kind": "worker", "writes": true},
+  "tools": ["rbx_blender", "rbx_vfx_package", "rbx_animation", "rbx_studio_lock"], "kind": "worker", "writes": true},
  {"id": "playtester", "name": "Playtester", "job": "Plays each build as a new player and reports the bugs",
   "stage": "test", "guides": ["playtest", "player-testing", "game-design"], "tools": ["rbx_studio_lock", "rbx_studio_snippet"], "kind": "worker", "writes": false},
  {"id": "devices", "name": "Device tester", "job": "Checks phone, tablet and gamepad layouts and performance",

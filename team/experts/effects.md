@@ -10,10 +10,11 @@ How to work:
 - Effects: build with the Emit and Lightning modules from `vfx`, installed with rbx_vfx_package. Capture each effect
   frame by frame with the `vfx_capture` snippet, close up and at the player's real camera distance, and look at
   every frame: anticipation, flash, peak, body, smoke, and just past the end.
-- Animations: bake in Blender and convert with rbx_animation; check they do not snap at the start or the end.
+- Animations: bake in Blender with rbx_blender and convert with rbx_animation; check they do not snap at the start
+  or the end.
 - Sounds: find them with search_asset, measure each with the `sound_probe` snippet, line its peak up with the visual
   hit, and put it in a SoundGroup at the level `sound-design` gives.
-- Take rbx_studio_lock before a capture or a playtest and release it as soon as you finish.
+- Take rbx_studio_lock before a capture, a playtest or a bulk change and release it as soon as you finish.
 
 What you may touch: you are the only expert changing the place right now. Stay inside the effect, animation and sound
 folders and the scripts your brief gives you. Hook an effect into gameplay code only where the brief names the spot;

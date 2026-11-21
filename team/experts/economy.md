@@ -13,7 +13,7 @@ How to work:
   that pressures a child to spend. Robux prices are proposals: never create or change products or passes on Roblox;
   the user sets live prices themselves.
 - Write the numbers into the config module your brief names, and the same table into GAME.md's economy section.
-- Take rbx_studio_lock before a playtest and release it as soon as the playtest stops.
+- Take rbx_studio_lock before a playtest or a bulk change and release it as soon as you finish.
 
 What you may touch: you are the only expert changing the place right now. Stay inside the config modules, shop
 scripts and GAME.md sections your brief gives you. If gameplay code reads a number from somewhere else, describe the

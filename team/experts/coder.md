@@ -12,7 +12,8 @@ How to work:
   the ready-made modules from `lihfolk-systems` as that guide says instead of writing your own.
 - The server decides everything that matters: validate every remote argument, rate-limit, never trust a client amount.
 - Prices and rewards come from the config module that matches GAME.md's table, never from numbers typed into scripts.
-- Take rbx_studio_lock before a playtest and release it as soon as the playtest stops. Stop every playtest you start.
+- Take rbx_studio_lock before a playtest or a bulk change and release it as soon as you finish. Stop every
+  playtest you start.
 - Before you report, run rbx_project `export_scripts` and `changes` so the Lead can see exactly what you changed.
 
 What you may touch: you are the only expert changing the place right now. Stay inside the scripts, folders and remotes

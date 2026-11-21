@@ -114,6 +114,52 @@ class RosterTests(unittest.TestCase):
             with self.assertRaises(KitError):
                 rbxstage.run("status", {"project": self.project})
 
+    def test_bad_field_values(self):
+        full = {"id": "writer", "name": "Story writer", "job": "Writes the story", "stage": "design", "guides": [],
+                "tools": [], "kind": "worker", "writes": False}
+        cases = [
+            ({"id": "coder", "writes": "false"}, "writes"),
+            ({"id": "coder", "guides": "promo"}, "guides"),
+            ({"id": "coder", "guides": ["no-such-guide"]}, "guides"),
+            ({"id": "coder", "tools": "rbx_project"}, "tools"),
+            ({"id": "coder", "stage": "polish"}, "stage"),
+            ({"id": "coder", "name": ""}, "name"),
+            ({"id": "coder", "job": 3}, "job"),
+            ({"id": "coder", "kind": "lead"}, "kind"),
+            ({"id": "coder", "kind": "boss"}, "kind"),
+            (dict(full, kind="lead"), "kind"),
+        ]
+        for entry, field in cases:
+            self.write("roster.json", json.dumps([entry]))
+            with self.assertRaises(KitError) as cm:
+                rbxroster.load(self.project)
+            msg = str(cm.exception)
+            self.assertIn("roster.json", msg, entry)
+            self.assertIn(repr(entry["id"]), msg, entry)
+            self.assertIn(repr(field), msg, entry)
+        self.write("roster.json", json.dumps([{"id": "scout", "name": "A"}, {"id": "scout", "name": "B"}]))
+        with self.assertRaises(KitError) as cm:
+            rbxroster.load(self.project)
+        self.assertIn("twice", str(cm.exception))
+        self.write("roster.json", json.dumps([{"id": "lead", "kind": "lead"}, dict(full)]))
+        self.assertEqual(rbxroster.load(self.project)[-1]["id"], "writer")
+
+    def test_bad_kit_roster(self):
+        kit = os.path.join(self.tmp, "kit")
+        os.makedirs(kit)
+        good = {"id": "coder", "name": "Coder", "job": "Scripts", "stage": "build", "guides": ["roblox-luau"],
+                "tools": [], "kind": "worker", "writes": True}
+        partial = dict(good)
+        del partial["writes"]
+        with mock.patch.object(rbxroster, "kit_dir", return_value=kit):
+            for data, words in (([good, good], "twice"), ([partial], "missing writes"), ([dict(good, writes=1)], "'writes'")):
+                with open(os.path.join(kit, "roster.json"), "w", encoding="utf-8") as f:
+                    json.dump(data, f)
+                with self.assertRaises(KitError) as cm:
+                    rbxroster.load()
+                self.assertIn(words, str(cm.exception))
+                self.assertIn(os.path.join(kit, "roster.json"), str(cm.exception))
+
     def test_status_lists_team(self):
         out = rbxstage.run("status", {"project": self.project})
         self.assertIn("Team (", out)

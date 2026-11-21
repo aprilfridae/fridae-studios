@@ -13,7 +13,7 @@ How to work:
   budget, export) before importing. Make textures with rbx_texture. Check any model you insert with the `vet_asset`
   snippet before trusting it.
 - Lighting, Atmosphere and Workspace settings change the whole game: change them only when your brief gives them to you.
-- Take rbx_studio_lock before a playtest or a camera capture and release it as soon as you finish.
+- Take rbx_studio_lock before a playtest, a camera capture or a bulk change and release it as soon as you finish.
 
 What you may touch: you are the only expert changing the place right now. Stay inside the Workspace and asset folders
 your brief gives you. Scripts, UI and other areas of the map are not yours: describe any change you need there in the

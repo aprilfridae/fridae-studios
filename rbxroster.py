@@ -44,14 +44,58 @@ def _read(path, required):
     return data
 
 
+def _no_duplicates(entries, path):
+    seen = set()
+    for e in entries:
+        if e["id"] in seen:
+            raise KitError("The team roster %s lists the expert %r twice." % (path, e["id"]))
+        seen.add(e["id"])
+
+
+def _check(entry, path):
+    """Raise KitError naming the file, the expert and the field when an entry's values are not usable."""
+    import rbxkit_mcp  # lazy: the guide list lives in the tool server
+    import rbxstage  # lazy: rbxstage imports this module
+
+    def bad(field, why):
+        raise KitError("The team roster %s: expert %r, field %r %s." % (path, entry["id"], field, why))
+
+    for k in ("name", "job", "stage"):
+        if not isinstance(entry.get(k), str) or not entry[k].strip():
+            bad(k, "must be a non-empty string")
+    if entry["stage"] not in rbxstage.STAGES and entry["stage"] != "all":
+        bad("stage", "must be one of %s or all (found %r)" % (", ".join(rbxstage.STAGES), entry["stage"]))
+    for k in ("guides", "tools"):
+        v = entry.get(k)
+        if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+            bad(k, "must be a list of names")
+    unknown = [g for g in entry["guides"] if g not in rbxkit_mcp.GUIDES]
+    if unknown:
+        bad("guides", "names guides that do not exist: %s" % ", ".join(unknown))
+    kinds = ("worker", "critic", "lead") if entry["id"] == "lead" else ("worker", "critic")
+    if entry.get("kind") not in kinds:
+        bad("kind", "must be %s (found %r)" % (" or ".join(kinds), entry.get("kind")))
+    if not isinstance(entry.get("writes"), bool):
+        bad("writes", "must be true or false (found %r)" % (entry.get("writes"),))
+
+
 def load(project=None):
     """The roster: the kit's entries, with a project's entries merged in by id (new ids are added at the end)."""
     path = os.path.join(kit_dir(), "roster.json")
-    roster = [{k: e.get(k) for k in KEYS} for e in _read(path, True)]
+    kit = _read(path, True)
+    _no_duplicates(kit, path)
+    for e in kit:
+        missing = [k for k in KEYS if k not in e]
+        if missing:
+            raise KitError("The team roster %s: expert %r is missing %s." % (path, e["id"], ", ".join(missing)))
+    roster = [{k: e[k] for k in KEYS} for e in kit]
+    source = {e["id"]: path for e in roster}
     if project:
         path = os.path.join(project_dir(project), "roster.json")
+        mine = _read(path, False)
+        _no_duplicates(mine, path)
         by_id = {e["id"]: e for e in roster}
-        for e in _read(path, False):
+        for e in mine:
             if e["id"] in by_id:
                 by_id[e["id"]].update({k: v for k, v in e.items() if k in KEYS})
             else:
@@ -61,6 +105,9 @@ def load(project=None):
                 entry = {k: e[k] for k in KEYS}
                 roster.append(entry)
                 by_id[e["id"]] = entry
+            source[e["id"]] = path
+    for e in roster:
+        _check(e, source[e["id"]])
     return roster
 
 

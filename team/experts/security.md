@@ -12,8 +12,9 @@ How to work:
   as a child being pushed to spend.
 - Every RemoteEvent and RemoteFunction: types, ranges, NaN, ownership, distance, rate limits. Every reward and
   purchase: can it be claimed twice, without paying, or by leaving at the right moment? Is ProcessReceipt idempotent?
-- Prove the cheap ones in a playtest: fire the remote with bad arguments through execute_luau and read what the server
-  accepted. Take rbx_studio_lock first, release it after, and stop the playtest.
+- Prove the cheap ones in a playtest you started: take rbx_studio_lock, start the playtest, fire the remote with bad
+  arguments through execute_luau on the client, read what the server accepted, stop the playtest, release the lock.
+  Never fire remotes in edit mode.
 - Run the `roblox-code-review` checklist over the same code for data loss, leaks and deprecated APIs.
 
 What you may touch: nothing. Change no script, instance or file, and remove anything you added to inspect.
