@@ -237,7 +237,32 @@ pub fn finished(agent: &Agent, stopped: bool) {
         }
         write_result(&id, result);
         agent.mark_result(); // its slot is free once it stops working (the chat stays open to read)
+        wake_lead_of(agent);
         slot_freed();
+    }
+}
+
+/// What a waiting Lead is told when one of its experts finished.
+pub fn expert_done_text(name: &str) -> String {
+    format!("{name} finished. Collect its report with rbx_team wait and carry on.")
+}
+
+/// Whether a finished expert wakes its Lead: only a Lead waiting (STATUS: WAITING, so nothing else will) and idle,
+/// of a run that is going on: not paused, not ended. A working Lead finds the result at its next wait.
+fn wakes_lead(expert: bool, waiting: bool, busy: bool, leads_running: bool, paused: bool) -> bool {
+    expert && waiting && !busy && leads_running && !paused
+}
+
+/// One wake per finished expert of a studio run, when its Lead sits waiting (see `wakes_lead`). The run's "slots" note
+/// is cleared too, so the free slot does not wake the same Lead a second time.
+fn wake_lead_of(agent: &Agent) {
+    let Some(lead) = agent.parent().and_then(|p| agents::get(&p)) else { return };
+    let Some(project) = lead.project() else { return };
+    let run = crate::studio_undo::lead_of(&project, &lead.id);
+    let paused = crate::studio_undo::paused_lead(&project, &lead.id);
+    if wakes_lead(agent.expert().is_some(), lead.studio_waiting(), lead.busy(), run.leads, paused) {
+        set_slots_note(&project, false);
+        lead.wake_studio(&expert_done_text(&agent.name()));
     }
 }
 
@@ -407,5 +432,43 @@ mod tests {
         assert_eq!(res["reason"], RUN_ENDED);
         assert_eq!(RUN_ENDED, "This game's studio run was ended.");
         agents::remove_agent(&lead.id);
+    }
+
+    #[test]
+    fn a_finished_expert_wakes_only_a_waiting_idle_lead_of_a_going_run() {
+        assert!(wakes_lead(true, true, false, true, false));
+        assert!(!wakes_lead(false, true, false, true, false), "a plain helper is not part of the run");
+        assert!(!wakes_lead(true, false, false, true, false), "not waiting: it collects the report at its next wait");
+        assert!(!wakes_lead(true, true, true, true, false), "working: the result is there for its next wait");
+        assert!(!wakes_lead(true, true, false, false, false), "ended (or no run)");
+        assert!(!wakes_lead(true, true, false, true, true), "paused");
+        assert_eq!(expert_done_text("Designer: Design plan"), "Designer: Design plan finished. Collect its report with rbx_team wait and carry on.");
+    }
+
+    #[test]
+    fn a_waiting_lead_is_woken_once_when_its_expert_finishes() {
+        let d = game("expert-wake");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: expert wake", Some(p.clone())).unwrap();
+        let stages: Vec<Value> = crate::studio_run::STAGES.iter().map(|s| json!({"id": s, "status": "todo"})).collect();
+        fs::write(d.join(".fridae").join("studio.json"), json!({"on": true, "lead": lead.id, "note": "slots", "stages": stages}).to_string()).unwrap();
+        lead.set_waiting_for_test(true);
+        let x = agents::spawn_expert("w-expert-wake", "worker", "Designer: Plan", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "designer".into(), name: "Designer".into(), text: String::new() }).unwrap();
+        finished(&x, false);
+        assert!(read(&d).get("note").is_none(), "the slots note is cleared, so the free slot does not wake it again");
+        // the wake goes on its own thread through ask(): wait for its message to reach the chat
+        let mut seen = false;
+        for _ in 0..50 {
+            if lead.last_user_text_for_test().is_some_and(|t| t.contains("Designer: Plan finished. Collect its report")) {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(seen, "the waiting Lead was woken");
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
     }
 }

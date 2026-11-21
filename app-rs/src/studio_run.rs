@@ -539,11 +539,12 @@ fn end_run(project: &Path) -> Result<String, String> {
 /// so a stopped turn's ending already sees it: no carry-on, and held messages go as ordinary ones.
 fn end(project: &str) -> Result<Value, String> {
     let lead = end_run(Path::new(project))?;
+    // the experts are stopped even when the Lead's chat is closed: they go on spending without it
+    for expert in agents::working_helpers_of(&lead) {
+        expert.stop();
+    }
     if let Some(l) = agents::get(&lead).filter(|_| !lead.is_empty()) {
         l.end_run();
-        for expert in agents::working_helpers_of(&lead) {
-            expert.stop();
-        }
         l.stop();
     }
     Ok(json!({"ok": true}))

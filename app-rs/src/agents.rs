@@ -389,6 +389,12 @@ fn no_progress(studio: bool, carry_on: bool, got_result: bool, tools: u32, idle:
     false
 }
 
+/// Whether the no-progress guards count this turn: a Studio Lead's, and only while none of its experts is working
+/// (waiting for them is not going round in circles, and STATUS: WAITING would leave them unattended).
+fn guarded(studio_lead: bool, experts_working: bool) -> bool {
+    studio_lead && !experts_working
+}
+
 /// How many Studio carry-ons in a row without a progress call a Lead may take before it is taken to be waiting.
 const STUCK_TURNS: u32 = 6;
 
@@ -613,6 +619,29 @@ pub struct Agent {
 static AGENTS: Mutex<Vec<Arc<Agent>>> = Mutex::new(Vec::new());
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
+/// The app is quitting: nothing new starts (a held message or a wake must not start an agent after shut_down).
+/// Per thread in tests, so a test that sets it touches no other test.
+#[cfg(not(test))]
+static SHUTTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+thread_local! {
+    static SHUTTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn set_shutting(on: bool) {
+    #[cfg(not(test))]
+    SHUTTING.store(on, Ordering::SeqCst);
+    #[cfg(test)]
+    SHUTTING.with(|s| s.set(on));
+}
+
+fn shutting() -> bool {
+    #[cfg(not(test))]
+    return SHUTTING.load(Ordering::SeqCst);
+    #[cfg(test)]
+    SHUTTING.with(|s| s.get())
+}
+
 pub fn agents() -> Vec<Arc<Agent>> {
     AGENTS.lock().unwrap().clone()
 }
@@ -712,6 +741,12 @@ impl Agent {
         let mut st = self.st.lock().unwrap();
         st.running = true;
         st.pid = Some(pid);
+    }
+
+    /// The text of the chat's latest "user" event (what was sent), for tests.
+    #[cfg(test)]
+    pub fn last_user_text_for_test(&self) -> Option<String> {
+        self.st.lock().unwrap().log.iter().rev().find(|e| is_user(e)).and_then(|e| e["text"].as_str()).map(str::to_string)
     }
 
     #[cfg(test)]
@@ -1166,7 +1201,7 @@ impl Agent {
     }
 
     pub fn send(self: &Arc<Self>, text: &str, ask: &Ask) {
-        if self.busy() {
+        if self.busy() || shutting() {
             return;
         }
         let has_project = self.project().is_some_and(|p| std::path::Path::new(&p).is_dir());
@@ -1584,10 +1619,12 @@ impl Agent {
         let paused = self.studio_lead() && self.paused_run();
         // a run ended in Review: nothing carries on (see ended_step)
         let ended = self.studio_lead() && self.project().is_some_and(|p| studio_undo::lead_of(&p, &self.id).ended);
+        // a Lead whose experts are still working is waiting for them, not going round in circles
+        let experts_working = !working_helpers_of(&self.id).is_empty();
         {
             // the no-progress guard: three carry-ons in a row without a tool call count as STATUS: WAITING
             let mut st = self.st.lock().unwrap();
-            let lead = st.last_ask.studio && st.role.is_none();
+            let lead = guarded(st.last_ask.studio && st.role.is_none(), experts_working);
             let (carry_on, tools) = (st.turn_auto, st.turn_tools);
             let ok = got_result && !result_error;
             let progress = st.turn_progress;
@@ -2033,6 +2070,7 @@ pub fn remove_agent(agent_id: &str) {
 
 /// Stop every agent and save every chat: called when the window closes.
 pub fn shut_down() {
+    set_shutting(true); // first: a turn ended below must not send its held messages as a new agent
     crate::promo::stop_install();
     // every running agent is ended, and the app waits for them (at most the stop grace), so none outlives it
     let pids: Vec<u32> = agents().iter().filter_map(|a| a.stop_turn()).collect();
@@ -2423,6 +2461,31 @@ mod tests {
         assert!(!no_progress(true, true, true, 0, &mut idle));
         assert!(!no_progress(true, true, true, 0, &mut idle));
         assert!(no_progress(true, true, true, 0, &mut idle));
+    }
+
+    #[test]
+    fn the_guards_hold_off_while_the_leads_experts_work() {
+        assert!(guarded(true, false));
+        assert!(!guarded(true, true), "experts at work: the Lead is waiting for them, not stuck");
+        assert!(!guarded(false, false));
+        // held off, the counts start again, so neither guard fires
+        let (mut idle, mut stuck) = (2, 5);
+        let lead = guarded(true, true);
+        assert!(!no_progress(lead, true, true, 0, &mut idle));
+        assert!(!no_progress_call(lead, true, true, false, &mut stuck));
+        assert_eq!((idle, stuck), (0, 0));
+    }
+
+    #[test]
+    fn nothing_starts_once_the_app_is_quitting() {
+        let a = Agent::detached_for_test("quitting", None);
+        set_shutting(true);
+        a.send("Carry on", &Ask::default());
+        set_shutting(false);
+        assert!(a.last_user_text_for_test().is_none(), "no turn was begun");
+        assert!(!a.busy());
+        a.send("Hello", &Ask::default());
+        assert_eq!(a.last_user_text_for_test().as_deref(), Some("Hello"), "and starts again once it is not");
     }
 
     #[test]
