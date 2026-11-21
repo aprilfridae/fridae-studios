@@ -187,8 +187,12 @@ from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (regist
   tests.test_studio_flow`. `tests/test_studio_flow.py` is a dry run of a Lead through `rbxkit_mcp.handle` with a stub
   app thread that answers `rbx_team` requests as finished experts.
 - Rust: `cargo test --manifest-path app-rs/Cargo.toml` (loop, studio_run, studio_undo and team tests use temp
-  projects named with spaces and accents; under `cfg(test)` the work folder is a temp folder,
-  `fridae-test-work-<pid>`, whatever `RBXKIT_WORK` says, so nothing writes to the real work folder).
+  projects named with spaces and accents; under `cfg(test)` everything, the work folder included, goes in
+  `<temp>/fridae-tests/<pid>/`, whatever `RBXKIT_WORK` says, so nothing writes to the real work folder; the next test
+  run clears the folders of runs that are over).
+- Stop: every agent starts in its own process group on macOS and Linux, and Stop (or quitting the app) sends the
+  group SIGTERM, then SIGKILL after 2 s; Windows keeps `taskkill /T /F`. The tests check it with a real shell that
+  starts a grandchild.
 - The app by hand, in a scratch folder so the real `Documents/Fridae Studios` is never touched. Make
   `<scratch>/kit` with symlinks to this repo's `ui`, `team`, `rbxkit_mcp.py` and `rbx.py` and its own `config.json`
   (`{"chat_ai": "claude", "projects": [{"name": "...", "path": "<scratch game folder>"}]}`; `git init` the game),
