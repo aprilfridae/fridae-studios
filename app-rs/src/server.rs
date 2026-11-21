@@ -18,7 +18,7 @@ use crate::{
     antigravity,
     attach, board, codex, media,
     paths::{self, PATHS, VERSION},
-    plugin, projects, promo, research, team, textures, update, usage,
+    plugin, projects, promo, promo_tab, research, team, textures, update, usage,
 };
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -113,6 +113,14 @@ fn promo_media(path: &str, range: &str) -> media::Streamed {
     }
 }
 
+/// GET /media/promo-style/<name>: a style's still from the tool's cache, for a known style name only.
+fn style_media(path: &str, range: &str) -> media::Streamed {
+    match promo_tab::style_still(&unescape(path.trim_start_matches("/media/promo-style/"))) {
+        Some(file) => media::serve(&file, "image/jpeg", range),
+        None => media::missing(),
+    }
+}
+
 fn query(url: &str, key: &str) -> Option<String> {
     url.split_once('?')?.1.split('&').find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v.to_string()))
 }
@@ -169,6 +177,8 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(json!({"projects": projects::list(), "default_parent": projects::default_parent().display().to_string(), "git": projects::git_installed()}))
     } else if path == "/api/status" {
         send_json(status())
+    } else if path == "/api/promos" {
+        send_json(promo_tab::list())
     } else {
         not_found()
     }
@@ -289,6 +299,8 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/pick-files" => send_json(json!({"paths": promo::pick_files(&text_of("kind"))})),
         "/api/promo" => send_json(promo::act(&body)),
         "/api/promo-engine" => send_json(promo::engine(&body)),
+        "/api/promo-start" => send_json(promo_tab::start(&body)),
+        "/api/promo-styles" => send_json(promo_tab::styles()),
         "/api/copy" => send_json(json!({"ok": textures::set_clipboard_text(&text_of("text"))})),
         "/api/texture" => {
             let rid = paths::base_name(&text_of("id"));
@@ -394,9 +406,10 @@ fn handle(mut req: Request, token: &str) {
     let open_file = path.starts_with("/fonts/") || path == "/logo.png";
     let given = Some(head(&req, "X-Token")).filter(|t| !t.is_empty()).or_else(|| query(&url, "t")).unwrap_or_default();
     let allowed = local && (open_file || same(&given, token));
-    if allowed && *req.method() == Method::Get && path.starts_with("/media/promo/") {
-        // a <video> carries the token in the address, like the chat's images
-        let resp = promo_media(&path, &head(&req, "Range"));
+    if allowed && *req.method() == Method::Get && (path.starts_with("/media/promo/") || path.starts_with("/media/promo-style/")) {
+        // a <video> or <img> carries the token in the address, like the chat's images
+        let range = head(&req, "Range");
+        let resp = if path.starts_with("/media/promo/") { promo_media(&path, &range) } else { style_media(&path, &range) };
         let _ = req.respond(resp);
         return;
     }

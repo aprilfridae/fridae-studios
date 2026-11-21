@@ -56,7 +56,10 @@ buttons.
    usually means something happened. Clips are used where they are; they are
    never copied. Files the user adds with Add clips or drops on the window
    arrive in their message as `[clip: <path>]` lines: those are the paths
-   (a music file among them is the song, unless they say otherwise).
+   (a music file among them is the song, unless they say otherwise). A promo
+   started from the Promos tab also has `Music:` (a path, or none: render
+   silent), `Reference video:`, `Style:`, `Length:` and `Voiceover script:`
+   lines; follow them (the voice script's claims still need confirming).
 3. **Plan.** Decide the one idea, the hook, the order of 4-10 shots, the
    style, the caption words and the end card. Run `styles` once if the user has no
    preference: it returns one sheet image with every style's still, labelled

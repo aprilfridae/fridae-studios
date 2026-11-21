@@ -1,5 +1,7 @@
-//! Finished promos. The promo tool drops a card file when a render is done; this
-//! shows it in the chat that asked for it, and does what the card's buttons ask.
+//! Finished promos. The promo tool drops a card file when a render is done (and rewrites it when the
+//! promo is rendered again into the same folder); this tells the window, which puts it in the Promos
+//! tab's library with a line in the chat that asked for it, and does what the card's buttons ask.
+//! The tab's listing, New promo form and style previews are in promo_tab.rs.
 //!
 //!   work/promo-cards/<id>.json   {"id", "agent", "folder", "video", "cover", "caption_text",
 //!                                 "style", "duration", "check": {"passed", "problems", "notes"}, "created"}
@@ -11,22 +13,25 @@
 //! `promo_engine` events.
 
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::Mutex,
+    sync::{
+        LazyLock, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
 
 use crate::{agents::{self, BUS}, attach, paths};
 
-const VIDEO_EXT: [&str; 4] = ["mp4", "mov", "mkv", "webm"];
-const AUDIO_EXT: [&str; 4] = ["mp3", "wav", "m4a", "ogg"];
+pub const VIDEO_EXT: [&str; 4] = ["mp4", "mov", "mkv", "webm"];
+pub const AUDIO_EXT: [&str; 4] = ["mp3", "wav", "m4a", "ogg"];
 
 fn dir() -> PathBuf {
     paths::work("promo-cards")
@@ -129,11 +134,43 @@ fn save(card: &Value, extras: bool) -> Value {
     }
 }
 
+/// A temporary name beside `path` that no other writer (another request, the promo tool) uses.
+fn tmp_beside(path: &Path) -> PathBuf {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    path.with_file_name(format!(".{name}.{}-{}.tmp", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
+}
+
+/// Write `bytes` to `path` through a temporary file, so a reader never finds half of it.
+fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
+    let tmp = tmp_beside(path);
+    let ok = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
+    if !ok {
+        let _ = fs::remove_file(&tmp);
+    }
+    ok
+}
+
 /// Write the edited post caption back to caption.txt in the card's own folder.
 fn write_caption(card: &Value, text: &str) -> bool {
     let Some(folder) = path_of(card, "folder").filter(|f| f.is_dir()) else { return false };
-    let tmp = folder.join("caption.txt.tmp");
-    fs::write(&tmp, text).is_ok() && fs::rename(&tmp, folder.join("caption.txt")).is_ok()
+    write_atomic(&folder.join("caption.txt"), text.as_bytes())
+}
+
+/// The card's own copy of the caption, so the library shows the edit after a restart. The watcher's note of
+/// the file is updated under the same lock, so the app's own edit is never taken for a new render.
+fn write_card_caption(dir: &Path, id: &str, text: &str, seen: &mut HashMap<String, SystemTime>) -> bool {
+    let Some(mut card) = card_in(dir, id) else { return false };
+    card["caption_text"] = json!(text);
+    let path = dir.join(format!("{id}.json"));
+    let Ok(bytes) = serde_json::to_vec_pretty(&card) else { return false };
+    if !write_atomic(&path, &bytes) {
+        return false;
+    }
+    if let Some(m) = mtime(&path) {
+        seen.insert(id.to_string(), m);
+    }
+    true
 }
 
 /// POST /api/promo {action: "reveal" | "save" | "caption", id, extras?, text?}
@@ -142,7 +179,12 @@ pub fn act(body: &Value) -> Value {
     match body["action"].as_str().unwrap_or("") {
         "reveal" => json!({"ok": reveal(&card)}),
         "save" => save(&card, body["extras"].as_bool().unwrap_or(false)),
-        "caption" => json!({"ok": write_caption(&card, body["text"].as_str().unwrap_or(""))}),
+        "caption" => {
+            let text = body["text"].as_str().unwrap_or("");
+            let on_disk = write_caption(&card, text);
+            let in_card = write_card_caption(&dir(), body["id"].as_str().unwrap_or(""), text, &mut SEEN.lock().unwrap());
+            json!({"ok": on_disk && in_card})
+        }
         _ => json!({"ok": false, "error": "Unknown action."}),
     }
 }
@@ -191,24 +233,68 @@ fn show(card: &Value) {
     BUS.put("promo", json!({"agent": target, "card": card}));
 }
 
-/// Cards already there when the app starts were shown in an earlier run; new ones are shown as they arrive.
+fn mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn secs(t: SystemTime) -> f64 {
+    t.duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// The card files in `dir`: (id, path, when the file last changed).
+pub(crate) fn card_files(dir: &Path) -> Vec<(String, PathBuf, SystemTime)> {
+    let entries = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path());
+    entries
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .filter_map(|p| {
+            let id = p.file_stem()?.to_string_lossy().to_string();
+            let m = mtime(&p)?;
+            valid_id(&id).then_some((id, p, m))
+        })
+        .collect()
+}
+
+/// A card as the page gets it: the file's contents plus `mtime`, which changes when it is rendered again.
+pub fn card_at(dir: &Path, id: &str, m: SystemTime) -> Option<Value> {
+    let mut card = card_in(dir, id)?;
+    card["mtime"] = json!(secs(m));
+    Some(card)
+}
+
+/// What is in `dir` now, without reporting any of it.
+fn snapshot(dir: &Path) -> HashMap<String, SystemTime> {
+    card_files(dir).into_iter().map(|(id, _, m)| (id, m)).collect()
+}
+
+/// Cards that are new or were written again since the last look. A card that does not read yet (still being
+/// written) is not noted, so it is tried again next time.
+fn changed_cards(dir: &Path, seen: &mut HashMap<String, SystemTime>) -> Vec<Value> {
+    let mut out = Vec::new();
+    for (id, _, m) in card_files(dir) {
+        if seen.get(&id) == Some(&m) {
+            continue;
+        }
+        if let Some(card) = card_at(dir, &id, m) {
+            seen.insert(id, m);
+            out.push(card);
+        }
+    }
+    out
+}
+
+/// Which card files the watcher has shown, and as of when.
+static SEEN: LazyLock<Mutex<HashMap<String, SystemTime>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Cards already there when the app starts were shown in an earlier run (the Promos tab lists them); new ones,
+/// and cards rendered again into the same folder, are shown as they arrive.
 pub fn watch() {
     let dir = dir();
-    let ids = |d: &Path| -> Vec<String> {
-        fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json")).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string())).collect()
-    };
-    let mut seen: HashSet<String> = ids(&dir).into_iter().collect();
+    *SEEN.lock().unwrap() = snapshot(&dir);
     loop {
         thread::sleep(Duration::from_millis(700));
-        for id in ids(&dir) {
-            if seen.contains(&id) {
-                continue;
-            }
-            // a card that does not read yet is tried again on the next look
-            if let Some(card) = card_in(&dir, &id) {
-                show(&card);
-                seen.insert(id);
-            }
+        let cards = changed_cards(&dir, &mut SEEN.lock().unwrap());
+        for card in cards {
+            show(&card);
         }
     }
 }
@@ -484,13 +570,69 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
+    fn set_mtime(path: &Path, secs_ago: u64) {
+        let f = fs::File::options().write(true).open(path).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(secs_ago)).unwrap();
+    }
+
+    #[test]
+    fn watcher_sees_rewritten_card() {
+        let d = scratch("watch");
+        fs::write(d.join("p1.json"), json!({"id": "p1", "created": "a"}).to_string()).unwrap();
+        set_mtime(&d.join("p1.json"), 60);
+        // cards there when the app starts were shown in an earlier run
+        let mut start = snapshot(&d);
+        assert!(changed_cards(&d, &mut start).is_empty());
+        let mut seen = HashMap::new();
+        let first = changed_cards(&d, &mut seen);
+        assert_eq!(first.len(), 1);
+        assert!(first[0]["mtime"].as_f64().unwrap() > 0.0);
+        assert!(changed_cards(&d, &mut seen).is_empty());
+        // rendered again into the same folder: same id, a newer file
+        fs::write(d.join("p1.json"), json!({"id": "p1", "created": "b"}).to_string()).unwrap();
+        let again = changed_cards(&d, &mut seen);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0]["created"], "b");
+        assert!(changed_cards(&d, &mut seen).is_empty());
+        // a card still being written is not marked seen, so it is reported once it reads
+        fs::write(d.join("p2.json"), "{\"id\": \"p2\", ").unwrap();
+        assert!(changed_cards(&d, &mut seen).is_empty());
+        fs::write(d.join("p2.json"), json!({"id": "p2"}).to_string()).unwrap();
+        assert_eq!(changed_cards(&d, &mut seen).len(), 1);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn caption_edit_goes_into_the_card_too() {
+        let d = scratch("cardcap");
+        fs::write(d.join("p1.json"), json!({"id": "p1", "caption_text": "old", "style": "hype"}).to_string()).unwrap();
+        let mut seen = HashMap::new();
+        changed_cards(&d, &mut seen);
+        assert!(write_card_caption(&d, "p1", "new #roblox", &mut seen));
+        let card = card_in(&d, "p1").unwrap();
+        assert_eq!((card["caption_text"].as_str(), card["style"].as_str()), (Some("new #roblox"), Some("hype")));
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "no temporary file is left");
+        // the app's own edit is not a new render: the watcher does not report it
+        assert!(changed_cards(&d, &mut seen).is_empty());
+        assert!(!write_card_caption(&d, "gone", "x", &mut seen));
+        assert!(!write_card_caption(&d, "../p1", "x", &mut seen));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn temporary_names_are_unique() {
+        let d = Path::new("/x");
+        assert_ne!(tmp_beside(&d.join("caption.txt")), tmp_beside(&d.join("caption.txt")));
+        assert_eq!(tmp_beside(&d.join("caption.txt")).parent(), Some(d));
+    }
+
     #[test]
     fn caption_is_written_in_the_cards_folder() {
         let d = scratch("caption");
         let card = json!({"folder": d.display().to_string()});
         assert!(write_caption(&card, "New caption\n#roblox"));
         assert_eq!(fs::read_to_string(d.join("caption.txt")).unwrap(), "New caption\n#roblox");
-        assert!(!d.join("caption.txt.tmp").exists());
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "no temporary file is left");
         assert!(!write_caption(&json!({"folder": d.join("missing").display().to_string()}), "x"));
         let _ = fs::remove_dir_all(&d);
     }

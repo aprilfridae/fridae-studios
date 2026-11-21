@@ -17,6 +17,7 @@ mod paths;
 mod plugin;
 mod projects;
 mod promo;
+mod promo_tab;
 mod research;
 mod server;
 mod splash;

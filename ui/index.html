@@ -311,11 +311,11 @@ textarea::placeholder { color: var(--faint); }
 .saytip.on { opacity: 1; transform: none; }
 
 /* ---------- other views take the whole space under the top bar ---------- */
-#board, #research, #overview { display: none; min-height: 0; }
+#board, #research, #overview, #promos { display: none; min-height: 0; }
 body.board #board { display: grid; }
-body.research #research { display: block; }
+body.research #research, body.promos #promos { display: block; }
 body.overview #overview { display: grid; }
-body.board .body, body.research .body, body.overview .body { display: none; }
+body.board .body, body.research .body, body.overview .body, body.promos .body { display: none; }
 
 /* board */
 #board { grid-template-rows: auto minmax(0, 1fr); }
@@ -385,6 +385,49 @@ body.board .body, body.research .body, body.overview .body { display: none; }
 .r-signals { margin: 8px 0 0; padding-left: 18px; color: var(--dim); font-size: 13.5px; line-height: 1.55; }
 .r-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .r-limits { font-size: 12.5px; color: var(--faint); max-width: 80ch; margin: 22px 0 0; line-height: 1.5; }
+
+/* promos: the engine, the new-promo form, promos being made, and the library */
+#promos { overflow-y: auto; padding: 28px 22px 40px; }
+.eng-row .eng-error { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
+.eng-row .eng-error:empty { display: none; }
+.eng-row.compact { padding: 12px 14px; border-radius: var(--r-m); border: 1px solid var(--line); background: var(--panel); }
+.eng-row.compact .sub { margin: 0; }
+.eng-row.compact .act { margin: 10px 0 0; }
+.eng-row.compact .act:has(.eng-install[hidden]) { display: none; }
+.eng-row.compact.ready { padding: 0; border: 0; background: none; }
+.pr-form { display: grid; gap: 18px; margin-top: 12px; padding: 18px 20px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 140ms ease; }
+.pr-form.drop { border-color: rgba(255, 255, 255, 0.5); }
+.pr-form.off .pr-field { opacity: 0.5; pointer-events: none; }
+.pr-label { display: block; font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+.pr-label small { font-weight: 400; color: var(--faint); margin-left: 6px; }
+.pr-field .act { margin: 0; align-items: center; }
+.pr-field .sub { margin: 6px 0 0; color: var(--faint); font-size: 12.5px; }
+.pr-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.pr-files:empty { display: none; }
+.pr-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 30px; padding: 0 6px 0 12px; border-radius: 999px; background: var(--hover); border: 1px solid var(--line); font-size: 12.5px; }
+.pr-file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-file button { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: var(--dim); }
+.pr-file button:hover { background: var(--press); color: var(--text); }
+.pr-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+.pr-style { display: flex; flex-direction: column; text-align: left; padding: 6px; border-radius: var(--r-m); border: 1px solid var(--line); background: var(--raised); transition: border-color 140ms ease, background-color 140ms ease; }
+.pr-style:hover { border-color: var(--line-strong); }
+.pr-style[aria-pressed="true"] { border-color: var(--text); background: var(--press); }
+.pr-style .still { display: grid; place-items: center; width: 100%; aspect-ratio: 9 / 16; border-radius: var(--r-s); background: #000; object-fit: cover; color: var(--faint); font-size: 12px; text-align: center; padding: 0 8px; box-sizing: border-box; }
+.pr-style b { font-size: 12.5px; font-weight: 600; margin: 6px 2px 0; }
+.pr-style small { font-size: 11.5px; color: var(--dim); line-height: 1.35; margin: 2px 2px 2px; }
+.pr-text { display: block; width: 100%; box-sizing: border-box; resize: vertical; padding: 9px 12px; border-radius: var(--r-s); border: 1px solid var(--line-strong); background: var(--raised); font: 13.5px/1.5 var(--sans); color: var(--text); outline: none; -webkit-user-select: text; user-select: text; }
+.pr-text:focus { border-color: rgba(255, 255, 255, 0.35); }
+.pr-row { display: flex; align-items: center; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); }
+.pr-row .grow { min-width: 0; flex: 1; }
+.pr-row b { display: block; font-weight: 500; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-row small { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; }
+.pr-row .pill { height: 28px; padding: 0 11px; font-size: 12.5px; }
+.pr-day { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--dim); margin: 22px 0 8px; }
+.pr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; align-items: start; }
+.pr-grid .promo { margin: 0; max-width: none; }
+.promo.flash { outline: 2px solid var(--text); outline-offset: 3px; }
+.promo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 8px 0 14px; font-size: 14px; }
+.promo-line span { color: var(--dim); }
 
 /* overview */
 #overview { grid-template-columns: minmax(0, 1fr) 340px; }
@@ -468,6 +511,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <nav class="nav">
       <button class="tab on" id="v-chats">Chats</button>
       <button class="tab" id="v-board" title="Each game's board: what is being worked on, what needs you, what is done">Board</button>
+      <button class="tab" id="v-promos" title="Promo videos: make one from your gameplay clips, and every promo made so far">Promos</button>
       <button class="tab" id="v-research" title="Roblox's live charts, and game ideas backed by them">Research</button>
       <button class="tab" id="v-overview" title="Everything your agents are doing, at a glance">Overview</button>
     </nav>
@@ -562,6 +606,28 @@ body.proj #pd, body.guide #gd { transform: none; }
     <p class="r-note" id="r-market-note"></p>
     <div id="r-market"></div>
   </div></div>
+  <div id="promos"><div class="r-col">
+    <span class="eyebrow">Promos</span>
+    <h1>Promo videos <span>from your clips.</span></h1>
+    <p class="lede">Choose your gameplay clips and say what the promo should show. An agent cuts it in a chat of its own, checks it, and it lands in the library below. Your clips are used where they are, and nothing is posted anywhere.</p>
+    <div class="eng-row compact" id="pr-engine"><p class="sub eng-state">Checking the promo engine...</p><div class="eng-bar" hidden><i></i></div><pre class="eng-error"></pre><div class="act"><button class="pill eng-install" hidden>Install</button></div></div>
+    <h2>New promo</h2>
+    <div class="pr-form" id="pr-form">
+      <div class="pr-field"><span class="pr-label">Clips</span><div class="pr-files" id="pr-clips"></div><div class="act"><button class="pill" id="pr-add-clips">Add clips</button><span class="sub" id="pr-drop-hint">or drop video files here</span></div></div>
+      <div class="pr-field"><span class="pr-label">Music</span><div class="pr-files" id="pr-music"></div><div class="act"><button class="pill" id="pr-pick-music">Pick music</button><span class="sub" id="pr-no-music">None: post it silent and add a TikTok sound.</span></div></div>
+      <div class="pr-field"><span class="pr-label">In the style of a TikTok<small>optional</small></span><div class="pr-files" id="pr-ref"></div><div class="act"><button class="pill" id="pr-pick-ref">Pick saved video</button></div><p class="sub">TikTok links can't be used: save the video file first, then pick it here. Its pacing and structure are copied, not its footage.</p></div>
+      <div class="pr-field"><span class="pr-label">Style</span><div class="pr-styles" id="pr-styles"></div><p class="sub" id="pr-styles-note"></p></div>
+      <div class="pr-field"><span class="pr-label">Length</span><div class="seg" id="pr-length"></div></div>
+      <div class="pr-field"><label class="pr-label" for="pr-voice">Voiceover script<small>optional</small></label><textarea class="pr-text" id="pr-voice" rows="3"></textarea><p class="sub">Leave empty for no voice. The agent asks before making claims about your game.</p></div>
+      <div class="pr-field"><label class="pr-label" for="pr-brief">What should it show?</label><textarea class="pr-text" id="pr-brief" rows="2" placeholder="e.g. the new boss fight and the shop"></textarea></div>
+      <div class="pr-field"><label class="pr-label" for="pr-proj">Project</label><select class="r-sel" id="pr-proj"></select></div>
+      <div class="act" style="margin: 0"><button class="pill main" id="pr-make" disabled>Make promo</button><span class="r-note" id="pr-why" style="margin: 0"></span></div>
+    </div>
+    <div id="pr-progress-wrap" hidden><h2>In progress</h2><div id="pr-progress"></div></div>
+    <h2>Library <small id="pr-count"></small></h2>
+    <p class="r-note" id="pr-empty">Promos you make appear here, newest first.</p>
+    <div id="pr-library"></div>
+  </div></div>
 </div>
 
 <div class="veil" id="veil"></div>
@@ -598,10 +664,7 @@ body.proj #pd, body.guide #gd { transform: none; }
       <p class="sub" id="plug-state"></p>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove</button></div>
       <h3>Promo engine</h3>
-      <p class="sub" id="eng-state">Checking...</p>
-      <div class="eng-bar" id="eng-bar" hidden><i></i></div>
-      <pre id="eng-error"></pre>
-      <div class="act"><button class="pill" id="eng-install" hidden>Install</button></div>
+      <div class="eng-row"><p class="sub eng-state">Checking...</p><div class="eng-bar" hidden><i></i></div><pre class="eng-error"></pre><div class="act"><button class="pill eng-install" hidden>Install</button></div></div>
       <h3>Check everything</h3>
       <p class="sub">Looks for every program the tools use and says how to fix what is missing. Connect other apps adds these tools to Claude Code, Antigravity or Cursor, to use them outside this window.</p>
       <div class="act"><button class="pill" id="b-check">Run full check</button><button class="pill" id="b-agents">Connect other apps</button></div>
@@ -715,6 +778,9 @@ const GUIDE = [
     ["Look at the market", "Live player counts and ratings for similar Roblox games.", "Find the most played games like ours and what they do well"],
     ["Sound", "Finds sounds and measures them, so the loud part lands on the action.", "Add sounds to the sword swing and line them up with the hit"],
   ]],
+  ["Promote", [
+    ["Promo videos", "The Promos tab cuts a TikTok, Short or Reel from your gameplay clips in a chat of its own, checks it, and keeps every promo in its library.", "@promos"],
+  ]],
   ["Bigger jobs", [
     ["Full auto", "Pick Full auto in the menu under the message box and it keeps going by itself without asking permission: it decides, builds, tests, fixes and carries on until the job is done.", "Build a first playable of this game and keep going until it works: "],
     ["Follow a game's progress", "The Board tab has a board for each game: what is being worked on, what needs you, and what is done. Agents keep it up to date as they work, and you can add, move and hand out cards yourself.", "@board"],
@@ -730,7 +796,7 @@ const GUIDE = [
   ]],
 ];
 const CONTROLS = [
-  ["Chats, Board, Research, Overview", "Chats is where the building happens. Board shows each game's work in columns. Research suggests what to make from Roblox's live charts. Overview shows every agent at once."],
+  ["Chats, Board, Promos, Research, Overview", "Chats is where the building happens. Board shows each game's work in columns. Promos makes promo videos from your clips and keeps them. Research suggests what to make from Roblox's live charts. Overview shows every agent at once."],
   ["Claude / Gemini / ChatGPT (top right)", "Switches between each AI's chats. Chats on different AIs keep working while you look at another; a number beside a name means that many are working there."],
   ["The dots (top right)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
   ["The chat's name", "Press it to rename the chat. Next to it is the game the chat belongs to: press that for the game's folder, notes and git history."],
@@ -747,7 +813,7 @@ const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" 
 /* One row of the guide. Rows with an example are buttons that put it in the message box. */
 function guideRow([name, what, example]) {
   const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
-  if (example === "@research" || example === "@overview" || example === "@board") row.onclick = () => { closeGuide(); setView(example.slice(1)); };
+  if (example === "@research" || example === "@overview" || example === "@board" || example === "@promos") row.onclick = () => { closeGuide(); setView(example.slice(1)); };
   else if (example) row.onclick = () => { closeGuide(); setView("chats"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); };
   return row;
 }
@@ -1165,9 +1231,9 @@ function onEvent(e) {
   if (e.kind === "setup") { $("setup-out").textContent = e.text; return; }
   if (e.kind === "promo_engine") { onEngine(e); return; }
   if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
-  if (e.kind === "clips") { if (e.id > bootMark) addClips(e.paths || []); return; }
+  if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? prAddPaths : addClips)(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
-  if (e.kind === "promo" && !e.agent) e.agent = current;   /* a promo with no chat of its own shows in the one in front */
+  if (e.kind === "promo") { onPromo(e); return; }
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
@@ -1201,9 +1267,6 @@ function onEvent(e) {
     skip.onclick = () => api("/api/texture", { id: e.req, action: "skip" });
     p.turn.appendChild(card); p.turn._steps = null;
     p.asks = p.asks || {}; p.asks[e.req] = card; p.now = "Waiting for your image";
-  } else if (e.kind === "promo") {
-    if (!p.turn) newTurn(p);
-    p.turn.appendChild(promoCard(e.card || {})); p.turn._steps = null;
   } else if (e.kind === "texdone") {
     const card = p.asks && p.asks[e.req];
     if (card) { card.classList.add("done"); card.querySelector("h4").textContent = e.ok ? "Image received" : "Texture skipped"; delete p.asks[e.req]; }
@@ -1293,6 +1356,7 @@ function onEvent(e) {
   }
   if (p.qbox && p.qbox.childElementCount && p.col.lastElementChild !== p.qbox) p.col.appendChild(p.qbox);   /* waiting messages stay last */
   paintRail();
+  if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
 /* Messages sent while the chat was working: shown under the conversation until they go. */
@@ -1308,25 +1372,33 @@ function paintQueue(p, items) {
   p.col.appendChild(p.qbox);
 }
 
-/* ---------- promo card: a finished promo from the promo tool ---------- */
+/* ---------- promo card: a finished promo, as the Promos tab's library shows it ---------- */
+const promoLen = (secs) => { const s = Math.round(Number(secs) || 0); return s ? Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") : ""; };
+const promoWhen = (c) => Date.parse(c.created || "") || (c.mtime || 0) * 1000;
 function promoCard(c) {
-  const id = encodeURIComponent(c.id || ""), src = (what) => "/media/promo/" + id + "/" + what + "?t=" + TOKEN;
-  const card = el("div", "ask promo enter", "<h4></h4><video controls playsinline preload=\"metadata\"></video><div class=\"meta\"></div><textarea aria-label=\"Post caption\" spellcheck=\"true\"></textarea><div class=\"saved\"></div><div class=\"check\"></div><div class=\"act\"><button class=\"pill main\">Download</button><button class=\"pill\">Show in folder</button><label><input type=\"checkbox\"> include cover and caption</label></div><div class=\"promo-post\"></div>");
-  card.querySelector("h4").textContent = "Promo ready";
+  /* the file's mtime in the address: a promo rendered again into the same folder loads its new video */
+  const id = encodeURIComponent(c.id || ""), src = (what) => "/media/promo/" + id + "/" + what + "?t=" + TOKEN + "&v=" + encodeURIComponent(c.mtime || c.created || "");
+  const card = el("div", "ask promo enter", "<h4></h4><video controls playsinline preload=\"metadata\"></video><div class=\"meta\"></div><textarea aria-label=\"Post caption\" spellcheck=\"true\"></textarea><div class=\"saved\"></div><div class=\"check\"></div><div class=\"act\"><button class=\"pill main\">Download</button><button class=\"pill\">Show in folder</button><button class=\"pill\" hidden>Open chat</button><label><input type=\"checkbox\"> include cover and caption</label></div><div class=\"promo-post\"></div>");
+  card.dataset.id = c.id || "";
+  card.querySelector("h4").textContent = c.folder ? c.folder.split(/[\\/]/).filter(Boolean).pop() : c.id || "Promo";
   const video = card.querySelector("video"); video.src = src("video"); video.poster = src("cover");
-  const secs = Number(c.duration) || 0;
-  card.querySelector(".meta").textContent = [c.style, secs ? Math.floor(secs / 60) + ":" + String(Math.round(secs % 60)).padStart(2, "0") : ""].filter(Boolean).join("  \u00b7  ");
+  const when = promoWhen(c);
+  card.querySelector(".meta").textContent = [c.style, promoLen(c.duration), when ? new Date(when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""].filter(Boolean).join("  \u00b7  ");
   const caption = card.querySelector("textarea"), saved = card.querySelector(".saved");
   caption.value = c.caption_text || "";
   let timer = null;
   caption.oninput = () => {
     saved.textContent = ""; clearTimeout(timer);
-    timer = setTimeout(async () => { const r = await api("/api/promo", { action: "caption", id: c.id, text: caption.value }); saved.textContent = r.ok ? "Caption saved to caption.txt" : "Could not save the caption."; }, 600);
+    timer = setTimeout(async () => {
+      const r = await api("/api/promo", { action: "caption", id: c.id, text: caption.value });
+      if (r.ok) c.caption_text = caption.value;
+      saved.textContent = r.ok ? "Caption saved" : "Could not save the caption.";
+    }, 600);
   };
   const ck = c.check || {}, check = card.querySelector(".check");
   check.textContent = ck.passed ? "Checked: safe areas, hook, loudness" : "Problems:\n" + ((ck.problems || []).join("\n") || "the check did not run");
   check.classList.toggle("bad", !ck.passed);
-  const [download, reveal] = card.querySelectorAll(".act button"), extras = card.querySelector(".act input");
+  const [download, reveal, chat] = card.querySelectorAll(".act button"), extras = card.querySelector(".act input");
   download.onclick = async () => {
     download.disabled = true;
     const r = await api("/api/promo", { action: "save", id: c.id, extras: extras.checked });
@@ -1334,6 +1406,8 @@ function promoCard(c) {
     saved.textContent = r.ok ? "Saved to " + r.path : r.cancelled ? "" : r.error || "Could not save the promo.";
   };
   reveal.onclick = async () => { const r = await api("/api/promo", { action: "reveal", id: c.id }); if (!r.ok) saved.textContent = r.error || "The video is no longer there."; };
+  chat.onclick = () => openChatById(c.agent);
+  card._chat = chat;
   return card;
 }
 
@@ -1444,9 +1518,16 @@ document.addEventListener("paste", (e) => {
   if (took) e.preventDefault();
 });
 const composer = document.querySelector(".composer");
-["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; composer.classList.add("drop"); } }));
-["dragleave", "drop"].forEach((n) => document.addEventListener(n, () => composer.classList.remove("drop")));
-document.addEventListener("drop", (e) => { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); [...e.dataTransfer.files].forEach(addFile); });
+const dropTarget = () => view === "promos" ? $("pr-form") : composer;
+["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; dropTarget().classList.add("drop"); } }));
+["dragleave", "drop"].forEach((n) => document.addEventListener(n, () => { composer.classList.remove("drop"); $("pr-form").classList.remove("drop"); }));
+document.addEventListener("drop", (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  /* the page never learns where a dropped file is, so videos reach the Promos form only through the app (not on Windows) or Add clips */
+  if (view === "promos") { prNote([...e.dataTransfer.files].some((f) => /^(video|audio)\//.test(f.type || "")) ? "Use Add clips to choose videos: a video dropped here can't be used where it is." : "Only video and music files can be used here."); return; }
+  [...e.dataTransfer.files].forEach(addFile);
+});
 $("attach").onclick = () => $("file").click();
 /* Videos and music go in the message as [clip: <path>] lines: the agent uses them where they are, nothing is copied. */
 function addClips(paths) {
@@ -1539,11 +1620,11 @@ $("b-guide").onclick = openGuide; $("gd-close").onclick = closeGuide;
 let view = "chats", research = {}, chartShown = "top-playing-now", pendingSeed = null;
 function setView(v) {
   view = v;
-  for (const name of ["chats", "board", "research", "overview"]) { if (name !== "chats") document.body.classList.toggle(name, v === name); $("v-" + name).classList.toggle("on", v === name); }
+  for (const name of ["chats", "board", "promos", "research", "overview"]) { if (name !== "chats") document.body.classList.toggle(name, v === name); $("v-" + name).classList.toggle("on", v === name); }
   if (v !== "chats") { closeSetup(); closeProject(); }
-  if (v === "research") { paintResearchPick(); loadResearch(true); } else if (v === "overview") startOverview(); else if (v === "board") openBoard(); else box.focus();
+  if (v === "research") { paintResearchPick(); loadResearch(true); } else if (v === "overview") startOverview(); else if (v === "board") openBoard(); else if (v === "promos") openPromos(); else box.focus();
 }
-$("v-chats").onclick = () => setView("chats"); $("v-board").onclick = () => setView("board"); $("v-research").onclick = () => setView("research"); $("v-overview").onclick = () => setView("overview");
+$("v-chats").onclick = () => setView("chats"); $("v-board").onclick = () => setView("board"); $("v-promos").onclick = () => setView("promos"); $("v-research").onclick = () => setView("research"); $("v-overview").onclick = () => setView("overview");
 const big = (n) => n == null ? "?" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
 const old = (d) => d == null ? "?" : d < 60 ? d + " days" : d < 730 ? Math.floor(d / 30) + " months" : Math.floor(d / 365) + " years";
 const pct = (n) => n == null ? "?" : n + "%";
@@ -1847,28 +1928,38 @@ const ENG_STEPS = { node: "Node.js", renderer: "the Remotion renderer", browser:
 const ENG_ORDER = Object.keys(ENG_STEPS);
 let engine = null, engCheckError = "", engJob = {};
 function paintEngine() {
-  const st = $("eng-state"), btn = $("eng-install"), bar = $("eng-bar"), err = $("eng-error");
   const label = (s) => ENG_STEPS[s] || "the promo engine";
-  bar.hidden = !engJob.running; err.textContent = ""; btn.hidden = false; btn.disabled = false;
+  let text, short, button = "", error = "", bar = -1, ready = false;
   if (engJob.running) {
     const at = Math.max(0, ENG_ORDER.indexOf(engJob.step)), f = engJob.fraction || 0;
-    st.textContent = engJob.step ? "Installing " + label(engJob.step) + " (part " + (at + 1) + " of " + ENG_ORDER.length + ", " + Math.round(f * 100) + "%)." : "Starting the install...";
-    bar.querySelector("i").style.width = Math.round(((at + f) / ENG_ORDER.length) * 100) + "%";
-    btn.textContent = "Installing..."; btn.disabled = true;
+    text = short = engJob.step ? "Installing " + label(engJob.step) + " (part " + (at + 1) + " of " + ENG_ORDER.length + ", " + Math.round(f * 100) + "%)." : "Starting the install...";
+    bar = Math.round(((at + f) / ENG_ORDER.length) * 100); button = "Installing...";
   } else if (engJob.error) {
-    st.textContent = "Could not install " + label(engJob.step) + ". Retry continues where it stopped.";
-    err.textContent = engJob.error; btn.textContent = "Retry";
+    text = short = "Could not install " + label(engJob.step) + ". Retry continues where it stopped.";
+    error = engJob.error; button = "Retry";
   } else if (!engine) {
-    st.textContent = engCheckError ? "Could not check the promo engine." : "Checking...";
-    err.textContent = engCheckError; btn.hidden = true;
+    text = engCheckError ? "Could not check the promo engine." : "Checking...";
+    short = engCheckError ? text : "Checking the promo engine...";
+    error = engCheckError;
   } else if (engine.ready) {
-    st.textContent = "Ready. Promo videos are made on this computer" + (engine.folder ? ", with the engine in " + engine.folder : "") + ".";
-    btn.hidden = true;
+    text = "Ready. Promo videos are made on this computer" + (engine.folder ? ", with the engine in " + engine.folder : "") + ".";
+    short = "Promo engine ready"; ready = true;
   } else {
     const all = engine.missing.length === ENG_ORDER.length;
-    st.textContent = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + (engine.folder ? " into " + engine.folder : "") + ". The promo maker needs it. Nothing is installed system-wide.";
-    btn.textContent = all ? "Install" : "Continue install";
+    text = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + (engine.folder ? " into " + engine.folder : "") + ". The promo maker needs it. Nothing is installed system-wide.";
+    short = "Promo engine \u2014 " + (all ? "not installed" : "partly installed") + " (about " + engine.download_mb + " MB" + (all ? "" : " left") + ")";
+    button = all ? "Install" : "Continue install";
   }
+  /* the same row in Setup and, shorter, at the top of the Promos tab */
+  document.querySelectorAll(".eng-row").forEach((row) => {
+    const compact = row.classList.contains("compact"), btn = row.querySelector(".eng-install"), b = row.querySelector(".eng-bar");
+    row.querySelector(".eng-state").textContent = compact ? short : text;
+    row.querySelector(".eng-error").textContent = error;
+    row.classList.toggle("ready", ready);
+    b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
+    btn.hidden = !button; btn.textContent = button; btn.disabled = !!engJob.running;
+  });
+  paintPromoForm();
 }
 async function loadEngine() {
   try { const r = await api("/api/promo-engine", { action: "status" }); engine = r.engine || null; engCheckError = r.error || ""; engJob = r.install || {}; } catch (e) {}
@@ -1880,7 +1971,221 @@ function onEngine(e) {
   else engJob = { running: true, step: e.step, fraction: e.fraction };
   paintEngine();
 }
-$("eng-install").onclick = async () => { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } };
+document.querySelectorAll(".eng-install").forEach((btn) => (btn.onclick = async () => { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } }));
+/* ---------- the Promos tab: new promo form, promos being made, and the library ---------- */
+const PR_VIDEO = ["mp4", "mov", "mkv", "webm"], PR_AUDIO = ["mp3", "wav", "m4a", "ogg"];
+const prExt = (p) => (/\.([A-Za-z0-9]+)$/.exec(p) || ["", ""])[1].toLowerCase();
+const prName = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+const prForm = { clips: [], music: "", reference: "", style: "", length: 30, project: null };
+let prStyles = null, prStylesBusy = false, prOpened = false;
+const promoLib = new Map();   /* card id -> { card, el } */
+/* chats this tab started: [{ agent, title, at }], kept in this browser */
+let prChats = [];
+try { prChats = JSON.parse(localStorage.getItem("promo-chats") || "[]").filter((x) => x && typeof x.agent === "string"); } catch (e) { prChats = []; }
+function savePrChats() { try { localStorage.setItem("promo-chats", JSON.stringify(prChats.slice(-30))); } catch (e) {} }
+/* a passing message beside Make promo; the reason it is disabled comes back after it */
+let prMsg = "", prMsgUntil = 0;
+function prNote(text) { prMsg = text; prMsgUntil = Date.now() + 5000; paintPromoForm(); setTimeout(paintPromoForm, 5100); }
+function prChip(path, remove) {
+  const chip = el("span", "pr-file", '<span></span><button aria-label="Remove"><svg width="8" height="8" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></button>');
+  chip.querySelector("span").textContent = prName(path); chip.title = path;
+  chip.querySelector("button").setAttribute("aria-label", "Remove " + prName(path));
+  chip.querySelector("button").onclick = () => { remove(); paintPromoForm(); };
+  return chip;
+}
+/* videos become clips; a music file becomes the music when none is chosen yet */
+function prAddPaths(paths) {
+  $("pr-form").classList.remove("drop");
+  let skipped = 0;
+  for (const p of paths) {
+    const x = prExt(p);
+    if (PR_VIDEO.includes(x)) { if (!prForm.clips.includes(p)) prForm.clips.push(p); }
+    else if (PR_AUDIO.includes(x) && !prForm.music) prForm.music = p;
+    else skipped++;
+  }
+  paintPromoForm();
+  if (skipped) prNote(skipped === 1 ? "One file was left out: only videos can be clips, and one music file." : skipped + " files were left out: only videos can be clips, and one music file.");
+}
+function paintPromoForm() {
+  if (!$("pr-form")) return;
+  const ready = !!(engine && engine.ready);
+  $("pr-form").classList.toggle("off", !ready);
+  const clips = $("pr-clips"); clips.innerHTML = "";
+  prForm.clips.forEach((c) => clips.appendChild(prChip(c, () => { prForm.clips = prForm.clips.filter((x) => x !== c); })));
+  const music = $("pr-music"); music.innerHTML = "";
+  if (prForm.music) music.appendChild(prChip(prForm.music, () => { prForm.music = ""; }));
+  $("pr-no-music").hidden = !!prForm.music; $("pr-pick-music").textContent = prForm.music ? "Change music" : "Pick music";
+  const ref = $("pr-ref"); ref.innerHTML = "";
+  if (prForm.reference) ref.appendChild(prChip(prForm.reference, () => { prForm.reference = ""; }));
+  $("pr-pick-ref").textContent = prForm.reference ? "Change video" : "Pick saved video";
+  const len = $("pr-length"); len.innerHTML = "";
+  [15, 30, 60].forEach((n) => { const b = el("button", n === prForm.length ? "on" : ""); b.textContent = n + " s"; b.onclick = () => { prForm.length = n; paintPromoForm(); }; len.appendChild(b); });
+  paintPromoStyles();
+  const brief = $("pr-brief").value.trim();
+  const why = !ready ? (engine ? "Install the promo engine first." : "Checking the promo engine...") : !prForm.clips.length ? "Add at least one clip." : !brief ? "Say what it should show." : "";
+  $("pr-make").disabled = !!why || $("pr-make").dataset.busy === "1";
+  $("pr-why").textContent = Date.now() < prMsgUntil ? prMsg : why;
+}
+function paintPromoStyles() {
+  const grid = $("pr-styles");
+  const tiles = [["", "Let the agent choose", "It picks the style that suits your clips.", ""]].concat((prStyles || []).map((x) => [x.name, x.name, x.about, x.url]));
+  if (grid.childElementCount !== tiles.length) {
+    grid.innerHTML = "";
+    tiles.forEach(([name, label, about, url]) => {
+      const b = el("button", "pr-style"); b.dataset.style = name;
+      let still;
+      if (url) { still = new Image(); still.loading = "lazy"; still.alt = ""; still.src = url + (url.includes("?") ? "&" : "?") + "t=" + TOKEN; }
+      else { still = el("span"); still.textContent = "Agent's choice"; }
+      still.classList.add("still");
+      const t = el("b"), a = el("small"); t.textContent = label; a.textContent = about;
+      b.append(still, t, a);
+      b.onclick = () => { prForm.style = name; paintPromoStyles(); };
+      grid.appendChild(b);
+    });
+  }
+  grid.querySelectorAll(".pr-style").forEach((b) => b.setAttribute("aria-pressed", b.dataset.style === prForm.style ? "true" : "false"));
+}
+async function loadPromoStyles() {
+  if (prStyles || prStylesBusy || !(engine && engine.ready)) return;
+  prStylesBusy = true; $("pr-styles-note").textContent = "Making the style previews. The first time takes a minute or two.";
+  try {
+    const r = await api("/api/promo-styles", {});
+    if (r.ok) { prStyles = r.styles || []; $("pr-styles-note").textContent = ""; }
+    else $("pr-styles-note").textContent = "Could not make the style previews: " + (r.error || "unknown error") + " You can still let the agent choose.";
+  } catch (e) { $("pr-styles-note").textContent = "Could not make the style previews."; }
+  prStylesBusy = false; paintPromoForm();
+}
+function paintPromoProjects() {
+  const sel = $("pr-proj"), list = projects.projects || [];
+  if (prForm.project === null) { const cur = agents.get(current); prForm.project = cur && cur.project ? cur.project.path : ""; }
+  if (prForm.project && !list.some((x) => x.path === prForm.project)) prForm.project = "";
+  sel.innerHTML = "";
+  sel.appendChild(new Option("No project", ""));
+  list.forEach((x) => sel.appendChild(new Option(x.name, x.path)));
+  sel.value = prForm.project;
+  sel.onchange = () => { prForm.project = sel.value; };
+}
+async function openPromos() {
+  prOpened = true;
+  paintPromoForm(); paintPromoProjects(); paintPromoProgress(); paintLibrary();
+  await Promise.all([loadEngine(), loadProjects()]);
+  paintPromoProjects(); loadPromoStyles();
+}
+$("pr-brief").oninput = paintPromoForm;
+$("pr-add-clips").onclick = async () => { const r = await api("/api/pick-files", { kind: "clips" }); prAddPaths(r.paths || []); };
+$("pr-pick-music").onclick = async () => { const r = await api("/api/pick-files", { kind: "music" }); if (r.paths && r.paths[0]) { prForm.music = r.paths[0]; paintPromoForm(); } };
+$("pr-pick-ref").onclick = async () => { const r = await api("/api/pick-files", { kind: "reference" }); if (r.paths && r.paths[0]) { prForm.reference = r.paths[0]; paintPromoForm(); } };
+if (/Windows/.test(navigator.userAgent)) $("pr-drop-hint").hidden = true;   /* no dropping videos by path there: Add clips only */
+$("pr-make").onclick = async () => {
+  const make = $("pr-make"), brief = $("pr-brief").value.trim();
+  make.dataset.busy = "1"; make.disabled = true;
+  let r;
+  try {
+    r = await api("/api/promo-start", { clips: prForm.clips, music: prForm.music || null, reference: prForm.reference || null, style: prForm.style, length: prForm.length, voice_text: $("pr-voice").value.trim(), brief, project: prForm.project || null });
+  } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  make.dataset.busy = "";
+  if (!r.ok) { paintPromoForm(); prNote(r.error || "Could not start the promo."); return; }
+  prChats.push({ agent: r.agent, title: "Promo: " + brief.split(/\s+/).slice(0, 5).join(" "), at: Date.now() }); savePrChats();
+  prForm.clips = []; prForm.music = ""; prForm.reference = ""; $("pr-brief").value = ""; $("pr-voice").value = "";
+  paintPromoForm(); paintPromoProgress();
+  prNote("Started in a chat of its own. It keeps working while you do other things.");
+};
+function openChatById(id) {
+  if (agents.has(id)) { setView("chats"); select(id); return; }
+  api("/api/open-chat", { id }).then((r) => { if (r.ok) { setView("chats"); select(r.agent); loadHistory(); } });
+}
+const chatKnown = (id) => !!id && (agents.has(id) || ((saved && saved.chats) || []).some((c) => c.id === id));
+/* a promo chat's state, from the same events the chat list shows */
+function promoChatState(p) {
+  if (!p) return "closed";
+  if (p.busy) return "working" + (p.now ? " · " + p.now : "");
+  if (p.last === "Needs you") return "needs you";
+  if (p.last === "Needs attention") return "failed";
+  if (p.last === "Stopped") return "stopped";
+  return p.started ? "done, no promo yet" : "starting";
+}
+function paintPromoProgress() {
+  /* a chat leaves the list when its promo arrives */
+  const madeBy = new Set([...promoLib.values()].map((x) => x.card.agent).filter(Boolean));
+  const before = prChats.length;
+  prChats = prChats.filter((x) => !madeBy.has(x.agent));
+  if (prChats.length !== before) savePrChats();
+  const box = $("pr-progress"); box.innerHTML = "";
+  $("pr-progress-wrap").hidden = !prChats.length;
+  prChats.slice().reverse().forEach((x) => {
+    const p = agents.get(x.agent);
+    const row = el("div", "pr-row", '<span class="dot"></span><span class="grow"><b></b><small></small></span><button class="pill">Open chat</button><button class="icon" aria-label="Remove from this list" title="Remove from this list"><svg width="10" height="10" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></button>');
+    row.querySelector(".dot").className = "dot" + (p && p.busy ? " live" : p ? " ok" : "");
+    row.querySelector("b").textContent = (p && p.name) || x.title;
+    row.querySelector("small").textContent = promoChatState(p);
+    const [open, drop] = row.querySelectorAll("button");
+    open.hidden = !chatKnown(x.agent);
+    open.onclick = () => openChatById(x.agent);
+    drop.onclick = () => { prChats = prChats.filter((y) => y !== x); savePrChats(); paintPromoProgress(); };
+    box.appendChild(row);
+  });
+}
+/* newest data wins: an older copy of a card (a replayed event) never replaces a newer one */
+function upsertPromo(card) {
+  if (!card || !card.id) return false;
+  const had = promoLib.get(card.id);
+  if (had && (had.card.mtime || 0) >= (card.mtime || 0)) return false;
+  promoLib.set(card.id, { card, el: promoCard(card) });
+  return true;
+}
+function paintLibrary() {
+  const lib = $("pr-library"), items = [...promoLib.values()];
+  items.sort((a, b) => promoWhen(b.card) - promoWhen(a.card) || (b.card.mtime || 0) - (a.card.mtime || 0));
+  $("pr-count").textContent = items.length ? items.length + (items.length === 1 ? " promo" : " promos") : "";
+  $("pr-empty").hidden = items.length > 0;
+  const day = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const today = day(Date.now()), groups = [];
+  for (const it of items) {
+    const t = promoWhen(it.card), d = t ? day(t) : 0;
+    const label = !d ? "Earlier" : d === today ? "Today" : Math.round((today - d) / 86400000) === 1 ? "Yesterday"
+      : new Date(d).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: new Date(d).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+    if (!groups.length || groups[groups.length - 1][0] !== label) groups.push([label, []]);
+    groups[groups.length - 1][1].push(it);
+    it.el._chat.hidden = !chatKnown(it.card.agent);
+  }
+  /* rebuilt only when the order changes, so a playing video or a caption being typed is left alone */
+  const sig = groups.map(([l, xs]) => l + ":" + xs.map((x) => x.card.id + "@" + (x.card.mtime || 0)).join(",")).join("|");
+  if (sig === paintLibrary.sig) return;
+  paintLibrary.sig = sig;
+  lib.innerHTML = "";
+  for (const [label, xs] of groups) {
+    const h = el("div", "pr-day"); h.textContent = label; lib.appendChild(h);
+    const grid = el("div", "pr-grid"); xs.forEach((x) => grid.appendChild(x.el)); lib.appendChild(grid);
+  }
+}
+async function loadPromos() {
+  try { const r = await api("/api/promos"); (r.cards || []).forEach(upsertPromo); } catch (e) { return; }
+  paintLibrary(); paintPromoProgress();
+}
+/* a finished promo: into the library always; in its chat, one line pointing there */
+function onPromo(e) {
+  const c = e.card || {};
+  if (upsertPromo(c)) { paintLibrary(); paintPromoProgress(); }
+  const p = e.agent && agents.get(e.agent);
+  if (!p || !c.id) return;
+  p.promoSeen = p.promoSeen || {};
+  const prev = p.promoSeen[c.id];
+  if (prev !== undefined && prev >= (c.mtime || 0)) return;
+  p.promoSeen[c.id] = c.mtime || 0;
+  if (!p.turn) newTurn(p);
+  const line = el("div", "promo-line enter", '<span></span><button class="linkish">Open in Promos</button>');
+  line.querySelector("span").textContent = (prev === undefined ? "Promo ready: " : "Promo updated: ") + (c.folder ? prName(c.folder) : c.id) + " —";
+  line.querySelector("button").onclick = () => openInPromos(c.id);
+  p.turn.appendChild(line); p.turn._steps = null;
+  paintRail();
+  if (p.id === current) stick();
+}
+function openInPromos(id) {
+  setView("promos");
+  const it = promoLib.get(id); if (!it) return;
+  it.el.scrollIntoView({ block: "center" });   /* the view is showing now: scrolling lays it out */
+  it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
+}
 function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); }
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
@@ -2180,7 +2485,7 @@ async function poll() {
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
 }
-refresh(); loadProjects(); poll(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
+refresh(); loadProjects(); loadPromos(); poll(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
 if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st === "downloading" || st === "checking") refresh(); }, 1500);
 fit();
 </script>
