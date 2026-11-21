@@ -3,7 +3,7 @@
   load_recipe("promo.json")   -> dict, or raises RecipeError with .problems
   validate(recipe, base_dir)  -> list of problems (empty = valid)
 """
-import json, os
+import json, ntpath, os
 
 STYLES = ("hype", "cinematic", "meme", "countdown", "update-log", "lyric", "showcase", "pov")
 CAPTION_SOURCES = ("voice", "music", "none", "words")
@@ -21,7 +21,8 @@ def _num(v):
 
 
 def _resolve(path, base_dir):
-    return path if os.path.isabs(path) else os.path.join(base_dir, path)
+    # a Windows drive path like C:\\Users\\x is absolute on any OS
+    return path if os.path.isabs(path) or ntpath.isabs(path) else os.path.join(base_dir, path)
 
 
 def scene_duration(scene):
@@ -34,6 +35,19 @@ def scene_duration(scene):
 def recipe_duration(recipe):
     """Total seconds of all scenes."""
     return sum(scene_duration(s) for s in recipe.get("scenes", []))
+
+
+def _tolerant_total(scenes):
+    """Total of the scenes that parse, so one bad scene does not hide other checks."""
+    total = 0.0
+    for s in scenes:
+        try:
+            d = scene_duration(s)
+        except (TypeError, ValueError, KeyError, ZeroDivisionError, AttributeError):
+            continue
+        if d > 0:
+            total += d
+    return total
 
 
 def _check_scene(i, s, base_dir, problems):
@@ -116,9 +130,7 @@ def validate(recipe, base_dir, durations=None):
     vol = audio.get("music_volume", 0.8)
     if not _num(vol) or not 0 <= vol <= 1:
         problems.append("audio 'music_volume' must be between 0 and 1.")
-    total = None
-    if not problems:
-        total = recipe_duration(recipe)
+    total = _tolerant_total(scenes)
     for key in ("music", "voice"):
         p = audio.get(key)
         if p is None:
@@ -127,7 +139,7 @@ def validate(recipe, base_dir, durations=None):
             problems.append("audio %s file not found: %s" % (key, p))
             continue
         length = _audio_length(p, base_dir, durations)
-        if key == "voice" and length is not None and total is not None and length > total + 0.05:
+        if key == "voice" and length is not None and total > 0 and length > total + 0.05:
             problems.append("The voice is %.1f s but the video is %.1f s; the voice would be cut off. "
                             "Lengthen the scenes or shorten the voice." % (length, total))
 

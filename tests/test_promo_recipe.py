@@ -83,6 +83,46 @@ class RecipeTests(unittest.TestCase):
                             {"title": "Hi", "duration": 1.2}])
         self.assertAlmostEqual(recipe_duration(r), 2.2)
 
+    def test_absolute_path_with_spaces_and_accents(self):
+        clip = _touch(os.path.join(self.tmp, "José Vidéos", "clip 1.mp4"))
+        r = _recipe(scenes=[{"clip": clip, "in": 0, "out": 2}])
+        self.assertEqual(validate(r, os.path.join(self.tmp, "elsewhere")), [])
+
+    def test_windows_drive_path_is_absolute_on_any_os(self):
+        from unittest import mock
+        from rbxpromo import recipe as mod
+        win = "C:\\Users\\José\\Videos\\clip 1.mp4"
+        self.assertEqual(mod._resolve(win, self.tmp), win)
+        r = _recipe(scenes=[{"clip": win, "in": 0, "out": 2}])
+        with mock.patch.object(mod.os.path, "isfile", side_effect=lambda p: p == win):
+            self.assertEqual(validate(r, self.tmp), [])
+
+    def _audio_recipe(self, audio, out=6):
+        _touch(os.path.join(self.tmp, "voice.wav"))
+        _touch(os.path.join(self.tmp, "music.mp3"))
+        return _recipe(audio=audio, scenes=[{"clip": "clip.mp4", "in": 0, "out": out}])
+
+    def test_music_shorter_than_scenes_is_valid(self):
+        r = self._audio_recipe({"music": "music.mp3"})
+        self.assertEqual(validate(r, self.tmp, durations={"music.mp3": 2.0}), [])
+
+    def test_voice_shorter_than_scenes_is_valid(self):
+        r = self._audio_recipe({"voice": "voice.wav"})
+        self.assertEqual(validate(r, self.tmp, durations={"voice.wav": 4.0}), [])
+
+    def test_voice_equal_or_within_tolerance_is_valid(self):
+        r = self._audio_recipe({"voice": "voice.wav"})
+        for d in (6.0, 6.04):
+            self.assertEqual(validate(r, self.tmp, durations={"voice.wav": d}), [], d)
+        self.assertTrue(validate(r, self.tmp, durations={"voice.wav": 6.2}))
+
+    def test_bad_scene_does_not_hide_voice_problem(self):
+        r = self._audio_recipe({"voice": "voice.wav"})
+        r["scenes"].append({"clip": "clip.mp4", "in": 5, "out": 2})
+        probs = validate(r, self.tmp, durations={"voice.wav": 9.0})
+        self.assertTrue(any("scene 1: 'in' must be before 'out'" in p for p in probs), probs)
+        self.assertTrue(any("voice is 9.0 s but the video is 6.0 s" in p for p in probs), probs)
+
     def test_other_field_checks(self):
         probs = validate(_recipe(fps=24, version=2, size=[100, 100]), self.tmp)
         self.assertEqual(len(probs), 3, probs)
