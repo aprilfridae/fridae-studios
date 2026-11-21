@@ -1084,7 +1084,7 @@ function selectionHint() {
   const it = pl.selection.items || []; const first = it[0] ? it[0].path.split(".").pop() + " (" + it[0].class + ")" : "";
   return '<span class="sel" title="The agent is told what you have selected in Studio.">Selected in Studio: ' + esc(first) + (pl.selection.count > 1 ? " +" + (pl.selection.count - 1) : "") + "</span>";
 }
-let nowHold = 0;        /* until when a note under the message box is kept */
+let nowHold = { until: 0, chat: "", nodes: [] };   /* a note under the message box: kept until then, over that chat only */
 let startingRun = "";   /* the chat a studio run is being started from, until its first event or an error */
 function paintComposer() {
   const p = agents.get(current); const b = !!(p && p.busy);
@@ -1097,7 +1097,7 @@ function paintComposer() {
   box.placeholder = b ? "Add to it while it works. Sent the moment it finishes." : "What should we build or test?";
   /* a note just put under the box (note, noteReview) stays its time; a run being started says so until its Lead answers */
   if (b) $("now").innerHTML = '<span class="now">' + esc(p.now || "Starting") + "</span>";
-  else if (Date.now() < nowHold) return;
+  else if (Date.now() < nowHold.until && nowHold.chat === current) $("now").replaceChildren(...nowHold.nodes);
   else if (startingRun && p && startingRun === p.id) $("now").innerHTML = '<span class="now">Starting the studio run\u2026</span>';
   else $("now").innerHTML = selectionHint() || studioHint();
 }
@@ -1335,7 +1335,9 @@ async function paintUsage() {
   const recs = (r && r.records) || [];
   const sum = (list) => list.reduce((a, x) => ({ total: a.total + (x.total || 0), input: a.input + (x.input || 0), output: a.output + (x.output || 0), cached: a.cached + (x.cache_read || 0), cost: a.cost + (x.cost || 0), turns: a.turns + 1 }), { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0 });
   const now = recs.filter((x) => x.t >= today), all = sum(now);
-  $("b-use").textContent = fmtTokens(all.total - all.cached) + " today";
+  /* nothing counted yet while the day's first turn runs: "…", not a "0" that looks like nothing is happening */
+  const first = !now.length && [...agents.values()].some((x) => x.busy);
+  $("b-use").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " today";
   const rows = AIS.map(([id]) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
   $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
     '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(s.total - s.cached) + "</span><small>" + s.turns + (s.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " \u00b7 about $" + s.cost.toFixed(2) + " at API prices" : "") + "</small></div>").join("")
@@ -1437,7 +1439,7 @@ function onEvent(e) {
     const p = agents.get(e.agent); if (!p) return;
     grow.unobserve(p.col); p.col.remove(); p.row.remove(); agents.delete(e.agent);
     if (current === e.agent) { current = null; if (bootMark !== Infinity) showAi(viewAi); }
-    paintRail(); loadHistory(); return;
+    paintRail(); loadHistory(); refresh(); return;   /* refresh: the New chat button counts the freed slot at once */
   }
   const p = pane(e.agent);
   if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
@@ -1548,8 +1550,11 @@ function onEvent(e) {
     if (!p.turn) newTurn(p);
     p.turn.appendChild(el("div", "err enter", esc(e.text)));
     p.last = e.text === "Stopped." ? "Stopped" : "Needs attention";
+  } else if (e.kind === "handed_back") {
+    /* a helper's result went back to the chat that started it: it is finished, whatever it last asked for */
+    p.last = p.last === "Stopped" ? "Stopped" : "Done";
   } else if (e.kind === "busy") {
-    p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); }
+    p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); if (e.id > bootMark) loadUsage(); }
   } else if (e.kind === "done") {
     const finished = p.turn;
     if (finished && e.id > bootMark && status.plugin && status.plugin.connected && finished.querySelector(".step")) {
@@ -1635,15 +1640,21 @@ function send() {
   if (!text && !ready.length) return;
   if (pending.some((a) => !a.name && !a.failed)) return;  /* an upload is still in flight */
   const names = ready.map((a) => a.name);
-  if (runMode === "studio" || leadsRun(p)) { studioSend(p, text, ready); return; }
+  if (runMode === "studio" || leadsRun(p)) { studioSend(p, text, ready, runMode === "studio"); return; }
   box.value = ""; pending = []; paintAtts(); fit();
+  plainSend(p, text, names);
+}
+/* a message in the chosen ordinary mode (Ask me, Full auto, Overnight) */
+function plainSend(p, text, names) {
   /* a chat started from a researched idea carries the idea's details with its first message */
   const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
   api("/api/send", { agent: p.id, text: full, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
 }
 /* Studio: in the Lead's own chat a message goes to it in Studio mode; in another chat of a game with no run going, it
-   starts one with this chat as the Lead and the message as the idea; while another chat leads, nothing is sent */
-async function studioSend(p, text, ready) {
+   starts one with this chat as the Lead and the message as the idea; while another chat leads, nothing is sent.
+   `chosen`: Studio is the mode picked under the box. Only then may a message start a run: a chat that only looked like
+   the Lead (a run ended a moment ago) sends in the chosen ordinary mode once the fresh run says it leads nothing. */
+async function studioSend(p, text, ready, chosen) {
   const names = ready.map((a) => a.name);
   box.value = ""; pending = []; paintAtts(); fit();
   const back = (why, link) => {
@@ -1668,6 +1679,7 @@ async function studioSend(p, text, ready) {
     api("/api/send", { agent: p.id, text: full, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: true, full: true, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
     return;
   }
+  if (!chosen) { paintSwitch(); plainSend(p, text, names); return; }
   if (runActive(r.run)) return back("This game's studio run is led by another chat.", pr.path);
   if (names.length) return back("Send files once the run has started: the message that starts it is words only.");
   if (!text) return back("Say what to make, then send.");
@@ -1684,7 +1696,7 @@ function noteReview(text, path) {
   const n = $("now"); n.replaceChildren();
   const w = el("span", "warn"); w.textContent = text + " ";
   const b = el("button", "linkish", "Open Review"); b.onclick = () => openInReview(path);
-  n.append(w, b); nowHold = Date.now() + 6000; clearTimeout(noteReview.t); noteReview.t = setTimeout(paintComposer, 6000);
+  n.append(w, b); nowHold = { until: Date.now() + 6000, chat: current, nodes: [w, b] }; clearTimeout(noteReview.t); noteReview.t = setTimeout(paintComposer, 6000);
 }
 // one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
 // keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
@@ -1773,7 +1785,7 @@ function paintAtts() {
   });
 }
 function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ? Object.keys(p.asks) : []; return ids.length ? ids[0] : null; }
-function note(text) { $("now").innerHTML = '<span class="warn">' + esc(text) + "</span>"; nowHold = Date.now() + 3500; setTimeout(paintComposer, 3500); }
+function note(text) { const w = el("span", "warn"); w.textContent = text; $("now").replaceChildren(w); nowHold = { until: Date.now() + 3500, chat: current, nodes: [w] }; setTimeout(paintComposer, 3500); }
 function addFile(file) {
   if (!file) return;
   if (/^(video|audio)\//.test(file.type || "")) { note("Use Add clips for videos and music: they are used where they are, not copied."); return; }
@@ -2585,7 +2597,7 @@ $("rv-end").onclick = () => {
   go.onclick = async () => {
     go.disabled = keep.disabled = true; go.textContent = "Ending...";
     let r; try { r = await api("/api/studio-run", { path, action: "end" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-    if (r && r.ok) { card.remove(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
+    if (r && r.ok) { card.remove(); if (rvAll[path] && rvAll[path].run) rvAll[path].run.on = false; paintSwitch(); paintComposer(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
     loadReview(path);
   };
   box.replaceChildren(card);
