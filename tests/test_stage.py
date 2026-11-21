@@ -172,7 +172,6 @@ class StageTests(unittest.TestCase):
         text = self.call("review", title="v2", summary="s", replaces=old)
         self.assertEqual(self.item(old)["status"], "approved")
         self.assertIn("already approved", text)
-        self.assertIn(old + ":approved", rbxstage.load_run(self.project)["read_decisions"] + [old + ":approved"])
         self.assertIn("v1", self.call("decisions"))
 
     def test_replaces_unknown_id(self):
