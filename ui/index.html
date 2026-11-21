@@ -1876,7 +1876,7 @@ async function loadEngine() {
 }
 function onEngine(e) {
   if (e.failed) engJob = { running: false, step: e.step, error: e.error };
-  else if (e.done) { engJob = {}; loadEngine(); }
+  else if (e.done || e.stopped) { engJob = {}; loadEngine(); }   /* stopped: the app is closing; the row then shows what is left */
   else engJob = { running: true, step: e.step, fraction: e.fraction };
   paintEngine();
 }

@@ -76,11 +76,17 @@ The same tools are a command line: `rbx <command>` (`rbx --help`).
 The promo maker renders with a separate engine that is downloaded on first use, never bundled: a portable
 Node 22, a copy of `promo/` with its npm packages (Remotion, transformers.js, kokoro-js), Remotion's headless
 browser, and the Whisper and Kokoro models. It lives in `engine/` in this folder when running from source, and
-in `Documents/Fridae Studios/engine` in the packaged app (`rbxpromo.engine.engine_dir()`).
+in the per-user app data folder in the packaged app (`rbxpromo.engine.engine_dir()`): macOS
+`~/Library/Application Support/Fridae Studios/engine`, Windows `%LOCALAPPDATA%\Fridae Studios\engine`. Not in
+Documents, which iCloud or OneDrive may sync; an engine earlier builds left in `Documents/Fridae Studios/engine`
+is moved there the first time the engine is used (`migrate_engine`).
 
 - `python3 -m rbxpromo.engine install` (or `rbx promo install`) installs it, about 730 MB. Every finished step is
   written to `engine/.state.json`, so running install again resumes instead of starting over. `rbx promo status`
   says what is missing. In the app, Setup, Connections, Promo engine runs `rbx promo install --json-progress`.
+  An install holds `.install.lock` (pid and start time) in the engine folder; a second install while that process
+  lives is refused, a lock left by a stopped one is taken over. Quitting the app stops the install's whole
+  process tree (its own process group on macOS, `taskkill /T` on Windows).
 - The renderer is a copy: after editing anything in `promo/`, run `python3 -m rbxpromo.engine install` again to
   refresh `engine/renderer` (it re-runs `npm ci` only when `package-lock.json` changed).
 - The packaged app ships `promo/` without `node_modules` (`rbxkit.spec`) so the install can copy it.

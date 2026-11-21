@@ -4,7 +4,7 @@
 The install is a list of steps. Each finished step is written to .state.json, so an install that
 was interrupted (or whose npm step failed) picks up at the step it stopped at instead of starting over.
 """
-import hashlib, json, os, platform, shutil, subprocess, sys, tarfile, urllib.request, zipfile
+import hashlib, json, os, platform, shutil, subprocess, sys, tarfile, time, urllib.request, zipfile
 
 import rbxpaths
 
@@ -22,10 +22,70 @@ class EngineError(rbxpaths.KitError):
     """The engine is missing a part, or a download or install step failed."""
 
 
+def app_data_dir(plat=None, env=None, home=None):
+    """The system's per-user app data folder for Fridae Studios: never Documents, which iCloud or OneDrive may sync."""
+    plat = plat or sys.platform
+    env = os.environ if env is None else env
+    home = home or os.path.expanduser("~")
+    if plat == "darwin":
+        return os.path.join(home, "Library", "Application Support", "Fridae Studios")
+    if plat == "win32":
+        return os.path.join(env.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "Fridae Studios")
+    return os.path.join(env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "fridae-studios")
+
+
+def _tree_size(root):
+    """(files, bytes) under root, symlinks counted as entries and not followed."""
+    files = size = 0
+    for folder, dirs, names in os.walk(root):
+        for n in names + [d for d in dirs if os.path.islink(os.path.join(folder, d))]:
+            files += 1
+            size += os.lstat(os.path.join(folder, n)).st_size
+    return files, size
+
+
+def migrate_engine(old, new):
+    """Move an engine left in the old place (Documents/Fridae Studios/engine) to `new` instead of downloading it again.
+
+    Does nothing when there is no old engine or `new` already exists. Across volumes the copy is checked (same
+    number of files and bytes) before the old folder is removed; a failed copy leaves the old one as it was.
+    Returns True when it moved one."""
+    if not os.path.isdir(old) or os.path.lexists(new):
+        return False
+    os.makedirs(os.path.dirname(new), exist_ok=True)
+    try:
+        os.rename(old, new)
+        return True
+    except OSError:
+        pass  # another volume: copy, check, then remove
+    stage = new + ".moving"
+    shutil.rmtree(stage, ignore_errors=True)
+    try:
+        shutil.copytree(old, stage, symlinks=True)
+        if _tree_size(stage) != _tree_size(old):
+            raise OSError("the copy does not match")
+        os.rename(stage, new)
+    except OSError:
+        shutil.rmtree(stage, ignore_errors=True)
+        return False
+    shutil.rmtree(old, ignore_errors=True)
+    return True
+
+
+_migrated = False
+
+
 def engine_dir():
-    """Documents/Fridae Studios/engine when packaged, <program folder>/engine from source."""
-    base = rbxpaths.HOME_DIR if rbxpaths.FROZEN else rbxpaths.KIT
-    return os.path.join(base, "engine")
+    """<program folder>/engine from source; when packaged, `engine` in the system's app data folder (moved there
+    from Documents/Fridae Studios/engine, where earlier builds put it, the first time it is asked for)."""
+    global _migrated
+    if not rbxpaths.FROZEN:
+        return os.path.join(rbxpaths.KIT, "engine")
+    new = os.path.join(app_data_dir(), "engine")
+    if not _migrated:
+        _migrated = True
+        migrate_engine(os.path.join(rbxpaths.HOME_DIR, "engine"), new)
+    return new
 
 
 def _p(*parts):
@@ -362,12 +422,88 @@ _STEP_FUNCS = {"node": _step_node, "renderer": _step_renderer, "browser": _step_
                "whisper": _step_whisper, "voice": _step_voice}
 
 
+def _pid_alive(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return k32.GetLastError() == 5  # access denied: it exists
+        code = ctypes.c_ulong()
+        k32.GetExitCodeProcess(handle, ctypes.byref(code))
+        k32.CloseHandle(handle)
+        return code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _lock_path():
+    return _p(".install.lock")
+
+
+def _take_lock():
+    """Claim the engine folder for this install: {"pid", "started"} in .install.lock. A lock whose process has
+    ended is taken over; a live one means another install is running."""
+    path = _lock_path()
+    for _ in range(3):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            held = rbxpaths.read_json(path)
+            if not isinstance(held, dict):
+                try:
+                    if time.time() - os.path.getmtime(path) < 5:  # just created, not written yet
+                        time.sleep(0.5)
+                        continue
+                except OSError:
+                    continue
+                held = {}
+            if _pid_alive(held.get("pid")) and held.get("pid") != os.getpid():
+                started = time.strftime("%H:%M", time.localtime(held.get("started") or 0))
+                raise EngineError(f"The promo engine is already being installed (process {held['pid']}, started {started}). "
+                                  "Wait for that install to finish, then check again.")
+            try:
+                os.remove(path)  # left by an install that was stopped
+            except FileNotFoundError:
+                pass
+            continue
+        with os.fdopen(fd, "w") as f:
+            json.dump({"pid": os.getpid(), "started": time.time()}, f)
+        return
+    raise EngineError(f"Could not claim {path} for the install. Try again.")
+
+
+def _drop_lock():
+    held = rbxpaths.read_json(_lock_path())
+    if isinstance(held, dict) and held.get("pid") == os.getpid():
+        try:
+            os.remove(_lock_path())
+        except OSError:
+            pass
+
+
 def install(progress=None, dry_run=False):
-    """Run the install steps that are not done yet. Returns status(), or just the planned step names for dry_run."""
+    """Run the install steps that are not done yet. Returns status(), or just the planned step names for dry_run.
+    Only one install runs on an engine folder at a time (EngineError if another one holds it)."""
     plan = [s for s in STEPS if s not in _load_state()]
     if dry_run:
         return plan
     os.makedirs(engine_dir(), exist_ok=True)
+    _take_lock()
+    try:
+        return _install(progress)
+    finally:
+        _drop_lock()
+
+
+def _install(progress):
     report = progress or (lambda step, fraction: None)
     ran = set()
     ran_any = False

@@ -222,9 +222,68 @@ struct Install {
     fraction: f64,
     error: String,
     child: Option<Child>,
+    /// The app is closing: a running install is stopped and no new one starts.
+    stopping: bool,
 }
 
-static INSTALL: Mutex<Install> = Mutex::new(Install { running: false, step: String::new(), fraction: 0.0, error: String::new(), child: None });
+static INSTALL: Mutex<Install> =
+    Mutex::new(Install { running: false, step: String::new(), fraction: 0.0, error: String::new(), child: None, stopping: false });
+
+/// How an install run ended.
+#[derive(Debug, PartialEq)]
+enum Ending {
+    Ready,
+    /// Stopped by the app (it is closing), not a failure.
+    Stopped,
+    Failed(String),
+}
+
+/// `done` is the last line's (ready, missing), when it came; `code` the exit code (None when killed).
+fn ending(stopping: bool, done: Option<(bool, Vec<String>)>, code: Option<i32>, stderr: &str) -> Ending {
+    match done {
+        Some((true, _)) if code == Some(0) => Ending::Ready,
+        _ if stopping => Ending::Stopped,
+        Some((_, missing)) if code == Some(0) => Ending::Failed(format!("The install finished, but these parts are still missing: {}.", missing.join(", "))),
+        _ => match error_tail(stderr) {
+            why if !why.is_empty() => Ending::Failed(why),
+            _ => Ending::Failed(format!("The install stopped (exit {}).", code.map(|c| c.to_string()).unwrap_or_else(|| "without a code".into()))),
+        },
+    }
+}
+
+/// The install command in its own process group (macOS), so stopping it also stops the npm, node and
+/// browser downloads it started. On Windows the tree is ended with taskkill /T.
+fn install_command() -> Command {
+    let mut c = paths::cli(&["promo", "install", "--json-progress"]);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    c
+}
+
+/// Stop the install and everything it started.
+fn kill_tree(child: &mut Child) {
+    let pid = child.id().to_string();
+    #[cfg(unix)]
+    let mut kill = {
+        let mut k = Command::new("kill");
+        k.args(["-KILL", "--", &format!("-{pid}")]);
+        k
+    };
+    #[cfg(windows)]
+    let mut kill = {
+        let mut k = Command::new("taskkill");
+        k.args(["/T", "/F", "/PID", &pid]);
+        k
+    };
+    kill.stdout(Stdio::null()).stderr(Stdio::null());
+    paths::quiet(&mut kill);
+    let _ = kill.status();
+    let _ = child.kill(); // in case the group kill could not run
+}
 
 /// One line of `rbx promo install --json-progress`.
 #[derive(Debug, PartialEq)]
@@ -272,29 +331,38 @@ fn engine_status() -> Value {
 }
 
 /// The install has ended: the state is settled before the page hears of it, so a status asked for then is current.
-fn finish(step: &str, error: String) {
+fn finish(step: &str, end: Ending) {
     {
         let mut i = INSTALL.lock().unwrap();
         i.running = false;
         i.child = None;
-        i.error = error.clone();
+        i.error = match &end {
+            Ending::Failed(e) => e.clone(),
+            _ => String::new(),
+        };
     }
-    if error.is_empty() {
-        BUS.put("promo_engine", json!({"done": true, "ready": true}));
-    } else {
-        BUS.put("promo_engine", json!({"failed": true, "step": step, "error": error}));
+    match end {
+        Ending::Ready => BUS.put("promo_engine", json!({"done": true, "ready": true})),
+        Ending::Stopped => BUS.put("promo_engine", json!({"stopped": true, "step": step})),
+        Ending::Failed(error) => BUS.put("promo_engine", json!({"failed": true, "step": step, "error": error})),
     }
 }
 
 /// Run the install and pass its progress on; Retry runs this again and the install resumes.
 fn run_install() {
-    let spawned = paths::cli(&["promo", "install", "--json-progress"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
-    let mut child = match spawned {
+    let mut child = match install_command().spawn() {
         Ok(c) => c,
-        Err(e) => return finish("", format!("Could not run the tools: {e}")),
+        Err(e) => return finish("", Ending::Failed(format!("Could not run the tools: {e}"))),
     };
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
-    INSTALL.lock().unwrap().child = Some(child);
+    {
+        let mut i = INSTALL.lock().unwrap();
+        if i.stopping {
+            // the app began closing while this was starting: stop_install found no child to stop
+            kill_tree(&mut child);
+        }
+        i.child = Some(child);
+    }
     // stderr is read beside stdout, so a chatty step can never fill its pipe and stall the install
     let errs = thread::spawn(move || {
         let mut text = String::new();
@@ -327,16 +395,10 @@ fn run_install() {
         }
     }
     let err_text = errs.join().unwrap_or_default();
-    let code = INSTALL.lock().unwrap().child.take().and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
-    let error = match done {
-        Some((true, _)) if code == Some(0) => String::new(),
-        Some((_, missing)) if code == Some(0) => format!("The install finished, but these parts are still missing: {}.", missing.join(", ")),
-        _ => match error_tail(&err_text) {
-            why if !why.is_empty() => why,
-            _ => format!("The install stopped (exit {}).", code.map(|c| c.to_string()).unwrap_or_else(|| "without a code".into())),
-        },
-    };
-    finish(&step, error);
+    let child = INSTALL.lock().unwrap().child.take();
+    let code = child.and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
+    let stopping = INSTALL.lock().unwrap().stopping;
+    finish(&step, ending(stopping, done, code, &err_text));
 }
 
 /// POST /api/promo-engine {action: "status" | "install"}
@@ -346,9 +408,9 @@ pub fn engine(body: &Value) -> Value {
         "install" => {
             let start = {
                 let mut i = INSTALL.lock().unwrap();
-                let start = !i.running;
+                let start = !i.running && !i.stopping;
                 if start {
-                    *i = Install { running: true, step: String::new(), fraction: 0.0, error: String::new(), child: None };
+                    *i = Install { running: true, step: String::new(), fraction: 0.0, error: String::new(), child: None, stopping: false };
                 }
                 start
             };
@@ -361,10 +423,13 @@ pub fn engine(body: &Value) -> Value {
     }
 }
 
-/// Closing the app stops an install halfway; the next install resumes from the last finished step.
+/// Closing the app stops an install halfway, with everything it started; the next install resumes from the
+/// last finished step.
 pub fn stop_install() {
-    if let Some(c) = INSTALL.lock().unwrap().child.as_mut() {
-        let _ = c.kill();
+    let mut i = INSTALL.lock().unwrap();
+    i.stopping = true;
+    if let Some(c) = i.child.as_mut() {
+        kill_tree(c);
     }
 }
 
@@ -479,5 +544,45 @@ mod tests {
         assert!(tail.starts_with("line 19") && tail.ends_with("line 30"), "{tail}");
         assert_eq!(error_tail("  one problem \n"), "one problem");
         assert!(error_tail(&"é".repeat(5000)).chars().count() <= 1500);
+    }
+
+    #[test]
+    fn an_install_ends_ready_stopped_or_failed() {
+        assert_eq!(ending(false, Some((true, vec![])), Some(0), ""), Ending::Ready);
+        // stopped by the app: killed, no last line, whatever it printed is not shown as a failure
+        assert_eq!(ending(true, None, None, "Traceback ... BrokenPipeError"), Ending::Stopped);
+        assert_eq!(ending(true, Some((false, vec!["voice".into()])), Some(0), ""), Ending::Stopped);
+        // a run that finished just as the app closed still counts as ready
+        assert_eq!(ending(true, Some((true, vec![])), Some(0), ""), Ending::Ready);
+        assert_eq!(ending(false, None, Some(1), "npm failed\n"), Ending::Failed("npm failed".into()));
+        assert_eq!(ending(false, None, None, ""), Ending::Failed("The install stopped (exit without a code).".into()));
+        assert_eq!(ending(false, Some((false, vec!["browser".into()])), Some(0), ""), Ending::Failed("The install finished, but these parts are still missing: browser.".into()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_kills_the_whole_process_group() {
+        // a shell in its own group that starts a grandchild, like fridae-cli starting npm
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 30 & echo $!; wait"]);
+        {
+            use std::os::unix::process::CommandExt;
+            c.process_group(0);
+        }
+        let mut child = c.stdout(Stdio::piped()).spawn().unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let grandchild = line.trim().to_string();
+        kill_tree(&mut child);
+        let _ = child.wait();
+        let mut gone = false;
+        for _ in 0..50 {
+            gone = !Command::new("kill").args(["-0", &grandchild]).stderr(Stdio::null()).status().unwrap().success();
+            if gone {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(gone, "the grandchild {grandchild} is still running");
     }
 }

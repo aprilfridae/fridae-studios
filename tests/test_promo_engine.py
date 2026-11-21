@@ -20,9 +20,114 @@ class EngineTests(unittest.TestCase):
     def test_engine_dir_source_vs_packaged(self):
         with mock.patch.object(rbxpaths, "FROZEN", False):
             self.assertEqual(_REAL_ENGINE_DIR(), os.path.join(rbxpaths.KIT, "engine"))
-        with mock.patch.object(rbxpaths, "FROZEN", True):
-            self.assertEqual(_REAL_ENGINE_DIR(),
-                             os.path.join(rbxpaths.HOME_DIR, "engine"))
+        with mock.patch.object(rbxpaths, "FROZEN", True), mock.patch.object(engine, "_migrated", True), \
+                mock.patch.object(engine, "app_data_dir", return_value=os.path.join(self.tmp, "appdata")):
+            self.assertEqual(_REAL_ENGINE_DIR(), os.path.join(self.tmp, "appdata", "engine"))
+
+    def test_app_data_dir_per_platform(self):
+        home = os.path.join(os.sep, "home", "jos\u00e9")
+        self.assertEqual(engine.app_data_dir("darwin", {}, home),
+                         os.path.join(home, "Library", "Application Support", "Fridae Studios"))
+        self.assertEqual(engine.app_data_dir("win32", {"LOCALAPPDATA": r"C:\Users\Jos\u00e9\AppData\Local"}, home),
+                         os.path.join(r"C:\Users\Jos\u00e9\AppData\Local", "Fridae Studios"))
+        self.assertEqual(engine.app_data_dir("win32", {}, home), os.path.join(home, "AppData", "Local", "Fridae Studios"))
+        self.assertEqual(engine.app_data_dir("linux", {"XDG_DATA_HOME": "/x/data"}, home), os.path.join("/x/data", "fridae-studios"))
+        self.assertEqual(engine.app_data_dir("linux", {}, home), os.path.join(home, ".local", "share", "fridae-studios"))
+        for plat in ("darwin", "win32", "linux"):
+            self.assertNotIn("Documents", engine.app_data_dir(plat, {}, home))
+
+    def _old_engine(self):
+        old = os.path.join(self.tmp, "Documents", "Fridae Studios", "engine")
+        os.makedirs(os.path.join(old, "node", "bin"))
+        with open(os.path.join(old, "node", "bin", "node"), "w") as f:
+            f.write("node")
+        with open(os.path.join(old, ".state.json"), "w") as f:
+            json.dump({"done": ["node"]}, f)
+        return old
+
+    def test_migration_moves_the_old_engine(self):
+        old = self._old_engine()
+        new = os.path.join(self.tmp, "Library", "Application Support", "Fridae Studios", "engine")
+        self.assertTrue(engine.migrate_engine(old, new))
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.isdir(os.path.dirname(old)))  # only the engine folder leaves Documents
+        with open(os.path.join(new, "node", "bin", "node")) as f:
+            self.assertEqual(f.read(), "node")
+        self.assertEqual(os.listdir(os.path.dirname(new)), ["engine"])
+        self.assertFalse(engine.migrate_engine(old, new))  # nothing left to move
+
+    def test_migration_across_volumes_copies_then_removes(self):
+        old = self._old_engine()
+        new = os.path.join(self.tmp, "appdata", "engine")
+        real_rename = os.rename
+        def rename(a, b):
+            if a == old:
+                raise OSError(18, "Invalid cross-device link")
+            return real_rename(a, b)
+        with mock.patch.object(engine.os, "rename", side_effect=rename):
+            self.assertTrue(engine.migrate_engine(old, new))
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.isfile(os.path.join(new, ".state.json")))
+        self.assertFalse(os.path.exists(new + ".moving"))
+
+    def test_failed_copy_keeps_the_old_engine(self):
+        old = self._old_engine()
+        new = os.path.join(self.tmp, "appdata", "engine")
+        with mock.patch.object(engine.os, "rename", side_effect=OSError(18, "cross-device")), \
+                mock.patch.object(engine, "_tree_size", side_effect=[(1, 1), (2, 2)]):
+            self.assertFalse(engine.migrate_engine(old, new))
+        self.assertTrue(os.path.isfile(os.path.join(old, "node", "bin", "node")))
+        self.assertFalse(os.path.exists(new) or os.path.exists(new + ".moving"))
+
+    def test_no_migration_when_the_new_engine_exists(self):
+        old = self._old_engine()
+        new = os.path.join(self.tmp, "appdata", "engine")
+        os.makedirs(new)
+        self.assertFalse(engine.migrate_engine(old, new))
+        self.assertTrue(os.path.isdir(old))
+        self.assertEqual(os.listdir(new), [])
+
+    def test_packaged_engine_dir_migrates_once(self):
+        home = os.path.join(self.tmp, "Documents", "Fridae Studios")
+        old = self._old_engine()
+        with mock.patch.object(rbxpaths, "FROZEN", True), mock.patch.object(rbxpaths, "HOME_DIR", home), \
+                mock.patch.object(engine, "_migrated", False), \
+                mock.patch.object(engine, "app_data_dir", return_value=os.path.join(self.tmp, "appdata")):
+            got = _REAL_ENGINE_DIR()
+        self.assertEqual(got, os.path.join(self.tmp, "appdata", "engine"))
+        self.assertTrue(os.path.isfile(os.path.join(got, "node", "bin", "node")))
+        self.assertFalse(os.path.exists(old))
+
+    def test_second_install_is_refused_while_one_runs(self):
+        with open(os.path.join(self.tmp, ".install.lock"), "w") as f:
+            json.dump({"pid": os.getppid(), "started": 0}, f)  # a live process that is not this one
+        ran = []
+        steps = {s: (lambda *a, **k: ran.append(1)) for s in engine.STEPS}
+        with mock.patch.object(engine, "_STEP_FUNCS", steps):
+            with self.assertRaises(EngineError) as cm:
+                engine.install()
+        self.assertIn("already being installed", str(cm.exception))
+        self.assertEqual(ran, [])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, ".install.lock")))  # still theirs
+
+    def test_stale_install_lock_is_taken_over_and_released(self):
+        import subprocess, sys
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        lock = os.path.join(self.tmp, ".install.lock")
+        with open(lock, "w") as f:
+            json.dump({"pid": dead.pid, "started": 0}, f)
+        seen = []
+        def step(*a, **k):
+            seen.append(rbxpaths.read_json(lock))
+        done = ["node", "renderer", "browser", "whisper"]
+        with mock.patch.object(engine, "_STEP_FUNCS", {s: step for s in engine.STEPS}), \
+                mock.patch.object(engine, "_load_state", side_effect=lambda: list(done)), \
+                mock.patch.object(engine, "_mark_done", side_effect=done.append), \
+                mock.patch.object(engine, "status", return_value={"ready": True}):
+            engine.install()
+        self.assertEqual(seen[0]["pid"], os.getpid())
+        self.assertFalse(os.path.exists(lock))
 
     def test_node_download_url(self):
         self.assertTrue(engine.node_url("win32", "AMD64").endswith("win-x64.zip"))

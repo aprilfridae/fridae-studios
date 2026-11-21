@@ -70,7 +70,7 @@ not included.
 ## Promo engine (downloaded at install, not bundled)
 
 `rbx promo install` (Setup, Connections, Promo engine) downloads these into the engine folder
-(`Documents/Fridae Studios/engine` in the app). Each keeps its own licence.
+(the per-user app data folder in the app, e.g. `~/Library/Application Support/Fridae Studios/engine`). Each keeps its own licence.
 
 - **Node.js** (MIT, https://github.com/nodejs/node/blob/main/LICENSE): the portable runtime from nodejs.org,
   checked against its `SHASUMS256.txt`.

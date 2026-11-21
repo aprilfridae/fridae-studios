@@ -77,8 +77,13 @@ never copied.
 - **It downloads its engine on first use** (about 730 MB: a portable Node.js,
   the Remotion renderer with its headless browser, a speech recognition model
   and a voice model). Install it from Setup, Connections, Promo engine, or let
-  the agent ask. It goes in `Documents/Fridae Studios/engine`; nothing is
-  installed system-wide. An interrupted install continues where it stopped.
+  the agent ask. It goes in your own app data folder (macOS:
+  `~/Library/Application Support/Fridae Studios/engine`; Windows:
+  `%LOCALAPPDATA%\Fridae Studios\engine`), not in Documents, so iCloud or
+  OneDrive do not sync it; an engine an earlier version put in
+  `Documents/Fridae Studios/engine` is moved there. Nothing is installed
+  system-wide. An interrupted install continues where it stopped, and only one
+  install runs at a time.
 - **Licence:** rendering uses [Remotion](https://www.remotion.dev/docs/license),
   which is free for individuals, non-profits and for-profit teams of up to 3
   people; larger companies need a Remotion company licence to use the promo

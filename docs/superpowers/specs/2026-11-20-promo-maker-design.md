@@ -219,8 +219,9 @@ voiceover lines that make claims about the game.
 ### Where files go
 
 `<work>/promos/<project or chat>/<timestamp>-<slug>/` holding `promo.json`, `promo.mp4`, `cover.jpg`,
-`caption.txt`, `sheet.jpg`, and any `voice.wav`. Engine downloads go in Fridae's data folder (`Documents/Fridae
-Studios/engine/` packaged, or the work folder from source), not the work folder.
+`caption.txt`, `sheet.jpg`, and any `voice.wav`. Engine downloads go in the per-user app data folder when packaged
+(`~/Library/Application Support/Fridae Studios/engine`, `%LOCALAPPDATA%\Fridae Studios\engine`; not Documents,
+which iCloud/OneDrive sync), or `<program folder>/engine` from source; never the work folder.
 
 ### README
 
