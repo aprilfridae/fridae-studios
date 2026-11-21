@@ -1,4 +1,4 @@
-import json, os, tempfile, unittest
+import json, os, shutil, tempfile, unittest
 from unittest import mock
 
 import rbxpaths
@@ -65,7 +65,14 @@ class EngineTests(unittest.TestCase):
     def test_install_resumes_after_failure(self):
         calls = []
         def ok(name):
-            return lambda *a, **k: calls.append(name)
+            def run(*a, **k):
+                calls.append(name)
+                made = {"browser": [("renderer", "node_modules", ".remotion")],
+                        "whisper": [("hf-cache", *engine.ASR_MODEL.split("/"))],
+                        "voice": [("hf-cache", *engine.VOICE_MODEL.split("/"))]}.get(name, [])
+                for parts in made:  # what the real step leaves on disk
+                    os.makedirs(os.path.join(self.tmp, *parts), exist_ok=True)
+            return run
         def boom(*a, **k):
             raise EngineError("npm failed")
         steps = {"node": ok("node"), "renderer": boom, "browser": ok("browser"),
@@ -91,6 +98,8 @@ class EngineTests(unittest.TestCase):
         open(os.path.join(self.tmp, "node", "bin", "node"), "w").close()
         os.makedirs(os.path.join(self.tmp, "renderer", "node_modules", "remotion"))
         os.makedirs(os.path.join(self.tmp, "renderer", "node_modules", ".remotion"))
+        for m in (engine.ASR_MODEL, engine.VOICE_MODEL):
+            os.makedirs(os.path.join(self.tmp, "hf-cache", *m.split("/")))
         engine._mark_done("node")
         engine._mark_done("renderer")
         for s in ("browser", "whisper", "voice"):
@@ -131,6 +140,50 @@ class EngineTests(unittest.TestCase):
     def test_download_mb_is_sum_of_missing_steps(self):
         st = engine.status()
         self.assertEqual(st["download_mb"], sum(engine._SIZE_MB[s] for s in st["missing"]))
+
+    def test_install_ends_ready_when_renderer_unmarks_browser(self):
+        self._fake_ready_engine()
+        calls = []
+        def renderer(progress):
+            calls.append("renderer")
+            engine._unmark("browser")  # what npm ci does after a lock change
+        def browser(progress):
+            calls.append("browser")
+            engine._mark_done("browser")
+        with open(os.path.join(engine._source_dir(), "scripts", "a.mjs"), "w") as f:
+            f.write("changed")
+        steps = dict(engine._STEP_FUNCS, renderer=renderer, browser=browser)
+        with mock.patch.object(engine, "_STEP_FUNCS", steps), mock.patch.object(engine, "_node_path", return_value="/x/node"):
+            st = engine.install()
+        self.assertEqual(calls, ["renderer", "browser"])
+        self.assertTrue(st["ready"])
+        self.assertEqual(st["missing"], [])
+
+    def test_install_does_not_loop_on_a_step_that_never_sticks(self):
+        self._fake_ready_engine()
+        with mock.patch.object(engine, "_STEP_FUNCS", dict(engine._STEP_FUNCS, browser=lambda p: None)):
+            engine._unmark("browser")
+            shutil.rmtree(os.path.join(self.tmp, "renderer", "node_modules", ".remotion"))
+            with mock.patch.object(engine, "_node_path", return_value="/x/node"):
+                with self.assertRaises(EngineError):
+                    engine.install()
+
+    def test_node_env_keeps_hf_cache_inside_engine(self):
+        env = engine.node_env()
+        self.assertEqual(env["HF_HOME"], os.path.join(self.tmp, "hf-cache"))
+        self.assertEqual(env["npm_config_cache"], os.path.join(self.tmp, "npm-cache"))
+
+    def test_status_needs_model_folders(self):
+        self._fake_ready_engine()
+        with mock.patch.object(engine, "_node_path", return_value="/x/node"):
+            self.assertTrue(engine.status()["ready"])
+            shutil.rmtree(os.path.join(self.tmp, "hf-cache", *engine.ASR_MODEL.split("/")))
+            st = engine.status()
+            self.assertFalse(st["ready"])
+            self.assertEqual(st["missing"], ["whisper"])
+            self.assertEqual(engine.install(dry_run=True), ["whisper"])
+            shutil.rmtree(os.path.join(self.tmp, "hf-cache", *engine.VOICE_MODEL.split("/")))
+            self.assertEqual(engine.status()["missing"], ["whisper", "voice"])
 
     def test_tools_raise_when_not_ready(self):
         with self.assertRaises(EngineError) as cm:

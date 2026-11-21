@@ -1,9 +1,11 @@
 // Voice generation. Task 4 adds speech synthesis; for now only --warm (download and load the model).
 import { KokoroTTS } from "kokoro-js";
 import { env } from "@huggingface/transformers";
+import { fileURLToPath } from "node:url";
 
 const MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
-if (process.env.HF_HOME) env.cacheDir = process.env.HF_HOME;
+// models live in <engine>/hf-cache, beside renderer/, whether or not HF_HOME is set
+env.cacheDir = process.env.HF_HOME || fileURLToPath(new URL("../../hf-cache", import.meta.url));
 
 if (process.argv.includes("--warm")) {
   await KokoroTTS.from_pretrained(MODEL, { dtype: "q8" });

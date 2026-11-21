@@ -11,6 +11,8 @@ import rbxpaths
 NODE_MAJOR = "v22."
 NODE_FALLBACK = "v22.12.0"  # only used when no version is given
 NODE_DIST = "https://nodejs.org/dist"
+ASR_MODEL = "onnx-community/whisper-base.en_timestamped"
+VOICE_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX"
 STEPS = ["node", "renderer", "browser", "whisper", "voice"]
 # measured download sizes in MB per step (node archive; npm packages + Remotion browser; ASR model; voice model)
 _SIZE_MB = {"node": 50, "renderer": 395, "browser": 115, "whisper": 76, "voice": 97}
@@ -147,6 +149,9 @@ def _load_state():
             current = None
         if state.get("promo_hash") != current:
             done.remove("renderer")
+    for step, model in (("whisper", ASR_MODEL), ("voice", VOICE_MODEL)):
+        if step in done and not os.path.isdir(_p("hf-cache", *model.split("/"))):
+            done.remove(step)  # the model files are gone even though the step was once finished
     if "browser" in done and not os.path.isdir(_p("renderer", "node_modules", ".remotion")):
         done.remove("browser")  # the headless browser lives in node_modules and is gone with it
     return done
@@ -213,7 +218,8 @@ def _require_ready():
 
 # ---------------------------------------------------------------- running things
 
-def _env():
+def node_env():
+    """Environment for every node script run in the engine (PATH, npm cache, Hugging Face cache inside the engine)."""
     env = dict(os.environ)
     node_bin = os.path.dirname(_node_path() or "")
     env["PATH"] = node_bin + os.pathsep + env.get("PATH", "")
@@ -227,7 +233,7 @@ def _env():
 
 def _run(cmd, cwd, what, ok_marker=None):
     try:
-        r = subprocess.run(cmd, cwd=cwd, env=_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        r = subprocess.run(cmd, cwd=cwd, env=node_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, encoding="utf-8", errors="replace", creationflags=rbxpaths.no_window())
     except OSError as e:
         raise EngineError(f"{what} could not start: {e}")
@@ -354,18 +360,28 @@ _STEP_FUNCS = {"node": _step_node, "renderer": _step_renderer, "browser": _step_
 
 def install(progress=None, dry_run=False):
     """Run the install steps that are not done yet. Returns status(), or just the planned step names for dry_run."""
-    done = _load_state()
-    plan = [s for s in STEPS if s not in done]
+    plan = [s for s in STEPS if s not in _load_state()]
     if dry_run:
         return plan
     os.makedirs(engine_dir(), exist_ok=True)
     report = progress or (lambda step, fraction: None)
-    for step in plan:
+    ran = set()
+    ran_any = False
+    while True:
+        # recomputed after every step: a step can invalidate an earlier one (npm ci removes the browser)
+        todo = [s for s in STEPS if s not in _load_state()]
+        if not todo:
+            break
+        step = todo[0]
+        if step in ran:
+            raise EngineError(f"The {step} step finished but is still not ready. Run install again or delete the engine folder.")
+        ran.add(step)
+        ran_any = True
         report(step, 0.0)
         _STEP_FUNCS[step](report)
         _mark_done(step)
         report(step, 1.0)
-    if plan:
+    if ran_any:
         shutil.rmtree(_p("npm-cache"), ignore_errors=True)  # only needed while installing
     return status()
 
