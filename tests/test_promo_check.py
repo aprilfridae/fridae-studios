@@ -107,6 +107,55 @@ def _sine(freq, seconds, peak_db, channels, rate=48000):
     return np.tile(x[:, None], (1, channels))
 
 
+class PresetNoteTests(unittest.TestCase):
+    def test_zero_presets_found_is_an_error(self):
+        from unittest import mock
+        with mock.patch("builtins.open", mock.mock_open(read_data="export const X = {};")):
+            with self.assertRaises(ValueError):
+                mod._caption_presets()
+
+    def test_unknown_preset_adds_one_note(self):
+        from unittest import mock
+        lay = [box(0.5, 1.0, 240, 700, 600, 200), box(1.0, 1.5, 240, 700, 600, 200)]
+        notes = []
+        with mock.patch.object(mod, "_caption_presets", return_value={"punch": {"color": "#FFFFFF", "stroke": 0, "strokeColor": None}}):
+            looks = mod._text_looks(lay, recipe(TITLE, captions={"source": "words", "style": "nope"}), notes)
+        self.assertEqual(looks, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("'nope' not found", notes[0])
+
+    def test_empty_presets_file_gives_note_through_check(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "captions"))
+            os.makedirs(os.path.join(tmp, "styles"))
+            with open(os.path.join(tmp, "captions", "presets.ts"), "w") as f:
+                f.write("// nothing")
+            with open(os.path.join(tmp, "styles", "hype.json"), "w") as f:
+                json.dump({"captions": "punch", "title": {"color": "#FFFFFF"}}, f)
+            with mock.patch.object(mod, "_src_dir", return_value=tmp):
+                p, n = mod._contrast_problems(None, [CENTRED], recipe(TITLE, captions={"source": "words"}))   # fails before the video is opened
+        self.assertEqual(p, [])
+        self.assertTrue(any("could not read the style files" in x and "no caption presets" in x for x in n), n)
+
+
+class SourceDirTests(unittest.TestCase):
+    def test_prefers_installed_renderer_copy(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "engine", "renderer", "src")
+            os.makedirs(src)
+            with mock.patch.object(engine, "engine_dir", return_value=os.path.join(tmp, "engine")):
+                self.assertEqual(mod._src_dir(), src)
+
+    def test_falls_back_to_program_sources(self):
+        from unittest import mock
+        import rbxpaths
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(engine, "engine_dir", return_value=os.path.join(tmp, "none")):
+                self.assertEqual(mod._src_dir(), os.path.join(rbxpaths.KIT, "promo", "src"))
+
+
 class LoudnessMathTests(unittest.TestCase):
     """BS.1770 reference: a stereo 1 kHz sine whose peak is -23 dBFS reads -23 LUFS (K-weighting adds
     +0.7 dB at 1 kHz, which the -0.691 offset cancels, and two channels add 3 dB to the mean square)."""
@@ -206,6 +255,12 @@ class MediaTests(unittest.TestCase):
         hype = recipe(TITLE, captions={"source": "words"})      # punch: white with a black outline
         res = mod.check(self.video("white2.mp4", -14.0, colour=(250, 250, 250)), [box(0.5, 2.0, 240, 700, 600, 200)], hype)
         self.assertEqual(res["problems"], [], res)
+
+    def test_box_past_the_end_of_the_video_is_noted(self):
+        cin = recipe(TITLE, style="cinematic", captions={"source": "words"})
+        lay = [box(50.0, 51.0, 240, 700, 600, 200), box(60.0, 61.0, 240, 700, 600, 200)]
+        res = mod.check(self.video("short.mp4", -14.0), lay, cin)
+        self.assertTrue(any("2 text boxes" in n and "50.5 s" in n for n in res["notes"]), res)
 
     def test_contrast_reads_only_a_handful_of_frames(self):
         from unittest import mock

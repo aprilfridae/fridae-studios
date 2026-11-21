@@ -234,15 +234,21 @@ def contrast_ratio(a, b):
     return (hi + 0.05) / (lo + 0.05)
 
 
+def _src_dir():
+    """promo/src of the installed renderer copy (what actually renders), else the program's own promo/src."""
+    installed = os.path.join(engine.engine_dir(), "renderer", "src")
+    return installed if os.path.isdir(installed) else os.path.join(rbxpaths.KIT, "promo", "src")
+
+
 def _style_json(name):
-    path = os.path.join(rbxpaths.KIT, "promo", "src", "styles", "%s.json" % name)
+    path = os.path.join(_src_dir(), "styles", "%s.json" % name)
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
 def _caption_presets():
     """{name: {"color", "stroke", "strokeColor"}} read from promo/src/captions/presets.ts."""
-    with open(os.path.join(rbxpaths.KIT, "promo", "src", "captions", "presets.ts"), encoding="utf-8") as f:
+    with open(os.path.join(_src_dir(), "captions", "presets.ts"), encoding="utf-8") as f:
         src = f.read()
     out = {}
     for block in src.split("preset({")[1:]:
@@ -254,6 +260,8 @@ def _caption_presets():
             sc = re.search(r"\bstrokeColor:\s*'(#[0-9A-Fa-f]{3,6})'", block)
             out[name.group(1)] = {"color": colour.group(1), "stroke": float(stroke.group(1)) if stroke else 0.0,
                                   "strokeColor": sc.group(1) if sc else None}
+    if not out:
+        raise ValueError("no caption presets found in presets.ts")
     return out
 
 
@@ -266,8 +274,9 @@ def _scene_style(recipe, t):
     return recipe["style"]
 
 
-def _text_looks(layout, recipe):
-    """[(box, text colour, outline colour or None)] for every box whose colours can be worked out."""
+def _text_looks(layout, recipe, notes):
+    """[(box, text colour, outline colour or None)] for every box whose colours can be worked out;
+    a caption whose preset cannot be found adds a note (once per preset) instead of vanishing."""
     style_cache, presets = {}, None
 
     def style(name):
@@ -288,6 +297,10 @@ def _text_looks(layout, recipe):
             p = presets.get(name)
             if p:
                 out.append((b, _hex(p["color"]), _hex(p["strokeColor"]) if p["stroke"] > 0 else None))
+            else:
+                msg = "Contrast not checked for captions (first at %s): style preset '%s' not found." % (_t(b["from"]), name)
+                if not any("preset '%s' not found" % name in n for n in notes):
+                    notes.append(msg)
         elif b["kind"] == "title":
             t = style(_scene_style(recipe, mid))["title"]
             out.append((b, _hex(t["color"]), _hex(t["strokeColor"]) if t.get("stroke", 0) > 0 else None))
@@ -324,23 +337,25 @@ def _box_luminance(cap, box, t):
 
 def _contrast_problems(video, layout, recipe):
     import cv2
+    notes = []
     try:
-        looks = _text_looks(layout, recipe)
+        looks = _text_looks(layout, recipe, notes)
     except (OSError, ValueError, KeyError) as e:
         return [], ["Text contrast was not checked: could not read the style files (%s)." % e]
     if not looks:
-        return [], []
+        return [], notes
     if len(looks) > MAX_CONTRAST_BOXES:
         looks = [looks[int(i * len(looks) / MAX_CONTRAST_BOXES)] for i in range(MAX_CONTRAST_BOXES)]
     cap = cv2.VideoCapture(video)
     if not cap.isOpened():
         raise RuntimeError("could not open the video to check contrast: " + video)
-    problems = []
+    problems, unread = [], []
     try:
         for box, colour, outline in looks:
             t = (box["from"] + box["to"]) / 2
             lum = _box_luminance(cap, box, t)
             if lum is None:
+                unread.append(t)
                 continue
             ratio = contrast_ratio(colour, lum)
             if outline:     # an outline carries the text where the picture would not
@@ -350,7 +365,10 @@ def _contrast_problems(video, layout, recipe):
                                 % (_KIND_LABEL.get(box["kind"], box["kind"]), _t(t), ratio, MIN_CONTRAST))
     finally:
         cap.release()
-    return problems, []
+    if unread:
+        notes.append("Contrast not checked for %d text box%s (first at %s): no readable picture there."
+                     % (len(unread), "" if len(unread) == 1 else "es", _t(unread[0])))
+    return problems, notes
 
 
 # ---------------------------------------------------------------- the check
