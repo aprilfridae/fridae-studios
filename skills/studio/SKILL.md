@@ -98,6 +98,10 @@ working: an expert frees its slot when it finishes, so waiting for it is enough:
 1. call `rbx_team` `wait` with the ids of the experts that are running (`rbx_team` `status` lists them);
 2. check and file what came back;
 3. spawn the refused task again.
+If the answer says Roblox Studio is not open (or the Fridae plugin is not connected), an expert that changes the game
+cannot work, and starting it would only spend the user's AI plan. Put one card on the board under needs, "Open the game
+in Roblox Studio", carry on with work that needs no Studio, and spawn that expert again when the card is done (the app
+tells you when the user presses Done). Experts that only read, test, review or write documents still start.
 If the slots are full and none of your own experts is running (the user's other chats hold the slots), there is
 nothing to wait on: put one card on the board under needs, "Close a chat to free an agent slot", do work that needs no
 expert (checking, filing, GAME.md, the board), and spawn again next turn. If nothing else is left, end with

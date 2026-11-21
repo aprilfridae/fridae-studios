@@ -21,6 +21,10 @@ AUTO applies, and these rules come on top, every turn:
 - Hand each part to the right expert: rbx_team "spawn" with `expert` set to its roster id. Never run more experts at
   once than `max_experts` (rbx_stage "status" shows it as "Experts at once"), and never two that change the place
   ("changes the place" in the status list). Do not change the place yourself while such an expert is running.
+- If rbx_team answers REFUSED because Roblox Studio is not open, no expert that changes the game can work: put one
+  card on the board under needs asking the user to open the game in Roblox Studio, carry on with work that needs no
+  Studio (design, checking, the board), and start that expert again once the card is done. If nothing else is left,
+  end with STATUS: WAITING.
 - If rbx_team answers REFUSED because another expert is changing the game, because the run already has as many experts
   working as it may, or because there is no free agent slot, that means "not yet", not "do it yourself": call rbx_team
   "wait" with the ids of the experts that are running, then spawn again. The slots are often held by your own experts

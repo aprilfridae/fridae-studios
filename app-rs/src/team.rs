@@ -142,6 +142,18 @@ pub const NO_SLOT: &str = "All agent slots are in use. Wait for one to finish, o
 
 /// Why an expert is not started for the Lead of a run that was ended in Review.
 pub const RUN_ENDED: &str = "This game's studio run was ended.";
+/// What a Lead is told when it tries to start an expert that changes the game while Studio cannot be reached.
+pub const NO_STUDIO: &str = "Roblox Studio is not open, or the Fridae plugin is not connected, so an expert that changes the game cannot work yet. Put one card on the board under needs asking the user to open the game in Roblox Studio, do work that needs no Studio, and start this expert again when that card is done.";
+
+/// An expert that changes the game needs Studio: without it the expert would only spend the user's AI plan.
+fn needs_studio(writes: bool, studio_open: bool) -> Option<&'static str> {
+    (writes && !studio_open).then_some(NO_STUDIO)
+}
+
+/// Whether Studio's edit session is talking to the app. Tests have no Studio, and test the rule through `needs_studio`.
+fn studio_open() -> bool {
+    cfg!(test) || crate::plugin::connected()
+}
 
 fn start(req: &Value) {
     let id = paths::base_name(req["id"].as_str().unwrap_or(""));
@@ -180,6 +192,9 @@ fn start(req: &Value) {
         let title = expert_title(expert_name, &name);
         let key = project.clone().unwrap_or_default();
         let writes = req["writes"].as_bool().unwrap_or(false);
+        if let Some(why) = needs_studio(writes, studio_open()) {
+            return refuse(why); // before the writer gate: a refused request never takes the place
+        }
         if let Err(why) = with_writers(|w| writer_gate(w, &key, &title, writes)) {
             return refuse(&why); // a refused request never takes the place
         }
@@ -471,4 +486,12 @@ mod tests {
             agents::remove_agent(&a.id);
         }
     }
+    #[test]
+    fn an_expert_that_changes_the_game_needs_studio_open() {
+        assert_eq!(needs_studio(true, false), Some(NO_STUDIO));
+        assert_eq!(needs_studio(true, true), None);
+        assert_eq!(needs_studio(false, false), None, "testers, reviewers and the designer work without Studio");
+        assert!(NO_STUDIO.contains("under needs") && NO_STUDIO.contains("start this expert again"));
+    }
+
 }
