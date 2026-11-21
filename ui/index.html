@@ -614,7 +614,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <h2>New promo</h2>
     <div class="pr-form" id="pr-form">
       <div class="pr-field"><span class="pr-label">Clips</span><div class="pr-files" id="pr-clips"></div><div class="act"><button class="pill" id="pr-add-clips">Add clips</button><span class="sub" id="pr-drop-hint">or drop video files here</span></div></div>
-      <div class="pr-field"><span class="pr-label">Music</span><div class="pr-files" id="pr-music"></div><div class="act"><button class="pill" id="pr-pick-music">Pick music</button><span class="sub" id="pr-no-music">None: post it silent and add a TikTok sound.</span></div></div>
+      <div class="pr-field"><span class="pr-label">Music</span><div class="pr-files" id="pr-music"></div><div class="act"><button class="pill" id="pr-pick-music">Pick music</button><span class="sub" id="pr-no-music">None: no music track, the game sound stays.</span></div><label class="sub" style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="pr-mute"> Mute game sound (I'll add a TikTok sound)</label></div>
       <div class="pr-field"><span class="pr-label">In the style of a TikTok<small>optional</small></span><div class="pr-files" id="pr-ref"></div><div class="act"><button class="pill" id="pr-pick-ref">Pick saved video</button></div><p class="sub">TikTok links can't be used: save the video file first, then pick it here. Its pacing and structure are copied, not its footage.</p></div>
       <div class="pr-field"><span class="pr-label">Style</span><div class="pr-styles" id="pr-styles"></div><p class="sub" id="pr-styles-note"></p></div>
       <div class="pr-field"><span class="pr-label">Length</span><div class="seg" id="pr-length"></div></div>
@@ -2081,12 +2081,12 @@ $("pr-make").onclick = async () => {
   make.dataset.busy = "1"; make.disabled = true;
   let r;
   try {
-    r = await api("/api/promo-start", { clips: prForm.clips, music: prForm.music || null, reference: prForm.reference || null, style: prForm.style, length: prForm.length, voice_text: $("pr-voice").value.trim(), brief, project: prForm.project || null });
+    r = await api("/api/promo-start", { clips: prForm.clips, music: prForm.music || null, reference: prForm.reference || null, style: prForm.style, length: prForm.length, voice_text: $("pr-voice").value.trim(), brief, project: prForm.project || null, mute_game_sound: $("pr-mute").checked });
   } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   make.dataset.busy = "";
   if (!r.ok) { paintPromoForm(); prNote(r.error || "Could not start the promo."); return; }
   prChats.push({ agent: r.agent, title: "Promo: " + brief.split(/\s+/).slice(0, 5).join(" "), at: Date.now() }); savePrChats();
-  prForm.clips = []; prForm.music = ""; prForm.reference = ""; $("pr-brief").value = ""; $("pr-voice").value = "";
+  prForm.clips = []; prForm.music = ""; prForm.reference = ""; $("pr-brief").value = ""; $("pr-voice").value = ""; $("pr-mute").checked = false;
   paintPromoForm(); paintPromoProgress();
   prNote("Started in a chat of its own. It keeps working while you do other things.");
 };

@@ -136,6 +136,14 @@ class RecipeTests(unittest.TestCase):
         self.assertTrue(any("scene 1: 'in' must be before 'out'" in p for p in probs), probs)
         self.assertTrue(any("voice is 9.0 s but the video is 6.0 s" in p for p in probs), probs)
 
+    def test_clip_and_voice_volume_ranges(self):
+        for key in ("clip_volume", "voice_volume"):
+            for ok in (0, 0.5, 1, 2):
+                self.assertEqual(validate(_recipe(audio={key: ok}), self.tmp), [], (key, ok))
+            for bad in (-0.1, 2.01, "1", True, None):
+                probs = validate(_recipe(audio={key: bad}), self.tmp)
+                self.assertTrue(any(key in p and "0 and 2" in p for p in probs), (key, bad, probs))
+
     def test_other_field_checks(self):
         probs = validate(_recipe(fps=24, version=2, size=[100, 100]), self.tmp)
         self.assertEqual(len(probs), 3, probs)

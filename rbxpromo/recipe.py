@@ -147,6 +147,10 @@ def validate(recipe, base_dir, durations=None):
     vol = audio.get("music_volume", 0.8)
     if not _num(vol) or not 0 <= vol <= 1:
         problems.append("audio 'music_volume' must be between 0 and 1.")
+    for key, what in (("clip_volume", "0 mutes the game sound"), ("voice_volume", "1 is the voice as recorded")):
+        v = audio.get(key, 1)
+        if not _num(v) or not 0 <= v <= 2:
+            problems.append("audio '%s' must be a number between 0 and 2 (%s)." % (key, what))
     vt = audio.get("voice_text")
     if vt is not None and (not isinstance(vt, str) or not vt.strip()):
         problems.append("audio 'voice_text' must be non-empty text to speak.")

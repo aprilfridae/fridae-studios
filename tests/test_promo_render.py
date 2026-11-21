@@ -191,6 +191,52 @@ class RenderTests(unittest.TestCase):
         self.assertLess(ducked, full * 0.4, (ducked, full))
         self.assertLess(rms(pcm(out, 2.92, 0.06)), full * 0.5, "music fades out at the end")
 
+    def _volume_render(self, name, audio):
+        clip = self.fx.make_clip(os.path.join(self.tmp, name + ".mp4"), 2, size=(640, 360))    # 440 Hz game sound
+        recipe = {"version": 1, "size": [1080, 1920], "fps": 30, "style": "hype", "audio": audio,
+                  "scenes": [{"clip": clip, "in": 0, "out": 2}]}
+        self.assertEqual(validate(recipe, self.tmp), [])
+        path = os.path.join(self.tmp, name + ".json")
+        with open(path, "w") as f:
+            json.dump(recipe, f)
+        out = os.path.join(self.tmp, name + ".out.mp4")
+        r, lines = run_render(path, out)
+        self.check_ok(r, lines, out)
+        return out
+
+    def test_clip_volume_scales_game_sound(self):
+        full = rms(pcm(self._volume_render("full", {}), 0.5, 1.0))
+        half = rms(pcm(self._volume_render("half", {"clip_volume": 0.5}), 0.5, 1.0))
+        self.assertGreater(full, 300)
+        self.assertAlmostEqual(half / full, 0.5, delta=0.1)
+
+    def test_clip_volume_zero_is_silent_and_only_a_note(self):
+        from rbxpromo.check import _loudness_result
+        out = self._volume_render("mute", {"clip_volume": 0})
+        self.assertLess(rms(pcm(out, 0.2, 1.6)), 5)
+        problems, notes = _loudness_result(out)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("silent" in n for n in notes), notes)
+
+    def test_voice_volume_scales_voice(self):
+        clip = self.fx.make_clip(os.path.join(self.tmp, "v.mp4"), 2, size=(640, 360), audio=False)
+        voice = os.path.join(self.tmp, "tone voice.wav")
+        self.fx._ffmpeg(["-f", "lavfi", "-i", "sine=frequency=500:duration=1.5", "-af", "volume=0.3",
+                         "-c:a", "pcm_s16le", voice])
+        levels = []
+        for i, vol in enumerate((1, 2)):
+            recipe = {"version": 1, "size": [1080, 1920], "fps": 30, "style": "hype",
+                      "audio": {"voice": voice, "voice_volume": vol}, "scenes": [{"clip": clip, "in": 0, "out": 2}]}
+            path = os.path.join(self.tmp, "vv%d.json" % i)
+            with open(path, "w") as f:
+                json.dump(recipe, f)
+            out = os.path.join(self.tmp, "vv%d.mp4" % i)
+            r, lines = run_render(path, out)
+            self.check_ok(r, lines, out)
+            levels.append(rms(pcm(out, 0.3, 1.0)))
+        self.assertGreater(levels[0], 100)
+        self.assertAlmostEqual(levels[1] / levels[0], 2.0, delta=0.3)
+
     def test_bad_recipe_reports_json_error(self):
         path = os.path.join(self.tmp, "bad.json")
         with open(path, "w") as f:

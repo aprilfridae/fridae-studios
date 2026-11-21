@@ -75,6 +75,8 @@ pub struct Start {
     pub voice_text: String,
     pub brief: String,
     pub project: Option<String>,
+    /// "Mute game sound (I'll add a TikTok sound)": the agent sets audio.clip_volume 0.
+    pub mute_game_sound: bool,
 }
 
 /// A file the user chose: it must be there, be a file, and have one of `exts`. Paths go into the message as
@@ -133,14 +135,18 @@ pub fn validate(body: &Value, known_project: impl Fn(&str) -> bool) -> Result<St
         p if known_project(&p) => Some(p),
         _ => return Err("That project is no longer in the list. Choose it again.".into()),
     };
-    Ok(Start { clips, music, reference, style, length, voice_text, brief, project })
+    let mute_game_sound = body["mute_game_sound"].as_bool().unwrap_or(false);
+    Ok(Start { clips, music, reference, style, length, voice_text, brief, project, mute_game_sound })
 }
 
 /// The new promo chat's first message.
 pub fn compose(s: &Start) -> String {
     let mut lines = vec![format!("Make a promo video of my game. What it should show: {}", s.brief), String::new()];
     lines.extend(s.clips.iter().map(|c| format!("[clip: {c}]")));
-    lines.push(if s.music.is_empty() { "Music: none. Render it silent so I can add a TikTok sound.".into() } else { format!("Music: {}", s.music) });
+    lines.push(if s.music.is_empty() { "Music: none (no music track; keep the game sound).".into() } else { format!("Music: {}", s.music) });
+    if s.mute_game_sound {
+        lines.push("Mute the game sound (audio clip_volume 0): I'll add a TikTok sound.".into());
+    }
     if !s.reference.is_empty() {
         lines.push(format!("Reference video: {}", s.reference));
     }
@@ -295,6 +301,7 @@ mod tests {
             voice_text: "This pet is broken.".into(),
             brief: "the new boss fight and the shop".into(),
             project: None,
+            mute_game_sound: false,
         };
         let text = compose(&full);
         assert!(text.contains("the new boss fight and the shop"), "{text}");
@@ -310,8 +317,11 @@ mod tests {
         let text = compose(&bare);
         assert!(text.contains(&format!("[clip: {clip}]")) && text.contains("Length: 30 seconds"), "{text}");
         assert!(!text.contains("Reference video") && !text.contains("Style:") && !text.contains("Voiceover script"), "{text}");
-        // no music is a choice, not a gap: the agent renders silent for a TikTok sound
-        assert!(text.contains("Music: none"), "{text}");
+        // no music means no music track: the game sound stays unless the user mutes it
+        assert!(text.contains("Music: none") && text.contains("keep the game sound"), "{text}");
+        assert!(!text.contains("silent") && !text.contains("clip_volume"), "{text}");
+        let muted = compose(&Start { mute_game_sound: true, ..bare });
+        assert!(muted.contains("Mute the game sound") && muted.contains("clip_volume 0"), "{muted}");
         assert!(text.contains("Follow the promo guide (rbx_guide topic promo)."), "{text}");
         let _ = fs::remove_dir_all(&d);
     }
@@ -325,6 +335,10 @@ mod tests {
         let s = validate(&ok, known).unwrap();
         assert_eq!((s.brief.as_str(), s.voice_text.as_str(), s.length, s.style.as_str()), ("boss fight", "hi", 60, "pov"));
         assert_eq!(s.project.as_deref(), Some("/games/obby"));
+        assert!(!s.mute_game_sound);
+        let mut muted = ok.clone();
+        muted["mute_game_sound"] = json!(true);
+        assert!(validate(&muted, known).unwrap().mute_game_sound);
         let no_project = json!({"clips": [clip], "length": 30, "brief": "x", "project": ""});
         assert_eq!(validate(&no_project, known).unwrap().project, None);
 

@@ -42,7 +42,7 @@ export type PromoProps = {
   captions: {preset: CaptionPreset; pages: Page[]} | null;
   end: EndCard | null;
   music: MusicTrack | null;
-  voice: {src: string; frames: number} | null;
+  voice: {src: string; frames: number; volume: number} | null;
 };
 export type LayoutBox = {from: number; to: number; x: number; y: number; w: number; h: number; kind: 'caption' | 'title' | 'end'};
 
@@ -74,6 +74,8 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
   const music = audio.music ? media[resolve(audio.music)] : null;
   const voice = audio.voice ? media[resolve(audio.voice)] : null;
   const underAudio = !!(music || voice);
+  // game sound: audio.clip_volume (0 mutes it), kept at 0.3 of that under music or voice
+  const clipVolume = Number(audio.clip_volume ?? 1);
 
   // scene timing: cumulative rounding keeps the total exact
   let t = 0;
@@ -117,7 +119,7 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
       cropX: Number(s.crop?.x ?? 0.5),
       focus: focus && focus.length ? focus : null,
       zoom: parseZoom(s.zoom ?? style.rhythm.zoom, `scene ${i}`),
-      volume: underAudio ? 0.3 : 1,
+      volume: clipVolume * (underAudio ? 0.3 : 1),
     } as ClipScene;
   });
 
@@ -159,7 +161,7 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
     const duck: [number, number][] = voice && audio.duck_music_under_voice !== false ? [[0, Math.round(voice.duration * fps)]] : [];
     musicTrack = {src: music.url, trimBefore: Math.round(start * fps), segment, volume: Number(audio.music_volume ?? 0.8), duck};
   }
-  const voiceTrack = voice ? {src: voice.url, frames: Math.round(voice.duration * fps)} : null;
+  const voiceTrack = voice ? {src: voice.url, frames: Math.round(voice.duration * fps), volume: Number(audio.voice_volume ?? 1)} : null;
 
   for (const b of layout) {
     b.x = r3(Math.max(0, b.x));

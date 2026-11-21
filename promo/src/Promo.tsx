@@ -64,7 +64,7 @@ export const Promo: React.FC<PromoProps> = (p) => {
       {p.music ? <Music m={p.music} frames={p.frames} fps={p.fps} /> : null}
       {p.voice ? (
         <Sequence from={0} durationInFrames={Math.min(p.frames, p.voice.frames)} layout="none">
-          <Audio src={p.voice.src} />
+          <Audio src={p.voice.src} volume={p.voice.volume} />
         </Sequence>
       ) : null}
     </AbsoluteFill>

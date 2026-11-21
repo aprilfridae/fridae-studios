@@ -57,8 +57,9 @@ buttons.
    never copied. Files the user adds with Add clips or drops on the window
    arrive in their message as `[clip: <path>]` lines: those are the paths
    (a music file among them is the song, unless they say otherwise). A promo
-   started from the Promos tab also has `Music:` (a path, or none: render
-   silent), `Reference video:`, `Style:`, `Length:` and `Voiceover script:`
+   started from the Promos tab also has `Music:` (a path, or none: no music
+   track, keep the game sound), possibly a `Mute the game sound` line (set
+   `audio.clip_volume` to 0), `Reference video:`, `Style:`, `Length:` and `Voiceover script:`
    lines; follow them (the voice script's claims still need confirming).
 3. **Plan.** Decide the one idea, the hook, the order of 4-10 shots, the
    style, the caption words and the end card. Run `styles` once if the user has no
@@ -176,10 +177,19 @@ it is in `caption.txt`.
 - Music is the user's own file (a song they made or have rights to), given as
   a path in `audio.music`. It loops and ducks under a voice, and it fades at
   the end. Never use music you found; never download any.
-- If the user will add a trending TikTok sound in the app, render
-  silent: leave out `audio.music` and `voice`. Say so: "Rendered without
-  music so you can add a TikTok sound."
-- Loudness is checked (it must land between -16 and -12 LUFS). A silent promo passes.
+- No music means no music track; the clips' game sound stays. If the user
+  will add a trending TikTok sound in the app and asks to mute the game
+  sound, also set `audio.clip_volume` to 0 (and leave out `voice`). Say so:
+  "Rendered without music or game sound so you can add a TikTok sound."
+- Volumes, all in `audio`: `clip_volume` (game sound, 0 to 2, default 1; 0
+  mutes it; it plays at 0.3 of that under music or a voice), `voice_volume`
+  (0 to 2, default 1), `music_volume` (0 to 1, default 0.8).
+- Loudness is checked (it must land between -16 and -12 LUFS). A fully
+  silent promo is only a note, not a problem. **Fixing a loudness problem:**
+  "too quiet" means raise the loudest part you have: `voice_volume` (up to
+  2) if there is a voice, else `music_volume` (up to 1), else
+  `clip_volume` (up to 2); "too loud" means lower them. Change by about
+  the gap (6 dB is roughly half or double), render again and re-check.
 - **Ask before voiceover.** Do not write a voice line that claims
   something about the game (a number, "the best", "free", "new update",
   "rare") without asking the user to confirm it. Ask once, with the exact
