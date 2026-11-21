@@ -24,6 +24,11 @@ class StageTests(unittest.TestCase):
         env = mock.patch.dict(os.environ, {"RBXKIT_PROJECT": ""})
         env.start()
         self.addCleanup(env.stop)
+        # a finished stage asks the app for a checkpoint in the work folder: never the real one in tests
+        self.work = os.path.join(self.tmp, "work é")
+        work = mock.patch.object(rbxpaths, "WORK", self.work)
+        work.start()
+        self.addCleanup(work.stop)
 
     def call(self, action, **kw):
         return rbxstage.run(action, dict(self.a, **kw))
@@ -81,6 +86,34 @@ class StageTests(unittest.TestCase):
         stage = [s for s in rbxstage.load_run(self.project)["stages"] if s["id"] == "design"][0]
         self.assertEqual(stage["status"], "done")
         self.assertTrue(stage["ended"])
+
+    def test_stage_done_requests_checkpoint(self):
+        requests = os.path.join(self.work, "stage-requests")
+        self.call("stage", id="build", status="start")
+        self.assertFalse(os.path.isdir(requests) and os.listdir(requests), "starting a stage asks for nothing")
+        os.makedirs(os.path.join(self.project, ".fridae"), exist_ok=True)
+        run = rbxstage.load_run(self.project)
+        run["lead"] = "c-lead"
+        rbxstage.save_run(self.project, run)
+        with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": "c-other"}):
+            self.assertEqual(self.call("stage", id="build", status="done"), "Stage build done.")
+        names = os.listdir(requests)
+        self.assertEqual(len(names), 1)
+        self.assertTrue(names[0].endswith(".json"))
+        with open(os.path.join(requests, names[0]), encoding="utf-8") as f:
+            req = json.load(f)
+        self.assertEqual((req["project"], req["stage"], req["lead"]), (self.project, "build", "c-lead"))
+        # a gate that does not pass asks for no checkpoint, and the stage is not done
+        self.call("stage", id="design", status="start")
+        with self.assertRaises(KitError):
+            self.call("stage", id="design", status="done")
+        self.assertEqual(len(os.listdir(requests)), 1)
+        # with no work folder to write to, the stage is still done
+        with mock.patch.object(rbxpaths, "WORK", os.path.join(self.project, "GAME.md", "x")):
+            open(os.path.join(self.project, "GAME.md"), "w").close()
+            self.call("stage", id="test", status="start")
+            self.assertEqual(self.call("stage", id="test", status="done"), "Stage test done.")
+        self.assertEqual([s["status"] for s in rbxstage.load_run(self.project)["stages"] if s["id"] == "test"], ["done"])
 
     def test_ungated_stage_done_needs_no_approval(self):
         self.call("stage", id="build", status="start")

@@ -21,7 +21,7 @@ use crate::{
     antigravity::{self, Out},
     attach, board, codex,
     paths::{self, PATHS},
-    plugin, projects, research, team, textures, usage,
+    plugin, projects, research, studio_undo, team, textures, usage,
 };
 
 pub const MAX_AGENTS: usize = 8;
@@ -153,6 +153,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
     st.halted = false;
     let waiting = st.studio_waiting;
     if !auto {
+        st.pause_told = false;
         st.autopilot_left = if ask.autopilot || ask.full { AUTOPILOT_TURNS } else { 0 };
         if !waiting {
             st.overnight_until = if ask.overnight { now + OVERNIGHT_SECS } else { 0.0 };
@@ -257,6 +258,62 @@ fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) ->
     }
 }
 
+/// The one message a paused Studio run's Lead gets instead of its next carry-on.
+const PAUSE_TEXT: &str = "The studio run is paused. Let the experts already at work finish (wait for their results with rbx_team action wait), start nothing new and hand out no new jobs, then end with STATUS: WAITING.";
+
+/// A Studio run that is paused: its Lead's next carry-on becomes the pause message, once (`told` remembers it was
+/// sent); after that the Lead waits, whatever it said, until Resume. Not paused: `step` as it was, and `told` cleared.
+fn pause_step(step: Step, paused: bool, told: &mut bool, state: &mut LoopState) -> Step {
+    if !paused {
+        *told = false;
+        return step;
+    }
+    match step {
+        Step::CarryOn(_) if !*told => {
+            *told = true;
+            Step::CarryOn(PAUSE_TEXT)
+        }
+        Step::CarryOn(_) => {
+            state.night = false;
+            Step::Wait
+        }
+        other => other,
+    }
+}
+
+/// A tool from Roblox Studio's own connector: the steps that change the place.
+fn studio_tool(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("roblox_studio")
+}
+
+/// The Studio steps in a chat's log from `since` on: {label, t}. What a helper hands its studio Lead.
+fn studio_steps_since(log: &[Value], since: f64) -> Vec<Value> {
+    log.iter()
+        .filter(|e| e["kind"] == "tool" && e["studio"] == true)
+        .filter_map(|e| Some(json!({"label": e["label"], "t": e["t"].as_f64().filter(|t| *t >= since)?})))
+        .collect()
+}
+
+/// A studio run's undo log: the Lead's own Studio steps and those its experts handed over ("helper_steps" events),
+/// as {t, by, label}, oldest first. Steps without a time are left out.
+fn merge_run_log(log: &[Value]) -> Vec<Value> {
+    let mut out: Vec<Value> = studio_steps_since(log, f64::MIN).into_iter().map(|s| json!({"t": s["t"], "by": "Lead", "label": s["label"]})).collect();
+    for e in log.iter().filter(|e| e["kind"] == "helper_steps") {
+        let by = e["name"].as_str().unwrap_or("Expert");
+        for step in e["steps"].as_array().into_iter().flatten().filter(|s| s["t"].is_number()) {
+            out.push(json!({"t": step["t"], "by": by, "label": step["label"]}));
+        }
+    }
+    out.sort_by(|a, b| a["t"].as_f64().unwrap_or(0.0).total_cmp(&b["t"].as_f64().unwrap_or(0.0)));
+    out
+}
+
+/// The undo log of a chat that is not open: read from its saved file.
+pub fn saved_run_log(chat_id: &str) -> Vec<Value> {
+    let d: Value = fs::read_to_string(chat_file(chat_id)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+    merge_run_log(d["events"].as_array().map(Vec::as_slice).unwrap_or(&[]))
+}
+
 static FRIENDLY: LazyLock<Map<String, Value>> =
     LazyLock::new(|| serde_json::from_str(include_str!("text/friendly.json")).unwrap_or_default());
 /// What the user can say to turn Gemini textures on.
@@ -319,6 +376,10 @@ struct State {
     expert: Option<String>,
     expert_text: Option<String>,
     writer_of: Option<String>,
+    /// The chat that started this helper (a studio run's Lead, for its experts).
+    parent: Option<String>,
+    /// A paused studio run's Lead has been told to wind down (see `pause_step`).
+    pause_told: bool,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
     turn_started: f64,
     log_seq: u64,
@@ -388,6 +449,45 @@ impl Agent {
         self.st.lock().unwrap().expert.clone()
     }
 
+    /// The chat that started this helper, if another chat did.
+    pub fn parent(&self) -> Option<String> {
+        self.st.lock().unwrap().parent.clone()
+    }
+
+    /// A note for the agent, sent with its next message.
+    pub fn note(&self, text: &str) {
+        self.st.lock().unwrap().notes.push(text.to_string());
+    }
+
+    /// This chat's studio run undo log: its own Studio steps and its experts', oldest first (see `merge_run_log`).
+    pub fn run_log(&self) -> Vec<Value> {
+        merge_run_log(&self.st.lock().unwrap().log)
+    }
+
+    /// Whether this chat's last message ran in Studio mode: it leads (or led) a studio run.
+    pub fn studio_lead(&self) -> bool {
+        let st = self.st.lock().unwrap();
+        st.last_ask.studio && st.role.is_none()
+    }
+
+    /// A helper's turn ended: when its parent leads a studio run, the Studio steps of this turn join the Lead's undo log.
+    pub fn hand_steps_to_lead(&self) {
+        let Some(lead) = self.parent().and_then(|p| get(&p)).filter(|l| l.studio_lead()) else { return };
+        let steps = {
+            let st = self.st.lock().unwrap();
+            studio_steps_since(&st.log, st.turn_started)
+        };
+        if !steps.is_empty() {
+            lead.put("helper_steps", json!({"name": self.name(), "agent": self.id, "steps": steps}));
+        }
+    }
+
+    /// The studio run of this chat's game, when this chat leads it and it is paused.
+    fn paused_run(&self) -> bool {
+        let Some(p) = self.project() else { return false };
+        studio_undo::paused_lead(&p, &self.id)
+    }
+
     /// Remember that this helper holds the project's writer place.
     pub fn set_writer(&self, project: &str) {
         self.st.lock().unwrap().writer_of = Some(project.to_string());
@@ -445,29 +545,16 @@ impl Agent {
             return json!({"ok": false, "text": "There is no overnight run in this chat to undo."});
         };
         let start = night["start"].as_f64().unwrap_or(0.0);
-        let mut lines: Vec<String> = Vec::new();
-        let mut ok = true;
-        if start > 0.0 && plugin::connected() {
-            let r = plugin::revert_within(start, 600);
-            ok &= r["ok"] == true;
-            lines.push(format!("Studio: {}", r["text"].as_str().unwrap_or("")));
-        } else if night["studio"] == true {
-            ok = false;
-            lines.push("Studio: not connected. Open the same place in Studio (without restarting it if you can, since a restart clears its undo history), then try again.".to_string());
-        } else {
-            lines.push("Studio: it was not connected when the night began, so there was nothing there to undo.".to_string());
-        }
-        match (night["project"].as_str(), night["commit"].as_str()) {
-            (Some(p), Some(c)) => match projects::restore_to(p, c) {
-                Ok(t) => lines.push(format!("Project: {t}")),
-                Err(e) => {
-                    ok = false;
-                    lines.push(format!("Project: {e}"));
-                }
-            },
-            (Some(_), None) => lines.push("Project: its folder has no git repository, so its files could not be checkpointed and were left as they are.".to_string()),
-            _ => {}
-        }
+        let back = studio_undo::put_back(&studio_undo::Checkpoint {
+            at: start,
+            studio: night["studio"] == true,
+            project: night["project"].as_str(),
+            commit: night["commit"].as_str(),
+            began: "the night began",
+            undoing: None,
+            steps: None,
+        });
+        let (mut lines, ok) = (back.lines, back.studio_ok && back.project_ok);
         lines.push("The board's cards from the night were kept so you can still read them.".to_string());
         let text = lines.join("\n");
         // marked done only when something was put back, so a failed try can be repeated
@@ -524,7 +611,7 @@ impl Agent {
             paths::now_secs() - st.saved_at > 3.0
         };
         // saved as the chat goes, so nothing is lost if the window is closed or the app is killed
-        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting") || (kind == "tool" && stale) {
+        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting" | "helper_steps" | "run_undone") || (kind == "tool" && stale) {
             self.save();
         }
     }
@@ -536,7 +623,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "parent": st.parent, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -568,27 +655,41 @@ impl Agent {
 
     /// A message from the user: sent now, or, while the chat is working, held and sent when it finishes.
     pub fn ask(self: &Arc<Self>, text: &str, ask: &Ask) {
-        let queued = {
+        // a paused studio run's Lead keeps the user's messages until Resume, so the run does not start up again
+        let auto = ask.kickoff.as_deref() == Some("auto");
+        let hold = !auto && !self.busy() && (ask.studio || self.studio_waiting()) && self.paused_run();
+        let (queued, held) = {
             let mut st = self.st.lock().unwrap();
-            if st.making || st.running {
+            if st.making || st.running || hold {
                 let qid = paths::random_hex(1)[..8].to_string();
                 st.queue.push((qid, text.to_string(), ask.clone()));
-                true
+                (true, Vec::new())
             } else {
-                false
+                // messages kept while the run was paused go first, in the same turn
+                (false, std::mem::take(&mut st.queue))
             }
         };
         if queued {
             self.show_queue();
-        } else {
-            self.send(text, ask);
+            return;
         }
+        if held.is_empty() {
+            return self.send(text, ask);
+        }
+        self.show_queue();
+        let text = held.iter().map(|(_, t, _)| t.as_str()).chain([text]).collect::<Vec<_>>().join("\n\n");
+        let ask = Ask { attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(), ..ask.clone() };
+        self.send(&text, &ask);
     }
 
     /// A Studio run goes on: a decision from Review, or Resume. Sent as a message in Studio mode (full auto, overnight's
     /// loop) with the model and effort of the chat's last message; held like any message while the chat is working.
     /// Returns at once: the turn runs on its own thread.
     pub fn wake_studio(self: &Arc<Self>, text: &str) {
+        // paused: the decision is in its review item, and rbx_stage hands it over after Resume
+        if self.paused_run() {
+            return;
+        }
         let ask = {
             let st = self.st.lock().unwrap();
             Ask { studio: true, full: true, overnight: true, model: st.last_ask.model.clone(), effort: st.last_ask.effort.clone(), ..Default::default() }
@@ -629,8 +730,12 @@ impl Agent {
     }
 
     fn show_queue(&self) {
-        let items: Vec<Value> = self.st.lock().unwrap().queue.iter().map(|(id, text, _)| json!({"qid": id, "text": text})).collect();
-        self.put("queued", json!({"items": items}));
+        let (items, idle): (Vec<Value>, bool) = {
+            let st = self.st.lock().unwrap();
+            (st.queue.iter().map(|(id, text, _)| json!({"qid": id, "text": text})).collect(), !(st.running || st.making))
+        };
+        // messages kept while the chat is idle are held for a paused studio run's Resume
+        self.put("queued", json!({"items": items, "paused": idle && !items.is_empty()}));
     }
 
     fn name_from(&self, title: String) {
@@ -801,7 +906,12 @@ impl Agent {
             plugin::pin(start);
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
             let commit = project.as_deref().and_then(projects::night_checkpoint);
-            self.put("night", json!({"start": start, "commit": commit, "project": project, "studio": plugin::connected()}));
+            let studio = plugin::connected();
+            self.put("night", json!({"start": start, "commit": commit, "project": project, "studio": studio}));
+            // the first checkpoint of a studio run is its start, so "Undo this run" can go all the way back
+            if let Some(p) = project.as_deref().filter(|_| ask.studio) {
+                studio_undo::record_start(p, &self.id, commit.as_deref(), studio, start);
+            }
         }
         let notes = std::mem::take(&mut self.st.lock().unwrap().notes);
         if !notes.is_empty() {
@@ -925,14 +1035,17 @@ impl Agent {
     }
 
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
-    fn show_tool(&self, name: &str) {
+    /// A tool from Roblox Studio's connector is noted with its time, for a studio run's undo log (`run_log`).
+    fn show_tool(&self, name: &str, studio: bool) {
         let known = FRIENDLY.iter().filter(|(k, _)| name == k.as_str() || name.ends_with(&format!("_{k}"))).max_by_key(|(k, _)| k.len());
         let label = match known {
             Some((_, v)) => v.as_str().map(str::to_string),
             None => Some(name.replace('_', " ")),
         };
-        if let Some(label) = label.filter(|l| !l.is_empty()) {
-            self.put("tool", json!({"label": label}));
+        // a Studio step is always noted, even one whose label the window hides
+        let label = label.filter(|l| !l.is_empty()).or_else(|| studio.then(|| name.replace('_', " ")));
+        if let Some(label) = label {
+            self.put("tool", if studio { json!({"label": label, "studio": true, "t": paths::now_secs()}) } else { json!({"label": label}) });
         }
     }
 
@@ -956,7 +1069,7 @@ impl Agent {
                         match out {
                             Out::Conversation(id) => self.st.lock().unwrap().session = Some(id),
                             Out::Model(name) => self.put("model", json!({"name": name})),
-                            Out::Tool(name) => self.show_tool(&name),
+                            Out::Tool(name) => self.show_tool(&name, studio_tool(&name)),
                             Out::Text(text) => self.put("text", json!({"text": text})),
                             Out::Pictures(paths) => {
                                 let urls: Vec<String> = paths.iter().filter_map(|p| fs::read(p).ok()).filter_map(|bytes| attach::save_chat_image(&bytes)).collect();
@@ -999,11 +1112,12 @@ impl Agent {
                                     }
                                 }
                                 "tool_use" => {
-                                    let short = b["name"].as_str().unwrap_or("").rsplit("__").next().unwrap_or("").to_string();
+                                    let full = b["name"].as_str().unwrap_or("");
+                                    let short = full.rsplit("__").next().unwrap_or("").to_string();
                                     if let Some(id) = b["id"].as_str() {
                                         self.st.lock().unwrap().tools.insert(id.to_string(), short.clone());
                                     }
-                                    self.show_tool(&short);
+                                    self.show_tool(&short, studio_tool(full));
                                 }
                                 _ => {}
                             }
@@ -1083,7 +1197,13 @@ impl Agent {
         let reply = self.last_reply();
         let last_line = reply.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
         let said = last_line.to_uppercase();
-        let held = std::mem::take(&mut self.st.lock().unwrap().queue);
+        let mut held = std::mem::take(&mut self.st.lock().unwrap().queue);
+        // a paused studio run: what the user sent waits for Resume, and the Lead winds down (see pause_step)
+        let paused = self.studio_lead() && self.paused_run();
+        if paused && !held.is_empty() {
+            self.st.lock().unwrap().queue = std::mem::take(&mut held);
+            self.show_queue();
+        }
         let mut night_over: Option<&str> = None;
         let mut waiting: Option<f64> = None;
         let carry_on: Option<(Ask, &str)> = {
@@ -1093,6 +1213,7 @@ impl Agent {
             let night = st.overnight_until > now;
             let mut ls = LoopState { autopilot_left: st.autopilot_left, fails: st.overnight_fails, done: st.overnight_done, night };
             let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result, &said, &mut ls);
+            let step = pause_step(step, paused, &mut st.pause_told, &mut ls);
             st.autopilot_left = ls.autopilot_left;
             st.overnight_fails = ls.fails;
             st.overnight_done = ls.done;
@@ -1126,6 +1247,8 @@ impl Agent {
                 ("doing", None)
             } else if stopped {
                 ("todo", Some("Stopped before it finished.".to_string()))
+            } else if waiting.is_some() && paused {
+                ("needs", Some("The studio run is paused. Resume it in Review".to_string()))
             } else if waiting.is_some() {
                 ("needs", Some("Waiting for your answer in Review".to_string()))
             } else if said.starts_with("STATUS: NEEDS YOU") {
@@ -1277,6 +1400,7 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
             }
             st.ai = Some(ai.unwrap_or_else(paths::default_ai));
             st.project = project;
+            st.parent = parent.map(str::to_string);
         }
         all.push(agent.clone());
         agent
@@ -1405,6 +1529,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.project = d["project"].as_str().map(str::to_string);
         st.role = d["role"].as_str().map(str::to_string);
         st.expert = d["expert"].as_str().map(str::to_string);
+        st.parent = d["parent"].as_str().map(str::to_string);
         // chats saved before there was a choice were all Claude's
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
@@ -1839,6 +1964,54 @@ mod tests {
         // a plain message turns the night and autopilot off
         assert_eq!(begin_send(&mut st, &Ask::default(), false, 5000.0), Some(false));
         assert_eq!((st.autopilot_left, st.overnight_until), (0, 0.0));
+    }
+
+    #[test]
+    fn pause_replaces_carry_on() {
+        // not paused: whatever next_step decided goes ahead, and the "told" mark is cleared
+        let (mut told, mut s) = (true, night());
+        assert_eq!(pause_step(Step::CarryOn(NEXT), false, &mut told, &mut s), Step::CarryOn(NEXT));
+        assert!(!told && s.night);
+        // paused: the first carry-on becomes the one pause message
+        let mut s = night();
+        assert_eq!(pause_step(Step::CarryOn(NEXT), true, &mut told, &mut s), Step::CarryOn(PAUSE_TEXT));
+        assert!(told && s.night);
+        assert!(PAUSE_TEXT.contains("STATUS: WAITING") && PAUSE_TEXT.contains("start nothing new"));
+        // after that it waits, whatever the Lead said, and the clock stops
+        assert_eq!(pause_step(Step::CarryOn(NEXT), true, &mut told, &mut s), Step::Wait);
+        assert!(told && !s.night);
+        // waiting, ending and idling are left as they are
+        let mut s = night();
+        assert_eq!(pause_step(Step::Wait, true, &mut told, &mut s), Step::Wait);
+        assert_eq!(pause_step(Step::Idle, true, &mut told, &mut s), Step::Idle);
+        assert!(matches!(pause_step(Step::End("x"), true, &mut told, &mut s), Step::End("x")));
+        // a fresh pause after a resume tells it again
+        let mut told = false;
+        assert_eq!(pause_step(Step::CarryOn(TURN_FAILED), true, &mut told, &mut night()), Step::CarryOn(PAUSE_TEXT));
+    }
+
+    #[test]
+    fn helper_steps_join_run_log() {
+        let log = vec![
+            json!({"kind": "user", "text": "go"}),
+            json!({"kind": "tool", "label": "Reading files"}),
+            json!({"kind": "tool", "label": "Moving a part", "studio": true, "t": 30.0}),
+            json!({"kind": "helper_steps", "name": "Coder: Shop", "steps": [{"label": "Editing a script", "t": 10.0}, {"label": "Adding a part", "t": 40.0}]}),
+            json!({"kind": "tool", "label": "Playtest", "studio": true, "t": 20.0}),
+            json!({"kind": "helper_steps", "name": "UI builder: HUD", "steps": [{"label": "Making a frame", "t": 35.0}, {"label": "bad"}]}),
+        ];
+        let merged = merge_run_log(&log);
+        let row = |i: usize| (merged[i]["t"].as_f64().unwrap(), merged[i]["by"].as_str().unwrap().to_string(), merged[i]["label"].as_str().unwrap().to_string());
+        assert_eq!(merged.len(), 5, "a step without a time and tools outside Studio are left out");
+        assert_eq!(row(0), (10.0, "Coder: Shop".into(), "Editing a script".into()));
+        assert_eq!(row(1), (20.0, "Lead".into(), "Playtest".into()));
+        assert_eq!(row(2), (30.0, "Lead".into(), "Moving a part".into()));
+        assert_eq!(row(3), (35.0, "UI builder: HUD".into(), "Making a frame".into()));
+        assert_eq!(row(4), (40.0, "Coder: Shop".into(), "Adding a part".into()));
+        // what a helper hands over: its own Studio steps from this turn on
+        let helper = vec![json!({"kind": "tool", "label": "Old", "studio": true, "t": 5.0}), json!({"kind": "tool", "label": "New", "studio": true, "t": 50.0}), json!({"kind": "tool", "label": "Read"})];
+        let own = studio_steps_since(&helper, 10.0);
+        assert_eq!(own, vec![json!({"label": "New", "t": 50.0})]);
     }
 
     #[test]

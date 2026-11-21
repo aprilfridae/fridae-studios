@@ -484,6 +484,12 @@ body.board .body, body.research .body, body.overview .body, body.promos .body, b
 .rv-set .pr-label { margin: 16px 0 8px; }
 .rv-gates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; font-size: 13px; color: var(--dim); }
 .rv-set .sub { color: var(--faint); font-size: 12px; margin: 8px 0 0; }
+.rv-set .pr-label + .pill { height: 28px; padding: 0 12px; font-size: 12px; }
+.cp-list { display: grid; gap: 4px; margin: 0 0 12px; }
+.cp-list button { height: 32px; padding: 0 12px; text-align: left; border-radius: var(--r-s); border: 1px solid var(--line); font-size: 13px; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.cp-list button:hover { color: var(--text); }
+.cp-list button[aria-pressed="true"] { background: var(--press); border-color: var(--line-strong); color: var(--text); }
+.run-undo p { white-space: pre-line; }
 .rv-empty h4 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
 .rv-empty p { margin: 0; font-size: 14px; color: var(--dim); line-height: 1.5; max-width: 60ch; }
 .rv-empty .sub { margin-top: 12px; color: var(--faint); font-size: 13px; }
@@ -706,6 +712,9 @@ body.proj #pd, body.guide #gd { transform: none; }
               <span class="pr-label">Experts at once</span>
               <div class="seg" id="rv-max"></div>
               <p class="sub">More experts finish sooner and use more of your AI plan. Only one changes the place at a time.</p>
+              <span class="pr-label">Go back</span>
+              <button class="pill" id="rv-undo" title="Put the game back as it was at one of the run's checkpoints">Undo this run</button>
+              <div id="rv-undo-box"></div>
             </details>
           </div>
           <p class="rv-err" id="rv-err"></p>
@@ -934,6 +943,7 @@ const GUIDE = [
     ["Checkpoint", "Saves every script into the project folder and its history, so changes can be compared and restored.", "Take a checkpoint"],
     ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
     ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open; the night's files stay in git history."],
+    ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. Studio must stay open; the run's files stay in git history."],
     ["Usage", "The count at the top is today's tokens across every chat. Click it for each AI and the last seven days."],
   ]],
 ];
@@ -1332,6 +1342,12 @@ setInterval(paintUsage, 60000); paintUsage();
 $("b-night").onclick = () => {
   const p = agents.get(current); if (!p || !p.night || p.busy) return;
   p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
+  /* a studio run's Lead: the run's checkpoints to pick from (the chat shows the report when it is done) */
+  const path = p.project && p.project.path, run = path && rvAll[path] && rvAll[path].run;
+  if (p.studio && run && run.lead === p.id) {
+    p.col.appendChild(undoRunCard(path, (res, card) => { if (res && res.ok) card.remove(); paintHead(); }));
+    stick(true); return;
+  }
   const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const what = [p.night.studio ? "every change the agents made in Studio since then, with scripts put back as they were" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
   const card = el("div", "ask night-ask enter", "<h4></h4><p></p><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Keep it</button></div>");
@@ -1434,12 +1450,17 @@ function onEvent(e) {
     card.querySelector("p").textContent = e.text || "";
     card.querySelector("p").style.whiteSpace = "pre-line";
     p.col.appendChild(card);
+  } else if (e.kind === "run_undone") {
+    const card = el("div", "ask enter", "<h4>The run was undone</h4><p></p>");
+    card.querySelector("p").textContent = e.text || "";
+    card.querySelector("p").style.whiteSpace = "pre-line";
+    p.col.appendChild(card);
   } else if (e.kind === "studio_waiting") {
     studioWaitLine(p, !!e.value);
   } else if (e.kind === "renamed") {
     p.name = e.name;
   } else if (e.kind === "queued") {
-    paintQueue(p, e.items || []);
+    paintQueue(p, e.items || [], !!e.paused);
   } else if (e.kind === "user") {
     const h = p.col.querySelector(".hello"); if (h) h.remove();
     p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0; p.steps = 0;
@@ -1515,11 +1536,11 @@ function onEvent(e) {
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
 /* Messages sent while the chat was working: shown under the conversation until they go. */
-function paintQueue(p, items) {
+function paintQueue(p, items, paused) {
   if (!p.qbox) p.qbox = el("div", "qbox");
   p.qbox.innerHTML = "";
   items.forEach((q) => {
-    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">Waiting. Sent the moment it finishes. <button>Remove</button></span>");
+    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">" + (paused ? "Held while the studio run is paused. Sent when you press Resume." : "Waiting. Sent the moment it finishes.") + " <button>Remove</button></span>");
     u.querySelector("div").textContent = q.text;
     u.querySelector("button").onclick = () => api("/api/unqueue", { agent: p.id, qid: q.qid });
     p.qbox.appendChild(u);
@@ -2467,12 +2488,49 @@ function paintReviewPick() {
   if (sig === paintReviewPick.sig) return; paintReviewPick.sig = sig;
   sel.replaceChildren(...rows.map(([path, label]) => new Option(label, path, false, path === rvPath)));
 }
-$("rv-proj").onchange = () => { rvPath = $("rv-proj").value; paintReview(); loadReview(rvPath); };
+$("rv-proj").onchange = () => { rvPath = $("rv-proj").value; $("rv-undo-box").replaceChildren(); paintReview(); loadReview(rvPath); };
+/* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
+   same confirm step as the night's undo */
+const cpName = (c) => (c.stage === "start" ? "Start of the run" : "After " + stageName(c.stage).toLowerCase()) + " \u00b7 " + ago(c.at || 0);
+function undoRunCard(path, onDone) {
+  const run = rvAll[path] && rvAll[path].run, seen = new Set();
+  const list = ((run && run.checkpoints) || []).slice().reverse().filter((c) => c && c.stage && !seen.has(c.stage) && seen.add(c.stage));
+  const card = el("div", "ask night-ask run-undo enter", '<h4>Undo this run?</h4><p></p><div class="cp-list" role="group" aria-label="Checkpoints, newest first"></div><div class="act"><button class="pill main">Undo this run</button><button class="pill">Keep it</button></div>');
+  const p = card.querySelector("p"), box = card.querySelector(".cp-list"), act = card.querySelector(".act"), [go, keep] = act.querySelectorAll(".pill");
+  let pick = list.length ? list[0].stage : "";
+  p.textContent = list.length
+    ? "Goes back to the checkpoint you pick. Undone: every change the agents made in Studio since then, with scripts put back as they were; and the project's files, as they were at the checkpoint (the run's versions stay in git history). Later stages are to do again, review items filed since then move to the archive, and the run is left paused. Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place."
+    : "This run has no checkpoints yet. One is taken when the run starts and after each finished stage.";
+  list.forEach((c, i) => {
+    const b = el("button"); b.type = "button"; b.textContent = cpName(c); b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+    b.title = [c.commit ? "the project's files" : "", c.studio ? "Studio's scripts" : ""].filter(Boolean).join(" and ") || "No files or scripts were saved here: only the run's stages and review go back";
+    b.onclick = () => { pick = c.stage; box.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false")); };
+    box.appendChild(b);
+  });
+  if (!list.length) { box.remove(); go.remove(); keep.textContent = "Close"; }
+  keep.onclick = () => card.remove();
+  go.onclick = async () => {
+    go.disabled = keep.disabled = true; go.textContent = "Undoing...";
+    let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+    if (res && res.ok) {
+      card.querySelector("h4").textContent = "The run was undone"; p.textContent = res.text || ""; box.remove();
+      go.remove(); keep.disabled = false; keep.textContent = "Close";
+    } else {
+      go.disabled = keep.disabled = false; go.textContent = "Undo this run";
+      p.textContent = (res && (res.error || res.text)) || "Could not undo the run.";
+    }
+    loadReview(path);
+    if (onDone) onDone(res, card);
+  };
+  return card;
+}
+$("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(rvPath)); };
 /* the run line: what the run is doing, and the one button that changes it */
 function runState(r, run) {
   if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
   if (run.paused) return ["Paused", "Nothing new is handed out. Experts already at work finish what they are doing.", "resume"];
   if (!r.lead_live) return ["Paused — the Lead's chat is closed", "Resume starts a new Lead chat that reads the run and carries on where it stopped.", "resume"];
+  if (!r.lead_active) return ["Paused", "The Lead is not working on the run right now (the app was restarted, or the run stopped). Resume picks it up where it stopped.", "resume"];
   if (run.note === "slots") return ["Waiting for a free agent slot", "Every agent slot is in use. Close a chat you are done with and the run carries on.", "pause"];
   if (r.waiting) return ["Waiting for you", "It has done all it can until you answer what is under Needs your answer.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];

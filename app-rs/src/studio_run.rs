@@ -3,7 +3,8 @@
 //! exactly as it does, under the same per-project lock (fridae_lock), keeping keys this file does not know:
 //!
 //!   <project>/.fridae/studio.json        the run: {"on", "stage", "stages", "gates", "max_experts", "lead", "idea",
-//!                                         "started", "paused", "read_decisions", "note"?}
+//!                                         "started", "paused", "read_decisions", "note"?, "checkpoints"?}
+//!                                         ("checkpoints" belong to studio_undo.rs)
 //!   <project>/.fridae/review/<id>.json   one review item: {"id", "stage", "expert", "title", "summary", "media",
 //!                                         "blocking", "status", "note", "created", "decided", "replaces", "by_chat"}
 //!   <project>/.fridae/review/<id>/       its pictures and clips (the names in "media")
@@ -54,7 +55,7 @@ pub(crate) fn mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
-fn write_json(path: &Path, v: &Value) -> Result<(), String> {
+pub(crate) fn write_json(path: &Path, v: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
     if write_atomic(path, &bytes) { Ok(()) } else { Err("Could not save the game's Studio files.".into()) }
 }
@@ -262,7 +263,7 @@ fn finished(run: &Value) -> bool {
     STAGES.iter().all(|s| stages.iter().any(|e| e["id"] == *s && e["status"] == "done"))
 }
 
-fn running(run: &Value) -> bool {
+pub(crate) fn running(run: &Value) -> bool {
     run["on"] == true && !finished(run)
 }
 
@@ -297,20 +298,26 @@ fn fresh_run(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64, l
 /// its media folder, so a failure never leaves a listed item without its pictures. Returns what could not be moved.
 /// Call under the project's lock.
 fn archive_review(project: &Path, stamp: u64) -> Vec<String> {
-    let review = review_dir(project);
-    let mut entries: Vec<PathBuf> = fs::read_dir(&review).into_iter().flatten().flatten().map(|e| e.path()).collect();
-    if entries.is_empty() {
-        return vec![];
-    }
+    let entries: Vec<PathBuf> = fs::read_dir(review_dir(project)).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    archive_entries(project, &stamp.to_string(), entries).1
+}
+
+/// Move these review files and folders to `.fridae/review-archive/<stamp>/` (or `<stamp>-2`… when that is taken),
+/// item files before media folders, and a folder only when its item file went. Returns the folder and the names that
+/// could not be moved; nothing is made when there is nothing to move. Call under the project's lock.
+pub(crate) fn archive_entries(project: &Path, stamp: &str, mut entries: Vec<PathBuf>) -> (PathBuf, Vec<String>) {
     let root = project.join(".fridae").join("review-archive");
-    let mut dest = root.join(stamp.to_string());
+    let mut dest = root.join(stamp);
     let mut n = 1;
     while dest.exists() {
         n += 1;
         dest = root.join(format!("{stamp}-{n}"));
     }
+    if entries.is_empty() {
+        return (dest, vec![]);
+    }
     if fs::create_dir_all(&dest).is_err() {
-        return entries.iter().map(|p| paths::base_name(&p.display().to_string())).collect();
+        return (dest, entries.iter().map(|p| paths::base_name(&p.display().to_string())).collect());
     }
     // item files first; a folder goes only when its item went (or it has no item file)
     entries.sort_by_key(|p| !p.extension().is_some_and(|e| e == "json"));
@@ -325,7 +332,7 @@ fn archive_review(project: &Path, stamp: u64) -> Vec<String> {
             failed.push(name);
         }
     }
-    failed
+    (dest, failed)
 }
 
 /// Under the lock: refuse when a run is going, else archive the last run's review items and write the new run.
@@ -344,7 +351,7 @@ fn write_fresh(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64,
 }
 
 /// The run's Lead, when its chat is open in this session.
-fn live_lead(run: &Value) -> Option<Arc<Agent>> {
+pub(crate) fn live_lead(run: &Value) -> Option<Arc<Agent>> {
     run["lead"].as_str().filter(|l| !l.is_empty()).and_then(agents::get)
 }
 
@@ -501,7 +508,7 @@ fn set_run(project: &Path, f: impl FnOnce(&mut Value)) -> Result<(), String> {
 }
 
 /// The project a request names, as the app's list of projects has it: only folders the user added, and that exist.
-fn project_of(path: &str) -> Option<String> {
+pub(crate) fn project_of(path: &str) -> Option<String> {
     known_paths().into_iter().find(|p| projects::same(p, path)).filter(|p| Path::new(p).is_dir())
 }
 
@@ -509,7 +516,7 @@ fn not_ours() -> Value {
     json!({"ok": false, "error": "That game is not one of your projects."})
 }
 
-fn answer(r: Result<Value, String>) -> Value {
+pub(crate) fn answer(r: Result<Value, String>) -> Value {
     r.unwrap_or_else(|e| json!({"ok": false, "error": e}))
 }
 
@@ -545,6 +552,8 @@ pub fn list(path: &str) -> Value {
     json!({
         "ok": true, "project": project, "key": project_key(&project), "run": run, "items": items(dir), "needs": needs,
         "helpers": helpers_work(&ai), "lead_live": lead.is_some(), "waiting": lead.as_ref().is_some_and(|l| l.studio_waiting()),
+        // the Lead's chat is open and actually running the run (after a restart it is open but idle until Resume)
+        "lead_active": lead.as_ref().is_some_and(|l| l.busy() || l.overnight() || l.studio_waiting()),
         "experts": expert_names(&paths::PATHS.kit, dir),
     })
 }
@@ -572,7 +581,8 @@ pub fn review(body: &Value) -> Value {
     }
 }
 
-/// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings", idea?, gates?, max_experts?}
+/// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings" | "undo", idea?, gates?, max_experts?,
+/// stage?} ("undo" is studio_undo.rs)
 pub fn studio_run(body: &Value) -> Value {
     let path = body["path"].as_str().unwrap_or("");
     if body["action"] == "start" && !Path::new(path).is_dir() {
@@ -584,6 +594,7 @@ pub fn studio_run(body: &Value) -> Value {
         "start" => answer(start(&project, body)),
         "resume" => answer(resume(&project)),
         "pause" => answer(set_run(dir, |run| run["paused"] = json!(true)).map(|_| json!({"ok": true}))),
+        "undo" => crate::studio_undo::undo(&project, body["stage"].as_str()),
         "settings" => answer(settings_from(body).and_then(|(gates, max)| {
             set_run(dir, |run| {
                 if let Some(g) = gates {

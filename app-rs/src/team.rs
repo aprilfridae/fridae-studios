@@ -151,6 +151,8 @@ fn start(req: &Value) {
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 pub fn finished(agent: &Agent) {
     release(agent);
+    agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
+
     if let Some((id, role)) = agent.team() {
         let text = agent.last_reply();
         let text = if text.is_empty() { "The agent stopped without a reply.".to_string() } else { text };

@@ -232,6 +232,7 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/stop" => {
             if let Some(a) = target {
                 a.stop();
+                crate::studio_undo::pause_if_lead(&a); // Stop on a studio run's Lead pauses the run
             }
             send_json(json!({"ok": true}))
         }
@@ -458,6 +459,7 @@ pub fn start(token: String) -> String {
     thread::spawn(team::watch);
     thread::spawn(promo::watch);
     thread::spawn(studio_watch::watch);
+    thread::spawn(crate::studio_undo::watch);
     plugin::start();
     antigravity::load_models();
     codex::load_models();

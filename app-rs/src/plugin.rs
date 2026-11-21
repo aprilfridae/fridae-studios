@@ -28,7 +28,7 @@ pub const PORT: u16 = 34931;
 const FILE_NAME: &str = "FridaeStudios.rbxmx";
 /// The plugin's own version. Raise it only when studio/plugin/FridaeStudios.lua changes: that is what asks
 /// people to update the plugin and restart Studio, so it must not move with every app release.
-const PLUGIN_VERSION: &str = "2.7.3";
+const PLUGIN_VERSION: &str = "2.8.0";
 
 #[derive(Default)]
 struct Live {
@@ -71,6 +71,11 @@ fn installed_version() -> Option<String> {
 /// Studio's edit session has spoken to us in the last few seconds.
 pub fn connected() -> bool {
     with(|l| l.seen.get("Edit").is_some_and(|t| paths::now_secs() - t < 6.0))
+}
+
+/// Studio is running this app's own copy of the plugin (older copies keep only one checkpoint's scripts).
+pub fn running_current() -> bool {
+    connected() && with(|l| l.version == PLUGIN_VERSION)
 }
 
 /// What the window shows about the plugin.
@@ -172,7 +177,8 @@ pub fn begin(since: f64) {
     }
 }
 
-/// Tell the plugin an overnight run is beginning: it keeps this snapshot of every script until the next night.
+/// Tell the plugin a checkpoint is being taken (an overnight or studio run beginning, or a stage of a studio run
+/// finished): it keeps this snapshot of every script, with the newest few other checkpoints'.
 pub fn pin(since: f64) {
     if connected() {
         with(|l| {

@@ -205,17 +205,36 @@ fn commit_all(dir: &Path, message: &str) -> Option<String> {
 
 /// A checkpoint of the project's files before an overnight run. None when the folder has no git repository.
 pub fn night_checkpoint(path: &str) -> Option<String> {
-    commit_all(Path::new(path), "Before the overnight run (Fridae Studios checkpoint)")
+    checkpoint(path, "Before the overnight run (Fridae Studios checkpoint)")
 }
+
+/// A checkpoint of the project's files with this commit message. None when the folder has no git repository.
+pub fn checkpoint(path: &str, message: &str) -> Option<String> {
+    commit_all(Path::new(path), message)
+}
+
+/// How a restore names what it undoes: in the text ("night's", "run's") and in its two commits.
+pub struct Undoing<'a> {
+    pub whose: &'a str,
+    pub end_commit: &'a str,
+    pub undo_commit: &'a str,
+}
+
+const NIGHT: Undoing<'static> = Undoing { whose: "night's", end_commit: "End of the overnight run (kept in history)", undo_commit: "Undo the overnight run (Fridae Studios)" };
 
 /// Put the project's files back as they were at `commit`, as a new commit, so the night's work stays in the history
 /// and this can itself be undone. The board (.fridae) is left as it is, so the night's cards can still be read.
 pub fn restore_to(path: &str, commit: &str) -> Result<String, String> {
+    restore_with(path, commit, &NIGHT)
+}
+
+/// `restore_to`, with its own words for what is undone.
+pub fn restore_with(path: &str, commit: &str, w: &Undoing) -> Result<String, String> {
     let dir = Path::new(path);
     if !commit.chars().all(|c| c.is_ascii_hexdigit()) || commit.len() < 7 {
         return Err("The checkpoint id is not valid.".to_string());
     }
-    let end = commit_all(dir, "End of the overnight run (kept in history)").ok_or("Could not record the night's files before undoing them.")?;
+    let end = commit_all(dir, w.end_commit).ok_or_else(|| format!("Could not record the {} files before undoing them.", w.whose))?;
     if end == commit {
         return Ok("The project's files had not changed.".to_string());
     }
@@ -225,11 +244,11 @@ pub fn restore_to(path: &str, commit: &str) -> Result<String, String> {
     if !ok {
         return Err(format!("Git could not put the files back: {out}"));
     }
-    commit_all(dir, "Undo the overnight run (Fridae Studios)").ok_or("The files were put back, but git could not record it.")?;
+    commit_all(dir, w.undo_commit).ok_or("The files were put back, but git could not record it.")?;
     Ok(match count {
         0 => "The project's files had not changed.".to_string(),
-        1 => "1 file in the project was put back. The night's version is still in git history.".to_string(),
-        n => format!("{n} files in the project were put back. The night's versions are still in git history."),
+        1 => format!("1 file in the project was put back. The {} version is still in git history.", w.whose),
+        n => format!("{n} files in the project were put back. The {} versions are still in git history.", w.whose),
     })
 }
 

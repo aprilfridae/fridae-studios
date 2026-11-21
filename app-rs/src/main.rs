@@ -23,6 +23,7 @@ mod research;
 mod server;
 mod splash;
 mod studio_run;
+mod studio_undo;
 mod studio_watch;
 mod team;
 mod textures;

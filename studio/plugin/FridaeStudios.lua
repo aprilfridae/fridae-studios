@@ -113,11 +113,14 @@ if EDIT then
 end
 
 -- Script edits never reach Studio's undo history, so the text of every script is remembered when a
--- turn begins and put back on undo. Kept in memory only, for the last few turns.
+-- turn begins and put back on undo. Kept in memory only, for the last few turns. Checkpoints (the start
+-- of an overnight or studio run, and each finished stage of a studio run) are pinned: the newest
+-- MAX_PINS are kept, so a run can be undone to any of its recent checkpoints while Studio stays open.
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local SCRIPT_ROOTS = { "Workspace", "ReplicatedStorage", "ReplicatedFirst", "ServerScriptService", "ServerStorage", "StarterGui", "StarterPack", "StarterPlayer", "Lighting", "SoundService" }
 local snapshots = {}
-local pinned = nil -- the snapshot from the start of an overnight run, kept until the next one
+local pins = {}
+local MAX_PINS = 12
 local function snapshot(since, pin)
 	local sources = {}
 	for _, name in ipairs(SCRIPT_ROOTS) do
@@ -136,7 +139,10 @@ local function snapshot(since, pin)
 		end
 	end
 	if pin then
-		pinned = { since = since, sources = sources }
+		table.insert(pins, { since = since, sources = sources })
+		while #pins > MAX_PINS do
+			table.remove(pins, 1)
+		end
 		return
 	end
 	table.insert(snapshots, { since = since, sources = sources })
@@ -149,8 +155,8 @@ local function restoreScripts(since)
 	-- the oldest snapshot taken at or after the moment asked for: the state when that turn began
 	local snap
 	local all = table.clone(snapshots)
-	if pinned then
-		table.insert(all, pinned)
+	for _, p in ipairs(pins) do
+		table.insert(all, p)
 	end
 	for _, s in ipairs(all) do
 		if s.since >= since and (not snap or s.since < snap.since) then

@@ -3,6 +3,9 @@
 Everything is small JSON in <project>/.fridae/ (studio.json, review/<id>.json, review/<id>/ media, lessons.md), so it
 travels with the game. The Fridae Studios app shows the review items; agents use rbx_stage. Nothing here prints:
 functions return text, because the MCP server speaks JSON-RPC over stdout.
+
+A finished stage also asks the app for a checkpoint: WORK/stage-requests/<id>.json {"project", "stage", "lead"}. The
+app takes it and appends {"stage", "commit", "studio", "at"} to studio.json "checkpoints" (see app-rs/src/studio_undo.rs).
 """
 import json
 import os
@@ -227,7 +230,22 @@ def _stage_locked(project, sid, status):
         entry.update(status="done", ended=now)
         msg = "Stage %s done." % sid
     save_run(project, run)
+    if status == "done":
+        _request_checkpoint(project, sid, run.get("lead") or os.environ.get("RBXKIT_AGENT_ID") or "")
     return msg
+
+
+def _request_checkpoint(project, stage, lead):
+    """Ask the app for a checkpoint of the game as it is now, so "Undo this run" can come back here. The app takes it
+    (git commit of the project, Studio's script snapshot) and adds it to studio.json "checkpoints". Nothing waits for
+    it: when the app is not running, or the work folder cannot be written, the stage is done all the same."""
+    folder = os.path.join(rbxpaths.WORK, "stage-requests")
+    rid = "s%d%s" % (int(time.time() * 1000), uuid.uuid4().hex[:6])
+    try:
+        _write_json(os.path.join(folder, rid + ".json"), {"project": project, "stage": stage, "lead": lead})
+        return True
+    except OSError:
+        return False
 
 
 def _copy_media(project, item_id, paths):
