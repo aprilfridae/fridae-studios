@@ -5,12 +5,18 @@
 //!                                 "style", "duration", "check": {"passed", "problems", "notes"}, "created"}
 //!
 //! Card files stay: they are the only record of which files the window may play.
+//!
+//! Setup's "Promo engine" row also lives here: `rbx promo status --json` for its state, and
+//! `rbx promo install --json-progress` run in the background, its progress lines passed on as
+//! `promo_engine` events.
 
 use std::{
     collections::HashSet,
     fs,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command, Stdio},
+    sync::Mutex,
     thread,
     time::Duration,
 };
@@ -207,6 +213,161 @@ pub fn watch() {
     }
 }
 
+// ---------------------------------------------------------------- the promo engine install (Setup)
+
+/// The install running in the background, or how the last one ended.
+struct Install {
+    running: bool,
+    step: String,
+    fraction: f64,
+    error: String,
+    child: Option<Child>,
+}
+
+static INSTALL: Mutex<Install> = Mutex::new(Install { running: false, step: String::new(), fraction: 0.0, error: String::new(), child: None });
+
+/// One line of `rbx promo install --json-progress`.
+#[derive(Debug, PartialEq)]
+enum EngineLine {
+    Progress(String, f64),
+    /// The last line: it has no "step".
+    Done(bool, Vec<String>),
+}
+
+fn engine_line(line: &str) -> Option<EngineLine> {
+    let v: Value = serde_json::from_str(line.trim()).ok().filter(Value::is_object)?;
+    match v["step"].as_str() {
+        Some(step) => Some(EngineLine::Progress(step.to_string(), v["fraction"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0))),
+        None => {
+            let missing = v["missing"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+            Some(EngineLine::Done(v["ready"].as_bool().unwrap_or(false), missing))
+        }
+    }
+}
+
+/// The last lines of what the install printed on failure, short enough for Setup.
+fn error_tail(text: &str) -> String {
+    let lines: Vec<&str> = text.trim().lines().collect();
+    let tail = lines[lines.len().saturating_sub(12)..].join("\n");
+    let chars: Vec<char> = tail.chars().collect();
+    chars[chars.len().saturating_sub(1500)..].iter().collect()
+}
+
+fn install_state() -> Value {
+    let i = INSTALL.lock().unwrap();
+    json!({"running": i.running, "step": i.step, "fraction": i.fraction, "error": i.error})
+}
+
+fn engine_status() -> Value {
+    let out = paths::cli(&["promo", "status", "--json"]).output();
+    let (engine, error) = match out {
+        Ok(o) if o.status.success() => match serde_json::from_slice::<Value>(&o.stdout) {
+            Ok(v) if v.is_object() => (v, String::new()),
+            _ => (Value::Null, "The promo engine's status could not be read.".to_string()),
+        },
+        Ok(o) => (Value::Null, error_tail(&String::from_utf8_lossy(&o.stderr))),
+        Err(e) => (Value::Null, format!("Could not run the tools: {e}")),
+    };
+    json!({"ok": error.is_empty(), "engine": engine, "error": error, "install": install_state()})
+}
+
+/// The install has ended: the state is settled before the page hears of it, so a status asked for then is current.
+fn finish(step: &str, error: String) {
+    {
+        let mut i = INSTALL.lock().unwrap();
+        i.running = false;
+        i.child = None;
+        i.error = error.clone();
+    }
+    if error.is_empty() {
+        BUS.put("promo_engine", json!({"done": true, "ready": true}));
+    } else {
+        BUS.put("promo_engine", json!({"failed": true, "step": step, "error": error}));
+    }
+}
+
+/// Run the install and pass its progress on; Retry runs this again and the install resumes.
+fn run_install() {
+    let spawned = paths::cli(&["promo", "install", "--json-progress"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn();
+    let mut child = match spawned {
+        Ok(c) => c,
+        Err(e) => return finish("", format!("Could not run the tools: {e}")),
+    };
+    let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
+    INSTALL.lock().unwrap().child = Some(child);
+    // stderr is read beside stdout, so a chatty step can never fill its pipe and stall the install
+    let errs = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(mut e) = stderr {
+            let _ = e.read_to_string(&mut text);
+        }
+        text
+    });
+    let (mut step, mut shown, mut done) = (String::new(), -1.0, None);
+    for line in stdout.map(BufReader::new).into_iter().flat_map(|r| r.lines()).map_while(Result::ok) {
+        match engine_line(&line) {
+            Some(EngineLine::Progress(s, f)) => {
+                {
+                    let mut i = INSTALL.lock().unwrap();
+                    i.step = s.clone();
+                    i.fraction = f;
+                }
+                // a new step, its end, or a whole percent more: the bus keeps every event, so not every chunk
+                if s != step || f >= 1.0 || f - shown >= 0.01 {
+                    BUS.put("promo_engine", json!({"step": s, "fraction": f}));
+                    shown = f;
+                }
+                step = s;
+            }
+            Some(EngineLine::Done(ready, missing)) => {
+                done = Some((ready, missing));
+                break;
+            }
+            None => {}
+        }
+    }
+    let err_text = errs.join().unwrap_or_default();
+    let code = INSTALL.lock().unwrap().child.take().and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
+    let error = match done {
+        Some((true, _)) if code == Some(0) => String::new(),
+        Some((_, missing)) if code == Some(0) => format!("The install finished, but these parts are still missing: {}.", missing.join(", ")),
+        _ => match error_tail(&err_text) {
+            why if !why.is_empty() => why,
+            _ => format!("The install stopped (exit {}).", code.map(|c| c.to_string()).unwrap_or_else(|| "without a code".into())),
+        },
+    };
+    finish(&step, error);
+}
+
+/// POST /api/promo-engine {action: "status" | "install"}
+pub fn engine(body: &Value) -> Value {
+    match body["action"].as_str().unwrap_or("") {
+        "status" => engine_status(),
+        "install" => {
+            let start = {
+                let mut i = INSTALL.lock().unwrap();
+                let start = !i.running;
+                if start {
+                    *i = Install { running: true, step: String::new(), fraction: 0.0, error: String::new(), child: None };
+                }
+                start
+            };
+            if start {
+                thread::spawn(run_install);
+            }
+            json!({"ok": true, "install": install_state()})
+        }
+        _ => json!({"ok": false, "error": "Unknown action."}),
+    }
+}
+
+/// Closing the app stops an install halfway; the next install resumes from the last finished step.
+pub fn stop_install() {
+    if let Some(c) = INSTALL.lock().unwrap().child.as_mut() {
+        let _ = c.kill();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,5 +460,24 @@ mod tests {
         for no in ["a.png", "b.txt", "c", "d.mp4.txt"] {
             assert!(!is_media(Path::new(no)), "{no}");
         }
+    }
+
+    #[test]
+    fn install_lines_are_progress_until_the_one_without_a_step() {
+        assert_eq!(engine_line(r#"{"step": "node", "fraction": 0.42}"#), Some(EngineLine::Progress("node".into(), 0.42)));
+        assert_eq!(engine_line(r#"{"step": "voice", "fraction": 3}"#), Some(EngineLine::Progress("voice".into(), 1.0)));
+        assert_eq!(engine_line(r#"{"ready": true, "missing": []}"#), Some(EngineLine::Done(true, vec![])));
+        assert_eq!(engine_line(r#"{"ready": false, "missing": ["browser", "voice"]}"#), Some(EngineLine::Done(false, vec!["browser".into(), "voice".into()])));
+        assert_eq!(engine_line("Downloading about 700 MB"), None);
+        assert_eq!(engine_line("[1, 2]"), None);
+    }
+
+    #[test]
+    fn error_tail_keeps_the_last_lines() {
+        let long: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        let tail = error_tail(&long);
+        assert!(tail.starts_with("line 19") && tail.ends_with("line 30"), "{tail}");
+        assert_eq!(error_tail("  one problem \n"), "one problem");
+        assert!(error_tail(&"é".repeat(5000)).chars().count() <= 1500);
     }
 }

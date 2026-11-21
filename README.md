@@ -63,6 +63,31 @@ explains anything missing.
 `fridae-cli --mcp` (`fridae-cli.exe` on Windows) is a standard MCP tool server, so the same tools work
 in Cursor, Codex, Gemini CLI and other agents.
 
+## Promo maker
+
+Ask a chat for a promo of your game and it cuts your gameplay clips into a
+vertical 1080x1920 video for TikTok, YouTube Shorts and Instagram Reels: hook
+title, word-by-word captions, an optional spoken voice-over, a cover image and
+a post caption. It checks its own render (captions clear of the platforms'
+buttons, a hook in the first seconds, readable text, sensible loudness) and
+shows the finished video in the chat with buttons to save it or show it in its
+folder. Nothing is posted or uploaded; your clips are read where they are and
+never copied.
+
+- **It downloads its engine on first use** (about 730 MB: a portable Node.js,
+  the Remotion renderer with its headless browser, a speech recognition model
+  and a voice model). Install it from Setup, Connections, Promo engine, or let
+  the agent ask. It goes in `Documents/Fridae Studios/engine`; nothing is
+  installed system-wide. An interrupted install continues where it stopped.
+- **Licence:** rendering uses [Remotion](https://www.remotion.dev/docs/license),
+  which is free for individuals, non-profits and for-profit teams of up to 3
+  people; larger companies need a Remotion company licence to use the promo
+  maker.
+- **Music is your responsibility.** Use your own track or one that is
+  free-licensed, or post the video silent and add a sound inside TikTok.
+- **Reference TikToks must be saved video files** (the agent can study a saved
+  video's shots, words and beats); links are not downloaded.
+
 ## Credits
 
 Bundled guides and fonts keep their own licences; see `THIRD_PARTY.md` and

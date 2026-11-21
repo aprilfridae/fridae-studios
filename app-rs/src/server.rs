@@ -288,6 +288,7 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/git" => send_json(projects::git(&text_of("path"), &text_of("action"), &body)),
         "/api/pick-files" => send_json(json!({"paths": promo::pick_files(&text_of("kind"))})),
         "/api/promo" => send_json(promo::act(&body)),
+        "/api/promo-engine" => send_json(promo::engine(&body)),
         "/api/copy" => send_json(json!({"ok": textures::set_clipboard_text(&text_of("text"))})),
         "/api/texture" => {
             let rid = paths::base_name(&text_of("id"));

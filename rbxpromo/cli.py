@@ -30,7 +30,7 @@ def _status(a):
     from rbxpromo import engine
     st = engine.status()
     if a.json:
-        return _show(st)
+        return _show(dict(st, folder=engine.engine_dir()))
     for k in ("node", "renderer", "browser", "whisper", "voice", "missing", "download_mb"):
         print("%s: %s" % (k, st[k]))
     print("ready: " + str(st["ready"]).lower())

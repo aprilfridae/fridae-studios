@@ -1188,6 +1188,7 @@ pub fn remove_agent(agent_id: &str) {
 
 /// Stop every agent and save every chat: called when the window closes.
 pub fn shut_down() {
+    crate::promo::stop_install();
     for a in agents() {
         a.stop();
         a.save();

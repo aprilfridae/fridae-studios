@@ -424,6 +424,8 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .su-body pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
 .su-body pre:empty { display: none; }
 .su-close { position: absolute; top: 12px; right: 12px; }
+.eng-bar { height: 4px; max-width: 360px; margin-top: 12px; border-radius: 999px; background: var(--hover); overflow: hidden; }
+.eng-bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width 300ms ease; }
 .scale-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .scale-row output { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
 .scale-row input[type=range] { flex: 1; max-width: 280px; accent-color: #ececed; }
@@ -595,6 +597,11 @@ body.proj #pd, body.guide #gd { transform: none; }
       <h3>Roblox Studio plugin</h3>
       <p class="sub" id="plug-state"></p>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove</button></div>
+      <h3>Promo engine</h3>
+      <p class="sub" id="eng-state">Checking...</p>
+      <div class="eng-bar" id="eng-bar" hidden><i></i></div>
+      <pre id="eng-error"></pre>
+      <div class="act"><button class="pill" id="eng-install" hidden>Install</button></div>
       <h3>Check everything</h3>
       <p class="sub">Looks for every program the tools use and says how to fix what is missing. Connect other apps adds these tools to Claude Code, Antigravity or Cursor, to use them outside this window.</p>
       <div class="act"><button class="pill" id="b-check">Run full check</button><button class="pill" id="b-agents">Connect other apps</button></div>
@@ -1156,6 +1163,7 @@ function settle(p) {
 }
 function onEvent(e) {
   if (e.kind === "setup") { $("setup-out").textContent = e.text; return; }
+  if (e.kind === "promo_engine") { onEngine(e); return; }
   if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
   if (e.kind === "clips") { if (e.id > bootMark) addClips(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
@@ -1834,7 +1842,46 @@ const sayTip = el("div", "saytip");
 { const c = document.querySelector(".composer"); c.style.position = "relative"; c.appendChild(sayTip); }
 function say(text) { sayTip.textContent = text; sayTip.classList.add("on"); clearTimeout(say.t); say.t = setTimeout(() => sayTip.classList.remove("on"), 6000); }
 
-function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); }
+/* Promo engine: downloaded on first use. Its install runs in the background and resumes where it stopped. */
+const ENG_STEPS = { node: "Node.js", renderer: "the Remotion renderer", browser: "the headless browser", whisper: "the speech recognition model", voice: "the voice model" };
+const ENG_ORDER = Object.keys(ENG_STEPS);
+let engine = null, engCheckError = "", engJob = {};
+function paintEngine() {
+  const st = $("eng-state"), btn = $("eng-install"), bar = $("eng-bar"), err = $("eng-error");
+  const label = (s) => ENG_STEPS[s] || "the promo engine";
+  bar.hidden = !engJob.running; err.textContent = ""; btn.hidden = false; btn.disabled = false;
+  if (engJob.running) {
+    const at = Math.max(0, ENG_ORDER.indexOf(engJob.step)), f = engJob.fraction || 0;
+    st.textContent = engJob.step ? "Installing " + label(engJob.step) + " (part " + (at + 1) + " of " + ENG_ORDER.length + ", " + Math.round(f * 100) + "%)." : "Starting the install...";
+    bar.querySelector("i").style.width = Math.round(((at + f) / ENG_ORDER.length) * 100) + "%";
+    btn.textContent = "Installing..."; btn.disabled = true;
+  } else if (engJob.error) {
+    st.textContent = "Could not install " + label(engJob.step) + ". Retry continues where it stopped.";
+    err.textContent = engJob.error; btn.textContent = "Retry";
+  } else if (!engine) {
+    st.textContent = engCheckError ? "Could not check the promo engine." : "Checking...";
+    err.textContent = engCheckError; btn.hidden = true;
+  } else if (engine.ready) {
+    st.textContent = "Ready. Promo videos are made on this computer" + (engine.folder ? ", with the engine in " + engine.folder : "") + ".";
+    btn.hidden = true;
+  } else {
+    const all = engine.missing.length === ENG_ORDER.length;
+    st.textContent = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + (engine.folder ? " into " + engine.folder : "") + ". The promo maker needs it. Nothing is installed system-wide.";
+    btn.textContent = all ? "Install" : "Continue install";
+  }
+}
+async function loadEngine() {
+  try { const r = await api("/api/promo-engine", { action: "status" }); engine = r.engine || null; engCheckError = r.error || ""; engJob = r.install || {}; } catch (e) {}
+  paintEngine();
+}
+function onEngine(e) {
+  if (e.failed) engJob = { running: false, step: e.step, error: e.error };
+  else if (e.done) { engJob = {}; loadEngine(); }
+  else engJob = { running: true, step: e.step, fraction: e.fraction };
+  paintEngine();
+}
+$("eng-install").onclick = async () => { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } };
+function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); }
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
   document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));

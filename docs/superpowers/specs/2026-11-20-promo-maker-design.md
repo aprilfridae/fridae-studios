@@ -71,7 +71,7 @@ download, open in their folder, or post with one click.
   Everything else stays MIT/Apache/LGPL. Code adapted from Subtle (MIT) and ideas from OpenMotion (Apache-2.0)
   and Short Video Maker (MIT) are credited in `THIRD_PARTY.md`.
 - **Packaging:** the packaged app ships no Node.js today. Remotion needs Node and a headless Chrome, so the
-  "promo engine" (portable Node, Remotion packages, Chrome Headless Shell, ffmpeg, whisper.cpp + model, Kokoro
+  "promo engine" (portable Node, Remotion packages, Chrome Headless Shell, ffmpeg, Whisper model, Kokoro
   voice model) downloads on first use into Fridae's own data folder, with a progress display and a size shown
   before download (expect several hundred MB). Nothing system-wide is installed. Setup's checks show its state.
 - **Large files:** chat attachments are base64 over HTTP, capped at 30 MB and copied into `work/attachments`.
@@ -160,7 +160,7 @@ CLI under `rbx promo …`, exposed to the agent as one MCP tool `rbx_promo` with
 | `probe` | Reads clips: length, fps, size, audio; hard cuts (ffmpeg scene detection); loud/action moments; a frame sheet per clip | JSON + sheet images |
 | `reference` | Breaks a reference TikTok into shot list, timings, on-screen text positions, caption look, music beats | JSON skeleton recipe + sheet |
 | `voice` | Script text → speech (Kokoro, local) | `voice.wav` + word timings |
-| `transcribe` | Word-level timing for a voice or a song (whisper.cpp) | JSON words |
+| `transcribe` | Word-level timing for a voice or a song (Whisper via transformers.js) | JSON words |
 | `render` | Validates `promo.json`, renders via Remotion, encodes H.264/AAC | `promo.mp4`, `cover.jpg`, `caption.txt`, `sheet.jpg` |
 | `check` | Safe-area overlap for each platform's UI, text contrast, hook within the first second, length limits, loudness | pass/fail list |
 | `styles` | Lists styles with a still for each | text + images |
@@ -246,7 +246,8 @@ responsibility.
 - Approach A (chat-driven tool + result card), timeline editor deferred.
 - Posting needs a click unless "post automatically" is switched on (off by default).
 - Kokoro for voice (English only); Piper as a fallback for other languages is left to the builder.
-- whisper.cpp (works on Windows and Mac) rather than Subtle's Apple-only mlx-whisper.
+- Whisper run with @huggingface/transformers in the engine's Node (works on Windows and Mac) rather than Subtle's
+  Apple-only mlx-whisper. (Planned as whisper.cpp; replaced during the build.)
 - Tokens in the OS keychain rather than `config.json`.
 - Engine downloaded on first use rather than bundled, to keep the main download small.
 - **Auto-post trigger:** only a render the agent marks `final` that also passes `check`; never during overnight

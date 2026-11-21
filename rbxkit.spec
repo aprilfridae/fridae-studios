@@ -8,6 +8,11 @@ datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "skills", "ag
 datas.append((os.path.join(HERE, "README.md"), "."))
 datas.append((os.path.join(HERE, "routing.txt"), "."))
 datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))
+# the promo engine's install copies this Remotion project into the engine folder; its node_modules are
+# installed there by npm, never shipped (from source, `npm` may have left one here)
+for folder, dirs, files in os.walk(os.path.join(HERE, "promo")):
+    dirs[:] = [d for d in dirs if d != "node_modules"]
+    datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if f != ".DS_Store"]
 hidden = ["rbx", "rbxtex", "rbximg", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
           "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxvault",
           "rbxpromo", "rbxpromo.cli", "rbxpromo.tool", "rbxpromo.engine", "rbxpromo.probe", "rbxpromo.reference",

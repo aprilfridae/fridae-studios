@@ -66,3 +66,30 @@ not included.
   individuals, non-profits and for-profit teams of up to 3 people; larger companies need a Remotion company
   licence to use the promo maker (https://www.remotion.dev/docs/license).
 - **Mediabunny** (MPL-2.0), installed with the engine, reads clip sizes and lengths in `promo/scripts/render.mjs`.
+
+## Promo engine (downloaded at install, not bundled)
+
+`rbx promo install` (Setup, Connections, Promo engine) downloads these into the engine folder
+(`Documents/Fridae Studios/engine` in the app). Each keeps its own licence.
+
+- **Node.js** (MIT, https://github.com/nodejs/node/blob/main/LICENSE): the portable runtime from nodejs.org,
+  checked against its `SHASUMS256.txt`.
+- **Remotion**: see above (https://www.remotion.dev/docs/license).
+- **Chrome Headless Shell**, downloaded by Remotion (`remotion browser ensure`) to render frames. Chromium is
+  under a BSD-style licence plus the licences of its components (https://www.chromium.org/chromium-projects/;
+  the full list ships with the browser as `chrome://credits`).
+- **Whisper** speech recognition, run with **@huggingface/transformers** (Apache-2.0,
+  https://github.com/huggingface/transformers.js) and the **onnx-community/whisper-base.en_timestamped** model
+  (MIT, converted from OpenAI's Whisper weights, https://github.com/openai/whisper): word timings for voices
+  and song lyrics.
+- **kokoro-js** (Apache-2.0, https://github.com/hexgrad/kokoro) with the **Kokoro-82M** voice model
+  (Apache-2.0, https://huggingface.co/hexgrad/Kokoro-82M; the ONNX build `onnx-community/Kokoro-82M-v1.0-ONNX`):
+  the local voice-over.
+
+## Ideas
+
+The promo maker borrows ideas, not code, from **OpenMotion** by nexu-io (Apache-2.0,
+https://github.com/nexu-io/openmotion): a recipe file for each video (its Motion.md) that the agent writes and
+the engine renders; and from **Short Video Maker** by gyoridavid (MIT,
+https://github.com/gyoridavid/short-video-maker): scenes as the unit of a video, captions timed with Whisper,
+and a free local Kokoro voice.

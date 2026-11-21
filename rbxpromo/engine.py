@@ -1,5 +1,5 @@
-"""The promo engine: a portable Node, the Remotion project, a headless browser, whisper.cpp and the
-voice model, all kept in one folder and installed on first use.
+"""The promo engine: a portable Node, the Remotion project, a headless browser, the Whisper speech model
+(run with @huggingface/transformers) and the voice model, all kept in one folder and installed on first use.
 
 The install is a list of steps. Each finished step is written to .state.json, so an install that
 was interrupted (or whose npm step failed) picks up at the step it stopped at instead of starting over.
