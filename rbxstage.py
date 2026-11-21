@@ -12,6 +12,7 @@ from contextlib import contextmanager
 import uuid
 
 import rbxpaths
+import rbxroster
 from rbxpaths import KitError
 
 STAGES = ["idea", "design", "build", "test", "launch", "promote"]
@@ -158,24 +159,9 @@ def _find_project(a):
     return project
 
 
-def _roster_names():
-    data = _read_json(os.path.join(rbxpaths.KIT, "team", "roster.json"))
-    if not data:
-        try:
-            with open(os.path.join(rbxpaths.KIT, "team", "roster.json"), encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            return []
-    entries = data.get("experts") if isinstance(data, dict) else data
-    if isinstance(entries, dict):
-        entries = [dict(v, id=k) if isinstance(v, dict) else {"id": k} for k, v in entries.items()]
-    names = []
-    for e in entries or []:
-        if isinstance(e, dict):
-            names.append(str(e.get("name") or e.get("id") or ""))
-        elif isinstance(e, str):
-            names.append(e)
-    return [n for n in names if n]
+def _roster_names(project):
+    return ["%s [%s, %s%s]" % (e["name"] or e["id"], e["id"], e["stage"], ", changes the place" if e["writes"] else "")
+            for e in rbxroster.load(project)]
 
 
 def _unread(project, run, items):
@@ -194,9 +180,9 @@ def _status(project):
                                                       ", paused" if run.get("paused") else "", run.get("stage") or "none"))
     lines.append("Stages: " + "  ".join("%s (%s)" % (s["id"], s.get("status", "todo")) for s in run["stages"]))
     lines.append("Gates (the run waits for you to approve): " + (", ".join(run.get("gates") or []) or "none"))
-    roster = _roster_names()
+    roster = _roster_names(project)
     if roster:
-        lines.append("Team: " + ", ".join(roster))
+        lines.append("Team (name [id for rbx_team, stage]): " + ", ".join(roster))
     open_items = [i for i in items if i.get("status") in OPEN]
     lines.append("Open review items (%d):" % len(open_items) if open_items else "No open review items.")
     for i in open_items:
