@@ -17,7 +17,7 @@
     "remotion": "4.0.545"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test \"src/captions/*.test.ts\"",
+    "test": "node --experimental-strip-types --test \"src/captions/*.test.ts\" \"scripts/*.test.mjs\"",
     "render": "node scripts/render.mjs"
   }
 }

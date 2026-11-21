@@ -5,15 +5,16 @@
 // stdout carries only JSON lines: {"progress":0.42} while rendering, then {"ok":true,"duration":…} — or
 // {"ok":false,"error":"…"} with a non-zero exit. Pass "-" as out.mp4 to render only the still.
 //
-// Clips are never copied. A tiny HTTP server on 127.0.0.1 serves exactly the files the recipe names (by index, so
-// paths with spaces, accents or drive letters never travel in URLs), with range requests; @remotion/media's
-// <Video>/<Audio> decode them in the headless browser and read only the byte ranges they need.
+// Clips are never copied. A private HTTP server on 127.0.0.1 (media-server.mjs: per-run token, Host check, CORS only
+// for the bundle's own origin) serves exactly the files the recipe names, by index, so paths with spaces, accents or
+// drive letters never travel in URLs; @remotion/media's <Video>/<Audio> decode them in the headless browser and read
+// only the byte ranges they need.
 import {createHash} from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
+import {freePort, serveFiles} from './media-server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
@@ -107,73 +108,6 @@ async function probeMedia(file) {
   }
 }
 
-const TYPES = {'.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac'};
-
-/** Serve only `files` (by index) from 127.0.0.1 with range requests and CORS. */
-function serveFiles(files) {
-  const server = http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Range');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
-    res.setHeader('Accept-Ranges', 'bytes');
-    if (req.method === 'OPTIONS') {
-      res.end();
-      return;
-    }
-    const m = /^\/media\/(\d+)\//.exec(req.url || '');
-    const file = m ? files[Number(m[1])] : undefined;
-    if (!file || (req.method !== 'GET' && req.method !== 'HEAD')) {
-      res.statusCode = 404;
-      res.end();
-      return;
-    }
-    let size;
-    try {
-      size = fs.statSync(file).size;
-    } catch {
-      res.statusCode = 404;
-      res.end();
-      return;
-    }
-    let start = 0;
-    let end = size - 1;
-    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
-    if (range) {
-      if (range[1] === '' && range[2] !== '') start = Math.max(0, size - Number(range[2]));
-      else {
-        start = Number(range[1] || 0);
-        if (range[2] !== '') end = Math.min(Number(range[2]), size - 1);
-      }
-      if (start > end || start >= size) {
-        res.statusCode = 416;
-        res.setHeader('Content-Range', `bytes */${size}`);
-        res.end();
-        return;
-      }
-      res.statusCode = 206;
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${size}`);
-    }
-    res.setHeader('Content-Length', end - start + 1);
-    res.setHeader('Content-Type', TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream');
-    if (req.method === 'HEAD') {
-      res.end();
-      return;
-    }
-    const stream = fs.createReadStream(file, {start, end});
-    stream.on('error', () => res.destroy());
-    res.on('close', () => stream.destroy());
-    stream.pipe(res);
-  });
-  return new Promise((resolve, reject) => {
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const {port} = server.address();
-      resolve({server, url: (i) => `http://127.0.0.1:${port}/media/${i}/${encodeURIComponent(path.basename(files[i]))}`});
-    });
-  });
-}
-
 function loadWords(caps, resolve) {
   if (!caps || caps.source === 'none' || caps.words == null) return null;
   let data = caps.words;
@@ -224,7 +158,9 @@ async function main() {
 
   const hash = hashDir([path.join(ROOT, 'src'), path.join(ROOT, 'public')]);
   const plan = await loadPlan(hash);
-  const {server, url} = await serveFiles(files);
+  // Remotion's bundle server gets a port chosen here, so the media server can allow exactly its origin
+  const port = await freePort();
+  const {server, url} = await serveFiles(files, {allowOrigins: [`http://localhost:${port}`, `http://127.0.0.1:${port}`]});
   try {
     const media = {};
     for (const [i, f] of files.entries()) media[f] = {...(await probeMedia(f)), url: url(i)};
@@ -258,7 +194,7 @@ async function main() {
     progress(0);
     const serveUrl = await getBundle(hash, (p) => progress(p * 0.1));
     const {selectComposition, renderMedia, renderStill} = await import('@remotion/renderer');
-    const composition = await selectComposition({serveUrl, id: 'Promo', inputProps: props, logLevel: 'error'});
+    const composition = await selectComposition({serveUrl, id: 'Promo', inputProps: props, logLevel: 'error', port});
     if (args.video) {
       fs.mkdirSync(path.dirname(args.video), {recursive: true});
       await renderMedia({
@@ -273,6 +209,7 @@ async function main() {
         outputLocation: args.video,
         overwrite: true,
         logLevel: 'error',
+        port,
         onProgress: ({progress: p}) => progress(0.1 + p * (args.still ? 0.85 : 0.9)),
       });
     }
@@ -280,7 +217,7 @@ async function main() {
       const file = args.still.file;
       fs.mkdirSync(path.dirname(file), {recursive: true});
       const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(args.still.sec * props.fps)));
-      await renderStill({serveUrl, composition, inputProps: props, frame, output: file, imageFormat: 'jpeg', jpegQuality: 90, overwrite: true, logLevel: 'error'});
+      await renderStill({serveUrl, composition, inputProps: props, frame, output: file, imageFormat: 'jpeg', jpegQuality: 90, overwrite: true, logLevel: 'error', port});
     }
     progress(1);
     out({ok: true, duration: Math.round(duration * 1000) / 1000, video: args.video, still: args.still ? args.still.file : null, layout: args.layout});

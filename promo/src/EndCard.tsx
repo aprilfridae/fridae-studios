@@ -1,7 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
 import {fontCss} from './fonts';
-import type {EndCard as EndCardProps} from './plan';
+import {endAnim, type EndCard as EndCardProps} from './plan';
 import {TitleText} from './scenes/TitleScene';
 import type {PromoStyle} from './styles/index';
 
@@ -17,7 +17,7 @@ export const EndCard: React.FC<{e: EndCardProps; style: PromoStyle}> = ({e, styl
   return (
     <AbsoluteFill>
       <AbsoluteFill style={{backgroundColor: style.end.scrim, opacity: scrim}} />
-      {e.title ? <TitleText layout={e.title} t={t} frame={frame} frames={e.frames} anim={t.anim === 'type' || t.anim === 'count' ? 'rise' : t.anim} /> : null}
+      {e.title ? <TitleText layout={e.title} t={t} frame={frame} frames={e.frames} anim={endAnim(t.anim) as typeof t.anim} /> : null}
       {cta && box ? (
         <div
           style={{

@@ -35,6 +35,7 @@ export type CaptionPreset = {
   anim: 'punch' | 'highlighter' | 'karaoke' | 'bottom' | 'impact' | 'glass' | 'ticket' | 'cinema';
   box?: string; // highlighter box / ticket label / glass pill colour
   dim?: number; // opacity of upcoming words
+  activeScale?: number; // scale of the word being spoken (counted into the layout box)
 };
 
 const preset = (p: CaptionPreset) => p;
@@ -45,7 +46,7 @@ export const CAPTION_STYLES: Record<string, CaptionPreset> = {
     size: 5.0, lineHeight: 1.1, letterSpacing: -0.005, maxWords: 4, maxLines: 2, maxCharsPerLine: 14,
     gapBreak: 0.35, minShow: 0.4, y: 0.62, padX: 0, padY: 0.1,
     color: '#FFFFFF', active: '#C8FF2E', emphasis: '#C8FF2E', emphasisScale: 1.0,
-    stroke: 0.07, strokeColor: '#000000', shadow: '0 0.08em 0.1em rgba(0,0,0,0.5)', anim: 'punch',
+    stroke: 0.07, strokeColor: '#000000', shadow: '0 0.08em 0.1em rgba(0,0,0,0.5)', anim: 'punch', activeScale: 1.08,
   }),
   highlighter: preset({
     name: 'highlighter', family: 'Montserrat ExtraBold', file: 'Montserrat-ExtraBold.ttf', weight: 800, case: 'upper',

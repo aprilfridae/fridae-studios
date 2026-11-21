@@ -270,7 +270,7 @@ export function paginate(words: Word[], o: PaginateOpts): Page[] {
 
   const fits = (list: Token[]) => {
     if (list.length === 1) return true;
-    const avail = safeW - 2 * st.padX * baseFs;
+    const avail = lineRoom(st, safeW, baseFs);
     const widths = list.map((t) => measure(t, baseFs));
     if (widths.some((w) => w > avail)) return false;
     const lines = wrap(widths, list.map((t) => [...textOf(t)].length), spaceW(baseFs), avail, st.maxCharsPerLine);
@@ -317,6 +317,10 @@ export function paginate(words: Word[], o: PaginateOpts): Page[] {
 
 const TILTS = [-3, 2.2, -1.6, 2.8, -2.4, 1.6];
 
+/** Width the words of a line may take: the safe width minus container padding and stroke on both sides, and
+ * room for the active word's scale-up (punch) so the drawn extent stays inside the safe area. */
+const lineRoom = (st: CaptionPreset, safeW: number, fs: number) => (safeW - 2 * (st.padX + st.stroke) * fs) / (st.activeScale ?? 1);
+
 function layoutPage(g: Token[], emph: number, start: number, end: number, index: number, o: PaginateOpts): Page {
   const st = o.style;
   const W = o.width;
@@ -330,7 +334,7 @@ function layoutPage(g: Token[], emph: number, start: number, end: number, index:
   let widths: number[] = [];
   let space = 0;
   for (let iter = 0; iter < 60; iter++) {
-    const avail = (SAFE.x1 - SAFE.x0) * W - 2 * st.padX * fs;
+    const avail = lineRoom(st, (SAFE.x1 - SAFE.x0) * W, fs);
     widths = texts.map((t, i) => textWidth(t, st.file, fs * scale(i), st.letterSpacing, o.metrics));
     space = textWidth(' ', st.file, fs, st.letterSpacing, o.metrics);
     lineOf = wrap(widths, chars, space, avail, g.length === 1 ? Infinity : st.maxCharsPerLine);
@@ -346,10 +350,14 @@ function layoutPage(g: Token[], emph: number, start: number, end: number, index:
   const blockH = lineH * nLines;
   const cx = ((SAFE.x0 + SAFE.x1) / 2) * W;
   const tilt = st.anim === 'ticket' ? TILTS[index % TILTS.length] : 0;
-  const padX = st.padX * fs;
-  const padY = st.padY * fs;
-  let bw = blockW + 2 * padX;
-  let bh = blockH + 2 * padY;
+  // the reported box holds everything drawn: container padding, the outline (drawn 2*stroke wide on the glyph
+  // edge, so stroke*fs outside it) and the active word scaled up about its centre (punch)
+  const grow = (st.activeScale ?? 1) - 1;
+  const edge = st.stroke * fs;
+  const padX = st.padX * fs + edge;
+  const padY = st.padY * fs + edge;
+  let bw = blockW + 2 * padX + grow * Math.max(...widths);
+  let bh = blockH + 2 * padY + grow * lineH;
   if (tilt) {
     const r = (Math.abs(tilt) * Math.PI) / 180;
     [bw, bh] = [bw * Math.cos(r) + bh * Math.sin(r), bw * Math.sin(r) + bh * Math.cos(r)];
@@ -371,18 +379,27 @@ function layoutPage(g: Token[], emph: number, start: number, end: number, index:
 
 // ---------------------------------------------------------------- titles and end cards
 
-export type TextFont = {file: string; size: number; lineHeight: number; letterSpacing: number; case: CaptionCase};
+/** `stroke` (em) and `anim` say how the title is drawn, so the wrap leaves room for its outline, label padding
+ * and rotation (see titleBox) inside the safe width. */
+export type TextFont = {file: string; size: number; lineHeight: number; letterSpacing: number; case: CaptionCase; stroke?: number; anim?: string};
 export type TextLayout = {fontSize: number; lineHeight: number; lines: {text: string; x: number; y: number; w: number}[]; box: Box};
 
 /** Wrap a title into at most `maxLines` balanced lines inside the safe width, centred at height fraction `y`. */
 export function layoutTitle(text: string, font: TextFont, metrics: Metrics, W: number, H: number, y: number, maxLines = 3, maxWidth = 1): TextLayout {
   const words = applyCase(text, font.case).split(/\s+/).filter(Boolean);
-  const avail = (SAFE.x1 - SAFE.x0) * W * maxWidth;
+  const safeW = (SAFE.x1 - SAFE.x0) * W * maxWidth;
+  const d = TITLE_DRAW[font.anim ?? ''] ?? {padX: 0, rotate: 0};
+  const edgeEm = (font.stroke ?? 0) + 0.06;
+  const rot = (Math.abs(d.rotate) * Math.PI) / 180;
+  // widest line such that titleBox's rotated, padded line still fits the safe width
+  const room = (size: number) => (safeW - (size * font.lineHeight + 2 * edgeEm * size) * Math.sin(rot)) / Math.cos(rot) - 2 * (d.padX + edgeEm) * size;
   let fs = (font.size / 100) * H;
+  let avail = room(fs);
   let lineOf: number[] = [];
   let widths: number[] = [];
   let space = 0;
   for (let iter = 0; iter < 80; iter++) {
+    avail = room(fs);
     widths = words.map((w) => textWidth(w, font.file, fs, font.letterSpacing, metrics));
     space = textWidth(' ', font.file, fs, font.letterSpacing, metrics);
     lineOf = wrap(widths, widths.map(() => 0), space, avail, Infinity);
@@ -395,7 +412,9 @@ export function layoutTitle(text: string, font: TextFont, metrics: Metrics, W: n
   const n = lineW.length;
   const blockH = lh * n;
   const cx = ((SAFE.x0 + SAFE.x1) / 2) * W;
-  const cy = Math.min(Math.max(y * H, SAFE.y0 * H + blockH / 2), SAFE.y1 * H - blockH / 2);
+  // vertical room for the drawn extent too (outline, rotation of the widest line)
+  const half = blockH / 2 + edgeEm * fs + (Math.max(0, ...lineW) / 2 + d.padX * fs) * Math.sin(rot);
+  const cy = Math.min(Math.max(y * H, SAFE.y0 * H + half), SAFE.y1 * H - half);
   const top = cy - blockH / 2;
   const lines = lineW.map((w, li) => ({
     text: words.filter((_, i) => lineOf[i] === li).join(' '),
@@ -405,4 +424,38 @@ export function layoutTitle(text: string, font: TextFont, metrics: Metrics, W: n
   }));
   const blockW = Math.max(0, ...lineW);
   return {fontSize: fs, lineHeight: lh, lines, box: {x: cx - blockW / 2, y: top, w: blockW, h: blockH}};
+}
+
+/** How title animations draw each line once settled: padding (em, horizontal, as on the stamp label) and the
+ * largest rotation (degrees). TitleScene draws with these numbers and titleBox reports them. */
+export const TITLE_DRAW: Record<string, {padX: number; rotate: number}> = {
+  stamp: {padX: 0.25, rotate: -3},
+  shake: {padX: 0, rotate: 2.2}, // wobbles between -2.2 and +2.2 degrees
+  type: {padX: 0.2, rotate: 0}, // the blinking caret after the text (about 0.34 em, the line stays centred)
+};
+
+/** The box that holds a title as drawn: each line grown by its outline (stroke em), a soft shadow margin,
+ * the animation's padding, then rotated about the line centre; the union of all lines. */
+export function titleBox(l: TextLayout, stroke: number, anim: string): Box {
+  const d = TITLE_DRAW[anim] ?? {padX: 0, rotate: 0};
+  const fs = l.fontSize;
+  const edge = fs * (stroke + 0.06);
+  const r = (Math.abs(d.rotate) * Math.PI) / 180;
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const line of l.lines) {
+    const w = line.w + 2 * (d.padX * fs + edge);
+    const h = l.lineHeight + 2 * edge;
+    const bw = w * Math.cos(r) + h * Math.sin(r);
+    const bh = w * Math.sin(r) + h * Math.cos(r);
+    const cx = line.x + line.w / 2;
+    const cy = line.y + l.lineHeight / 2;
+    x0 = Math.min(x0, cx - bw / 2);
+    x1 = Math.max(x1, cx + bw / 2);
+    y0 = Math.min(y0, cy - bh / 2);
+    y1 = Math.max(y1, cy + bh / 2);
+  }
+  return {x: x0, y: y0, w: x1 - x0, h: y1 - y0};
 }

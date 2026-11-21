@@ -1,6 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import type {TextLayout} from '../captions/paginate';
+import {TITLE_DRAW, type TextLayout} from '../captions/paginate';
 import {fontCss} from '../fonts';
 import type {TitleScene as TitleSceneProps} from '../plan';
 import type {TitleStyle} from '../styles/index';
@@ -37,7 +37,7 @@ export const TitleText: React.FC<{layout: TextLayout; t: TitleStyle; frame: numb
           filter = `blur(${(1 - p) * 10}px)`;
         } else if (a === 'shake') {
           const s = spring({frame: f, fps, config: {damping: 9, stiffness: 240, mass: 0.6}});
-          transform = `scale(${interpolate(s, [0, 1], [0.55, 1])}) rotate(${Math.sin(frame * 1.9 + li) * 2.2}deg)`;
+          transform = `scale(${interpolate(s, [0, 1], [0.55, 1])}) rotate(${Math.sin(frame * 1.9 + li) * TITLE_DRAW.shake.rotate}deg)`;
         } else if (a === 'count') {
           const p = interpolate(frame, [0, fps * 0.35], [0, 1], {...clamp, easing: Easing.out(Easing.exp)});
           transform = `scale(${interpolate(p, [0, 1], [2.6, 1])})`;
@@ -45,7 +45,7 @@ export const TitleText: React.FC<{layout: TextLayout; t: TitleStyle; frame: numb
           filter = `blur(${(1 - p) * 14}px)`;
         } else if (a === 'stamp') {
           const s = spring({frame: f, fps, config: {damping: 15, stiffness: 300, mass: 0.6}});
-          transform = `rotate(-3deg) scale(${interpolate(s, [0, 1], [1.45, 1])})`;
+          transform = `rotate(${TITLE_DRAW.stamp.rotate}deg) scale(${interpolate(s, [0, 1], [1.45, 1])})`;
           opacity = interpolate(f, [0, 2], [0, 1], clamp);
         } else if (a === 'rise') {
           const p = interpolate(f, [0, fps * 0.45], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
@@ -77,7 +77,7 @@ export const TitleText: React.FC<{layout: TextLayout; t: TitleStyle; frame: numb
                 WebkitTextStroke: t.stroke ? `${t.stroke * fs * 2}px ${t.strokeColor}` : undefined,
                 paintOrder: 'stroke fill',
                 backgroundColor: stamp ? t.accent : undefined,
-                padding: stamp ? `0 ${fs * 0.25}px` : undefined,
+                padding: stamp ? `0 ${fs * TITLE_DRAW.stamp.padX}px` : undefined,
               }}
             >
               {a === 'type' ? <span>{text || '​'}</span> : text}

@@ -3,7 +3,7 @@
 // layout.json matches the video exactly.
 import metricsJson from './captions/metrics.json';
 import {CAPTION_STYLES, type CaptionPreset} from './captions/presets';
-import {layoutTitle, paginate, type Box, type Highlight, type Metrics, type Page, type TextLayout, type Word} from './captions/paginate';
+import {layoutTitle, paginate, titleBox, type Box, type Highlight, type Metrics, type Page, type TextLayout, type Word} from './captions/paginate';
 import {PROMO_STYLES, TRANSITIONS, type PromoStyle} from './styles/index';
 
 const metrics = metricsJson as unknown as Metrics;
@@ -48,6 +48,9 @@ export type LayoutBox = {from: number; to: number; x: number; y: number; w: numb
 
 export class PlanError extends Error {}
 
+/** The end card's title animation: typing and count-in read badly over footage, so they rise instead. */
+export const endAnim = (a: string) => (a === 'type' || a === 'count' ? 'rise' : a);
+
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 export function parseZoom(z: unknown, where: string): Zoom[] {
@@ -61,10 +64,6 @@ export function parseZoom(z: unknown, where: string): Zoom[] {
     if (!Number.isFinite(t) || t < 0) throw new PlanError(`${where}: zoom time in "${part.trim()}" must be seconds >= 0.`);
     return {kind, t};
   });
-}
-
-function boxOf(l: TextLayout, pad: number): Box {
-  return {x: l.box.x - pad, y: l.box.y - pad, w: l.box.w + 2 * pad, h: l.box.h + 2 * pad};
 }
 
 export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve: (p: string) => string, words: Word[] | null): {props: PromoProps; layout: LayoutBox[]; duration: number} {
@@ -99,7 +98,7 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
     if ('title' in s) {
       const st = (s.style && PROMO_STYLES[s.style]) || style;
       const tl = layoutTitle(String(s.title), st.title, metrics, WIDTH, HEIGHT, st.title.y, 3);
-      layout.push({from: a / fps, to: b / fps, ...boxOf(tl, tl.fontSize * (0.06 + st.title.stroke)), kind: 'title'});
+      layout.push({from: a / fps, to: b / fps, ...titleBox(tl, st.title.stroke, st.title.anim), kind: 'title'});
       return {...base, kind: 'title', text: String(s.title), layout: tl, style: st} as TitleScene;
     }
     const m = media[resolve(s.clip)];
@@ -127,13 +126,13 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
   if (recipe.end_card && frames > 0) {
     const n = Math.max(1, Math.round(Math.min(style.end.seconds, (frames / fps) * 0.4) * fps));
     const from = frames - n;
-    const tf = {...style.title, size: Math.min(style.title.size, 9)};
+    const tf = {...style.title, size: Math.min(style.title.size, 9), anim: endAnim(style.title.anim)};
     const title = recipe.end_card.title ? layoutTitle(recipe.end_card.title, tf, metrics, WIDTH, HEIGHT, 0.42, 2) : null;
-    const ctaFont = {...style.title, size: 3.6, lineHeight: 1.2, letterSpacing: Math.min(style.title.letterSpacing, 0.08)};
+    const ctaFont = {...style.title, size: 3.6, lineHeight: 1.2, letterSpacing: Math.min(style.title.letterSpacing, 0.08), stroke: 0, anim: 'rise'};
     const ctaY = title ? (title.box.y + title.box.h) / HEIGHT + 0.075 : 0.5;
     const cta = recipe.end_card.cta ? layoutTitle(recipe.end_card.cta, ctaFont, metrics, WIDTH, HEIGHT, ctaY, 1, 0.8) : null;
     const ctaBox = cta ? {x: cta.box.x - cta.fontSize * 0.9, y: cta.box.y - cta.fontSize * 0.45, w: cta.box.w + cta.fontSize * 1.8, h: cta.box.h + cta.fontSize * 0.9} : null;
-    if (title) layout.push({from: from / fps, to: frames / fps, ...boxOf(title, title.fontSize * (0.06 + style.title.stroke)), kind: 'end'});
+    if (title) layout.push({from: from / fps, to: frames / fps, ...titleBox(title, style.title.stroke, tf.anim), kind: 'end'});
     if (ctaBox) layout.push({from: from / fps, to: frames / fps, ...ctaBox, kind: 'end'});
     end = {from, frames: n, title, cta, ctaBox};
   }

@@ -74,7 +74,7 @@ const PageView: React.FC<{st: CaptionPreset; page: Page; t: number; frame: numbe
             if (s === 'upcoming') return null;
             const f = frame - Math.round(w.start * fps);
             const pop = interpolate(f, [0, f30(6, fps)], [0, 1], {...clamp, easing: outBack});
-            const scale = interpolate(pop, [0, 1], [0.55, 1]) * (s === 'active' ? 1.08 : 1);
+            const scale = interpolate(pop, [0, 1], [0.55, 1]) * (s === 'active' ? st.activeScale ?? 1 : 1);
             const color = w.emphasis ? st.emphasis : s === 'active' ? st.active : st.color;
             return wordBox(w, {color, transform: `scale(${scale})`, opacity: interpolate(f, [0, 2], [0.2, 1], clamp)});
           })}
