@@ -336,7 +336,6 @@ def _box_luminance(cap, box, t):
 
 
 def _contrast_problems(video, layout, recipe):
-    import cv2
     notes = []
     try:
         looks = _text_looks(layout, recipe, notes)
@@ -346,9 +345,11 @@ def _contrast_problems(video, layout, recipe):
         return [], notes
     if len(looks) > MAX_CONTRAST_BOXES:
         looks = [looks[int(i * len(looks) / MAX_CONTRAST_BOXES)] for i in range(MAX_CONTRAST_BOXES)]
-    cap = cv2.VideoCapture(video)
-    if not cap.isOpened():
-        raise RuntimeError("could not open the video to check contrast: " + video)
+    import rbxvideo
+    try:
+        cap = rbxvideo.open_capture(video)
+    except ValueError as e:
+        raise RuntimeError("could not check contrast: %s" % e)
     problems, unread = [], []
     try:
         for box, colour, outline in looks:

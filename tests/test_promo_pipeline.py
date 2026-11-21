@@ -70,9 +70,11 @@ class PipelineTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": "agent-7"}):
             res = render(self.recipe())
         cards = os.listdir(os.path.join(self.work, "promo-cards"))
-        self.assertEqual(cards, [os.path.basename(res["folder"]) + ".json"])
+        self.assertEqual(len(cards), 1, cards)
         with open(os.path.join(self.work, "promo-cards", cards[0]), encoding="utf-8") as f:
             card = json.load(f)
+        self.assertEqual(cards[0], card["id"] + ".json")
+        self.assertRegex(card["id"], "^" + os.path.basename(res["folder"]) + "-[0-9a-f]{8}$")
         self.assertEqual(set(card), {"id", "agent", "folder", "video", "cover", "caption_text", "style",
                                      "duration", "check", "created"})
         self.assertEqual(card["agent"], "agent-7")
@@ -106,9 +108,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIsInstance(chk["passed"], bool)
         self.assertTrue(chk["passed"], chk)
         self.assertTrue(any("silent" in n for n in chk["notes"]), chk)     # the fixture promo has no music or voice
-        card = os.path.join(self.work, "promo-cards", os.path.basename(res["folder"]) + ".json")
-        with open(card, encoding="utf-8") as f:
-            self.assertEqual(json.load(f)["check"], chk)
+        self.assertEqual(self._card(res)["check"], chk)
 
     def test_failed_check_is_reported_in_card(self):
         from rbxpromo import render as mod
@@ -197,6 +197,64 @@ class PipelineTests(unittest.TestCase):
                 mod.render(self.recipe())
         self.assertFalse(os.path.exists(os.path.join(self.work, "promo-cards")))
         self.assertEqual(os.listdir(os.path.join(self.work, "promos", "general")), [])
+
+    def _card(self, res):
+        cards = os.listdir(os.path.join(self.work, "promo-cards"))
+        self.assertEqual(len(cards), 1, cards)
+        with open(os.path.join(self.work, "promo-cards", cards[0]), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_sheet_failure_keeps_video_and_card(self):
+        from rbxpromo import render as mod
+        with mock.patch.object(mod, "_sheet", side_effect=RuntimeError("sheet boom")):
+            res = mod.render(self.recipe())
+        self.assertTrue(os.path.isfile(res["video"]))
+        self.assertIsNone(res["sheet"])
+        self.assertTrue(any("sheet boom" in n for n in res["check"]["notes"]), res["check"])
+        self.assertEqual(self._card(res)["check"], res["check"])
+
+    def test_check_failure_keeps_video_and_card(self):
+        from rbxpromo import render as mod
+        with mock.patch.object(mod, "_run_check", side_effect=RuntimeError("check boom")):
+            res = mod.render(self.recipe())
+        self.assertTrue(os.path.isfile(res["video"]))
+        self.assertTrue(os.path.isfile(res["sheet"]))
+        self.assertFalse(res["check"]["passed"])
+        self.assertEqual(res["check"]["problems"], ["The check could not run: check boom"])
+        self.assertEqual(self._card(res)["check"], res["check"])
+
+    def test_caption_write_failure_keeps_video_and_card(self):
+        from rbxpromo import render as mod
+        with mock.patch.object(mod, "_write_caption", side_effect=OSError("disk full")):
+            res = mod.render(self.recipe())
+        self.assertTrue(os.path.isfile(res["video"]))
+        self.assertFalse(res["check"]["passed"])
+        self.assertTrue(any("disk full" in p for p in res["check"]["problems"]), res["check"])
+        self.assertTrue(os.path.isdir(self._card(res)["folder"]))
+
+    def test_sheet_under_non_ascii_folder_with_windows_like_cv2(self):
+        import cv2
+        from rbxpromo import render as mod
+        real_read, real_write = cv2.imread, cv2.imwrite
+        r = mock.patch.object(cv2, "imread", lambda p, *a, **k: None if not str(p).isascii() else real_read(p, *a, **k))
+        w = mock.patch.object(cv2, "imwrite", lambda p, *a, **k: False if not str(p).isascii() else real_write(p, *a, **k))
+        with r, w:
+            res = mod.render(self.recipe())          # self.tmp holds "pipé"
+        self.assertTrue(os.path.isfile(res["sheet"]))
+        self.assertTrue(res["check"]["passed"], res["check"])
+
+    def test_card_id_unique_per_folder(self):
+        from rbxpromo import render as mod
+        a = mod.render(self.recipe(), out_dir=os.path.join(self.tmp, "x", "out"))
+        b = mod.render(self.recipe(), out_dir=os.path.join(self.tmp, "y", "out"))
+        ids = []
+        for n in os.listdir(os.path.join(self.work, "promo-cards")):
+            with open(os.path.join(self.work, "promo-cards", n), encoding="utf-8") as f:
+                ids.append(json.load(f)["id"])
+        self.assertEqual(len(set(ids)), 2, ids)
+        for i in ids:
+            self.assertRegex(i, r"^out-[0-9a-f]{8}$")
+        self.assertTrue(os.path.isdir(a["folder"]) and os.path.isdir(b["folder"]))
 
     def test_promo_folder_names(self):
         from rbxpromo.render import promo_folder

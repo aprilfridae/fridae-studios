@@ -8,7 +8,7 @@ recipe the renderer got: generated voice, caption words and auto-tracked focus f
 cover.jpg, caption.txt, sheet.jpg, layout.json and, when the recipe has voice text, voice.wav. The card
 WORK/promo-cards/<id>.json is written last, after the self-check ran.
 """
-import copy, datetime, json, ntpath, os, re, shutil, subprocess, tempfile
+import copy, datetime, hashlib, json, ntpath, os, re, shutil, subprocess, tempfile
 
 import rbxpaths
 from rbxpromo import engine
@@ -45,9 +45,8 @@ def _motion_centres(path, start, end, step=TRACK_STEP):
     seconds: the centroid of the difference between two frames a couple of frames apart."""
     import cv2
     import numpy as np
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
-        raise ValueError("could not open video for tracking: " + path)
+    import rbxvideo
+    cap = rbxvideo.open_capture(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     gap = 2
     out = []
@@ -231,9 +230,10 @@ def _sheet(video, out_jpg):
             res = rbxvideo.frames(video, count=12, out_dir=tmp)
         except SystemExit as e:
             raise RuntimeError("Could not make the contact sheet: %s" % e)
-        img = cv2.imread(res["look_at"][0])
-        if img is None or not cv2.imwrite(out_jpg, img, [cv2.IMWRITE_JPEG_QUALITY, 88]):
-            raise RuntimeError("Could not write the contact sheet " + out_jpg)
+        try:
+            rbxvideo.imwrite(out_jpg, rbxvideo.imread(res["look_at"][0]), [cv2.IMWRITE_JPEG_QUALITY, 88])
+        except OSError as e:
+            raise RuntimeError("Could not write the contact sheet: %s" % e)
 
 
 def _run_check(video, layout_path, recipe):
@@ -246,6 +246,19 @@ def _caption_text(recipe):
     post = recipe.get("post") or {}
     tags = " ".join("#" + str(t).lstrip("#") for t in post.get("hashtags") or [] if str(t).strip("#"))
     return str(post.get("caption", "")) + "\n" + tags
+
+
+def _write_caption(path, text):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def card_id(folder):
+    """The card's id: the folder name (made a plain ASCII file stem) plus 8 hex of the folder path's sha1,
+    so two promo folders with the same name never share a card."""
+    folder = os.path.abspath(folder)
+    name = re.sub(r"[^A-Za-z0-9_-]+", "-", os.path.basename(folder)).strip("-") or "promo"
+    return "%s-%s" % (name, hashlib.sha1(folder.encode("utf-8")).hexdigest()[:8])
 
 
 def render(recipe_path, out_dir=None, on_progress=None):
@@ -280,19 +293,39 @@ def render(recipe_path, out_dir=None, on_progress=None):
         rbxpaths.write_json(p["render.json"], recipe, indent=2, ensure_ascii=False)
         done = _run_renderer(p["render.json"], p["promo.mp4"], p["layout.json"], p["cover.jpg"],
                              _cover_time(recipe, duration), report)
-        report(0.92)
-        _sheet(p["promo.mp4"], p["sheet.jpg"])
-        text = _caption_text(recipe)
-        with open(p["caption.txt"], "w", encoding="utf-8") as f:
-            f.write(text)
-        report(0.95)
-        result = _run_check(p["promo.mp4"], p["layout.json"], recipe)
     except Exception:
         if not existed:
             shutil.rmtree(folder, ignore_errors=True)
         raise
+    # The video is finished: from here on nothing deletes the folder; a failure is reported on the card instead.
+    report(0.92)
+    notes, problems = [], []
+    sheet = p["sheet.jpg"]
+    try:
+        _sheet(p["promo.mp4"], sheet)
+    except Exception as e:
+        if os.path.exists(sheet):        # never leave an older sheet that shows a different video
+            os.remove(sheet)
+        sheet = None
+        notes.append("No contact sheet: %s" % e)
+    text = _caption_text(recipe)
+    caption = p["caption.txt"]
+    try:
+        _write_caption(caption, text)
+    except Exception as e:
+        caption = None
+        problems.append("The caption file could not be written: %s" % e)
+    report(0.95)
+    try:
+        result = _run_check(p["promo.mp4"], p["layout.json"], recipe)
+    except Exception as e:
+        result = {"passed": False, "problems": ["The check could not run: %s" % e], "notes": []}
+    if notes or problems:
+        result = dict(result, problems=list(result.get("problems", [])) + problems,
+                      notes=list(result.get("notes", [])) + notes)
+        result["passed"] = bool(result.get("passed")) and not problems
     duration = float(done.get("duration", duration))
-    pid = os.path.basename(folder)
+    pid = card_id(folder)
     cards = os.path.join(rbxpaths.WORK, "promo-cards")
     os.makedirs(cards, exist_ok=True)
     card = {"id": pid, "agent": agent, "folder": folder, "video": p["promo.mp4"], "cover": p["cover.jpg"],
@@ -300,5 +333,5 @@ def render(recipe_path, out_dir=None, on_progress=None):
             "created": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
     rbxpaths.write_json(os.path.join(cards, pid + ".json"), card, indent=2, ensure_ascii=False)
     report(1.0)
-    return {"folder": folder, "video": p["promo.mp4"], "cover": p["cover.jpg"], "caption": p["caption.txt"],
-            "sheet": p["sheet.jpg"], "duration": duration, "check": result}
+    return {"folder": folder, "video": p["promo.mp4"], "cover": p["cover.jpg"], "caption": caption,
+            "sheet": sheet, "duration": duration, "check": result}

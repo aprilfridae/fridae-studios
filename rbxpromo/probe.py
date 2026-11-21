@@ -155,9 +155,8 @@ def _scan_video(path, on_progress=None, duration=0.0):
     compared, which is where most of the time goes on 1080p60 clips."""
     import cv2
     import numpy as np
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
-        raise ValueError("could not open video: " + path)
+    import rbxvideo
+    cap = rbxvideo.open_capture(path)
     step = max(1, int(round((cap.get(cv2.CAP_PROP_FPS) or 30) / CUT_FPS)))
     cuts, recent, prev_small = [], [], None
     prev_sample, next_sample, diffs = None, 0.0, []
@@ -227,7 +226,7 @@ def probe(paths, out_dir, on_progress=None):
         cuts, motion, last_t = _scan_video(path, prog, info["duration"])
         if info["duration"] and info["duration"] - last_t > max(1.0, 0.05 * info["duration"]):
             warnings.append("only %.1f s of %.1f s could be read" % (last_t, info["duration"]))
-        stem = "%02d-%s" % (n + 1, os.path.splitext(os.path.basename(path))[0])
+        stem = "%02d-clip" % (n + 1)       # ASCII: the clip's own name may not be (Windows OpenCV, old tools)
         result[path] = {
             "info": info,
             "cuts": cuts,
