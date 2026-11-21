@@ -12,9 +12,8 @@ NODE_MAJOR = "v22."
 NODE_FALLBACK = "v22.12.0"  # only used when no version is given
 NODE_DIST = "https://nodejs.org/dist"
 STEPS = ["node", "renderer", "browser", "whisper", "voice"]
-# rough download sizes in MB, shown before anything is fetched
-_SIZE_MB = {"node": 45, "renderer": 330, "browser": 90, "whisper": 160, "voice": 90}
-WHISPER_MODEL = "base.en"
+# measured download sizes in MB per step (node archive; npm packages + Remotion browser; ASR model; voice model)
+_SIZE_MB = {"node": 50, "renderer": 395, "browser": 115, "whisper": 76, "voice": 97}
 
 
 class EngineError(rbxpaths.KitError):
@@ -112,18 +111,64 @@ def _download(url, dest, on_fraction=None):
 
 # ---------------------------------------------------------------- state
 
-def _load_state():
+def promo_hash(kind="all"):
+    """SHA-256 of the promo/ sources (node_modules excluded); kind "lock" hashes only package-lock.json."""
+    root = _source_dir()
+    h = hashlib.sha256()
+    names = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d != "node_modules")
+        names += [os.path.join(folder, f) for f in sorted(files)]
+    for path in names:
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if kind == "lock" and rel != "package-lock.json":
+            continue
+        h.update(rel.encode() + b"\0")
+        with open(path, "rb") as f:
+            h.update(f.read())
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _state():
     data = rbxpaths.read_json(_p(".state.json"))
-    done = data.get("done") if isinstance(data, dict) else None
-    return [s for s in STEPS if isinstance(done, list) and s in done]
+    return data if isinstance(data, dict) else {}
+
+
+def _load_state():
+    """Finished steps. The renderer counts only while promo/ is unchanged since it was installed."""
+    state = _state()
+    done = state.get("done")
+    done = [s for s in STEPS if isinstance(done, list) and s in done]
+    if "renderer" in done:
+        try:
+            current = promo_hash()
+        except OSError:
+            current = None
+        if state.get("promo_hash") != current:
+            done.remove("renderer")
+    if "browser" in done and not os.path.isdir(_p("renderer", "node_modules", ".remotion")):
+        done.remove("browser")  # the headless browser lives in node_modules and is gone with it
+    return done
+
+
+def _unmark(step):
+    state = _state()
+    state["done"] = [x for x in state.get("done", []) if x != step]
+    rbxpaths.write_json(_p(".state.json"), state)
 
 
 def _mark_done(step):
     os.makedirs(engine_dir(), exist_ok=True)
-    done = _load_state()
+    state = _state()
+    done = state.get("done") if isinstance(state.get("done"), list) else []
     if step not in done:
         done.append(step)
-    rbxpaths.write_json(_p(".state.json"), {"done": done})
+    state["done"] = done
+    if step == "renderer":
+        state["promo_hash"] = promo_hash()
+        state["lock_hash"] = promo_hash("lock")
+    rbxpaths.write_json(_p(".state.json"), state)
 
 
 def _node_path():
@@ -141,10 +186,6 @@ def _compositor_dir():
     return None
 
 
-def _whisper_ok():
-    return os.path.isfile(_p("whisper", f"ggml-{WHISPER_MODEL}.bin")) and os.path.isdir(_p("whisper", "whisper.cpp"))
-
-
 def status():
     """What is installed: node path, one bool per part, ready, the missing parts in install order, and the download size left."""
     done = _load_state()
@@ -153,7 +194,7 @@ def status():
         "node": node is not None,
         "renderer": "renderer" in done and os.path.isdir(_p("renderer", "node_modules", "remotion")),
         "browser": "browser" in done,
-        "whisper": "whisper" in done and _whisper_ok(),
+        "whisper": "whisper" in done,
         "voice": "voice" in done,
     }
     missing = [s for s in STEPS if not has[s]]
@@ -176,6 +217,7 @@ def _env():
     env = dict(os.environ)
     node_bin = os.path.dirname(_node_path() or "")
     env["PATH"] = node_bin + os.pathsep + env.get("PATH", "")
+    env["HF_HOME"] = _p("hf-cache")  # model downloads stay inside the engine folder
     env["npm_config_cache"] = _p("npm-cache")
     env["npm_config_update_notifier"] = "false"
     env["npm_config_fund"] = "false"
@@ -282,9 +324,13 @@ def _copy_sources():
 
 
 def _step_renderer(progress):
+    lock_changed = _state().get("lock_hash") != promo_hash("lock")
     _copy_sources()
     progress("renderer", 0.1)
-    _run(node_cmd(_npm_cli("npm-cli.js"), "ci", "--omit=dev"), _p("renderer"), "npm install of the Remotion project")
+    if lock_changed or not os.path.isdir(_p("renderer", "node_modules", "remotion")):
+        _run(node_cmd(_npm_cli("npm-cli.js"), "ci", "--omit=dev"), _p("renderer"),
+             "npm install of the Remotion project")
+        _unmark("browser")  # npm ci wipes node_modules, and the headless browser lives in there
 
 
 def _step_browser(progress):
@@ -293,8 +339,8 @@ def _step_browser(progress):
 
 
 def _step_whisper(progress):
-    _run(node_cmd(os.path.join("scripts", "setup-whisper.mjs"), _p("whisper"), WHISPER_MODEL),
-         _p("renderer"), "whisper.cpp install")
+    _run(node_cmd(os.path.join("scripts", "setup-whisper.mjs"), "--warm"), _p("renderer"),
+         "speech recognition model download", ok_marker="whisper model ready")  # onnxruntime may abort at exit
 
 
 def _step_voice(progress):
@@ -319,6 +365,8 @@ def install(progress=None, dry_run=False):
         _STEP_FUNCS[step](report)
         _mark_done(step)
         report(step, 1.0)
+    if plan:
+        shutil.rmtree(_p("npm-cache"), ignore_errors=True)  # only needed while installing
     return status()
 
 

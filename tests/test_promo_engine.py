@@ -78,6 +78,60 @@ class EngineTests(unittest.TestCase):
             engine.install()
         self.assertEqual(calls, ["node", "renderer", "browser", "whisper", "voice"])
 
+    def _fake_ready_engine(self):
+        src = os.path.join(self.tmp, "src-promo")
+        os.makedirs(os.path.join(src, "scripts"))
+        for name, text in (("package.json", "{}"), ("package-lock.json", "L1"), ("scripts/a.mjs", "a")):
+            with open(os.path.join(src, name), "w") as f:
+                f.write(text)
+        p = mock.patch.object(engine, "_source_dir", return_value=src)
+        p.start()
+        self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp, "node", "bin"))
+        open(os.path.join(self.tmp, "node", "bin", "node"), "w").close()
+        os.makedirs(os.path.join(self.tmp, "renderer", "node_modules", "remotion"))
+        os.makedirs(os.path.join(self.tmp, "renderer", "node_modules", ".remotion"))
+        engine._mark_done("node")
+        engine._mark_done("renderer")
+        for s in ("browser", "whisper", "voice"):
+            engine._mark_done(s)
+        return src
+
+    def test_status_renderer_stale_on_hash_change(self):
+        src = self._fake_ready_engine()
+        with mock.patch.object(engine, "_node_path", return_value="/x/node"):
+            self.assertTrue(engine.status()["renderer"])
+            with open(os.path.join(src, "scripts", "a.mjs"), "w") as f:
+                f.write("changed")
+            st = engine.status()
+            self.assertFalse(st["renderer"])
+            self.assertEqual(st["missing"], ["renderer"])
+            self.assertEqual(engine.install(dry_run=True), ["renderer"])
+
+    def test_node_modules_in_source_ignored_by_hash(self):
+        src = self._fake_ready_engine()
+        before = engine.promo_hash()
+        os.makedirs(os.path.join(src, "node_modules"))
+        with open(os.path.join(src, "node_modules", "x"), "w") as f:
+            f.write("x")
+        self.assertEqual(engine.promo_hash(), before)
+
+    def test_renderer_refresh_skips_npm_when_lock_unchanged(self):
+        src = self._fake_ready_engine()
+        with open(os.path.join(src, "scripts", "a.mjs"), "w") as f:
+            f.write("changed")
+        with mock.patch.object(engine, "_run") as run, mock.patch.object(engine, "_node_path", return_value="/x/node"):
+            engine._step_renderer(lambda *a: None)
+            run.assert_not_called()
+            with open(os.path.join(src, "package-lock.json"), "w") as f:
+                f.write("L2")
+            engine._step_renderer(lambda *a: None)
+            run.assert_called_once()
+
+    def test_download_mb_is_sum_of_missing_steps(self):
+        st = engine.status()
+        self.assertEqual(st["download_mb"], sum(engine._SIZE_MB[s] for s in st["missing"]))
+
     def test_tools_raise_when_not_ready(self):
         with self.assertRaises(EngineError) as cm:
             engine.ffmpeg()

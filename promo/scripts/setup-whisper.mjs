@@ -1,15 +1,17 @@
-// Install whisper.cpp and one model into <dir>.   node setup-whisper.mjs <dir> [model]
-import path from "node:path";
-import { installWhisperCpp, downloadWhisperModel } from "@remotion/install-whisper-cpp";
+// Speech recognition model (Whisper through transformers.js). Task 5 adds transcription.
+//   node setup-whisper.mjs --warm   download the model into the cache and transcribe 1 s of silence
+import { pipeline, env } from "@huggingface/transformers";
 
-const WHISPER_VERSION = "1.5.5";
-const dir = process.argv[2];
-const model = process.argv[3] || "base.en";
-if (!dir) {
-  console.error("usage: node setup-whisper.mjs <dir> [model]");
-  process.exit(2);
+// the _timestamped export carries the cross attentions that word-level timestamps need
+const MODEL = "onnx-community/whisper-base.en_timestamped";
+if (process.env.HF_HOME) env.cacheDir = process.env.HF_HOME;
+
+if (process.argv.includes("--warm")) {
+  const asr = await pipeline("automatic-speech-recognition", MODEL, { dtype: "q8" });
+  await asr(new Float32Array(16000), { return_timestamps: "word" });
+  console.log("whisper model ready");
+  process.exit(0);
 }
 
-await installWhisperCpp({ to: path.join(dir, "whisper.cpp"), version: WHISPER_VERSION, printOutput: false });
-await downloadWhisperModel({ model, folder: dir, printOutput: false });
-console.log("whisper ready");
+console.error("usage: node setup-whisper.mjs --warm");
+process.exit(2);
