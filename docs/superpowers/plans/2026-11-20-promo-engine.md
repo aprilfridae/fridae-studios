@@ -228,3 +228,44 @@ Recipe fields (version 1): `version` (=1), `size` ([1080,1920]), `fps` (30|60), 
 - [ ] **Step 3: Verify packaging:** `.venv/bin/python build_mac.py` → open the built app with a bare environment (`env -i HOME=$HOME PATH=/usr/bin:/bin`), Setup shows the row, Install completes into `~/Documents/Fridae Studios/engine/`, render a promo from two fixture clips, card shows. Interrupt an install halfway (quit the app), reopen, Retry resumes.
 - [ ] **Step 4: Run all tests:** `python3 -m unittest discover tests -v` and `cargo test --manifest-path app-rs/Cargo.toml` → all PASS (engine-gated tests run, not skipped, on the dev Mac).
 - [ ] **Step 5: Commit** `git commit -m "promo: engine install in Setup, packaging and docs"`
+
+### Task 12: Promos tab (user direction, 2026-11-21: "it should be an entire tab on the app itself, not tucked into the message system")
+
+**Files:**
+- Modify: `ui/index.html` (top nav tab "Promos" after "Board"; the Promos view; chat shows only a one-line notice), `app-rs/src/promo.rs` (list cards, start a promo, styles), `app-rs/src/server.rs` (routes only), `app-rs/src/agents.rs` only if needed to start a promo chat
+- Test: `cargo test` units in promo.rs; manual check in the app
+
+**The Promos view (top to bottom):**
+1. **Engine row** (reuse Task 11's Setup row component): when the engine is not ready, the tab shows "Promo engine — not installed (about N MB) [Install]" with progress and Retry, and the New promo form is disabled with a one-line reason. When ready: a small "Promo engine ready" line.
+2. **New promo** form:
+   - **Clips:** list of chosen clips (file name, length if known, × to remove). **Add clips** button (`/api/pick-files kind:"clips"`, multi) and drag-drop of video files onto the tab (paths only, nothing copied; on Windows the button only, per the Task 10 ruling).
+   - **Music:** "None — post silent and add a TikTok sound" (default) or **Pick music** (`kind:"music"`), shows the file name with ×.
+   - **In the style of a TikTok (optional):** **Pick saved video** (`kind:"reference"`), with a one-line hint that TikTok links can't be used — save the video file first.
+   - **Style:** a grid of the 8 styles, each its still and name + `about` line, one selectable; plus "Let the agent choose" (default). Stills come from `rbx promo styles` (cached in WORK/promo-work/styles) served through a token-protected media route confined to that folder.
+   - **Length:** 15 s / 30 s (default) / 60 s.
+   - **Voiceover script (optional)** textarea, with the hint "Leave empty for no voice. The agent asks before making claims about your game."
+   - **What should it show?** textarea (required): free text, e.g. "the new boss fight and the shop".
+   - **Project** select (existing projects; default the project in front or none).
+   - **Make promo** button (disabled until at least one clip and the "What should it show?" text are set, and the engine is ready).
+   Clicking Make promo starts a new agent chat titled "Promo: <first words>" in that project (reuse how /api/new or agents::spawn_helper starts chats) with a composed first message: the brief text, `[clip: <path>]` lines, music/reference/style/length/voice script lines, and "Follow the promo guide (rbx_guide topic promo)." The chat runs in the background; the tab does not switch away.
+3. **In progress:** each promo being made shows a row: title, its chat's live state (working / needs you / done / failed), and **Open chat** (switches to that chat so the user can steer or answer questions). It disappears when its card arrives (or shows the failure).
+4. **Library:** every promo from `WORK/promo-cards/*.json` (read at startup and when new cards arrive — persists across restarts), newest first, grouped by date (Today, Yesterday, then dates). Each item is the Task 10 card: 9:16 video player, style · length · created time, check line, editable post caption, **Download**, **Show in folder**, **Open chat** (if its agent exists), and the empty `div.promo-post` slot for plan 3.
+
+**Chat:** when a promo card arrives for a chat, the chat shows one line, "Promo ready: <folder name> — Open in Promos" (button switches to the Promos tab and scrolls to and highlights that item), instead of the full card. Cards with no agent or an unknown agent simply appear in the library (never dropped).
+
+**Fixes absorbed from the Task 10 review (ledgered minors):**
+- Re-rendering into the same folder (the guide's edit promo.json → render again loop) refreshes that library item: the watcher tracks (id, mtime), not id only; the item moves to the top and the video reloads (cache-bust the media URL).
+- A card arriving with no chat open is never lost (it lands in the library).
+- Editing the caption writes caption.txt AND the card JSON's caption_text (atomically, unique tmp name), so a reload shows the edited text.
+- Duration shows m:ss without "0:60" (round total seconds first).
+
+**Routes (token-protected, server.rs routes only):**
+- `GET /api/promos` → `{cards: [...]}` newest first (by `created`, then mtime).
+- `POST /api/promo-start {clips:[paths], music?, reference?, style?, length, voice_text?, brief, project?}` → `{ok, agent}`; validates that clip/music/reference paths exist and are files with the allowed extensions; brief non-empty; style one of the 8 or empty; length in {15,30,60}.
+- `POST /api/promo-styles` → runs `paths::cli(["promo","styles"])` (JSON) in a thread, returns `[{name, about, url}]`; `GET /media/promo-style/<name>` serves `<WORK>/promo-work/styles/<name>-*.jpg` (name must be one of the returned style names; newest matching file).
+
+- [ ] **Step 1: Rust tests** (promo.rs): `list_cards_newest_first` (temp WORK with 3 cards, one half-written/invalid skipped); `watcher_sees_rewritten_card` (same id, newer mtime → reported again); `compose_start_message` (contains every [clip: ] line, style/length/voice/music/reference lines, and the guide pointer; omits empty optionals); `start_validates` (missing clip file, bad extension, empty brief, bad length → error); `style_still_path_confined` (name with "/" or "..", or unknown name → None).
+- [ ] **Step 2: Run** `cargo test --manifest-path app-rs/Cargo.toml` → FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** → PASS; build; launch the app and check by hand what you can (routes with the token via curl; the tab in a browser pane on the same server if the webview can't be driven): tab renders, styles grid loads, Make promo starts a chat with the composed message, a card file appearing lands in the library and the chat shows the one-line notice, re-writing the card refreshes the item, caption edit survives a reload.
+- [ ] **Step 5: Commit** `git commit -m "app: Promos tab with new-promo form, progress and library"`

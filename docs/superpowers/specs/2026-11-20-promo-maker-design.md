@@ -269,3 +269,12 @@ responsibility.
 - Exact Remotion and Node versions, and how the engine download is verified (checksums).
 - Instagram's public-URL requirement: pick a free, privacy-respecting way or ship Instagram as "coming soon"
   behind the button until solved. TikTok and YouTube must work.
+
+## Amendment 2026-11-21: a Promos tab
+
+At the user's direction ("it should be an entire tab on the app itself, not tucked into the message system"), the
+promo maker gets its own **Promos** tab in the app's top bar (after Board): engine status/install, a New promo form
+(clips, music, optional saved reference video, style grid, length, optional voiceover script, "What should it
+show?", project, Make promo — which starts a background agent chat), promos in progress with Open chat, and a
+library of every promo grouped by date with the card controls (player, check, editable caption, Download, Show in
+folder, Post slot). Chats show only a one-line "Promo ready — Open in Promos" notice. Plan 1 Task 12 builds it.
