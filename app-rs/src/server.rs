@@ -225,7 +225,7 @@ fn post(path: &str, body: Value) -> Reply {
             send_json(json!({"ok": target.is_some()}))
         }
         "/api/undo-night" => match target {
-            Some(a) => send_json(a.undo_night()),
+            Some(a) => send_json(a.undo_night(body["files_only"].as_bool().unwrap_or(false))),
             None => send_json(json!({"ok": false, "text": "That chat is gone."})),
         },
         "/api/usage" => send_json(json!({"ok": true, "records": usage::since(body["since"].as_f64().unwrap_or(0.0))})),

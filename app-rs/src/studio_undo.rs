@@ -4,12 +4,14 @@
 //!   - the project's files: a git commit of the project folder, when it is a git repository;
 //!   - Studio's scripts: a snapshot the Fridae plugin keeps in Studio's memory, pinned at the checkpoint's time (the
 //!     plugin keeps the newest 24 pins); the agents' Studio steps since then are undone by time, whoever made them.
-//!     Before an undo puts scripts back, their current text is pinned too ("before undo").
+//!     Before an undo puts scripts back, the plugin hands over every script's text and it is saved to disk, in the
+//!     layout `rbx.py project export_scripts` uses, under `<project>/.fridae/before-undo/<YYYYMMDD-HHMMSS>/`.
 //!
 //! What undo needs is in `<project>/.fridae/studio.json` "checkpoints": [{"stage", "commit", "studio", "at", "git"?}]
 //! ("git": "failed" when the folder is a repository but the commit failed: such a checkpoint is refused) ("start"
 //! for the run's first), so it works after the app restarts. Studio's part needs Studio to have stayed open on the same
-//! place (its undo history and the plugin's snapshots live there).
+//! place (its undo history and the plugin's snapshots live there): when it no longer has the checkpoint's snapshot,
+//! the undo is refused and nothing is changed, unless the user chooses the files only.
 //!
 //! A finished stage asks for its checkpoint through a request file, `WORK/stage-requests/<id>.json`
 //! {"project", "stage", "lead"} (rbxstage.py); `watch` takes it and appends it.
@@ -33,14 +35,20 @@ use crate::{
 pub const NO_RUN: &str = "This game has no studio run to undo.";
 pub const NO_CHECKPOINTS: &str = "This run has no checkpoints to go back to yet.";
 pub const NO_SUCH_CHECKPOINT: &str = "This run has no checkpoint for that stage.";
-const BUSY: &str = "Pause the run and let the experts finish, then undo.";
+const BUSY: &str = "The run is paused now. Let the experts finish what they are doing, then undo.";
 const STUDIO_CLOSED: &str = "Open the game in Roblox Studio, then undo \u{2014} or undo the files only.";
 const ALREADY_UNDOING: &str = "An undo is already running.";
 const GIT_FAILED: &str = "Git could not save the project's files at this checkpoint, so the run cannot go back to it. Pick an earlier checkpoint.";
 const MISSING_COMMIT: &str = "The checkpoint's commit is not in the project's git history any more, so nothing was undone.";
+/// Studio no longer has the checkpoint's snapshot: its scripts cannot go back (nothing is changed).
+pub const STUDIO_RESTARTED: &str = "Roblox Studio was restarted since that checkpoint, so its scripts cannot be put back";
+const STUDIO_PINS_FULL: &str = "Roblox Studio keeps copies of the scripts from its newest 24 checkpoints only, and this one is older, so its scripts cannot be put back";
+const OLD_PLUGIN: &str = "Studio's Fridae plugin is an older copy that cannot hand over the scripts to save them before the undo, so Studio was left as it is. Update the plugin in Setup and restart Studio";
+/// Asked after a refusal that leaves the files-only undo open.
+const OR_FILES_ONLY: &str = " \u{2014} undo the files only?";
 /// What `.fridae/.gitignore` keeps out of the checkpoint commits: review pictures and clips (the item files stay
-/// tracked), the archive, and the lock.
-const GITIGNORE_LINES: [&str; 3] = ["review/*/", "review-archive/", ".lock"];
+/// tracked), the archive, the lock, and the scripts saved before an undo.
+const GITIGNORE_LINES: [&str; 4] = ["review/*/", "review-archive/", ".lock", "before-undo/"];
 
 /// A checkpoint to go back to, and how the report names it.
 pub struct Checkpoint<'a> {
@@ -62,14 +70,124 @@ pub struct Checkpoint<'a> {
 pub struct PutBack {
     pub studio_ok: bool,
     pub project_ok: bool,
+    /// Studio's part could not be done and nothing at all was changed (Studio restarted since the checkpoint, an old
+    /// plugin, the scripts could not be saved first): the reason. The files-only undo is still open.
+    pub refused: Option<String>,
     pub lines: Vec<String>,
 }
 
-/// Put Studio and the project's files back as they were at a checkpoint. A checkpoint commit missing from git stops
-/// it before anything is touched; otherwise each part is tried whatever the other did. Before Studio's scripts go
-/// back, their text as it is now is pinned in Studio as "before undo", so it is not lost.
-pub fn put_back(cp: &Checkpoint) -> PutBack {
-    let mut out = PutBack { studio_ok: true, project_ok: true, lines: Vec::new() };
+/// What `put_back` needs of Studio, so the order of its steps can be tested without one.
+pub trait StudioLink {
+    fn connected(&self) -> bool;
+    /// The plugin is the current copy (it can hand over the scripts and keeps a pin per checkpoint).
+    fn current(&self) -> bool;
+    /// Whether Studio still has the checkpoint pinned at `at` (see `plugin::has_pin`).
+    fn has_pin(&self, at: f64) -> Result<Value, String>;
+    /// Write every script's current text into `folder`, in the layout of `rbx.py project export_scripts`.
+    fn save_scripts(&self, folder: &Path) -> Result<(), String>;
+    /// Undo back to the checkpoint pinned at `at` (`plugin::revert_within` with `exact`).
+    fn revert(&self, at: f64) -> Value;
+}
+
+/// The real Studio, through the Fridae plugin.
+pub struct Live;
+
+impl StudioLink for Live {
+    fn connected(&self) -> bool {
+        plugin::connected()
+    }
+    fn current(&self) -> bool {
+        plugin::running_current()
+    }
+    fn has_pin(&self, at: f64) -> Result<Value, String> {
+        plugin::has_pin(at)
+    }
+    fn save_scripts(&self, folder: &Path) -> Result<(), String> {
+        let data = plugin::sources()?;
+        let file = paths::work("tmp").join(format!("before-undo-{}.json", paths::random_hex(1)));
+        fs::create_dir_all(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
+        fs::write(&file, serde_json::to_vec(&data).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let out = paths::cli(&["project", "save_scripts", "--from", &file.display().to_string(), "--out", &folder.display().to_string()]).output();
+        let _ = fs::remove_file(&file);
+        match out {
+            Ok(o) if o.status.success() => Ok(()),
+            Ok(o) => {
+                let said = String::from_utf8_lossy(if o.stderr.is_empty() { &o.stdout } else { &o.stderr }).trim().to_string();
+                Err(if said.is_empty() { "the script export failed".to_string() } else { said })
+            }
+            Err(e) => Err(format!("the script export could not start: {e}")),
+        }
+    }
+    fn revert(&self, at: f64) -> Value {
+        plugin::revert_within(at, 600, true)
+    }
+}
+
+/// How Studio's part of an undo went, from the plugin's answer.
+#[derive(Debug, PartialEq)]
+pub(crate) enum StudioOutcome {
+    /// Steps were undone or scripts put back.
+    Restored,
+    /// Studio had the checkpoint's snapshot and nothing differed from it.
+    NothingChanged,
+    /// Studio no longer has the checkpoint's snapshot (restarted since): nothing was touched.
+    NoSnapshot,
+    /// Not done, or only part of it (a step that is not the agent's in the way, no answer, an error).
+    Failed,
+}
+
+pub(crate) fn studio_outcome(r: &Value) -> StudioOutcome {
+    if r["no_snapshot"] == true {
+        StudioOutcome::NoSnapshot
+    } else if r["ok"] != true || r["blocked"].is_string() {
+        StudioOutcome::Failed
+    } else if r["undone"].as_u64().unwrap_or(0) == 0 && r["scripts"].as_u64().unwrap_or(0) == 0 {
+        StudioOutcome::NothingChanged
+    } else {
+        StudioOutcome::Restored
+    }
+}
+
+/// Why Studio cannot go back to the checkpoint pinned at `at`, from `has_pin`'s answer; None when it can.
+pub(crate) fn pin_missing(at: f64, answer: &Value) -> Option<&'static str> {
+    if answer["pinned"] == true {
+        None
+    } else if answer["full"] == true && answer["oldest"].as_f64().is_some_and(|o| at < o) {
+        Some(STUDIO_PINS_FULL)
+    } else {
+        Some(STUDIO_RESTARTED)
+    }
+}
+
+/// Where the scripts are saved before an undo puts them back: `<project>/.fridae/before-undo/<YYYYMMDD-HHMMSS>/`
+/// (the work folder's `before-undo` for a night without a project). A second undo in the same second gets "-2".
+fn before_undo_folder(project: Option<&str>, stamp: &str) -> PathBuf {
+    let base = project.map_or_else(|| paths::work("before-undo"), |p| Path::new(p).join(".fridae").join("before-undo"));
+    let mut folder = base.join(stamp);
+    let mut n = 1;
+    while folder.exists() {
+        n += 1;
+        folder = base.join(format!("{stamp}-{n}"));
+    }
+    folder
+}
+
+/// A folder as the report names it: relative to the project when it is inside it.
+fn shown(folder: &Path, project: Option<&str>) -> String {
+    project.and_then(|p| folder.strip_prefix(p).ok()).map_or_else(|| folder.display().to_string(), |r| r.display().to_string().replace('\\', "/"))
+}
+
+fn refused(why: String) -> PutBack {
+    PutBack { studio_ok: false, project_ok: false, refused: Some(why.clone()), lines: vec![why] }
+}
+
+/// Put Studio and the project's files back as they were at a checkpoint. Nothing is touched when the checkpoint
+/// commit is missing from git, or when Studio's part cannot be done safely (`refused`): Studio no longer has the
+/// checkpoint's snapshot, the plugin is too old to hand over the scripts, or they could not be saved to disk first.
+/// Otherwise each part is tried whatever the other did. Before Studio's scripts go back, their text as it is now is
+/// written to `.fridae/before-undo/<time>/`, and the report names that folder.
+pub fn put_back(cp: &Checkpoint, link: &dyn StudioLink) -> PutBack {
+    let mut out = PutBack { studio_ok: true, project_ok: true, refused: None, lines: Vec::new() };
     if let (Some(p), Some(c)) = (cp.project, cp.commit) {
         if !projects::commit_exists(p, c) {
             out.project_ok = false;
@@ -79,26 +197,47 @@ pub fn put_back(cp: &Checkpoint) -> PutBack {
     }
     if let Some(line) = cp.skip_studio {
         out.lines.push(line.to_string());
-    } else if cp.at > 0.0 && plugin::connected() {
-        // an older plugin keeps one pin only: pinning now would replace the checkpoint's own snapshot
-        let current = plugin::running_current();
-        if current {
-            plugin::pin(paths::now_secs(), "before undo");
+    } else if cp.at > 0.0 && cp.studio && link.connected() {
+        if !link.current() {
+            return refused(OLD_PLUGIN.to_string());
         }
-        let r = plugin::revert_within(cp.at, 600);
-        out.studio_ok = r["ok"] == true;
-        out.lines.push(format!("Studio: {}", r["text"].as_str().unwrap_or("")));
-        if current && out.studio_ok {
-            out.lines.push("Studio: the scripts as they were just before this undo are kept in Studio as a snapshot named \"before undo\" until Studio closes.".to_string());
+        match link.has_pin(cp.at) {
+            Ok(a) => {
+                if let Some(why) = pin_missing(cp.at, &a) {
+                    return refused(why.to_string());
+                }
+            }
+            Err(e) => return refused(format!("Studio could not say whether it still has the scripts from then ({e}), so nothing was undone")),
         }
-        if cp.undoing.is_some() && !current {
-            out.lines.push("Studio: its Fridae plugin is an older copy that keeps scripts only from the latest checkpoint, so scripts may not have gone all the way back. Update the plugin in Setup and restart Studio.".to_string());
+        if let Some(p) = cp.project {
+            ensure_gitignore(Path::new(p)); // the saved scripts stay out of the restore's commits
         }
+        let folder = before_undo_folder(cp.project, &paths::stamp());
+        let where_ = shown(&folder, cp.project);
+        if let Err(e) = link.save_scripts(&folder) {
+            let _ = fs::remove_dir_all(&folder);
+            return refused(format!("The scripts in Studio could not be saved to {where_} before the undo ({e}), so nothing was undone"));
+        }
+        let r = link.revert(cp.at);
+        let saved = format!("Your scripts as they were are saved in {where_}.");
+        match studio_outcome(&r) {
+            StudioOutcome::NoSnapshot => {
+                let _ = fs::remove_dir_all(&folder);
+                return refused(STUDIO_RESTARTED.to_string());
+            }
+            StudioOutcome::Failed => {
+                out.studio_ok = false;
+                out.lines.push(format!("Studio: {}", r["text"].as_str().unwrap_or("it did not answer.")));
+            }
+            StudioOutcome::NothingChanged => out.lines.push("Studio: nothing there had changed since then.".to_string()),
+            StudioOutcome::Restored => out.lines.push(format!("Studio: {}", r["text"].as_str().unwrap_or(""))),
+        }
+        out.lines.push(format!("Studio: {saved}"));
     } else if cp.studio {
         out.studio_ok = false;
         out.lines.push("Studio: not connected. Open the same place in Studio (without restarting it if you can, since a restart clears its undo history), then try again.".to_string());
     } else {
-        out.lines.push(format!("Studio: it was not connected when {}, so there was nothing there to undo.", cp.began));
+        out.lines.push(format!("Studio: it was not connected when {}, so there is no copy of its scripts from then; it was left as it is.", cp.began));
     }
     match (cp.project, cp.commit) {
         (Some(p), Some(c)) => match cp.undoing.map_or_else(|| projects::restore_to(p, c), |w| projects::restore_with(p, c, w)) {
@@ -114,11 +253,16 @@ pub fn put_back(cp: &Checkpoint) -> PutBack {
     out
 }
 
-/// Keep review media, the archive and the lock out of the checkpoint commits: `<project>/.fridae/.gitignore` gets the
-/// lines it is missing (a user's own lines are kept; the project's top-level .gitignore is never touched).
+/// Keep review media, the archive, the lock and the scripts saved before an undo out of the checkpoint commits:
+/// `<project>/.fridae/.gitignore` gets the lines it is missing (a user's own lines are kept; the project's top-level
+/// .gitignore is never touched). A file that is there but cannot be read as text is left alone.
 pub(crate) fn ensure_gitignore(project: &Path) {
     let file = project.join(".fridae").join(".gitignore");
-    let have = fs::read_to_string(&file).unwrap_or_default();
+    let have = match fs::read_to_string(&file) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return,
+    };
     let lines: Vec<&str> = have.lines().map(str::trim).collect();
     let missing: Vec<&str> = GITIGNORE_LINES.iter().copied().filter(|l| !lines.contains(l)).collect();
     if missing.is_empty() || fs::create_dir_all(project.join(".fridae")).is_err() {
@@ -267,6 +411,11 @@ fn refuse(why: &str) -> Value {
     json!({"ok": false, "error": why, "text": why})
 }
 
+/// A refusal that leaves the files-only undo open (the window then offers "Undo the files only").
+fn offer_files_only(why: &str) -> Value {
+    json!({"ok": false, "error": why, "text": why, "files_only": true})
+}
+
 /// Games with an undo going on in this app: a second one at the same time is refused.
 static UNDOING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -290,10 +439,16 @@ impl Drop for Undoing {
 }
 
 /// POST /api/studio-run {action: "undo", path, stage?, files_only?}: the game back to a checkpoint of its run (the
-/// newest when no stage is given). Refused while the Lead or an expert is working, while another undo of the game
-/// runs, and, when Studio is closed but the run used it since that checkpoint, unless `files_only` (Studio is then
-/// left as it is). The run is left paused.
+/// newest when no stage is given). The run is paused and its Lead's next carry-on dropped first; then the undo is
+/// refused while the Lead or an expert is working (or about to: a turn being sent counts), while another undo of the
+/// game runs, and, unless `files_only` (Studio is then left as it is), when Studio's part cannot be done: Studio
+/// closed although the run used it since that checkpoint, Studio restarted since (no snapshot), an old plugin, or the
+/// scripts could not be saved first. A refusal changes nothing but the pause. The run is left paused.
 pub fn undo(project: &str, stage: Option<&str>, files_only: bool) -> Value {
+    undo_with(project, stage, files_only, &Live)
+}
+
+fn undo_with(project: &str, stage: Option<&str>, files_only: bool, link: &dyn StudioLink) -> Value {
     let Some(_one) = Undoing::take(project) else { return refuse(ALREADY_UNDOING) };
     let dir = Path::new(project);
     let Some(run) = read_run(dir).filter(|r| r["on"] == true) else { return refuse(NO_RUN) };
@@ -308,14 +463,27 @@ pub fn undo(project: &str, stage: Option<&str>, files_only: bool) -> Value {
         return refuse(MISSING_COMMIT);
     }
     let lead = run["lead"].as_str().unwrap_or("").to_string();
+    // first the run is paused and the Lead's next carry-on dropped (the flag Stop uses), so nothing new starts;
+    // only then is it checked that nobody is working, a turn being sent included
+    let _ = change_run(dir, |r| {
+        let go = r.is_object() && r["paused"] != true;
+        if go {
+            r["paused"] = json!(true);
+        }
+        (go, ())
+    });
+    let live = agents::get(&lead);
+    if let Some(l) = &live {
+        l.halt();
+    }
     if run_busy(project, &lead) {
         return refuse(BUSY);
     }
     // Studio closed: its part is never reported as done. Refused when the run had Studio open since this checkpoint.
-    let connected = plugin::connected();
+    let connected = link.connected();
     let used_studio = run["checkpoints"].as_array().is_some_and(|l| l[idx..].iter().any(|c| c["studio"] == true));
     if !files_only && !connected && used_studio {
-        return json!({"ok": false, "error": STUDIO_CLOSED, "text": STUDIO_CLOSED, "files_only": true});
+        return offer_files_only(STUDIO_CLOSED);
     }
     let skip_studio = if files_only {
         Some("Studio: left as it is (you chose to undo the files only).")
@@ -324,33 +492,27 @@ pub fn undo(project: &str, stage: Option<&str>, files_only: bool) -> Value {
     } else {
         None
     };
-    // the Lead's next carry-on is dropped (the flag Stop uses), and the run paused, before anything goes back
-    let live = agents::get(&lead);
-    if let Some(l) = &live {
-        l.halt();
-    }
-    let _ = change_run(dir, |r| {
-        let go = r.is_object() && r["paused"] != true;
-        if go {
-            r["paused"] = json!(true);
-        }
-        (go, ())
-    });
     let at = cp["at"].as_f64().unwrap_or(0.0);
     let name = checkpoint_name(cp["stage"].as_str().unwrap_or(""));
     let log = live.as_ref().map(|l| l.run_log()).unwrap_or_else(|| agents::saved_run_log(&lead));
     let since: Vec<&Value> = log.iter().filter(|s| s["t"].as_f64().unwrap_or(0.0) >= at).collect();
     let undo_commit = format!("Undo the studio run to {name} (Fridae Studios)");
     let words = projects::Undoing { whose: "run's", end_commit: "Before undoing the studio run (kept in history)", undo_commit: &undo_commit };
-    let back = put_back(&Checkpoint {
-        at,
-        studio: cp["studio"] == true,
-        project: Some(project),
-        commit: cp["commit"].as_str(),
-        began: "the checkpoint was taken",
-        undoing: Some(&words),
-        skip_studio,
-    });
+    let back = put_back(
+        &Checkpoint {
+            at,
+            studio: cp["studio"] == true,
+            project: Some(project),
+            commit: cp["commit"].as_str(),
+            began: "the checkpoint was taken",
+            undoing: Some(&words),
+            skip_studio,
+        },
+        link,
+    );
+    if let Some(why) = &back.refused {
+        return offer_files_only(&format!("{why}{OR_FILES_ONLY}"));
+    }
     let mut lines = vec![format!("Back to {name}{}.", if files_only { " (the files only)" } else { "" })];
     if !since.is_empty() {
         let mut who: Vec<&str> = Vec::new();
@@ -412,7 +574,7 @@ pub fn undo(project: &str, stage: Option<&str>, files_only: bool) -> Value {
 pub fn take(project: &str, message: &str) -> Saved {
     ensure_gitignore(Path::new(project));
     let at = paths::now_secs();
-    plugin::pin(at, "checkpoint");
+    plugin::pin(at);
     let studio = plugin::connected();
     let repo = projects::is_repo(project);
     let commit = projects::checkpoint(project, message);
@@ -535,13 +697,18 @@ mod tests {
         let d = game("ignore");
         let f = d.join(".fridae").join(".gitignore");
         ensure_gitignore(&d);
-        assert_eq!(fs::read_to_string(&f).unwrap(), "review/*/\nreview-archive/\n.lock\n");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "review/*/\nreview-archive/\n.lock\nbefore-undo/\n");
         fs::write(&f, "mine.txt\n.lock").unwrap();
         ensure_gitignore(&d);
-        assert_eq!(fs::read_to_string(&f).unwrap(), "mine.txt\n.lock\nreview/*/\nreview-archive/\n");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "mine.txt\n.lock\nreview/*/\nreview-archive/\nbefore-undo/\n");
         ensure_gitignore(&d);
-        assert_eq!(fs::read_to_string(&f).unwrap(), "mine.txt\n.lock\nreview/*/\nreview-archive/\n", "nothing added twice");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "mine.txt\n.lock\nreview/*/\nreview-archive/\nbefore-undo/\n", "nothing added twice");
         assert!(!d.join(".gitignore").exists(), "the project's own .gitignore is not touched");
+        // a file that is there but is not text is the user's: left alone, not replaced
+        let odd = [0xffu8, 0xfe, b'm', b'i', b'n', b'e', b'\n', 0x80];
+        fs::write(&f, odd).unwrap();
+        ensure_gitignore(&d);
+        assert_eq!(fs::read(&f).unwrap(), odd);
     }
 
     fn git(dir: &Path, args: &[&str]) -> (bool, String) {
@@ -623,8 +790,10 @@ mod tests {
         assert!(d.join("untracked.txt").exists());
         assert_eq!(git(&d, &["rev-parse", "HEAD"]).1, head, "no commit was made");
         // put_back itself stops before Studio or the files
-        let back = put_back(&Checkpoint { at: 1.0, studio: true, project: Some(&p), commit: Some("deadbeefdeadbeef"), began: "x", undoing: None, skip_studio: None });
+        let link = Fake::new();
+        let back = put_back(&Checkpoint { at: 1.0, studio: true, project: Some(&p), commit: Some("deadbeefdeadbeef"), began: "x", undoing: None, skip_studio: None }, &link);
         assert!(!back.project_ok && back.studio_ok);
+        assert!(link.calls().is_empty(), "Studio was not asked anything");
         assert_eq!(back.lines.len(), 1);
         assert!(back.lines[0].contains("Studio was left as it is"));
     }
@@ -633,10 +802,11 @@ mod tests {
     fn studio_closed_offers_files_only() {
         let (d, _) = git_game("git files only", true);
         let p = d.display().to_string();
-        let run_before = fs::read_to_string(run_file(&d)).unwrap();
+        let mut run_before = read_run(&d).unwrap();
         let r = undo(&p, None, false);
         assert_eq!((r["ok"].as_bool(), r["error"].as_str(), r["files_only"].as_bool()), (Some(false), Some(STUDIO_CLOSED), Some(true)));
-        assert_eq!(fs::read_to_string(run_file(&d)).unwrap(), run_before, "refused before anything changed");
+        run_before["paused"] = json!(true);
+        assert_eq!(read_run(&d).unwrap(), run_before, "refused before anything changed but the pause");
         assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v3 uncommitted");
         let r = undo(&p, None, true);
         assert_eq!(r["ok"], true, "{r}");
@@ -656,6 +826,7 @@ mod tests {
         expert.set_running_for_test(false);
         agents::remove_agent(&expert.id);
         assert_eq!(r["error"], BUSY);
+        assert_eq!(read_run(&d).unwrap()["paused"], true, "the run is paused before the check, so nothing new starts");
         let one = Undoing::take(&p).unwrap();
         assert_eq!(undo(&p, None, false)["error"], ALREADY_UNDOING);
         drop(one);
@@ -749,5 +920,156 @@ mod tests {
         let (moved, _, _) = archive_after(&d, 100.0, 778);
         assert_eq!(moved, 0);
         assert!(!d.join(".fridae").join("review-archive").join("undo-778").exists());
+    }
+
+    /// A Studio for put_back: what it answers, and the calls it got, in order.
+    struct Fake {
+        connected: bool,
+        current: bool,
+        pin: Result<serde_json::Value, String>,
+        save: Result<(), String>,
+        revert: serde_json::Value,
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Fake {
+        fn new() -> Fake {
+            Fake {
+                connected: true,
+                current: true,
+                pin: Ok(json!({"pinned": true})),
+                save: Ok(()),
+                revert: json!({"ok": true, "undone": 3, "scripts": 2, "text": "Undid 3 step(s) in Studio."}),
+                calls: Default::default(),
+            }
+        }
+        fn calls(&self) -> Vec<String> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl StudioLink for Fake {
+        fn connected(&self) -> bool {
+            self.connected
+        }
+        fn current(&self) -> bool {
+            self.current
+        }
+        fn has_pin(&self, _at: f64) -> Result<serde_json::Value, String> {
+            self.calls.borrow_mut().push("has_pin".into());
+            self.pin.clone()
+        }
+        fn save_scripts(&self, folder: &Path) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("save {}", folder.display()));
+            fs::create_dir_all(folder.join("ServerScriptService")).unwrap();
+            fs::write(folder.join("ServerScriptService").join("Shop.server.luau"), "print('now')").unwrap();
+            self.save.clone()
+        }
+        fn revert(&self, _at: f64) -> serde_json::Value {
+            // the scripts are already on disk when Studio is asked to put them back
+            let saved = self.calls.borrow().iter().any(|c| c.starts_with("save ") && Path::new(&c[5..]).join("ServerScriptService").join("Shop.server.luau").is_file());
+            self.calls.borrow_mut().push(format!("revert saved={saved}"));
+            self.revert.clone()
+        }
+    }
+
+    fn checkpoint_of<'a>(p: &'a str, commit: &'a str, at: f64) -> Checkpoint<'a> {
+        Checkpoint { at, studio: true, project: Some(p), commit: Some(commit), began: "x", undoing: None, skip_studio: None }
+    }
+
+    #[test]
+    fn scripts_are_saved_to_disk_before_studio_goes_back() {
+        let (d, first) = git_game("git before undo", true);
+        let p = d.display().to_string();
+        let link = Fake::new();
+        let back = put_back(&checkpoint_of(&p, &first, 5.0), &link);
+        assert!(back.refused.is_none() && back.studio_ok && back.project_ok, "{:?}", back.lines);
+        let calls = link.calls();
+        assert_eq!(calls.len(), 3, "{calls:?}");
+        assert_eq!(calls[0], "has_pin");
+        assert!(calls[1].starts_with("save ") && calls[1].contains(".fridae/before-undo/"), "{calls:?}");
+        assert_eq!(calls[2], "revert saved=true", "the folder is written before the revert call");
+        let folder = PathBuf::from(&calls[1][5..]);
+        let name = folder.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!((name.len(), name.as_bytes()[8]), (15, b'-'), "YYYYMMDD-HHMMSS: {name}");
+        let text = back.lines.join("\n");
+        assert!(text.contains(&format!("Your scripts as they were are saved in .fridae/before-undo/{name}.")), "{text}");
+        assert!(text.contains("Studio: Undid 3 step(s) in Studio."), "{text}");
+        assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v1", "the files went back too");
+        // the saved scripts stay on disk, out of git
+        assert!(folder.join("ServerScriptService").join("Shop.server.luau").is_file());
+        assert!(fs::read_to_string(d.join(".fridae").join(".gitignore")).unwrap().lines().any(|l| l == "before-undo/"));
+        assert!(git(&d, &["log", "--all", "--name-only", "--format="]).1.lines().all(|l| !l.contains("before-undo")));
+    }
+
+    #[test]
+    fn a_failed_export_blocks_the_studio_revert() {
+        let (d, first) = git_game("git export fails", true);
+        let p = d.display().to_string();
+        let link = Fake { save: Err("Studio did not answer in time.".into()), ..Fake::new() };
+        let back = put_back(&checkpoint_of(&p, &first, 5.0), &link);
+        let why = back.refused.clone().expect("refused");
+        assert!(why.contains("could not be saved to .fridae/before-undo/") && why.contains("Studio did not answer in time.") && why.contains("nothing was undone"), "{why}");
+        assert!(link.calls().iter().all(|c| !c.starts_with("revert")), "Studio was not reverted: {:?}", link.calls());
+        assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v3 uncommitted", "the files were not touched");
+        assert!(d.join(".fridae").join("before-undo").read_dir().unwrap().next().is_none(), "the half-written folder is gone");
+        // the route: refused with the files-only choice, and the run's stages left as they were
+        let r = undo_with(&p, None, false, &link);
+        assert_eq!((r["ok"].as_bool(), r["files_only"].as_bool()), (Some(false), Some(true)));
+        assert!(r["error"].as_str().unwrap().ends_with(OR_FILES_ONLY));
+        assert_eq!(read_run(&d).unwrap()["stages"][0]["status"], "done");
+        assert_eq!(read_run(&d).unwrap()["checkpoints"].as_array().unwrap().len(), 1);
+        let r = undo_with(&p, None, true, &link);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v1");
+    }
+
+    #[test]
+    fn studio_restarted_or_an_old_plugin_refuses_and_changes_nothing() {
+        let (d, first) = git_game("git restarted", true);
+        let p = d.display().to_string();
+        // no pin for that time: refused before anything is saved or reverted
+        let link = Fake { pin: Ok(json!({"pinned": false, "full": false})), ..Fake::new() };
+        let r = undo_with(&p, None, false, &link);
+        assert_eq!(r["error"].as_str(), Some(format!("{STUDIO_RESTARTED}{OR_FILES_ONLY}").as_str()));
+        assert_eq!(r["files_only"], true);
+        assert_eq!(link.calls(), vec!["has_pin".to_string()]);
+        assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v3 uncommitted");
+        assert_eq!(read_run(&d).unwrap()["stages"][0]["status"], "done");
+        // the plugin itself finds no snapshot when asked to revert: refused, and the saved copy is not left behind
+        let link = Fake { revert: json!({"ok": true, "undone": 0, "scripts": 0, "no_snapshot": true}), ..Fake::new() };
+        let back = put_back(&checkpoint_of(&p, &first, 5.0), &link);
+        assert_eq!(back.refused.as_deref(), Some(STUDIO_RESTARTED));
+        assert_eq!(fs::read_to_string(d.join("a.txt")).unwrap(), "v3 uncommitted");
+        assert!(d.join(".fridae").join("before-undo").read_dir().unwrap().next().is_none());
+        // an old plugin cannot hand over the scripts
+        let link = Fake { current: false, ..Fake::new() };
+        let back = put_back(&checkpoint_of(&p, &first, 5.0), &link);
+        assert_eq!(back.refused.as_deref(), Some(OLD_PLUGIN));
+        assert!(link.calls().is_empty());
+        // files only leaves Studio alone
+        let link = Fake { pin: Ok(json!({"pinned": false})), ..Fake::new() };
+        assert_eq!(undo_with(&p, None, true, &link)["ok"], true);
+        assert!(link.calls().is_empty());
+    }
+
+    #[test]
+    fn studio_answer_tells_restored_nothing_changed_and_no_snapshot_apart() {
+        assert_eq!(studio_outcome(&json!({"ok": true, "undone": 2, "scripts": 0})), StudioOutcome::Restored);
+        assert_eq!(studio_outcome(&json!({"ok": true, "undone": 0, "scripts": 1})), StudioOutcome::Restored);
+        assert_eq!(studio_outcome(&json!({"ok": true, "undone": 0, "scripts": 0})), StudioOutcome::NothingChanged);
+        assert_eq!(studio_outcome(&json!({"ok": true, "undone": 0, "scripts": 0, "no_snapshot": true})), StudioOutcome::NoSnapshot);
+        assert_eq!(studio_outcome(&json!({"ok": true, "undone": 1, "blocked": "Move"})), StudioOutcome::Failed);
+        assert_eq!(studio_outcome(&json!({"ok": false, "text": "Studio did not answer in time."})), StudioOutcome::Failed);
+        assert_eq!(pin_missing(5.0, &json!({"pinned": true})), None);
+        assert_eq!(pin_missing(5.0, &json!({"pinned": false, "full": false})), Some(STUDIO_RESTARTED));
+        assert_eq!(pin_missing(5.0, &json!({"pinned": false, "full": true, "oldest": 9.0})), Some(STUDIO_PINS_FULL));
+        assert_eq!(pin_missing(10.0, &json!({"pinned": false, "full": true, "oldest": 9.0})), Some(STUDIO_RESTARTED));
+        // "nothing changed" is reported as such, not as nothing of the agent's to undo
+        let (d, first) = git_game("git nothing changed", true);
+        let p = d.display().to_string();
+        let link = Fake { revert: json!({"ok": true, "undone": 0, "scripts": 0}), ..Fake::new() };
+        let back = put_back(&checkpoint_of(&p, &first, 5.0), &link);
+        assert!(back.studio_ok && back.lines.iter().any(|l| l == "Studio: nothing there had changed since then."), "{:?}", back.lines);
     }
 }

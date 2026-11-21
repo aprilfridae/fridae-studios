@@ -116,13 +116,13 @@ end
 -- turn begins and put back on undo. Kept in memory only, for the last few turns. Checkpoints (the start
 -- of an overnight or studio run, and each finished stage of a studio run) are pinned: the newest
 -- MAX_PINS are kept, so a run can be undone to any of its recent checkpoints while Studio stays open.
--- Just before an undo puts scripts back, their text is pinned too, named "before undo", so it is not lost.
+-- Before an undo puts scripts back, the app asks for every script's text ("sources") and saves it to disk.
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local SCRIPT_ROOTS = { "Workspace", "ReplicatedStorage", "ReplicatedFirst", "ServerScriptService", "ServerStorage", "StarterGui", "StarterPack", "StarterPlayer", "Lighting", "SoundService" }
 local snapshots = {}
 local pins = {}
 local MAX_PINS = 24
-local function snapshot(since, pin, name)
+local function snapshot(since, pin)
 	local sources = {}
 	for _, name in ipairs(SCRIPT_ROOTS) do
 		local root = game:FindService(name)
@@ -140,7 +140,7 @@ local function snapshot(since, pin, name)
 		end
 	end
 	if pin then
-		table.insert(pins, { since = since, sources = sources, name = name or "checkpoint" })
+		table.insert(pins, { since = since, sources = sources })
 		while #pins > MAX_PINS do
 			table.remove(pins, 1)
 		end
@@ -152,16 +152,28 @@ local function snapshot(since, pin, name)
 	end
 end
 
-local function restoreScripts(since)
-	-- the oldest snapshot taken at or after the moment asked for: the state when that turn began
-	local snap
-	local all = table.clone(snapshots)
+-- the checkpoint pinned at exactly this moment, if Studio still has it (a restart loses every pin)
+local function pinAt(at)
 	for _, p in ipairs(pins) do
-		table.insert(all, p)
+		if math.abs(p.since - at) < 0.001 then
+			return p
+		end
 	end
-	for _, s in ipairs(all) do
-		if s.since >= since and (not snap or s.since < snap.since) then
-			snap = s
+	return nil
+end
+
+local function restoreScripts(since, snap)
+	-- a turn's undo: the oldest snapshot taken at or after the moment asked for, the state when that turn began
+	-- (a checkpoint's undo passes its own pin)
+	if not snap then
+		local all = table.clone(snapshots)
+		for _, p in ipairs(pins) do
+			table.insert(all, p)
+		end
+		for _, s in ipairs(all) do
+			if s.since >= since and (not snap or s.since < snap.since) then
+				snap = s
+			end
 		end
 	end
 	if not snap then
@@ -193,7 +205,13 @@ local function restoreScripts(since)
 	return restored, true
 end
 
-local function revert(since)
+-- `exact`: undo back to the checkpoint pinned at `since`. Without that pin (Studio restarted since), nothing
+-- is touched and the answer says so (no_snapshot).
+local function revert(since, exact)
+	local pin = exact and pinAt(since) or nil
+	if exact and not pin then
+		return { undone = 0, left = 0, scripts = 0, had_snapshot = false, no_snapshot = true }
+	end
 	local undone, blocked = 0, nil
 	reverting = true
 	while undone < 6000 do
@@ -221,18 +239,115 @@ local function revert(since)
 	-- scripts go back only when the undo was not cut short, so the place is never left half way
 	local scripts, had = 0, false
 	if not blocked then
-		scripts, had = restoreScripts(since)
+		scripts, had = restoreScripts(since, pin)
 	end
 	return { undone = undone, blocked = blocked, left = left, scripts = scripts, had_snapshot = had }
+end
+
+-- Every script's text, for the app to save to disk before an undo puts scripts back: the same shape as
+-- rbxproject's COLLECT (path of names and sibling indexes, class, source), in pages of about `budget` bytes,
+-- so no single sync body grows too big. The list is made on the first page and kept for the rest.
+local SOURCE_SERVICES = { "Workspace", "ReplicatedFirst", "ReplicatedStorage", "ServerScriptService", "ServerStorage", "StarterGui",
+	"StarterPack", "StarterPlayer", "Lighting", "SoundService", "Teams", "Chat", "TextChatService",
+	"LocalizationService", "MaterialService", "TestService" }
+local collected = nil
+local function collectScripts()
+	local index = {}
+	local function sibling(inst)
+		if not index[inst] then
+			local n, name = 0, inst.Name
+			for _, c in ipairs(inst.Parent:GetChildren()) do
+				if c.Name == name then
+					n += 1
+					index[c] = n
+				end
+			end
+		end
+		return index[inst]
+	end
+	local out = {}
+	for _, sname in ipairs(SOURCE_SERVICES) do
+		local ok, svc = pcall(function()
+			return game:FindService(sname)
+		end)
+		if ok and svc then
+			for _, d in ipairs(svc:GetDescendants()) do
+				if d:IsA("LuaSourceContainer") then
+					local path, cur = {}, d
+					while cur ~= svc do
+						table.insert(path, 1, { cur.Name, sibling(cur) })
+						cur = cur.Parent
+					end
+					table.insert(path, 1, { sname, 1 })
+					local item = { p = path, c = d.ClassName, k = #d:GetChildren() > 0 }
+					-- what the script editor shows (text being typed included), else the saved source
+					local okS, src = pcall(function()
+						return ScriptEditorService:GetEditorSource(d)
+					end)
+					if not (okS and type(src) == "string") then
+						okS, src = pcall(function()
+							return d.Source
+						end)
+					end
+					if okS and type(src) == "string" then
+						item.s = src
+					else
+						item.unreadable = true
+					end
+					if d.ClassName == "Script" then
+						pcall(function()
+							item.r = d.RunContext.Name
+						end)
+					end
+					pcall(function()
+						if d.Enabled == false then
+							item.off = true
+						end
+					end)
+					table.insert(out, item)
+				end
+			end
+		end
+	end
+	return out
+end
+local function sources(command)
+	local from = math.max(1, math.floor(tonumber(command.from) or 1))
+	local budget = tonumber(command.budget) or 400000
+	if from == 1 or not collected or collected.token ~= command.token then
+		collected = { token = command.token, items = collectScripts() }
+	end
+	local items, page, size, i = collected.items, {}, 0, from
+	while i <= #items do
+		local n = #(items[i].s or "") + 200
+		if #page > 0 and size + n > budget then
+			break
+		end
+		table.insert(page, items[i])
+		size += n
+		i += 1
+	end
+	local nextFrom = nil
+	if i <= #items then
+		nextFrom = i
+	else
+		collected = nil
+	end
+	return { place = { name = game.Name, id = game.PlaceId, universe = game.GameId }, scripts = page, total = #items, next = nextFrom }
 end
 
 -- the only things the app can ask for
 local function handle(command)
 	if command.kind == "begin" and EDIT then
-		snapshot(tonumber(command.since) or now(), command.pin == true, type(command.name) == "string" and command.name or nil)
+		snapshot(tonumber(command.since) or now(), command.pin == true)
 		return { ok = true }
 	elseif command.kind == "revert" and EDIT then
-		return revert(tonumber(command.since) or now())
+		return revert(tonumber(command.since) or now(), command.exact == true)
+	elseif command.kind == "has_pin" and EDIT then
+		-- not pinned: Studio restarted since, or the checkpoint is older than the newest MAX_PINS ("full")
+		return { pinned = pinAt(tonumber(command.at) or -1) ~= nil, full = #pins >= MAX_PINS, oldest = pins[1] and pins[1].since or nil }
+	elseif command.kind == "sources" and EDIT then
+		return sources(command)
 	elseif command.kind == "count" and EDIT then
 		local n = 0
 		for _, s in ipairs(steps) do

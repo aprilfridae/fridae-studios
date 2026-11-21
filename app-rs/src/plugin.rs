@@ -178,60 +178,113 @@ pub fn begin(since: f64) {
 }
 
 /// Tell the plugin a checkpoint is being taken (an overnight or studio run beginning, or a stage of a studio run
-/// finished): it keeps this snapshot of every script, with the newest few other checkpoints'.
-/// `name` says what it is ("checkpoint", or "before undo": the scripts as they were just before an undo put them back).
-pub fn pin(since: f64, name: &str) {
+/// finished): it keeps this snapshot of every script, pinned at exactly `since`, with the newest few other pins.
+pub fn pin(since: f64) {
     if connected() {
         with(|l| {
             l.next_id += 1;
             let id = l.next_id;
-            l.commands.push(json!({"id": id, "kind": "begin", "since": since, "pin": true, "name": name}));
+            l.commands.push(json!({"id": id, "kind": "begin", "since": since, "pin": true}));
         });
     }
 }
 
-/// Ask the plugin to undo the agent's steps made since a moment in time.
-pub fn revert(since: f64) -> Value {
-    revert_within(since, 40)
-}
-
-/// The same, waiting up to `secs` for Studio (undoing a whole night can take minutes).
-pub fn revert_within(since: f64, secs: u64) -> Value {
+/// Send one request to the plugin and wait up to `secs` for its answer ({"id", "ok", "result"}).
+fn request(mut command: Value, secs: u64) -> Result<Value, String> {
     if !connected() {
-        return json!({"ok": false, "text": "Studio is not connected. Open Studio with the Fridae plugin installed."});
+        return Err("Studio is not connected. Open Studio with the Fridae plugin installed.".to_string());
     }
     let id = with(|l| {
         l.next_id += 1;
         let id = l.next_id;
-        l.commands.push(json!({"id": id, "kind": "revert", "since": since}));
+        command["id"] = json!(id);
+        l.commands.push(command);
         id
     });
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut guard = LIVE.lock().unwrap();
     loop {
         if let Some(r) = guard.as_mut().and_then(|l| l.results.remove(&id)) {
-            let undone = r["result"]["undone"].as_u64().unwrap_or(0);
-            let scripts = r["result"]["scripts"].as_u64().unwrap_or(0);
-            let put_back = match scripts {
-                0 => String::new(),
-                1 => " 1 script was put back as it was.".to_string(),
-                n => format!(" {n} scripts were put back as they were."),
-            };
-            let text = match (undone, r["result"]["blocked"].as_str()) {
-                (0, Some(top)) => format!("Nothing was undone: the newest step in Studio's history is \"{top}\", which is not the agent's. Undo that yourself with Ctrl+Z, then try again."),
-                (n, Some(top)) => format!("Undid {n} step(s), then stopped at \"{top}\", which is not the agent's. Scripts were left alone. Undo that step yourself with Ctrl+Z, then try again."),
-                (0, None) if scripts == 0 => "There was nothing of the agent's to undo from this turn.".to_string(),
-                (0, None) => format!("No steps to undo.{put_back}"),
-                (n, None) => format!("Undid {n} step(s) in Studio.{put_back} Ctrl+Y brings the steps back, but not the script text."),
-            };
-            return json!({"ok": r["ok"] == true, "undone": undone, "scripts": scripts, "text": text});
+            return Ok(r);
         }
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return json!({"ok": false, "text": "Studio did not answer in time."});
+            return Err("Studio did not answer in time.".to_string());
         }
         guard = ANSWERED.wait_timeout(guard, left).unwrap().0;
     }
+}
+
+/// The plugin's answer to a request it may not know (an older copy answers {"error": "unknown request"}).
+fn answer_of(r: Value) -> Result<Value, String> {
+    let result = r["result"].clone();
+    match result["error"].as_str() {
+        Some("unknown request") => Err("Studio's Fridae plugin is an older copy that cannot do this. Update the plugin in Setup and restart Studio.".to_string()),
+        Some(e) => Err(format!("Studio's Fridae plugin failed: {e}")),
+        None if r["ok"] != true => Err("Studio's Fridae plugin failed.".to_string()),
+        None => Ok(result),
+    }
+}
+
+/// Whether Studio still has the checkpoint pinned at exactly `at`: {"pinned", "full" (it keeps no more pins),
+/// "oldest" (the oldest pin's time)}.
+pub fn has_pin(at: f64) -> Result<Value, String> {
+    answer_of(request(json!({"kind": "has_pin", "at": at}), 30)?)
+}
+
+/// Every script in the open place, as {"place", "scripts": [...]} in rbxproject COLLECT's shape, fetched page by page.
+pub fn sources() -> Result<Value, String> {
+    let token = paths::random_hex(1);
+    let (mut from, mut scripts) = (1u64, Vec::new());
+    for _ in 0..10_000 {
+        let page = answer_of(request(json!({"kind": "sources", "token": token, "from": from, "budget": 400_000}), 60)?)?;
+        scripts.extend(page["scripts"].as_array().cloned().unwrap_or_default());
+        match page["next"].as_u64() {
+            Some(n) if n > from => from = n,
+            Some(_) => return Err("Studio's Fridae plugin sent the scripts out of order.".to_string()),
+            None => {
+                let total = page["total"].as_u64().unwrap_or(scripts.len() as u64);
+                if total != scripts.len() as u64 {
+                    return Err(format!("Studio's Fridae plugin sent {} of its {total} scripts.", scripts.len()));
+                }
+                return Ok(json!({"place": page["place"], "scripts": scripts}));
+            }
+        }
+    }
+    Err("Studio's Fridae plugin sent too many pages of scripts.".to_string())
+}
+
+/// Ask the plugin to undo the agent's steps made since a moment in time.
+pub fn revert(since: f64) -> Value {
+    revert_within(since, 40, false)
+}
+
+/// The same, waiting up to `secs` for Studio (undoing a whole night can take minutes). `exact`: back to the
+/// checkpoint pinned at `since`; without that pin Studio is left alone and the answer has "no_snapshot": true.
+pub fn revert_within(since: f64, secs: u64, exact: bool) -> Value {
+    let r = match request(json!({"kind": "revert", "since": since, "exact": exact}), secs) {
+        Ok(r) => r,
+        Err(e) => return json!({"ok": false, "text": e}),
+    };
+    let undone = r["result"]["undone"].as_u64().unwrap_or(0);
+    let scripts = r["result"]["scripts"].as_u64().unwrap_or(0);
+    let blocked = r["result"]["blocked"].as_str();
+    let put_back = match scripts {
+        0 => String::new(),
+        1 => " 1 script was put back as it was.".to_string(),
+        n => format!(" {n} scripts were put back as they were."),
+    };
+    let text = match (undone, blocked) {
+        _ if r["result"]["no_snapshot"] == true => "Studio no longer has its copy of the scripts from then, so nothing was undone there.".to_string(),
+        (0, Some(top)) => format!("Nothing was undone: the newest step in Studio's history is \"{top}\", which is not the agent's. Undo that yourself with Ctrl+Z, then try again."),
+        (n, Some(top)) => format!("Undid {n} step(s), then stopped at \"{top}\", which is not the agent's. Scripts were left alone. Undo that step yourself with Ctrl+Z, then try again."),
+        (0, None) if scripts == 0 && exact => "Nothing there had changed since then.".to_string(),
+        (0, None) if scripts == 0 => "There was nothing of the agent's to undo from this turn.".to_string(),
+        (0, None) => format!("No steps to undo.{put_back}"),
+        (n, None) => format!("Undid {n} step(s) in Studio.{put_back} Ctrl+Y brings the steps back, but not the script text."),
+    };
+    json!({"ok": r["ok"] == true && r["result"]["error"].is_null(), "undone": undone, "scripts": scripts, "blocked": blocked,
+           "no_snapshot": r["result"]["no_snapshot"] == true, "text": text})
 }
 
 fn sync(body: &Value) -> Value {

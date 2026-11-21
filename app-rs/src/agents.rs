@@ -162,7 +162,23 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
         st.overnight_done = 0;
     }
     st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
+    st.sending = true;
     Some(waiting)
+}
+
+/// Whether the chat is working: a turn being sent (from `begin_send` until the AI is running, or the send gives up),
+/// a turn running, or a texture being made.
+fn working(st: &State) -> bool {
+    st.sending || st.running || st.making
+}
+
+/// Clears `sending` when `send` returns, whichever way: by then the turn is running, or it never started.
+struct Sending<'a>(&'a Agent);
+
+impl Drop for Sending<'_> {
+    fn drop(&mut self) {
+        self.0.st.lock().unwrap().sending = false;
+    }
 }
 
 /// A waiting Studio run goes on: the clock restarts with the full 24 hours. Returns the seconds that were left when
@@ -403,6 +419,8 @@ struct State {
     overnight_until: f64,
     /// Stop was pressed between two of autopilot's or the night's turns: the next carry-on is not sent.
     halted: bool,
+    /// A turn is being sent: `begin_send` has run and the AI is not running yet (see `working`).
+    sending: bool,
     overnight_fails: u32,
     overnight_done: u32,
     /// Studio mode stopped at a gate (STATUS: WAITING): no carry-on until the user answers, and the clock is stopped
@@ -465,7 +483,7 @@ impl Agent {
     /// Drop the next carry-on of the loop (the flag Stop sets between turns): an undo is about to put things back.
     pub fn halt(&self) {
         let mut st = self.st.lock().unwrap();
-        if !(st.running || st.making) {
+        if !working(&st) {
             st.halted = true;
         }
     }
@@ -555,7 +573,8 @@ impl Agent {
 
     /// Undo this chat's latest overnight run: the agent's steps in Studio since it began, every script as it was,
     /// and the project's files as they were at the checkpoint. Answers with what happened, for the window.
-    pub fn undo_night(&self) -> Value {
+    /// `files_only`: Studio is left as it is (offered when Studio's part cannot be done: "files_only" in the answer).
+    pub fn undo_night(&self, files_only: bool) -> Value {
         if self.busy() {
             return json!({"ok": false, "text": "Stop the agent first, then undo the night."});
         }
@@ -574,15 +593,23 @@ impl Agent {
             return json!({"ok": false, "text": "This chat leads a studio run: use Undo this run, which also puts the run's stages and review back."});
         }
         let start = night["start"].as_f64().unwrap_or(0.0);
-        let back = studio_undo::put_back(&studio_undo::Checkpoint {
-            at: start,
-            studio: night["studio"] == true,
-            project: night["project"].as_str(),
-            commit: night["commit"].as_str(),
-            began: "the night began",
-            undoing: None,
-            skip_studio: None,
-        });
+        let back = studio_undo::put_back(
+            &studio_undo::Checkpoint {
+                at: start,
+                studio: night["studio"] == true,
+                project: night["project"].as_str(),
+                commit: night["commit"].as_str(),
+                began: "the night began",
+                undoing: None,
+                skip_studio: files_only.then_some("Studio: left as it is (you chose to undo the files only)."),
+            },
+            &studio_undo::Live,
+        );
+        if let Some(why) = back.refused {
+            // nothing was changed: Studio's part cannot be done, the files alone still can
+            let text = if night["commit"].is_string() { format!("{why} \u{2014} undo the files only?") } else { format!("{why}.") };
+            return json!({"ok": false, "text": text, "files_only": night["commit"].is_string()});
+        }
         let (mut lines, ok) = (back.lines, back.studio_ok && back.project_ok);
         lines.push("The board's cards from the night were kept so you can still read them.".to_string());
         let text = lines.join("\n");
@@ -618,8 +645,7 @@ impl Agent {
     }
 
     pub fn busy(&self) -> bool {
-        let st = self.st.lock().unwrap();
-        st.making || st.running
+        working(&self.st.lock().unwrap())
     }
 
     fn has_messages(&self) -> bool {
@@ -689,7 +715,7 @@ impl Agent {
         let hold = !auto && !self.busy() && (ask.studio || self.studio_waiting()) && self.paused_run();
         let (queued, held) = {
             let mut st = self.st.lock().unwrap();
-            if st.making || st.running || hold {
+            if working(&st) || hold {
                 let qid = paths::random_hex(1)[..8].to_string();
                 st.queue.push((qid, text.to_string(), ask.clone()));
                 (true, Vec::new())
@@ -877,6 +903,7 @@ impl Agent {
         let Some(resumed) = begin_send(&mut self.st.lock().unwrap(), ask, auto, paths::now_secs()) else {
             return;
         };
+        let _sending = Sending(self);
         if let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
             return self.make_texture(&c[1].to_lowercase(), c[2].trim());
         }
@@ -941,7 +968,7 @@ impl Agent {
         // (a Studio run going on after a gate is the same run, so it keeps its first checkpoint)
         if ask.overnight && !auto && !resumed {
             let start = self.turn_started();
-            plugin::pin(start, "checkpoint");
+            plugin::pin(start);
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
             if let Some(p) = project.as_deref().filter(|_| ask.studio) {
                 studio_undo::ensure_gitignore(std::path::Path::new(p)); // review media stays out of the checkpoint commits
@@ -1987,6 +2014,28 @@ mod tests {
         back_to_wait(&mut st, 500.0);
         assert!(st.studio_waiting);
         assert_eq!((st.overnight_until, st.overnight_left), (0.0, 500.0));
+    }
+
+    #[test]
+    fn a_turn_being_sent_counts_as_working_so_undo_waits() {
+        let a = Agent::new("c-sending-test".into(), "Lead");
+        let carry_on = Ask { kickoff: Some("auto".into()), ..Default::default() };
+        // a carry-on that got through begin_send is busy from then on, before the AI runs: halt cannot drop it any more,
+        // so undo's busy check must refuse
+        assert_eq!(begin_send(&mut a.st.lock().unwrap(), &carry_on, true, 1.0), Some(false));
+        let sending = Sending(&a);
+        assert!(a.busy(), "between begin_send and the turn running");
+        a.halt();
+        assert!(!a.st.lock().unwrap().halted, "halt does not linger for a turn already under way");
+        a.set_running_for_test(true);
+        drop(sending);
+        assert!(a.busy(), "the turn runs: still busy");
+        a.set_running_for_test(false);
+        assert!(!a.busy());
+        // halted first: the next carry-on never starts sending
+        a.halt();
+        assert_eq!(begin_send(&mut a.st.lock().unwrap(), &carry_on, true, 2.0), None);
+        assert!(!a.busy());
     }
 
     #[test]

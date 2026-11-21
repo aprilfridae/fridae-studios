@@ -12,6 +12,7 @@ names, so they can be read, searched, diffed and committed like any code:
   rbx.py project info | export_scripts | changes
   rbx.py project checkpoint -m "shop works"
   rbx.py project restore_scripts [--commit abc123] [--paths ...] [--confirm]
+  rbx.py project save_scripts --from scripts.json --out folder   (scripts the Fridae plugin handed over)
 
 A checkpoint covers SCRIPTS ONLY. Parts, UI, terrain and every other instance
 are not in it: Studio's own undo and the place's version history cover those.
@@ -170,7 +171,11 @@ def safe_name(name):
 
 def read_place(studio):
     """(place info, scripts) from the open place. Each script: path, class, source, run_context, has_children."""
-    data = json.loads(studio.fetch(COLLECT, timeout=300))
+    return parse_place(json.loads(studio.fetch(COLLECT, timeout=300)))
+
+
+def parse_place(data):
+    """(place info, scripts) from what COLLECT returns (the Fridae plugin's "sources" answer has the same shape)."""
     scripts = [{"path": [[str(n), int(i)] for n, i in it["p"]], "class": it["c"], "source": it.get("s"),
                 "run_context": it.get("r"), "has_children": bool(it.get("k")), "disabled": bool(it.get("off"))}
                for it in data.get("scripts") or []]
@@ -243,8 +248,24 @@ def _waypoint(studio, name):
 # ------------------------------------------------------------------ actions
 def export_scripts(studio, root=None):
     root = root or project()
-    src = os.path.join(root, "src")
     place, scripts = read_place(studio)
+    return write_scripts(os.path.join(root, "src"), place, scripts)
+
+
+def save_scripts(data_file, out):
+    """Write scripts the Fridae plugin handed over (a JSON file in COLLECT's shape) into the folder `out`, in the same
+    layout as export_scripts. The app uses it to keep the scripts as they were before an undo puts them back."""
+    data = read_json(data_file)
+    if not isinstance(data, dict) or not isinstance(data.get("scripts"), list):
+        raise ProjectError("The scripts to save could not be read from %s." % data_file)
+    if os.path.isdir(out) and os.listdir(out):
+        raise ProjectError("The folder %s is not empty, so the scripts were not saved there." % out)
+    place, scripts = parse_place(data)
+    return write_scripts(out, place, scripts)
+
+
+def write_scripts(src, place, scripts):
+    """Write the scripts under src (Rojo-style names and .manifest.json); files of scripts no longer there go."""
     files = layout(scripts)
     old = load_manifest(src) or {"files": {}}
     os.makedirs(src, exist_ok=True)
@@ -580,6 +601,10 @@ def run(action, a=None):
     action = (action or "info").lower()
     if action == "info":
         return _info_text(info())
+    if action == "save_scripts":
+        if not a.get("source") or not a.get("out"):
+            raise ProjectError("save_scripts needs --from (the plugin's scripts, as JSON) and --out (the folder).")
+        return _export_text(save_scripts(a["source"], a["out"]))
     root = project()
     with rbxstudio.Studio() as s:
         if action == "export_scripts":
@@ -594,14 +619,17 @@ def run(action, a=None):
 
 
 def _cmd(a):
-    print(run(a.action, {"message": a.message, "commit": a.commit, "paths": a.paths, "confirm": a.confirm}))
+    print(run(a.action, {"message": a.message, "commit": a.commit, "paths": a.paths, "confirm": a.confirm,
+                         "source": a.source, "out": a.out}))
 
 
 def register(sub):
     g = sub.add_parser("project", help="export the place's scripts to the project folder, checkpoint them in git, restore them")
-    g.add_argument("action", choices=["info", "export_scripts", "checkpoint", "changes", "restore_scripts"])
+    g.add_argument("action", choices=["info", "export_scripts", "checkpoint", "changes", "restore_scripts", "save_scripts"])
     g.add_argument("-m", "--message", help="checkpoint: what this checkpoint is")
     g.add_argument("--commit", help="restore_scripts: the commit to restore from (default: the files in src)")
     g.add_argument("--paths", nargs="*", help="restore_scripts: only these files, folders or instance paths")
     g.add_argument("--confirm", action="store_true", help="restore_scripts: really write the scripts into the place")
+    g.add_argument("--from", dest="source", help="save_scripts: a JSON file of scripts from the Fridae plugin")
+    g.add_argument("--out", help="save_scripts: the folder to write them into")
     g.set_defaults(fn=_cmd)
