@@ -1029,10 +1029,6 @@ function addCopy(node, text) {
 function hello(p) {
   const wrap = el("div", "hello enter", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede">Say it in plain words. I work in your open Studio place and in Blender, and I show you what I made before calling it done.</p><div class="hello-needs"></div>');
   wrap.appendChild(startCard(p));
-  const ideas = guideList([["Things to try", [GUIDE[1][1][0], GUIDE[1][1][2], GUIDE[2][1][0], GUIDE[3][1][0]]]]);
-  const more = el("button", "linkish", "Everything it can do"); more.style.marginTop = "12px";
-  more.onclick = openGuide; ideas.appendChild(more);
-  wrap.appendChild(ideas);
   p.col.appendChild(wrap);
   paintNeeds();
 }
