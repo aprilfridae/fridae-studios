@@ -152,7 +152,9 @@ def _prepare(recipe, folder, report):
         wav = os.path.join(folder, "voice.wav")
         v = audio_mod.voice(text, wav)
         audio["voice"], words = wav, v["words"]
-        problems = validate(recipe, folder, durations={wav: v["duration"]})
+        checked = copy.deepcopy(recipe)
+        checked["audio"].pop("voice_text")      # now spoken: only the length is left to check
+        problems = validate(checked, folder, durations={wav: v["duration"]})
         if problems:
             raise RecipeError(problems)
     if caps and caps.get("source") != "none" and not caps.get("words"):
@@ -229,7 +231,9 @@ def _run_check(folder, video, layout_path, recipe):
         layout = json.load(f)
     try:
         from rbxpromo.check import check
-    except ImportError:             # Task 7 not landed yet
+    except ModuleNotFoundError as e:    # Task 7 not landed yet; any other import error is a real failure
+        if e.name != "rbxpromo.check":
+            raise
         def check(video, layout, recipe):
             return {"passed": True, "problems": []}
     return check(video, layout, recipe)

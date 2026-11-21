@@ -71,6 +71,19 @@ class RecipeTests(unittest.TestCase):
         probs = validate(_recipe(style="boring"), self.tmp)
         self.assertTrue(any("boring" in p and all(s in p for s in STYLES) for p in probs), probs)
 
+    def test_voice_text_and_project_checked(self):
+        for bad in ("", "  ", 5, ["a"]):
+            probs = validate(_recipe(audio={"voice_text": bad}), self.tmp)
+            self.assertTrue(any("voice_text" in p for p in probs), (bad, probs))
+        self.assertEqual(validate(_recipe(audio={"voice_text": "Hello there"}, project="my game"), self.tmp), [])
+        probs = validate(_recipe(project=3), self.tmp)
+        self.assertTrue(any("'project'" in p for p in probs), probs)
+
+    def test_voice_and_voice_text_together_rejected(self):
+        _touch(os.path.join(self.tmp, "voice.wav"))
+        probs = validate(_recipe(audio={"voice": "voice.wav", "voice_text": "Hi"}), self.tmp, durations={"voice.wav": 1.0})
+        self.assertTrue(any("not both" in p for p in probs), probs)
+
     def test_voice_longer_than_scenes(self):
         _touch(os.path.join(self.tmp, "voice.wav"))
         r = _recipe(audio={"voice": "voice.wav"},

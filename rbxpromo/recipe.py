@@ -147,6 +147,13 @@ def validate(recipe, base_dir, durations=None):
     vol = audio.get("music_volume", 0.8)
     if not _num(vol) or not 0 <= vol <= 1:
         problems.append("audio 'music_volume' must be between 0 and 1.")
+    vt = audio.get("voice_text")
+    if vt is not None and (not isinstance(vt, str) or not vt.strip()):
+        problems.append("audio 'voice_text' must be non-empty text to speak.")
+    if vt is not None and audio.get("voice") is not None:
+        problems.append("Set either audio 'voice' (a file) or 'voice_text' (text to speak), not both.")
+    if recipe.get("project") is not None and not isinstance(recipe["project"], str):
+        problems.append("'project' must be text (the folder name for the outputs).")
     total = _tolerant_total(scenes)
     for key in ("music", "voice"):
         p = audio.get(key)
