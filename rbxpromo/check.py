@@ -203,7 +203,8 @@ def _loudness_result(video):
         return [], ["The audio is silent (below -70 LUFS), so loudness was not checked."]
     if lo <= lufs <= hi:
         return [], []
-    return ["Loudness is %.1f LUFS, outside %d to %d LUFS (%s)." % (lufs, lo, hi, "too quiet" if lufs < lo else "too loud")], []
+    # plain words first; the measured value keeps one decimal and an ASCII minus, like the guide quotes it
+    return ["%s: %.1f LUFS, aim for %d to %d" % ("Too quiet" if lufs < lo else "Too loud", lufs, lo, hi)], []
 
 
 # ---------------------------------------------------------------- contrast

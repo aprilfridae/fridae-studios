@@ -213,7 +213,8 @@ class MediaTests(unittest.TestCase):
         res = mod.check(path, [box(0.2, 1.0, 240, 700, 600, 200, "title")], recipe(TITLE))
         loud = [p for p in res["problems"] if "LUFS" in p]
         self.assertEqual(len(loud), 1, res)
-        self.assertIn("-30.", loud[0])
+        self.assertTrue(loud[0].startswith("Too quiet: -30."), loud)
+        self.assertIn("aim for -16 to -12", loud[0])
         self.assertFalse(res["passed"])
 
     def test_loudness_in_range_passes(self):
@@ -224,7 +225,7 @@ class MediaTests(unittest.TestCase):
 
     def test_loud_video_fails(self):
         res = mod.check(self.video("loud.mp4", peak_db=-6.0), [], recipe(TITLE))
-        self.assertTrue(any("too loud" in p and "-6." in p for p in res["problems"]), res)
+        self.assertTrue(any(p.startswith("Too loud: -6.") for p in res["problems"]), res)
 
     def test_no_audio_track_is_a_note(self):
         res = mod.check(self.video("mute.mp4"), [CENTRED], recipe(TITLE))

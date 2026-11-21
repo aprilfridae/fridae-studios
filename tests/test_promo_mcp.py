@@ -25,6 +25,11 @@ class Capture(io.TextIOWrapper):
         return self.buffer.getvalue().decode("utf-8")
 
 
+def fake_clip(out_dir):
+    """Stands in for reference.sample_clip where render_still is faked: no engine and no file needed."""
+    return os.path.join(out_dir, "sample.mp4")
+
+
 def text(res):
     return res["content"][0]["text"]
 
@@ -168,13 +173,13 @@ class ToolTests(unittest.TestCase):
             Image.new("RGB", (108, 192), (90, 40, 160)).save(out_jpg)
             return out_jpg
         with tempfile.TemporaryDirectory() as out, mock.patch.object(engine, "promo_hash", return_value="b" * 40), \
-                mock.patch.object(render, "render_still", fake_still):
+                mock.patch.object(render, "render_still", fake_still), mock.patch.object(reference, "sample_clip", fake_clip):
             items = reference.styles(out)
             with open(items[0]["still"], "wb") as f:
                 f.write(b"half a jpeg")
             n = len(renders)
             again = reference.styles(out)
-            self.assertEqual(len(renders), n + 1)
+            self.assertEqual(len(renders), n + 2)        # a still is two frames: the title card and the footage
             with Image.open(again[0]["still"]) as im:
                 im.load()
             tool.styles_sheet(again, os.path.join(out, "sheet_styles.jpg"))
@@ -189,7 +194,7 @@ class ToolTests(unittest.TestCase):
                 f.write(b"partial")
             raise engine.EngineError("renderer died")
         with tempfile.TemporaryDirectory() as out, mock.patch.object(engine, "promo_hash", return_value="c" * 40), \
-                mock.patch.object(render, "render_still", broken):
+                mock.patch.object(render, "render_still", broken), mock.patch.object(reference, "sample_clip", fake_clip):
             with self.assertRaises(engine.EngineError):
                 reference.styles(out)
             self.assertEqual(os.listdir(out), [])
@@ -206,17 +211,18 @@ class ToolTests(unittest.TestCase):
             return out_jpg
         with tempfile.TemporaryDirectory() as work, mock.patch.object(engine, "status", return_value=READY), \
                 mock.patch.object(engine, "promo_hash", return_value="a" * 40), \
-                mock.patch("rbxpaths.WORK", work), mock.patch.object(render, "render_still", fake_still):
+                mock.patch("rbxpaths.WORK", work), mock.patch.object(render, "render_still", fake_still), \
+                mock.patch.object(reference, "sample_clip", fake_clip):
             first = call({"action": "styles"})
             n = len(renders)
             second = call({"action": "styles"})
-        self.assertGreaterEqual(n, 8)
+        self.assertGreaterEqual(n, 16)                  # two frames per style: the title card and the footage
         self.assertEqual(len(renders), n, "the second call must not render again")
         for res in (first, second):
             self.assertFalse(res["isError"])
             self.assertEqual([c["type"] for c in res["content"]], ["text", "image"])
             data = json.loads(text(res))
-            self.assertEqual(len(data["styles"]), n)
+            self.assertEqual(len(data["styles"]) * 2, n)
             self.assertTrue(data["sheet"].endswith("sheet_styles.jpg"))
 
 

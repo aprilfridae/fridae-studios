@@ -185,10 +185,11 @@ it is in `caption.txt`.
   mutes it; it plays at 0.3 of that under music or a voice), `voice_volume`
   (0 to 2, default 1), `music_volume` (0 to 1, default 0.8).
 - Loudness is checked (it must land between -16 and -12 LUFS). A fully
-  silent promo is only a note, not a problem. **Fixing a loudness problem:**
-  "too quiet" means raise the loudest part you have: `voice_volume` (up to
+  silent promo is only a note, not a problem. The problem reads like
+  "Too quiet: -19.6 LUFS, aim for -16 to -12". **Fixing a loudness problem:**
+  "Too quiet" means raise the loudest part you have: `voice_volume` (up to
   2) if there is a voice, else `music_volume` (up to 1), else
-  `clip_volume` (up to 2); "too loud" means lower them. Change by about
+  `clip_volume` (up to 2); "Too loud" means lower them. Change by about
   the gap (6 dB is roughly half or double), render again and re-check.
 - **Ask before voiceover.** Do not write a voice line that claims
   something about the game (a number, "the best", "free", "new update",
