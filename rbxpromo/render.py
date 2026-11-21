@@ -11,6 +11,7 @@ import copy, datetime, json, ntpath, os, re, shutil, subprocess, tempfile
 
 import rbxpaths
 from rbxpromo import engine
+from rbxpromo.check import check
 from rbxpromo.recipe import RecipeError, load_recipe, recipe_duration, scene_duration, validate, _resolve
 
 TRACK_STEP = 0.25        # seconds between motion samples
@@ -226,16 +227,9 @@ def _sheet(video, out_jpg):
             raise RuntimeError("Could not write the contact sheet " + out_jpg)
 
 
-def _run_check(folder, video, layout_path, recipe):
+def _run_check(video, layout_path, recipe):
     with open(layout_path, encoding="utf-8") as f:
         layout = json.load(f)
-    try:
-        from rbxpromo.check import check
-    except ModuleNotFoundError as e:    # Task 7 not landed yet; any other import error is a real failure
-        if e.name != "rbxpromo.check":
-            raise
-        def check(video, layout, recipe):
-            return {"passed": True, "problems": []}
     return check(video, layout, recipe)
 
 
@@ -280,7 +274,7 @@ def render(recipe_path, out_dir=None, on_progress=None):
         with open(p["caption.txt"], "w", encoding="utf-8") as f:
             f.write(text)
         report(0.95)
-        result = _run_check(folder, p["promo.mp4"], p["layout.json"], recipe)
+        result = _run_check(p["promo.mp4"], p["layout.json"], recipe)
     except Exception:
         if not existed:
             shutil.rmtree(folder, ignore_errors=True)

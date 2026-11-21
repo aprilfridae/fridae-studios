@@ -98,39 +98,17 @@ class PipelineTests(unittest.TestCase):
             mod.render(self.recipe())
         self.assertEqual(order, ["check", "card"])
 
-    def test_check_import_error_inside_module_propagates(self):
-        import sys, types
+    def test_real_check_result_lands_on_card(self):
         from rbxpromo import render as mod
-        fake = types.ModuleType("rbxpromo.check")
-
-        def boom(*a):
-            raise ImportError("No module named 'cv2'")
-        fake.check = boom
-        layout = os.path.join(self.tmp, "layout.json")
-        with open(layout, "w") as f:
-            json.dump([], f)
-        with mock.patch.dict(sys.modules, {"rbxpromo.check": fake}):
-            with self.assertRaises(ImportError):
-                mod._run_check(self.tmp, "v.mp4", layout, {})
-        with mock.patch.dict(sys.modules, {"rbxpromo.check": None}):     # module absent: stub applies
-            self.assertTrue(mod._run_check(self.tmp, "v.mp4", layout, {})["passed"])
-
-    def test_check_module_with_broken_import_propagates(self):
-        import importlib, sys
-        from rbxpromo import render as mod
-        folder = os.path.join(self.tmp, "pkgs")
-        os.makedirs(folder)
-        layout = os.path.join(self.tmp, "layout.json")
-        with open(layout, "w") as f:
-            json.dump([], f)
-        import rbxpromo
-        with open(os.path.join(folder, "check.py"), "w") as f:
-            f.write("import module_that_does_not_exist_xyz\n")
-        with mock.patch.object(rbxpromo, "__path__", [folder]), mock.patch.dict(sys.modules):
-            sys.modules.pop("rbxpromo.check", None)
-            with self.assertRaises(ModuleNotFoundError) as cm:
-                mod._run_check(self.tmp, "v.mp4", layout, {})
-        self.assertEqual(cm.exception.name, "module_that_does_not_exist_xyz")
+        res = mod.render(self.recipe())
+        chk = res["check"]
+        self.assertEqual(set(chk), {"passed", "problems", "notes"})
+        self.assertIsInstance(chk["passed"], bool)
+        self.assertTrue(chk["passed"], chk)
+        self.assertTrue(any("silent" in n for n in chk["notes"]), chk)     # the fixture promo has no music or voice
+        card = os.path.join(self.work, "promo-cards", os.path.basename(res["folder"]) + ".json")
+        with open(card, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["check"], chk)
 
     def test_failed_check_is_reported_in_card(self):
         from rbxpromo import render as mod
