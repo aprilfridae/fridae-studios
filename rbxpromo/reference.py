@@ -16,9 +16,12 @@ from rbxpromo import engine
 from rbxpromo.recipe import STYLES
 
 MIN_SHOT = 0.2           # seconds; a shorter "shot" is a detection glitch and joins the previous one
-HOP = 0.01               # beat analysis: seconds per energy frame
+HOP = 0.01               # beat analysis: seconds between energy frames
 BEAT_GAP = 0.25          # no two beats closer than this
-BEAT_FLOOR = 1.0         # smallest log-energy jump (about 2.7x louder) that can count as a beat
+WIN = 0.03               # seconds of audio per energy frame
+BASELINE = 0.5           # seconds of recent energy a beat has to rise above
+MIN_LEVEL = 0.003        # quieter than this (full scale RMS) is silence: no beats
+BEAT_FLOOR = 0.3         # smallest rise (fraction of the recent level) that can count as a beat
 BEAT_RATE = 8000
 STILL_AT = 1.0
 _URL = re.compile(r"^\s*([a-z][a-z0-9+.-]*://|www\.)", re.I)
@@ -35,29 +38,36 @@ def _refuse_url(path):
 # ---------------------------------------------------------------- beats
 
 def beats_from_samples(samples, rate):
-    """Beat times in seconds from onset strength: jumps in the log of the short-window RMS energy,
-    taken where they stand well above the usual jump size, at least BEAT_GAP apart."""
+    """Beat times in seconds. Onset strength is how far the short-window RMS rises above its own recent
+    average (about the last 0.5 s), as a fraction of that average, so a steady music bed does not hide
+    a kick. Peaks above an adaptive threshold count, at least BEAT_GAP apart. Silence gives none."""
     import numpy as np
     x = np.asarray(samples, dtype=np.float64)
-    hop, win = max(1, int(rate * HOP)), max(2, int(rate * HOP * 2))
+    hop, win = max(1, int(rate * HOP)), max(2, int(rate * WIN))
     n = (len(x) - win) // hop + 1
     if n < 3:
         return []
     sq = np.concatenate([[0.0], np.cumsum(x * x)])
     starts = np.arange(n) * hop
-    rms = np.sqrt((sq[starts + win] - sq[starts]) / win)
-    onset = np.maximum(0.0, np.diff(np.log(rms + 1e-4)))
+    rms = np.sqrt(np.maximum(sq[starts + win] - sq[starts], 0.0) / win)
+    back, skip = int(BASELINE / HOP), 3
+    onset = np.zeros(n)
+    for i in range(skip + 1, n):
+        past = rms[max(0, i - back):i - skip]
+        base = past.mean()
+        if base > MIN_LEVEL:
+            onset[i] = max(0.0, rms[i] - base) / base
     thr = max(BEAT_FLOOR, float(onset.mean() + 2 * onset.std()))
-    out = []
+    out, strength = [], []
     for i in np.flatnonzero(onset > thr):
-        lo, hi = max(0, i - 2), min(len(onset), i + 3)
-        if onset[i] < onset[lo:hi].max():
+        if onset[i] < onset[max(0, i - 4):i + 5].max():
             continue                                    # not the local peak
-        t = (i + 1) * hop / rate
+        t = round(float(i * hop / rate + WIN / 2), 3)
         if not out or t - out[-1] >= BEAT_GAP:
-            out.append(round(float(t), 3))
-        elif onset[i] > onset[int(round(out[-1] * rate / hop)) - 1]:
-            out[-1] = round(float(t), 3)                # a stronger onset inside the gap replaces the weaker
+            out.append(t)
+            strength.append(onset[i])
+        elif onset[i] > strength[-1]:
+            out[-1], strength[-1] = t, onset[i]         # a stronger onset inside the gap replaces the weaker
     return out
 
 
@@ -120,7 +130,7 @@ def reference(path, out_dir):
     _refuse_url(path)
     if not os.path.isfile(path):
         raise ValueError("Reference video not found: %s. Save the video file and give its path." % path)
-    engine._require_ready()
+    engine.require_ready()
     from rbxpromo import audio
     from rbxpromo.probe import probe
     p = probe([path], out_dir)[path]

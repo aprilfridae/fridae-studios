@@ -62,6 +62,33 @@ class ReferenceTests(unittest.TestCase):
         for got, want in zip(beats, (0.5, 1.5, 2.5, 3.5)):
             self.assertAlmostEqual(got, want, delta=0.05)
 
+    @staticmethod
+    def _bed(seconds, rate=8000, seed=1):
+        import numpy as np
+        t = np.arange(int(seconds * rate)) / rate
+        rng = np.random.default_rng(seed)
+        return (0.12 * np.sin(2 * np.pi * 55 * t) + 0.08 * np.sin(2 * np.pi * 220 * t)
+                + 0.03 * rng.standard_normal(len(t)))
+
+    def test_beats_found_over_a_music_bed(self):
+        import numpy as np
+        rate = 8000
+        x = self._bed(8)
+        kicks = [0.5 * k for k in range(1, 16)]
+        for k in kicks:                       # decaying 120 -> 60 Hz thump
+            n = int(0.18 * rate)
+            tt = np.arange(n) / rate
+            x[int(k * rate):int(k * rate) + n] += 0.5 * np.exp(-tt * 18) * np.sin(2 * np.pi * (120 * tt - 160 * tt * tt))
+        beats = reference.beats_from_samples(x, rate)
+        hit = sum(1 for k in kicks if any(abs(b - k) <= 0.05 for b in beats))
+        self.assertGreaterEqual(hit, 0.8 * len(kicks), beats)
+        self.assertLessEqual(len(beats), len(kicks) + 3, beats)
+
+    def test_no_beats_in_steady_tone_or_silence(self):
+        import numpy as np
+        self.assertLessEqual(len(reference.beats_from_samples(self._bed(8), 8000)), 1)
+        self.assertEqual(reference.beats_from_samples(np.zeros(8000 * 3), 8000), [])
+
     def test_styles_lists_all(self):
         out = os.path.join(self.tmp, "styles")
         items = reference.styles(out)

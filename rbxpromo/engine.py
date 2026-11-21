@@ -208,12 +208,16 @@ def status():
             "download_mb": sum(_SIZE_MB[s] for s in missing)}
 
 
-def _require_ready():
+def require_ready():
+    """Raise EngineError naming what is missing unless the whole engine is installed."""
     st = status()
     if not st["ready"]:
         raise EngineError("The promo engine is not fully installed (missing: " + ", ".join(st["missing"]) +
                           f"). Run `python3 -m rbxpromo.engine install` (about {st['download_mb']} MB left to download); "
                           "it continues where it stopped.")
+
+
+_require_ready = require_ready      # old name
 
 
 # ---------------------------------------------------------------- running things
@@ -257,7 +261,7 @@ def node_cmd(script, *args):
 
 
 def _binary(name):
-    _require_ready()
+    require_ready()
     folder = _compositor_dir()
     exe = os.path.join(folder, name + (".exe" if os.name == "nt" else "")) if folder else None
     if not exe or not os.path.isfile(exe):

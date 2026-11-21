@@ -217,7 +217,7 @@ def _run_renderer(recipe_path, video, layout, cover, cover_t, report):
 
 def render_still(recipe_path, out_jpg, seconds):
     """Render only one frame of a recipe (at `seconds`) to a JPEG, without making a video."""
-    engine._require_ready()
+    engine.require_ready()
     _run_renderer(recipe_path, "-", None, out_jpg, seconds, lambda _x: None)
     return out_jpg
 
@@ -262,7 +262,7 @@ def render(recipe_path, out_dir=None, on_progress=None):
     problems = _caption_problems(recipe)
     if problems:
         raise RecipeError(problems)
-    engine._require_ready()
+    engine.require_ready()
     first_title = next((s["title"] for s in recipe["scenes"] if "title" in s), recipe.get("style", "promo"))
     agent = os.environ.get("RBXKIT_AGENT_ID", "")
     folder = os.path.abspath(out_dir) if out_dir else promo_folder(recipe.get("project") or agent or "general", first_title)

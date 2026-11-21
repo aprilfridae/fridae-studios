@@ -48,7 +48,7 @@ def _atomic_copy(src, dst):
 
 def _run_node(script, *args):
     """Run an engine script; success is its JSON line with "ok" (onnxruntime may abort at exit afterwards)."""
-    engine._require_ready()
+    engine.require_ready()
     cmd = engine.node_cmd(os.path.join("scripts", script), *args)
     try:
         r = subprocess.run(cmd, cwd=os.path.join(engine.engine_dir(), "renderer"), env=engine.node_env(),
@@ -92,7 +92,7 @@ def transcribe(path, lang="en"):
     comes out as poor English guesses. A silent file gives no words."""
     if not os.path.isfile(path):
         raise ValueError(f"Audio file not found: {path}")
-    engine._require_ready()
+    engine.require_ready()
     cached = os.path.join(_cache_dir(), "words-" + _key("transcribe", _file_key(path)) + ".json")
     data = rbxpaths.read_json(cached)
     if isinstance(data, dict) and "words" in data and "duration" in data:
@@ -138,7 +138,7 @@ def voice(text, out_wav, voice="af_heart"):
     Returns {"file", "duration", "words": [{"text","start","end"}]}."""
     if not str(text).strip():
         raise ValueError("There is no text to speak.")
-    engine._require_ready()
+    engine.require_ready()
     key = _key("voice", text, voice)
     cached_wav = os.path.join(_cache_dir(), "voice-" + key + ".wav")
     if not os.path.isfile(cached_wav):
