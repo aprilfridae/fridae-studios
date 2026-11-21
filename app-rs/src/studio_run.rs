@@ -519,6 +519,20 @@ fn helpers_work(ai: &str) -> bool {
     paths::AIS.contains(&ai)
 }
 
+/// Roster ids to the names people read ("ui" is "UI builder"): the kit's roster, then the game's own entries over it.
+fn expert_names(kit: &Path, project: &Path) -> serde_json::Map<String, Value> {
+    let mut names = serde_json::Map::new();
+    for f in [kit.join("team").join("roster.json"), project.join(".fridae").join("team").join("roster.json")] {
+        let list: Value = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        for e in list.as_array().into_iter().flatten() {
+            if let (Some(id), Some(name)) = (e["id"].as_str(), e["name"].as_str()) {
+                names.insert(id.to_string(), json!(name));
+            }
+        }
+    }
+    names
+}
+
 /// GET /api/review?path=<project>
 pub fn list(path: &str) -> Value {
     let Some(project) = project_of(path) else { return not_ours() };
@@ -531,6 +545,7 @@ pub fn list(path: &str) -> Value {
     json!({
         "ok": true, "project": project, "key": project_key(&project), "run": run, "items": items(dir), "needs": needs,
         "helpers": helpers_work(&ai), "lead_live": lead.is_some(), "waiting": lead.as_ref().is_some_and(|l| l.studio_waiting()),
+        "experts": expert_names(&paths::PATHS.kit, dir),
     })
 }
 
@@ -628,6 +643,21 @@ mod tests {
         fs::write(d.join(".fridae").join("review").join("half.json"), "{\"id\": \"half\", ").unwrap();
         let ids: Vec<String> = items(&d).iter().map(|i| i["id"].as_str().unwrap().to_string()).collect();
         assert_eq!(ids, ["bb", "aa", "dd"]);
+    }
+
+    #[test]
+    fn expert_names_take_the_games_own_roster_over_the_kits() {
+        let d = game("names");
+        let kit = d.join("kit");
+        fs::create_dir_all(kit.join("team")).unwrap();
+        fs::create_dir_all(d.join(".fridae").join("team")).unwrap();
+        fs::write(kit.join("team").join("roster.json"), r#"[{"id": "ui", "name": "UI builder"}, {"id": "coder", "name": "Coder"}]"#).unwrap();
+        fs::write(d.join(".fridae").join("team").join("roster.json"), r#"[{"id": "coder", "name": "Scripter"}, {"id": "x"}]"#).unwrap();
+        let names = expert_names(&kit, &d);
+        assert_eq!(names["ui"], "UI builder");
+        assert_eq!(names["coder"], "Scripter");
+        assert!(!names.contains_key("x"));
+        assert!(expert_names(&d.join("nowhere"), &d.join("nowhere")).is_empty());
     }
 
     #[test]

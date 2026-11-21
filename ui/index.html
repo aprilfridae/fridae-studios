@@ -111,7 +111,7 @@ div.g-row { cursor: default; }
 .upd.busy { background: var(--press); color: var(--dim); }
 .conn { display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px; border-radius: var(--r-s); transition: background-color 140ms ease; }
 .conn:hover, .conn[aria-expanded="true"] { background: var(--hover); }
-.meter { height: 32px; padding: 0 10px; border-radius: var(--r-s); font: 500 12px/1 var(--mono); color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.meter { height: 32px; padding: 0 10px; white-space: nowrap; border-radius: var(--r-s); font: 500 12px/1 var(--mono); color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
 .meter:hover, .meter[aria-expanded="true"] { background: var(--hover); color: var(--text); }
 #use-pop { width: 320px; }
 .u-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px; border-radius: var(--r-s); font-size: 14px; }
@@ -321,11 +321,11 @@ textarea::placeholder { color: var(--faint); }
 .saytip.on { opacity: 1; transform: none; }
 
 /* ---------- other views take the whole space under the top bar ---------- */
-#board, #research, #overview, #promos { display: none; min-height: 0; }
-body.board #board { display: grid; }
+#board, #research, #overview, #promos, #review { display: none; min-height: 0; }
+body.board #board, body.review #review { display: grid; }
 body.research #research, body.promos #promos { display: block; }
 body.overview #overview { display: grid; }
-body.board .body, body.research .body, body.overview .body, body.promos .body { display: none; }
+body.board .body, body.research .body, body.overview .body, body.promos .body, body.review .body { display: none; }
 
 /* board */
 #board { grid-template-rows: auto minmax(0, 1fr); }
@@ -387,6 +387,7 @@ body.board .body, body.research .body, body.overview .body, body.promos .body { 
 .idea-card dd { margin: 0; color: var(--dim); }
 .idea-card dd ul { margin: 0; padding-left: 16px; }
 .idea-card .act { margin: 16px 0 0; }
+.idea-card .r-note:empty { display: none; }
 .r-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 8px; -webkit-user-select: text; user-select: text; }
 .r-table th { text-align: left; font-weight: 500; color: var(--faint); font-size: 12px; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
 .r-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--dim); }
@@ -452,6 +453,73 @@ body.board .body, body.research .body, body.overview .body, body.promos .body { 
 .promo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; }
 .promo-line span { color: var(--dim); }
 
+/* review: one game's studio run (its state, stages and settings), what needs an answer, and finished work to look at.
+   Two columns from 1000px, each scrolling on its own; below that, one column in the same order. */
+#review { grid-template-rows: auto minmax(0, 1fr); }
+.nav .tab .n { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: var(--dim); font-weight: 400; }
+.nav .tab .n.strong { font-weight: 700; }
+.rv-cols { overflow-y: auto; min-height: 0; padding: 16px 24px 40px; }
+.rv-run { padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); }
+.rv-state { display: flex; align-items: center; gap: 12px; }
+.rv-state b { font-size: 16px; font-weight: 600; }
+.rv-state .pill { margin-left: auto; height: 28px; padding: 0 12px; font-size: 12px; }
+.rv-why { margin: 4px 0 0; font-size: 13px; color: var(--dim); line-height: 1.5; }
+.rv-why .linkish { margin-left: 4px; }
+.rv-err, .rv-item .rv-err { margin: 8px 0 0; font-size: 13px; color: var(--text); }
+.rv-err:empty { display: none; }
+.rv-item .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.01em; color: var(--faint); margin: 0 0 4px; }
+.rv-stages { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; margin: 16px 0 0; }
+.rv-stage { padding-top: 8px; border-top: 2px solid var(--line-strong); font-size: 12px; color: var(--faint); min-width: 0; }
+.rv-stage span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-stage small { display: block; font-family: var(--mono); font-size: 11px; color: var(--faint); min-height: 16px; }
+.rv-stage.done { border-top-color: var(--dim); color: var(--dim); }
+.rv-stage.cur { border-top-color: var(--text); color: var(--text); font-weight: 600; }
+.rv-stage.cur small { color: var(--dim); font-weight: 400; }
+.rv-set { margin: 16px 0 0; border-top: 1px solid var(--line); padding-top: 12px; }
+.rv-set summary { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); cursor: pointer; list-style: none; border-radius: var(--r-s); }
+.rv-set summary::-webkit-details-marker { display: none; }
+.rv-set summary:hover { color: var(--text); }
+.rv-set summary svg { transition: transform 180ms var(--ease); }
+.rv-set[open] summary svg { transform: rotate(90deg); }
+.rv-set .pr-label { margin: 16px 0 8px; }
+.rv-gates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; font-size: 13px; color: var(--dim); }
+.rv-set .sub { color: var(--faint); font-size: 12px; margin: 8px 0 0; }
+.rv-empty h4 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.rv-empty p { margin: 0; font-size: 14px; color: var(--dim); line-height: 1.5; max-width: 60ch; }
+.rv-empty .sub { margin-top: 12px; color: var(--faint); font-size: 13px; }
+.rv-h { display: flex; align-items: baseline; gap: 8px; margin: 24px 0 8px; font-size: 14px; font-weight: 600; }
+.rv-h span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
+.rv-h .pill { margin-left: auto; height: 28px; padding: 0 12px; font-size: 12px; font-weight: 400; align-self: center; }
+.rv-none { font-size: 13px; color: var(--faint); margin: 0; }
+.rv-list { display: grid; gap: 12px; align-items: start; }
+.rv-right .rv-list { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.rv-item { margin: 0; max-width: none; transition: border-color 140ms ease; }
+.rv-item.flash { outline: 2px solid var(--text); outline-offset: 3px; }
+.rv-item h4 { word-break: break-word; }
+.rv-item p { white-space: pre-line; word-break: break-word; }
+.rv-item p.clamp { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.rv-item .more { font-size: 12px; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; margin: -6px 0 10px; display: inline-block; }
+.rv-item .act { align-items: center; }
+.rv-media { display: flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; }
+.rv-media > * { flex: none; display: block; max-width: 100%; border-radius: var(--r-m); border: 1px solid var(--line); background: #000; }
+.rv-media button { padding: 0; overflow: hidden; cursor: zoom-in; }
+.rv-media img { display: block; max-width: 100%; max-height: 280px; }
+.rv-media video { max-height: 320px; }
+.rv-media.many > * { max-width: 78%; }
+.rv-media.many img, .rv-media.many video { height: 168px; max-height: none; width: auto; max-width: 100%; }
+.rv-change { display: flex; gap: 8px; margin: 10px 0 0; }
+.rv-change .pill { height: 32px; }
+.rv-item.done { padding: 8px 16px; }
+.rv-item.done > :not(.rv-said) { display: none; }
+.rv-said { display: none; font-size: 13px; color: var(--dim); word-break: break-word; }
+.rv-item.done .rv-said { display: block; }
+.studio-wait { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; font-weight: 500; color: var(--text); }
+@media (min-width: 1000px) {
+  .rv-cols { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 32px; overflow: hidden; padding: 0 20px 0 24px; }
+  .rv-left, .rv-right { min-height: 0; overflow-y: auto; padding: 16px 12px 40px 0; }
+  .rv-right .rv-h:first-child { margin-top: 0; }
+}
+
 /* overview */
 #overview { grid-template-columns: minmax(0, 1fr) 340px; }
 .o-graph { position: relative; min-width: 0; min-height: 0; }
@@ -512,6 +580,8 @@ body.proj #pd, body.guide #gd { transform: none; }
 
 @media (max-width: 980px) {
   .top .mark span { display: none; }
+  .top { gap: 8px; }
+  .nav .tab { padding: 0 8px; }
   #ai-pick .tab { padding: 0 8px; }
   .bd-cols { grid-template-columns: repeat(4, minmax(200px, 240px)); }
 }
@@ -534,6 +604,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <nav class="nav">
       <button class="tab on" id="v-chats">Chats</button>
       <button class="tab" id="v-board" title="Each game's board: what is being worked on, what needs you, what is done">Board</button>
+      <button class="tab" id="v-review" title="Each game's studio run: what needs your answer, and finished work to look at">Review<span class="n" id="rv-badge" hidden></span></button>
       <button class="tab" id="v-promos" title="Promo videos: make one from your gameplay clips, and every promo made so far">Promos</button>
       <button class="tab" id="v-research" title="Roblox's live charts, and game ideas backed by them">Research</button>
       <button class="tab" id="v-overview" title="Everything your agents are doing, at a glance">Overview</button>
@@ -589,6 +660,7 @@ body.proj #pd, body.guide #gd { transform: none; }
               <h5>Effort</h5><div class="seg" id="effort"></div>
               <h5>How it works</h5><div class="seg" id="run-mode"></div>
               <p class="sub" id="run-note" style="margin: 8px 2px 8px"></p>
+              <p class="sub" id="run-why" style="margin: -4px 2px 8px; color: var(--faint)" hidden></p>
               <h5>Extras</h5>
               <button class="switch" id="selftest" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span><span class="swl">Self-test</span><small>Checks its work with screenshots and playtests and fixes it, up to five rounds.</small></span></button>
               <button class="switch" id="gemini" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span><span class="swl">Gemini textures</span><small>Asks you for every texture through Gemini instead of drawing its own.</small></span></button>
@@ -607,6 +679,47 @@ body.proj #pd, body.guide #gd { transform: none; }
       <p class="sub" id="bd-note"></p>
     </div>
     <div class="bd-cols" id="bd-cols"></div>
+  </div>
+
+  <div id="review">
+    <div class="bd-head">
+      <h2>Review</h2>
+      <select class="sel-proj" id="rv-proj" title="Each game has its own studio run"></select>
+      <p class="sub" id="rv-note"></p>
+    </div>
+    <div class="rv-cols">
+      <section class="rv-left" aria-label="The run">
+        <div class="rv-run">
+          <div class="rv-empty" id="rv-empty" hidden>
+            <h4 id="rv-empty-h">No studio run for this game</h4>
+            <p>In Studio mode a Lead takes the game from idea to launch, handing each stage to an expert. Finished work and the decisions only you can make wait here, so you sign off now and then and it keeps going.</p>
+            <p class="sub">How to start: in a chat for this game, pick Studio in the menu under the message box and say what to make. Or press Start a studio run on an idea in Research.</p>
+          </div>
+          <div id="rv-live" hidden>
+            <div class="rv-state"><span class="dot" id="rv-dot"></span><b id="rv-state"></b><button class="pill" id="rv-toggle" hidden></button></div>
+            <p class="rv-why" id="rv-why"></p>
+            <div class="rv-stages" id="rv-stages"></div>
+            <details class="rv-set" id="rv-set">
+              <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
+              <span class="pr-label">Wait for my approval after</span>
+              <div class="rv-gates" id="rv-gates"></div>
+              <span class="pr-label">Experts at once</span>
+              <div class="seg" id="rv-max"></div>
+              <p class="sub">More experts finish sooner and use more of your AI plan. Only one changes the place at a time.</p>
+            </details>
+          </div>
+          <p class="rv-err" id="rv-err"></p>
+        </div>
+        <h3 class="rv-h">Needs your answer <span id="rv-needs-n"></span></h3>
+        <p class="rv-none" id="rv-needs-none">Nothing needs you right now.</p>
+        <div class="rv-list" id="rv-needs"></div>
+      </section>
+      <section class="rv-right" aria-label="To look at">
+        <h3 class="rv-h">To look at <span id="rv-look-n"></span><button class="pill" id="rv-all" hidden>Approve all</button></h3>
+        <p class="rv-none" id="rv-look-none">Finished work lands here for a look, newest first. Nothing is waiting.</p>
+        <div class="rv-list" id="rv-look"></div>
+      </section>
+    </div>
   </div>
 
   <div id="overview">
@@ -811,6 +924,7 @@ const GUIDE = [
   ]],
   ["Bigger jobs", [
     ["Full auto", "Pick Full auto in the menu under the message box and it keeps going by itself without asking permission: it decides, builds, tests, fixes and carries on until the job is done.", "Build a first playable of this game and keep going until it works: "],
+    ["Studio mode", "Pick Studio in the menu under the message box in a game's chat and say what to make. A Lead takes the game through design, build, test, launch and promotion, handing each part to an expert by name, and keeps going. Finished work and the decisions only you can make wait in the Review tab.", "@review"],
     ["Follow a game's progress", "The Board tab has a board for each game: what is being worked on, what needs you, and what is done. Agents keep it up to date as they work, and you can add, move and hand out cards yourself.", "@board"],
     ["See everything at once", "The Overview tab draws every chat, helper and project as a live graph, with a list of what each one is doing and a Stop for each.", "@overview"],
     ["Split the work", "Hands parts of a big job to helper chats that work at the same time, then checks each one.", "Split this into parallel tasks and build it: "],
@@ -824,11 +938,11 @@ const GUIDE = [
   ]],
 ];
 const CONTROLS = [
-  ["Chats, Board, Promos, Research, Overview", "Chats is where the building happens. Board shows each game's work in columns. Promos makes promo videos from your clips and keeps them. Research suggests what to make from Roblox's live charts. Overview shows every agent at once."],
+  ["Chats, Board, Review, Promos, Research, Overview", "Chats is where the building happens. Board shows each game's work in columns. Review is where a studio run's finished work and questions wait for your yes or your changes. Promos makes promo videos from your clips and keeps them. Research suggests what to make from Roblox's live charts. Overview shows every agent at once."],
   ["Claude / Gemini / ChatGPT (top right)", "Switches between each AI's chats. Chats on different AIs keep working while you look at another; a number beside a name means that many are working there."],
   ["The dots (top right)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
   ["The chat's name", "Press it to rename the chat. Next to it is the game the chat belongs to: press that for the game's folder, notes and git history."],
-  ["The menu under the message box", "The model, how much effort it puts in (low to max), and the modes: Autopilot, Self-test and Gemini textures. Applies from your next message."],
+  ["The menu under the message box", "The model, how much effort it puts in (low to max), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions go on the board under Needs you instead of stopping it, and when a job is done it picks the next one from the board and GAME.md. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
@@ -841,7 +955,7 @@ const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" 
 /* One row of the guide. Rows with an example are buttons that put it in the message box. */
 function guideRow([name, what, example]) {
   const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
-  if (example === "@research" || example === "@overview" || example === "@board" || example === "@promos") row.onclick = () => { closeGuide(); setView(example.slice(1)); };
+  if (example === "@research" || example === "@overview" || example === "@board" || example === "@promos" || example === "@review") row.onclick = () => { closeGuide(); setView(example.slice(1)); };
   else if (example) row.onclick = () => { closeGuide(); setView("chats"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); };
   return row;
 }
@@ -942,7 +1056,7 @@ function paintRail() {
     p.row.className = "agent " + (p.busy ? "busy" : "idle") + (p.id === current ? " on" : "");
     p.row.hidden = !here;
     p.row.querySelector("b").textContent = p.name;
-    p.row.querySelector("small").textContent = p.busy ? (p.now || "Starting") : p.last;
+    p.row.querySelector("small").textContent = (p.expert ? p.expert + " \u00b7 " : "") + (p.busy ? (p.now || "Starting") : p.last);
     if (p.busy && here) working++;
   }
   $("rail-title").textContent = aiName(viewAi) + " chats";
@@ -964,16 +1078,25 @@ function paintComposer() {
   sendBtn.title = stop ? "Stop" : b ? "Send. It waits until the agent finishes, then goes straight to it." : "";
   sendBtn.disabled = !b && !something;
   box.placeholder = b ? "Add to it while it works. Sent the moment it finishes." : "What should we build or test?";
-  $("now").innerHTML = b ? '<span class="now">' + esc(p.now || "Starting") + "</span>" : selectionHint();
+  $("now").innerHTML = b ? '<span class="now">' + esc(p.now || "Starting") + "</span>" : selectionHint() || studioHint();
 }
 /* The bar above the conversation: the chat's name (press to rename) and its game. */
 function paintHead() {
   const p = agents.get(current), t = $("chat-title");
   if (t) { t.textContent = p ? p.name : "New chat"; t.hidden = !p; }
   const meta = $("chat-meta"); if (!meta) return;
-  const nb = $("b-night"); if (nb) nb.hidden = !(p && p.night && !p.nightUndone && !p.busy);
-  meta.textContent = p ? [p.used ? fmtTokens(p.used) + " tokens" : "", aiName(chatAi(p)), p.role === "critic" ? "reviewer" : p.role === "research" ? "researcher" : p.role ? "helper" : "", p.overnight && p.overnight > Date.now() / 1000 ? "overnight until " + new Date(p.overnight * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ") : "";
+  const nb = $("b-night");
+  if (nb) {
+    nb.hidden = !(p && p.night && !p.nightUndone && !p.busy);
+    nb.textContent = p && p.studio ? "Undo this run" : "Undo the night";
+    nb.title = "Put Studio and the project back as they were before the " + (p && p.studio ? "studio" : "overnight") + " run began";
+  }
+  const live = p && p.overnight && p.overnight > Date.now() / 1000;
+  meta.textContent = p ? [p.used ? fmtTokens(p.used) + " tokens" : "", aiName(chatAi(p)), roleName(p),
+    p.studio && p.studioWaiting ? "Studio, waiting for you in Review" : live ? (p.studio ? "Studio" : "overnight until " + new Date(p.overnight * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })) : p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ") : "";
 }
+/* what kind of chat it is: an expert by name, else reviewer, researcher or helper; nothing for the user's own */
+function roleName(p) { return p.expert || (p.role === "critic" ? "reviewer" : p.role === "research" ? "researcher" : p.role ? "helper" : ""); }
 function renameChat() {
   const p = agents.get(current), t = $("chat-title"); if (!p || !t) return;
   const input = el("input", "title-edit"); input.value = p.name; input.setAttribute("aria-label", "Chat name");
@@ -1104,6 +1227,7 @@ function paintProject() {
   const p = agents.get(current); const pr = p && p.project; const b = $("b-proj");
   b.hidden = !pr; if (pr) b.textContent = pr.name;
   if (!pr) document.body.classList.remove("proj");
+  paintSwitch();
 }
 function paintGit(state, r) {
   const out = $("pd-out");
@@ -1210,8 +1334,10 @@ $("b-night").onclick = () => {
   p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
   const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const what = [p.night.studio ? "every change the agents made in Studio since then, with scripts put back as they were" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
-  const card = el("div", "ask night-ask enter", "<h4>Undo the night?</h4><p></p><div class=\"act\"><button class=\"pill main\">Undo the night</button><button class=\"pill\">Keep it</button></div>");
-  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place.";
+  const card = el("div", "ask night-ask enter", "<h4></h4><p></p><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Keep it</button></div>");
+  card.querySelector("h4").textContent = (p.studio ? "Undo this run" : "Undo the night") + "?";
+  card.querySelector(".pill.main").textContent = p.studio ? "Undo this run" : "Undo the night";
+  card.querySelector("p").textContent = "Goes back to " + when + ", when the " + (p.studio ? "studio" : "overnight") + " run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place.";
   const [go, keep] = card.querySelectorAll("button");
   keep.onclick = () => card.remove();
   go.onclick = async () => {
@@ -1258,6 +1384,8 @@ function onEvent(e) {
   if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? prAddPaths : addClips)(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
   if (e.kind === "promo") { onPromo(e); return; }
+  if (e.kind === "review") { onReviewItem(e); return; }
+  if (e.kind === "studio_run") { onStudioRun(e); return; }
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
@@ -1267,7 +1395,7 @@ function onEvent(e) {
   }
   const p = pane(e.agent);
   if (e.kind === "agent_new") {
-    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent;
+    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert;
     if (!current || (e.id > bootMark && !e.background)) select(p.id);
     if (pendingSeed && pendingSeed.id === p.id) { p.seed = pendingSeed.text; box.value = "Let's make this: " + pendingSeed.title; fit(); pendingSeed = null; }
     loadHistory();
@@ -1299,13 +1427,15 @@ function onEvent(e) {
     if (e.id > bootMark) loadUsage();
   } else if (e.kind === "night") {
     p.night = e; p.nightUndone = false;
-    p.col.appendChild(el("span", "tag enter", e.commit || e.studio ? "Checkpoint saved \u00b7 undo the night is at the top" : "No checkpoint: no git in the project and Studio not connected"));
+    p.col.appendChild(el("span", "tag enter", e.commit || e.studio ? "Checkpoint saved \u00b7 " + (p.studio ? "undo this run" : "undo the night") + " is at the top" : "No checkpoint: no git in the project and Studio not connected"));
   } else if (e.kind === "night_undone") {
     p.nightUndone = true;
     const card = el("div", "ask enter", "<h4>The night was undone</h4><p></p>");
     card.querySelector("p").textContent = e.text || "";
     card.querySelector("p").style.whiteSpace = "pre-line";
     p.col.appendChild(card);
+  } else if (e.kind === "studio_waiting") {
+    studioWaitLine(p, !!e.value);
   } else if (e.kind === "renamed") {
     p.name = e.name;
   } else if (e.kind === "queued") {
@@ -1313,10 +1443,11 @@ function onEvent(e) {
   } else if (e.kind === "user") {
     const h = p.col.querySelector(".hello"); if (h) h.remove();
     p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0; p.steps = 0;
+    p.studio = !!e.studio; studioWaitLine(p, !!e.studio_waiting);
     p.carried = e.auto ? (p.carried || 0) + 1 : 0;
     if (e.auto) {
       const left = p.overnight ? Math.max(0, p.overnight - Date.now() / 1000) : 0;
-      p.col.appendChild(el("span", "tag enter", p.overnight ? "Overnight \u00b7 turn " + p.carried + " \u00b7 " + Math.floor(left / 3600) + "h " + Math.floor((left % 3600) / 60) + "m left" : "Full auto \u00b7 carrying on by itself (" + p.carried + " of 12)"));
+      p.col.appendChild(el("span", "tag enter", p.overnight ? (p.studio ? "Studio" : "Overnight") + " \u00b7 turn " + p.carried + " \u00b7 " + Math.floor(left / 3600) + "h " + Math.floor((left % 3600) / 60) + "m left" : "Full auto \u00b7 carrying on by itself (" + p.carried + " of 12)"));
       paintRail(); if (e.agent === current) { paintComposer(); stick(); } return;
     }
     const u = el("div", "you enter");
@@ -1331,7 +1462,7 @@ function onEvent(e) {
       u.appendChild(docs);
     }
     u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
-    const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full ? "full auto" : "", e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
+    const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
     if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
   } else if (e.kind === "tool") {
     const s = steps(p);
@@ -1451,10 +1582,49 @@ function send() {
   if (!text && !ready.length) return;
   if (pending.some((a) => !a.name && !a.failed)) return;  /* an upload is still in flight */
   const names = ready.map((a) => a.name);
+  if (runMode === "studio") { studioSend(p, text, ready); return; }
   box.value = ""; pending = []; paintAtts(); fit();
   /* a chat started from a researched idea carries the idea's details with its first message */
   const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
   api("/api/send", { agent: p.id, text: full, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
+}
+/* Studio: in the Lead's own chat a message goes to it in Studio mode; in another chat of a game with no run going, it
+   starts one with this chat as the Lead and the message as the idea; while another chat leads, nothing is sent */
+async function studioSend(p, text, ready) {
+  const names = ready.map((a) => a.name);
+  box.value = ""; pending = []; paintAtts(); fit();
+  const back = (why, link) => {
+    if (!box.value.trim()) box.value = text;
+    if (!pending.length) pending = ready;
+    paintAtts(); fit();
+    if (link) noteReview(why, link); else note(why);
+  };
+  const pr = p.project;
+  if (!pr) return back("Studio needs a game folder. Start a folder for this game first, or pick another mode.");
+  let r; try { r = await api("/api/review?path=" + encodeURIComponent(pr.path)); } catch (e) { r = null; }
+  if (!r || !r.ok) return back((r && r.error) || "Could not reach the app.");
+  rvAll[pr.path] = r;
+  const full = p.seed ? text + "\n\n" + p.seed : text;
+  if (runActive(r.run) && r.run.lead === p.id) {
+    p.seed = null;
+    api("/api/send", { agent: p.id, text: full, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: true, full: true, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
+    return;
+  }
+  if (runActive(r.run)) return back("This game's studio run is led by another chat.", pr.path);
+  if (names.length) return back("Send files once the run has started: the message that starts it is words only.");
+  if (!text) return back("Say what to make, then send.");
+  let res; try { res = await api("/api/studio-run", { action: "start", path: pr.path, idea: full, agent: p.id }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+  if (!res.ok) return back(res.error || "Could not start the studio run.");
+  p.seed = null;
+  if (res.warning) note(res.warning);
+  loadReview(pr.path);
+}
+/* a passing line under the message box with a way to Review */
+function noteReview(text, path) {
+  const n = $("now"); n.replaceChildren();
+  const w = el("span", "warn"); w.textContent = text + " ";
+  const b = el("button", "linkish", "Open Review"); b.onclick = () => openInReview(path);
+  n.append(w, b); clearTimeout(noteReview.t); noteReview.t = setTimeout(paintComposer, 6000);
 }
 // one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
 // keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
@@ -1462,6 +1632,7 @@ const RUN_MODES = [
   ["ask", "Ask me", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
   ["night", "Overnight", "Full auto for up to 24 hours without you: questions go on the board, it picks its own next job, and the computer stays awake. Leave Studio open."],
+  ["studio", "Studio", "A Lead takes this game through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 let runMode = "ask";
 try {
@@ -1469,22 +1640,42 @@ try {
 } catch (e) {}
 if (!RUN_MODES.some((m) => m[0] === runMode)) runMode = "ask";
 let autoPilot = false, overNight = false, fullAuto = false;
+/* Studio sends its own way (see studioSend); other messages sent while it is chosen go in full auto */
 function applyMode() { fullAuto = runMode !== "ask"; overNight = runMode === "night"; autoPilot = false; }
 applyMode();
 let selfTest = false;
 try { selfTest = localStorage.getItem("selftest") === "1"; } catch (e) {}
 function paintSwitch() {
+  const why = studioWhy();
   $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
   const seg = $("run-mode"); seg.innerHTML = "";
   RUN_MODES.forEach(([id, name, note]) => {
     const b = el("button", id === runMode ? "on" : "", esc(name)); b.title = note;
+    if (id === "studio" && why) { b.disabled = true; b.title = why; }
     b.onclick = () => {
-      runMode = id; applyMode(); try { localStorage.setItem("runmode", id); } catch (e) {} paintSwitch(); paintModel();
-      say({ ask: "Ask me: it does what you ask, then waits for you.", full: "Full auto: from your next message nothing asks for permission, and it keeps going until the job is done.", night: "Overnight: from your next message it works in full auto for up to 24 hours without you. Leave Studio open. Pressing stop ends it." }[id]);
+      runMode = id; applyMode(); try { localStorage.setItem("runmode", id); } catch (e) {} paintSwitch(); paintModel(); paintComposer();
+      say({ ask: "Ask me: it does what you ask, then waits for you.", full: "Full auto: from your next message nothing asks for permission, and it keeps going until the job is done.", night: "Overnight: from your next message it works in full auto for up to 24 hours without you. Leave Studio open. Pressing stop ends it.",
+        studio: "Studio: your next message starts a studio run for this game, or goes to the Lead of the one running. Answer it in the Review tab." }[id]);
     };
     seg.appendChild(b);
   });
   $("run-note").textContent = RUN_MODES.find((m) => m[0] === runMode)[2];
+  $("run-why").textContent = why; $("run-why").hidden = !why;
+}
+/* Studio needs a game folder, and helper agents on the chat's AI; "" when it can be used */
+function studioWhy() {
+  const p = agents.get(current);
+  if (!p || !p.project) return "Studio needs a game folder. Start a folder for this game first.";
+  const r = rvAll[p.project.path];
+  return r && r.helpers === false ? "Studio needs helper agents, and they don't work on this chat's AI." : "";
+}
+/* under the message box while Studio is chosen: what the next message will do */
+function studioHint() {
+  const p = agents.get(current); if (runMode !== "studio" || !p) return "";
+  if (!p.project) return '<span class="sel">Studio needs a game folder: start a folder for this game first.</span>';
+  const r = rvAll[p.project.path], run = r && r.run, name = p.project.name;
+  const text = runActive(run) ? (run.lead === p.id ? "Studio: this chat leads " + name + "'s run. Answer it in Review." : "Studio: another chat leads " + name + "'s run.") : "Studio: your message starts a studio run for " + name + ".";
+  return '<span class="sel">' + esc(text) + "</span>";
 }
 $("selftest").onclick = () => { selfTest = !selfTest; try { localStorage.setItem("selftest", selfTest ? "1" : "0"); } catch (e) {} paintSwitch(); paintModel();
   say(selfTest ? "Self-test on: it checks its work with screenshots and playtests and fixes what it finds, up to five rounds." : "Self-test off: it builds, looks once, and reports."); };
@@ -1613,7 +1804,7 @@ const menu = $("settings-panel"), modelBtn = $("model");
 function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen);
-  const modes = [overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
+  const modes = [runMode === "studio" ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
   $("model-name").textContent = [cur ? cur[1] : aiName(ai), EFFORT_NAMES[effort]].concat(modes).join(" \u00b7 ");
   const box0 = $("model-menu"); box0.innerHTML = "";
   if (!list.length) box0.appendChild(el("p", "sub", "Its model list has not arrived yet.")).style.margin = "0 8px 6px";
@@ -1650,11 +1841,11 @@ $("b-guide").onclick = openGuide; $("gd-close").onclick = closeGuide;
 let view = "chats", research = {}, chartShown = "top-playing-now", pendingSeed = null;
 function setView(v) {
   view = v;
-  for (const name of ["chats", "board", "promos", "research", "overview"]) { if (name !== "chats") document.body.classList.toggle(name, v === name); $("v-" + name).classList.toggle("on", v === name); }
+  for (const name of ["chats", "board", "review", "promos", "research", "overview"]) { if (name !== "chats") document.body.classList.toggle(name, v === name); $("v-" + name).classList.toggle("on", v === name); }
   if (v !== "chats") { closeSetup(); closeProject(); }
-  if (v === "research") { paintResearchPick(); loadResearch(true); } else if (v === "overview") startOverview(); else if (v === "board") openBoard(); else if (v === "promos") openPromos(); else box.focus();
+  if (v === "research") { paintResearchPick(); loadResearch(true); } else if (v === "overview") startOverview(); else if (v === "board") openBoard(); else if (v === "review") openReview(); else if (v === "promos") openPromos(); else box.focus();
 }
-$("v-chats").onclick = () => setView("chats"); $("v-board").onclick = () => setView("board"); $("v-promos").onclick = () => setView("promos"); $("v-research").onclick = () => setView("research"); $("v-overview").onclick = () => setView("overview");
+$("v-chats").onclick = () => setView("chats"); $("v-board").onclick = () => setView("board"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos"); $("v-research").onclick = () => setView("research"); $("v-overview").onclick = () => setView("overview");
 const big = (n) => n == null ? "?" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
 const old = (d) => d == null ? "?" : d < 60 ? d + " days" : d < 730 ? Math.floor(d / 30) + " months" : Math.floor(d / 365) + " years";
 const pct = (n) => n == null ? "?" : n + "%";
@@ -1684,18 +1875,19 @@ function ideaCard(i) {
     + dd("Evidence", (i.evidence || []).length ? "<ul>" + i.evidence.map((x) => "<li>" + esc(String(x)) + "</li>").join("") + "</ul>" : "")
     + dd("Similar games", (i.comparables || []).length ? "<ul>" + i.comparables.map((c) => "<li>" + esc(c.name || "") + ": " + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes" + (c.note ? ". " + esc(c.note) : "") + "</li>").join("") + "</ul>" : "")
     + dd("First version", esc(i.first_playable || "")) + dd("Main risk", esc(i.risk || "")) + "</dl>"
-    + '<div class="act"><button class="pill main">Start this game</button><button class="pill">Build it on autopilot</button><button class="pill">Copy</button></div>';
+    + '<div class="act"><button class="pill main">Start this game</button><button class="pill">Start a studio run</button><button class="pill">Copy</button></div><p class="r-note" style="min-height: 0"></p>';
   const [start, build, copy] = card.querySelectorAll("button");
   start.title = "Opens a chat with this idea, where you set up a folder and it interviews you before building.";
-  build.title = "Makes a project folder and builds a first playable without asking you anything. Roblox Studio must be open on an empty place.";
+  build.title = "Makes a project folder and starts a studio run with this idea: a Lead hands each stage to an expert and keeps going, and finished work waits for you in Review. Roblox Studio must be open on an empty place.";
   build.onclick = async () => {
-    const r = await api("/api/new", { ai: viewAi });
-    if (!r.ok) { build.textContent = "All eight chats are in use"; return; }
-    const made = await api("/api/project", { agent: r.agent, action: "create", name: i.title || "New game", git: !!projects.git });
-    if (!made.ok) { build.textContent = made.error || "Could not make the folder"; api("/api/remove", { agent: r.agent }); return; }
-    setView("chats"); loadProjects();
-    api("/api/send", { agent: r.agent, autopilot: true, selftest: false, gemini: false, attachments: [], model: null, effort: "high",
-      text: "Build this game as a first playable, without asking me anything. Decide the details yourself and write them into GAME.md first, then build it in the open Studio place, test it, and keep going until it is playable.\n\n" + ideaText(i) });
+    const why = card.querySelector(".r-note"); why.textContent = ""; build.disabled = true;
+    const made = await api("/api/project", { action: "create", name: i.title || "New game", git: !!projects.git });
+    if (!made.ok) { build.disabled = false; why.textContent = made.error || "Could not make the folder."; return; }
+    await loadProjects();
+    const r = await api("/api/studio-run", { action: "start", path: made.project.path, idea: ideaText(i) });
+    build.disabled = false;
+    if (!r.ok) { why.textContent = (r.error || "Could not start the run.") + " The folder " + made.project.name + " was made; start the run from a chat for it."; return; }
+    rvPath = made.project.path; setView("review");
   };
   start.style.cssText = "background: var(--text); color: var(--accent-ink); border-color: transparent; font-weight: 500;";
   start.onclick = async () => {
@@ -1867,11 +2059,11 @@ function overviewList() {
   $("o-totals").textContent = (working.length ? working.length + " working" : "Nothing is working") + " \u00b7 " + (open.length - working.length) + " open and idle \u00b7 " + n + " saved";
   $("o-actions").hidden = working.length === 0;
   const list = $("o-list"); list.innerHTML = "";
-  if (!open.length) list.appendChild(el("p", "sub", "No chats have started yet. Start one in Chats, or pick an idea in Research and build it on autopilot. Everything that is working shows up here."));
+  if (!open.length) list.appendChild(el("p", "sub", "No chats have started yet. Start one in Chats, or pick an idea in Research and start a studio run. Everything that is working shows up here."));
   open.sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0)).forEach((p) => {
     const row = el("div", "o-row" + (p.busy ? " busy" : ""), "<b></b><small></small><div class=\"doing\"></div><div class=\"act\"></div>");
     row.querySelector("b").textContent = p.name;
-    row.querySelector("small").textContent = [aiName(chatAi(p)), p.project ? p.project.name : "", p.role === "critic" ? "reviewer" : p.role === "research" ? "researcher" : p.role ? "helper" : "", p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ");
+    row.querySelector("small").textContent = [aiName(chatAi(p)), p.project ? p.project.name : "", roleName(p), p.studio && p.studioWaiting ? "Studio, waiting for you" : p.autopilot ? "full auto" + (p.carried ? " " + p.carried + "/12" : "") : ""].filter(Boolean).join(" \u00b7 ");
     row.querySelector(".doing").textContent = p.busy ? (p.now || "Starting") + " \u00b7 " + elapsed(Date.now() - (p.since || Date.now())) + (p.steps ? " \u00b7 " + p.steps + (p.steps === 1 ? " step" : " steps") : "") : (p.last || "Idle");
     const act = row.querySelector(".act");
     const openBtn = el("button", "pill", "Open"); openBtn.onclick = () => { setView("chats"); select(p.id); }; act.appendChild(openBtn);
@@ -2216,6 +2408,264 @@ function openInPromos(id) {
   it.el.scrollIntoView({ block: "center" });   /* the view is showing now: scrolling lays it out */
   it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
 }
+
+/* ---------- the Review tab: each game's studio run, what needs an answer, and finished work to look at ---------- */
+const STAGE_NAMES = [["idea", "Idea"], ["design", "Design"], ["build", "Build"], ["test", "Test"], ["launch", "Launch"], ["promote", "Promote"]];
+const LEAD_CARD = "Waiting for your answer in Review";   /* the Lead's own board card points here, so Review leaves it out */
+const rvAll = {};           /* project path -> its GET /api/review reply */
+const rvDone = new Map();   /* item or card id -> { at, gone }: answered here; one line until the next refresh after it */
+const rvCards = new Map();  /* item or card id -> { sig, el } */
+let rvPath = "", rvTimer = 0, rvLoadT = 0, rvDeferred = false, rvSetBusy = false;
+const stagesDone = (run) => !!(run && run.stages && run.stages.length && run.stages.every((s) => s.status === "done"));
+const runActive = (run) => !!(run && run.on && !stagesDone(run));
+const rvNeeds = (r) => ((r && r.needs) || []).filter((c) => (c.note || "") !== LEAD_CARD);
+const rvWaiting = (r) => ((r && r.items) || []).filter((i) => i.status === "waiting" && !rvDone.has(i.id));
+const stageName = (id) => (STAGE_NAMES.find((s) => s[0] === id) || [id, cap(id || "")])[1];
+const expertName = (r, id) => ((r && r.experts) || {})[id] || cap(String(id || "").replace(/-/g, " "));
+const rvShown = (id) => { const d = rvDone.get(id); return !d || !d.gone; };
+async function loadReview(only) {
+  const started = Date.now(), list = (projects.projects || []).filter((x) => !only || x.path === only);
+  await Promise.all(list.map(async (x) => {
+    try { const r = await api("/api/review?path=" + encodeURIComponent(x.path)); if (r && r.ok) rvAll[x.path] = r; else delete rvAll[x.path]; } catch (e) {}
+  }));
+  if (!only) for (const k of Object.keys(rvAll)) if (!(projects.projects || []).some((x) => x.path === k)) delete rvAll[k];
+  /* an answer made here stays as one line until a refresh that began well after it */
+  for (const d of rvDone.values()) if (d.at < started - 1500) d.gone = true;
+  paintReviewBadge();
+  if (view === "review") paintReview();
+  if (view === "chats") { paintSwitch(); paintComposer(); }
+}
+function reloadReview() { clearTimeout(rvLoadT); rvLoadT = setTimeout(() => loadReview(), 300); }
+/* the tab's count: answers and looks waiting across every game; heavier when something stops a run */
+function paintReviewBadge() {
+  let n = 0, strong = false;
+  for (const r of Object.values(rvAll)) {
+    const w = rvWaiting(r), nd = rvNeeds(r).filter((c) => !rvDone.has(c.id));
+    n += w.length + nd.length;
+    if (nd.length || w.some((i) => i.blocking)) strong = true;
+  }
+  const b = $("rv-badge"); b.hidden = !n; b.textContent = n; b.classList.toggle("strong", strong);
+  $("v-review").title = (n ? n + (n === 1 ? " thing waits" : " things wait") + " for you" + (strong ? ", and a run is stopped until you answer" : "") + ". " : "") + "Each game's studio run: what needs your answer, and finished work to look at";
+}
+function openReview() {
+  paintReview();
+  loadProjects().then(() => {
+    const list = projects.projects || [], cur = agents.get(current);
+    if (!list.some((x) => x.path === rvPath)) {
+      const busy = list.find((x) => rvWaiting(rvAll[x.path]).length || rvNeeds(rvAll[x.path]).length);
+      rvPath = cur && cur.project && list.some((x) => x.path === cur.project.path) ? cur.project.path : busy ? busy.path : list.length ? list[0].path : "";
+    }
+    loadReview();
+  });
+  clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") loadReview(); else clearInterval(rvTimer); }, 5000);
+}
+function paintReviewPick() {
+  const list = projects.projects || [], sel = $("rv-proj");
+  const rows = list.map((x) => { const r = rvAll[x.path], n = rvWaiting(r).length + rvNeeds(r).length; return [x.path, x.name + (n ? " (" + n + ")" : "")]; });
+  const sig = JSON.stringify(rows) + rvPath;
+  sel.hidden = list.length < 2;
+  if (sig === paintReviewPick.sig) return; paintReviewPick.sig = sig;
+  sel.replaceChildren(...rows.map(([path, label]) => new Option(label, path, false, path === rvPath)));
+}
+$("rv-proj").onchange = () => { rvPath = $("rv-proj").value; paintReview(); loadReview(rvPath); };
+/* the run line: what the run is doing, and the one button that changes it */
+function runState(r, run) {
+  if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
+  if (run.paused) return ["Paused", "Nothing new is handed out. Experts already at work finish what they are doing.", "resume"];
+  if (!r.lead_live) return ["Paused — the Lead's chat is closed", "Resume starts a new Lead chat that reads the run and carries on where it stopped.", "resume"];
+  if (run.note === "slots") return ["Waiting for a free agent slot", "Every agent slot is in use. Close a chat you are done with and the run carries on.", "pause"];
+  if (r.waiting) return ["Waiting for you", "It has done all it can until you answer what is under Needs your answer.", "pause"];
+  return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
+}
+{
+  const strip = $("rv-stages"), gates = $("rv-gates"), max = $("rv-max");
+  STAGE_NAMES.forEach(([id, name]) => {
+    const s = el("div", "rv-stage", "<span></span><small></small>"); s.dataset.id = id; s.querySelector("span").textContent = name; strip.appendChild(s);
+    const g = el("label", "check-row", '<input type="checkbox"><span></span>'); g.querySelector("span").textContent = name; g.querySelector("input").value = id; gates.appendChild(g);
+  });
+  [1, 2, 3, 4].forEach((n) => { const b = el("button"); b.textContent = n; b.dataset.n = n; max.appendChild(b); });
+  const settings = async (body) => {
+    rvSetBusy = true; $("rv-err").textContent = "";
+    let r; try { r = await api("/api/studio-run", Object.assign({ path: rvPath, action: "settings" }, body)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+    rvSetBusy = false;
+    if (!r.ok) $("rv-err").textContent = r.error || "Could not change the settings.";
+    loadReview(rvPath);
+  };
+  gates.onchange = () => settings({ gates: [...gates.querySelectorAll("input:checked")].map((i) => i.value) });
+  max.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; max.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); settings({ max_experts: +b.dataset.n }); };
+}
+$("rv-toggle").onclick = async () => {
+  const b = $("rv-toggle"), action = b.dataset.action, path = rvPath;
+  b.disabled = true; $("rv-err").textContent = "";
+  let r; try { r = await api("/api/studio-run", { path, action }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  b.disabled = false;
+  if (!r.ok) $("rv-err").textContent = r.error || "That did not work.";
+  loadReview(path);
+};
+function paintRun(r) {
+  const run = r && r.run && r.run.on ? r.run : null;
+  $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
+  $("rv-empty-h").textContent = (projects.projects || []).length ? "No studio run for this game" : "No game yet";
+  $("rv-note").textContent = run && run.started ? "Run started " + ago(run.started) : "";
+  if (!run) return;
+  const [state, why, action] = runState(r, run);
+  $("rv-state").textContent = state;
+  $("rv-dot").className = "dot" + (state === "Working" ? " live" : state === "Finished" || state === "Waiting for you" ? " ok" : "");
+  const w = $("rv-why"); w.textContent = why;
+  if (r.lead_live && run.lead) { const b = el("button", "linkish", "Open the Lead's chat"); b.onclick = () => openChatById(run.lead); w.append(" ", b); }
+  const t = $("rv-toggle"); t.hidden = !action; t.dataset.action = action; t.textContent = action === "resume" ? "Resume" : "Pause";
+  t.classList.toggle("main", action === "resume");
+  const gates = run.gates || [];
+  $("rv-stages").querySelectorAll(".rv-stage").forEach((s) => {
+    const id = s.dataset.id, st = (run.stages || []).find((x) => x.id === id) || {};
+    const now = st.status !== "done" && (st.status === "doing" || run.stage === id), gate = gates.includes(id);
+    s.className = "rv-stage" + (st.status === "done" ? " done" : now ? " cur" : "");
+    s.querySelector("small").textContent = st.status === "done" ? "done" : now ? "now" : gate ? "gate" : "";
+    s.title = stageName(id) + ": " + (st.status === "done" ? "done" : now ? "working on it now" : "to do") + (gate ? ". Waits for your approval before it is done." : ".");
+  });
+  if (!rvSetBusy) {
+    $("rv-gates").querySelectorAll("input").forEach((i) => (i.checked = gates.includes(i.value)));
+    $("rv-max").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.n === (run.max_experts || 2)));
+  }
+}
+/* a review item: its pictures or clip first, then who made it, what it is, and Approve or Change */
+function rvItemCard(it, r) {
+  const path = r.project;
+  const card = el("div", "ask rv-item enter", '<div class="rv-media"></div><div class="meta"></div><h4></h4><p></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button><button class="pill">Change</button></div><div class="rv-change" hidden><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill">Send</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  card.dataset.id = it.id;
+  const media = it.media || [], row = card.querySelector(".rv-media");
+  if (!media.length) row.remove();
+  row.classList.toggle("many", media.length > 1);
+  media.forEach((f) => {
+    const src = "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(it.id) + "/" + encodeURIComponent(f) + "?t=" + TOKEN;
+    if (/\.(mp4|mov)$/i.test(f)) { const v = el("video"); v.controls = true; v.playsInline = true; v.preload = "metadata"; v.src = src; row.appendChild(v); return; }
+    const b = el("button"), im = new Image(); im.alt = f; im.loading = "lazy"; im.src = src;
+    b.setAttribute("aria-label", "Enlarge " + f); b.appendChild(im); b.onclick = () => zoom(src); row.appendChild(b);
+  });
+  card.querySelector(".meta").textContent = [expertName(r, it.expert), it.stage ? stageName(it.stage) : "", it.created ? ago(it.created) : ""].filter(Boolean).join("  ·  ");
+  card.querySelector("h4").textContent = it.title || "Untitled";
+  const sum = card.querySelector("p"), more = card.querySelector(".more");
+  sum.textContent = it.summary || "";
+  if (!it.summary) sum.remove();
+  else if (it.summary.length > 320 || it.summary.split("\n").length > 6) { sum.classList.add("clamp"); more.hidden = false; more.onclick = () => { const open = sum.classList.toggle("clamp"); more.textContent = open ? "Show all" : "Show less"; }; }
+  const [approve, change] = card.querySelectorAll(".act .pill"), box0 = card.querySelector(".rv-change"), input = box0.querySelector("input"), send0 = box0.querySelector(".pill"), err = card.querySelector(".rv-err");
+  const decide = async (body, said) => {
+    approve.disabled = change.disabled = send0.disabled = true; err.textContent = "";
+    let res; try { res = await api("/api/review", Object.assign({ path, id: it.id }, body)); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+    if (!res.ok) { approve.disabled = change.disabled = send0.disabled = false; err.textContent = res.error || "That did not work."; return; }
+    rvDone.set(it.id, { at: Date.now() });
+    card.querySelector(".rv-said").textContent = said; card.classList.add("done");
+    paintReviewBadge(); paintReview();
+  };
+  approve.onclick = () => decide({ action: "approve" }, "Approved: " + (it.title || "Untitled"));
+  const closeChange = () => { box0.hidden = true; input.value = ""; err.textContent = ""; change.focus(); };
+  change.onclick = () => { if (box0.hidden) { box0.hidden = false; input.focus(); } else closeChange(); };
+  const sendChange = () => { const note = input.value.trim(); if (!note) { err.textContent = "Say what to change."; input.focus(); return; } decide({ action: "change", note }, "Change sent: " + note); };
+  send0.onclick = sendChange;
+  input.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChange(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeChange(); } };
+  input.onblur = () => { if (rvDeferred) setTimeout(paintReview, 0); };
+  return card;
+}
+/* a board card in the needs column: only the user can do it, so it is answered here too */
+function rvNeedCard(c, path) {
+  const card = el("div", "ask rv-item enter", '<div class="meta">On the board</div><h4></h4><p></p><div class="act"><button class="pill main">Done</button><button class="pill">Open the board</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  card.querySelector("h4").textContent = c.title || "";
+  const p = card.querySelector("p"); if (c.note) p.textContent = c.note; else p.remove();
+  const [done, board] = card.querySelectorAll(".act .pill"), err = card.querySelector(".rv-err");
+  if (c.chat && chatKnown(c.chat)) { const o = el("button", "pill", "Open its chat"); o.onclick = () => openChatById(c.chat); card.querySelector(".act").appendChild(o); }
+  done.onclick = async () => {
+    done.disabled = true; err.textContent = "";
+    let r; try { r = await api("/api/board", { path, action: "move", id: c.id, column: "done" }); } catch (e) { r = { ok: false }; }
+    if (!r || !r.ok) { done.disabled = false; err.textContent = (r && r.error) || "Could not move the card."; return; }
+    rvDone.set(c.id, { at: Date.now() });
+    card.querySelector(".rv-said").textContent = "Done: " + (c.title || ""); card.classList.add("done");
+    paintReviewBadge(); paintReview();
+  };
+  board.onclick = () => { boardPath = path; setView("board"); };
+  return card;
+}
+function rvCard(key, sig, make) {
+  const had = rvCards.get(key);
+  if (had && had.sig === sig) return had.el;
+  /* the entrance plays once: a card moved within a list later does not fade in again */
+  const card = make(); card.addEventListener("animationend", () => card.classList.remove("enter"), { once: true });
+  rvCards.set(key, { sig, el: card }); return card;
+}
+/* a list is only rebuilt when what is in it changed, and never under a change note being typed */
+function paintRvList(box, els) {
+  if (els.length === box.children.length && els.every((e, i) => box.children[i] === e)) return;
+  const typing = document.activeElement && document.activeElement.tagName === "INPUT" && box.contains(document.activeElement);
+  if (typing) { rvDeferred = true; return; }
+  box.replaceChildren(...els);
+}
+function paintReview() {
+  rvDeferred = false;
+  paintReviewPick();
+  const r = rvAll[rvPath];
+  paintRun(r);
+  const items = ((r && r.items) || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
+  const needs = rvNeeds(r).filter((c) => rvShown(c.id));
+  const keep = new Set();
+  const itemEl = (i) => { keep.add(i.id); return rvCard(i.id, [rvPath, i.id, i.created, (i.media || []).join("/"), i.title, i.summary].join("|"), () => rvItemCard(i, r)); };
+  const needEl = (c) => { keep.add(c.id); return rvCard(c.id, [rvPath, c.id, c.title, c.note, c.chat].join("|"), () => rvNeedCard(c, rvPath)); };
+  const blocking = items.filter((i) => i.blocking), look = items.filter((i) => !i.blocking);
+  paintRvList($("rv-needs"), blocking.map(itemEl).concat(needs.map(needEl)));
+  paintRvList($("rv-look"), look.map(itemEl));
+  for (const k of [...rvCards.keys()]) if (!keep.has(k)) rvCards.delete(k);
+  const nNeeds = blocking.filter((i) => !rvDone.has(i.id)).length + needs.filter((c) => !rvDone.has(c.id)).length, open = look.filter((i) => !rvDone.has(i.id));
+  $("rv-needs-n").textContent = nNeeds || ""; $("rv-look-n").textContent = open.length || "";
+  $("rv-needs-none").hidden = blocking.length + needs.length > 0; $("rv-look-none").hidden = look.length > 0;
+  $("rv-all").hidden = open.length < 2;
+}
+$("rv-all").onclick = async () => {
+  const b = $("rv-all"), path = rvPath, r = rvAll[path];
+  const open = ((r && r.items) || []).filter((i) => i.status === "waiting" && !i.blocking && !rvDone.has(i.id));
+  b.disabled = true; $("rv-err").textContent = "";
+  let res; try { res = await api("/api/review", { path, action: "approve_all" }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+  b.disabled = false;
+  if (!res.ok) { $("rv-err").textContent = res.error || "Could not approve them."; return; }
+  open.forEach((i) => {
+    rvDone.set(i.id, { at: Date.now() });
+    const c = rvCards.get(i.id); if (c) { c.el.querySelector(".rv-said").textContent = "Approved: " + (i.title || "Untitled"); c.el.classList.add("done"); }
+  });
+  paintReviewBadge(); paintReview();
+};
+/* a new review item: Review reloads; the chat that filed it gets one line pointing there */
+function onReviewItem(e) {
+  reloadReview();
+  const it = e.item || {}, p = it.by_chat && agents.get(it.by_chat);
+  if (!p || !it.id || it.status !== "waiting") return;
+  p.reviewSeen = p.reviewSeen || {};
+  if (p.reviewSeen[it.id]) return;
+  p.reviewSeen[it.id] = true;
+  if (!p.turn) newTurn(p);
+  const line = el("div", "promo-line enter", '<span></span><button class="linkish">Open in Review</button>');
+  line.querySelector("span").textContent = "For review: " + (it.title || "Untitled") + " —";
+  line.querySelector("button").onclick = () => openInReview(e.project, it.id);
+  p.turn.appendChild(line); p.turn._steps = null;
+  if (p.id === current) stick();
+}
+function onStudioRun(e) {
+  if (rvAll[e.project]) { rvAll[e.project].run = e.run; if (view === "review" && e.project === rvPath) paintReview(); }
+  reloadReview();
+}
+function openInReview(path, id) {
+  if (path) rvPath = path;
+  setView("review");
+  const c = id && rvCards.get(id); if (!c) return;
+  c.el.scrollIntoView({ block: "center" });
+  c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
+}
+/* "Waiting for you in Review": one line at the end of a Lead's chat while its run waits at a gate */
+function studioWaitLine(p, on) {
+  p.studioWaiting = on;
+  if (!on) { if (p.waitLine) p.waitLine.remove(); return; }
+  if (!p.waitLine) {
+    p.waitLine = el("div", "studio-wait enter", '<span>Waiting for you in Review</span><button class="linkish">Open Review</button>');
+    p.waitLine.querySelector("button").onclick = () => openInReview(p.project && p.project.path);
+  }
+  p.col.appendChild(p.waitLine); p.last = "Waiting for you";
+}
 function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); }
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
@@ -2320,7 +2770,7 @@ function blockedCard(p, commands) {
     if (p.busy) { say("Wait for the agent to finish, then allow it."); return; }
     if (!(await allowCommands(names, true))) return;
     finish("Allowed: " + names.join(", "));
-    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
+    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
   };
   no.onclick = () => finish("Not allowed: " + names.join(", "));
   return card;
@@ -2515,8 +2965,9 @@ async function poll() {
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
 }
-refresh(); loadProjects(); loadPromos(); poll(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
+refresh(); loadProjects().then(() => loadReview()); loadPromos(); poll(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
 if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st === "downloading" || st === "checking") refresh(); }, 1500);
+if (!ONCE) setInterval(() => { if (view !== "review") loadReview(); }, 20000);   /* the Review count: board cards have no event */
 fit();
 </script>
 </body>
