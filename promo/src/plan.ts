@@ -154,7 +154,7 @@ export function buildPlan(recipe: any, media: Record<string, MediaInfo>, resolve
   // audio: music loops from music_start, ducks under the voice, fades out at the end
   let musicTrack: MusicTrack | null = null;
   if (music) {
-    const start = Number(audio.music_start ?? 0);
+    const start = Math.max(0, Number(audio.music_start ?? 0) || 0);
     const segment = Math.floor((music.duration - start) * fps);
     if (segment < 1) throw new PlanError(`audio music_start (${start} s) is past the end of the music (${music.duration.toFixed(1)} s).`);
     const duck: [number, number][] = voice && audio.duck_music_under_voice !== false ? [[0, Math.round(voice.duration * fps)]] : [];

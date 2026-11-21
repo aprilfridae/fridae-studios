@@ -67,8 +67,8 @@ async function loadPlan(hash) {
   const file = path.join(os.tmpdir(), `fridae-promo-plan-${hash}.mjs`);
   if (!fs.existsSync(file)) {
     const esbuild = await import('esbuild');
-    await esbuild.build({entryPoints: [path.join(ROOT, 'src', 'plan.ts')], bundle: true, platform: 'node', format: 'esm', outfile: file + '.tmp', logLevel: 'silent'});
-    fs.renameSync(file + '.tmp', file);
+    await esbuild.build({entryPoints: [path.join(ROOT, 'src', 'plan.ts')], bundle: true, platform: 'node', format: 'esm', outfile: `${file}.${process.pid}.tmp`, logLevel: 'silent'});
+    fs.renameSync(`${file}.${process.pid}.tmp`, file);
   }
   return import(pathToFileURL(file).href);
 }
