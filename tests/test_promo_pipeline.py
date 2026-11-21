@@ -132,8 +132,10 @@ class PipelineTests(unittest.TestCase):
         clip = _moving_square(os.path.join(self.tmp, "square.mp4"), self.fx, seconds=2)
         path = self.recipe(scenes=[{"clip": clip, "in": 0, "out": 2, "crop": {"x": 0.15, "track": "auto"}}])
         res = render(path)
-        with open(os.path.join(res["folder"], "promo.json"), encoding="utf-8") as f:
+        with open(os.path.join(res["folder"], "render.json"), encoding="utf-8") as f:
             self.assertTrue(json.load(f)["scenes"][0]["focus"])
+        with open(os.path.join(res["folder"], "promo.json"), encoding="utf-8") as f:
+            self.assertNotIn("focus", json.load(f)["scenes"][0])
 
     def test_pan_speed_is_limited(self):
         from rbxpromo.render import _smooth, MAX_PAN
@@ -168,10 +170,16 @@ class PipelineTests(unittest.TestCase):
         res = render(self.recipe(audio={"voice_text": "Big news today."}, captions={"source": "voice"}))
         folder = res["folder"]
         self.assertTrue(os.path.getsize(os.path.join(folder, "voice.wav")) > 1000)
-        with open(os.path.join(folder, "promo.json"), encoding="utf-8") as f:
+        with open(os.path.join(folder, "render.json"), encoding="utf-8") as f:
             saved = json.load(f)
         self.assertEqual(saved["audio"]["voice"], os.path.join(folder, "voice.wav"))
         self.assertEqual([w["text"] for w in saved["captions"]["words"]], ["Big", "news", "today."])
+        with open(os.path.join(folder, "promo.json"), encoding="utf-8") as f:
+            original = json.load(f)
+        self.assertEqual(original["audio"], {"voice_text": "Big news today."})
+        self.assertNotIn("words", original["captions"])
+        again = render(os.path.join(folder, "promo.json"), out_dir=folder)     # edit-and-render-again works
+        self.assertEqual(again["folder"], folder)
         with open(os.path.join(folder, "layout.json"), encoding="utf-8") as f:
             self.assertIn("caption", {b["kind"] for b in json.load(f)})
 

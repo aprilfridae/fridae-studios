@@ -9,7 +9,7 @@ Studio. This server supplies everything around it: Blender, textures, icons,
 animation and video tools, the Luau snippets to run in Studio, and the guides
 that say how to use it all.
 """
-import base64, contextlib, json, os, re, subprocess, sys, tempfile, threading, time, uuid
+import base64, json, os, re, subprocess, sys, tempfile, threading, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rbxpaths import KIT, VERSION, KitError, cli, no_window
@@ -463,8 +463,7 @@ def _start_promo_job(fn, args):
 
     def work():
         try:
-            with contextlib.redirect_stdout(sys.stderr):
-                job["result"] = fn(args, lambda x: job.__setitem__("progress", x))
+            job["result"] = fn(args, lambda x: job.__setitem__("progress", x))
         except _promo_expected_errors() as e:
             job["error"] = e
         except Exception as e:  # a bug inside a render is the job's error, not a crash of the server
@@ -521,8 +520,13 @@ def t_promo(a):
                                            "next": "This render is still running. Call rbx_promo with action 'job' and this id "
                                                    "to see progress and, when done, the result."}), True, False)
             return _job_reply(job)
-        with contextlib.redirect_stdout(sys.stderr):
-            data = fn(args, None)
+        data = fn(args, None)
+        if action == "styles":      # one labelled sheet of all styles; the stills are in the list, not attached
+            res = result(_promo_text(data), True, False)
+            with open(data["sheet"], "rb") as f:
+                res["content"].append({"type": "image", "data": base64.b64encode(f.read()).decode("ascii"),
+                                       "mimeType": "image/jpeg"})
+            return res
         return result(_promo_text(data))
     except _promo_expected_errors() as e:
         return _promo_failure(e)
@@ -723,7 +727,13 @@ def handle(msg):
 
 def main():
     stdin = sys.stdin.buffer
-    out = sys.stdout.buffer
+    # The protocol goes out on a private copy of fd 1. Fd 1 and sys.stdout then point at stderr before any thread
+    # starts, so a stray print, a library or a child process writing to "stdout" can never corrupt the protocol,
+    # and tools that capture stdout with redirect_stdout still work.
+    out = os.fdopen(os.dup(1), "wb")
+    sys.stdout.flush()
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
     for raw in stdin:
         raw = raw.strip()
         if not raw:

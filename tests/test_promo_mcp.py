@@ -140,15 +140,73 @@ class ToolTests(unittest.TestCase):
         self.assertNotIn(read["id"], rbxkit_mcp._JOBS)
         self.assertIn(unread["id"], rbxkit_mcp._JOBS)
 
-    def test_a_promo_call_never_writes_the_protocol_stdout(self):
-        def chatty(args, progress):
-            print("noise from inside")
-            return {"ok": 1}
-        buf = io.StringIO()
-        with mock.patch.object(engine, "status", return_value=READY), mock.patch.dict(tool.ACTIONS, {"render": chatty}), \
-                redirect_stdout(buf), redirect_stderr(io.StringIO()):
-            call({"action": "render", "recipe": "r.json"})
-        self.assertEqual(buf.getvalue(), "")
+    def test_styles_reuses_stills_and_returns_one_sheet_image(self):
+        import tempfile
+        from PIL import Image
+        from rbxpromo import render
+        renders = []
+
+        def fake_still(recipe_path, out_jpg, seconds):
+            renders.append(out_jpg)
+            Image.new("RGB", (1080, 1920), (90, 40, 160)).save(out_jpg)
+            return out_jpg
+        with tempfile.TemporaryDirectory() as work, mock.patch.object(engine, "status", return_value=READY), \
+                mock.patch.object(engine, "promo_hash", return_value="a" * 40), \
+                mock.patch("rbxpaths.WORK", work), mock.patch.object(render, "render_still", fake_still):
+            first = call({"action": "styles"})
+            n = len(renders)
+            second = call({"action": "styles"})
+        self.assertGreaterEqual(n, 8)
+        self.assertEqual(len(renders), n, "the second call must not render again")
+        for res in (first, second):
+            self.assertFalse(res["isError"])
+            self.assertEqual([c["type"] for c in res["content"]], ["text", "image"])
+            data = json.loads(text(res))
+            self.assertEqual(len(data["styles"]), n)
+            self.assertTrue(data["sheet"].endswith("sheet_styles.jpg"))
+
+
+class ProtocolStdoutTests(unittest.TestCase):
+    """The server's stdout carries only JSON-RPC, even while a job thread prints and runs a child that writes to fd 1."""
+
+    SCRIPT = r"""
+import os, subprocess, sys, time
+sys.path.insert(0, %(kit)r)
+import rbxkit_mcp
+from rbxpromo import engine, tool
+engine.status = lambda: {"ready": True, "missing": [], "download_mb": 0}
+def noisy(args, progress):
+    for i in range(20):
+        print("python print", i)
+        os.write(1, b"raw fd write\n")
+        subprocess.run([sys.executable, "-c", "print('child stdout')"], stdin=subprocess.DEVNULL)
+        time.sleep(0.05)
+    return {"ok": 1}
+tool.ACTIONS["render"] = noisy
+rbxkit_mcp.PROMO_SYNC_SECONDS = 0.1
+rbxkit_mcp.main()
+"""
+
+    def test_protocol_stream_has_only_jsonrpc_lines(self):
+        reqs = [{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                 "params": {"name": "rbx_promo", "arguments": {"action": "render", "recipe": "r.json"}}}]
+        reqs += [{"jsonrpc": "2.0", "id": 2 + i, "method": "ping"} for i in range(5)]
+        proc = subprocess.Popen([sys.executable, "-c", self.SCRIPT % {"kit": KIT_DIR}], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for r in reqs:
+            proc.stdin.write((json.dumps(r) + "\n").encode())
+            proc.stdin.flush()
+            time.sleep(0.15)
+        time.sleep(1.5)
+        proc.stdin.close()
+        out, err = proc.communicate(timeout=30)
+        lines = out.decode().splitlines()
+        self.assertEqual(len(lines), len(reqs))
+        for line in lines:
+            self.assertEqual(json.loads(line)["jsonrpc"], "2.0")
+        self.assertIn(b"python print", err)       # the noise went to stderr instead
+        self.assertIn(b"child stdout", err)
+        self.assertIn(b"raw fd write", err)
 
 
 class ChildStdinTests(unittest.TestCase):

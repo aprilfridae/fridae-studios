@@ -2,9 +2,10 @@
 
   render("promo.json")  -> {"folder", "video", "cover", "caption", "sheet", "duration", "check"}
 
-The folder (WORK/promos/<project-or-chat>/<YYYYMMDD-HHMMSS>-<slug>/) holds promo.json (a copy with every
-path made absolute and the auto-filled focus/words/voice in it), promo.mp4, cover.jpg, caption.txt,
-sheet.jpg, layout.json and, when the recipe has voice text, voice.wav. The card
+The folder (WORK/promos/<project-or-chat>/<YYYYMMDD-HHMMSS>-<slug>/) holds promo.json (the original recipe with
+every path made absolute, so it can be edited and rendered again from anywhere), render.json (the resolved
+recipe the renderer got: generated voice, caption words and auto-tracked focus filled in), promo.mp4,
+cover.jpg, caption.txt, sheet.jpg, layout.json and, when the recipe has voice text, voice.wav. The card
 WORK/promo-cards/<id>.json is written last, after the self-check ran.
 """
 import copy, datetime, json, ntpath, os, re, shutil, subprocess, tempfile
@@ -270,11 +271,14 @@ def render(recipe_path, out_dir=None, on_progress=None):
     os.makedirs(folder, exist_ok=True)
     try:
         recipe = _absolute(recipe, base)
-        _prepare(recipe, folder, report)
+        p = {n: os.path.join(folder, n) for n in ("promo.json", "render.json", "promo.mp4", "cover.jpg", "caption.txt",
+                                                  "sheet.jpg", "layout.json")}
+        rbxpaths.write_json(p["promo.json"], recipe, indent=2, ensure_ascii=False)   # the agent's recipe, paths absolute
+        recipe = copy.deepcopy(recipe)
+        _prepare(recipe, folder, report)                                             # fills voice, words, focus
         duration = recipe_duration(recipe)
-        p = {n: os.path.join(folder, n) for n in ("promo.json", "promo.mp4", "cover.jpg", "caption.txt", "sheet.jpg", "layout.json")}
-        rbxpaths.write_json(p["promo.json"], recipe, indent=2, ensure_ascii=False)
-        done = _run_renderer(p["promo.json"], p["promo.mp4"], p["layout.json"], p["cover.jpg"],
+        rbxpaths.write_json(p["render.json"], recipe, indent=2, ensure_ascii=False)
+        done = _run_renderer(p["render.json"], p["promo.mp4"], p["layout.json"], p["cover.jpg"],
                              _cover_time(recipe, duration), report)
         report(0.92)
         _sheet(p["promo.mp4"], p["sheet.jpg"])

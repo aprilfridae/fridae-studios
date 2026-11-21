@@ -46,10 +46,28 @@ def do_reference(args, on_progress=None):
     return reference.reference(_need(args, "path", "the saved reference video file"), args.get("out") or scratch_dir("reference"))
 
 
+def styles_sheet(items, out_jpg, cols=4, cell=(270, 480), label=34):
+    """One contact sheet of every style's still, each labelled with its name."""
+    from PIL import Image, ImageDraw
+    rows = (len(items) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * cell[0], rows * (cell[1] + label)), (20, 20, 20))
+    draw = ImageDraw.Draw(sheet)
+    for i, it in enumerate(items):
+        x, y = (i % cols) * cell[0], (i // cols) * (cell[1] + label)
+        with Image.open(it["still"]) as im:
+            sheet.paste(im.convert("RGB").resize(cell), (x, y + label))
+        draw.text((x + 8, y + 10), it["name"], fill=(255, 255, 255))
+    sheet.save(out_jpg, quality=88)
+    return out_jpg
+
+
 def do_styles(args, on_progress=None):
+    """Every style with a still. The default folder is stable so reference.styles' per-hash cache works across calls."""
     from rbxpromo import reference
     engine.require_ready()
-    return {"styles": reference.styles(args.get("out") or scratch_dir("styles"))}
+    out = args.get("out") or os.path.join(rbxpaths.WORK, "promo-work", "styles")
+    items = reference.styles(out)
+    return {"styles": items, "sheet": styles_sheet(items, os.path.join(out, "sheet_styles.jpg"))}
 
 
 def do_voice(args, on_progress=None):

@@ -56,8 +56,9 @@ buttons.
    usually means something happened. Clips are used where they are; they are
    never copied.
 3. **Plan.** Decide the one idea, the hook, the order of 4-10 shots, the
-   style, the caption words and the end card. Run `styles` once to see the
-   stills if the user has no preference. Say the plan in two lines before
+   style, the caption words and the end card. Run `styles` once if the user has no
+   preference: it returns one sheet image with every style's still, labelled
+   with its name. Say the plan in two lines before
    rendering.
 4. **Write `promo.json`.** In a folder you choose (for example next to your
    notes), then render it (see the recipe below).
@@ -131,10 +132,15 @@ which one and ask the user.
 - `project` is the folder name for the outputs. Use the game's name in
   lower case. If you leave it out, a general folder is used.
 - Output goes to `work/promos/<project>/<YYYYMMDD-HHMMSS>-<slug>/` with
-  `promo.json`, `promo.mp4`, `cover.jpg`, `caption.txt`, `sheet.jpg` (and
-  `voice.wav` when the voice was spoken). Re-render a tweak by editing the
-  `promo.json` in that folder and rendering it with `out` set to the same
-  folder.
+  `promo.json`, `render.json`, `promo.mp4`, `cover.jpg`, `caption.txt`,
+  `sheet.jpg` (and `voice.wav` when the voice was spoken). The folder's
+  `promo.json` is your own recipe with relative paths made absolute: edit it
+  and render it again from anywhere (`render` with `recipe` set to it and
+  `out` set to the same folder to overwrite, or leave `out` out for a new
+  folder). The voice and transcripts are cached, so a re-render is cheap.
+  `render.json` is what the renderer received (generated voice file, caption
+  words, tracked focus filled in); it is for reading only, never edit it or
+  render it.
 
 ## Using a reference video
 
