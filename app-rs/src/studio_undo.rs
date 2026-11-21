@@ -637,6 +637,23 @@ pub fn take(project: &str, message: &str) -> Saved {
     Saved { git_failed: repo && commit.is_none(), commit, studio, at }
 }
 
+/// What the game's run says about one chat: it leads the run and the run is going (not finished, not ended), the run
+/// already has its "start" checkpoint, or the run it led was ended in Review.
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
+pub struct LeadOf {
+    pub leads: bool,
+    pub started: bool,
+    pub ended: bool,
+}
+
+pub fn lead_of(project: &str, id: &str) -> LeadOf {
+    let Some(r) = read_run(Path::new(project)) else { return LeadOf::default() };
+    let mine = !id.is_empty() && r["lead"] == id;
+    let leads = mine && running(&r);
+    let started = leads && r["checkpoints"].as_array().is_some_and(|l| l.iter().any(|c| c["stage"] == "start"));
+    LeadOf { leads, started, ended: mine && r["on"] != true && r["ended"].is_number() }
+}
+
 /// Whether `id` leads the game's run and the run is paused.
 pub fn paused_lead(project: &str, id: &str) -> bool {
     read_run(Path::new(project)).is_some_and(|r| running(&r) && r["paused"] == true && r["lead"] == id)

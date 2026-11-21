@@ -157,7 +157,7 @@ fn status() -> Value {
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
-        "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "models": MODELS,
+        "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
         "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }

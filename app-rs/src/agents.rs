@@ -129,13 +129,6 @@ fn loop_mode(stopped: bool, held: bool, night: bool, studio: bool) -> Mode {
     }
 }
 
-const STUDIO_NEEDS_PROJECT: &str = "Studio mode needs a game project. Start a folder for this game first, then turn Studio on.";
-
-/// Why a message cannot run in Studio mode, if it cannot: Studio runs belong to a game project's folder.
-fn studio_refusal(studio: bool, has_project: bool) -> Option<&'static str> {
-    (studio && !has_project).then_some(STUDIO_NEEDS_PROJECT)
-}
-
 /// The settings a message runs with. Studio mode is full auto with overnight's loop, and a Studio run waiting at a
 /// gate goes on in Studio mode whatever the message itself asked for (a reply, or a decision from Review).
 fn effective_ask(ask: &Ask, waiting: bool, last: &Ask) -> Ask {
@@ -162,6 +155,8 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
         st.overnight_done = 0;
     }
     st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
+    st.turn_auto = auto;
+    st.turn_tools = 0;
     st.sending = true;
     Some(waiting)
 }
@@ -202,13 +197,13 @@ fn back_to_wait(st: &mut State, left: f64) {
 const NEXT_STEP: &str = "Carry on with the next step.";
 const TURN_FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
 
-/// The whole of the after-turn decision. `said` is the reply's last line in capitals.
 /// Whether Claude Code's closing "result" event reports a finished turn. "Not logged in" arrives as a result with
 /// is_error set, and must count as a failed turn, not as a reply.
 fn result_ok(e: &Value) -> bool {
     !e["is_error"].as_bool().unwrap_or(false)
 }
 
+/// The whole of the after-turn decision. `said` is the reply's last line in capitals.
 fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) -> Step {
     let studio = mode == Mode::Studio;
     match mode {
@@ -314,6 +309,71 @@ fn paused_carry_on<'a>(text: &'a str, told: &mut bool) -> Option<&'a str> {
     }
     *told = true;
     Some(PAUSE_TEXT)
+}
+
+/// Held messages go as one turn with the newest message's settings, but Studio is kept when any of them was a Studio
+/// message (a run's Lead never drops out of Studio mode because the last message was typed in another mode).
+fn merged_studio(held: &[(String, String, Ask)], newest: bool) -> bool {
+    newest || held.iter().any(|(_, _, a)| a.studio)
+}
+
+/// What a Lead is told when its run was ended in Review while it worked or waited.
+const RUN_ENDED: &str = "Studio run ended in Review. Its files and review items are kept.";
+
+/// A Lead whose run was ended (Review's "End this run"): nothing carries on and nothing waits any more.
+fn ended_step(step: Step, ended: bool, state: &mut LoopState) -> Step {
+    match step {
+        Step::CarryOn(_) | Step::Wait if ended => {
+            state.night = false;
+            Step::End(RUN_ENDED)
+        }
+        other => other,
+    }
+}
+
+/// How many carry-on turns in a row without a single tool call a Studio Lead may take before it is taken to be waiting.
+const IDLE_TURNS: u32 = 3;
+
+/// The no-progress guard: a Studio Lead that answers three carry-ons in a row without calling any tool is going round
+/// in circles, so the turn counts as STATUS: WAITING (the user's next answer or message wakes it). `idle` counts such
+/// turns; a turn with a tool call, a turn the user sent, or a failed turn starts the count again. True when the guard
+/// trips (the count then starts again too).
+fn no_progress(studio: bool, carry_on: bool, got_result: bool, tools: u32, idle: &mut u32) -> bool {
+    if !(studio && carry_on && got_result && tools == 0) {
+        *idle = 0;
+        return false;
+    }
+    *idle += 1;
+    if *idle >= IDLE_TURNS {
+        *idle = 0;
+        return true;
+    }
+    false
+}
+
+/// Any message to the chat that leads a running, not ended studio run is a Studio message, whatever mode it was sent in
+/// (a reply typed while the Lead works, or queued in another mode, must not take the run out of Studio mode).
+fn studio_message(ask: &Ask, leads_run: bool) -> Ask {
+    Ask { studio: ask.studio || leads_run, ..ask.clone() }
+}
+
+const STUDIO_FALLBACK: &str = "Studio needs a game folder, so this message ran in Ask me.";
+
+/// Studio runs belong to a game project's folder: in a chat with none, a Studio message goes as Ask me instead (it
+/// does what it is asked, then waits), with a line saying so.
+fn studio_fallback(ask: &Ask, has_project: bool) -> (Ask, Option<&'static str>) {
+    if ask.studio && !has_project {
+        (Ask { studio: false, overnight: false, full: false, autopilot: false, ..ask.clone() }, Some(STUDIO_FALLBACK))
+    } else {
+        (ask.clone(), None)
+    }
+}
+
+/// Whether a message starts a night checkpoint (a plugin pin and a "Before the overnight run" commit). Not for the
+/// loop's own carry-ons, not for a waiting run going on, and not for a message to the Lead of a studio run that already
+/// has its "start" checkpoint (a decision, a reply while it works, Resume): those belong to the same run.
+fn takes_night_checkpoint(ask: &Ask, auto: bool, resumed: bool, run_started: bool) -> bool {
+    ask.overnight && !auto && !resumed && !(ask.studio && run_started)
 }
 
 /// A tool from Roblox Studio's own connector: the steps that change the place.
@@ -438,6 +498,29 @@ struct State {
     ai: Option<String>,
     /// Messages the user sent while this chat was working, with their own settings. They go together as the next turn.
     queue: Vec<(String, String, Ask)>,
+    /// A helper whose result has been handed back: while it is not working it holds no agent slot (see `holds_slot`).
+    result_written: bool,
+    /// The current (or latest) turn was the loop's own carry-on, and how many tools it called (the no-progress guard).
+    turn_auto: bool,
+    turn_tools: u32,
+    /// Studio carry-on turns in a row without a tool call (see `no_progress`).
+    idle_turns: u32,
+}
+
+/// Whether a chat counts toward MAX_AGENTS. A helper that has finished (its result is handed back and it is not working)
+/// stays open to read but frees its slot; if the user messages it, it counts again while it works.
+fn holds_slot(st: &State) -> bool {
+    !(st.team.is_some() && st.result_written && !working(st))
+}
+
+/// How many agent slots are taken now.
+fn slots_taken(all: &[Arc<Agent>]) -> usize {
+    all.iter().filter(|a| holds_slot(&a.st.lock().unwrap())).count()
+}
+
+/// The agent slots in use, for the window (it may show more chats than this: finished helpers hold none).
+pub fn slots_used() -> usize {
+    slots_taken(&AGENTS.lock().unwrap())
 }
 
 /// One chat. One headless Claude Code turn at a time; events go to the bus.
@@ -486,6 +569,34 @@ impl Agent {
         self.st.lock().unwrap().expert.clone()
     }
 
+    /// A helper's result was handed back: from now on it holds an agent slot only while it works.
+    pub fn mark_result(&self) {
+        self.st.lock().unwrap().result_written = true;
+    }
+
+    /// Whether this chat takes one of the MAX_AGENTS slots now (see `holds_slot`).
+    pub fn holds_slot(&self) -> bool {
+        holds_slot(&self.st.lock().unwrap())
+    }
+
+    /// The run this chat leads was ended in Review: the night's clock and autopilot stop, a wait at a gate is over,
+    /// and the next carry-on is dropped. A turn already under way finishes, and then nothing carries on (`ended_step`).
+    pub fn end_run(&self) {
+        let was_waiting = {
+            let mut st = self.st.lock().unwrap();
+            st.overnight_until = 0.0;
+            st.overnight_left = 0.0;
+            st.autopilot_left = 0;
+            if !working(&st) {
+                st.halted = true;
+            }
+            std::mem::take(&mut st.studio_waiting)
+        };
+        if was_waiting {
+            self.put("studio_waiting", json!({"value": false, "left": 0}));
+        }
+    }
+
     /// Drop the next carry-on of the loop (the flag Stop sets between turns): an undo is about to put things back.
     pub fn halt(&self) {
         let mut st = self.st.lock().unwrap();
@@ -497,6 +608,24 @@ impl Agent {
     #[cfg(test)]
     pub fn set_running_for_test(&self, on: bool) {
         self.st.lock().unwrap().running = on;
+    }
+
+    #[cfg(test)]
+    pub fn set_waiting_for_test(&self, on: bool) {
+        self.st.lock().unwrap().studio_waiting = on;
+    }
+
+    /// A chat for a test that is not among the open ones (so no other test's sweep over the open chats touches it).
+    #[cfg(test)]
+    pub fn detached_for_test(id: &str, project: Option<&str>) -> Arc<Agent> {
+        let a = Agent::new(id.to_string(), "Lead");
+        a.st.lock().unwrap().project = project.map(str::to_string);
+        a
+    }
+
+    #[cfg(test)]
+    pub fn notes_for_test(&self) -> Vec<String> {
+        self.st.lock().unwrap().notes.clone()
     }
 
     /// The chat that started this helper, if another chat did.
@@ -687,7 +816,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "parent": st.parent, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -721,7 +850,8 @@ impl Agent {
     pub fn ask(self: &Arc<Self>, text: &str, ask: &Ask) {
         // a paused studio run's Lead keeps the user's messages until Resume, so the run does not start up again
         let auto = ask.kickoff.as_deref() == Some("auto");
-        let hold = !auto && !self.busy() && (ask.studio || self.studio_waiting()) && self.paused_run();
+        // (any message to a run's Lead is a Studio message: see studio_message)
+        let hold = !auto && !self.busy() && self.paused_run();
         let (queued, held) = {
             let mut st = self.st.lock().unwrap();
             if working(&st) || hold {
@@ -742,7 +872,11 @@ impl Agent {
         }
         self.show_queue();
         let text = held.iter().map(|(_, t, _)| t.as_str()).chain([text]).collect::<Vec<_>>().join("\n\n");
-        let ask = Ask { attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(), ..ask.clone() };
+        let ask = Ask {
+            attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(),
+            studio: merged_studio(&held, ask.studio),
+            ..ask.clone()
+        };
         self.send(&text, &ask);
     }
 
@@ -887,16 +1021,18 @@ impl Agent {
         if self.busy() {
             return;
         }
+        let has_project = self.project().is_some_and(|p| std::path::Path::new(&p).is_dir());
+        // the Lead of a running studio run: what reaches it is a Studio message, and the run's start checkpoint is kept
+        let run = match self.project().filter(|_| has_project && self.role().is_none()) {
+            Some(p) => studio_undo::lead_of(&p, &self.id),
+            None => studio_undo::LeadOf::default(),
+        };
         let ask = &{
             let st = self.st.lock().unwrap();
-            effective_ask(ask, st.studio_waiting, &st.last_ask)
+            effective_ask(&studio_message(ask, run.leads), st.studio_waiting, &st.last_ask)
         };
-        let has_project = self.project().is_some_and(|p| std::path::Path::new(&p).is_dir());
-        if let Some(why) = studio_refusal(ask.studio, has_project) {
-            self.put("error", json!({"text": why}));
-            self.put("done", json!({}));
-            return;
-        }
+        let (ask, fallback) = studio_fallback(ask, has_project);
+        let ask = &ask;
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
         let (model, attachments, kickoff) = (ask.model.as_deref(), ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
@@ -909,6 +1045,10 @@ impl Agent {
         } else {
             text
         };
+        // a carry-on for a run that was ended in Review meanwhile goes nowhere
+        if auto && run.ended && self.studio_lead() {
+            return;
+        }
         let Some(resumed) = begin_send(&mut self.st.lock().unwrap(), ask, auto, paths::now_secs()) else {
             return;
         };
@@ -946,7 +1086,7 @@ impl Agent {
             json!({
                 "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
-                "studio": ask.studio, "studio_waiting": false,
+                "studio": ask.studio, "studio_waiting": false, "fallback": fallback,
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
                 "files": infos.iter().filter(|i| i.kind != "image").map(|i| i.label.clone()).collect::<Vec<_>>(),
             }),
@@ -975,7 +1115,7 @@ impl Agent {
         }
         // an overnight run starts with a checkpoint, so the whole night can be undone in the morning
         // (a Studio run going on after a gate is the same run, so it keeps its first checkpoint)
-        if ask.overnight && !auto && !resumed {
+        if takes_night_checkpoint(ask, auto, resumed, run.started) {
             let start = self.turn_started();
             plugin::pin(start);
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
@@ -998,7 +1138,9 @@ impl Agent {
         }
         self.put("busy", json!({"value": true}));
         let kind = self.ai();
-        let Some(exe) = paths::find_ai(&kind) else {
+        // tests never start an AI, whatever is installed on the computer running them
+        let found = if cfg!(test) { None } else { paths::find_ai(&kind) };
+        let Some(exe) = found else {
             let missing = match kind.as_str() {
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
                 "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae Studios.",
@@ -1116,6 +1258,7 @@ impl Agent {
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
     /// A tool from Roblox Studio's connector is noted with its time, for a studio run's undo log (`run_log`).
     fn show_tool(&self, name: &str, studio: bool) {
+        self.st.lock().unwrap().turn_tools += 1; // the no-progress guard counts every tool call, shown or not
         let known = FRIENDLY.iter().filter(|(k, _)| name == k.as_str() || name.ends_with(&format!("_{k}"))).max_by_key(|(k, _)| k.len());
         let label = match known {
             Some((_, v)) => v.as_str().map(str::to_string),
@@ -1277,10 +1420,21 @@ impl Agent {
         // autopilot: the agent ends each reply by saying whether there is more it can do alone; if so, it is told to carry on
         let reply = self.last_reply();
         let last_line = reply.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
-        let said = last_line.to_uppercase();
+        let mut said = last_line.to_uppercase();
         let mut held = std::mem::take(&mut self.st.lock().unwrap().queue);
         // a paused studio run: what the user sent waits for Resume, and the Lead winds down (see pause_step)
         let paused = self.studio_lead() && self.paused_run();
+        // a run ended in Review: nothing carries on (see ended_step)
+        let ended = self.studio_lead() && self.project().is_some_and(|p| studio_undo::lead_of(&p, &self.id).ended);
+        {
+            // the no-progress guard: three carry-ons in a row without a tool call count as STATUS: WAITING
+            let mut st = self.st.lock().unwrap();
+            let lead = st.last_ask.studio && st.role.is_none();
+            let (carry_on, tools) = (st.turn_auto, st.turn_tools);
+            if no_progress(lead, carry_on, got_result && !result_error, tools, &mut st.idle_turns) {
+                said = "STATUS: WAITING".to_string();
+            }
+        }
         if paused && !held.is_empty() {
             self.st.lock().unwrap().queue = std::mem::take(&mut held);
             self.show_queue();
@@ -1296,6 +1450,7 @@ impl Agent {
             // a turn whose result is an error counts as failed, so a signed-out AI ends the loop after three turns
             let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result && !result_error, &said, &mut ls);
             let step = pause_step(step, paused, &mut st.pause_told, &mut ls);
+            let step = ended_step(step, ended, &mut ls);
             st.autopilot_left = ls.autopilot_left;
             st.overnight_fails = ls.fails;
             st.overnight_done = ls.done;
@@ -1346,7 +1501,8 @@ impl Agent {
             // what the user sent while it worked goes next, in one message, with the newest settings
             self.show_queue();
             let text = held.iter().map(|(_, t, _)| t.as_str()).collect::<Vec<_>>().join("\n\n");
-            let ask = Ask { kickoff: None, attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).collect(), ..held.last().unwrap().2.clone() };
+            let newest = held.last().unwrap().2.clone();
+            let ask = Ask { kickoff: None, attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).collect(), studio: merged_studio(&held, newest.studio), ..newest };
             let me = self.clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(400));
@@ -1425,7 +1581,7 @@ pub fn pretty_model(model_id: &str) -> String {
 pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
     let agent = {
         let mut all = AGENTS.lock().unwrap();
-        if all.len() >= MAX_AGENTS {
+        if slots_taken(&all) >= MAX_AGENTS {
             return None;
         }
         let n = COUNT.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1465,7 +1621,7 @@ pub fn new_background_chat(name: &str, project: Option<String>) -> Option<Arc<Ag
 fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
     let agent = {
         let mut all = AGENTS.lock().unwrap();
-        if all.len() >= MAX_AGENTS {
+        if slots_taken(&all) >= MAX_AGENTS {
             return None;
         }
         let n = COUNT.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1589,7 +1745,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
     let agent = Agent::new(chat_id, d["name"].as_str().filter(|s| !s.is_empty()).unwrap_or("Chat"));
     {
         let mut all = AGENTS.lock().unwrap();
-        if all.len() >= MAX_AGENTS {
+        if slots_taken(&all) >= MAX_AGENTS {
             return None;
         }
         all.push(agent.clone());
@@ -1611,6 +1767,8 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.project = d["project"].as_str().map(str::to_string);
         st.role = d["role"].as_str().map(str::to_string);
         st.expert = d["expert"].as_str().map(str::to_string);
+        // a reopened expert keeps its instructions (rbxroster caps them at 16,000 characters)
+        st.expert_text = d["expert_text"].as_str().map(str::to_string);
         st.parent = d["parent"].as_str().map(str::to_string);
         // chats saved before there was a choice were all Claude's
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
@@ -1659,6 +1817,7 @@ pub fn remove_agent(agent_id: &str) {
         agent.save();
         BUS.put("agent_removed", json!({"agent": agent.id}));
         remember_open();
+        team::slot_freed(); // a waiting studio run may have been short of a slot
     }
     if AGENTS.lock().unwrap().is_empty() {
         new_agent(None);
@@ -1998,10 +2157,162 @@ mod tests {
     }
 
     #[test]
-    fn studio_needs_a_project() {
-        assert_eq!(studio_refusal(true, false), Some(STUDIO_NEEDS_PROJECT));
-        assert_eq!(studio_refusal(true, true), None);
-        assert_eq!(studio_refusal(false, false), None);
+    fn studio_without_a_project_falls_back_to_ask_me() {
+        // what the server makes of a Studio message (studio implies overnight and full)
+        let studio = Ask { studio: true, overnight: true, full: true, autopilot: true, model: Some("opus".into()), ..Default::default() };
+        let (a, line) = studio_fallback(&studio, false);
+        assert!(!a.studio && !a.overnight && !a.full && !a.autopilot, "Ask me: does what it is asked, then waits");
+        assert_eq!(a.model.as_deref(), Some("opus"));
+        assert_eq!(line, Some(STUDIO_FALLBACK));
+        let (a, line) = studio_fallback(&studio, true);
+        assert!(a.studio && a.overnight && line.is_none(), "a game project: Studio as asked");
+        let night = Ask { overnight: true, full: true, ..Default::default() };
+        let (a, line) = studio_fallback(&night, false);
+        assert!(a.overnight && a.full && line.is_none(), "other modes are not touched");
+    }
+
+    #[test]
+    fn held_studio_message_takes_no_checkpoint() {
+        let studio = Ask { studio: true, overnight: true, full: true, ..Default::default() };
+        // a message to the Lead of a run that has its start checkpoint (a reply while it works, a decision, Resume)
+        assert!(!takes_night_checkpoint(&studio, false, false, true));
+        // the run's first message takes the start checkpoint
+        assert!(takes_night_checkpoint(&studio, false, false, false));
+        // a waiting run going on, and the loop's own carry-ons, never do
+        assert!(!takes_night_checkpoint(&studio, false, true, false));
+        assert!(!takes_night_checkpoint(&studio, true, false, false));
+        // Overnight for an ordinary chat: as before, every message of the user's starts a night
+        let night = Ask { overnight: true, full: true, ..Default::default() };
+        assert!(takes_night_checkpoint(&night, false, false, false));
+        assert!(takes_night_checkpoint(&night, false, false, true), "only a studio message keeps the run's checkpoint");
+        assert!(!takes_night_checkpoint(&Ask::default(), false, false, false));
+    }
+
+    #[test]
+    fn resume_takes_no_checkpoint() {
+        // Resume (and a decision) reach the Lead through wake_studio: a non-carry-on Studio message
+        let wake = Ask { studio: true, full: true, overnight: true, ..Default::default() };
+        let mut st = State { last_ask: wake.clone(), ..Default::default() };
+        let ask = effective_ask(&studio_message(&wake, true), st.studio_waiting, &st.last_ask);
+        let resumed = begin_send(&mut st, &ask, false, 10.0).unwrap();
+        assert!(!takes_night_checkpoint(&ask, false, resumed, true));
+    }
+
+    #[test]
+    fn a_message_to_the_lead_is_a_studio_message_whatever_its_mode() {
+        let last = Ask { studio: true, overnight: true, full: true, ..Default::default() };
+        for typed in [Ask::default(), Ask { full: true, ..Default::default() }, Ask { overnight: true, full: true, ..Default::default() }] {
+            let a = effective_ask(&studio_message(&typed, true), false, &last);
+            assert!(a.studio && a.overnight && a.full, "the Lead of a running run stays in Studio mode");
+            let a = effective_ask(&studio_message(&typed, false), false, &last);
+            assert!(!a.studio, "not a run's Lead: the message's own mode");
+        }
+        // messages held while it worked go as one turn: Studio is kept if any of them was a Studio message
+        let held = vec![("q1".to_string(), "a".to_string(), Ask { studio: true, ..Default::default() }), ("q2".to_string(), "b".to_string(), Ask::default())];
+        assert!(merged_studio(&held, false));
+        assert!(!merged_studio(&held[1..], false));
+        assert!(merged_studio(&held[1..], true));
+    }
+
+    #[test]
+    fn no_progress_guard_waits_after_three_idle_carry_ons() {
+        let mut idle = 0;
+        assert!(!no_progress(true, true, true, 0, &mut idle));
+        assert!(!no_progress(true, true, true, 0, &mut idle));
+        assert!(no_progress(true, true, true, 0, &mut idle), "the third idle carry-on counts as STATUS: WAITING");
+        assert_eq!(idle, 0, "and the count starts again");
+        // a tool call, a message from the user, or a failed turn breaks the run of idle turns
+        for (carry_on, got, tools) in [(true, true, 1), (false, true, 0), (true, false, 0)] {
+            let mut idle = 2;
+            assert!(!no_progress(true, carry_on, got, tools, &mut idle));
+            assert_eq!(idle, 0);
+        }
+        // not a Studio Lead: never
+        let mut idle = 0;
+        for _ in 0..5 {
+            assert!(!no_progress(false, true, true, 0, &mut idle));
+        }
+        // the turn it trips on waits like a Lead that said STATUS: WAITING
+        let mut s = night();
+        assert_eq!(next_step(Mode::Studio, true, "STATUS: WAITING", &mut s), Step::Wait);
+    }
+
+    #[test]
+    fn an_ended_run_stops_carrying_on_and_waiting() {
+        let mut s = night();
+        assert_eq!(ended_step(Step::CarryOn(NEXT), true, &mut s), Step::End(RUN_ENDED));
+        assert!(!s.night);
+        let mut s = night();
+        assert_eq!(ended_step(Step::Wait, true, &mut s), Step::End(RUN_ENDED));
+        assert_eq!(ended_step(Step::Idle, true, &mut s), Step::Idle);
+        let mut s = night();
+        assert_eq!(ended_step(Step::CarryOn(NEXT), false, &mut s), Step::CarryOn(NEXT));
+        assert!(s.night);
+        // the Lead itself: the clock, autopilot and a wait end, and the next carry-on is dropped
+        let a = Agent::new("c-end-test".into(), "Lead");
+        {
+            let mut st = a.st.lock().unwrap();
+            st.studio_waiting = true;
+            st.overnight_until = 1e12;
+            st.autopilot_left = 5;
+        }
+        a.end_run();
+        {
+            let st = a.st.lock().unwrap();
+            assert!(!st.studio_waiting && st.overnight_until == 0.0 && st.autopilot_left == 0 && st.halted);
+        }
+        assert_eq!(begin_send(&mut a.st.lock().unwrap(), &Ask { kickoff: Some("auto".into()), ..Default::default() }, true, 1.0), None);
+    }
+
+    #[test]
+    fn a_finished_helper_holds_no_slot() {
+        let mut st = State::default();
+        assert!(holds_slot(&st), "the user's own chat");
+        st.team = Some("w1".into());
+        assert!(holds_slot(&st), "a helper at work");
+        st.result_written = true;
+        assert!(!holds_slot(&st), "finished: open to read, no slot");
+        st.running = true;
+        assert!(holds_slot(&st), "the user messaged it: it counts again while it works");
+        st.running = false;
+        st.sending = true;
+        assert!(holds_slot(&st));
+    }
+
+    #[test]
+    fn finished_experts_free_their_slots_one_after_another() {
+        // more experts than MAX_AGENTS, one after another: each one's slot is free once its result is handed back
+        let mut made = Vec::new();
+        for n in 0..(MAX_AGENTS + 4) {
+            let x = Expert { id: "coder".into(), name: "Coder".into(), text: "Write code.".into() };
+            let a = spawn_expert(&format!("w-slots-{n}"), "worker", &format!("Coder: task {n}"), None, None, Some("c-slots-lead"), x).expect("a free slot");
+            assert!(a.holds_slot());
+            a.mark_result();
+            assert!(!a.holds_slot());
+            made.push(a);
+        }
+        assert!(slots_used() < MAX_AGENTS, "finished helpers are not counted");
+        for a in made {
+            remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn an_expert_keeps_its_instructions_when_reopened() {
+        let x = Expert { id: "ui".into(), name: "UI builder".into(), text: "Build the HUD é.".into() };
+        let a = spawn_expert("w-reopen", "worker", "UI builder: HUD", None, None, None, x).unwrap();
+        a.put("user", json!({"text": "Make the HUD"}));
+        let id = a.id.clone();
+        remove_agent(&id); // saved to the (temporary) work folder
+        let back = open_chat(&id).expect("reopened");
+        assert_eq!(back.st.lock().unwrap().expert_text.as_deref(), Some("Build the HUD é."));
+        assert_eq!(back.expert().as_deref(), Some("ui"));
+        remove_agent(&id);
+    }
+
+    #[test]
+    fn tests_use_a_temporary_work_folder() {
+        assert!(PATHS.work.starts_with(std::env::temp_dir()), "{}", PATHS.work.display());
     }
 
     #[test]

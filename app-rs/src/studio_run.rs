@@ -3,7 +3,7 @@
 //! exactly as it does, under the same per-project lock (fridae_lock), keeping keys this file does not know:
 //!
 //!   <project>/.fridae/studio.json        the run: {"on", "stage", "stages", "gates", "max_experts", "lead", "idea",
-//!                                         "started", "paused", "read_decisions", "note"?, "checkpoints"?}
+//!                                         "started", "paused", "read_decisions", "note"?, "checkpoints"?, "ended"?}
 //!                                         ("checkpoints" belong to studio_undo.rs)
 //!   <project>/.fridae/review/<id>.json   one review item: {"id", "stage", "expert", "title", "summary", "media",
 //!                                         "blocking", "status", "note", "created", "decided", "replaces", "by_chat"}
@@ -214,16 +214,37 @@ fn decide(project: &Path, id: &str, approve: bool, note: &str, seen: &mut HashMa
     item["note"] = json!(note);
     item["decided"] = json!(paths::now_secs());
     write_item(&path, &item, seen)?;
+    if approve && item["blocking"] == true {
+        supersede_older_changes(project, &item, seen);
+    }
     let title = item["title"].as_str().unwrap_or("").trim().to_string();
     Ok(if approve { format!("Review: {title} \u{2014} approved") } else { format!("Review: {title} \u{2014} change: {note}") })
 }
 
-/// Approve every waiting item that does not block the run. Returns how many.
-fn approve_all(project: &Path, seen: &mut HashMap<PathBuf, SystemTime>) -> Result<usize, String> {
+/// A blocking item was approved: older blocking items of the same stage still marked "changes" (a redo filed without
+/// `replaces`) are superseded by it, so they cannot hold the gate shut. Call under the lock.
+fn supersede_older_changes(project: &Path, approved: &Value, seen: &mut HashMap<PathBuf, SystemTime>) {
+    let created = approved["created"].as_f64().unwrap_or(0.0);
+    for (id, path) in item_files(project) {
+        let Some(mut old) = read_obj(&path) else { continue };
+        let older = old["created"].as_f64().unwrap_or(0.0) < created;
+        if id != approved["id"].as_str().unwrap_or("") && older && old["status"] == "changes" && old["blocking"] == true && old["stage"] == approved["stage"] {
+            old["status"] = json!("superseded");
+            old["superseded_by"] = approved["id"].clone();
+            let _ = write_item(&path, &old, seen);
+        }
+    }
+}
+
+/// Approve the waiting items the user saw (`ids`, the ones on screen) that do not block the run. Returns how many.
+fn approve_all(project: &Path, ids: &[String], seen: &mut HashMap<PathBuf, SystemTime>) -> Result<usize, String> {
     let _lock = fridae_lock::acquire(project)?;
     let now = paths::now_secs();
     let mut n = 0;
-    for (_, path) in item_files(project) {
+    for (id, path) in item_files(project) {
+        if !ids.contains(&id) {
+            continue; // filed after the user looked: it waits for its own look
+        }
         let Some(mut item) = read_obj(&path) else { continue };
         if item["status"] != "waiting" || item["blocking"].as_bool().unwrap_or(false) {
             continue;
@@ -496,6 +517,32 @@ fn resume(project: &str) -> Result<Value, String> {
     Ok(json!({"ok": true, "agent": id}))
 }
 
+const NO_RUN_TO_END: &str = "This game has no studio run going to end.";
+
+/// Under the lock: a run that is going is switched off with its end time ("on": false, "ended"); its stages, files,
+/// review items and checkpoints all stay. Returns the Lead's id.
+fn end_run(project: &Path) -> Result<String, String> {
+    change_run(project, |run| {
+        if !run.is_object() || !running(run) {
+            return (false, Err(NO_RUN_TO_END.to_string()));
+        }
+        run["on"] = json!(false);
+        run["ended"] = json!(paths::now_secs());
+        run.as_object_mut().map(|o| o.remove("note"));
+        (true, Ok(run["lead"].as_str().unwrap_or("").to_string()))
+    })?
+}
+
+/// End this run: nothing destructive. The Lead stops carrying on (a turn under way finishes first), experts at work
+/// finish, and a new run may start (it archives this one's review items as usual).
+fn end(project: &str) -> Result<Value, String> {
+    let lead = end_run(Path::new(project))?;
+    if let Some(l) = agents::get(&lead).filter(|_| !lead.is_empty()) {
+        l.end_run();
+    }
+    Ok(json!({"ok": true}))
+}
+
 /// Change an existing run's own fields.
 fn set_run(project: &Path, f: impl FnOnce(&mut Value)) -> Result<(), String> {
     let had = change_run(project, |run| {
@@ -559,7 +606,30 @@ pub fn list(path: &str) -> Value {
     })
 }
 
-/// POST /api/review {path, action: "approve" | "change" | "approve_all", id?, note?}
+/// A needs card on the board was marked done (in Review or on the Board tab): the Lead of the game's running run hears
+/// "Board: <title> — done". A waiting Lead is woken; a working one gets it with its next turn; a paused run, or one
+/// whose Lead is not open, is not woken (the card is on the board for when it goes on). Returns whether a Lead was told.
+fn needs_done(project: &Path, title: &str) -> Result<Value, String> {
+    let title: String = title.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+    if title.is_empty() {
+        return Err("Which card was done?".into());
+    }
+    let Some(run) = read_run(project).filter(|r| running(r) && r["paused"] != true) else { return Ok(json!({"ok": true, "told": false})) };
+    let Some(lead) = live_lead(&run) else { return Ok(json!({"ok": true, "told": false})) };
+    let text = board_done_text(&title);
+    if lead.studio_waiting() {
+        lead.wake_studio(&text);
+    } else {
+        lead.note(&text);
+    }
+    Ok(json!({"ok": true, "told": true}))
+}
+
+fn board_done_text(title: &str) -> String {
+    format!("Board: {title} \u{2014} done")
+}
+
+/// POST /api/review {path, action: "approve" | "change" | "approve_all" | "needs_done", id?, note?, ids?, title?}
 pub fn review(body: &Value) -> Value {
     let Some(project) = project_of(body["path"].as_str().unwrap_or("")) else { return not_ours() };
     let dir = Path::new(&project);
@@ -567,8 +637,15 @@ pub fn review(body: &Value) -> Value {
     let text = match body["action"].as_str().unwrap_or("") {
         "approve" => decide(dir, id, true, note, &mut SEEN.lock().unwrap()),
         "change" => decide(dir, id, false, note, &mut SEEN.lock().unwrap()),
-        "approve_all" => approve_all(dir, &mut SEEN.lock().unwrap())
-            .map(|n| if n == 0 { String::new() } else { format!("Review: {n} item{} approved", if n == 1 { "" } else { "s" }) }),
+        "approve_all" => match body["ids"].as_array() {
+            Some(list) => {
+                let ids: Vec<String> = list.iter().filter_map(Value::as_str).map(str::to_string).collect();
+                approve_all(dir, &ids, &mut SEEN.lock().unwrap())
+                    .map(|n| if n == 0 { String::new() } else { format!("Review: {n} item{} approved", if n == 1 { "" } else { "s" }) })
+            }
+            None => Err("Say which items to approve.".into()),
+        },
+        "needs_done" => return answer(needs_done(dir, body["title"].as_str().unwrap_or(""))),
         _ => Err("Unknown action.".into()),
     };
     match text {
@@ -582,7 +659,7 @@ pub fn review(body: &Value) -> Value {
     }
 }
 
-/// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings" | "undo", idea?, gates?, max_experts?,
+/// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings" | "undo" | "end", idea?, gates?, max_experts?,
 /// stage?, files_only?} ("undo" is studio_undo.rs)
 pub fn studio_run(body: &Value) -> Value {
     let path = body["path"].as_str().unwrap_or("");
@@ -595,6 +672,7 @@ pub fn studio_run(body: &Value) -> Value {
         "start" => answer(start(&project, body)),
         "resume" => answer(resume(&project)),
         "pause" => answer(set_run(dir, |run| run["paused"] = json!(true)).map(|_| json!({"ok": true}))),
+        "end" => answer(end(&project)),
         "undo" => crate::studio_undo::undo(&project, body["stage"].as_str(), body["files_only"].as_bool().unwrap_or(false)),
         "settings" => answer(settings_from(body).and_then(|(gates, max)| {
             set_run(dir, |run| {
@@ -716,12 +794,93 @@ mod tests {
         put_item(&d, "cc", json!({"status": "changes"}));
         put_item(&d, "dd", json!({}));
         let mut seen = HashMap::new();
-        assert_eq!(approve_all(&d, &mut seen).unwrap(), 2);
+        let all: Vec<String> = ["aa", "bb", "cc", "dd"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(approve_all(&d, &all, &mut seen).unwrap(), 2);
         assert_eq!(item(&d, "aa")["status"], "approved");
         assert_eq!(item(&d, "dd")["status"], "approved");
         assert_eq!(item(&d, "bb")["status"], "waiting");
         assert_eq!(item(&d, "cc")["status"], "changes");
-        assert_eq!(approve_all(&d, &mut seen).unwrap(), 0);
+        assert_eq!(approve_all(&d, &all, &mut seen).unwrap(), 0);
+    }
+
+    #[test]
+    fn approve_all_approves_only_what_the_user_saw() {
+        let d = game("all-seen");
+        put_item(&d, "aa", json!({}));
+        put_item(&d, "ee", json!({})); // filed after the page drew the list
+        let mut seen = HashMap::new();
+        assert_eq!(approve_all(&d, &["aa".to_string()], &mut seen).unwrap(), 1);
+        assert_eq!(item(&d, "aa")["status"], "approved");
+        assert_eq!(item(&d, "ee")["status"], "waiting", "an item the user has not seen waits for its own look");
+        assert_eq!(approve_all(&d, &[], &mut seen).unwrap(), 0);
+    }
+
+    #[test]
+    fn approving_a_newer_blocking_item_supersedes_older_changes_of_its_stage() {
+        let d = game("supersede");
+        put_item(&d, "old", json!({"stage": "design", "blocking": true, "status": "changes", "created": 1.0}));
+        put_item(&d, "other", json!({"stage": "build", "blocking": true, "status": "changes", "created": 1.0}));
+        put_item(&d, "loose", json!({"stage": "design", "blocking": false, "status": "changes", "created": 1.0}));
+        put_item(&d, "new", json!({"stage": "design", "blocking": true, "created": 5.0}));
+        put_item(&d, "later", json!({"stage": "design", "blocking": true, "status": "changes", "created": 9.0}));
+        let mut seen = HashMap::new();
+        decide(&d, "new", true, "", &mut seen).unwrap();
+        let old = item(&d, "old");
+        assert_eq!((old["status"].as_str(), old["superseded_by"].as_str()), (Some("superseded"), Some("new")));
+        assert_eq!(old["extra_key"], 7, "unknown keys are kept");
+        assert_eq!(item(&d, "other")["status"], "changes", "another stage's item is not touched");
+        assert_eq!(item(&d, "loose")["status"], "changes", "only blocking items");
+        assert_eq!(item(&d, "later")["status"], "changes", "only older ones");
+        assert!(!crate::fridae_lock::lock_path(&d).exists());
+    }
+
+    #[test]
+    fn ending_a_run_keeps_everything_and_allows_a_new_one() {
+        let d = game("end");
+        let mut r = todo_run("c-no-such-lead");
+        r["paused"] = json!(false);
+        r["note"] = json!("slots");
+        r["future"] = json!({"x": 1});
+        r["checkpoints"] = json!([{"stage": "start", "at": 1.0}]);
+        put_run(&d, r);
+        put_item(&d, "aa", json!({}));
+        assert_eq!(can_start(&d).unwrap_err(), ALREADY);
+        let p = d.display().to_string();
+        assert_eq!(end(&p).unwrap()["ok"], true);
+        let after = run(&d);
+        assert_eq!(after["on"], false);
+        assert!(after["ended"].as_f64().unwrap() > 1_000_000_000.0);
+        assert!(after.get("note").is_none());
+        assert_eq!((after["future"]["x"].as_i64(), after["checkpoints"].as_array().map(|l| l.len())), (Some(1), Some(1)), "nothing else changes");
+        assert_eq!(item(&d, "aa")["status"], "waiting", "review items stay");
+        assert_eq!(end(&p).unwrap_err(), NO_RUN_TO_END, "an ended run cannot be ended again");
+        assert!(can_start(&d).is_ok(), "a new run may start");
+        assert_eq!(write_fresh(&d, "Next", vec![], 2, "c-new").unwrap(), None);
+        assert!(d.join(".fridae").join("review-archive").read_dir().unwrap().next().is_some(), "the old run's items are archived as usual");
+        assert!(run(&d).get("ended").is_none());
+        assert_eq!(end(&d.join("nothing").display().to_string()).unwrap_err(), NO_RUN_TO_END);
+    }
+
+    #[test]
+    fn a_needs_card_done_tells_the_lead() {
+        let d = game("needs");
+        assert_eq!(needs_done(&d, "  ").unwrap_err(), "Which card was done?");
+        assert_eq!(needs_done(&d, "Add an API key").unwrap()["told"], false, "no run");
+        let p = d.display().to_string();
+        let lead = agents::new_background_chat("Lead: needs", Some(p.clone())).unwrap();
+        let mut r = todo_run(&lead.id);
+        r["paused"] = json!(false);
+        put_run(&d, r.clone());
+        let res = needs_done(&d, "Add   an API key é").unwrap();
+        assert_eq!(res["told"], true);
+        // the Lead is working (not waiting): it gets the line with its next turn
+        assert_eq!(lead.notes_for_test(), vec!["Board: Add an API key é \u{2014} done".to_string()]);
+        r["paused"] = json!(true);
+        put_run(&d, r);
+        assert_eq!(needs_done(&d, "Other").unwrap()["told"], false, "a paused run is not woken");
+        assert_eq!(lead.notes_for_test().len(), 1);
+        agents::remove_agent(&lead.id);
+        assert_eq!(board_done_text("X"), "Board: X \u{2014} done");
     }
 
     #[test]

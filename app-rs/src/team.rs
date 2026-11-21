@@ -89,6 +89,54 @@ fn set_slots_note(project: &str, on: bool) {
     });
 }
 
+/// The run's limit on experts working at once (studio.json "max_experts", 1 to 4, 2 when unset). None when there is
+/// room for one more.
+fn experts_limit(working: usize, max: u64) -> Option<String> {
+    (working as u64 >= max).then(|| format!("The run already has {working} experts working (the limit is {max}). Wait for one, then start this one."))
+}
+
+/// For a request from the Lead of a running studio run: refused when as many of its helpers as the run allows are still
+/// at work (a helper counts until its result is handed back, or again while the user has it working).
+fn over_expert_limit(lead: &Agent, project: &str) -> Option<String> {
+    let run = studio_run::read_run(Path::new(project)).filter(|r| studio_run::running(r) && r["lead"] == lead.id.as_str())?;
+    let max = run["max_experts"].as_u64().filter(|n| (1..=4).contains(n)).unwrap_or(2);
+    let working = agents::agents().iter().filter(|a| a.parent().as_deref() == Some(lead.id.as_str()) && a.team().is_some() && a.holds_slot()).count();
+    experts_limit(working, max)
+}
+
+pub const SLOT_FREE: &str = "An agent slot is free. Carry on.";
+
+/// A slot came free (a helper finished, or a chat was closed): every waiting Lead whose run has the note "slots" gets
+/// the note cleared and is woken with SLOT_FREE.
+pub fn slot_freed() {
+    for lead in agents::agents() {
+        if lead_to_wake(&lead) {
+            lead.wake_studio(SLOT_FREE);
+        }
+    }
+}
+
+/// Whether this chat is a waiting Lead of a running, unpaused run with the note "slots"; if so the note is cleared
+/// (under the lock), so it is woken once.
+fn lead_to_wake(lead: &Agent) -> bool {
+    if lead.role().is_some() || !lead.studio_waiting() {
+        return false;
+    }
+    let Some(project) = lead.project() else { return false };
+    let dir = Path::new(&project);
+    if !studio_run::run_file(dir).is_file() {
+        return false;
+    }
+    studio_run::change_run(dir, |run| {
+        let go = run.is_object() && studio_run::running(run) && run["paused"] != true && run["lead"] == lead.id.as_str() && run["note"] == "slots";
+        if go {
+            run.as_object_mut().map(|o| o.remove("note"));
+        }
+        (go, go)
+    })
+    .unwrap_or(false)
+}
+
 fn start(req: &Value) {
     let id = paths::base_name(req["id"].as_str().unwrap_or(""));
     let role = if req["role"] == "critic" { "critic" } else { "worker" };
@@ -110,6 +158,11 @@ fn start(req: &Value) {
         return refuse("An agent that was started by another agent may not start more.");
     }
     let project = from.as_ref().and_then(|a| a.project());
+    if let (Some(lead), Some(p)) = (&from, &project) {
+        if let Some(why) = over_expert_limit(lead, p) {
+            return refuse(&why);
+        }
+    }
     let ai = from.as_ref().map(|a| a.ai());
     let parent = from.as_ref().map(|a| a.id.as_str());
     let agent = if let Some(expert_id) = &expert {
@@ -161,6 +214,8 @@ pub fn finished(agent: &Agent) {
             result["expert"] = json!(e);
         }
         write_result(&id, result);
+        agent.mark_result(); // its slot is free once it stops working (the chat stays open to read)
+        slot_freed();
     }
 }
 
@@ -256,5 +311,54 @@ mod tests {
         fs::write(d.join(".fridae").join("studio.json"), r#"{"note": "other"}"#).unwrap();
         set_slots_note(p, false);
         assert_eq!(read(&d)["note"], "other");
+    }
+
+    #[test]
+    fn the_run_limits_experts_at_work() {
+        assert_eq!(experts_limit(1, 2), None);
+        assert_eq!(experts_limit(2, 2).as_deref(), Some("The run already has 2 experts working (the limit is 2). Wait for one, then start this one."));
+        assert!(experts_limit(4, 3).is_some());
+        let d = game("limit");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: limit", Some(p.clone())).unwrap();
+        let stages: Vec<Value> = crate::studio_run::STAGES.iter().map(|s| json!({"id": s, "status": "todo"})).collect();
+        fs::write(d.join(".fridae").join("studio.json"), json!({"on": true, "lead": lead.id, "max_experts": 1, "stages": stages}).to_string()).unwrap();
+        assert_eq!(over_expert_limit(&lead, &p), None, "no expert at work yet");
+        let x = agents::spawn_helper(Some("w-limit"), "worker", "Coder: one", Some(p.clone()), None, Some(&lead.id)).unwrap();
+        assert!(over_expert_limit(&lead, &p).unwrap().contains("(the limit is 1)"), "a started helper counts before its first turn");
+        x.mark_result();
+        assert_eq!(over_expert_limit(&lead, &p), None, "its result is handed back: it no longer counts");
+        // another chat's helpers, and a chat that does not lead the run, are not limited by it
+        let other = agents::new_background_chat("Mine", Some(p.clone())).unwrap();
+        let y = agents::spawn_helper(Some("w-limit2"), "worker", "Coder: two", Some(p.clone()), None, Some(&other.id)).unwrap();
+        assert_eq!(over_expert_limit(&lead, &p), None);
+        assert_eq!(over_expert_limit(&other, &p), None);
+        for a in [&lead, &x, &other, &y] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn a_free_slot_wakes_a_waiting_lead_with_the_slots_note() {
+        let d = game("wake");
+        let p = d.to_str().unwrap().to_string();
+        let lead = Agent::detached_for_test("c-wake-lead", Some(&p));
+        let stages: Vec<Value> = crate::studio_run::STAGES.iter().map(|s| json!({"id": s, "status": "todo"})).collect();
+        let run = json!({"on": true, "lead": "c-wake-lead", "paused": false, "note": "slots", "keep": 1, "stages": stages});
+        fs::write(d.join(".fridae").join("studio.json"), run.to_string()).unwrap();
+        assert!(!lead_to_wake(&lead), "not waiting: it retries by itself");
+        assert_eq!(read(&d)["note"], "slots");
+        lead.set_waiting_for_test(true);
+        assert!(lead_to_wake(&lead));
+        let after = read(&d);
+        assert!(after.get("note").is_none());
+        assert_eq!(after["keep"], 1);
+        assert!(!lead_to_wake(&lead), "woken once");
+        // a paused run is not woken
+        let mut paused = run.clone();
+        paused["paused"] = json!(true);
+        fs::write(d.join(".fridae").join("studio.json"), paused.to_string()).unwrap();
+        assert!(!lead_to_wake(&lead));
+        assert_eq!(SLOT_FREE, "An agent slot is free. Carry on.");
     }
 }
