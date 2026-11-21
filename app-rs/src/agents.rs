@@ -45,6 +45,8 @@ const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
 const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
+const STUDIO_PROMPT: &str = include_str!("text/studio.txt");
+const KICKOFF_STUDIO: &str = include_str!("text/kickoff_studio.txt");
 /// How long overnight mode keeps a chat going after the user's last message.
 const OVERNIGHT_SECS: f64 = 24.0 * 3600.0;
 /// How many times in a row autopilot may tell an agent to carry on before the user is needed again.
@@ -65,8 +67,131 @@ pub struct Ask {
     /// How hard the model thinks: low, medium, high, xhigh or max. None leaves it to the AI.
     pub effort: Option<String>,
     pub attachments: Vec<String>,
-    /// "new" or "existing" for a project's first message; "auto" for autopilot's own "carry on".
+    /// "new", "existing" or "studio" for a project's first message; "auto" for autopilot's own "carry on".
     pub kickoff: Option<String>,
+    /// Studio mode: the game's chat is the Lead, moving the game through its stages with named experts. It implies
+    /// full auto and overnight's loop, and may also wait for the user at a gate (STATUS: WAITING).
+    pub studio: bool,
+}
+
+/// What kind of turn just ended, for deciding what happens next.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Mode {
+    /// Stop was pressed during the turn.
+    Stopped,
+    /// The user sent messages while it worked; they go next instead of any carry-on.
+    Held,
+    Overnight,
+    Studio,
+    /// Neither night nor studio clock is running: autopilot (or nothing) decides.
+    Autopilot,
+}
+
+/// The loop's counters, copied out of the chat's state and back after each turn.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+struct LoopState {
+    autopilot_left: u32,
+    /// Failed turns in a row, and "done"s in a row, in overnight or studio mode.
+    fails: u32,
+    done: u32,
+    /// Whether the overnight (or studio) clock is still running; set false when the night or run ends or waits.
+    night: bool,
+}
+
+/// What the app does after a turn.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Step {
+    /// Send this message as the next turn.
+    CarryOn(&'static str),
+    /// Studio mode at a gate: send nothing and wait for the user's answer.
+    Wait,
+    /// The night or run is over; show this.
+    End(&'static str),
+    /// Nothing more happens.
+    Idle,
+}
+
+fn loop_mode(stopped: bool, held: bool, night: bool, studio: bool) -> Mode {
+    if stopped {
+        Mode::Stopped
+    } else if held {
+        Mode::Held
+    } else if night && studio {
+        Mode::Studio
+    } else if night {
+        Mode::Overnight
+    } else {
+        Mode::Autopilot
+    }
+}
+
+const NEXT_STEP: &str = "Carry on with the next step.";
+const TURN_FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
+
+/// The whole of the after-turn decision. `said` is the reply's last line in capitals.
+fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) -> Step {
+    let studio = mode == Mode::Studio;
+    match mode {
+        Mode::Stopped | Mode::Held => {
+            state.autopilot_left = 0;
+            if mode == Mode::Stopped {
+                state.night = false;
+            }
+            Step::Idle
+        }
+        // overnight: keep going past "done" and "needs you"; stop on repeated failure or when twice there is nothing left
+        Mode::Overnight | Mode::Studio => {
+            if !got_result {
+                state.fails += 1;
+                if state.fails >= 3 {
+                    state.night = false;
+                    Step::End(if studio { "Studio run stopped: three turns in a row failed." } else { "Overnight mode stopped: three turns in a row failed." })
+                } else {
+                    Step::CarryOn(TURN_FAILED)
+                }
+            } else if studio && said.starts_with("STATUS: WAITING") {
+                // everything left depends on the user's answer in Review: stop the clock until they give it
+                state.fails = 0;
+                state.done = 0;
+                state.night = false;
+                Step::Wait
+            } else if said.starts_with("STATUS: DONE") {
+                state.fails = 0;
+                state.done += 1;
+                if state.done >= 2 {
+                    state.night = false;
+                    Step::End(if studio {
+                        "Studio run finished: twice in a row there was nothing more it could do without you. See Review and the board for what needs you."
+                    } else {
+                        "Overnight mode finished: twice in a row there was nothing more it could do without you. See the board for what needs you."
+                    })
+                } else {
+                    Step::CarryOn(if studio {
+                        "Studio run: call rbx_stage decisions and act on every answer, then, within any limits I set in this chat, hand the next job the stages need to the right expert. If everything left waits on my answer in Review, end with STATUS: WAITING. If the run is truly finished, say so and end with STATUS: DONE."
+                    } else {
+                        "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE."
+                    })
+                }
+            } else if said.starts_with("STATUS: NEEDS YOU") {
+                state.fails = 0;
+                state.done = 0;
+                Step::CarryOn(if studio {
+                    "I am away. Put what you need from me on the board under needs if it is not there yet (or file it with rbx_stage review, blocking, if the run cannot pass a gate without it), then carry on with the next job that does not depend on it."
+                } else {
+                    "I am away. Put what you need from me on the board under needs if it is not there yet, then carry on with the next most valuable thing you can do without me."
+                })
+            } else {
+                state.fails = 0;
+                state.done = 0;
+                Step::CarryOn(if studio { "Carry on with the next step. Call rbx_stage decisions first and act on any answer." } else { NEXT_STEP })
+            }
+        }
+        Mode::Autopilot => {
+            let go = got_result && state.autopilot_left > 0 && said.starts_with("STATUS: CONTINUE");
+            state.autopilot_left = if go { state.autopilot_left - 1 } else { 0 };
+            if go { Step::CarryOn(NEXT_STEP) } else { Step::Idle }
+        }
+    }
 }
 
 static FRIENDLY: LazyLock<Map<String, Value>> =
@@ -143,6 +268,10 @@ struct State {
     halted: bool,
     overnight_fails: u32,
     overnight_done: u32,
+    /// Studio mode stopped at a gate (STATUS: WAITING): no carry-on until the user answers, and the clock is stopped
+    /// with this many seconds of it left.
+    studio_waiting: bool,
+    overnight_left: f64,
     /// Which AI this chat runs on ("claude", "gemini" or "chatgpt"). Open until the first message; a
     /// conversation then stays with the AI it began on, because its memory lives with that AI.
     ai: Option<String>,
@@ -332,7 +461,7 @@ impl Agent {
             paths::now_secs() - st.saved_at > 3.0
         };
         // saved as the chat goes, so nothing is lost if the window is closed or the app is killed
-        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone") || (kind == "tool" && stale) {
+        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting") || (kind == "tool" && stale) {
             self.save();
         }
     }
@@ -408,6 +537,12 @@ impl Agent {
     /// Whether overnight mode is keeping this chat going.
     pub fn overnight(&self) -> bool {
         self.st.lock().unwrap().overnight_until > paths::now_secs()
+    }
+
+    /// Whether a Studio run in this chat is stopped at a gate, waiting for the user's answer in Review.
+    #[allow(dead_code)] // read by the Review tab (a later task); the window already gets it as the studio_waiting event
+    pub fn studio_waiting(&self) -> bool {
+        self.st.lock().unwrap().studio_waiting
     }
 
     /// Note what a turn used: in the usage log, and as an event the window adds up for this chat.
@@ -509,10 +644,12 @@ impl Agent {
         if self.busy() {
             return;
         }
+        // Studio mode is full auto with overnight's loop
+        let ask = &Ask { overnight: ask.overnight || ask.studio, full: ask.full || ask.studio, ..ask.clone() };
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
         let (model, attachments, kickoff) = (ask.model.as_deref(), ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
-        {
+        let resumed = {
             // a message from the user sets autopilot's allowance afresh; its own "carry on" spends from it
             let mut st = self.st.lock().unwrap();
             if auto && std::mem::take(&mut st.halted) {
@@ -525,7 +662,19 @@ impl Agent {
                 st.overnight_fails = 0;
                 st.overnight_done = 0;
             }
+            // a Studio run waiting at a gate goes on: the clock restarts with the full 24 hours
+            let resumed = std::mem::take(&mut st.studio_waiting);
+            if resumed {
+                st.overnight_left = 0.0;
+                if ask.studio {
+                    st.overnight_until = paths::now_secs() + OVERNIGHT_SECS;
+                }
+            }
             st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
+            resumed
+        };
+        if resumed {
+            self.put("studio_waiting", json!({"value": false, "left": 0}));
         }
         if let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
             return self.make_texture(&c[1].to_lowercase(), c[2].trim());
@@ -555,6 +704,7 @@ impl Agent {
             json!({
                 "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
+                "studio": ask.studio, "studio_waiting": false,
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
                 "files": infos.iter().filter(|i| i.kind != "image").map(|i| i.label.clone()).collect::<Vec<_>>(),
             }),
@@ -568,6 +718,7 @@ impl Agent {
         match kickoff {
             Some("new") => text += KICKOFF_NEW,
             Some("existing") => text += KICKOFF_EXISTING,
+            Some("studio") => text += KICKOFF_STUDIO,
             _ => {}
         }
         // what is selected in Studio and any new errors there, when the Studio plugin is connected
@@ -581,7 +732,8 @@ impl Agent {
             plugin::begin(st.turn_started);
         }
         // an overnight run starts with a checkpoint, so the whole night can be undone in the morning
-        if ask.overnight && !auto {
+        // (a Studio run going on after a gate is the same run, so it keeps its first checkpoint)
+        if ask.overnight && !auto && !resumed {
             let start = self.turn_started();
             plugin::pin(start);
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
@@ -610,7 +762,7 @@ impl Agent {
             self.put("ai", json!({"ai": kind}));
         }
         // what the two switches under the message box add
-        let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>();
+        let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
         let mut prompt = SYSTEM_PROMPT.to_string() + &switches;
         let (project, role, expert_text) = {
             let st = self.st.lock().unwrap();
@@ -624,6 +776,9 @@ impl Agent {
             Some("research") => prompt += RESEARCH_PROMPT,
             Some(_) => prompt += WORKER_PROMPT,
             None => {}
+        }
+        if ask.studio && role.is_none() {
+            prompt += &studio_lead_text(project.as_deref());
         }
         if let Some(text) = expert_text.filter(|t| !t.trim().is_empty()) {
             prompt += &format!("\n\n{}", text.trim());
@@ -863,51 +1018,37 @@ impl Agent {
         let said = last_line.to_uppercase();
         let held = std::mem::take(&mut self.st.lock().unwrap().queue);
         let mut night_over: Option<&str> = None;
+        let mut waiting: Option<f64> = None;
         let carry_on: Option<(Ask, &str)> = {
             let mut st = self.st.lock().unwrap();
             let next = Ask { kickoff: Some("auto".to_string()), ..st.last_ask.clone() };
-            if !held.is_empty() || stopped {
-                st.autopilot_left = 0;
-                if stopped {
-                    st.overnight_until = 0.0;
+            let now = paths::now_secs();
+            let night = st.overnight_until > now;
+            let mut ls = LoopState { autopilot_left: st.autopilot_left, fails: st.overnight_fails, done: st.overnight_done, night };
+            let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result, &said, &mut ls);
+            st.autopilot_left = ls.autopilot_left;
+            st.overnight_fails = ls.fails;
+            st.overnight_done = ls.done;
+            if step == Step::Wait {
+                st.studio_waiting = true;
+                st.overnight_left = (st.overnight_until - now).max(0.0);
+                waiting = Some(st.overnight_left);
+            }
+            if stopped || (night && !ls.night) {
+                st.overnight_until = 0.0;
+            }
+            match step {
+                Step::CarryOn(say) => Some((next, say)),
+                Step::End(why) => {
+                    night_over = Some(why);
+                    None
                 }
-                None
-            } else if st.overnight_until > paths::now_secs() {
-                // overnight: keep going past "done" and "needs you"; stop on repeated failure or when twice there is nothing left
-                if !got_result {
-                    st.overnight_fails += 1;
-                    if st.overnight_fails >= 3 {
-                        st.overnight_until = 0.0;
-                        night_over = Some("Overnight mode stopped: three turns in a row failed.");
-                        None
-                    } else {
-                        Some((next, "The last turn failed. Find out what went wrong, fix or work around it, then carry on."))
-                    }
-                } else if said.starts_with("STATUS: DONE") {
-                    st.overnight_fails = 0;
-                    st.overnight_done += 1;
-                    if st.overnight_done >= 2 {
-                        st.overnight_until = 0.0;
-                        night_over = Some("Overnight mode finished: twice in a row there was nothing more it could do without you. See the board for what needs you.");
-                        None
-                    } else {
-                        Some((next, "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE."))
-                    }
-                } else if said.starts_with("STATUS: NEEDS YOU") {
-                    st.overnight_fails = 0;
-                    st.overnight_done = 0;
-                    Some((next, "I am away. Put what you need from me on the board under needs if it is not there yet, then carry on with the next most valuable thing you can do without me."))
-                } else {
-                    st.overnight_fails = 0;
-                    st.overnight_done = 0;
-                    Some((next, "Carry on with the next step."))
-                }
-            } else {
-                let go = got_result && st.autopilot_left > 0 && said.starts_with("STATUS: CONTINUE");
-                st.autopilot_left = if go { st.autopilot_left - 1 } else { 0 };
-                go.then_some((next, "Carry on with the next step."))
+                Step::Wait | Step::Idle => None,
             }
         };
+        if let Some(left) = waiting {
+            self.put("studio_waiting", json!({"value": true, "left": left.round()}));
+        }
         if let Some(why) = night_over {
             self.put("error", json!({"text": why}));
         }
@@ -918,6 +1059,8 @@ impl Agent {
                 ("doing", None)
             } else if stopped {
                 ("todo", Some("Stopped before it finished.".to_string()))
+            } else if waiting.is_some() {
+                ("needs", Some("Waiting for your answer in Review".to_string()))
             } else if said.starts_with("STATUS: NEEDS YOU") {
                 ("needs", Some(last_line.splitn(2, ':').nth(1).and_then(|r| r.splitn(2, ':').nth(1)).unwrap_or("").trim().to_string()))
             } else if !got_result {
@@ -956,6 +1099,12 @@ impl Agent {
                 st.overnight_until = 0.0;
                 st.autopilot_left = 0;
                 st.halted = true;
+                let was_waiting = std::mem::take(&mut st.studio_waiting);
+                st.overnight_left = 0.0;
+                drop(st);
+                if was_waiting {
+                    self.put("studio_waiting", json!({"value": false, "left": 0}));
+                }
                 return;
             }
             st.stopped = true;
@@ -1251,6 +1400,17 @@ pub fn shut_down() {
     }
 }
 
+/// The Lead's instructions for a Studio run: the game's own `.fridae/team/experts/lead.md` when it has one, else the
+/// kit's `team/experts/lead.md`. Empty when neither can be read (the studio prompt still applies).
+fn studio_lead_text(project: Option<&str>) -> String {
+    let mut files: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(p) = project {
+        files.push(std::path::Path::new(p).join(".fridae").join("team").join("experts").join("lead.md"));
+    }
+    files.push(PATHS.kit.join("team").join("experts").join("lead.md"));
+    files.iter().find_map(|f| fs::read_to_string(f).ok()).filter(|t| !t.trim().is_empty()).map(|t| format!("\n\n{}", t.trim())).unwrap_or_default()
+}
+
 /// Extra instructions when several agents share one Studio place.
 fn team_prompt(me: &Agent) -> String {
     let others: Vec<String> = agents()
@@ -1383,4 +1543,165 @@ pub fn connect_other_agents() -> String {
          For any other agent that supports MCP servers, add:\n{}",
         serde_json::to_string_pretty(&json!({"mcpServers": {"rbxkit": entry}})).unwrap_or_default()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NIGHT_NEXT: &str = "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE.";
+    const NIGHT_AWAY: &str = "I am away. Put what you need from me on the board under needs if it is not there yet, then carry on with the next most valuable thing you can do without me.";
+    const FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
+    const NEXT: &str = "Carry on with the next step.";
+
+    fn night() -> LoopState {
+        LoopState { autopilot_left: AUTOPILOT_TURNS, fails: 0, done: 0, night: true }
+    }
+
+    #[test]
+    fn mode_is_chosen_as_before() {
+        assert_eq!(loop_mode(true, true, true, true), Mode::Stopped);
+        assert_eq!(loop_mode(false, true, true, true), Mode::Held);
+        assert_eq!(loop_mode(false, false, true, false), Mode::Overnight);
+        assert_eq!(loop_mode(false, false, true, true), Mode::Studio);
+        assert_eq!(loop_mode(false, false, false, true), Mode::Autopilot);
+        assert_eq!(loop_mode(false, false, false, false), Mode::Autopilot);
+    }
+
+    #[test]
+    fn stopped_and_held_carry_nothing() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Stopped, true, "STATUS: CONTINUE", &mut s), Step::Idle);
+        assert_eq!((s.autopilot_left, s.night), (0, false));
+        let mut s = night();
+        assert_eq!(next_step(Mode::Held, true, "STATUS: CONTINUE", &mut s), Step::Idle);
+        assert_eq!((s.autopilot_left, s.night), (0, true)); // a held message does not end the night
+    }
+
+    #[test]
+    fn overnight_carries_on_with_the_same_messages() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Overnight, true, "SOME TEXT", &mut s), Step::CarryOn(NEXT));
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: CONTINUE", &mut s), Step::CarryOn(NEXT));
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: NEEDS YOU: A KEY", &mut s), Step::CarryOn(NIGHT_AWAY));
+        assert_eq!((s.fails, s.done, s.night), (0, 0, true));
+        assert_eq!(s.autopilot_left, AUTOPILOT_TURNS); // the night does not spend autopilot's allowance
+    }
+
+    #[test]
+    fn overnight_done_twice_ends() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: DONE", &mut s), Step::CarryOn(NIGHT_NEXT));
+        assert_eq!((s.done, s.night), (1, true));
+        assert_eq!(
+            next_step(Mode::Overnight, true, "STATUS: DONE", &mut s),
+            Step::End("Overnight mode finished: twice in a row there was nothing more it could do without you. See the board for what needs you.")
+        );
+        assert!(!s.night);
+    }
+
+    #[test]
+    fn overnight_done_count_resets_on_other_lines() {
+        let mut s = night();
+        next_step(Mode::Overnight, true, "STATUS: DONE", &mut s);
+        next_step(Mode::Overnight, true, "STATUS: NEEDS YOU: X", &mut s);
+        assert_eq!(s.done, 0);
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: DONE", &mut s), Step::CarryOn(NIGHT_NEXT));
+        next_step(Mode::Overnight, true, "STATUS: CONTINUE", &mut s);
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: DONE", &mut s), Step::CarryOn(NIGHT_NEXT));
+    }
+
+    #[test]
+    fn overnight_three_failures_end() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Overnight, false, "", &mut s), Step::CarryOn(FAILED));
+        assert_eq!(next_step(Mode::Overnight, false, "", &mut s), Step::CarryOn(FAILED));
+        assert_eq!(next_step(Mode::Overnight, false, "", &mut s), Step::End("Overnight mode stopped: three turns in a row failed."));
+        assert!(!s.night);
+    }
+
+    #[test]
+    fn overnight_failures_reset_on_success() {
+        let mut s = night();
+        next_step(Mode::Overnight, false, "", &mut s);
+        next_step(Mode::Overnight, false, "", &mut s);
+        next_step(Mode::Overnight, true, "STATUS: CONTINUE", &mut s);
+        assert_eq!(s.fails, 0);
+        assert_eq!(next_step(Mode::Overnight, false, "", &mut s), Step::CarryOn(FAILED));
+        // a failure does not touch the done count
+        let mut s = night();
+        next_step(Mode::Overnight, true, "STATUS: DONE", &mut s);
+        next_step(Mode::Overnight, false, "", &mut s);
+        assert_eq!((s.fails, s.done), (1, 1));
+    }
+
+    #[test]
+    fn autopilot_unchanged() {
+        let mut s = LoopState { autopilot_left: 2, ..Default::default() };
+        assert_eq!(next_step(Mode::Autopilot, true, "STATUS: CONTINUE", &mut s), Step::CarryOn(NEXT));
+        assert_eq!(s.autopilot_left, 1);
+        assert_eq!(next_step(Mode::Autopilot, true, "STATUS: CONTINUE", &mut s), Step::CarryOn(NEXT));
+        assert_eq!(s.autopilot_left, 0);
+        assert_eq!(next_step(Mode::Autopilot, true, "STATUS: CONTINUE", &mut s), Step::Idle);
+        let mut s = LoopState { autopilot_left: 5, ..Default::default() };
+        assert_eq!(next_step(Mode::Autopilot, true, "STATUS: DONE", &mut s), Step::Idle);
+        assert_eq!(s.autopilot_left, 0);
+        let mut s = LoopState { autopilot_left: 5, ..Default::default() };
+        assert_eq!(next_step(Mode::Autopilot, false, "STATUS: CONTINUE", &mut s), Step::Idle);
+        assert_eq!(s.autopilot_left, 0);
+    }
+
+    #[test]
+    fn studio_waiting_waits_and_resets_counters() {
+        let mut s = night();
+        next_step(Mode::Studio, true, "STATUS: DONE", &mut s);
+        next_step(Mode::Studio, false, "", &mut s);
+        assert_eq!((s.fails, s.done), (1, 1));
+        assert_eq!(next_step(Mode::Studio, true, "STATUS: WAITING", &mut s), Step::Wait);
+        assert_eq!((s.fails, s.done, s.night), (0, 0, false)); // the clock stops
+    }
+
+    #[test]
+    fn studio_done_twice_ends() {
+        let mut s = night();
+        assert!(matches!(next_step(Mode::Studio, true, "STATUS: DONE", &mut s), Step::CarryOn(_)));
+        assert!(matches!(next_step(Mode::Studio, true, "STATUS: DONE", &mut s), Step::End(_)));
+        assert!(!s.night);
+    }
+
+    #[test]
+    fn studio_three_failures_end_and_failed_turn_never_waits() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Studio, false, "STATUS: WAITING", &mut s), Step::CarryOn(FAILED));
+        next_step(Mode::Studio, false, "", &mut s);
+        assert!(matches!(next_step(Mode::Studio, false, "", &mut s), Step::End(_)));
+    }
+
+    #[test]
+    fn studio_other_lines_carry_on() {
+        let mut s = night();
+        assert!(matches!(next_step(Mode::Studio, true, "STATUS: CONTINUE", &mut s), Step::CarryOn(_)));
+        assert!(matches!(next_step(Mode::Studio, true, "STATUS: NEEDS YOU: A KEY", &mut s), Step::CarryOn(_)));
+        assert_eq!((s.fails, s.done, s.night), (0, 0, true));
+    }
+
+    #[test]
+    fn waiting_outside_studio_is_an_ordinary_line() {
+        let mut s = night();
+        assert_eq!(next_step(Mode::Overnight, true, "STATUS: WAITING", &mut s), Step::CarryOn(NEXT));
+        assert!(s.night);
+        let mut s = LoopState { autopilot_left: 5, ..Default::default() };
+        assert_eq!(next_step(Mode::Autopilot, true, "STATUS: WAITING", &mut s), Step::Idle);
+        assert_eq!(s.autopilot_left, 0);
+    }
+
+    #[test]
+    fn studio_prompt_and_kickoff_name_the_real_tools() {
+        for word in ["rbx_stage", "rbx_team", "decisions", "STATUS: WAITING", "`studio`", "replaces", "wait"] {
+            assert!(STUDIO_PROMPT.contains(word), "studio.txt should mention {word}");
+        }
+        for word in ["design", "idea", "scout", "GAME.md", "the plan for this run"] {
+            assert!(KICKOFF_STUDIO.contains(word), "kickoff_studio.txt should mention {word}");
+        }
+    }
 }

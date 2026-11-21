@@ -204,8 +204,10 @@ fn post(path: &str, body: Value) -> Reply {
                 let (selftest, gemini, model) = (body["selftest"].as_bool().unwrap_or(false), body["gemini"].as_bool().unwrap_or(false), body["model"].as_str().map(str::to_string));
                 let kickoff = body["kickoff"].as_str().map(str::to_string);
                 let effort = body["effort"].as_str().map(str::to_string);
-                let overnight = body["overnight"].as_bool().unwrap_or(false);
-                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff };
+                // Studio mode implies full auto and overnight's loop
+                let studio = body["studio"].as_bool().unwrap_or(false);
+                let overnight = studio || body["overnight"].as_bool().unwrap_or(false);
+                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff, studio };
                 thread::spawn(move || agent.ask(&text, &ask));
             }
             send_json(json!({"ok": target.is_some()}))

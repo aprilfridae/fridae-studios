@@ -84,6 +84,7 @@ GUIDES = {
     "market-research": ("skills/market-research/SKILL.md", "Game: comparable live experiences with rbx_market and what to learn from them"),
     "critic": ("skills/critic/SKILL.md", "Instructions for an agent spawned as a reviewer of finished work"),
     "producer": ("skills/producer/SKILL.md", "Splitting a large request between parallel agents with rbx_team"),
+    "studio": ("skills/studio/SKILL.md", "Studio mode, for the Lead: stages, gates, briefing experts, review items, decisions, waiting"),
     "promo": ("skills/roblox-promo/SKILL.md", "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo"),
 }
 
