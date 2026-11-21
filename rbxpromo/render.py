@@ -189,7 +189,8 @@ def _cover_time(recipe, duration):
 
 def _run_renderer(recipe_path, video, layout, cover, cover_t, report):
     script = os.path.join(engine.engine_dir(), "renderer", "scripts", "render.mjs")
-    cmd = engine.node_cmd(script, recipe_path, video, "--layout", layout, "--still", str(cover_t), cover)
+    cmd = engine.node_cmd(script, recipe_path, video, *(["--layout", layout] if layout else []),
+                          "--still", str(cover_t), cover)
     with tempfile.TemporaryFile() as err:
         with subprocess.Popen(cmd, env=engine.node_env(), stdout=subprocess.PIPE, stderr=err,
                               text=True, encoding="utf-8", errors="replace") as proc:
@@ -212,6 +213,13 @@ def _run_renderer(recipe_path, video, layout, cover, cover_t, report):
         why = (final or {}).get("error") or tail or "no result from the renderer (exit code %s)" % code
         raise engine.EngineError("The render failed: " + why)
     return final
+
+
+def render_still(recipe_path, out_jpg, seconds):
+    """Render only one frame of a recipe (at `seconds`) to a JPEG, without making a video."""
+    engine._require_ready()
+    _run_renderer(recipe_path, "-", None, out_jpg, seconds, lambda _x: None)
+    return out_jpg
 
 
 def _sheet(video, out_jpg):
