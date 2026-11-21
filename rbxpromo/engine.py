@@ -218,6 +218,15 @@ def _binary(name):
     return exe
 
 
+def tool_env():
+    """Environment for running ffmpeg/ffprobe: on macOS they find their libav*.dylib files only via this path."""
+    env = dict(os.environ)
+    folder = _compositor_dir()
+    if folder:
+        env["DYLD_LIBRARY_PATH"] = folder + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
+    return env
+
+
 def ffmpeg():
     return _binary("ffmpeg")
 
