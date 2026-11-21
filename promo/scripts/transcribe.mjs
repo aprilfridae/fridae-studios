@@ -24,6 +24,26 @@ export function readWav16(path) {
   return { samples: out, rate };
 }
 
+const WINDOW_S = 25, SEARCH_S = 5;
+function windows(samples, rate) {
+  const out = [], win = WINDOW_S * rate, frame = Math.round(rate * 0.1);
+  let from = 0;
+  while (from < samples.length) {
+    let to = Math.min(samples.length, from + win);
+    if (to < samples.length) {
+      let best = Infinity;
+      for (let f = to - SEARCH_S * rate; f + frame <= to; f += frame) {
+        let e = 0;
+        for (let i = f; i < f + frame; i++) e += samples[i] * samples[i];
+        if (e < best) { best = e; to = f + (frame >> 1); }
+      }
+    }
+    out.push([from, to]);
+    from = to;
+  }
+  return out;
+}
+
 const path = process.argv[2];
 if (!path) { console.error("usage: node transcribe.mjs <wav>"); process.exit(2); }
 const { samples, rate } = readWav16(path);
@@ -34,11 +54,21 @@ const rms = samples.length ? Math.sqrt(sum / samples.length) : 0;
 let words = [];
 if (rms >= SILENT_RMS) {
   const asr = await pipeline("automatic-speech-recognition", MODEL, { dtype: "q8" });
-  const r = await asr(samples, { return_timestamps: "word", chunk_length_s: 30, stride_length_s: 5 });
-  words = (r.chunks || [])
-    .map((c) => ({ text: String(c.text).trim(), start: c.timestamp[0], end: c.timestamp[1] ?? c.timestamp[0] }))
-    .filter((w) => w.text && Number.isFinite(w.start))
-    .map((w) => ({ text: w.text, start: +w.start.toFixed(3), end: +Math.max(w.start, Number.isFinite(w.end) ? w.end : w.start).toFixed(3) }));
+  // Whisper takes 30 s at a time, and transformers.js word times collapse after its own chunk
+  // boundary, so the audio is cut into windows here (at the quietest moment near each end) and
+  // the times are shifted back.
+  for (const [from, to] of windows(samples, rate)) {
+    const r = await asr(samples.subarray(from, to), { return_timestamps: "word" });
+    const off = from / rate, limit = to / rate;
+    for (const c of r.chunks || []) {
+      const text = String(c.text).trim(), s0 = c.timestamp[0];
+      if (!text || !Number.isFinite(s0)) continue;
+      const e0 = Number.isFinite(c.timestamp[1]) ? Math.max(s0, c.timestamp[1]) : s0;
+      // a word can never lie outside its window or before the one that came before it
+      const start = Math.max(words.length ? words[words.length - 1].start : 0, Math.min(limit, off + s0));
+      words.push({ text, start: +start.toFixed(3), end: +Math.max(start, Math.min(limit, off + e0)).toFixed(3) });
+    }
+  }
 }
 console.log(JSON.stringify({ ok: true, words, duration: +duration.toFixed(3) }));
 // onnxruntime can abort while the process shuts down; the caller trusts the line above, not the exit code.

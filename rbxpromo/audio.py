@@ -152,5 +152,10 @@ def voice(text, out_wav, voice="af_heart"):
             _to_pcm16(raw, wav)
             _atomic_copy(wav, cached_wav)
     words = transcribe(cached_wav)
+    heard = sum(len(_norm(w["text"])) for w in words["words"])
+    wanted = sum(len(_norm(t)) for t in str(text).split())
+    if wanted and heard < 0.8 * wanted:
+        raise engine.EngineError(f"The voice covered only part of the script ({heard} of {wanted} letters were "
+                                 "recognised). Shorten the text or try again.")
     _atomic_copy(cached_wav, out_wav)
     return {"file": out_wav, "duration": words["duration"], "words": align_to_script(text, words["words"])}

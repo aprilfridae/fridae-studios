@@ -66,6 +66,27 @@ class AudioTests(unittest.TestCase):
         self.assertEqual(r["words"], [])
         self.assertAlmostEqual(r["duration"], 3.0, delta=0.2)
 
+    def test_long_script_is_not_cut_off(self):
+        places = ["castle", "jungle", "harbor", "desert", "volcano", "market", "island", "tower", "canyon", "garden"]
+        things = ["glowing key", "silver map", "hidden door", "golden crown", "tiny robot", "ancient bridge"]
+        # varied sentences: Whisper drops repeated ones, which would hide what this test checks
+        sentences = ["In the %s you can find a %s and then meet new friends." % (p, t) for p in places[:8] for t in things[:2]]
+        text = " ".join(sentences) + " The very last sentence ends here."
+        out = os.path.join(self.tmp.name, "long.wav")
+        r = self.audio.voice(text, out)
+        self.assertGreater(r["duration"], 60)  # about 220 words, well past the model's ~510 token limit
+        self.assertEqual([w["text"].lower().strip(".") for w in r["words"][-4:]], ["last", "sentence", "ends", "here"])
+        self.assertAlmostEqual(len(r["words"]), len(text.split()), delta=len(text.split()) * 0.1)  # Whisper may mishear a few
+        starts = [w["start"] for w in r["words"]]
+        self.assertEqual(starts, sorted(starts))
+        self.assertGreater(len(set(starts)), len(starts) * 0.95)  # no pile-up of equal times past 30 s
+
+    def test_voice_raises_when_speech_misses_the_script(self):
+        from unittest import mock
+        with mock.patch.object(self.audio, "transcribe", return_value={"words": [{"text": "hello", "start": 0, "end": 1}], "duration": 1}):
+            with self.assertRaises(self.audio.engine.EngineError):
+                self.audio.voice("this is a much longer script than the speech that came back from the model", os.path.join(self.tmp.name, "m.wav"))
+
     def test_empty_text_is_an_error(self):
         with self.assertRaises(ValueError):
             self.audio.voice("   ", os.path.join(self.tmp.name, "x.wav"))
