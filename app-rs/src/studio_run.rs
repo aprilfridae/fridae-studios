@@ -533,12 +533,18 @@ fn end_run(project: &Path) -> Result<String, String> {
     })?
 }
 
-/// End this run: nothing destructive. The Lead stops carrying on (a turn under way finishes first), experts at work
-/// finish, and a new run may start (it archives this one's review items as usual).
+/// End this run: nothing destructive (files and review items stay). The Lead's turn under way and the experts at work
+/// are stopped (a Lead blocked in `rbx_team wait` would otherwise go on spending, and so would its experts), nothing
+/// carries on, and a new run may start (it archives this one's review items as usual). The run is marked ended first,
+/// so a stopped turn's ending already sees it: no carry-on, and held messages go as ordinary ones.
 fn end(project: &str) -> Result<Value, String> {
     let lead = end_run(Path::new(project))?;
     if let Some(l) = agents::get(&lead).filter(|_| !lead.is_empty()) {
         l.end_run();
+        for expert in agents::working_helpers_of(&lead) {
+            expert.stop();
+        }
+        l.stop();
     }
     Ok(json!({"ok": true}))
 }

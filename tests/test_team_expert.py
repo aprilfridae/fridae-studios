@@ -109,3 +109,105 @@ class ExpertSpawnTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LeadWaitTests(unittest.TestCase):
+    """rbx_team wait hands a studio run's Lead back early (live run L4), and refuses experts on an ended run (L2)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="wait é ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.project = os.path.join(self.tmp, "Gäme")
+        os.makedirs(os.path.join(self.project, ".fridae"))
+        for p in (mock.patch.object(rbxteam, "RESULTS", os.path.join(self.tmp, "res")),
+                  mock.patch.object(rbxteam, "REQUESTS", os.path.join(self.tmp, "req")),
+                  mock.patch.object(rbxteam, "NUDGES", os.path.join(self.tmp, "nudge")),
+                  mock.patch.object(rbxteam, "PICKUP", 0.3),
+                  mock.patch.dict(os.environ, {"RBXKIT_PROJECT": self.project, "RBXKIT_AGENT_ROLE": "",
+                                               "RBXKIT_AGENT_ID": "lead1"})):
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(rbxteam.RESULTS)
+        self.result("w1", "running")
+
+    def result(self, rid, status):
+        with open(os.path.join(rbxteam.RESULTS, rid + ".json"), "w", encoding="utf-8") as f:
+            json.dump({"id": rid, "status": status, "role": "worker", "name": "Design plan", "text": "ok"}, f)
+
+    def run_file(self, **run):
+        with open(os.path.join(self.project, ".fridae", "studio.json"), "w", encoding="utf-8") as f:
+            json.dump(dict({"on": True, "lead": "lead1", "stage": "design"}, **run), f)
+
+    def wait(self, timeout=3):
+        import time
+        t = time.time()
+        out = rbxteam.run("wait", {"ids": ["w1"], "timeout": timeout})
+        return out, time.time() - t
+
+    def test_no_run_waits_as_before(self):
+        out, took = self.wait(1)
+        self.assertGreaterEqual(took, 0.9)
+        self.assertIn("Still not finished after", out)
+
+    def test_another_chats_run_waits_as_before(self):
+        self.run_file(lead="someone-else", paused=True)
+        out, took = self.wait(1)
+        self.assertGreaterEqual(took, 0.9)
+        self.assertNotIn("Returned early", out)
+
+    def test_paused_run_returns_at_once(self):
+        self.run_file(paused=True)
+        out, took = self.wait()
+        self.assertLess(took, 1.5)
+        self.assertIn("Returned early", out)
+        self.assertIn("paused", out)
+        self.assertIn("Still running: w1", out)
+        self.assertIn("have not failed", out)
+
+    def test_ended_run_returns_at_once(self):
+        import time
+        self.run_file(on=False, ended=time.time())
+        out, took = self.wait()
+        self.assertLess(took, 1.5)
+        self.assertIn("ended", out)
+
+    def test_nudge_returns_and_is_taken(self):
+        self.run_file()
+        os.makedirs(rbxteam.NUDGES)
+        with open(os.path.join(rbxteam.NUDGES, "lead1"), "w", encoding="utf-8") as f:
+            json.dump({"typed": 1, "wakes": 0}, f)
+        out, took = self.wait()
+        self.assertLess(took, 1.5)
+        self.assertIn("the user sent you a message", out)
+        self.assertFalse(os.path.exists(os.path.join(rbxteam.NUDGES, "lead1")), "taken, so the next wait does not return for it")
+        with open(os.path.join(rbxteam.NUDGES, "lead1"), "w", encoding="utf-8") as f:
+            json.dump({"typed": 0, "wakes": 1}, f)
+        out, _ = self.wait()
+        self.assertIn("rbx_stage action 'decisions'", out)
+
+    def test_lead_waits_in_slices(self):
+        self.run_file()
+        with mock.patch.object(rbxteam, "LEAD_WAIT", 1):
+            out, took = self.wait(5)
+        self.assertLess(took, 2.5)
+        self.assertIn("Returned early", out)
+        self.assertIn("decisions", out)
+
+    def test_finished_tasks_are_handed_back_normally(self):
+        self.run_file(paused=True)
+        self.result("w1", "done")
+        out, _ = self.wait()
+        self.assertIn("All finished", out)
+        self.assertNotIn("Returned early", out)
+
+    def test_ended_run_refuses_experts(self):
+        import time
+        self.run_file(on=False, ended=time.time())
+        with self.assertRaises(KitError) as e:
+            rbxteam.spawn("worker", "More", ExpertSpawnTests.TASK, expert="coder")
+        self.assertIn("This game's studio run was ended.", str(e.exception))
+        self.assertEqual(os.listdir(self.tmp).count("req"), 0, "no request was written")
+        # a plain helper (no expert) is not part of the run, and an ended run of another chat refuses nothing
+        self.run_file(on=False, ended=time.time(), lead="someone-else")
+        rid, res = rbxteam.spawn("worker", "More", ExpertSpawnTests.TASK, expert="coder")
+        self.assertIsNone(res, "nobody picks it up in a test, but it was asked for")

@@ -137,6 +137,9 @@ fn lead_to_wake(lead: &Agent) -> bool {
     .unwrap_or(false)
 }
 
+/// Why an expert is not started for the Lead of a run that was ended in Review.
+pub const RUN_ENDED: &str = "This game's studio run was ended.";
+
 fn start(req: &Value) {
     let id = paths::base_name(req["id"].as_str().unwrap_or(""));
     let role = if req["role"] == "critic" { "critic" } else { "worker" };
@@ -159,6 +162,10 @@ fn start(req: &Value) {
     }
     let project = from.as_ref().and_then(|a| a.project());
     if let (Some(lead), Some(p)) = (&from, &project) {
+        // an ended run's Lead may finish the turn under way, but it starts no more experts
+        if expert.is_some() && crate::studio_undo::lead_of(p, &lead.id).ended {
+            return refuse(RUN_ENDED);
+        }
         if let Some(why) = over_expert_limit(lead, p) {
             return refuse(&why);
         }
@@ -201,7 +208,6 @@ fn start(req: &Value) {
     thread::spawn(move || agent.send(&task, &agents::Ask::default()));
 }
 
-/// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// What a helper hands back: its reply, or why there is none. A helper the user stopped says so first, so the
 /// waiting chat knows it did not finish (and what it had said so far, if anything).
 pub fn result_text(reply: &str, stopped: bool) -> String {
@@ -214,6 +220,7 @@ pub fn result_text(reply: &str, stopped: bool) -> String {
     }
 }
 
+/// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
 pub fn finished(agent: &Agent, stopped: bool) {
     release(agent);
@@ -382,5 +389,20 @@ mod tests {
         fs::write(d.join(".fridae").join("studio.json"), paused.to_string()).unwrap();
         assert!(!lead_to_wake(&lead));
         assert_eq!(SLOT_FREE, "An agent slot is free. Carry on.");
+    }
+
+    #[test]
+    fn an_ended_runs_lead_starts_no_experts() {
+        let d = game("ended");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: ended", Some(p.clone())).unwrap();
+        fs::write(d.join(".fridae").join("studio.json"), json!({"on": false, "ended": 1.0, "lead": lead.id}).to_string()).unwrap();
+        let task = "Design the course: twelve sections, checkpoints every two, a short tutorial, and report the plan back.";
+        start(&json!({"id": "w-ended", "from": lead.id, "role": "worker", "name": "Plan", "task": task, "expert": "designer", "expert_name": "Designer"}));
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-ended.json")).unwrap()).unwrap();
+        assert_eq!(res["status"], "refused");
+        assert_eq!(res["reason"], RUN_ENDED);
+        assert_eq!(RUN_ENDED, "This game's studio run was ended.");
+        agents::remove_agent(&lead.id);
     }
 }

@@ -72,6 +72,9 @@ pub struct Ask {
     /// Studio mode: the game's chat is the Lead, moving the game through its stages with named experts. It implies
     /// full auto and overnight's loop, and may also wait for the user at a gate (STATUS: WAITING).
     pub studio: bool,
+    /// A message the app itself sends to a studio run's Lead (Resume, a decision, a free slot, a board card), not one
+    /// the user typed: Stop and End this run drop it from the queue (`drop_wakes`).
+    pub wake: bool,
 }
 
 /// What kind of turn just ended, for deciding what happens next.
@@ -317,6 +320,40 @@ fn merged_studio(held: &[(String, String, Ask)], newest: bool) -> bool {
     newest || held.iter().any(|(_, _, a)| a.studio)
 }
 
+/// Stop or End this run on a Lead: the app's own queued wakes go (a "Resume the studio run." must not start a new
+/// turn), and after End what the user typed stays queued but as an ordinary message. True when the queue changed.
+fn drop_wakes(queue: &mut Vec<(String, String, Ask)>, ended: bool) -> bool {
+    let before = queue.len();
+    queue.retain(|(_, _, a)| !a.wake);
+    let mut changed = queue.len() < before;
+    if ended {
+        for (_, _, a) in queue.iter_mut().filter(|(_, _, a)| a.studio) {
+            *a = ordinary(a);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// A Studio message turned into an ordinary one (Ask me): no Studio, no full auto, no night loop.
+fn ordinary(ask: &Ask) -> Ask {
+    Ask { studio: false, overnight: false, full: false, autopilot: false, wake: false, ..ask.clone() }
+}
+
+/// What a message to a project's chat runs with, given the game's run (`run`) and whether the chat waits at a gate.
+/// The Lead of a running run gets Studio mode whatever was sent (`studio_message`); the Lead of an ENDED run is an
+/// ordinary chat again: a Studio message goes as Ask me (no Studio mode, so no night checkpoint), and None means it
+/// is dropped (an app wake, or a carry-on, for a run that is over).
+fn lead_ask(ask: &Ask, run: studio_undo::LeadOf, waiting: bool, last: &Ask) -> Option<Ask> {
+    if !run.ended {
+        return Some(effective_ask(&studio_message(ask, run.leads), waiting, last));
+    }
+    if ask.wake || (ask.kickoff.as_deref() == Some("auto") && last.studio) {
+        return None;
+    }
+    Some(if ask.studio { ordinary(ask) } else { effective_ask(ask, false, last) })
+}
+
 /// What a Lead is told when its run was ended in Review while it worked or waited.
 const RUN_ENDED: &str = "Studio run ended in Review. Its files and review items are kept.";
 
@@ -537,6 +574,16 @@ pub fn agents() -> Vec<Arc<Agent>> {
     AGENTS.lock().unwrap().clone()
 }
 
+/// Whether a chat is one of `lead`'s helpers at work: started by it with rbx_team, and working now.
+fn working_helper_of(st: &State, lead: &str) -> bool {
+    !lead.is_empty() && st.team.is_some() && st.parent.as_deref() == Some(lead) && working(st)
+}
+
+/// The helpers `lead` started that are working now (End this run stops them).
+pub fn working_helpers_of(lead: &str) -> Vec<Arc<Agent>> {
+    agents().into_iter().filter(|a| working_helper_of(&a.st.lock().unwrap(), lead)).collect()
+}
+
 pub fn get(id: &str) -> Option<Arc<Agent>> {
     AGENTS.lock().unwrap().iter().find(|a| a.id == id).cloned()
 }
@@ -582,16 +629,21 @@ impl Agent {
     /// The run this chat leads was ended in Review: the night's clock and autopilot stop, a wait at a gate is over,
     /// and the next carry-on is dropped. A turn already under way finishes, and then nothing carries on (`ended_step`).
     pub fn end_run(&self) {
-        let was_waiting = {
+        let (was_waiting, requeued) = {
             let mut st = self.st.lock().unwrap();
+            // queued wakes go; what the user typed stays queued, as ordinary messages (see drop_wakes)
+            let requeued = drop_wakes(&mut st.queue, true);
             st.overnight_until = 0.0;
             st.overnight_left = 0.0;
             st.autopilot_left = 0;
             if !working(&st) {
                 st.halted = true;
             }
-            std::mem::take(&mut st.studio_waiting)
+            (std::mem::take(&mut st.studio_waiting), requeued)
         };
+        if requeued {
+            self.show_queue();
+        }
         if was_waiting {
             self.put("studio_waiting", json!({"value": false, "left": 0}));
         }
@@ -873,6 +925,7 @@ impl Agent {
         };
         if queued {
             self.show_queue();
+            self.nudge();
             return;
         }
         if held.is_empty() {
@@ -883,6 +936,7 @@ impl Agent {
         let ask = Ask {
             attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(),
             studio: merged_studio(&held, ask.studio),
+            wake: ask.wake && held.iter().all(|(_, _, a)| a.wake),
             ..ask.clone()
         };
         self.send(&text, &ask);
@@ -898,20 +952,54 @@ impl Agent {
         }
         let ask = {
             let st = self.st.lock().unwrap();
-            Ask { studio: true, full: true, overnight: true, model: st.last_ask.model.clone(), effort: st.last_ask.effort.clone(), ..Default::default() }
+            Ask { studio: true, full: true, overnight: true, wake: true, model: st.last_ask.model.clone(), effort: st.last_ask.effort.clone(), ..Default::default() }
         };
         let (me, text) = (self.clone(), text.to_string());
         thread::spawn(move || me.ask(&text, &ask));
     }
 
+    /// A studio run's Lead has something waiting (a typed message or an app wake held behind its turn): a small file
+    /// in WORK/team-nudge/<id> tells its `rbx_team wait` to hand it back early (see rbxteam.py). Cleared when the turn
+    /// ends (`clear_nudge`). Other chats get none: their wait is unchanged.
+    fn nudge(&self) {
+        if !self.studio_lead() {
+            return;
+        }
+        let (typed, wakes) = {
+            let st = self.st.lock().unwrap();
+            if !working(&st) || st.queue.is_empty() {
+                return;
+            }
+            let wakes = st.queue.iter().filter(|(_, _, a)| a.wake).count();
+            (st.queue.len() - wakes, wakes)
+        };
+        let dir = paths::work("team-nudge");
+        let _ = fs::create_dir_all(&dir);
+        let tmp = dir.join(format!("{}.tmp", self.id));
+        if fs::write(&tmp, json!({"typed": typed, "wakes": wakes}).to_string()).is_ok() {
+            let _ = fs::rename(&tmp, dir.join(&self.id));
+        }
+    }
+
+    pub fn nudge_file(&self) -> std::path::PathBuf {
+        paths::work("team-nudge").join(&self.id)
+    }
+
+    fn clear_nudge(&self) {
+        let _ = fs::remove_file(self.nudge_file());
+    }
+
     /// Take back a held message before it is sent.
     pub fn unqueue(&self, qid: &str) -> bool {
-        let removed = {
+        let (removed, empty) = {
             let mut st = self.st.lock().unwrap();
             let before = st.queue.len();
             st.queue.retain(|(id, _, _)| id != qid);
-            st.queue.len() < before
+            (st.queue.len() < before, st.queue.is_empty())
         };
+        if empty {
+            self.clear_nudge();
+        }
         self.show_queue();
         removed
     }
@@ -940,8 +1028,11 @@ impl Agent {
             let st = self.st.lock().unwrap();
             (st.queue.iter().map(|(id, text, _)| json!({"qid": id, "text": text})).collect(), !(st.running || st.making))
         };
-        // messages kept while the chat is idle are held for a paused studio run's Resume
-        self.put("queued", json!({"items": items, "paused": idle && !items.is_empty()}));
+        // messages kept while the chat is idle are held for a paused studio run's Resume, or (the run was ended
+        // meanwhile) go with the user's next message
+        let kept = idle && !items.is_empty();
+        let paused = kept && self.paused_run();
+        self.put("queued", json!({"items": items, "paused": paused, "kept": kept && !paused}));
     }
 
     fn name_from(&self, title: String) {
@@ -1035,10 +1126,13 @@ impl Agent {
             Some(p) => studio_undo::lead_of(&p, &self.id),
             None => studio_undo::LeadOf::default(),
         };
-        let ask = &{
+        let lead = {
             let st = self.st.lock().unwrap();
-            effective_ask(&studio_message(ask, run.leads), st.studio_waiting, &st.last_ask)
+            lead_ask(ask, run, st.studio_waiting, &st.last_ask)
         };
+        // a wake or carry-on for a run that was ended in Review goes nowhere
+        let Some(ask) = lead else { return };
+        let ask = &ask;
         let (ask, fallback) = studio_fallback(ask, has_project);
         let ask = &ask;
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
@@ -1053,10 +1147,6 @@ impl Agent {
         } else {
             text
         };
-        // a carry-on for a run that was ended in Review meanwhile goes nowhere
-        if auto && run.ended && self.studio_lead() {
-            return;
-        }
         let Some(resumed) = begin_send(&mut self.st.lock().unwrap(), ask, auto, paths::now_secs()) else {
             return;
         };
@@ -1407,6 +1497,7 @@ impl Agent {
             st.pid = None;
             std::mem::take(&mut st.stopped)
         };
+        self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         if !got_result && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
             self.put("error", json!({"text": "The memory of this earlier chat is no longer on this computer, so the agent has lost its context. Send your message again and it will carry on from what you tell it."}));
@@ -1511,7 +1602,13 @@ impl Agent {
             self.show_queue();
             let text = held.iter().map(|(_, t, _)| t.as_str()).collect::<Vec<_>>().join("\n\n");
             let newest = held.last().unwrap().2.clone();
-            let ask = Ask { kickoff: None, attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).collect(), studio: merged_studio(&held, newest.studio), ..newest };
+            let ask = Ask {
+                kickoff: None,
+                attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).collect(),
+                studio: merged_studio(&held, newest.studio),
+                wake: held.iter().all(|(_, _, a)| a.wake), // one typed message among them makes it the user's
+                ..newest
+            };
             let me = self.clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(400));
@@ -1541,6 +1638,10 @@ impl Agent {
     /// Everything `stop` does but ending the process, whose pid it returns (None when no turn is running).
     fn stop_turn(&self) -> Option<u32> {
         team::release(self); // a stopped expert no longer holds the game
+        // the app's own queued wakes go with the turn; what the user typed stays queued
+        if drop_wakes(&mut self.st.lock().unwrap().queue, false) {
+            self.show_queue();
+        }
         let (pid, making) = {
             let mut st = self.st.lock().unwrap();
             if !(st.running || st.making) {
@@ -2053,6 +2154,94 @@ mod tests {
         assert!(t.elapsed() >= paths::STOP_GRACE / 2, "SIGTERM was ignored, so it took the grace and SIGKILL");
         let _ = reaper.join();
         assert!(gone(line.trim()));
+    }
+
+    fn typed(text: &str, studio: bool) -> (String, String, Ask) {
+        ("q".into(), text.into(), Ask { studio, ..Default::default() })
+    }
+
+    fn woken(text: &str) -> (String, String, Ask) {
+        ("w".into(), text.into(), Ask { studio: true, full: true, overnight: true, wake: true, ..Default::default() })
+    }
+
+    #[test]
+    fn stop_and_end_drop_the_apps_own_wakes() {
+        let mut q = vec![woken("Resume the studio run."), typed("Keep it under five minutes", true), woken("Review: Plan — approved")];
+        assert!(drop_wakes(&mut q, false), "Stop: the wakes go");
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].1, "Keep it under five minutes");
+        assert!(q[0].2.studio, "Stop alone keeps what the user typed as it was");
+        assert!(drop_wakes(&mut q, true), "End: the typed message stays, as an ordinary one");
+        assert_eq!(q.len(), 1);
+        assert!(!q[0].2.studio && !q[0].2.overnight && !q[0].2.full);
+        assert!(!drop_wakes(&mut q, true), "nothing more to change");
+        let mut plain = vec![typed("hello", false)];
+        assert!(!drop_wakes(&mut plain, true), "an ordinary message is left alone");
+    }
+
+    #[test]
+    fn an_ended_runs_lead_is_an_ordinary_chat_again() {
+        let ended = studio_undo::LeadOf { leads: false, started: false, ended: true };
+        let running = studio_undo::LeadOf { leads: true, started: true, ended: false };
+        let last = Ask { studio: true, full: true, overnight: true, ..Default::default() };
+        // the app's wakes and the loop's carry-ons for an ended run go nowhere
+        assert!(lead_ask(&woken("Resume the studio run.").2, ended, false, &last).is_none());
+        let carry = Ask { kickoff: Some("auto".into()), ..last.clone() };
+        assert!(lead_ask(&carry, ended, false, &last).is_none());
+        // a message typed in Studio mode goes as Ask me: no Studio mode, so no night checkpoint
+        let a = lead_ask(&Ask { studio: true, ..Default::default() }, ended, true, &last).unwrap();
+        assert!(!a.studio && !a.overnight && !a.full && !a.autopilot);
+        assert!(!takes_night_checkpoint(&a, false, false, false));
+        // an ordinary message in an ordinary mode keeps its settings (overnight is an ordinary overnight)
+        let night = Ask { overnight: true, ..Default::default() };
+        let a = lead_ask(&night, ended, false, &Ask::default()).unwrap();
+        assert!(a.overnight && !a.studio);
+        // a running run's Lead: as before (any message is a Studio message, the start checkpoint is kept)
+        let a = lead_ask(&Ask::default(), running, false, &last).unwrap();
+        assert!(a.studio && a.overnight && a.full);
+        assert!(!takes_night_checkpoint(&a, false, false, true));
+        // no run at all: unchanged
+        let a = lead_ask(&Ask::default(), studio_undo::LeadOf::default(), false, &Ask::default()).unwrap();
+        assert!(!a.studio && !a.overnight);
+    }
+
+    #[test]
+    fn end_finds_the_leads_working_helpers() {
+        let mut st = State::default();
+        assert!(!working_helper_of(&st, "lead"));
+        st.team = Some("w1".into());
+        st.parent = Some("lead".into());
+        assert!(!working_helper_of(&st, "lead"), "not working");
+        st.running = true;
+        assert!(working_helper_of(&st, "lead"));
+        assert!(!working_helper_of(&st, "other"));
+        assert!(!working_helper_of(&st, ""));
+        st.team = None;
+        assert!(!working_helper_of(&st, "lead"), "a chat the user opened is not a helper");
+    }
+
+    #[test]
+    fn a_busy_leads_held_message_nudges_its_wait() {
+        let a = Agent::detached_for_test("nudge-lead", None);
+        let _ = fs::remove_file(a.nudge_file());
+        {
+            let mut st = a.st.lock().unwrap();
+            st.last_ask.studio = true;
+            st.sending = true; // working
+        }
+        a.ask("Also keep the course under five minutes", &Ask::default());
+        let n: Value = serde_json::from_str(&fs::read_to_string(a.nudge_file()).unwrap()).unwrap();
+        assert_eq!(n, json!({"typed": 1, "wakes": 0}));
+        a.ask("Review: Plan — approved", &woken("x").2);
+        let n: Value = serde_json::from_str(&fs::read_to_string(a.nudge_file()).unwrap()).unwrap();
+        assert_eq!(n, json!({"typed": 1, "wakes": 1}));
+        a.clear_nudge(); // the turn ended
+        assert!(!a.nudge_file().exists());
+        // an ordinary chat's held message nudges nothing
+        let b = Agent::detached_for_test("nudge-plain", None);
+        b.st.lock().unwrap().sending = true;
+        b.ask("hello", &Ask::default());
+        assert!(!b.nudge_file().exists());
     }
 
     #[test]

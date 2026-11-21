@@ -19,10 +19,13 @@ from rbxpaths import WORK, KitError, read_json, write_json
 
 REQUESTS = os.path.join(WORK, "team-requests")
 RESULTS = os.path.join(WORK, "team-results")
+NUDGES = os.path.join(WORK, "team-nudge")  # WORK/team-nudge/<agent id>: the app has something waiting for that Lead
 ROLES = ("worker", "critic")
 FINISHED = ("done", "refused")
 PICKUP = 15       # seconds to wait for the app to answer a spawn
 MAX_WAIT = 840
+LEAD_WAIT = 120   # a studio run's Lead waits at most this long at a time, so messages and decisions reach it
+RUN_ENDED = "This game's studio run was ended."
 
 
 class TeamError(KitError):
@@ -41,6 +44,22 @@ def _safe(rid):
     return rid
 
 
+def _my_run():
+    """The studio run this chat leads ({"on", "paused", "ended", ...} from <project>/.fridae/studio.json), or None
+    when it leads none (no project, no run, or another chat's run)."""
+    me = (os.environ.get("RBXKIT_AGENT_ID") or "").strip()
+    project = (os.environ.get("RBXKIT_PROJECT") or "").strip()
+    if not me or not project:
+        return None
+    run = read_json(os.path.join(project, ".fridae", "studio.json"))
+    return run if isinstance(run, dict) and run.get("lead") == me else None
+
+
+def _ended(run):
+    return bool(run) and run.get("on") is not True and isinstance(run.get("ended"), (int, float)) \
+        and not isinstance(run.get("ended"), bool)
+
+
 def spawn(role, name, task, expert=None):
     mine = (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip().lower()
     if mine in ROLES:
@@ -48,6 +67,8 @@ def spawn(role, name, task, expert=None):
                         "yourself and say in your reply what else is needed." % mine)
     entry = None
     expert = str(expert or "").strip().lower()
+    if expert and _ended(_my_run()):
+        raise TeamError(RUN_ENDED + " Start no more experts: finish what you are doing and report.")
     if expert:
         import rbxroster  # lazy: only Studio mode needs the roster
         entry = rbxroster.expert(expert, os.environ.get("RBXKIT_PROJECT") or None)  # KitError lists the valid ids
@@ -103,17 +124,69 @@ def known():
     return sorted(out, key=lambda r: str(r.get("id")))
 
 
+def _take_nudge():
+    """What the app has waiting for this chat ({"typed": n, "wakes": n}), taken so the next wait does not return
+    for it again; None when there is nothing."""
+    me = (os.environ.get("RBXKIT_AGENT_ID") or "").strip()
+    if not me or any(c in me for c in "/\\:."):
+        return None
+    path = os.path.join(NUDGES, me)
+    if not os.path.exists(path):
+        return None
+    data = read_json(path)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return data if isinstance(data, dict) else {}
+
+
+def _early(run):
+    """Why a studio Lead's wait should return now, or None."""
+    if run is not None:
+        if _ended(run):
+            return "ended"
+        if run.get("on") is True and run.get("paused") is True:
+            return "paused"
+    nudge = _take_nudge() if run is not None and run.get("on") is True else None
+    if nudge is not None:
+        return "message" if nudge.get("typed") else "decision"
+    return None
+
+
 def wait(ids, timeout=600):
+    """Wait for the tasks to finish; returns ({id: result}, why) where `why` is None (all finished, or the time ran
+    out) or why a studio run's Lead was handed back early: "ended", "paused", "message", "decision" or "slice"
+    (LEAD_WAIT passed). Callers that lead no studio run wait as before."""
     ids = [_safe(i) for i in ids or []]
     if not ids:
         raise TeamError("Give 'ids': the task ids to wait for (spawn returns them).")
     timeout = max(1, min(MAX_WAIT, int(timeout or 600)))
+    lead = _my_run() is not None
+    slice_end = time.time() + LEAD_WAIT if lead else None
     deadline = time.time() + timeout
     while True:
         res = {i: _result(i) for i in ids}
         if all(r and r.get("status") in FINISHED for r in res.values()) or time.time() >= deadline:
-            return res
+            return res, None
+        if lead:
+            why = _early(_my_run())
+            if why:
+                return res, why
+            if time.time() >= slice_end:
+                return res, "slice"
         time.sleep(0.5)
+
+
+EARLY = {
+    "ended": "the studio run was ended in Review. Start nothing new: finish up and report",
+    "paused": "the studio run was paused in Review. Hand out nothing new; finish what you are doing and report",
+    "message": "the user sent you a message. It reaches you when this turn ends, so end the turn with a short note "
+               "(your experts keep working; wait for them again next turn)",
+    "decision": "a decision or other news is waiting for you. Call rbx_stage action 'decisions', act on it, then wait again",
+    "slice": "a studio Lead waits at most %d seconds at a time, so messages and decisions reach it. Call rbx_stage "
+             "action 'decisions', act on anything new, then wait again" % LEAD_WAIT,
+}
 
 
 def _line(rid, r):
@@ -146,7 +219,7 @@ def run(action, a=None):
         return "id                     status   role    name\n" + "\n".join(_line(i, r) for i, r in rows)
     if action == "wait":
         t0 = time.time()
-        res = wait(a.get("ids"), a.get("timeout"))
+        res, why = wait(a.get("ids"), a.get("timeout"))
         left = [i for i, r in res.items() if not r or r.get("status") not in FINISHED]
         out = []
         for i, r in res.items():
@@ -154,7 +227,10 @@ def run(action, a=None):
             if r and r.get("status") == "done":
                 out.append((r.get("text") or "(the agent finished without a reply)").strip())
             out.append("")
-        if left:
+        if left and why:
+            out.append("Returned early after %d seconds: %s. Still running: %s. They have not failed and keep working; "
+                       "collect them with wait later." % (time.time() - t0, EARLY[why], ", ".join(left)))
+        elif left:
             out.append("Still not finished after %d seconds: %s. Call wait again, or carry on and check later with 'status'."
                        % (time.time() - t0, ", ".join(left)))
         else:

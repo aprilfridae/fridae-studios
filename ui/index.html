@@ -1491,7 +1491,7 @@ function onEvent(e) {
   } else if (e.kind === "renamed") {
     p.name = e.name;
   } else if (e.kind === "queued") {
-    paintQueue(p, e.items || [], !!e.paused);
+    paintQueue(p, e.items || [], !!e.paused, !!e.kept);
   } else if (e.kind === "user") {
     const h = p.col.querySelector(".hello"); if (h) h.remove();
     p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0; p.steps = 0;
@@ -1568,11 +1568,11 @@ function onEvent(e) {
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
 /* Messages sent while the chat was working: shown under the conversation until they go. */
-function paintQueue(p, items, paused) {
+function paintQueue(p, items, paused, kept) {
   if (!p.qbox) p.qbox = el("div", "qbox");
   p.qbox.innerHTML = "";
   items.forEach((q) => {
-    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">" + (paused ? "Held while the studio run is paused. Sent when you press Resume." : "Waiting. Sent the moment it finishes.") + " <button>Remove</button></span>");
+    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">" + (paused ? "Held while the studio run is paused. Sent when you press Resume." : kept ? "Kept. Sent with your next message." : "Waiting. Sent the moment it finishes.") + " <button>Remove</button></span>");
     u.querySelector("div").textContent = q.text;
     u.querySelector("button").onclick = () => api("/api/unqueue", { agent: p.id, qid: q.qid });
     p.qbox.appendChild(u);
