@@ -608,6 +608,9 @@ impl Agent {
                 began: "the night began",
                 undoing: None,
                 skip_studio: files_only.then_some("Studio: left as it is (you chose to undo the files only)."),
+                // as before Studio mode: the agents' Studio steps since the night began are undone by time, even when
+                // Studio was closed when it began (the scripts are still saved to disk first)
+                exact: false,
             },
             &studio_undo::Live,
         );
