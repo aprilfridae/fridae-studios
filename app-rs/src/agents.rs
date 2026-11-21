@@ -281,6 +281,19 @@ fn pause_step(step: Step, paused: bool, told: &mut bool, state: &mut LoopState) 
     }
 }
 
+/// A carry-on arriving while the Lead's run is paused (decided before the pause, or in the gap before an undo): the
+/// pause message goes once instead, and anything after it is dropped.
+fn paused_carry_on<'a>(text: &'a str, told: &mut bool) -> Option<&'a str> {
+    if text == PAUSE_TEXT {
+        return Some(PAUSE_TEXT);
+    }
+    if *told {
+        return None;
+    }
+    *told = true;
+    Some(PAUSE_TEXT)
+}
+
 /// A tool from Roblox Studio's own connector: the steps that change the place.
 fn studio_tool(name: &str) -> bool {
     name.to_ascii_lowercase().contains("roblox_studio")
@@ -449,6 +462,19 @@ impl Agent {
         self.st.lock().unwrap().expert.clone()
     }
 
+    /// Drop the next carry-on of the loop (the flag Stop sets between turns): an undo is about to put things back.
+    pub fn halt(&self) {
+        let mut st = self.st.lock().unwrap();
+        if !(st.running || st.making) {
+            st.halted = true;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn set_running_for_test(&self, on: bool) {
+        self.st.lock().unwrap().running = on;
+    }
+
     /// The chat that started this helper, if another chat did.
     pub fn parent(&self) -> Option<String> {
         self.st.lock().unwrap().parent.clone()
@@ -544,6 +570,9 @@ impl Agent {
         let Some(night) = night else {
             return json!({"ok": false, "text": "There is no overnight run in this chat to undo."});
         };
+        if night["run"] == true {
+            return json!({"ok": false, "text": "This chat leads a studio run: use Undo this run, which also puts the run's stages and review back."});
+        }
         let start = night["start"].as_f64().unwrap_or(0.0);
         let back = studio_undo::put_back(&studio_undo::Checkpoint {
             at: start,
@@ -552,7 +581,7 @@ impl Agent {
             commit: night["commit"].as_str(),
             began: "the night began",
             undoing: None,
-            steps: None,
+            skip_studio: None,
         });
         let (mut lines, ok) = (back.lines, back.studio_ok && back.project_ok);
         lines.push("The board's cards from the night were kept so you can still read them.".to_string());
@@ -836,6 +865,15 @@ impl Agent {
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
         let (model, attachments, kickoff) = (ask.model.as_deref(), ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
+        // a carry-on decided before the run was paused (or undone) does not run as it was: see paused_carry_on
+        let text: &str = if auto && self.studio_lead() && self.paused_run() {
+            match paused_carry_on(text, &mut self.st.lock().unwrap().pause_told) {
+                Some(t) => t,
+                None => return,
+            }
+        } else {
+            text
+        };
         let Some(resumed) = begin_send(&mut self.st.lock().unwrap(), ask, auto, paths::now_secs()) else {
             return;
         };
@@ -903,14 +941,19 @@ impl Agent {
         // (a Studio run going on after a gate is the same run, so it keeps its first checkpoint)
         if ask.overnight && !auto && !resumed {
             let start = self.turn_started();
-            plugin::pin(start);
+            plugin::pin(start, "checkpoint");
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
+            if let Some(p) = project.as_deref().filter(|_| ask.studio) {
+                studio_undo::ensure_gitignore(std::path::Path::new(p)); // review media stays out of the checkpoint commits
+            }
             let commit = project.as_deref().and_then(projects::night_checkpoint);
             let studio = plugin::connected();
-            self.put("night", json!({"start": start, "commit": commit, "project": project, "studio": studio}));
+            // a studio run's night is undone with Undo this run, never with Undo the night ("run")
+            self.put("night", json!({"start": start, "commit": commit, "project": project, "studio": studio, "run": ask.studio}));
             // the first checkpoint of a studio run is its start, so "Undo this run" can go all the way back
             if let Some(p) = project.as_deref().filter(|_| ask.studio) {
-                studio_undo::record_start(p, &self.id, commit.as_deref(), studio, start);
+                let saved = studio_undo::Saved { git_failed: commit.is_none() && projects::is_repo(p), commit: commit.clone(), studio, at: start };
+                studio_undo::record_start(p, &self.id, &saved);
             }
         }
         let notes = std::mem::take(&mut self.st.lock().unwrap().notes);
@@ -1988,6 +2031,20 @@ mod tests {
         // a fresh pause after a resume tells it again
         let mut told = false;
         assert_eq!(pause_step(Step::CarryOn(TURN_FAILED), true, &mut told, &mut night()), Step::CarryOn(PAUSE_TEXT));
+    }
+
+    #[test]
+    fn paused_run_replaces_or_drops_a_late_carry_on() {
+        let mut told = false;
+        assert_eq!(paused_carry_on(NEXT, &mut told), Some(PAUSE_TEXT));
+        assert!(told);
+        assert_eq!(paused_carry_on(NEXT, &mut told), None, "told once: the next is dropped");
+        assert_eq!(paused_carry_on(PAUSE_TEXT, &mut told), Some(PAUSE_TEXT), "the pause message itself goes");
+        let mut told = false;
+        assert_eq!(paused_carry_on(PAUSE_TEXT, &mut told), Some(PAUSE_TEXT));
+        // halted (an undo, or Stop) drops the carry-on whatever it says
+        let mut st = State { halted: true, ..Default::default() };
+        assert_eq!(begin_send(&mut st, &Ask { kickoff: Some("auto".into()), ..Default::default() }, true, 1.0), None);
     }
 
     #[test]

@@ -344,6 +344,7 @@ fn write_fresh(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64,
         }
         let stamp = run["started"].as_f64().filter(|s| *s > 0.0).unwrap_or_else(paths::now_secs) as u64;
         let failed = archive_review(project, stamp);
+        crate::studio_undo::ensure_gitignore(project); // checkpoints never commit review media
         *run = fresh_run(project, idea, gates, max_experts, lead);
         let warning = (!failed.is_empty()).then(|| format!("Could not move these old review files into the archive: {}.", failed.join(", ")));
         (true, Ok(warning))
@@ -582,7 +583,7 @@ pub fn review(body: &Value) -> Value {
 }
 
 /// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings" | "undo", idea?, gates?, max_experts?,
-/// stage?} ("undo" is studio_undo.rs)
+/// stage?, files_only?} ("undo" is studio_undo.rs)
 pub fn studio_run(body: &Value) -> Value {
     let path = body["path"].as_str().unwrap_or("");
     if body["action"] == "start" && !Path::new(path).is_dir() {
@@ -594,7 +595,7 @@ pub fn studio_run(body: &Value) -> Value {
         "start" => answer(start(&project, body)),
         "resume" => answer(resume(&project)),
         "pause" => answer(set_run(dir, |run| run["paused"] = json!(true)).map(|_| json!({"ok": true}))),
-        "undo" => crate::studio_undo::undo(&project, body["stage"].as_str()),
+        "undo" => crate::studio_undo::undo(&project, body["stage"].as_str(), body["files_only"].as_bool().unwrap_or(false)),
         "settings" => answer(settings_from(body).and_then(|(gates, max)| {
             set_run(dir, |run| {
                 if let Some(g) = gates {

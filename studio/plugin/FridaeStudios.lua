@@ -116,12 +116,13 @@ end
 -- turn begins and put back on undo. Kept in memory only, for the last few turns. Checkpoints (the start
 -- of an overnight or studio run, and each finished stage of a studio run) are pinned: the newest
 -- MAX_PINS are kept, so a run can be undone to any of its recent checkpoints while Studio stays open.
+-- Just before an undo puts scripts back, their text is pinned too, named "before undo", so it is not lost.
 local ScriptEditorService = game:GetService("ScriptEditorService")
 local SCRIPT_ROOTS = { "Workspace", "ReplicatedStorage", "ReplicatedFirst", "ServerScriptService", "ServerStorage", "StarterGui", "StarterPack", "StarterPlayer", "Lighting", "SoundService" }
 local snapshots = {}
 local pins = {}
-local MAX_PINS = 12
-local function snapshot(since, pin)
+local MAX_PINS = 24
+local function snapshot(since, pin, name)
 	local sources = {}
 	for _, name in ipairs(SCRIPT_ROOTS) do
 		local root = game:FindService(name)
@@ -139,7 +140,7 @@ local function snapshot(since, pin)
 		end
 	end
 	if pin then
-		table.insert(pins, { since = since, sources = sources })
+		table.insert(pins, { since = since, sources = sources, name = name or "checkpoint" })
 		while #pins > MAX_PINS do
 			table.remove(pins, 1)
 		end
@@ -228,7 +229,7 @@ end
 -- the only things the app can ask for
 local function handle(command)
 	if command.kind == "begin" and EDIT then
-		snapshot(tonumber(command.since) or now(), command.pin == true)
+		snapshot(tonumber(command.since) or now(), command.pin == true, type(command.name) == "string" and command.name or nil)
 		return { ok = true }
 	elseif command.kind == "revert" and EDIT then
 		return revert(tonumber(command.since) or now())

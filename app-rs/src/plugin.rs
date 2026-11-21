@@ -179,12 +179,13 @@ pub fn begin(since: f64) {
 
 /// Tell the plugin a checkpoint is being taken (an overnight or studio run beginning, or a stage of a studio run
 /// finished): it keeps this snapshot of every script, with the newest few other checkpoints'.
-pub fn pin(since: f64) {
+/// `name` says what it is ("checkpoint", or "before undo": the scripts as they were just before an undo put them back).
+pub fn pin(since: f64, name: &str) {
     if connected() {
         with(|l| {
             l.next_id += 1;
             let id = l.next_id;
-            l.commands.push(json!({"id": id, "kind": "begin", "since": since, "pin": true}));
+            l.commands.push(json!({"id": id, "kind": "begin", "since": since, "pin": true, "name": name}));
         });
     }
 }

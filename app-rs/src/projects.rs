@@ -213,6 +213,16 @@ pub fn checkpoint(path: &str, message: &str) -> Option<String> {
     commit_all(Path::new(path), message)
 }
 
+/// The folder is a git repository and git is installed: a checkpoint of it can be committed.
+pub fn is_repo(path: &str) -> bool {
+    git_installed() && Path::new(path).join(".git").exists()
+}
+
+/// The commit is in the project's history (checked before anything is undone).
+pub fn commit_exists(path: &str, commit: &str) -> bool {
+    commit.chars().all(|c| c.is_ascii_hexdigit()) && commit.len() >= 7 && run_git(Path::new(path), &["cat-file", "-e", &format!("{commit}^{{commit}}")]).0
+}
+
 /// How a restore names what it undoes: in the text ("night's", "run's") and in its two commits.
 pub struct Undoing<'a> {
     pub whose: &'a str,

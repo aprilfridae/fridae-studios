@@ -1339,21 +1339,25 @@ document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") 
 setInterval(paintUsage, 60000); paintUsage();
 
 /* ---------- undo the night ---------- */
-$("b-night").onclick = () => {
+$("b-night").onclick = async () => {
   const p = agents.get(current); if (!p || !p.night || p.busy) return;
   p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
-  /* a studio run's Lead: the run's checkpoints to pick from (the chat shows the report when it is done) */
-  const path = p.project && p.project.path, run = path && rvAll[path] && rvAll[path].run;
-  if (p.studio && run && run.lead === p.id) {
+  /* a studio run (this chat's night was one): always the run's undo, with its checkpoints to pick from (the chat
+     shows the report when it is done); never Undo the night, which would leave the run's stages and review behind */
+  if (p.studio || p.night.run) {
+    const path = p.project && p.project.path;
+    if (path) await loadReview(path);
+    if (!path || !(rvAll[path] && rvAll[path].run)) { note("Could not load this game's studio run. Open Review and try Undo this run there."); return; }
+    p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
     p.col.appendChild(undoRunCard(path, (res, card) => { if (res && res.ok) card.remove(); paintHead(); }));
     stick(true); return;
   }
   const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const what = [p.night.studio ? "every change the agents made in Studio since then, with scripts put back as they were" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
+  const what = [p.night.studio ? "the agents' changes in Studio since then, step by step, stopping at the first step that is yours; and the text of every script goes back to how it was then, your own and other chats' script edits included (the scripts as they are now are kept in Studio as a snapshot named \u201cbefore undo\u201d until Studio closes, with the current Fridae plugin)" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
   const card = el("div", "ask night-ask enter", "<h4></h4><p></p><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Keep it</button></div>");
   card.querySelector("h4").textContent = (p.studio ? "Undo this run" : "Undo the night") + "?";
   card.querySelector(".pill.main").textContent = p.studio ? "Undo this run" : "Undo the night";
-  card.querySelector("p").textContent = "Goes back to " + when + ", when the " + (p.studio ? "studio" : "overnight") + " run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place.";
+  card.querySelector("p").textContent = "Goes back to " + when + ", when the " + (p.studio ? "studio" : "overnight") + " run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " The board's cards are kept. Studio must still be open on the same place.";
   const [go, keep] = card.querySelectorAll("button");
   keep.onclick = () => card.remove();
   go.onclick = async () => {
@@ -2499,7 +2503,7 @@ function undoRunCard(path, onDone) {
   const p = card.querySelector("p"), box = card.querySelector(".cp-list"), act = card.querySelector(".act"), [go, keep] = act.querySelectorAll(".pill");
   let pick = list.length ? list[0].stage : "";
   p.textContent = list.length
-    ? "Goes back to the checkpoint you pick. Undone: every change the agents made in Studio since then, with scripts put back as they were; and the project's files, as they were at the checkpoint (the run's versions stay in git history). Later stages are to do again, review items filed since then move to the archive, and the run is left paused. Your own edits since then stop it in Studio, and the board's cards are kept. Studio must still be open on the same place."
+    ? "Goes back to the checkpoint you pick. The project's files go back to how they were then (the run's versions stay in git history). In Studio, the agents' changes since then are undone step by step, stopping at the first step that is yours; and the text of every script goes back to how it was at the checkpoint, your own and other chats' script edits included. The scripts as they are now are kept in Studio as a snapshot named \u201cbefore undo\u201d until Studio closes (with the current Fridae plugin). Studio must still be open on the same place. Later stages are to do again, review items filed since then move to the archive, and the run is left paused. The board's cards are kept."
     : "This run has no checkpoints yet. One is taken when the run starts and after each finished stage.";
   list.forEach((c, i) => {
     const b = el("button"); b.type = "button"; b.textContent = cpName(c); b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
@@ -2508,20 +2512,25 @@ function undoRunCard(path, onDone) {
     box.appendChild(b);
   });
   if (!list.length) { box.remove(); go.remove(); keep.textContent = "Close"; }
+  /* shown only after the app refused because Studio is closed: the files go back, Studio is left as it is */
+  const files = el("button", "pill", "Undo the files only"); files.hidden = true; act.insertBefore(files, keep);
   keep.onclick = () => card.remove();
-  go.onclick = async () => {
-    go.disabled = keep.disabled = true; go.textContent = "Undoing...";
-    let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+  const run1 = async (filesOnly) => {
+    go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
+    let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick, files_only: filesOnly }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
     if (res && res.ok) {
       card.querySelector("h4").textContent = "The run was undone"; p.textContent = res.text || ""; box.remove();
-      go.remove(); keep.disabled = false; keep.textContent = "Close";
+      go.remove(); files.remove(); keep.disabled = false; keep.textContent = "Close";
     } else {
-      go.disabled = keep.disabled = false; go.textContent = "Undo this run";
+      go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo this run"; files.textContent = "Undo the files only";
       p.textContent = (res && (res.error || res.text)) || "Could not undo the run.";
+      if (res && res.files_only) files.hidden = false;
     }
     loadReview(path);
     if (onDone) onDone(res, card);
   };
+  go.onclick = () => run1(false);
+  files.onclick = () => run1(true);
   return card;
 }
 $("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(rvPath)); };
