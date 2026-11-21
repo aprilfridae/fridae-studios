@@ -137,6 +137,9 @@ fn lead_to_wake(lead: &Agent) -> bool {
     .unwrap_or(false)
 }
 
+/// Why a helper cannot start (or a finished one take a message): every agent slot is in use.
+pub const NO_SLOT: &str = "All agent slots are in use. Wait for one to finish, or close a chat.";
+
 /// Why an expert is not started for the Lead of a run that was ended in Review.
 pub const RUN_ENDED: &str = "This game's studio run was ended.";
 
@@ -188,7 +191,7 @@ fn start(req: &Value) {
             if let Some(p) = &project {
                 set_slots_note(p, true);
             }
-            return refuse("All agent slots are in use. Wait for one to finish, or close a chat.");
+            return refuse(NO_SLOT);
         };
         if writes {
             agent.set_writer(&key);
@@ -200,7 +203,7 @@ fn start(req: &Value) {
     } else {
         let title = if role == "critic" && !name.to_lowercase().starts_with("review") { format!("Review: {name}") } else { name.clone() };
         let Some(agent) = agents::spawn_helper(Some(&id), role, &title, project, ai, parent) else {
-            return refuse("All agent slots are in use. Wait for one to finish, or close a chat.");
+            return refuse(NO_SLOT);
         };
         agent
     };
@@ -309,7 +312,7 @@ mod tests {
     }
 
     fn game(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("fridae-team-{name}-{}", std::process::id())).join("My Gäme");
+        let d = crate::paths::test_dir(&format!("team-{name}")).join("My Gäme");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(d.join(".fridae")).unwrap();
         d

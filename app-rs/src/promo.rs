@@ -524,7 +524,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("fridae-promo-{name}-{}", std::process::id()));
+        let d = crate::paths::test_dir(&format!("promo-{name}"));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

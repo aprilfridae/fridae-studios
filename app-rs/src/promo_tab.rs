@@ -242,7 +242,7 @@ mod tests {
     use std::{fs, time::{Duration, SystemTime}};
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("fridae-promotab-{name}-{}", std::process::id()));
+        let d = crate::paths::test_dir(&format!("promotab-{name}"));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

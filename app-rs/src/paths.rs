@@ -47,13 +47,74 @@ pub static PATHS: LazyLock<Paths> = LazyLock::new(|| {
     };
     let home = if cli_exe.is_some() { home_dir().join("Documents").join(APP) } else { kit.clone() };
     // tests never write to a real work folder, whatever RBXKIT_WORK says: one temp folder per test run
-    let work = if cfg!(test) {
-        env::temp_dir().join(format!("fridae-test-work-{}", std::process::id()))
-    } else {
-        env::var("RBXKIT_WORK").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("work"))
-    };
+    #[cfg(test)]
+    let work = test_dir("work");
+    #[cfg(not(test))]
+    let work = env::var("RBXKIT_WORK").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("work"));
     Paths { install, kit, home, work, cli_exe }
 });
+
+/// Where this test run keeps its files: <temp>/fridae-tests/<pid>/<name>. The first call clears the folders of test
+/// runs that are over, and the per-test folders older test runs left straight in <temp> (fridae-<test>-<pid>).
+#[cfg(test)]
+pub fn test_dir(name: &str) -> PathBuf {
+    static ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+        let base = env::temp_dir().join("fridae-tests");
+        sweep_test_dirs(&base, &env::temp_dir());
+        base.join(std::process::id().to_string())
+    });
+    ROOT.join(name)
+}
+
+/// The pid at the end of a test folder's name ("fridae-team-note-123" -> 123), for the old per-test folders.
+#[cfg(test)]
+fn legacy_test_pid(name: &str) -> Option<u32> {
+    const OLD: [&str; 8] = ["fridae-test-work-", "fridae-lock-", "fridae-promotab-", "fridae-media-", "fridae-studio-run-", "fridae-studio-undo-", "fridae-promo-", "fridae-team-"];
+    if !OLD.iter().any(|p| name.starts_with(p)) {
+        return None;
+    }
+    name.rsplit('-').next()?.parse().ok()
+}
+
+/// Whether a process is still running (a test run that may still use its folder). Off Unix it is taken to be, and
+/// only folders a day old are cleared.
+#[cfg(test)]
+fn test_run_alive(pid: u32, folder: &Path) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let _ = folder;
+        Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+    }
+    #[cfg(not(unix))]
+    {
+        let age = fs::metadata(folder).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok());
+        age.is_none_or(|a| a.as_secs() < 86400)
+    }
+}
+
+#[cfg(test)]
+fn sweep_test_dirs(base: &Path, temp: &Path) {
+    let mut alive: std::collections::HashMap<u32, bool> = std::collections::HashMap::new();
+    let mut gone = |pid: u32, folder: &Path| !*alive.entry(pid).or_insert_with(|| test_run_alive(pid, folder));
+    for e in fs::read_dir(base).into_iter().flatten().flatten() {
+        if let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) {
+            if gone(pid, &e.path()) {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+    for e in fs::read_dir(temp).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if let Some(pid) = legacy_test_pid(&name) {
+            if e.path().is_dir() && gone(pid, &e.path()) {
+                let _ = fs::remove_dir_all(e.path());
+            }
+        }
+    }
+}
 
 pub fn home_dir() -> PathBuf {
     PathBuf::from(env::var("USERPROFILE").or_else(|_| env::var("HOME")).unwrap_or_default())
@@ -401,5 +462,39 @@ pub fn stamp() -> String {
             return format!("{t}");
         }
         format!("{:04}{:02}{:02}-{:02}{:02}{:02}", tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_test_folders_are_known_by_name_only() {
+        assert_eq!(legacy_test_pid("fridae-team-note-123"), Some(123));
+        assert_eq!(legacy_test_pid("fridae-test-work-77"), Some(77));
+        assert_eq!(legacy_test_pid("fridae-update-webview"), None, "the app's own folder is never touched");
+        assert_eq!(legacy_test_pid("fridae-team-note"), None);
+        assert_eq!(legacy_test_pid("other-team-12"), None);
+    }
+
+    #[test]
+    fn a_finished_test_runs_folder_is_cleared_and_a_live_one_kept() {
+        let base = test_dir("sweep").join("tests");
+        let temp = test_dir("sweep").join("temp");
+        let me = std::process::id().to_string();
+        // a pid that is surely not running: past the largest pid macOS and Linux hand out by default
+        let dead = "4194304";
+        for d in [base.join(dead), base.join(&me), temp.join(format!("fridae-team-x-{dead}")), temp.join("fridae-update-webview")] {
+            fs::create_dir_all(&d).unwrap();
+        }
+        sweep_test_dirs(&base, &temp);
+        if cfg!(unix) {
+            assert!(!base.join(dead).exists());
+            assert!(!temp.join(format!("fridae-team-x-{dead}")).exists());
+        }
+        assert!(base.join(&me).exists(), "this run's own folder stays");
+        assert!(temp.join("fridae-update-webview").exists());
+        assert!(PATHS.work.starts_with(env::temp_dir().join("fridae-tests").join(&me)));
     }
 }

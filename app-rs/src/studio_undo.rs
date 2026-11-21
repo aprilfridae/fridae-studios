@@ -714,7 +714,7 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     fn game(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("fridae-studio-undo-{name}-{}", std::process::id())).join("My Gäme é");
+        let d = crate::paths::test_dir(&format!("studio-undo-{name}")).join("My Gäme é");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(d.join(".fridae").join("review")).unwrap();
         d

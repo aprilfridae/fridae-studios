@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn serves_whole_part_and_refuses() {
-        let dir = std::env::temp_dir().join(format!("fridae-media-{}", std::process::id()));
+        let dir = crate::paths::test_dir("media");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("clip 1.mp4");
         let data: Vec<u8> = (0..1000u32).map(|i| (i % 251) as u8).collect();

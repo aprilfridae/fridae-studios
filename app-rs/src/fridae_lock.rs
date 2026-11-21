@@ -74,7 +74,7 @@ mod tests {
     use super::*;
 
     fn project(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("fridae-lock-{name}-{}", std::process::id())).join("My Gäme");
+        let d = crate::paths::test_dir(&format!("lock-{name}")).join("My Gäme");
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
