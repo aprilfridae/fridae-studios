@@ -38,7 +38,7 @@ fn dir() -> PathBuf {
 }
 
 /// A card id is a plain file name stem: never a path the page could steer elsewhere.
-fn valid_id(id: &str) -> bool {
+pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty() && !id.starts_with('.') && !id.contains("..") && !id.contains(['/', '\\', ':', '\0'])
 }
 
@@ -142,7 +142,7 @@ fn tmp_beside(path: &Path) -> PathBuf {
 }
 
 /// Write `bytes` to `path` through a temporary file, so a reader never finds half of it.
-fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> bool {
     let tmp = tmp_beside(path);
     let ok = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
     if !ok {

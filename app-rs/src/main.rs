@@ -22,6 +22,8 @@ mod promo_tab;
 mod research;
 mod server;
 mod splash;
+mod studio_run;
+mod studio_watch;
 mod team;
 mod textures;
 mod update;

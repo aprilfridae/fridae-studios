@@ -87,8 +87,8 @@ Report: what you did, what you checked and how, the picture or clip file paths, 
 Experts marked "changes the place" (coder, ui, world, effects, economy) edit the one Studio place, so only one of them
 runs at a time; `rbx_team` refuses a second one. Alongside a writer you may run experts that only read, test or work
 outside Studio: the Designer, the Scout, the Security reviewer, the Icon and thumbnails expert, the Promo maker, and
-the Playtester or Device tester on a finished build. Never more than `max_experts` at once (in
-`<project>/.fridae/studio.json`, 2 if it is not there). While a writer runs, do not change the place yourself.
+the Playtester or Device tester on a finished build. Never more than `max_experts` at once (`rbx_stage` `status`
+shows it as "Experts at once"). While a writer runs, do not change the place yourself.
 
 ## Refused spawns
 

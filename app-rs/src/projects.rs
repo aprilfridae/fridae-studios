@@ -38,7 +38,7 @@ pub fn default_parent() -> PathBuf {
     if paths::packaged() { PATHS.home.join("games") } else { paths::work("games") }
 }
 
-fn same(a: &str, b: &str) -> bool {
+pub fn same(a: &str, b: &str) -> bool {
     let norm = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_lowercase();
     norm(a) == norm(b)
 }

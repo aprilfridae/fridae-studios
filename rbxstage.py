@@ -179,7 +179,8 @@ def _status(project):
         lines.append("Run: %s%s. Current stage: %s." % ("on" if run.get("on") else "off",
                                                       ", paused" if run.get("paused") else "", run.get("stage") or "none"))
     lines.append("Stages: " + "  ".join("%s (%s)" % (s["id"], s.get("status", "todo")) for s in run["stages"]))
-    lines.append("Gates (the run waits for you to approve): " + (", ".join(run.get("gates") or []) or "none"))
+    lines.append("Experts at once (max_experts): %s. Gates (the run waits for you to approve): %s" % (
+        run.get("max_experts") or 2, ", ".join(run.get("gates") or []) or "none"))
     roster = _roster_names(project)
     if roster:
         lines.append("Team (name [id for rbx_team, stage]): " + ", ".join(roster))

@@ -1,0 +1,704 @@
+//! Studio mode, the app's side: the Review tab's listing, the user's decisions on review items, and starting, pausing
+//! and resuming a game's run. The files belong to rbxstage.py (the agents' `rbx_stage`), and are read and written here
+//! exactly as it does, under the same per-project lock (fridae_lock), keeping keys this file does not know:
+//!
+//!   <project>/.fridae/studio.json        the run: {"on", "stage", "stages", "gates", "max_experts", "lead", "idea",
+//!                                         "started", "paused", "read_decisions", "note"?}
+//!   <project>/.fridae/review/<id>.json   one review item: {"id", "stage", "expert", "title", "summary", "media",
+//!                                         "blocking", "status", "note", "created", "decided", "replaces", "by_chat"}
+//!   <project>/.fridae/review/<id>/       its pictures and clips (the names in "media")
+//!
+//! A decision only sets "status", "note" and "decided"; rbxstage hands it to the Lead as `id:status`. The app also
+//! sends the Lead a short message so a run waiting at a gate goes on. The watcher (studio_watch.rs) tells the window
+//! when items or runs change.
+
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, LazyLock, Mutex},
+    thread,
+    time::SystemTime,
+};
+
+use serde_json::{Value, json};
+
+use crate::{
+    agents::{self, Agent, Ask},
+    board, fridae_lock, paths, projects,
+    promo::{valid_id, write_atomic},
+};
+
+pub const STAGES: [&str; 6] = ["idea", "design", "build", "test", "launch", "promote"];
+const DEFAULT_GATES: [&str; 2] = ["design", "launch"];
+const NOTE_MAX: usize = 600;
+const IDEA_MAX: usize = 4000;
+const ALREADY: &str = "This game already has a studio run. Resume it from Review.";
+
+/// Review item files the app wrote itself, and their times, shared with the watcher so it does not report them.
+pub(crate) static SEEN: LazyLock<Mutex<HashMap<PathBuf, SystemTime>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn run_file(project: &Path) -> PathBuf {
+    project.join(".fridae").join("studio.json")
+}
+
+pub(crate) fn review_dir(project: &Path) -> PathBuf {
+    project.join(".fridae").join("review")
+}
+
+pub(crate) fn read_obj(path: &Path) -> Option<Value> {
+    serde_json::from_str::<Value>(&fs::read_to_string(path).ok()?).ok().filter(Value::is_object)
+}
+
+pub(crate) fn mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn write_json(path: &Path, v: &Value) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
+    if write_atomic(path, &bytes) { Ok(()) } else { Err("Could not save the game's Studio files.".into()) }
+}
+
+/// Change studio.json under the project's lock: `f` gets the run (Null when there is none or it does not read) and
+/// says whether to save it, which is done through a temporary file.
+pub fn change_run<T>(project: &Path, f: impl FnOnce(&mut Value) -> (bool, T)) -> Result<T, String> {
+    let _lock = fridae_lock::acquire(project)?;
+    let file = run_file(project);
+    let mut run = read_obj(&file).unwrap_or(Value::Null);
+    let (save, out) = f(&mut run);
+    if save {
+        write_json(&file, &run)?;
+    }
+    Ok(out)
+}
+
+pub fn read_run(project: &Path) -> Option<Value> {
+    read_obj(&run_file(project))
+}
+
+/// The review item files in a project: (id, path).
+pub(crate) fn item_files(project: &Path) -> Vec<(String, PathBuf)> {
+    let entries = fs::read_dir(review_dir(project)).into_iter().flatten().flatten().map(|e| e.path());
+    entries
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .filter_map(|p| Some((p.file_stem()?.to_string_lossy().to_string(), p)))
+        .filter(|(id, _)| valid_id(id))
+        .collect()
+}
+
+/// The items the Review tab shows: newest first, without the ones a newer version replaced. Files that do not read
+/// (still being written) are left out.
+pub fn items(project: &Path) -> Vec<Value> {
+    let mut out: Vec<Value> =
+        item_files(project).into_iter().filter_map(|(_, p)| read_obj(&p)).filter(|i| i["id"].is_string() && i["status"] != "superseded").collect();
+    out.sort_by(|a, b| b["created"].as_f64().unwrap_or(0.0).total_cmp(&a["created"].as_f64().unwrap_or(0.0)));
+    out
+}
+
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let mut msg = data.to_vec();
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&((data.len() as u64).wrapping_mul(8)).to_be_bytes());
+    for block in msg.chunks(64) {
+        let mut w = [0u32; 80];
+        for (i, word) in block.chunks(4).enumerate() {
+            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(*wi);
+            (e, d, c, b, a) = (d, c, b.rotate_left(30), a, t);
+        }
+        for (x, y) in h.iter_mut().zip([a, b, c, d, e]) {
+            *x = x.wrapping_add(y);
+        }
+    }
+    let mut out = [0u8; 20];
+    for (i, x) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&x.to_be_bytes());
+    }
+    out
+}
+
+/// The name a project goes by in media addresses: the first 12 hex characters of the SHA-1 of its path.
+pub fn project_key(project: &str) -> String {
+    sha1(project.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>()[..12].to_string()
+}
+
+fn media_type(name: &str) -> Option<&'static str> {
+    match Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        _ => None,
+    }
+}
+
+/// The file `/media/review/<key>/<id>/<file>` may serve: one of the item's own pictures or clips, in its folder under
+/// a known project's `.fridae/review/`, and nothing else.
+fn media_in(known: &[String], key: &str, id: &str, file: &str) -> Option<(PathBuf, &'static str)> {
+    if !valid_id(id) || !valid_id(file) {
+        return None;
+    }
+    let ctype = media_type(file)?;
+    let project = known.iter().find(|p| project_key(p) == key)?;
+    let review = review_dir(Path::new(project));
+    let item = read_obj(&review.join(format!("{id}.json")))?;
+    if !item["media"].as_array()?.iter().any(|m| m.as_str() == Some(file)) {
+        return None;
+    }
+    let path = review.join(id).join(file);
+    // a link planted in the folder may not lead out of it
+    let (real, root) = (path.canonicalize().ok()?, review.canonicalize().ok()?);
+    real.starts_with(&root).then_some((path, ctype))
+}
+
+fn known_paths() -> Vec<String> {
+    projects::list().iter().filter_map(|p| p["path"].as_str().map(str::to_string)).collect()
+}
+
+pub fn media(key: &str, id: &str, file: &str) -> Option<(PathBuf, &'static str)> {
+    media_in(&known_paths(), key, id, file)
+}
+
+/// Save an item the app changed, noting the new file time so the watcher does not take it for news.
+fn write_item(path: &Path, item: &Value, seen: &mut HashMap<PathBuf, SystemTime>) -> Result<(), String> {
+    write_json(path, item)?;
+    if let Some(m) = mtime(path) {
+        seen.insert(path.to_path_buf(), m);
+    }
+    Ok(())
+}
+
+fn clean_note(note: &str) -> Result<String, String> {
+    let note = note.trim();
+    if note.chars().count() > NOTE_MAX {
+        return Err(format!("Keep the note to {NOTE_MAX} characters or fewer."));
+    }
+    Ok(note.to_string())
+}
+
+/// The user approves an item, or asks for a change (`approve` false, with a note). Only an item still waiting can be
+/// decided: checked and written under the lock. Returns the message for the Lead.
+fn decide(project: &Path, id: &str, approve: bool, note: &str, seen: &mut HashMap<PathBuf, SystemTime>) -> Result<String, String> {
+    if !valid_id(id) {
+        return Err("That review item is gone.".into());
+    }
+    let note = clean_note(note)?;
+    if !approve && note.is_empty() {
+        return Err("Say what to change.".into());
+    }
+    let path = review_dir(project).join(format!("{id}.json"));
+    let _lock = fridae_lock::acquire(project)?;
+    let Some(mut item) = read_obj(&path) else { return Err("That review item is gone.".into()) };
+    if item["status"] != "waiting" {
+        return Err("Already answered.".into());
+    }
+    item["status"] = json!(if approve { "approved" } else { "changes" });
+    item["note"] = json!(note);
+    item["decided"] = json!(paths::now_secs());
+    write_item(&path, &item, seen)?;
+    let title = item["title"].as_str().unwrap_or("").trim().to_string();
+    Ok(if approve { format!("Review: {title} \u{2014} approved") } else { format!("Review: {title} \u{2014} change: {note}") })
+}
+
+/// Approve every waiting item that does not block the run. Returns how many.
+fn approve_all(project: &Path, seen: &mut HashMap<PathBuf, SystemTime>) -> Result<usize, String> {
+    let _lock = fridae_lock::acquire(project)?;
+    let now = paths::now_secs();
+    let mut n = 0;
+    for (_, path) in item_files(project) {
+        let Some(mut item) = read_obj(&path) else { continue };
+        if item["status"] != "waiting" || item["blocking"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        item["status"] = json!("approved");
+        item["note"] = json!("");
+        item["decided"] = json!(now);
+        write_item(&path, &item, seen)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// Gates and experts at once from a request, checked: gates are stages (kept in stage order), experts 1 to 4.
+fn settings_from(body: &Value) -> Result<(Option<Vec<String>>, Option<u64>), String> {
+    let gates = match body.get("gates") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(list)) => {
+            let names: Vec<&str> = list.iter().map(|g| g.as_str().unwrap_or("")).collect();
+            if names.iter().any(|g| !STAGES.contains(g)) {
+                return Err(format!("Gates must be stages: {}.", STAGES.join(", ")));
+            }
+            Some(STAGES.iter().filter(|s| names.contains(s)).map(|s| s.to_string()).collect())
+        }
+        Some(_) => return Err("Gates must be a list of stages.".into()),
+    };
+    let max = match body.get("max_experts") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_u64().filter(|n| (1..=4).contains(n)).ok_or("Experts at once must be 1, 2, 3 or 4.")?),
+    };
+    Ok((gates, max))
+}
+
+/// Every stage done: the run is over and a new one may start.
+fn finished(run: &Value) -> bool {
+    let stages = run["stages"].as_array().cloned().unwrap_or_default();
+    STAGES.iter().all(|s| stages.iter().any(|e| e["id"] == *s && e["status"] == "done"))
+}
+
+fn running(run: &Value) -> bool {
+    run["on"] == true && !finished(run)
+}
+
+fn can_start(project: &Path) -> Result<(), String> {
+    if !project.is_dir() {
+        return Err("That game's folder is missing.".into());
+    }
+    match read_run(project) {
+        Some(run) if running(&run) => Err(ALREADY.into()),
+        _ => Ok(()),
+    }
+}
+
+/// A new run, as rbxstage's `_new_run` makes it, but on. Decisions on items from an earlier run count as read, so
+/// the new Lead is not handed them again.
+fn fresh_run(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64, lead: &str) -> Value {
+    let read: Vec<String> = item_files(project)
+        .into_iter()
+        .filter_map(|(_, p)| read_obj(&p))
+        .filter(|i| i["status"] == "approved" || i["status"] == "changes")
+        .map(|i| format!("{}:{}", i["id"].as_str().unwrap_or(""), i["status"].as_str().unwrap_or("")))
+        .collect();
+    json!({
+        "on": true, "stage": "",
+        "stages": STAGES.iter().map(|s| json!({"id": s, "status": "todo", "started": 0, "ended": 0})).collect::<Vec<_>>(),
+        "gates": gates, "max_experts": max_experts, "lead": lead, "idea": idea, "started": paths::now_secs(), "paused": false,
+        "read_decisions": read,
+    })
+}
+
+/// The run's Lead, when its chat is open in this session.
+fn live_lead(run: &Value) -> Option<Arc<Agent>> {
+    run["lead"].as_str().filter(|l| !l.is_empty()).and_then(agents::get)
+}
+
+/// Tell the run's Lead what the user decided. With no live Lead the run is marked paused (Resume starts one, and
+/// rbx_stage hands it the decision). Returns whether a Lead was told.
+fn notify_lead(project: &Path, text: &str) -> bool {
+    if let Some(lead) = read_run(project).as_ref().and_then(live_lead) {
+        lead.wake_studio(text);
+        return true;
+    }
+    let _ = change_run(project, |run| {
+        if !run.is_object() || run["paused"] == true {
+            return (false, ());
+        }
+        run["paused"] = json!(true);
+        (true, ())
+    });
+    false
+}
+
+/// The chat that leads a run: the project's most recent idle chat of the user's own, or a new one in the background.
+/// The second value says whether it was made here.
+fn lead_chat(project: &str) -> Option<(Arc<Agent>, bool)> {
+    let mine = |a: &Arc<Agent>| a.role().is_none() && !a.busy() && a.project().is_some_and(|p| projects::same(&p, project));
+    if let Some(a) = agents::agents().into_iter().rev().find(mine) {
+        return Some((a, false));
+    }
+    let name = projects::describe(project)["name"].as_str().unwrap_or("").to_string();
+    agents::new_background_chat(&format!("Lead: {name}"), Some(project.to_string())).map(|a| (a, true))
+}
+
+const NO_SLOT: &str = "All agent slots are in use. Close a chat, then try again.";
+
+fn kickoff(lead: &Arc<Agent>, text: String) {
+    let ask = Ask { studio: true, full: true, overnight: true, kickoff: Some("studio".into()), ..Default::default() };
+    let lead = lead.clone();
+    thread::spawn(move || lead.ask(&text, &ask));
+}
+
+fn start(project: &str, body: &Value) -> Result<Value, String> {
+    let dir = Path::new(project);
+    let (gates, max) = settings_from(body)?;
+    let gates = gates.unwrap_or_else(|| DEFAULT_GATES.iter().map(|g| g.to_string()).collect());
+    let idea: String = body["idea"].as_str().unwrap_or("").trim().chars().take(IDEA_MAX).collect();
+    can_start(dir)?;
+    let (lead, made) = lead_chat(project).ok_or(NO_SLOT)?;
+    let wrote = change_run(dir, |run| {
+        if running(run) {
+            return (false, false);
+        }
+        *run = fresh_run(dir, &idea, gates, max.unwrap_or(2), &lead.id);
+        (true, true)
+    });
+    if wrote != Ok(true) {
+        if made {
+            agents::remove_agent(&lead.id);
+        }
+        return Err(wrote.err().unwrap_or_else(|| ALREADY.into()));
+    }
+    kickoff(&lead, if idea.is_empty() { "Start a studio run for this game.".into() } else { idea });
+    Ok(json!({"ok": true, "agent": lead.id}))
+}
+
+fn resume(project: &str) -> Result<Value, String> {
+    let dir = Path::new(project);
+    let run = read_run(dir).ok_or("This game has no studio run yet.")?;
+    let live = live_lead(&run);
+    let (lead, made) = match live {
+        Some(l) => (l, false),
+        None => lead_chat(project).ok_or(NO_SLOT)?,
+    };
+    let fresh = run["lead"].as_str() != Some(lead.id.as_str());
+    let saved = change_run(dir, |run| {
+        if !run.is_object() {
+            return (false, false);
+        }
+        run["paused"] = json!(false);
+        if fresh {
+            run["lead"] = json!(lead.id);
+        }
+        (true, true)
+    });
+    if saved != Ok(true) {
+        if made {
+            agents::remove_agent(&lead.id);
+        }
+        return Err(saved.err().unwrap_or_else(|| "This game has no studio run yet.".into()));
+    }
+    if fresh {
+        kickoff(&lead, "Adopt this game's studio run and carry on.".into());
+    } else {
+        lead.wake_studio("Resume the studio run.");
+    }
+    Ok(json!({"ok": true, "agent": lead.id}))
+}
+
+/// Change an existing run's own fields.
+fn set_run(project: &Path, f: impl FnOnce(&mut Value)) -> Result<(), String> {
+    let had = change_run(project, |run| {
+        if !run.is_object() {
+            return (false, false);
+        }
+        f(run);
+        (true, true)
+    })?;
+    if had { Ok(()) } else { Err("This game has no studio run yet.".into()) }
+}
+
+/// The project a request names, as the app's list of projects has it: only folders the user added, and that exist.
+fn project_of(path: &str) -> Option<String> {
+    known_paths().into_iter().find(|p| projects::same(p, path)).filter(|p| Path::new(p).is_dir())
+}
+
+fn not_ours() -> Value {
+    json!({"ok": false, "error": "That game is not one of your projects."})
+}
+
+fn answer(r: Result<Value, String>) -> Value {
+    r.unwrap_or_else(|e| json!({"ok": false, "error": e}))
+}
+
+/// Whether helper agents (and so a Studio team) work on this AI. Every AI the app runs gets the rbxkit tools with
+/// rbx_team, so all of them do.
+fn helpers_work(ai: &str) -> bool {
+    paths::AIS.contains(&ai)
+}
+
+/// GET /api/review?path=<project>
+pub fn list(path: &str) -> Value {
+    let Some(project) = project_of(path) else { return not_ours() };
+    let dir = Path::new(&project);
+    let run = read_run(dir);
+    let lead = run.as_ref().and_then(live_lead);
+    let ai = lead.as_ref().map(|l| l.ai()).unwrap_or_else(paths::default_ai);
+    let board = board::get(&project);
+    let needs: Vec<Value> = board["cards"].as_array().into_iter().flatten().filter(|c| c["column"] == "needs").cloned().collect();
+    json!({
+        "ok": true, "project": project, "key": project_key(&project), "run": run, "items": items(dir), "needs": needs,
+        "helpers": helpers_work(&ai), "lead_live": lead.is_some(), "waiting": lead.as_ref().is_some_and(|l| l.studio_waiting()),
+    })
+}
+
+/// POST /api/review {path, action: "approve" | "change" | "approve_all", id?, note?}
+pub fn review(body: &Value) -> Value {
+    let Some(project) = project_of(body["path"].as_str().unwrap_or("")) else { return not_ours() };
+    let dir = Path::new(&project);
+    let (id, note) = (body["id"].as_str().unwrap_or(""), body["note"].as_str().unwrap_or(""));
+    let text = match body["action"].as_str().unwrap_or("") {
+        "approve" => decide(dir, id, true, note, &mut SEEN.lock().unwrap()),
+        "change" => decide(dir, id, false, note, &mut SEEN.lock().unwrap()),
+        "approve_all" => approve_all(dir, &mut SEEN.lock().unwrap())
+            .map(|n| if n == 0 { String::new() } else { format!("Review: {n} item{} approved", if n == 1 { "" } else { "s" }) }),
+        _ => Err("Unknown action.".into()),
+    };
+    match text {
+        Ok(text) => {
+            if !text.is_empty() {
+                notify_lead(dir, &text);
+            }
+            json!({"ok": true})
+        }
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
+/// POST /api/studio-run {path, action: "start" | "pause" | "resume" | "settings", idea?, gates?, max_experts?}
+pub fn studio_run(body: &Value) -> Value {
+    let path = body["path"].as_str().unwrap_or("");
+    if body["action"] == "start" && !Path::new(path).is_dir() {
+        return json!({"ok": false, "error": "That game's folder is missing."});
+    }
+    let Some(project) = project_of(path) else { return not_ours() };
+    let dir = Path::new(&project);
+    match body["action"].as_str().unwrap_or("") {
+        "start" => answer(start(&project, body)),
+        "resume" => answer(resume(&project)),
+        "pause" => answer(set_run(dir, |run| run["paused"] = json!(true)).map(|_| json!({"ok": true}))),
+        "settings" => answer(settings_from(body).and_then(|(gates, max)| {
+            set_run(dir, |run| {
+                if let Some(g) = gates {
+                    run["gates"] = json!(g);
+                }
+                if let Some(m) = max {
+                    run["max_experts"] = json!(m);
+                }
+            })
+            .map(|_| json!({"ok": true}))
+        })),
+        _ => json!({"ok": false, "error": "Unknown action."}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::studio_watch::changes;
+    use std::collections::HashSet;
+
+    fn game(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("fridae-studio-run-{name}-{}", std::process::id())).join("My Gäme é");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join(".fridae").join("review")).unwrap();
+        d
+    }
+
+    fn put_item(d: &Path, id: &str, extra: Value) {
+        let mut item = json!({"id": id, "stage": "build", "expert": "coder", "title": format!("Item {id}"), "summary": "s", "media": [],
+            "blocking": false, "status": "waiting", "note": "", "created": 1.0, "decided": 0, "replaces": "", "by_chat": "c1", "extra_key": 7});
+        for (k, v) in extra.as_object().unwrap() {
+            item[k] = v.clone();
+        }
+        fs::write(d.join(".fridae").join("review").join(format!("{id}.json")), serde_json::to_string(&item).unwrap()).unwrap();
+    }
+
+    fn item(d: &Path, id: &str) -> Value {
+        serde_json::from_str(&fs::read_to_string(d.join(".fridae").join("review").join(format!("{id}.json"))).unwrap()).unwrap()
+    }
+
+    fn put_run(d: &Path, run: Value) {
+        fs::write(run_file(d), serde_json::to_string(&run).unwrap()).unwrap();
+    }
+
+    fn run(d: &Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(run_file(d)).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn list_newest_first_skips_superseded() {
+        let d = game("list");
+        put_item(&d, "aa", json!({"created": 10.0}));
+        put_item(&d, "bb", json!({"created": 30.0}));
+        put_item(&d, "cc", json!({"created": 20.0, "status": "superseded"}));
+        put_item(&d, "dd", json!({"created": 5.0, "status": "approved"}));
+        fs::write(d.join(".fridae").join("review").join("half.json"), "{\"id\": \"half\", ").unwrap();
+        let ids: Vec<String> = items(&d).iter().map(|i| i["id"].as_str().unwrap().to_string()).collect();
+        assert_eq!(ids, ["bb", "aa", "dd"]);
+    }
+
+    #[test]
+    fn decide_once() {
+        let d = game("once");
+        put_item(&d, "aa", json!({"title": "Shop menu"}));
+        let mut seen = HashMap::new();
+        let text = decide(&d, "aa", true, "", &mut seen).unwrap();
+        assert_eq!(text, "Review: Shop menu \u{2014} approved");
+        let it = item(&d, "aa");
+        assert_eq!(it["status"], "approved");
+        assert!(it["decided"].as_f64().unwrap() > 1_000_000_000.0);
+        assert_eq!(it["extra_key"], 7, "unknown keys are kept");
+        // the app's own write is noted, so the watcher does not report it
+        let file = d.join(".fridae").join("review").join("aa.json");
+        assert_eq!(seen.get(&file), fs::metadata(&file).and_then(|m| m.modified()).ok().as_ref());
+        assert_eq!(decide(&d, "aa", true, "", &mut seen).unwrap_err(), "Already answered.");
+        assert_eq!(decide(&d, "aa", false, "redo", &mut seen).unwrap_err(), "Already answered.");
+        assert_eq!(item(&d, "aa")["status"], "approved");
+        assert!(decide(&d, "gone", true, "", &mut seen).is_err());
+        assert!(decide(&d, "../aa", true, "", &mut seen).is_err());
+        assert!(!crate::fridae_lock::lock_path(&d).exists(), "the lock is let go");
+    }
+
+    #[test]
+    fn change_needs_note() {
+        let d = game("note");
+        put_item(&d, "aa", json!({"title": "Map"}));
+        let mut seen = HashMap::new();
+        assert!(decide(&d, "aa", false, "   ", &mut seen).is_err());
+        assert!(decide(&d, "aa", false, &"x".repeat(601), &mut seen).is_err());
+        assert_eq!(item(&d, "aa")["status"], "waiting");
+        let text = decide(&d, "aa", false, "  Make the lava brighter é ", &mut seen).unwrap();
+        assert_eq!(text, "Review: Map \u{2014} change: Make the lava brighter é");
+        let it = item(&d, "aa");
+        assert_eq!((it["status"].as_str(), it["note"].as_str()), (Some("changes"), Some("Make the lava brighter é")));
+    }
+
+    #[test]
+    fn approve_all_skips_blocking() {
+        let d = game("all");
+        put_item(&d, "aa", json!({}));
+        put_item(&d, "bb", json!({"blocking": true}));
+        put_item(&d, "cc", json!({"status": "changes"}));
+        put_item(&d, "dd", json!({}));
+        let mut seen = HashMap::new();
+        assert_eq!(approve_all(&d, &mut seen).unwrap(), 2);
+        assert_eq!(item(&d, "aa")["status"], "approved");
+        assert_eq!(item(&d, "dd")["status"], "approved");
+        assert_eq!(item(&d, "bb")["status"], "waiting");
+        assert_eq!(item(&d, "cc")["status"], "changes");
+        assert_eq!(approve_all(&d, &mut seen).unwrap(), 0);
+    }
+
+    #[test]
+    fn media_confined() {
+        let d = game("media");
+        put_item(&d, "aa", json!({"media": ["shot 1.png", "clip.mp4", "notes.txt"]}));
+        let folder = d.join(".fridae").join("review").join("aa");
+        fs::create_dir_all(&folder).unwrap();
+        for f in ["shot 1.png", "clip.mp4", "other.png", "notes.txt"] {
+            fs::write(folder.join(f), b"data").unwrap();
+        }
+        fs::write(d.join(".fridae").join("x"), b"secret").unwrap();
+        let p = d.display().to_string();
+        let known = vec![p.clone()];
+        let key = project_key(&p);
+        let (file, ctype) = media_in(&known, &key, "aa", "shot 1.png").unwrap();
+        assert_eq!((file, ctype), (folder.join("shot 1.png"), "image/png"));
+        assert_eq!(media_in(&known, &key, "aa", "clip.mp4").unwrap().1, "video/mp4");
+        assert!(media_in(&known, &key, "aa", "other.png").is_none(), "not in the item's media");
+        assert!(media_in(&known, &key, "aa", "notes.txt").is_none(), "not a picture or clip");
+        assert!(media_in(&known, &key, "aa", "../x").is_none());
+        assert!(media_in(&known, &key, "aa", "..").is_none());
+        assert!(media_in(&known, &key, "../aa", "shot 1.png").is_none());
+        assert!(media_in(&known, "000000000000", "aa", "shot 1.png").is_none(), "unknown key");
+        assert!(media_in(&known, &key, "zz", "shot 1.png").is_none(), "unknown item");
+        assert!(media_in(&[], &key, "aa", "shot 1.png").is_none(), "not a known project");
+    }
+
+    #[test]
+    fn settings_validated() {
+        assert_eq!(settings_from(&json!({"gates": ["launch", "design", "design"], "max_experts": 3})).unwrap(), (Some(vec!["design".into(), "launch".into()]), Some(3)));
+        assert_eq!(settings_from(&json!({"gates": []})).unwrap(), (Some(vec![]), None));
+        assert_eq!(settings_from(&json!({})).unwrap(), (None, None));
+        assert!(settings_from(&json!({"gates": ["design", "ship"]})).is_err());
+        assert!(settings_from(&json!({"gates": "design"})).is_err());
+        assert!(settings_from(&json!({"max_experts": 0})).is_err());
+        assert!(settings_from(&json!({"max_experts": 5})).is_err());
+        assert!(settings_from(&json!({"max_experts": 2.5})).is_err());
+        assert!(settings_from(&json!({"max_experts": "2"})).is_err());
+    }
+
+    #[test]
+    fn project_key_stable() {
+        assert_eq!(project_key("abc"), "a9993e364706"); // SHA-1 of "abc" starts a9993e364706816a
+        let p = "/Users/me/Games/My Gäme é";
+        assert_eq!(project_key(p), project_key(p));
+        assert_eq!(project_key(p).len(), 12);
+        assert!(project_key(p).chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(project_key(p), project_key("/Users/me/Games/Other"));
+        // a long input crosses SHA-1's 64-byte blocks
+        assert_eq!(project_key(&"a".repeat(1000)), "291e9a6c6699");
+    }
+
+    #[test]
+    fn start_refuses_running_run() {
+        let d = game("start");
+        assert!(can_start(&d).is_ok(), "no run yet");
+        assert!(can_start(&d.join("missing")).is_err());
+        let mut stages: Vec<Value> = STAGES.iter().map(|s| json!({"id": s, "status": "done"})).collect();
+        stages[3]["status"] = json!("doing");
+        put_run(&d, json!({"on": true, "stages": stages}));
+        assert_eq!(can_start(&d).unwrap_err(), "This game already has a studio run. Resume it from Review.");
+        stages[3]["status"] = json!("done");
+        put_run(&d, json!({"on": true, "stages": stages}));
+        assert!(can_start(&d).is_ok(), "a finished run may be followed by a new one");
+        put_run(&d, json!({"on": false, "stages": []}));
+        assert!(can_start(&d).is_ok());
+    }
+
+    #[test]
+    fn change_run_keeps_unknown_keys() {
+        let d = game("change");
+        put_run(&d, json!({"on": true, "stage": "build", "future": {"x": 1}}));
+        change_run(&d, |r| {
+            r["paused"] = json!(true);
+            (true, ())
+        })
+        .unwrap();
+        let r = run(&d);
+        assert_eq!((r["paused"].as_bool(), r["future"]["x"].as_i64(), r["stage"].as_str()), (Some(true), Some(1), Some("build")));
+        assert!(!crate::fridae_lock::lock_path(&d).exists());
+        let leftovers = fs::read_dir(d.join(".fridae")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".tmp")).count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
+    fn no_live_lead_pauses_run() {
+        let d = game("lead");
+        put_run(&d, json!({"on": true, "lead": "c-no-such-chat", "paused": false}));
+        assert!(!notify_lead(&d, "Review: x \u{2014} approved"));
+        assert_eq!(run(&d)["paused"], true);
+    }
+
+    #[test]
+    fn watcher_reports_changes_not_own_writes() {
+        let d = game("watch");
+        let p = d.display().to_string();
+        put_item(&d, "aa", json!({}));
+        let (mut seen, mut looked) = (HashMap::new(), HashSet::new());
+        assert!(changes(&[p.clone()], &mut seen, &mut looked).is_empty(), "what is there at the start is not reported");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        put_item(&d, "bb", json!({"title": "New"}));
+        put_run(&d, json!({"on": true, "stage": "design"}));
+        fs::write(d.join(".fridae").join("review").join("cc.json"), "{\"id\": ").unwrap(); // half written
+        let ev = changes(&[p.clone()], &mut seen, &mut looked);
+        assert_eq!(ev.len(), 2);
+        let review = ev.iter().find(|(k, _)| *k == "review").unwrap();
+        assert_eq!((review.1["project"].as_str(), review.1["item"]["title"].as_str()), (Some(p.as_str()), Some("New")));
+        let run_ev = ev.iter().find(|(k, _)| *k == "studio_run").unwrap();
+        assert_eq!(run_ev.1["run"]["stage"], "design");
+        // the app's own decision is not reported; the half-written file is, once it is whole
+        decide(&d, "aa", true, "", &mut seen).unwrap();
+        put_item(&d, "cc", json!({}));
+        let ev = changes(&[p.clone()], &mut seen, &mut looked);
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].1["item"]["id"], "cc");
+        assert!(changes(&[p], &mut seen, &mut looked).is_empty());
+    }
+}

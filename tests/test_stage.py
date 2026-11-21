@@ -54,6 +54,15 @@ class StageTests(unittest.TestCase):
         for stage in rbxstage.STAGES:
             self.assertIn(stage, text)
 
+    def test_status_shows_experts_at_once_and_gates(self):
+        text = self.call("status")
+        self.assertIn("Experts at once (max_experts): 2. Gates (the run waits for you to approve): design, launch", text)
+        os.makedirs(os.path.join(self.project, ".fridae"), exist_ok=True)
+        with open(rbxstage.run_file(self.project), "w", encoding="utf-8") as f:
+            json.dump({"on": True, "max_experts": 3, "gates": ["build"]}, f)
+        text = self.call("status")
+        self.assertIn("Experts at once (max_experts): 3. Gates (the run waits for you to approve): build", text)
+
     def test_stage_start_and_done(self):
         self.call("stage", id="design", status="start")
         run = rbxstage.load_run(self.project)

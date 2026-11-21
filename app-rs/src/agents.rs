@@ -585,6 +585,18 @@ impl Agent {
         }
     }
 
+    /// A Studio run goes on: a decision from Review, or Resume. Sent as a message in Studio mode (full auto, overnight's
+    /// loop) with the model and effort of the chat's last message; held like any message while the chat is working.
+    /// Returns at once: the turn runs on its own thread.
+    pub fn wake_studio(self: &Arc<Self>, text: &str) {
+        let ask = {
+            let st = self.st.lock().unwrap();
+            Ask { studio: true, full: true, overnight: true, model: st.last_ask.model.clone(), effort: st.last_ask.effort.clone(), ..Default::default() }
+        };
+        let (me, text) = (self.clone(), text.to_string());
+        thread::spawn(move || me.ask(&text, &ask));
+    }
+
     /// Take back a held message before it is sent.
     pub fn unqueue(&self, qid: &str) -> bool {
         let removed = {
@@ -603,7 +615,6 @@ impl Agent {
     }
 
     /// Whether a Studio run in this chat is stopped at a gate, waiting for the user's answer in Review.
-    #[allow(dead_code)] // read by the Review tab (a later task); the window already gets it as the studio_waiting event
     pub fn studio_waiting(&self) -> bool {
         self.st.lock().unwrap().studio_waiting
     }

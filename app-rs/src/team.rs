@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use crate::{
     agents::{self, Agent},
-    fridae_lock, paths,
+    paths, studio_run,
 };
 
 fn write_result(id: &str, value: Value) {
@@ -67,26 +67,26 @@ fn expert_title(expert_name: &str, name: &str) -> String {
 
 /// Studio's run file carries a note the page shows ("slots": waiting for a free agent slot). Only touches a run that exists.
 fn set_slots_note(project: &str, on: bool) {
-    let file = Path::new(project).join(".fridae").join("studio.json");
-    if !file.is_file() {
+    let dir = Path::new(project);
+    if !studio_run::run_file(dir).is_file() {
         return;
     }
-    let Ok(_lock) = fridae_lock::acquire(Path::new(project)) else { return };
-    let Some(mut run) = fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object) else { return };
-    if on {
-        if run["note"] == "slots" {
-            return;
+    let _ = studio_run::change_run(dir, |run| {
+        if !run.is_object() {
+            return (false, ());
         }
-        run["note"] = json!("slots");
-    } else if run["note"] == "slots" {
-        run.as_object_mut().map(|o| o.remove("note"));
-    } else {
-        return;
-    }
-    let tmp = file.with_extension(format!("{}.{}.tmp", std::process::id(), paths::now_secs() as u64));
-    if fs::write(&tmp, serde_json::to_string_pretty(&run).unwrap_or_default()).is_ok() && fs::rename(&tmp, &file).is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
+        if on {
+            if run["note"] == "slots" {
+                return (false, ());
+            }
+            run["note"] = json!("slots");
+        } else if run["note"] == "slots" {
+            run.as_object_mut().map(|o| o.remove("note"));
+        } else {
+            return (false, ());
+        }
+        (true, ())
+    });
 }
 
 fn start(req: &Value) {
@@ -245,7 +245,7 @@ mod tests {
         let run = read(&d);
         assert_eq!(run["note"], "slots");
         assert_eq!(run["stage"], "build");
-        assert!(!fridae_lock::lock_path(&d).exists(), "the lock is let go");
+        assert!(!crate::fridae_lock::lock_path(&d).exists(), "the lock is let go");
         set_slots_note(p, false);
         let run = read(&d);
         assert!(run.get("note").is_none());

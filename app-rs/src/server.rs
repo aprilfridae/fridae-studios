@@ -18,7 +18,7 @@ use crate::{
     antigravity,
     attach, board, codex, media,
     paths::{self, PATHS, VERSION},
-    plugin, projects, promo, promo_tab, research, team, textures, update, usage,
+    plugin, projects, promo, promo_tab, research, studio_run, studio_watch, team, textures, update, usage,
 };
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -121,6 +121,16 @@ fn style_media(path: &str, range: &str) -> media::Streamed {
     }
 }
 
+/// GET /media/review/<project key>/<item id>/<file>: only a picture or clip the review item lists, from its folder.
+fn review_media(path: &str, range: &str) -> media::Streamed {
+    let mut parts = path.trim_start_matches("/media/review/").splitn(3, '/');
+    let (key, id, file) = (unescape(parts.next().unwrap_or("")), unescape(parts.next().unwrap_or("")), unescape(parts.next().unwrap_or("")));
+    match studio_run::media(&key, &id, &file) {
+        Some((file, ctype)) => media::serve(&file, ctype, range),
+        None => media::missing(),
+    }
+}
+
 fn query(url: &str, key: &str) -> Option<String> {
     url.split_once('?')?.1.split('&').find_map(|kv| kv.split_once('=').filter(|(k, _)| *k == key).map(|(_, v)| v.to_string()))
 }
@@ -179,6 +189,8 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(status())
     } else if path == "/api/promos" {
         send_json(promo_tab::list())
+    } else if path == "/api/review" {
+        send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
     } else {
         not_found()
     }
@@ -303,6 +315,8 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/promo-engine" => send_json(promo::engine(&body)),
         "/api/promo-start" => send_json(promo_tab::start(&body)),
         "/api/promo-styles" => send_json(promo_tab::styles()),
+        "/api/review" => send_json(studio_run::review(&body)),
+        "/api/studio-run" => send_json(studio_run::studio_run(&body)),
         "/api/copy" => send_json(json!({"ok": textures::set_clipboard_text(&text_of("text"))})),
         "/api/texture" => {
             let rid = paths::base_name(&text_of("id"));
@@ -408,10 +422,17 @@ fn handle(mut req: Request, token: &str) {
     let open_file = path.starts_with("/fonts/") || path == "/logo.png";
     let given = Some(head(&req, "X-Token")).filter(|t| !t.is_empty()).or_else(|| query(&url, "t")).unwrap_or_default();
     let allowed = local && (open_file || same(&given, token));
-    if allowed && *req.method() == Method::Get && (path.starts_with("/media/promo/") || path.starts_with("/media/promo-style/")) {
+    let media_path = ["/media/promo/", "/media/promo-style/", "/media/review/"].iter().any(|p| path.starts_with(p));
+    if allowed && *req.method() == Method::Get && media_path {
         // a <video> or <img> carries the token in the address, like the chat's images
         let range = head(&req, "Range");
-        let resp = if path.starts_with("/media/promo/") { promo_media(&path, &range) } else { style_media(&path, &range) };
+        let resp = if path.starts_with("/media/promo/") {
+            promo_media(&path, &range)
+        } else if path.starts_with("/media/review/") {
+            review_media(&path, &range)
+        } else {
+            style_media(&path, &range)
+        };
         let _ = req.respond(resp);
         return;
     }
@@ -436,6 +457,7 @@ pub fn start(token: String) -> String {
     thread::spawn(textures::watch);
     thread::spawn(team::watch);
     thread::spawn(promo::watch);
+    thread::spawn(studio_watch::watch);
     plugin::start();
     antigravity::load_models();
     codex::load_models();
