@@ -160,6 +160,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
     st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
     st.turn_auto = auto;
     st.turn_tools = 0;
+    st.turn_progress = false;
     st.sending = true;
     Some(waiting)
 }
@@ -388,6 +389,39 @@ fn no_progress(studio: bool, carry_on: bool, got_result: bool, tools: u32, idle:
     false
 }
 
+/// How many Studio carry-ons in a row without a progress call a Lead may take before it is taken to be waiting.
+const STUCK_TURNS: u32 = 6;
+
+/// A tool call that moves a studio run on: rbx_stage stage/review/lesson, rbx_team spawn, any tool of Roblox
+/// Studio's connector, or a file edit. Looking (status, decisions, wait, reading files) is not progress. `input` is
+/// the call's arguments; Null when the AI does not report them (then rbx_stage and rbx_team count as progress).
+fn progress_call(name: &str, input: &Value) -> bool {
+    let short = name.rsplit("__").next().unwrap_or(name).to_ascii_lowercase();
+    let action = input["action"].as_str().map(str::to_ascii_lowercase);
+    match short.as_str() {
+        "rbx_stage" => action.map_or(input.is_null(), |a| matches!(a.as_str(), "stage" | "review" | "lesson")),
+        "rbx_team" => action.map_or(input.is_null(), |a| a == "spawn"),
+        "write" | "edit" | "multiedit" | "notebookedit" | "write_file" | "edit_file" | "apply_patch" | "replace" => true,
+        _ => studio_tool(name),
+    }
+}
+
+/// The second no-progress guard: a Studio Lead whose carry-ons keep calling tools but none that moves the run on
+/// (a `rbx_team wait` or a status check in a loop) is going round in circles too: six such carry-ons in a row count as
+/// STATUS: WAITING. A turn with a progress call, a turn the user sent, or a failed turn starts the count again.
+fn no_progress_call(studio: bool, carry_on: bool, got_result: bool, progress: bool, stuck: &mut u32) -> bool {
+    if !(studio && carry_on && got_result && !progress) {
+        *stuck = 0;
+        return false;
+    }
+    *stuck += 1;
+    if *stuck >= STUCK_TURNS {
+        *stuck = 0;
+        return true;
+    }
+    false
+}
+
 /// Any message to the chat that leads a running, not ended studio run is a Studio message, whatever mode it was sent in
 /// (a reply typed while the Lead works, or queued in another mode, must not take the run out of Studio mode).
 fn studio_message(ask: &Ask, leads_run: bool) -> Ask {
@@ -542,12 +576,21 @@ struct State {
     turn_tools: u32,
     /// Studio carry-on turns in a row without a tool call (see `no_progress`).
     idle_turns: u32,
+    /// Whether this turn made a progress call (see `progress_call`), and how many Studio carry-ons in a row made none.
+    turn_progress: bool,
+    stuck_turns: u32,
 }
 
 /// Whether a chat counts toward MAX_AGENTS. A helper that has finished (its result is handed back and it is not working)
 /// stays open to read but frees its slot; if the user messages it, it counts again while it works.
 fn holds_slot(st: &State) -> bool {
     !(st.team.is_some() && st.result_written && !working(st))
+}
+
+/// Whether a message to a chat must be refused for want of a slot: a chat that holds none now (a finished helper)
+/// takes one to work, and there is none free. `taken` is only counted when it matters.
+fn no_slot_for(holds: bool, taken: impl FnOnce() -> usize) -> bool {
+    !holds && taken() >= MAX_AGENTS
 }
 
 /// How many agent slots are taken now.
@@ -877,7 +920,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -913,6 +956,11 @@ impl Agent {
         let auto = ask.kickoff.as_deref() == Some("auto");
         // (any message to a run's Lead is a Studio message: see studio_message)
         let hold = !auto && !self.busy() && self.paused_run();
+        // a finished helper takes an agent slot again to work, so a message to it needs a free one
+        if no_slot_for(self.holds_slot(), || slots_taken(&AGENTS.lock().unwrap())) {
+            self.put("error", json!({"text": crate::team::NO_SLOT}));
+            return;
+        }
         let (queued, held) = {
             let mut st = self.st.lock().unwrap();
             if working(&st) || hold {
@@ -1392,7 +1440,13 @@ impl Agent {
                         match out {
                             Out::Conversation(id) => self.st.lock().unwrap().session = Some(id),
                             Out::Model(name) => self.put("model", json!({"name": name})),
-                            Out::Tool(name) => self.show_tool(&name, studio_tool(&name)),
+                            Out::Tool(name) => {
+                                // these AIs do not say what a tool was asked, so any rbxkit, Studio or file tool counts
+                                if progress_call(&name, &Value::Null) {
+                                    self.st.lock().unwrap().turn_progress = true;
+                                }
+                                self.show_tool(&name, studio_tool(&name))
+                            }
                             Out::Text(text) => self.put("text", json!({"text": text})),
                             Out::Pictures(paths) => {
                                 let urls: Vec<String> = paths.iter().filter_map(|p| fs::read(p).ok()).filter_map(|bytes| attach::save_chat_image(&bytes)).collect();
@@ -1439,6 +1493,9 @@ impl Agent {
                                     let short = full.rsplit("__").next().unwrap_or("").to_string();
                                     if let Some(id) = b["id"].as_str() {
                                         self.st.lock().unwrap().tools.insert(id.to_string(), short.clone());
+                                    }
+                                    if progress_call(full, &b["input"]) {
+                                        self.st.lock().unwrap().turn_progress = true;
                                     }
                                     self.show_tool(&short, studio_tool(full));
                                 }
@@ -1532,7 +1589,12 @@ impl Agent {
             let mut st = self.st.lock().unwrap();
             let lead = st.last_ask.studio && st.role.is_none();
             let (carry_on, tools) = (st.turn_auto, st.turn_tools);
-            if no_progress(lead, carry_on, got_result && !result_error, tools, &mut st.idle_turns) {
+            let ok = got_result && !result_error;
+            let progress = st.turn_progress;
+            // both counts go on every turn, so neither guard hides the other
+            let idle = no_progress(lead, carry_on, ok, tools, &mut st.idle_turns);
+            let stuck = no_progress_call(lead, carry_on, ok, progress, &mut st.stuck_turns);
+            if idle || stuck {
                 said = "STATUS: WAITING".to_string();
             }
         }
@@ -1808,7 +1870,28 @@ pub fn remember_open() {
 /// Reopen the chats that were open last time.
 pub fn restore_open() -> usize {
     let Ok(text) = fs::read_to_string(paths::work("chats").join("_open.txt")) else { return 0 };
-    text.lines().map(str::trim).filter(|l| !l.is_empty()).take(MAX_AGENTS).filter(|id| open_chat(id).is_some()).count()
+    let listed: Vec<(String, bool, f64)> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|id| {
+            let d: Value = fs::read_to_string(chat_file(id)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
+            let finished = d["team"].is_string() && d["result_written"] == true;
+            (id.to_string(), !finished, d["updated"].as_f64().unwrap_or(0.0))
+        })
+        .collect();
+    restore_order(&listed, MAX_AGENTS).iter().filter(|id| open_chat(id).is_some()).count()
+}
+
+/// Which of the chats listed as open (id, holds a slot, last updated) are reopened, in order: the slot-holding ones
+/// first, then the finished helpers (they take no slot, so all of them). When more slot-holding chats are listed than
+/// there are slots, the newest `slots` of them are reopened (in their listed order); the rest stay under Earlier.
+fn restore_order(listed: &[(String, bool, f64)], slots: usize) -> Vec<String> {
+    let mut holders: Vec<(usize, &(String, bool, f64))> = listed.iter().enumerate().filter(|(_, c)| c.1).collect();
+    holders.sort_by(|a, b| b.1 .2.total_cmp(&a.1 .2));
+    holders.truncate(slots);
+    holders.sort_by_key(|(i, _)| *i);
+    holders.iter().map(|(_, c)| c.0.clone()).chain(listed.iter().filter(|c| !c.1).map(|c| c.0.clone())).collect()
 }
 
 fn chat_file(chat_id: &str) -> std::path::PathBuf {
@@ -1862,8 +1945,14 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
     let d: Value = serde_json::from_str(&fs::read_to_string(chat_file(&chat_id)).ok()?).ok()?;
     let agent = Agent::new(chat_id, d["name"].as_str().filter(|s| !s.is_empty()).unwrap_or("Chat"));
     {
+        // a helper that handed its result back stays finished after a restart, so it takes no agent slot
+        let mut st = agent.st.lock().unwrap();
+        st.team = d["team"].as_str().map(str::to_string);
+        st.result_written = d["result_written"].as_bool().unwrap_or(false);
+    }
+    {
         let mut all = AGENTS.lock().unwrap();
-        if slots_taken(&all) >= MAX_AGENTS {
+        if agent.holds_slot() && slots_taken(&all) >= MAX_AGENTS {
             return None;
         }
         all.push(agent.clone());
@@ -2243,6 +2332,97 @@ mod tests {
         b.st.lock().unwrap().sending = true;
         b.ask("hello", &Ask::default());
         assert!(!b.nudge_file().exists());
+    }
+
+    #[test]
+    fn restore_reopens_every_chat_slot_holders_first_and_newest() {
+        let c = |id: &str, holds: bool, t: f64| (id.to_string(), holds, t);
+        // finished helpers take no slot: all are reopened, after the slot holders
+        let listed = vec![c("a", true, 1.0), c("h1", false, 2.0), c("b", true, 3.0), c("h2", false, 4.0)];
+        assert_eq!(restore_order(&listed, 8), vec!["a", "b", "h1", "h2"]);
+        // more slot holders than slots: the newest ones, in their listed order; the rest stay under Earlier
+        let listed = vec![c("old", true, 1.0), c("h", false, 9.0), c("new1", true, 5.0), c("mid", true, 3.0), c("new2", true, 6.0)];
+        assert_eq!(restore_order(&listed, 2), vec!["new1", "new2", "h"]);
+        assert_eq!(restore_order(&[], 8), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_finished_helper_stays_finished_after_a_restart() {
+        let a = new_background_chat("Designer: restart", None).unwrap();
+        {
+            let mut st = a.st.lock().unwrap();
+            st.team = Some("w-restart".into());
+            st.parent = Some("lead-x".into());
+        }
+        a.put("user", json!({"text": "Design the plan"}));
+        a.mark_result();
+        a.save();
+        let id = a.id.clone();
+        remove_agent(&id);
+        let d: Value = serde_json::from_str(&fs::read_to_string(chat_file(&id)).unwrap()).unwrap();
+        assert_eq!(d["team"], "w-restart");
+        assert_eq!(d["result_written"], true);
+        let b = open_chat(&id).unwrap();
+        assert!(!b.holds_slot(), "a finished helper holds no slot after a restart");
+        assert_eq!(b.team().map(|t| t.0).as_deref(), Some("w-restart"));
+        remove_agent(&id);
+    }
+
+    #[test]
+    fn a_message_to_a_finished_helper_needs_a_free_slot() {
+        assert!(!no_slot_for(true, || MAX_AGENTS), "a chat holding a slot is never refused");
+        assert!(!no_slot_for(false, || MAX_AGENTS - 1), "a free slot: it takes it");
+        assert!(no_slot_for(false, || MAX_AGENTS), "none free: refused");
+        let mut counted = false;
+        assert!(!no_slot_for(true, || {
+            counted = true;
+            0
+        }));
+        assert!(!counted, "the slots are only counted for a chat that holds none");
+    }
+
+    #[test]
+    fn progress_calls_are_the_ones_that_move_the_run_on() {
+        assert!(progress_call("mcp__rbxkit__rbx_stage", &json!({"action": "review", "title": "Plan"})));
+        assert!(progress_call("mcp__rbxkit__rbx_stage", &json!({"action": "stage", "id": "build"})));
+        assert!(progress_call("mcp__rbxkit__rbx_stage", &json!({"action": "lesson"})));
+        assert!(!progress_call("mcp__rbxkit__rbx_stage", &json!({"action": "decisions"})));
+        assert!(!progress_call("mcp__rbxkit__rbx_stage", &json!({"action": "status"})));
+        assert!(progress_call("mcp__rbxkit__rbx_team", &json!({"action": "spawn"})));
+        assert!(!progress_call("mcp__rbxkit__rbx_team", &json!({"action": "wait", "ids": ["w1"]})));
+        assert!(!progress_call("mcp__rbxkit__rbx_team", &json!({"action": "status"})));
+        assert!(progress_call("mcp__Roblox_Studio__run_code", &json!({})));
+        assert!(progress_call("Edit", &json!({"file_path": "GAME.md"})));
+        assert!(progress_call("Write", &json!({})));
+        assert!(!progress_call("Read", &json!({})));
+        assert!(!progress_call("mcp__rbxkit__rbx_board", &json!({"action": "list"})));
+        // an AI that does not report the arguments: rbx_stage and rbx_team count
+        assert!(progress_call("rbx_team", &Value::Null));
+    }
+
+    #[test]
+    fn six_carry_ons_without_progress_count_as_waiting() {
+        let mut n = 0;
+        for _ in 0..5 {
+            assert!(!no_progress_call(true, true, true, false, &mut n));
+        }
+        assert!(no_progress_call(true, true, true, false, &mut n), "the sixth trips it");
+        assert_eq!(n, 0, "and the count starts again");
+        for _ in 0..5 {
+            no_progress_call(true, true, true, false, &mut n);
+        }
+        assert!(!no_progress_call(true, true, true, true, &mut n), "a progress call resets it");
+        assert_eq!(n, 0);
+        for (studio, carry_on, ok) in [(false, true, true), (true, false, true), (true, true, false)] {
+            let mut n = 5;
+            assert!(!no_progress_call(studio, carry_on, ok, false, &mut n));
+            assert_eq!(n, 0, "not a Lead, a user's turn, or a failed turn: no count");
+        }
+        // the three-turns-without-any-tool rule is unchanged
+        let mut idle = 0;
+        assert!(!no_progress(true, true, true, 0, &mut idle));
+        assert!(!no_progress(true, true, true, 0, &mut idle));
+        assert!(no_progress(true, true, true, 0, &mut idle));
     }
 
     #[test]
