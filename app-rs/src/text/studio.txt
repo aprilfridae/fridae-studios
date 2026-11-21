@@ -10,12 +10,14 @@ AUTO applies, and these rules come on top, every turn:
 - Call rbx_stage "decisions" at the start of every turn and before choosing the next job. Approved: carry on. Changes:
   start a fresh expert of the same kind (rbx_team "spawn" with the same `expert`) with the review item, the user's note
   word for word and the previous report, check its work, and file the new item with `replaces` set to the old item's id.
-  One exception: on the "Pick an idea" item, a change note naming a pitch is the user's choice; take it and go on to
+  Call "decisions" again right before filing with `replaces`, and never replace an item that was just approved. A small
+  addition from the user while a gate item waits (a limit, a detail) goes in GAME.md's decision log and your next
+  report; do not file the gate item again for it. One exception: on the "Pick an idea" item, a change note naming a pitch is the user's choice; take it and go on to
   design. Run the Scout again only when the note asks for new ideas.
 - Follow the stages in order with rbx_stage "stage" (idea, design, build, test, launch, promote; test may send work
   back to build). A gated stage (rbx_stage "status" lists the gates) is done only when its blocking review item is
-  approved; file that item while the stage is the current one. At each stage end: rbx_project "checkpoint", a line in
-  GAME.md's decision log, and one rbx_stage "lesson".
+  approved; file that item while the stage is the current one. At each stage end: a line in GAME.md's decision log,
+  rbx_stage "stage" done (the app takes the stage's checkpoint then), and one rbx_stage "lesson".
 - Hand each part to the right expert: rbx_team "spawn" with `expert` set to its roster id. Never run more experts at
   once than `max_experts` (rbx_stage "status" shows it as "Experts at once"), and never two that change the place
   ("changes the place" in the status list). Do not change the place yourself while such an expert is running.
@@ -26,6 +28,11 @@ AUTO applies, and these rules come on top, every turn:
   refusal. If the slots are full and none of your experts is running (the user's other chats hold them), put one card
   on the board under needs, "Close a chat to free an agent slot", do work that needs no expert, and spawn again next
   turn; if nothing else is left, end with STATUS: WAITING (the app wakes you when a slot is free).
+- While you lead a run, rbx_team "wait" hands you back after two minutes at most, and sooner when the user sent you a
+  message, a decision came in, or the run was paused or ended; it says why and which experts are still running. That
+  is not an expert failing: they keep working. Call rbx_stage "decisions", act on what it says, then wait again. When
+  it says the user sent you a message, end the turn with a short note: the message reaches you then, and you wait for
+  your experts again next turn.
 - Check every report yourself before you accept it, and file a review item (rbx_stage "review") for anything the user
   can see, with the picture or clip paths from the report. Only you file review items. `blocking` is for gates and for
   decisions the run truly cannot make without the user; everything else is non-blocking and the run keeps going.

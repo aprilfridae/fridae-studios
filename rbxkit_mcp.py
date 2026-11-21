@@ -689,6 +689,7 @@ TOOLS = [
              "expert": {"type": "string", "description": "review: the expert that made the work"},
              "blocking": {"type": "boolean", "description": "review: true if the run must wait for the user's yes"},
              "replaces": {"type": "string", "description": "review: id of the older item this one replaces"},
+             "force": {"type": "boolean", "description": "review: replace even an item the user already approved (only when the plan itself must change)"},
              "text": {"type": "string", "description": "lesson: one short sentence"},
              "scope": {"type": "string", "enum": ["game", "all"], "description": "lesson: this game or every game (default game)"}},
             ["action"]), t_stage),
@@ -697,7 +698,8 @@ TOOLS = [
      "problems; the task must be a full brief (at least 80 characters: what to do, where, what is done already, what to leave alone, "
      "what to report), because the new agent knows nothing about this chat. Returns an id and status, or says the app did not pick "
      "it up. 'status' (optional ids) lists tasks. 'wait' (ids, timeout seconds, default 600, at most 840) blocks until they are done "
-     "or refused and returns each agent's final reply. Agents started this way cannot start more. They share the one Studio: use "
+     "or refused and returns each agent's final reply (a studio run's Lead is handed back after 120 seconds at most, or sooner when a "
+     "message or decision is waiting or the run was paused or ended; it says why). Agents started this way cannot start more. They share the one Studio: use "
      "rbx_studio_lock around playtests.",
      schema({"action": {"type": "string", "enum": ["spawn", "status", "wait"]},
              "role": {"type": "string", "enum": ["worker", "critic"], "description": "spawn"},

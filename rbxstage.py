@@ -323,6 +323,14 @@ def _copy_media(project, item_id, paths):
     return kept, skipped
 
 
+def _refuse_approved(old, a):
+    """Replacing an item the user already approved would make them approve twice: refused unless `force`."""
+    if old.get("status") == "approved" and not a.get("force"):
+        raise KitError("Not filed: [%s] %s was already approved by the user, so it is not replaced. Call 'decisions' and "
+                       "carry on from the approval; record small additions in GAME.md's decision log. Give 'force' true "
+                       "only when the plan itself must change." % (old.get("id") or "?", old.get("title") or ""))
+
+
 def _review(project, a):
     title = (a.get("title") or "").strip()
     if not title:
@@ -333,6 +341,7 @@ def _review(project, a):
         old = _read_json(_item_path(project, replaces))
         if not old:
             raise KitError("No review item with id %r to replace." % replaces)
+        _refuse_approved(old, a)
     run = load_run(project)
     item_id = uuid.uuid4().hex[:8]
     kept, skipped = _copy_media(project, item_id, a.get("media"))
@@ -343,6 +352,12 @@ def _review(project, a):
             "replaces": replaces, "by_chat": os.environ.get("RBXKIT_AGENT_ID") or ""}
     note = ""
     with locked(project):
+        if old:
+            try:
+                _refuse_approved(_read_json(_item_path(project, replaces)) or {}, a)  # approved while the media copied
+            except KitError:
+                shutil.rmtree(os.path.join(_review_dir(project), item_id), ignore_errors=True)
+                raise
         _write_json(_item_path(project, item_id), item)
         if old:
             cur = _read_json(_item_path(project, replaces))  # re-read: the user may have decided it meanwhile

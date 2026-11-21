@@ -211,10 +211,36 @@ class StageTests(unittest.TestCase):
         item = self.item(old)
         item["status"] = "approved"
         self.write_item(item)
-        text = self.call("review", title="v2", summary="s", replaces=old)
+        # replacing an approved item is refused (the user would approve twice), and nothing is filed
+        before = set(os.listdir(self.review_dir()))
+        with self.assertRaises(KitError) as e:
+            self.call("review", title="v2", summary="s", replaces=old, media=[self.media("a.png")])
+        self.assertIn("already approved", str(e.exception))
+        self.assertIn("force", str(e.exception))
+        self.assertEqual(set(os.listdir(self.review_dir())), before, "no item and no media folder left behind")
+        # with force it is filed, and the approval is kept as it was
+        text = self.call("review", title="v2", summary="s", replaces=old, force=True)
         self.assertEqual(self.item(old)["status"], "approved")
         self.assertIn("already approved", text)
         self.assertIn("v1", self.call("decisions"))
+
+    def test_approved_while_filing_is_refused_and_cleaned_up(self):
+        old = self.filed_id(self.call("review", title="v1", summary="s", blocking=True))
+        real = rbxstage._copy_media
+
+        def copy_then_approve(project, item_id, paths):
+            out = real(project, item_id, paths)
+            item = self.item(old)
+            item["status"] = "approved"  # the user approved it in Review just now
+            self.write_item(item)
+            return out
+
+        before = set(os.listdir(self.review_dir()))
+        with mock.patch.object(rbxstage, "_copy_media", copy_then_approve):
+            with self.assertRaises(KitError):
+                self.call("review", title="v2", summary="s", replaces=old, media=[self.media("a.png")])
+        self.assertEqual(set(os.listdir(self.review_dir())), before)
+        self.assertEqual(self.item(old)["status"], "approved")
 
     def test_replaces_unknown_id(self):
         with self.assertRaises(KitError):

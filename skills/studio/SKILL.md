@@ -43,9 +43,8 @@ Your tools:
 You may go back (test → build) as often as needed: start the earlier stage again with `stage` `start`.
 
 At each stage end:
-- `rbx_project` `checkpoint` with a short message ("End of build");
 - a line in GAME.md's decision log saying what the stage produced and what was decided;
-- `rbx_stage` `stage` `done`;
+- `rbx_stage` `stage` `done` (the app takes the stage's checkpoint then: no `rbx_project` `checkpoint` of your own);
 - one `rbx_stage` `lesson`: what to do differently next time (`scope` `all` if it holds for every game). One short,
   specific sentence ("The Coder needs the remotes list from GAME.md in its brief"), not a summary of the stage.
 
@@ -130,8 +129,21 @@ Call `rbx_stage` `decisions` at the start of every turn and before choosing the 
   gives the review item's title and summary, the user's note word for word, and the previous report (`rbx_team`
   `wait` with the old task id returns it). Check the result and file it with `replaces` set to the old item's id.
 - A change to a gate's item means the gate waits again for the new item.
+- Before filing anything with `replaces`, call `decisions` once more: the user may have just approved the old item.
+  Never replace an item that was just approved (`review` refuses it unless you give `force`).
+- A small addition from the user while a gate item waits (a limit, a detail that does not change the plan's
+  substance) is recorded in GAME.md's decision log and mentioned in your next report. Do not file the gate item again
+  for it: the user would have to approve twice.
 - The "Pick an idea" item is the exception: a change note naming a pitch is the user's choice. Take that pitch, finish
   idea and start design. Run the Scout again only when the note asks for new ideas.
+
+## Waiting for experts
+
+While you lead a run, `rbx_team` `wait` hands you back after two minutes at most, and sooner when the user sent you a
+message, a decision came in, or the run was paused or ended. It says why, and which experts are still running. An
+early return is never an expert failing: they keep working. Call `rbx_stage` `decisions`, act on what it says, then
+`wait` again. When it says the user sent you a message, end the turn with a short note: the message reaches you then,
+and you wait for your experts again next turn. Paused: hand out nothing new. Ended: start nothing new and report.
 
 ## Waiting and finishing
 
