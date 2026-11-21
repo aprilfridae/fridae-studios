@@ -173,7 +173,8 @@ def _reference(topic):
     for cand in (ref, ref + ".md"):
         path = os.path.join(folder, cand)
         if os.path.isfile(path):
-            return fill(open(path, encoding="utf-8").read())
+            with open(path, encoding="utf-8") as f:
+                return fill(f.read())
     return None
 
 
@@ -181,7 +182,8 @@ def _one_guide(topic):
     path = os.path.join(KIT, GUIDES[topic][0])
     if not os.path.exists(path):
         return None
-    text = fill(open(path, encoding="utf-8").read())
+    with open(path, encoding="utf-8") as f:
+        text = fill(f.read())
     refs = os.path.join(os.path.dirname(path), "references")
     if topic != "vfx" and os.path.isdir(refs):
         files = sorted(f[:-3] for f in os.listdir(refs) if f.endswith(".md"))
@@ -208,6 +210,9 @@ def _one_guide(topic):
     return text
 
 
+GUIDE_CAP = 30000  # bytes of guide text one rbx_guide call returns at most (past the first guide)
+
+
 def t_guide(a):
     """One or several guides in a single call."""
     wanted = [str(t).strip().lower() for t in (a.get("topics") or [])]
@@ -217,16 +222,25 @@ def t_guide(a):
     if not wanted:
         lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
         return result("\n".join(lines), True, False)
-    out, unknown = [], []
+    out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
     for topic in wanted:
         text = _one_guide(topic) if topic in GUIDES else _reference(topic)
         if text is None:
             unknown.append(topic)
-        else:
-            out.append("=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text)
+            continue
+        part = "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text
+        n = len(part.encode("utf-8")) + 2
+        if out and (left or size + n > GUIDE_CAP):
+            left.append(topic)  # the first guide always comes whole; the rest only while the answer stays small
+            continue
+        out.append(part)
+        size += n
     if not out:
         return result("No such guide: " + ", ".join(unknown) + ". Call rbx_guide with no arguments to list the topics.", False)
     body = PREFACE + "\n\n".join(out)
+    if left:
+        body += ("\n\n(Left out to keep this answer under %d KB: %s. Ask for them in another rbx_guide call, two topics "
+                 "at a time.)" % (GUIDE_CAP // 1000, ", ".join(left)))
     if unknown:
         body += "\n\n(No such guide: " + ", ".join(unknown) + ")"
     return result(body, True, False)
@@ -547,7 +561,8 @@ def schema(props, required=()):
 S = {"type": "string"}
 TOOLS = [
     ("rbx_guide", "Read rbxkit guides. Before a Roblox task, load every relevant guide in one call by passing several names in "
-     "`topics` (always include 'workflow'; add the style guide for modelling, UI and effects). With no arguments, lists the topics.",
+     "`topics` (always include 'workflow'; add the style guide for modelling, UI and effects). One answer holds about 30 KB at most: "
+     "topics left out are named, so ask for them in another call. With no arguments, lists the topics.",
      schema({"topics": {"type": "array", "items": {"type": "string"},
                         "description": "Guide names: workflow, playtest, ui-design, ui-helpers, ui-audit, sim-ui, vfx, vfx-basics, tester, web-to-roblox, "
                                        "emil-design-eng, motion-design, redesign-skill, reference-design-contract, "

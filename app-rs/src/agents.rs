@@ -619,6 +619,7 @@ impl Agent {
     /// A helper's result was handed back: from now on it holds an agent slot only while it works.
     pub fn mark_result(&self) {
         self.st.lock().unwrap().result_written = true;
+        self.put("handed_back", json!({})); // the window shows the chat as finished, never as needing the user
     }
 
     /// Whether this chat takes one of the MAX_AGENTS slots now (see `holds_slot`).

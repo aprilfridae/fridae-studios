@@ -181,3 +181,38 @@ class RosterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GuideLoadTests(unittest.TestCase):
+    """Live run L7: a 6-topic rbx_guide call returned 62 KB and the expert tried to parse it with a shell command."""
+
+    def text(self, topics):
+        res = rbxkit_mcp.t_guide({"topics": topics})
+        return res["content"][0]["text"]
+
+    def test_one_answer_stays_under_the_cap_and_names_what_was_left_out(self):
+        topics = ["workflow", "unslop", "emil-design-eng", "motion-design", "studio"]
+        text = self.text(topics)
+        self.assertIn("GUIDE: workflow", text, "the first guide always comes")
+        self.assertLessEqual(len(text.encode("utf-8")), rbxkit_mcp.GUIDE_CAP + 2000)
+        self.assertIn("Left out to keep this answer under 30 KB", text)
+        left = text.rsplit("Left out", 1)[1]
+        for t in topics[1:]:
+            if "GUIDE: " + t not in text:
+                self.assertIn(t, left)
+
+    def test_a_small_request_is_whole(self):
+        text = self.text(["studio", "producer"])
+        self.assertIn("GUIDE: studio", text)
+        self.assertIn("GUIDE: producer", text)
+        self.assertNotIn("Left out", text)
+
+    def test_expert_files_load_two_topics_at_a_time_and_use_no_shell_on_output(self):
+        folder = os.path.join(os.path.dirname(rbxroster.__file__), "team", "experts")
+        for name in IDS:
+            if name == "lead":
+                continue
+            with open(os.path.join(folder, name + ".md"), encoding="utf-8") as f:
+                text = " ".join(f.read().split())
+            self.assertIn("at most two topics per rbx_guide call", text, name)
+            self.assertIn("Never use shell commands to post-process a tool's output", text, name)
