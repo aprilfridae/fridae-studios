@@ -276,8 +276,8 @@ fn can_start(project: &Path) -> Result<(), String> {
     }
 }
 
-/// A new run, as rbxstage's `_new_run` makes it, but on. Decisions on items from an earlier run count as read, so
-/// the new Lead is not handed them again.
+/// A new run, as rbxstage's `_new_run` makes it, but on. Decisions on items still in the review folder (ones the
+/// archive could not move) count as read, so the new Lead is not handed them.
 fn fresh_run(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64, lead: &str) -> Value {
     let read: Vec<String> = item_files(project)
         .into_iter()
@@ -291,6 +291,56 @@ fn fresh_run(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64, l
         "gates": gates, "max_experts": max_experts, "lead": lead, "idea": idea, "started": paths::now_secs(), "paused": false,
         "read_decisions": read,
     })
+}
+
+/// Move everything in the review folder to `.fridae/review-archive/<stamp>/` (a free name), each item's file before
+/// its media folder, so a failure never leaves a listed item without its pictures. Returns what could not be moved.
+/// Call under the project's lock.
+fn archive_review(project: &Path, stamp: u64) -> Vec<String> {
+    let review = review_dir(project);
+    let mut entries: Vec<PathBuf> = fs::read_dir(&review).into_iter().flatten().flatten().map(|e| e.path()).collect();
+    if entries.is_empty() {
+        return vec![];
+    }
+    let root = project.join(".fridae").join("review-archive");
+    let mut dest = root.join(stamp.to_string());
+    let mut n = 1;
+    while dest.exists() {
+        n += 1;
+        dest = root.join(format!("{stamp}-{n}"));
+    }
+    if fs::create_dir_all(&dest).is_err() {
+        return entries.iter().map(|p| paths::base_name(&p.display().to_string())).collect();
+    }
+    // item files first; a folder goes only when its item went (or it has no item file)
+    entries.sort_by_key(|p| !p.extension().is_some_and(|e| e == "json"));
+    let mut failed: Vec<String> = Vec::new();
+    for path in entries {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if path.is_dir() && failed.contains(&format!("{name}.json")) {
+            failed.push(name);
+            continue;
+        }
+        if fs::rename(&path, dest.join(&name)).is_err() {
+            failed.push(name);
+        }
+    }
+    failed
+}
+
+/// Under the lock: refuse when a run is going, else archive the last run's review items and write the new run.
+/// Returns a warning when some old review files could not be moved.
+fn write_fresh(project: &Path, idea: &str, gates: Vec<String>, max_experts: u64, lead: &str) -> Result<Option<String>, String> {
+    change_run(project, |run| {
+        if running(run) {
+            return (false, Err(ALREADY.to_string()));
+        }
+        let stamp = run["started"].as_f64().filter(|s| *s > 0.0).unwrap_or_else(paths::now_secs) as u64;
+        let failed = archive_review(project, stamp);
+        *run = fresh_run(project, idea, gates, max_experts, lead);
+        let warning = (!failed.is_empty()).then(|| format!("Could not move these old review files into the archive: {}.", failed.join(", ")));
+        (true, Ok(warning))
+    })?
 }
 
 /// The run's Lead, when its chat is open in this session.
@@ -315,15 +365,31 @@ fn notify_lead(project: &Path, text: &str) -> bool {
     false
 }
 
-/// The chat that leads a run: the project's most recent idle chat of the user's own, or a new one in the background.
-/// The second value says whether it was made here.
-fn lead_chat(project: &str) -> Option<(Arc<Agent>, bool)> {
-    let mine = |a: &Arc<Agent>| a.role().is_none() && !a.busy() && a.project().is_some_and(|p| projects::same(&p, project));
-    if let Some(a) = agents::agents().into_iter().rev().find(mine) {
-        return Some((a, false));
-    }
+/// A new background chat to lead the project's run, "Lead: <project name>".
+fn new_lead_chat(project: &str) -> Option<Arc<Agent>> {
     let name = projects::describe(project)["name"].as_str().unwrap_or("").to_string();
-    agents::new_background_chat(&format!("Lead: {name}"), Some(project.to_string())).map(|a| (a, true))
+    agents::new_background_chat(&format!("Lead: {name}"), Some(project.to_string()))
+}
+
+/// The chat a run starts in: the one the user started it from (`agent`), which must be an idle chat of their own in
+/// this project or in none yet (it then joins the project), or else a new Lead chat. The second value says whether
+/// the chat was made here.
+fn start_lead(project: &str, agent: Option<&str>) -> Result<(Arc<Agent>, bool), String> {
+    let Some(id) = agent.filter(|a| !a.is_empty()) else { return new_lead_chat(project).map(|a| (a, true)).ok_or_else(|| NO_SLOT.to_string()) };
+    let chat = agents::get(id).ok_or("That chat is gone.")?;
+    if chat.role().is_some() {
+        return Err("Only a chat of your own can lead a studio run.".into());
+    }
+    if chat.busy() {
+        return Err("That chat is working. Wait for it to finish, then start the run.".into());
+    }
+    match chat.project() {
+        Some(p) if projects::same(&p, project) => {}
+        Some(_) => return Err("That chat belongs to another game.".into()),
+        None if chat.set_project(project) => {}
+        None => return Err("That chat has already started without this game. Start the run from a new chat.".into()),
+    }
+    Ok((chat, false))
 }
 
 const NO_SLOT: &str = "All agent slots are in use. Close a chat, then try again.";
@@ -340,55 +406,86 @@ fn start(project: &str, body: &Value) -> Result<Value, String> {
     let gates = gates.unwrap_or_else(|| DEFAULT_GATES.iter().map(|g| g.to_string()).collect());
     let idea: String = body["idea"].as_str().unwrap_or("").trim().chars().take(IDEA_MAX).collect();
     can_start(dir)?;
-    let (lead, made) = lead_chat(project).ok_or(NO_SLOT)?;
-    let wrote = change_run(dir, |run| {
-        if running(run) {
-            return (false, false);
-        }
-        *run = fresh_run(dir, &idea, gates, max.unwrap_or(2), &lead.id);
-        (true, true)
-    });
-    if wrote != Ok(true) {
-        if made {
-            agents::remove_agent(&lead.id);
-        }
-        return Err(wrote.err().unwrap_or_else(|| ALREADY.into()));
-    }
+    let (lead, made) = start_lead(project, body["agent"].as_str())?;
+    let warning = finish_start(dir, &lead, made, &idea, gates, max.unwrap_or(2))?;
     kickoff(&lead, if idea.is_empty() { "Start a studio run for this game.".into() } else { idea });
-    Ok(json!({"ok": true, "agent": lead.id}))
+    let mut out = json!({"ok": true, "agent": lead.id});
+    if let Some(w) = warning {
+        out["warning"] = json!(w);
+    }
+    Ok(out)
+}
+
+/// Write the new run for `lead`; when another request started a run meanwhile, a chat made for this one is closed.
+fn finish_start(dir: &Path, lead: &Arc<Agent>, made: bool, idea: &str, gates: Vec<String>, max: u64) -> Result<Option<String>, String> {
+    let wrote = write_fresh(dir, idea, gates, max, &lead.id);
+    if wrote.is_err() && made {
+        agents::remove_agent(&lead.id);
+    }
+    wrote
+}
+
+const NO_RUN: &str = "This game has no studio run to resume.";
+
+/// What Resume found under the lock.
+#[derive(Debug, PartialEq)]
+enum Claim {
+    /// The run is unpaused, and led by the chat given (or still by its live Lead).
+    Ours,
+    /// Another request gave the run a Lead since it was read: this one.
+    Taken(String),
+}
+
+/// Under the lock: the run must be on and not finished, and still led by `expected` (the Lead read before); then it
+/// is unpaused and, with `new_lead`, handed to that chat.
+fn claim_lead(project: &Path, expected: &str, new_lead: Option<&str>) -> Result<Claim, String> {
+    change_run(project, |run| {
+        if !run.is_object() || !running(run) {
+            return (false, Err(NO_RUN.to_string()));
+        }
+        let now = run["lead"].as_str().unwrap_or("").to_string();
+        if now != expected {
+            return (false, Ok(Claim::Taken(now)));
+        }
+        run["paused"] = json!(false);
+        if let Some(id) = new_lead {
+            run["lead"] = json!(id);
+        }
+        (true, Ok(Claim::Ours))
+    })?
 }
 
 fn resume(project: &str) -> Result<Value, String> {
     let dir = Path::new(project);
-    let run = read_run(dir).ok_or("This game has no studio run yet.")?;
-    let live = live_lead(&run);
-    let (lead, made) = match live {
-        Some(l) => (l, false),
-        None => lead_chat(project).ok_or(NO_SLOT)?,
+    let run = read_run(dir).filter(running).ok_or(NO_RUN)?;
+    let expected = run["lead"].as_str().unwrap_or("").to_string();
+    let id = match live_lead(&run) {
+        Some(lead) => match claim_lead(dir, &expected, None)? {
+            Claim::Ours => {
+                lead.wake_studio("Resume the studio run.");
+                lead.id.clone()
+            }
+            Claim::Taken(other) => other,
+        },
+        None => {
+            let chat = new_lead_chat(project).ok_or(NO_SLOT)?;
+            match claim_lead(dir, &expected, Some(&chat.id)) {
+                Ok(Claim::Ours) => {
+                    kickoff(&chat, "Adopt this game's studio run and carry on.".into());
+                    chat.id.clone()
+                }
+                Ok(Claim::Taken(other)) => {
+                    agents::remove_agent(&chat.id);
+                    other
+                }
+                Err(e) => {
+                    agents::remove_agent(&chat.id);
+                    return Err(e);
+                }
+            }
+        }
     };
-    let fresh = run["lead"].as_str() != Some(lead.id.as_str());
-    let saved = change_run(dir, |run| {
-        if !run.is_object() {
-            return (false, false);
-        }
-        run["paused"] = json!(false);
-        if fresh {
-            run["lead"] = json!(lead.id);
-        }
-        (true, true)
-    });
-    if saved != Ok(true) {
-        if made {
-            agents::remove_agent(&lead.id);
-        }
-        return Err(saved.err().unwrap_or_else(|| "This game has no studio run yet.".into()));
-    }
-    if fresh {
-        kickoff(&lead, "Adopt this game's studio run and carry on.".into());
-    } else {
-        lead.wake_studio("Resume the studio run.");
-    }
-    Ok(json!({"ok": true, "agent": lead.id}))
+    Ok(json!({"ok": true, "agent": id}))
 }
 
 /// Change an existing run's own fields.
@@ -650,6 +747,112 @@ mod tests {
         assert!(can_start(&d).is_ok(), "a finished run may be followed by a new one");
         put_run(&d, json!({"on": false, "stages": []}));
         assert!(can_start(&d).is_ok());
+    }
+
+    fn todo_run(lead: &str) -> Value {
+        json!({"on": true, "lead": lead, "paused": true, "stages": STAGES.iter().map(|s| json!({"id": s, "status": "todo"})).collect::<Vec<_>>()})
+    }
+
+    fn done_run(started: f64) -> Value {
+        json!({"on": true, "started": started, "lead": "c-old", "stages": STAGES.iter().map(|s| json!({"id": s, "status": "done"})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn resume_claim_is_compare_and_set() {
+        let d = game("claim");
+        put_run(&d, todo_run("c-old"));
+        assert_eq!(claim_lead(&d, "c-old", Some("c-new1")).unwrap(), Claim::Ours);
+        assert_eq!((run(&d)["lead"].as_str(), run(&d)["paused"].as_bool()), (Some("c-new1"), Some(false)));
+        // a second Resume that read the old Lead finds the run already adopted and changes nothing
+        assert_eq!(claim_lead(&d, "c-old", Some("c-new2")).unwrap(), Claim::Taken("c-new1".into()));
+        assert_eq!(run(&d)["lead"], "c-new1");
+        // waking the live Lead keeps it
+        assert_eq!(claim_lead(&d, "c-new1", None).unwrap(), Claim::Ours);
+        assert_eq!(run(&d)["lead"], "c-new1");
+    }
+
+    #[test]
+    fn resume_refuses_finished_or_off_run() {
+        let d = game("resume-off");
+        let p = d.display().to_string();
+        assert_eq!(resume(&p).unwrap_err(), NO_RUN, "no run");
+        put_run(&d, done_run(5.0));
+        assert_eq!(resume(&p).unwrap_err(), NO_RUN, "finished");
+        assert_eq!(claim_lead(&d, "c-old", Some("c-x")).unwrap_err(), NO_RUN);
+        let mut off = todo_run("c-old");
+        off["on"] = json!(false);
+        put_run(&d, off);
+        assert_eq!(resume(&p).unwrap_err(), NO_RUN, "off");
+        assert!(!agents::agents().iter().any(|a| a.project().as_deref() == Some(p.as_str())), "no chat was made");
+    }
+
+    #[test]
+    fn start_lead_takes_only_an_idle_chat_of_this_game() {
+        let d = game("startlead");
+        let other = game("startlead-other");
+        let p = d.display().to_string();
+        let mine = agents::new_background_chat("Mine", Some(p.clone())).unwrap();
+        let theirs = agents::new_background_chat("Theirs", Some(other.display().to_string())).unwrap();
+        let helper = agents::spawn_helper(None, "worker", "Helper", Some(p.clone()), None, None).unwrap();
+        let (chat, made) = start_lead(&p, Some(&mine.id)).unwrap();
+        assert_eq!((chat.id.as_str(), made), (mine.id.as_str(), false));
+        let why = |id: &str| start_lead(&p, Some(id)).err();
+        assert_eq!(why(&theirs.id).as_deref(), Some("That chat belongs to another game."));
+        assert_eq!(why(&helper.id).as_deref(), Some("Only a chat of your own can lead a studio run."));
+        assert_eq!(why("c-no-such-chat").as_deref(), Some("That chat is gone."));
+        for a in [&mine, &theirs, &helper] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn double_start_refused_and_leaves_no_chat() {
+        let d = game("double");
+        let p = d.display().to_string();
+        assert_eq!(write_fresh(&d, "Lava obby", vec!["design".into()], 2, "c-first").unwrap(), None);
+        assert_eq!(write_fresh(&d, "Other", vec![], 3, "c-second").unwrap_err(), ALREADY);
+        let r = run(&d);
+        assert_eq!((r["lead"].as_str(), r["idea"].as_str()), (Some("c-first"), Some("Lava obby")));
+        // the route refuses before making a chat
+        assert_eq!(start(&p, &json!({"idea": "x"})).unwrap_err(), ALREADY);
+        assert!(!agents::agents().iter().any(|a| a.project().as_deref() == Some(p.as_str())));
+        // a chat made for a start that lost the race is closed again
+        let lead = agents::new_background_chat("Lead: race", Some(p.clone())).unwrap();
+        assert_eq!(finish_start(&d, &lead, true, "x", vec![], 2).unwrap_err(), ALREADY);
+        assert!(agents::get(&lead.id).is_none());
+        assert_eq!(run(&d)["lead"], "c-first");
+    }
+
+    #[test]
+    fn new_run_archives_old_review_items() {
+        let d = game("archive");
+        let p = d.display().to_string();
+        put_run(&d, done_run(1234.5));
+        put_item(&d, "aa", json!({"status": "approved", "media": ["shot.png"]}));
+        put_item(&d, "bb", json!({}));
+        let media = d.join(".fridae").join("review").join("aa");
+        fs::create_dir_all(&media).unwrap();
+        fs::write(media.join("shot.png"), b"png").unwrap();
+        let (mut seen, mut looked) = (HashMap::new(), HashSet::new());
+        changes(&[p.clone()], &mut seen, &mut looked);
+        assert_eq!(write_fresh(&d, "Next game", vec![], 2, "c-new").unwrap(), None);
+        assert_eq!(fs::read_dir(d.join(".fridae").join("review")).unwrap().count(), 0);
+        let arch = d.join(".fridae").join("review-archive").join("1234");
+        assert!(arch.join("aa.json").is_file() && arch.join("bb.json").is_file());
+        assert_eq!(fs::read(arch.join("aa").join("shot.png")).unwrap(), b"png");
+        let r = run(&d);
+        assert_eq!((r["lead"].as_str(), r["idea"].as_str(), r["on"].as_bool()), (Some("c-new"), Some("Next game"), Some(true)));
+        assert!(r["stages"].as_array().unwrap().iter().all(|s| s["status"] == "todo"));
+        assert_eq!(r["read_decisions"], json!([]));
+        assert!(items(&d).is_empty());
+        // the move is not news for the Review tab: only the new run is reported
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let ev = changes(&[p], &mut seen, &mut looked);
+        assert!(ev.iter().all(|(k, _)| *k == "studio_run"), "{ev:?}");
+        // a second archive with the same stamp gets its own folder
+        put_item(&d, "cc", json!({}));
+        assert!(archive_review(&d, 1234).is_empty());
+        assert!(d.join(".fridae").join("review-archive").join("1234-2").join("cc.json").is_file());
     }
 
     #[test]
