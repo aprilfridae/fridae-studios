@@ -12,6 +12,8 @@ import re
 import rbxpaths
 from rbxpaths import KitError
 
+# an expert's instructions go into its chat's standing prompt (and its saved chat): keep them a sensible size
+MAX_TEXT = 16000
 KEYS = ("id", "name", "job", "stage", "guides", "tools", "kind", "writes")
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -125,6 +127,9 @@ def expert(expert_id, project=None):
         try:
             with open(p, encoding="utf-8") as f:
                 entry["text"] = f.read()
+            if len(entry["text"]) > MAX_TEXT:
+                raise KitError("The instructions for %s (%s) are %d characters long; keep them to %s or fewer." % (
+                    entry["id"], p, len(entry["text"]), format(MAX_TEXT, ",")))
             return entry
         except FileNotFoundError:
             continue

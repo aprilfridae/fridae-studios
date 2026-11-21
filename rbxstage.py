@@ -63,13 +63,19 @@ def locked(project):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError) as e:
+            # PermissionError: on Windows a lock file that is being deleted cannot be opened yet; wait like for a held one
             try:
                 if time.time() - os.stat(path).st_mtime > LOCK_STALE:
                     os.remove(path)
                     continue
             except OSError:
-                continue  # it vanished between the two calls: try again at once
+                if isinstance(e, FileExistsError):
+                    continue  # it vanished between the two calls: try again at once
+                if time.time() > deadline:  # no lock file, and still denied: the folder cannot be written
+                    raise KitError("Could not lock the game's Studio files: %s." % e)
+                time.sleep(0.02)
+                continue
             if time.time() > deadline:
                 raise KitError("Another Fridae Studios process is updating this game's Studio files. Try again in a moment.")
             time.sleep(0.02)
@@ -189,9 +195,15 @@ def _status(project):
         lines.append("Team (name [id for rbx_team, stage]): " + ", ".join(roster))
     open_items = [i for i in items if i.get("status") in OPEN]
     lines.append("Open review items (%d):" % len(open_items) if open_items else "No open review items.")
+    read = set(run.get("read_decisions") or [])
     for i in open_items:
-        lines.append("  [%s] %s (%s%s, %s)" % (i["id"], i.get("title", ""), i.get("stage", ""),
-                                               ", blocking" if i.get("blocking") else "", i.get("status")))
+        line = "  [%s] %s (%s%s, %s)" % (i["id"], i.get("title", ""), i.get("stage", ""),
+                                         ", blocking" if i.get("blocking") else "", i.get("status"))
+        if i.get("status") == "changes":
+            # the user's note stays here until the redo is filed, so a turn that failed after 'decisions' loses nothing
+            line += ". Note: %s%s" % (i.get("note") or "(no note)",
+                                      " (already handed over by 'decisions')" if "%s:changes" % i["id"] in read else "")
+        lines.append(line)
     unread = _unread(project, run, items)
     if unread:
         lines.append("%d decision%s not read yet (call 'decisions'):" % (len(unread), "" if len(unread) == 1 else "s"))
@@ -212,6 +224,9 @@ def _stage(project, a):
 
 def _stage_locked(project, sid, status):
     run = load_run(project)
+    if run.get("ended") and not run.get("on"):
+        raise KitError("This studio run was ended in the app's Review tab, so its stages no longer change. Stop here; a "
+                       "new run starts from the app.")
     entry = [s for s in run["stages"] if s["id"] == sid][0]
     now = time.time()
     if status == "start":
@@ -222,17 +237,39 @@ def _stage_locked(project, sid, status):
         msg = "Stage %s started." % sid
     else:
         if sid in (run.get("gates") or []):
-            mine = [i for i in load_items(project) if i.get("stage") == sid and i.get("blocking") and i.get("status") != "superseded"]
+            mine = _supersede_old_changes(project, sid)
             if not any(i.get("status") == "approved" for i in mine) or any(i.get("status") in OPEN for i in mine):
-                raise KitError("The %s stage is a gate: the user has to approve its blocking review item first, and none of its "
-                                "blocking items may still be waiting or need changes. File one with action 'review' "
-                                "(blocking true), wait for the decision, then finish the stage." % sid)
+                msg = ("The %s stage is a gate: the user has to approve its blocking review item first, and none of its "
+                       "blocking items may still be waiting or need changes. File one with action 'review' "
+                       "(blocking true), wait for the decision, then finish the stage." % sid)
+                for i in mine:
+                    if i.get("status") == "changes":
+                        msg += (" [%s] %s still has changes wanted: file the redo with action 'review', blocking true and "
+                                "replaces=%s." % (i["id"], i.get("title", ""), i["id"]))
+                raise KitError(msg)
         entry.update(status="done", ended=now)
         msg = "Stage %s done." % sid
     save_run(project, run)
     if status == "done":
         _request_checkpoint(project, sid, run.get("lead") or os.environ.get("RBXKIT_AGENT_ID") or "")
     return msg
+
+
+def _supersede_old_changes(project, sid):
+    """The stage's blocking items that count, after a newer approved blocking item of the stage has superseded every
+    older one still marked "changes" (a redo filed without `replaces`). Call under the lock."""
+    mine = [i for i in load_items(project) if i.get("stage") == sid and i.get("blocking") and i.get("status") != "superseded"]
+    approved = [i for i in mine if i.get("status") == "approved"]
+    keep = []
+    for i in mine:
+        newer = [a for a in approved if (a.get("created") or 0) > (i.get("created") or 0)]
+        if i.get("status") == "changes" and newer:
+            i["status"] = "superseded"
+            i["superseded_by"] = newer[-1]["id"]
+            _write_json(_item_path(project, i["id"]), i)
+            continue
+        keep.append(i)
+    return keep
 
 
 def _request_checkpoint(project, stage, lead):

@@ -104,6 +104,16 @@ class RosterTests(unittest.TestCase):
         with self.assertRaises(KitError):
             rbxroster.expert("../roster")
 
+    def test_expert_text_capped(self):
+        self.write(os.path.join("experts", "coder.md"), "x" * rbxroster.MAX_TEXT)
+        self.assertEqual(len(rbxroster.expert("coder", self.project)["text"]), rbxroster.MAX_TEXT)
+        self.write(os.path.join("experts", "coder.md"), "é" * (rbxroster.MAX_TEXT + 1))
+        with self.assertRaises(KitError) as cm:
+            rbxroster.expert("coder", self.project)
+        self.assertIn(os.path.join(self.team_dir(), "experts", "coder.md"), str(cm.exception))
+        self.assertIn("16,000", str(cm.exception))
+        self.assertEqual(rbxroster.MAX_TEXT, 16000)
+
     def test_malformed_project_roster(self):
         for bad in ("{not json", json.dumps({"experts": []}), json.dumps([{"name": "no id"}]),
                     json.dumps([{"id": "../x", "name": "X"}]), json.dumps([{"id": "new"}])):

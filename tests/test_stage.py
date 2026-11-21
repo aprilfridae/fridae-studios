@@ -270,6 +270,78 @@ class StageTests(unittest.TestCase):
         with self.assertRaises(KitError):
             self.call("stage", id="design", status="done")
 
+    def test_status_shows_change_notes_and_which_were_delivered(self):
+        a = self.filed_id(self.call("review", title="Coin art", summary="s"))
+        b = self.filed_id(self.call("review", title="Shop menu", summary="s"))
+        for rid, note in ((a, "Make it gold"), (b, "Bigger buttons é")):
+            item = self.item(rid)
+            item.update(status="changes", note=note)
+            self.write_item(item)
+        text = self.call("status")
+        self.assertIn("Make it gold", text)
+        self.assertIn("Bigger buttons é", text)
+        self.assertNotIn("already handed over", text)
+        self.call("decisions")
+        # the note stays readable after 'decisions' handed it over, so a lost turn does not lose it
+        text = self.call("status")
+        line_a = [l for l in text.splitlines() if "[%s]" % a in l][0]
+        self.assertIn("Make it gold", line_a)
+        self.assertIn("already handed over", line_a)
+
+    def test_gate_names_an_old_item_with_changes_and_says_replaces(self):
+        self.call("stage", id="design", status="start")
+        old = self.filed_id(self.call("review", title="Design doc", summary="s", blocking=True))
+        item = self.item(old)
+        item.update(status="changes", note="more levels")
+        self.write_item(item)
+        with self.assertRaises(KitError) as e:
+            self.call("stage", id="design", status="done")
+        self.assertIn("[%s]" % old, str(e.exception))
+        self.assertIn("replaces=%s" % old, str(e.exception))
+
+    def test_gate_newer_approved_item_supersedes_older_changes(self):
+        self.call("stage", id="design", status="start")
+        old = self.filed_id(self.call("review", title="Design v1", summary="s", blocking=True))
+        item = self.item(old)
+        item.update(status="changes", note="more levels")
+        self.write_item(item)
+        new = self.filed_id(self.call("review", title="Design v2", summary="s", blocking=True))  # replaces forgotten
+        item = self.item(new)
+        item["status"] = "approved"
+        self.write_item(item)
+        self.assertIn("done", self.call("stage", id="design", status="done"))
+        self.assertEqual(self.item(old)["status"], "superseded")
+        self.assertEqual(self.item(old)["superseded_by"], new)
+
+    def test_an_ended_run_does_not_start_again(self):
+        self.call("stage", id="idea", status="start")
+        run = rbxstage.load_run(self.project)
+        run.update(on=False, ended=time.time(), future_key=1)
+        rbxstage.save_run(self.project, run)
+        with self.assertRaises(KitError) as e:
+            self.call("stage", id="design", status="start")
+        self.assertIn("ended", str(e.exception))
+        run = rbxstage.load_run(self.project)
+        self.assertFalse(run["on"])
+        self.assertEqual(run["future_key"], 1)
+        self.assertIn("Run: off", self.call("status"))
+
+    def test_lock_retries_while_windows_denies_access(self):
+        os.makedirs(os.path.join(self.project, ".fridae"))
+        real_open, calls = os.open, []
+
+        def flaky(path, flags, *rest):
+            if path == rbxstage.lock_file(self.project) and len(calls) < 2:
+                calls.append(1)
+                raise PermissionError(13, "Access is denied")  # a lock file pending deletion on Windows
+            return real_open(path, flags, *rest)
+
+        with mock.patch.object(rbxstage.os, "open", flaky):
+            with rbxstage.locked(self.project):
+                self.assertTrue(os.path.exists(rbxstage.lock_file(self.project)))
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(os.path.exists(rbxstage.lock_file(self.project)))
+
     def test_lock_taken_over_when_stale_and_released(self):
         os.makedirs(os.path.join(self.project, ".fridae"))
         lock = rbxstage.lock_file(self.project)
