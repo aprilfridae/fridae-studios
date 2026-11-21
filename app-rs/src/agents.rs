@@ -996,6 +996,15 @@ pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
 /// Start an agent with a role of its own: a worker or reviewer for another agent (`team_id` is that
 /// request), or the Research tab's researcher.
 pub fn spawn_helper(team_id: Option<&str>, role: &str, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
+    spawn_named(team_id, Some(role), name, project, ai, parent)
+}
+
+/// Start a chat of the user's own (no role) in the background, already named and in its project: the Promos tab's.
+pub fn new_background_chat(name: &str, project: Option<String>) -> Option<Arc<Agent>> {
+    spawn_named(None, None, name, project, None, None)
+}
+
+fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
     let agent = {
         let mut all = AGENTS.lock().unwrap();
         if all.len() >= MAX_AGENTS {
@@ -1007,7 +1016,7 @@ pub fn spawn_helper(team_id: Option<&str>, role: &str, name: &str, project: Opti
         {
             let mut st = agent.st.lock().unwrap();
             st.named = true;
-            st.role = Some(role.to_string());
+            st.role = role.map(str::to_string);
             st.team = team_id.map(str::to_string);
             st.ai = Some(ai.unwrap_or_else(paths::default_ai));
             st.project = project;
@@ -1188,6 +1197,7 @@ pub fn remove_agent(agent_id: &str) {
 
 /// Stop every agent and save every chat: called when the window closes.
 pub fn shut_down() {
+    crate::promo::stop_install();
     for a in agents() {
         a.stop();
         a.save();

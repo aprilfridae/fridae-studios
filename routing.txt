@@ -36,6 +36,7 @@ Load every guide that is relevant to the request before starting, in one rbx_gui
 - Any design decision, new feature or system: `game-design`; add `economy-design` when prices, rewards, drop rates or
   progression numbers are involved.
 - Sounds and music: `sound-design`.
+- A promo, trailer, TikTok, Short or Reel for a game, editing gameplay clips into a vertical video: `promo` (then use `rbx_promo`).
 - Judging whether something is fun, clear or ready: `player-testing`, with `playtest`.
 - Big requests that can be split into parallel work: `producer`. When you were spawned as a reviewer: `critic`.
 Facts that change (limits, quotas, defaults, prices, policy, anything changed in 2025-2026), a bug whose cause is unclear,

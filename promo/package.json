@@ -1,0 +1,23 @@
+{
+  "name": "fridae-promo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Remotion project that renders Fridae Studios promo videos.",
+  "dependencies": {
+    "@huggingface/transformers": "3.8.1",
+    "@remotion/bundler": "4.0.545",
+    "@remotion/cli": "4.0.545",
+    "@remotion/media": "4.0.545",
+    "@remotion/renderer": "4.0.545",
+    "kokoro-js": "1.2.1",
+    "mediabunny": "1.66.0",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "remotion": "4.0.545"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test \"src/captions/*.test.ts\" \"scripts/*.test.mjs\"",
+    "render": "node scripts/render.mjs"
+  }
+}

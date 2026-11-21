@@ -1,0 +1,51 @@
+{
+  "name": "meme",
+  "about": "Meme edit: hard cuts and crash zooms, bouncy heavy captions, classic outlined Anton title.",
+  "rhythm": {
+    "shot": [
+      0.8,
+      2.0
+    ],
+    "zoom": "punch@0.2"
+  },
+  "transitions": {
+    "default": "cut",
+    "set": [
+      "cut",
+      "zoom",
+      "flash"
+    ]
+  },
+  "captions": "impact",
+  "grade": {
+    "saturate": 1.25,
+    "contrast": 1.08
+  },
+  "title": {
+    "family": "Anton",
+    "file": "Anton-Regular.ttf",
+    "weight": 400,
+    "case": "upper",
+    "size": 10,
+    "lineHeight": 1.04,
+    "letterSpacing": 0.01,
+    "y": 0.45,
+    "color": "#FFFFFF",
+    "accent": "#FFFFFF",
+    "stroke": 0.08,
+    "strokeColor": "#000000",
+    "shadow": "0 0.05em 0 #000",
+    "background": [
+      "#FF3B30",
+      "#FF9500"
+    ],
+    "anim": "shake"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(0,0,0,0.5)",
+    "ctaFill": "#FEFA1D",
+    "ctaColor": "#000000"
+  },
+  "letterbox": false
+}

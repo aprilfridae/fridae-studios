@@ -1,0 +1,51 @@
+{
+  "name": "lyric",
+  "about": "Lyric edit: cuts on the beat of the user's song, karaoke captions that light up word by word.",
+  "rhythm": {
+    "shot": [
+      0.5,
+      1.2
+    ],
+    "zoom": ""
+  },
+  "transitions": {
+    "default": "flash",
+    "set": [
+      "flash",
+      "cut",
+      "fade"
+    ]
+  },
+  "captions": "karaoke",
+  "grade": {
+    "saturate": 1.05,
+    "contrast": 1.04
+  },
+  "title": {
+    "family": "Inter SemiBold",
+    "file": "Inter-SemiBold.ttf",
+    "weight": 600,
+    "case": "sentence",
+    "size": 6.5,
+    "lineHeight": 1.15,
+    "letterSpacing": -0.01,
+    "y": 0.45,
+    "color": "#FFFFFF",
+    "accent": "#FFD24A",
+    "stroke": 0,
+    "strokeColor": "#000000",
+    "shadow": "0 0.05em 0.3em rgba(0,0,0,0.6)",
+    "background": [
+      "#0D0D12",
+      "#2A1B3D"
+    ],
+    "anim": "rise"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(10,6,20,0.58)",
+    "ctaFill": "#FFD24A",
+    "ctaColor": "#0A0A0A"
+  },
+  "letterbox": false
+}

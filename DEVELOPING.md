@@ -64,11 +64,46 @@ agent reads the built-in guides and uses the tools itself.
 | `rbx_animation` | Turns a Blender animation into a Roblox animation file |
 | `rbx_vfx_package` | Installs the VFX modules into a place without uploading |
 | `rbx_studio_snippet` | Ready-made Luau for Studio: VFX player, lightning, capture, icon booth, model placement, rig export |
+| `rbx_promo` | Vertical promo videos from gameplay clips: probe, reference, voice, render, check (needs the promo engine) |
 | `rbx_doctor` | Says what is missing and how to fix it |
 
 Claude Code users also get the guides as skills and a `roblox-tester` agent.
 
 The same tools are a command line: `rbx <command>` (`rbx --help`).
+
+## The promo engine
+
+The promo maker renders with a separate engine that is downloaded on first use, never bundled: a portable
+Node 22, a copy of `promo/` with its npm packages (Remotion, transformers.js, kokoro-js), Remotion's headless
+browser, and the Whisper and Kokoro models. It lives in `engine/` in this folder when running from source, and
+in the per-user app data folder in the packaged app (`rbxpromo.engine.engine_dir()`): macOS
+`~/Library/Application Support/Fridae Studios/engine`, Windows `%LOCALAPPDATA%\Fridae Studios\engine`. Not in
+Documents, which iCloud or OneDrive may sync; an engine earlier builds left in `Documents/Fridae Studios/engine`
+is moved there the first time the engine is used (`migrate_engine`).
+
+- `python3 -m rbxpromo.engine install` (or `rbx promo install`) installs it, about 730 MB. Every finished step is
+  written to `engine/.state.json`, so running install again resumes instead of starting over. `rbx promo status`
+  says what is missing. In the app, Setup, Connections, Promo engine runs `rbx promo install --json-progress`.
+  An install holds `.install.lock` (pid and start time) in the engine folder; a second install while that process
+  lives is refused, a lock left by a stopped one is taken over. Quitting the app stops the install's whole
+  process tree (its own process group on macOS, `taskkill /T` on Windows).
+- The renderer is a copy: after editing anything in `promo/`, run `python3 -m rbxpromo.engine install` again to
+  refresh `engine/renderer` (it re-runs `npm ci` only when `package-lock.json` changed).
+- The packaged app ships `promo/` without `node_modules` (`rbxkit.spec`) so the install can copy it.
+- onnxruntime (used by the Whisper and Kokoro scripts) can abort as Node exits, with exit code 134, after the
+  work is done. The Python side judges those scripts by what they printed (a JSON line with `"ok"`, or a
+  "model ready" line), not by the exit code; expect the 134 when you run `promo/scripts/voice.mjs` or
+  `transcribe.mjs` by hand.
+
+Tests: the promo tests need the engine installed, and the ones that read video need OpenCV, so run them with the
+virtual environment's Python:
+
+```
+.venv/bin/python -m unittest discover tests -v
+engine/node/bin/node --experimental-strip-types --test 'promo/src/captions/*.test.ts' 'promo/scripts/*.test.mjs'
+```
+
+Without the engine the engine-gated tests are skipped, not failed.
 
 ## Folders
 
@@ -76,6 +111,8 @@ The same tools are a command line: `rbx <command>` (`rbx --help`).
 - `rbxkit_mcp.py` - the MCP server agents connect to.
 - `studio/` - Luau that runs in Roblox Studio.
 - `skills/`, `agents/` - the guides.
+- `rbxpromo/`, `promo/` - the promo maker: the Python side, and the Remotion project the engine renders with.
+- `engine/` - the promo engine when running from source (not in git).
 - `work/` - everything the tools produce (models, textures, icons).
 
 ## Good to know

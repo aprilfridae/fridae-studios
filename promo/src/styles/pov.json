@@ -1,0 +1,51 @@
+{
+  "name": "pov",
+  "about": "POV story: a typed 'POV:' hook, quick cuts and whips, captions with a box hopping word to word.",
+  "rhythm": {
+    "shot": [
+      1.0,
+      2.0
+    ],
+    "zoom": "punch@0.3"
+  },
+  "transitions": {
+    "default": "whip",
+    "set": [
+      "whip",
+      "cut",
+      "zoom"
+    ]
+  },
+  "captions": "highlighter",
+  "grade": {
+    "saturate": 1.1,
+    "contrast": 1.04
+  },
+  "title": {
+    "family": "Poppins ExtraBold",
+    "file": "Poppins-ExtraBold.ttf",
+    "weight": 800,
+    "case": "sentence",
+    "size": 6.2,
+    "lineHeight": 1.15,
+    "letterSpacing": -0.02,
+    "y": 0.45,
+    "color": "#FFFFFF",
+    "accent": "#5A12D0",
+    "stroke": 0,
+    "strokeColor": "#000000",
+    "shadow": "0 0.05em 0.25em rgba(0,0,0,0.6)",
+    "background": [
+      "#0B0614",
+      "#2A0E5C"
+    ],
+    "anim": "type"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(11,6,20,0.6)",
+    "ctaFill": "#5A12D0",
+    "ctaColor": "#FFFFFF"
+  },
+  "letterbox": false
+}

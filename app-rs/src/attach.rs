@@ -77,7 +77,30 @@ pub fn save_chat_image_b64(data: &str) -> Option<String> {
 /// agent can read both). Word, PowerPoint, Excel, OpenDocument and RTF files
 /// also get a plain-text copy, because the agent cannot read those directly.
 pub fn save_attachment(data: &str, filename: Option<&str>) -> Option<Value> {
-    let raw = decode(data).filter(|r| r.len() <= MAX_BYTES)?;
+    save_raw(decode(data)?, filename)
+}
+
+/// A file dropped on the window together with videos, which the app takes instead of the page.
+#[cfg_attr(windows, allow(dead_code))]
+/// Returns what the page's own upload would have: {"ok", "name", "kind", "label"}, or {"ok": false, "label", "error"}.
+pub fn attach_path(path: &std::path::Path) -> Value {
+    let label = paths::base_name(&path.display().to_string());
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let refuse = |why: &str| json!({"ok": false, "label": label, "error": why});
+    if size as usize > MAX_BYTES {
+        return refuse(&format!("{label} is over 30 MB."));
+    }
+    match fs::read(path).ok().and_then(|raw| save_raw(raw, Some(&label))) {
+        Some(mut got) => {
+            got["ok"] = json!(true);
+            got
+        }
+        None => refuse(&format!("Could not attach {label}.")),
+    }
+}
+
+fn save_raw(raw: Vec<u8>, filename: Option<&str>) -> Option<Value> {
+    let raw = Some(raw).filter(|r| !r.is_empty() && r.len() <= MAX_BYTES)?;
     let dir = paths::work("attachments");
     fs::create_dir_all(&dir).ok()?;
     let stamp = format!("{}-{:02}", paths::stamp(), COUNT.fetch_add(1, Ordering::SeqCst) + 1);

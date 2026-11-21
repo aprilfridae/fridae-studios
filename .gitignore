@@ -8,3 +8,6 @@ dist/
 *.zip
 build-out/
 .venv/
+.superpowers/
+engine/
+promo/node_modules/

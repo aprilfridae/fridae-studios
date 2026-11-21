@@ -1,0 +1,52 @@
+{
+  "name": "hype",
+  "about": "Fast cuts on the beat, zoom punches, whip and flash transitions, big pop-in captions with a lime hot word.",
+  "rhythm": {
+    "shot": [
+      0.6,
+      1.5
+    ],
+    "zoom": "punch@0.12"
+  },
+  "transitions": {
+    "default": "whip",
+    "set": [
+      "whip",
+      "flash",
+      "zoom",
+      "cut"
+    ]
+  },
+  "captions": "punch",
+  "grade": {
+    "saturate": 1.18,
+    "contrast": 1.06
+  },
+  "title": {
+    "family": "Poppins Black",
+    "file": "Poppins-Black.ttf",
+    "weight": 900,
+    "case": "upper",
+    "size": 8.5,
+    "lineHeight": 1.02,
+    "letterSpacing": -0.01,
+    "y": 0.45,
+    "color": "#FFFFFF",
+    "accent": "#C8FF2E",
+    "stroke": 0.05,
+    "strokeColor": "#000000",
+    "shadow": "0 0.06em 0 #000",
+    "background": [
+      "#12002B",
+      "#4A12C9"
+    ],
+    "anim": "slam"
+  },
+  "end": {
+    "seconds": 2.0,
+    "scrim": "rgba(14,0,40,0.62)",
+    "ctaFill": "#C8FF2E",
+    "ctaColor": "#0A0A0A"
+  },
+  "letterbox": false
+}

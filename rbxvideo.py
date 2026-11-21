@@ -9,11 +9,53 @@ import json, os, sys
 from rbxpaths import KIT, WORK
 
 
-def _open(path):
+def imwrite(path, img, params=None):
+    """cv2.imwrite that works for any path: on Windows cv2.imwrite only takes paths in the ANSI code page,
+    so the image is encoded in memory and written with numpy. Raises OSError if it could not be written."""
+    import cv2
+    ext = os.path.splitext(path)[1] or ".png"
+    ok, buf = cv2.imencode(ext, img, params or [])
+    if not ok:
+        raise OSError("could not encode the image for " + path)
+    try:
+        buf.tofile(path)
+    except (OSError, ValueError) as e:
+        raise OSError("could not write the image %s: %s" % (path, e))
+    return path
+
+
+def imread(path, flags=None):
+    """cv2.imread that works for any path (see imwrite). Raises OSError if it could not be read."""
+    import cv2
+    import numpy as np
+    try:
+        data = np.fromfile(path, np.uint8)
+    except (OSError, ValueError) as e:
+        raise OSError("could not read the image %s: %s" % (path, e))
+    img = cv2.imdecode(data, cv2.IMREAD_COLOR if flags is None else flags) if data.size else None
+    if img is None:
+        raise OSError("could not decode the image " + path)
+    return img
+
+
+def open_capture(path):
+    """cv2.VideoCapture that never fails silently: ValueError naming the path when it does not open."""
     import cv2
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
-        sys.exit("could not open video: " + path)
+        if os.path.isfile(path):
+            raise ValueError("could not open the video %s: the file exists but OpenCV cannot read it (an unsupported "
+                             "format, or on Windows letters in the path outside the system code page)" % path)
+        raise ValueError("could not open the video %s: the file does not exist" % path)
+    return cap
+
+
+def _open(path):
+    import cv2
+    try:
+        cap = open_capture(path)
+    except ValueError as e:
+        sys.exit(str(e))
     return cv2, cap
 
 
@@ -60,7 +102,7 @@ def frames(path, start=None, end=None, count=12, cols=4, width=480, out_dir=None
         tiles.append(img)
         if not sheet:
             p = os.path.join(out_dir, "frame_%07.3f.png" % t)
-            cv2.imwrite(p, img)
+            imwrite(p, img)
             saved.append(p)
     cap.release()
     if not tiles:
@@ -74,7 +116,7 @@ def frames(path, start=None, end=None, count=12, cols=4, width=480, out_dir=None
                 row.append(np.zeros_like(tiles[0]))
             rows.append(np.hstack(row))
         p = os.path.join(out_dir, "sheet_%.2f-%.2f.png" % (start, end))
-        cv2.imwrite(p, np.vstack(rows))
+        imwrite(p, np.vstack(rows))
         saved.append(p)
     return {"look_at": saved, "times": [round(t, 3) for t in times], "video": meta}
 
