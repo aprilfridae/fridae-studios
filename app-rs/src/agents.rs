@@ -83,6 +83,8 @@ enum Mode {
     Held,
     Overnight,
     Studio,
+    /// A Studio run whose 24 hours ran out during the turn: autopilot decides, but it can still wait at a gate.
+    StudioLate,
     /// Neither night nor studio clock is running: autopilot (or nothing) decides.
     Autopilot,
 }
@@ -120,9 +122,64 @@ fn loop_mode(stopped: bool, held: bool, night: bool, studio: bool) -> Mode {
         Mode::Studio
     } else if night {
         Mode::Overnight
+    } else if studio {
+        Mode::StudioLate
     } else {
         Mode::Autopilot
     }
+}
+
+const STUDIO_NEEDS_PROJECT: &str = "Studio mode needs a game project. Start a folder for this game first, then turn Studio on.";
+
+/// Why a message cannot run in Studio mode, if it cannot: Studio runs belong to a game project's folder.
+fn studio_refusal(studio: bool, has_project: bool) -> Option<&'static str> {
+    (studio && !has_project).then_some(STUDIO_NEEDS_PROJECT)
+}
+
+/// The settings a message runs with. Studio mode is full auto with overnight's loop, and a Studio run waiting at a
+/// gate goes on in Studio mode whatever the message itself asked for (a reply, or a decision from Review).
+fn effective_ask(ask: &Ask, waiting: bool, last: &Ask) -> Ask {
+    let (studio, overnight, full) = if waiting && last.studio { (true, last.overnight, last.full) } else { (ask.studio, ask.overnight, ask.full) };
+    Ask { studio, overnight: overnight || studio, full: full || studio, ..ask.clone() }
+}
+
+/// The bookkeeping at the start of a message. None when Stop was pressed between two turns of the loop. Returns
+/// whether a Studio run was waiting; a waiting run stays waiting (clock stopped) until a turn really starts.
+fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
+    // a message from the user sets autopilot's allowance afresh; its own "carry on" spends from it
+    if auto && std::mem::take(&mut st.halted) {
+        return None;
+    }
+    st.halted = false;
+    let waiting = st.studio_waiting;
+    if !auto {
+        st.autopilot_left = if ask.autopilot || ask.full { AUTOPILOT_TURNS } else { 0 };
+        if !waiting {
+            st.overnight_until = if ask.overnight { now + OVERNIGHT_SECS } else { 0.0 };
+        }
+        st.overnight_fails = 0;
+        st.overnight_done = 0;
+    }
+    st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
+    Some(waiting)
+}
+
+/// A waiting Studio run goes on: the clock restarts with the full 24 hours. Returns the seconds that were left when
+/// it stopped, so a turn that cannot start after all can put the wait back; None when it was not waiting.
+fn resume_from_wait(st: &mut State, now: f64) -> Option<f64> {
+    if !std::mem::take(&mut st.studio_waiting) {
+        return None;
+    }
+    let left = std::mem::take(&mut st.overnight_left);
+    st.overnight_until = now + OVERNIGHT_SECS;
+    Some(left)
+}
+
+/// Undo `resume_from_wait` when the turn did not start: waiting again, clock stopped.
+fn back_to_wait(st: &mut State, left: f64) {
+    st.studio_waiting = true;
+    st.overnight_left = left;
+    st.overnight_until = 0.0;
 }
 
 const NEXT_STEP: &str = "Carry on with the next step.";
@@ -186,7 +243,13 @@ fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) ->
                 Step::CarryOn(if studio { "Carry on with the next step. Call rbx_stage decisions first and act on any answer." } else { NEXT_STEP })
             }
         }
-        Mode::Autopilot => {
+        Mode::Autopilot | Mode::StudioLate => {
+            if mode == Mode::StudioLate && got_result && said.starts_with("STATUS: WAITING") {
+                state.fails = 0;
+                state.done = 0;
+                state.night = false;
+                return Step::Wait;
+            }
             let go = got_result && state.autopilot_left > 0 && said.starts_with("STATUS: CONTINUE");
             state.autopilot_left = if go { state.autopilot_left - 1 } else { 0 };
             if go { Step::CarryOn(NEXT_STEP) } else { Step::Idle }
@@ -644,40 +707,29 @@ impl Agent {
         if self.busy() {
             return;
         }
-        // Studio mode is full auto with overnight's loop
-        let ask = &Ask { overnight: ask.overnight || ask.studio, full: ask.full || ask.studio, ..ask.clone() };
+        let ask = &{
+            let st = self.st.lock().unwrap();
+            effective_ask(ask, st.studio_waiting, &st.last_ask)
+        };
+        let has_project = self.project().is_some_and(|p| std::path::Path::new(&p).is_dir());
+        if let Some(why) = studio_refusal(ask.studio, has_project) {
+            self.put("error", json!({"text": why}));
+            self.put("done", json!({}));
+            return;
+        }
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
         let (model, attachments, kickoff) = (ask.model.as_deref(), ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
-        let resumed = {
-            // a message from the user sets autopilot's allowance afresh; its own "carry on" spends from it
-            let mut st = self.st.lock().unwrap();
-            if auto && std::mem::take(&mut st.halted) {
-                return;
-            }
-            st.halted = false;
-            if !auto {
-                st.autopilot_left = if autopilot { AUTOPILOT_TURNS } else { 0 };
-                st.overnight_until = if ask.overnight { paths::now_secs() + OVERNIGHT_SECS } else { 0.0 };
-                st.overnight_fails = 0;
-                st.overnight_done = 0;
-            }
-            // a Studio run waiting at a gate goes on: the clock restarts with the full 24 hours
-            let resumed = std::mem::take(&mut st.studio_waiting);
-            if resumed {
-                st.overnight_left = 0.0;
-                if ask.studio {
-                    st.overnight_until = paths::now_secs() + OVERNIGHT_SECS;
-                }
-            }
-            st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
-            resumed
+        let Some(resumed) = begin_send(&mut self.st.lock().unwrap(), ask, auto, paths::now_secs()) else {
+            return;
         };
-        if resumed {
-            self.put("studio_waiting", json!({"value": false, "left": 0}));
-        }
         if let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
             return self.make_texture(&c[1].to_lowercase(), c[2].trim());
+        }
+        // a turn starts here, so a Studio run waiting at a gate goes on (put back below if no AI can be found)
+        let was_left = resume_from_wait(&mut self.st.lock().unwrap(), paths::now_secs());
+        if was_left.is_some() {
+            self.put("studio_waiting", json!({"value": false, "left": 0}));
         }
         let mut gemini = gemini;
         if !gemini && GEMINI_PHRASE.is_match(text) {
@@ -755,6 +807,10 @@ impl Agent {
             self.put("error", json!({"text": missing}));
             self.put("done", json!({}));
             team::release(self);
+            if let Some(left) = was_left {
+                back_to_wait(&mut self.st.lock().unwrap(), left);
+                self.put("studio_waiting", json!({"value": true, "left": left.round()}));
+            }
             return;
         };
         if self.st.lock().unwrap().ai.is_none() {
@@ -1564,7 +1620,7 @@ mod tests {
         assert_eq!(loop_mode(false, true, true, true), Mode::Held);
         assert_eq!(loop_mode(false, false, true, false), Mode::Overnight);
         assert_eq!(loop_mode(false, false, true, true), Mode::Studio);
-        assert_eq!(loop_mode(false, false, false, true), Mode::Autopilot);
+        assert_eq!(loop_mode(false, false, false, true), Mode::StudioLate);
         assert_eq!(loop_mode(false, false, false, false), Mode::Autopilot);
     }
 
@@ -1693,6 +1749,85 @@ mod tests {
         let mut s = LoopState { autopilot_left: 5, ..Default::default() };
         assert_eq!(next_step(Mode::Autopilot, true, "STATUS: WAITING", &mut s), Step::Idle);
         assert_eq!(s.autopilot_left, 0);
+    }
+
+    #[test]
+    fn studio_late_waits_but_otherwise_is_autopilot() {
+        let mut s = LoopState { autopilot_left: 3, fails: 1, done: 1, night: false };
+        assert_eq!(next_step(Mode::StudioLate, true, "STATUS: WAITING", &mut s), Step::Wait);
+        assert_eq!((s.fails, s.done, s.night), (0, 0, false));
+        let mut s = LoopState { autopilot_left: 3, ..Default::default() };
+        assert_eq!(next_step(Mode::StudioLate, false, "STATUS: WAITING", &mut s), Step::Idle);
+        let mut s = LoopState { autopilot_left: 3, ..Default::default() };
+        assert_eq!(next_step(Mode::StudioLate, true, "STATUS: CONTINUE", &mut s), Step::CarryOn(NEXT));
+        assert_eq!(s.autopilot_left, 2);
+        assert_eq!(next_step(Mode::StudioLate, true, "STATUS: DONE", &mut s), Step::Idle);
+        assert_eq!(s.autopilot_left, 0);
+    }
+
+    #[test]
+    fn studio_needs_a_project() {
+        assert_eq!(studio_refusal(true, false), Some(STUDIO_NEEDS_PROJECT));
+        assert_eq!(studio_refusal(true, true), None);
+        assert_eq!(studio_refusal(false, false), None);
+    }
+
+    #[test]
+    fn studio_implies_overnight_and_full() {
+        let a = effective_ask(&Ask { studio: true, ..Default::default() }, false, &Ask::default());
+        assert!(a.studio && a.overnight && a.full);
+        let a = effective_ask(&Ask { overnight: true, ..Default::default() }, false, &Ask::default());
+        assert!(!a.studio && a.overnight && !a.full); // the server turns full on for overnight, as before
+    }
+
+    #[test]
+    fn a_waiting_run_resumes_in_studio_mode_whatever_was_sent() {
+        let last = Ask { studio: true, overnight: true, full: true, ..Default::default() };
+        let plain = Ask { model: Some("opus".into()), ..Default::default() };
+        let a = effective_ask(&plain, true, &last);
+        assert!(a.studio && a.overnight && a.full);
+        assert_eq!(a.model.as_deref(), Some("opus"));
+        // not waiting: the message's own mode wins
+        assert!(!effective_ask(&plain, false, &last).studio);
+    }
+
+    #[test]
+    fn begin_send_leaves_a_waiting_run_waiting_until_the_turn_starts() {
+        let mut st = State { studio_waiting: true, overnight_left: 500.0, overnight_until: 0.0, ..Default::default() };
+        let ask = effective_ask(&Ask::default(), true, &Ask { studio: true, overnight: true, full: true, ..Default::default() });
+        assert_eq!(begin_send(&mut st, &ask, false, 1000.0), Some(true));
+        assert!(st.studio_waiting);
+        assert_eq!((st.overnight_until, st.overnight_left), (0.0, 500.0));
+        assert!(st.last_ask.studio);
+        // the turn starts: full 24 hours from now
+        assert_eq!(resume_from_wait(&mut st, 1000.0), Some(500.0));
+        assert!(!st.studio_waiting);
+        assert_eq!((st.overnight_until, st.overnight_left), (1000.0 + OVERNIGHT_SECS, 0.0));
+        assert_eq!(resume_from_wait(&mut st, 1000.0), None);
+        // no AI after all: back to waiting as it was
+        back_to_wait(&mut st, 500.0);
+        assert!(st.studio_waiting);
+        assert_eq!((st.overnight_until, st.overnight_left), (0.0, 500.0));
+    }
+
+    #[test]
+    fn begin_send_unchanged_for_ordinary_messages() {
+        let mut st = State { overnight_fails: 2, overnight_done: 1, ..Default::default() };
+        let night = Ask { overnight: true, full: true, ..Default::default() };
+        assert_eq!(begin_send(&mut st, &night, false, 1000.0), Some(false));
+        assert_eq!((st.autopilot_left, st.overnight_until, st.overnight_fails, st.overnight_done), (AUTOPILOT_TURNS, 1000.0 + OVERNIGHT_SECS, 0, 0));
+        // its own carry-on spends, and does not reset the clock
+        st.overnight_fails = 1;
+        assert_eq!(begin_send(&mut st, &Ask { kickoff: Some("auto".into()), ..night.clone() }, true, 5000.0), Some(false));
+        assert_eq!((st.overnight_until, st.overnight_fails), (1000.0 + OVERNIGHT_SECS, 1));
+        assert!(st.last_ask.kickoff.is_none());
+        // Stop between turns: the carry-on is dropped once
+        st.halted = true;
+        assert_eq!(begin_send(&mut st, &night, true, 5000.0), None);
+        assert!(!st.halted);
+        // a plain message turns the night and autopilot off
+        assert_eq!(begin_send(&mut st, &Ask::default(), false, 5000.0), Some(false));
+        assert_eq!((st.autopilot_left, st.overnight_until), (0, 0.0));
     }
 
     #[test]
