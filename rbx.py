@@ -243,7 +243,7 @@ def main(argv=None):
 
     names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen",
              "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",
-             "rbxpromo.cli": "promo"}
+             "rbxpromo.cli": "promo", "rbxstage": "stage"}
     for mod, name in names.items():
         try:
             importlib.import_module(mod).register(sub)

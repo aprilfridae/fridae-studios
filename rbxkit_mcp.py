@@ -417,6 +417,11 @@ def t_board(a):
     return _direct(rbxboard.run, a.get("action") or "list", a)
 
 
+def t_stage(a):
+    import rbxstage
+    return _direct(rbxstage.run, a.get("action") or "status", a)
+
+
 def t_vault(a):
     import rbxvault
     return _direct(rbxvault.run, a.get("action") or "search", a)
@@ -671,6 +676,21 @@ TOOLS = [
              "note": {"type": "string", "description": "add/update: optional detail, one or two sentences"},
              "column": {"type": "string", "enum": ["todo", "doing", "needs", "done"], "description": "add (default doing) / move"},
              "id": {"type": "string", "description": "move/update: the card's id from list or add"}}, ["action"]), t_board),
+    ("rbx_stage", "Studio mode: move the game through its stages (idea, design, build, test, launch, promote), file review items "
+     "with pictures or clips for the user to approve in the app, read their decisions, and keep lessons. Load the `studio` guide "
+     "before using it.",
+     schema({"action": {"type": "string", "enum": ["status", "stage", "review", "decisions", "lesson"]},
+             "id": {"type": "string", "enum": ["idea", "design", "build", "test", "launch", "promote"], "description": "stage: which stage"},
+             "status": {"type": "string", "enum": ["start", "done"], "description": "stage: start or finish it"},
+             "title": {"type": "string", "description": "review: short title"},
+             "summary": {"type": "string", "description": "review: what was done and what the user should check"},
+             "media": {"type": "array", "items": {"type": "string"}, "description": "review: picture or video file paths (png, jpg, webp, mp4, mov; 8 at most)"},
+             "expert": {"type": "string", "description": "review: the expert that made the work"},
+             "blocking": {"type": "boolean", "description": "review: true if the run must wait for the user's yes"},
+             "replaces": {"type": "string", "description": "review: id of the older item this one replaces"},
+             "text": {"type": "string", "description": "lesson: one short sentence"},
+             "scope": {"type": "string", "enum": ["game", "all"], "description": "lesson: this game or every game (default game)"}},
+            ["action"]), t_stage),
     ("rbx_team", "Start extra agents through the Fridae Studios app and collect their reports. Only works when this chat runs inside the "
      "app. Action 'spawn' (role, name, task): role 'worker' does an independent piece of the job, 'critic' reviews work and reports "
      "problems; the task must be a full brief (at least 80 characters: what to do, where, what is done already, what to leave alone, "
