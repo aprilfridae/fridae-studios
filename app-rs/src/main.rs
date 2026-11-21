@@ -12,6 +12,7 @@ mod antigravity;
 mod attach;
 mod board;
 mod codex;
+mod fridae_lock;
 mod media;
 mod paths;
 mod plugin;

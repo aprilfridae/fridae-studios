@@ -64,7 +64,7 @@ pub fn find_ideas(focus: &str, ai: Option<&str>, model: Option<&str>) -> Value {
     let focus = focus.trim();
     let name = if focus.is_empty() { "Research: game ideas".to_string() } else { format!("Research: {focus}") };
     let Some(agent) = agents::spawn_helper(None, "research", &name, None, ai.filter(|a| paths::AIS.contains(a)).map(str::to_string), None) else {
-        return json!({"ok": false, "error": "All six chats are in use. Close one, then try again."});
+        return json!({"ok": false, "error": "All eight chats are in use. Close one, then try again."});
     };
     let task = if focus.is_empty() {
         "Research the Roblox market as it is right now and propose five game ideas.".to_string()

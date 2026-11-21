@@ -5,6 +5,8 @@ results; the app does the rest.
 
   request   WORK/team-requests/<id>.json   written here (as .tmp, then renamed)
             {"id", "from", "role": "worker" | "critic", "name", "task", "created"}
+            plus, when an expert from the Studio roster was asked for (rbxroster, filled in here, not by the app):
+            "expert": id, "expert_name", "expert_text", "writes": bool; "role" is then the expert's kind
   result    WORK/team-results/<id>.json    written and updated by the app
             {"id", "agent", "name", "role", "status": "running" | "done" | "refused", "reason", "text"}
 
@@ -39,11 +41,20 @@ def _safe(rid):
     return rid
 
 
-def spawn(role, name, task):
+def spawn(role, name, task, expert=None):
     mine = (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip().lower()
     if mine in ROLES:
         raise TeamError("You were started as a %s by another agent, and such agents may not start more. Do the task "
                         "yourself and say in your reply what else is needed." % mine)
+    entry = None
+    expert = str(expert or "").strip().lower()
+    if expert:
+        import rbxroster  # lazy: only Studio mode needs the roster
+        entry = rbxroster.expert(expert, os.environ.get("RBXKIT_PROJECT") or None)  # KitError lists the valid ids
+        if entry["kind"] not in ROLES:
+            raise TeamError("The %s is the game's own chat, not a helper, so it cannot be started with rbx_team. Pick another "
+                            "expert." % entry["name"])
+        role = entry["kind"]  # the roster decides what the helper is started as
     role = str(role or "").strip().lower()
     if role not in ROLES:
         raise TeamError("Give 'role': \"worker\" (does a piece of the job) or \"critic\" (reviews work and reports problems).")
@@ -58,6 +69,9 @@ def spawn(role, name, task):
     rid = "w%d%s" % (int(time.time() * 1000), "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(4)))
     req = {"id": rid, "from": os.environ.get("RBXKIT_AGENT_ID") or "", "role": role, "name": name[:34], "task": task,
            "created": time.time()}
+    if entry:
+        req.update({"expert": entry["id"], "expert_name": entry["name"], "expert_text": entry["text"],
+                    "writes": bool(entry["writes"])})
     os.makedirs(REQUESTS, exist_ok=True)
     path = os.path.join(REQUESTS, rid + ".json")
     write_json(path, req)
@@ -114,7 +128,7 @@ def run(action, a=None):
     a = a or {}
     action = (action or "status").lower()
     if action == "spawn":
-        rid, res = spawn(a.get("role"), a.get("name"), a.get("task"))
+        rid, res = spawn(a.get("role"), a.get("name"), a.get("task"), expert=a.get("expert"))
         if res is None:
             return ("NOT STARTED. The app did not pick up the request within %d seconds, so it was withdrawn. Extra agents "
                     "only work when this chat runs inside the Fridae Studios app with it open. Carry on by yourself." % PICKUP)

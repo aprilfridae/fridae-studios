@@ -178,7 +178,7 @@ pub fn start(body: &Value) -> Value {
         projects::touch(p);
     }
     let Some(agent) = agents::new_background_chat(&title(&s.brief), s.project.clone()) else {
-        return json!({"ok": false, "error": "All six chats are in use. Close one, then try again."});
+        return json!({"ok": false, "error": "All eight chats are in use. Close one, then try again."});
     };
     let (id, text) = (agent.id.clone(), compose(&s));
     thread::spawn(move || agent.send(&text, &Ask::default()));

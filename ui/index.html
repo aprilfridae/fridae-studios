@@ -948,7 +948,7 @@ function paintRail() {
   $("rail-title").textContent = aiName(viewAi) + " chats";
   paintHead();
   $("rail-count").textContent = working ? working + " working" : "";
-  $("b-new").disabled = agents.size >= (status.max_agents || 6);
+  $("b-new").disabled = agents.size >= (status.max_agents || 8);
 }
 function selectionHint() {
   const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
@@ -1690,7 +1690,7 @@ function ideaCard(i) {
   build.title = "Makes a project folder and builds a first playable without asking you anything. Roblox Studio must be open on an empty place.";
   build.onclick = async () => {
     const r = await api("/api/new", { ai: viewAi });
-    if (!r.ok) { build.textContent = "All six chats are in use"; return; }
+    if (!r.ok) { build.textContent = "All eight chats are in use"; return; }
     const made = await api("/api/project", { agent: r.agent, action: "create", name: i.title || "New game", git: !!projects.git });
     if (!made.ok) { build.textContent = made.error || "Could not make the folder"; api("/api/remove", { agent: r.agent }); return; }
     setView("chats"); loadProjects();
@@ -1700,7 +1700,7 @@ function ideaCard(i) {
   start.style.cssText = "background: var(--text); color: var(--accent-ink); border-color: transparent; font-weight: 500;";
   start.onclick = async () => {
     const r = await api("/api/new", { ai: viewAi });
-    if (!r.ok) { start.textContent = "All six chats are in use"; return; }
+    if (!r.ok) { start.textContent = "All eight chats are in use"; return; }
     pendingSeed = { id: r.agent, text: ideaText(i), title: i.title || "this idea" }; setView("chats");
     const p = agents.get(r.agent); if (p) { p.seed = pendingSeed.text; select(p.id); box.value = "Let's make this: " + pendingSeed.title; fit(); pendingSeed = null; }
   };
@@ -2488,7 +2488,7 @@ function openCard(card, c) {
   btn("Save", "main", async () => { await boardAct({ action: "edit", id: c.id, title: title.value, note: note.value }); close(); });
   if (p || saved0) btn("Open its chat", "", async () => { close(); const r = p ? { ok: true, agent: p.id } : await api("/api/open-chat", { id: c.chat }); if (r.ok) { setView("chats"); select(r.agent); } });
   if (c.column === "todo" || (c.column === "needs" && !c.chat)) btn("Give to a new chat", "", async () => {
-    const r = await api("/api/new", { ai: viewAi }); if (!r.ok) { say("All six chats are in use."); return; }
+    const r = await api("/api/new", { ai: viewAi }); if (!r.ok) { say("All eight chats are in use."); return; }
     const made = await api("/api/project", { agent: r.agent, action: "use", path: boardPath });
     if (!made.ok) return;
     await boardAct({ action: "remove", id: c.id }); boardOpen = null;

@@ -703,7 +703,8 @@ TOOLS = [
              "name": {"type": "string", "description": "spawn: short title shown in the app, 34 characters at most"},
              "task": {"type": "string", "description": "spawn: the full instructions for the new agent"},
              "ids": {"type": "array", "items": S, "description": "status (optional) and wait: task ids returned by spawn"},
-             "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"}}, ["action"]), t_team),
+             "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"},
+             "expert": {"type": "string", "description": "spawn (Studio mode): a roster expert id such as coder or security; its role comes from the roster and the task is added to the expert's own instructions"}}, ["action"]), t_team),
     ("rbx_promo", "Make vertical promo videos for a game (TikTok, Shorts, Reels): probe clips, render a recipe, check it. "
      "Read the guide first: rbx_guide topic `promo`. A long render returns a job id; poll it with action 'job'.",
      schema({"action": {"type": "string", "enum": ["status", "probe", "reference", "voice", "transcribe", "render", "check", "styles", "job"]},

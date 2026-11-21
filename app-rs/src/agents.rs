@@ -24,7 +24,7 @@ use crate::{
     plugin, projects, research, team, textures, usage,
 };
 
-pub const MAX_AGENTS: usize = 6;
+pub const MAX_AGENTS: usize = 8;
 pub const MAX_ATTACH: usize = 10;
 /// Aliases the agent CLI resolves to the latest model of each family.
 pub const MODELS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
@@ -126,6 +126,11 @@ struct State {
     /// "worker" or "critic" for an agent another agent started, with the id of that request.
     role: Option<String>,
     team: Option<String>,
+    /// Studio mode: the roster id of the expert this helper was started as, the instructions that came with it,
+    /// and, for an expert that changes the game, the project whose one writer place it holds.
+    expert: Option<String>,
+    expert_text: Option<String>,
+    writer_of: Option<String>,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
     turn_started: f64,
     log_seq: u64,
@@ -184,6 +189,21 @@ impl Agent {
     pub fn team(&self) -> Option<(String, String)> {
         let st = self.st.lock().unwrap();
         Some((st.team.clone()?, st.role.clone().unwrap_or_default()))
+    }
+
+    /// The roster id of the Studio expert this helper was started as (the id after `expert:`), if any.
+    pub fn expert(&self) -> Option<String> {
+        self.st.lock().unwrap().expert.clone()
+    }
+
+    /// Remember that this helper holds the project's writer place.
+    pub fn set_writer(&self, project: &str) {
+        self.st.lock().unwrap().writer_of = Some(project.to_string());
+    }
+
+    /// Give up the writer place: the project it was held for, once, then nothing (so a second release cannot free another helper's).
+    pub fn take_writer(&self) -> Option<String> {
+        self.st.lock().unwrap().writer_of.take()
     }
 
     /// Tie this chat to a game project. Only possible before the conversation has started,
@@ -324,7 +344,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -582,6 +602,7 @@ impl Agent {
             };
             self.put("error", json!({"text": missing}));
             self.put("done", json!({}));
+            team::release(self);
             return;
         };
         if self.st.lock().unwrap().ai.is_none() {
@@ -591,9 +612,9 @@ impl Agent {
         // what the two switches under the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>();
         let mut prompt = SYSTEM_PROMPT.to_string() + &switches;
-        let (project, role) = {
+        let (project, role, expert_text) = {
             let st = self.st.lock().unwrap();
-            (st.project.clone().filter(|p| std::path::Path::new(p).is_dir()), st.role.clone())
+            (st.project.clone().filter(|p| std::path::Path::new(p).is_dir()), st.role.clone(), st.expert_text.clone())
         };
         if let Some(p) = &project {
             prompt += &PROJECT_PROMPT.replace("{path}", p);
@@ -603,6 +624,9 @@ impl Agent {
             Some("research") => prompt += RESEARCH_PROMPT,
             Some(_) => prompt += WORKER_PROMPT,
             None => {}
+        }
+        if let Some(text) = expert_text.filter(|t| !t.trim().is_empty()) {
+            prompt += &format!("\n\n{}", text.trim());
         }
         prompt += &team_prompt(self);
         let _ = fs::create_dir_all(&PATHS.work);
@@ -661,6 +685,7 @@ impl Agent {
             Err(e) => {
                 self.put("error", json!({"text": format!("Could not start the agent: {e}")}));
                 self.put("done", json!({}));
+                team::release(self);
                 return;
             }
         };
@@ -923,6 +948,7 @@ impl Agent {
     }
 
     pub fn stop(&self) {
+        team::release(self); // a stopped expert no longer holds the game
         let (pid, making) = {
             let mut st = self.st.lock().unwrap();
             if !(st.running || st.making) {
@@ -996,15 +1022,26 @@ pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
 /// Start an agent with a role of its own: a worker or reviewer for another agent (`team_id` is that
 /// request), or the Research tab's researcher.
 pub fn spawn_helper(team_id: Option<&str>, role: &str, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
-    spawn_named(team_id, Some(role), name, project, ai, parent)
+    spawn_named(team_id, Some(role), name, project, ai, parent, None)
+}
+
+/// A named Studio expert: a helper whose chat also gets the expert's own instructions (`id`, display `name`, `text`).
+pub struct Expert {
+    pub id: String,
+    pub name: String,
+    pub text: String,
+}
+
+pub fn spawn_expert(team_id: &str, role: &str, title: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>, expert: Expert) -> Option<Arc<Agent>> {
+    spawn_named(Some(team_id), Some(role), title, project, ai, parent, Some(expert))
 }
 
 /// Start a chat of the user's own (no role) in the background, already named and in its project: the Promos tab's.
 pub fn new_background_chat(name: &str, project: Option<String>) -> Option<Arc<Agent>> {
-    spawn_named(None, None, name, project, None, None)
+    spawn_named(None, None, name, project, None, None, None)
 }
 
-fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
+fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
     let agent = {
         let mut all = AGENTS.lock().unwrap();
         if all.len() >= MAX_AGENTS {
@@ -1018,13 +1055,21 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
             st.named = true;
             st.role = role.map(str::to_string);
             st.team = team_id.map(str::to_string);
+            if let Some(x) = &expert {
+                st.expert = Some(x.id.clone());
+                st.expert_text = Some(x.text.clone());
+            }
             st.ai = Some(ai.unwrap_or_else(paths::default_ai));
             st.project = project;
         }
         all.push(agent.clone());
         agent
     };
-    BUS.put("agent_new", json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent}));
+    let mut event = json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent});
+    if let Some(x) = &expert {
+        event["expert"] = json!(x.name);
+    }
+    BUS.put("agent_new", event);
     if let Some(p) = agent.project() {
         agent.put("project", projects::describe(&p));
     }
@@ -1143,6 +1188,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.session = d["session"].as_str().map(str::to_string);
         st.project = d["project"].as_str().map(str::to_string);
         st.role = d["role"].as_str().map(str::to_string);
+        st.expert = d["expert"].as_str().map(str::to_string);
         // chats saved before there was a choice were all Claude's
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
@@ -1186,6 +1232,7 @@ pub fn remove_agent(agent_id: &str) {
     };
     if let Some(agent) = found {
         agent.stop();
+        team::release(&agent);
         agent.save();
         BUS.put("agent_removed", json!({"agent": agent.id}));
         remember_open();
