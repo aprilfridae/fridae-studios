@@ -115,7 +115,8 @@ as named experts, plus small files in the project. The spec is
 created with O_EXCL, retried for about 5 s and taken over after 10 s; `rbxstage.locked` in Python,
 `app-rs/src/fridae_lock.rs` in Rust):
 - `.fridae/studio.json`: the run (`on`, `stage`, `stages`, `gates`, `max_experts`, `lead`, `idea`, `started`,
-  `paused`, `read_decisions`, `checkpoints`, sometimes `note: "slots"`). Unknown keys are kept by both sides.
+  `paused`, `read_decisions`, `checkpoints`, sometimes `note: "slots"`, and `ended` once Review's End this run switched
+  it off). Unknown keys are kept by both sides. `rbx_stage stage` refuses to change an ended run.
 - `.fridae/review/<id>.json` (status `waiting` | `approved` | `changes` | `superseded`) and its media in
   `.fridae/review/<id>/` (copied in, never decoded). A new run moves old items to `.fridae/review-archive/<started>/`;
   an undo moves later ones to `review-archive/undo-<stamp>/`.
@@ -126,25 +127,42 @@ created with O_EXCL, retried for about 5 s and taken over after 10 s; `rbxstage.
 
 **The agent side.** `rbxstage.py` is the `rbx_stage` tool (`status`, `stage`, `review`, `decisions`, `lesson`;
 CLI `rbx stage ...`). A gated stage can only be finished once a blocking item of that stage is approved and none is
-still open. `decisions` hands each answer over once (`read_decisions` holds `id:status`). Finishing a stage writes
+still open; a newer approved blocking item supersedes older ones of the stage still marked `changes` (a redo filed
+without `replaces`), and a refusal names any item still marked `changes` with the `replaces=<id>` to use.
+`decisions` hands each answer over once (`read_decisions` holds `id:status`); `status` keeps printing the note of
+every open `changes` item, saying which were already handed over, and an undo that reopens an item drops its
+`id:changes` mark so it is handed over again. Finishing a stage writes
 `WORK/stage-requests/<id>.json` for the app's checkpoint. `rbxroster.py` loads `team/roster.json` (fields `id, name,
 job, stage, guides, tools, kind, writes`) with the project's overrides merged field by field, and checks every field.
-`rbx_team spawn` takes `expert`: `rbxteam.py` resolves it and puts `expert`, `expert_name`, `expert_text` and `writes`
-in the request; the Lead itself cannot be spawned, and helpers still cannot start helpers.
+`rbx_team spawn` takes `expert`: `rbxteam.py` resolves it and puts `expert`, `expert_name`, `expert_text` (at most
+16,000 characters) and `writes` in the request; the Lead itself cannot be spawned, and helpers still cannot start
+helpers.
 
 **The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `team/experts/lead.md` (project copy
 first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
 from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (registered in `rbxkit_mcp.GUIDES`).
 
 **The app side** (`app-rs/src`):
-- `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step`. `STATUS: WAITING`
-  stops the 24-hour clock and emits `studio_waiting`; a user message or a decision resumes it. Three failed turns in
-  a row end the run (a `result` event with `is_error`, such as a signed-out AI, counts as failed). `MAX_AGENTS` is 8.
+- `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step` / `ended_step` /
+  `no_progress`. `STATUS: WAITING` stops the 24-hour clock and emits `studio_waiting`; a user message or a decision
+  resumes it. Three failed turns in a row end the run (a `result` event with `is_error`, such as a signed-out AI,
+  counts as failed), and three carry-ons in a row without a tool call count as `STATUS: WAITING`. Any message to the
+  chat that leads a running run is a Studio message (`studio_message`, also for held messages merged into one turn),
+  and takes no night checkpoint once the run has its `start` one (`takes_night_checkpoint`). A Studio message in a
+  chat with no project goes as Ask me, with a line saying so (`studio_fallback`). `MAX_AGENTS` is 8 and counts slots,
+  not open chats: a helper whose result is handed back holds none while it is not working (`holds_slot`), and the
+  page's status has `slots_used`. Expert chats save and restore `expert_text`. Tests never start an AI (`send` finds
+  none under `cfg(test)`).
 - `team.rs`: starts experts (chat titled with the expert's name, `expert_text` appended to the helper prompt) and
   refuses a second `writes: true` expert per project (in-memory writer place, released when the helper finishes or is
-  stopped or closed). A spawn refused for slots sets `note: "slots"` on the run.
+  stopped or closed), and refuses a request from a run's Lead while `max_experts` of its helpers are at work. A spawn
+  refused for slots sets `note: "slots"` on the run; when a slot frees (a helper finishes, a chat is closed) a waiting
+  Lead of a run with that note has it cleared and is woken with "An agent slot is free. Carry on." (`slot_freed`).
 - `studio_run.rs`: the routes' work. `GET /api/review?path=`, `POST /api/review {path, action: approve | change |
-  approve_all, id?, note?}`, `POST /api/studio-run {path, action: start | resume | pause | settings | undo, ...}`,
+  approve_all | needs_done, id?, note?, ids?, title?}` (`approve_all` approves only the `ids` the page shows;
+  `needs_done` tells the Lead "Board: <title> — done" after a needs card is done in Review or on the Board), `POST
+  /api/studio-run {path, action: start | resume | pause | settings | undo | end, ...}` (`end` sets `on: false` and
+  `ended`, stops the Lead carrying on, and deletes nothing; a new run may then start),
   `GET /media/review/<key>/<id>/<file>` (key = first 12 hex of the SHA-1 of the stored project path; served only for
   files listed in the item and inside `.fridae/review/`). All need the token, and `path` must be a known project.
   A decision writes the item and wakes the Lead with `Review: <title> — approved` / `— change: <note>`; while the run
@@ -152,11 +170,16 @@ from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (regist
 - `studio_watch.rs`: polls every project's `review/` and `studio.json` (700 ms) and sends `review` / `studio_run`
   BUS events to the page.
 - `studio_undo.rs`: turns stage requests into checkpoints (git commit of the project + a Studio plugin pin, appended
-  to `checkpoints`), and does `undo`: halt and pause the Lead, refuse while anything in the game is working, commit
+  to `checkpoints`), and does `undo`: check Studio's part first (closed, no pin at the chosen checkpoint although a
+  later one used Studio, an old plugin, a restart: refused with the files-only offer before anything changes), then
+  halt and pause the Lead (a refusal after this point says the run is paused), refuse while anything in the game is working, commit
   the current files, save Studio's scripts to `.fridae/before-undo/<time>/` (plugin `sources` → `rbx project
   save_scripts`), revert Studio to the pin taken exactly at the checkpoint, restore the files as a new commit, rewind
   the run record and archive later review items. Studio closed while a checkpoint from the chosen one on used it, Studio restarted
   (no pin), or an old plugin: it refuses and offers `files_only: true`. Script snapshots live in the plugin's memory (plugin 2.8.0 keeps the newest 24 pins).
+  The Lead's note says only what really went back. Overnight's Undo the night uses the same `put_back` with `exact:
+  false`: the agents' Studio steps since the night began are undone by time, as before, even when Studio was closed
+  when it began (the scripts are still saved to disk first, so it too needs the current plugin).
 - `ui/index.html`: the Review tab, Studio in the run-mode menu, experts by name, the undo picker.
 
 **Testing without an AI.**
@@ -164,7 +187,8 @@ from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (regist
   tests.test_studio_flow`. `tests/test_studio_flow.py` is a dry run of a Lead through `rbxkit_mcp.handle` with a stub
   app thread that answers `rbx_team` requests as finished experts.
 - Rust: `cargo test --manifest-path app-rs/Cargo.toml` (loop, studio_run, studio_undo and team tests use temp
-  projects named with spaces and accents; nothing writes to the real work folder).
+  projects named with spaces and accents; under `cfg(test)` the work folder is a temp folder,
+  `fridae-test-work-<pid>`, whatever `RBXKIT_WORK` says, so nothing writes to the real work folder).
 - The app by hand, in a scratch folder so the real `Documents/Fridae Studios` is never touched. Make
   `<scratch>/kit` with symlinks to this repo's `ui`, `team`, `rbxkit_mcp.py` and `rbx.py` and its own `config.json`
   (`{"chat_ai": "claude", "projects": [{"name": "...", "path": "<scratch game folder>"}]}`; `git init` the game),

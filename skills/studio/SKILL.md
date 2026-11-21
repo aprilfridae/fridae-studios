@@ -93,14 +93,16 @@ shows it as "Experts at once"). While a writer runs, do not change the place you
 ## Refused spawns
 
 `rbx_team` `spawn` may answer `REFUSED` with "Another expert is changing the game right now (<name>). Wait for it, then
-start this one." or with no free agent slot. Both mean not yet:
+start this one.", with "The run already has <n> experts working (the limit is <n>). Wait for one, then start this
+one.", or with no free agent slot. All three mean not yet. The slots are often held by your own experts still
+working: an expert frees its slot when it finishes, so waiting for it is enough:
 1. call `rbx_team` `wait` with the ids of the experts that are running (`rbx_team` `status` lists them);
 2. check and file what came back;
 3. spawn the refused task again.
 If the slots are full and none of your own experts is running (the user's other chats hold the slots), there is
 nothing to wait on: put one card on the board under needs, "Close a chat to free an agent slot", do work that needs no
 expert (checking, filing, GAME.md, the board), and spawn again next turn. If nothing else is left, end with
-`STATUS: WAITING`.
+`STATUS: WAITING`: the app wakes you with "An agent slot is free. Carry on." when one is.
 Never drop the task, never do a writer's job yourself instead, and never mark the run done because of a refusal. If the
 answer is `NOT STARTED` (the app did not pick the request up), try once more; if it fails again, put a card on the
 board under needs and carry on with other work.

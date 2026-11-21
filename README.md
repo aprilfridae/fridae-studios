@@ -73,11 +73,22 @@ builder, Effects and sound, Playtester, Device tester, Security reviewer,
 Economy and shop, Icon and thumbnails, Promo maker. You sign off on what they
 make now and then, and the run keeps going.
 
-**Starting a run.** Open a chat for a game (a chat needs a game folder; one
-without a folder can't run Studio), pick **Studio** in the menu under the
-message box, and send your idea in one line, for example "A small obby with
-three checkpoints and a coin shop". Or press **Start a studio run** on one of
-the Research tab's ideas.
+**Before the first run.**
+- Sign in to the AI first: run `claude auth login` in a terminal once. Setup
+  can show Claude Code as ready while it is signed out, and a signed-out run
+  stops after three failed turns.
+- Keep Roblox Studio open on the game, with the Fridae plugin connected (the
+  Studio plugin dot at the top), for as long as the run builds.
+- Update the plugin to 2.8.0: in Setup, press **Update** next to the Studio
+  plugin, then restart Studio. An older plugin now blocks the Studio part of undo, for Overnight's
+  Undo the night as well as for Undo this run (the files can still go back).
+
+**Starting a run.** Open a chat for a game (a chat needs a game folder; in a
+chat without one a message sent with Studio chosen goes as Ask me), pick
+**Studio** in the menu under the message box, and send your idea in one line,
+for example "A small obby with three checkpoints and a coin shop". Or press
+**Start a studio run** on one of the Research tab's ideas. Whatever is chosen
+in the menu, what you send in the Lead's own chat goes to the run.
 
 **When it stops for you.** By default only twice: to approve the **design
 plan**, and at **ready to publish**, which is a checklist of what you do
@@ -96,6 +107,10 @@ work with your note, and the new version replaces the old one in Review.
 already working finish. While a run is paused, your messages to the Lead wait
 until you press Resume. If you quit the app, the run comes back as Paused.
 
+**End this run.** In Review's Run settings, End this run stops the run for
+good: the Lead starts nothing new, and the game's files, review items and
+checkpoints stay. You can then start a new run for the game.
+
 **Undo this run.** The run takes a checkpoint when it starts and after each
 finished stage. Undo this run (in Review's Run settings, or at the top of the
 Lead's chat) goes back to the checkpoint you pick and leaves the run paused.
@@ -104,16 +119,22 @@ Lead's chat) goes back to the checkpoint you pick and leaves the run paused.
   installed). What they were just before the undo is saved in the game's git
   history first, so nothing is lost.
 - Scripts in Roblox Studio can go back only if Studio has stayed open since
-  that checkpoint and the Fridae Studios plugin is 2.8.0 or newer. Before
-  putting them back, the scripts as they are now are saved under
-  `.fridae/before-undo/` in the game's folder.
+  that checkpoint and the Fridae Studios plugin is 2.8.0 or newer. The copies
+  live in Studio's memory, and it keeps the newest 24. Before putting them
+  back, the scripts as they are now are saved under `.fridae/before-undo/` in
+  the game's folder.
 - If Studio is closed or was restarted since then, undo offers to put back the
   files only.
 
 **It runs on your own AI plan**, and a team uses more of it than one chat.
 In Run settings, **Experts at once** is 2 by default (1 to 4); set it to 1 to
 use less, or Pause the run. Only one expert changes the game in Studio at a
-time, and at most eight chats and helpers work at once in the whole app.
+time, and at most eight chats and helpers are open at once in the whole app
+(an expert that has finished stays open to read but no longer counts).
+
+**Experts ask before running programs.** Experts are not in Full auto: before
+one runs a shell program you have not allowed, it asks, and the question waits
+in its chat (allow the program there, or in Setup).
 
 **Make the team your own.** The team list and each expert's instructions are
 plain files in the app's `team` folder: `team/roster.json` and
