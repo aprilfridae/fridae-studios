@@ -108,6 +108,63 @@ pub fn quiet(c: &mut Command) {
     }
 }
 
+/// On Unix, starts the command in a process group of its own, so `end_trees` can end it and everything it starts
+/// without touching the app. Nothing changes on Windows (taskkill /T follows the tree there).
+pub fn own_group(c: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = c;
+}
+
+/// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
+pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
+
+/// Ends each process (started with `own_group`) and everything it started, and returns once they are gone.
+/// Unix: SIGTERM to each process group, then SIGKILL to any group still there after `STOP_GRACE`. A pid that is
+/// not a group of its own is never signalled as a group of the app's: the app's own pid and pids 0/1 are skipped.
+/// Windows: `taskkill /T /F`, as always.
+pub fn end_trees(pids: &[u32]) {
+    #[cfg(windows)]
+    for pid in pids {
+        let mut kill = Command::new("taskkill");
+        kill.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        quiet(&mut kill);
+        let _ = kill.status();
+    }
+    #[cfg(unix)]
+    {
+        let me = std::process::id();
+        let groups: Vec<u32> = pids.iter().copied().filter(|&p| p > 1 && p != me).collect();
+        let signal = |sig: &str, group: u32| {
+            Command::new("kill")
+                .args([sig, "--", &format!("-{group}")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        for &g in &groups {
+            signal("-TERM", g);
+        }
+        let until = std::time::Instant::now() + STOP_GRACE;
+        let mut left = groups;
+        loop {
+            left.retain(|&g| signal("-0", g)); // still has a member
+            if left.is_empty() || std::time::Instant::now() >= until {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        for &g in &left {
+            signal("-KILL", g);
+        }
+    }
+}
+
 // ----------------------------------------------------------------- settings
 pub fn load_config() -> Map<String, Value> {
     fs::read_to_string(PATHS.home.join("config.json"))

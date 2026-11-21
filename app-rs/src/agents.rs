@@ -610,6 +610,14 @@ impl Agent {
         self.st.lock().unwrap().running = on;
     }
 
+    /// A turn "running" as the given process, for the Stop tests.
+    #[cfg(test)]
+    pub fn set_turn_pid_for_test(&self, pid: u32) {
+        let mut st = self.st.lock().unwrap();
+        st.running = true;
+        st.pid = Some(pid);
+    }
+
     #[cfg(test)]
     pub fn set_waiting_for_test(&self, on: bool) {
         self.st.lock().unwrap().studio_waiting = on;
@@ -1233,6 +1241,7 @@ impl Agent {
         // a texture request may wait minutes for the user
         cmd.env("MCP_TOOL_TIMEOUT", "900000").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::quiet(&mut cmd);
+        paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -1414,7 +1423,7 @@ impl Agent {
             let code = status.and_then(|s| s.code()).unwrap_or(-1);
             self.put("error", json!({"text": if tail.is_empty() { format!("The agent exited unexpectedly (code {code}).") } else { tail }}));
         }
-        team::finished(self);
+        team::finished(self, stopped);
         research::finished(self);
         self.put("done", json!({}));
         // autopilot: the agent ends each reply by saying whether there is more it can do alone; if so, it is told to carry on
@@ -1518,7 +1527,19 @@ impl Agent {
         }
     }
 
+    /// Stop this chat's turn: the agent's process and everything it started end (see `paths::end_trees`).
     pub fn stop(&self) {
+        if let Some(pid) = self.stop_turn() {
+            // Windows: taskkill, there and then, as always. Unix: SIGTERM now and SIGKILL after a grace, off this thread
+            #[cfg(windows)]
+            paths::end_trees(&[pid]);
+            #[cfg(not(windows))]
+            thread::spawn(move || paths::end_trees(&[pid]));
+        }
+    }
+
+    /// Everything `stop` does but ending the process, whose pid it returns (None when no turn is running).
+    fn stop_turn(&self) -> Option<u32> {
         team::release(self); // a stopped expert no longer holds the game
         let (pid, making) = {
             let mut st = self.st.lock().unwrap();
@@ -1533,20 +1554,15 @@ impl Agent {
                 if was_waiting {
                     self.put("studio_waiting", json!({"value": false, "left": 0}));
                 }
-                return;
+                return None;
             }
             st.stopped = true;
             (st.pid.filter(|_| st.running), st.making)
         };
-        if let Some(pid) = pid {
-            let mut kill = Command::new("taskkill");
-            kill.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(Stdio::null()).stderr(Stdio::null());
-            paths::quiet(&mut kill);
-            let _ = kill.status();
-        }
         if making {
             textures::skip_for(&self.id); // the waiting texture tool then ends by itself
         }
+        pid
     }
 }
 
@@ -1827,8 +1843,10 @@ pub fn remove_agent(agent_id: &str) {
 /// Stop every agent and save every chat: called when the window closes.
 pub fn shut_down() {
     crate::promo::stop_install();
+    // every running agent is ended, and the app waits for them (at most the stop grace), so none outlives it
+    let pids: Vec<u32> = agents().iter().filter_map(|a| a.stop_turn()).collect();
+    paths::end_trees(&pids);
     for a in agents() {
-        a.stop();
         a.save();
     }
 }
@@ -1981,6 +1999,66 @@ pub fn connect_other_agents() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A shell in a group of its own (as `send` starts every agent) that has started a grandchild; returns both.
+    #[cfg(unix)]
+    fn shell_with_grandchild() -> (std::process::Child, String) {
+        use std::io::BufRead;
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 60 & echo $!; wait"]).stdout(Stdio::piped());
+        paths::own_group(&mut c);
+        let mut child = c.spawn().unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        (child, line.trim().to_string())
+    }
+
+    #[cfg(unix)]
+    fn gone(pid: &str) -> bool {
+        for _ in 0..60 {
+            if !Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().unwrap().success() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_ends_the_agent_and_what_it_started() {
+        let (mut child, grandchild) = shell_with_grandchild();
+        let a = Agent::detached_for_test("stopgroup", None);
+        a.set_turn_pid_for_test(child.id());
+        a.stop();
+        let _ = child.wait(); // as read() does; the test itself (the app) is still here to do it
+        assert!(gone(&grandchild), "the grandchild {grandchild} is still running");
+        assert!(a.st.lock().unwrap().stopped);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn end_trees_ends_a_group_that_ignores_sigterm() {
+        use std::io::BufRead;
+        let mut c = Command::new("sh");
+        c.args(["-c", "trap '' TERM; sleep 60 & echo $!; wait"]).stdout(Stdio::piped());
+        paths::own_group(&mut c);
+        let mut child = c.spawn().unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let group = child.id();
+        let reaper = thread::spawn(move || child.wait());
+        let t = std::time::Instant::now();
+        paths::end_trees(&[group]);
+        assert!(t.elapsed() >= paths::STOP_GRACE / 2, "SIGTERM was ignored, so it took the grace and SIGKILL");
+        let _ = reaper.join();
+        assert!(gone(line.trim()));
+    }
+
+    #[test]
+    fn end_trees_never_signals_the_app_itself() {
+        paths::end_trees(&[0, 1, std::process::id()]); // the test run (the app here) goes on
+    }
 
     const NIGHT_NEXT: &str = "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE.";
     const NIGHT_AWAY: &str = "I am away. Put what you need from me on the board under needs if it is not there yet, then carry on with the next most valuable thing you can do without me.";

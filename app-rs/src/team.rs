@@ -202,13 +202,25 @@ fn start(req: &Value) {
 }
 
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
-pub fn finished(agent: &Agent) {
+/// What a helper hands back: its reply, or why there is none. A helper the user stopped says so first, so the
+/// waiting chat knows it did not finish (and what it had said so far, if anything).
+pub fn result_text(reply: &str, stopped: bool) -> String {
+    let reply = reply.trim();
+    match (stopped, reply.is_empty() || reply == "Stopped.") {
+        (true, true) => "Stopped: the user stopped this agent before it finished. It handed back nothing.".to_string(),
+        (true, false) => format!("Stopped: the user stopped this agent before it finished. What it had said so far:\n\n{reply}"),
+        (false, true) => "The agent stopped without a reply.".to_string(),
+        (false, false) => reply.to_string(),
+    }
+}
+
+/// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
+pub fn finished(agent: &Agent, stopped: bool) {
     release(agent);
     agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
 
     if let Some((id, role)) = agent.team() {
-        let text = agent.last_reply();
-        let text = if text.is_empty() { "The agent stopped without a reply.".to_string() } else { text };
+        let text = result_text(&agent.last_reply(), stopped);
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
         if let Some(e) = agent.expert() {
             result["expert"] = json!(e);
@@ -244,6 +256,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_stopped_helper_says_it_was_stopped() {
+        assert_eq!(result_text("All done.", false), "All done.");
+        assert_eq!(result_text("  ", false), "The agent stopped without a reply.");
+        let none = result_text("Stopped.", true);
+        assert!(none.starts_with("Stopped: the user stopped this agent before it finished."), "{none}");
+        let some = result_text("Half the shop is built.", true);
+        assert!(some.starts_with("Stopped:") && some.ends_with("Half the shop is built."), "{some}");
+    }
+
+    #[test]
     fn second_writer_is_refused() {
         let mut held = HashMap::new();
         assert!(writer_gate(&mut held, "/g/one", "Coder: Shop", true).is_ok());
@@ -262,7 +284,7 @@ mod tests {
         let key = "/g/release-test".to_string();
         with_writers(|w| writer_gate(w, &key, "Coder: A", true)).unwrap();
         a.set_writer(&key);
-        finished(&a);
+        finished(&a, false);
         assert!(with_writers(|w| writer_gate(w, &key, "Coder: B", true)).is_ok());
         release(&a);
         assert_eq!(with_writers(|w| w.get(&key).cloned()).as_deref(), Some("Coder: B"));
