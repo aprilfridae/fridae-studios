@@ -4,6 +4,7 @@
 import { pipeline, env } from "@huggingface/transformers";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { windows } from "./windows.mjs";
 
 const MODEL = "onnx-community/whisper-base.en_timestamped";
 env.cacheDir = process.env.HF_HOME || fileURLToPath(new URL("../../hf-cache", import.meta.url));
@@ -22,26 +23,6 @@ export function readWav16(path) {
   const n = data.length >> 1, out = new Float32Array(n);
   for (let i = 0; i < n; i++) out[i] = data.readInt16LE(i * 2) / 32768;
   return { samples: out, rate };
-}
-
-const WINDOW_S = 25, SEARCH_S = 5;
-function windows(samples, rate) {
-  const out = [], win = WINDOW_S * rate, frame = Math.round(rate * 0.1);
-  let from = 0;
-  while (from < samples.length) {
-    let to = Math.min(samples.length, from + win);
-    if (to < samples.length) {
-      let best = Infinity;
-      for (let f = to - SEARCH_S * rate; f + frame <= to; f += frame) {
-        let e = 0;
-        for (let i = f; i < f + frame; i++) e += samples[i] * samples[i];
-        if (e < best) { best = e; to = f + (frame >> 1); }
-      }
-    }
-    out.push([from, to]);
-    from = to;
-  }
-  return out;
 }
 
 const path = process.argv[2];
