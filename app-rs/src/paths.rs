@@ -46,7 +46,12 @@ pub static PATHS: LazyLock<Paths> = LazyLock::new(|| {
         env::var("FRIDAE_KIT").map(PathBuf::from).unwrap_or_else(|_| install.clone())
     };
     let home = if cli_exe.is_some() { home_dir().join("Documents").join(APP) } else { kit.clone() };
-    let work = env::var("RBXKIT_WORK").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("work"));
+    // tests never write to a real work folder, whatever RBXKIT_WORK says: one temp folder per test run
+    let work = if cfg!(test) {
+        env::temp_dir().join(format!("fridae-test-work-{}", std::process::id()))
+    } else {
+        env::var("RBXKIT_WORK").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("work"))
+    };
     Paths { install, kit, home, work, cli_exe }
 });
 
