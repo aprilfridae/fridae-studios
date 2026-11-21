@@ -19,11 +19,14 @@ def _ffmpeg(args, stdin=None):
         raise RuntimeError("ffmpeg failed: " + r.stderr.decode("utf-8", "replace")[-800:])
 
 
-def _frame(i, t, size, cuts):
+def _frame(i, t, size, cuts, shift=None, pan=False):
     import cv2, numpy as np
     w, h = size
     seg = sum(1 for c in cuts if t >= c)
-    if seg % 2 == 1:
+    if pan:
+        xs = (np.arange(w)[None, :] + int(t * 900)) // 40 % 2 * 200
+        return np.repeat(np.repeat(xs, h, 0)[:, :, None], 3, 2).astype(np.uint8) + 20
+    if seg % 2 == 1 and shift is None:
         img = np.empty((h, w, 3), np.uint8)
         img[:] = _COLOURS[(seg // 2) % len(_COLOURS)]
         return img
@@ -36,6 +39,8 @@ def _frame(i, t, size, cuts):
     # the box moves faster in the second half of each second so motion varies over time
     pos = (t * w * (0.2 + 0.8 * (t % 1.0))) % max(1, w - bw)
     cv2.rectangle(img, (int(pos), h // 3), (int(pos) + bw, h // 3 + bw), (255, 255, 255), -1)
+    if seg % 2 == 1:     # low-contrast cut: same picture, brightness lifted by `shift`
+        img = np.clip(img.astype(np.int16) + shift, 0, 255).astype(np.uint8)
     return img
 
 
@@ -44,12 +49,13 @@ def _png(img):
     return cv2.imencode(".png", img)[1].tobytes()
 
 
-def make_clip(path, seconds, size=(1280, 720), fps=30, audio=True, cuts=()):
+def make_clip(path, seconds, size=(1280, 720), fps=30, audio=True, cuts=(), shift=None, pan=False):
     """Write an H.264 (+AAC sine) clip. `cuts` are times where the picture switches to a
-    flat colour and back, giving hard scene changes."""
+    flat colour and back, giving hard scene changes; with `shift` they instead lift the
+    brightness by that much (a low-contrast cut). `pan=True` draws fast-moving stripes, no cuts."""
     cuts = sorted(cuts)
     n = int(round(seconds * fps))
-    data = b"".join(_png(_frame(i, i / fps, size, cuts)) for i in range(n))
+    data = b"".join(_png(_frame(i, i / fps, size, cuts, shift, pan)) for i in range(n))
     args = ["-f", "image2pipe", "-framerate", str(fps), "-c:v", "png", "-i", "-"]
     if audio:
         args += ["-f", "lavfi", "-i", "sine=frequency=440:duration=%s" % seconds]
