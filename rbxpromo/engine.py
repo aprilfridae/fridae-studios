@@ -237,7 +237,7 @@ def node_env():
 
 def _run(cmd, cwd, what, ok_marker=None):
     try:
-        r = subprocess.run(cmd, cwd=cwd, env=node_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        r = subprocess.run(cmd, cwd=cwd, env=node_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, encoding="utf-8", errors="replace", creationflags=rbxpaths.no_window())
     except OSError as e:
         raise EngineError(f"{what} could not start: {e}")

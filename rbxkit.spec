@@ -9,7 +9,9 @@ datas.append((os.path.join(HERE, "README.md"), "."))
 datas.append((os.path.join(HERE, "routing.txt"), "."))
 datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))
 hidden = ["rbx", "rbxtex", "rbximg", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
-          "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxvault"]
+          "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxvault",
+          "rbxpromo", "rbxpromo.cli", "rbxpromo.tool", "rbxpromo.engine", "rbxpromo.probe", "rbxpromo.reference",
+          "rbxpromo.audio", "rbxpromo.render", "rbxpromo.check", "rbxpromo.recipe"]
 
 a = Analysis(["cli_main.py"], pathex=[HERE], datas=datas, hiddenimports=hidden,
              excludes=["tkinter", "matplotlib", "scipy", "pandas", "IPython", "pytest", "torch", "tensorflow", "webview", "clr"])

@@ -14,9 +14,10 @@
   project   export the place's scripts to the project folder, checkpoint and restore them
   economy   simulate progression numbers or a drop table from a JSON file
   market    look up live Roblox experiences (public data)
+  promo     vertical promo videos: probe clips, render, check (needs the promo engine)
   where     print the paths the kit uses
 """
-import argparse, glob, json, os, shutil, subprocess, sys
+import argparse, glob, importlib, json, os, shutil, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rbxpaths import KIT, WORK, CONFIG, FROZEN, KitError, no_window
@@ -192,6 +193,15 @@ def cmd_doctor(a):
     lines.append("  [%s] %-18s %s" % ("ok" if studio else "--", "Roblox Studio",
                  "found" if studio else "not found on this computer (needed for texture previews and local module loading)"))
 
+    try:
+        from rbxpromo import engine
+        st = engine.status()
+        detail = ("ready" if st["ready"] else "not installed (missing: %s; about %s MB to download; install it in the app's Setup, "
+                  "or: rbx promo install)" % (", ".join(st["missing"]), st["download_mb"]))
+        lines.append("  [%s] %-18s %s" % ("ok" if st["ready"] else "--", "Promo engine", detail))
+    except Exception as e:  # never a download or a failure of doctor itself
+        lines.append("  [--] %-18s could not be checked: %s" % ("Promo engine", e))
+
     skills = os.path.join(os.path.expanduser("~"), ".claude", "skills")
     have = [n for n in ("roblox-studio-workflow", "roblox-playtest", "roblox-vfx", "roblox-ui-design")
             if os.path.exists(os.path.join(skills, n, "SKILL.md"))]
@@ -232,10 +242,11 @@ def main(argv=None):
     w.set_defaults(fn=cmd_where)
 
     names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen",
-             "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research"}
+             "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",
+             "rbxpromo.cli": "promo"}
     for mod, name in names.items():
         try:
-            __import__(mod).register(sub)
+            importlib.import_module(mod).register(sub)
         except ImportError as e:
             # a missing library (numpy, pillow, opencv) only disables that command
             missing = sub.add_parser(name, help="unavailable: %s (run: rbx doctor)" % e)

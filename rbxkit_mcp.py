@@ -9,7 +9,7 @@ Studio. This server supplies everything around it: Blender, textures, icons,
 animation and video tools, the Luau snippets to run in Studio, and the guides
 that say how to use it all.
 """
-import base64, json, os, re, subprocess, sys, tempfile
+import base64, contextlib, json, os, re, subprocess, sys, tempfile, threading, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rbxpaths import KIT, VERSION, KitError, cli, no_window
@@ -84,6 +84,7 @@ GUIDES = {
     "market-research": ("skills/market-research/SKILL.md", "Game: comparable live experiences with rbx_market and what to learn from them"),
     "critic": ("skills/critic/SKILL.md", "Instructions for an agent spawned as a reviewer of finished work"),
     "producer": ("skills/producer/SKILL.md", "Splitting a large request between parallel agents with rbx_team"),
+    "promo": ("skills/roblox-promo/SKILL.md", "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo"),
 }
 
 
@@ -421,6 +422,112 @@ def t_vault(a):
     return _direct(rbxvault.run, a.get("action") or "search", a)
 
 
+# ------------------------------------------------------------ promo tool
+# A render can outlast the client's call timeout, so it runs in a thread and the call returns a job id once it
+# would take longer than PROMO_SYNC_SECONDS. The child processes rbxpromo starts never read our stdin (the
+# protocol channel) and never write our stdout.
+PROMO_SYNC_SECONDS = 60
+PROMO_JOB_READ_TTL = 300        # a finished job is forgotten this long after its result was read
+PROMO_JOB_KEEP = 3600           # ... or this long after it finished if nobody read it
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _promo_text(data):
+    return json.dumps(data, indent=1, ensure_ascii=False)
+
+
+def _promo_failure(e):
+    from rbxpromo.tool import problems_text
+    return result(problems_text(e), False)
+
+
+def _promo_expected_errors():
+    from rbxpromo.recipe import RecipeError
+    return (KitError, RecipeError, ValueError, FileNotFoundError, RuntimeError)
+
+
+def _forget_old_jobs():
+    now = time.time()
+    with _JOBS_LOCK:
+        for jid, j in list(_JOBS.items()):
+            if not j["finished"]:
+                continue
+            since, ttl = (j["read"], PROMO_JOB_READ_TTL) if j["read"] else (j["finished"], PROMO_JOB_KEEP)
+            if now - since > ttl:
+                del _JOBS[jid]
+
+
+def _start_promo_job(fn, args):
+    job = {"id": uuid.uuid4().hex, "progress": 0.0, "result": None, "error": None, "finished": None, "read": None}
+
+    def work():
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                job["result"] = fn(args, lambda x: job.__setitem__("progress", x))
+        except _promo_expected_errors() as e:
+            job["error"] = e
+        except Exception as e:  # a bug inside a render is the job's error, not a crash of the server
+            job["error"] = RuntimeError("%s: %s" % (type(e).__name__, e))
+        job["finished"] = time.time()
+
+    job["thread"] = threading.Thread(target=work, daemon=True)
+    with _JOBS_LOCK:
+        _JOBS[job["id"]] = job
+    job["thread"].start()
+    return job
+
+
+def _job_reply(job):
+    if job["finished"] is None:
+        return result(_promo_text({"job": job["id"], "state": "running", "progress": round(job["progress"], 3),
+                                   "next": "Call rbx_promo again with action 'job' and this id in a minute."}), True, False)
+    job["read"] = time.time()
+    if job["error"] is not None:
+        return _promo_failure(job["error"])
+    return result(_promo_text(job["result"]))
+
+
+def t_promo(a):
+    from rbxpromo import engine, tool
+    action = a.get("action")
+    if not action:
+        return result("Give 'action': " + ", ".join(list(tool.ACTIONS) + ["job"]) + ". Read the guide first: rbx_guide topic `promo`.", False)
+    _forget_old_jobs()
+    if action == "job":
+        with _JOBS_LOCK:
+            job = _JOBS.get(a.get("id") or "")
+        if not job:
+            return result("No promo job with id '%s'. A job is forgotten after its result was read, or an hour after it "
+                          "finished, and when the app restarts. Start the render again." % a.get("id", ""), False)
+        return _job_reply(job)
+    if action == "install":
+        return result("The app installs the promo engine: ask the user to open Setup and press Install on the Promo engine row.", False)
+    fn = tool.ACTIONS.get(action)
+    if fn is None:
+        return result("Unknown action '%s'. Actions: %s, job." % (action, ", ".join(tool.ACTIONS)), False)
+    if action in tool.NEEDS_ENGINE:
+        st = engine.status()
+        if not st["ready"]:
+            return result("The promo engine is not installed. Install the promo engine in Setup (about %s MB; it continues if "
+                          "interrupted). Missing parts: %s." % (st["download_mb"], ", ".join(st["missing"])), False)
+    args = {k: a.get(k) for k in ("paths", "path", "recipe", "text", "voice", "out", "layout", "lang")}
+    try:
+        if action == "render":
+            job = _start_promo_job(fn, args)
+            job["thread"].join(PROMO_SYNC_SECONDS)
+            if job["finished"] is None:
+                return result(_promo_text({"job": job["id"], "state": "running", "progress": round(job["progress"], 3),
+                                           "next": "This render is still running. Call rbx_promo with action 'job' and this id "
+                                                   "to see progress and, when done, the result."}), True, False)
+            return _job_reply(job)
+        with contextlib.redirect_stdout(sys.stderr):
+            data = fn(args, None)
+        return result(_promo_text(data))
+    except _promo_expected_errors() as e:
+        return _promo_failure(e)
+
+
 def schema(props, required=()):
     return {"type": "object", "properties": props, "required": list(required)}
 
@@ -571,6 +678,16 @@ TOOLS = [
              "task": {"type": "string", "description": "spawn: the full instructions for the new agent"},
              "ids": {"type": "array", "items": S, "description": "status (optional) and wait: task ids returned by spawn"},
              "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"}}, ["action"]), t_team),
+    ("rbx_promo", "Make vertical promo videos for a game (TikTok, Shorts, Reels): probe clips, render a recipe, check it. "
+     "Read the guide first: rbx_guide topic `promo`. A long render returns a job id; poll it with action 'job'.",
+     schema({"action": {"type": "string", "enum": ["status", "probe", "reference", "voice", "transcribe", "render", "check", "styles", "job"]},
+             "paths": {"type": "array", "items": S, "description": "probe: clip files"},
+             "path": {"type": "string", "description": "reference, transcribe: the media file; check: the rendered promo.mp4"},
+             "recipe": {"type": "string", "description": "render, check: path of promo.json"},
+             "text": {"type": "string", "description": "voice: the words to speak"},
+             "voice": {"type": "string", "description": "voice: voice name, default af_heart"},
+             "out": {"type": "string", "description": "output folder (probe, reference, styles, render) or wav file (voice)"},
+             "id": {"type": "string", "description": "job: the id render returned"}}, ["action"]), t_promo),
 ]
 HANDLERS = {name: fn for name, _, _, fn in TOOLS}
 

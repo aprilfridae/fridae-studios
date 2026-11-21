@@ -52,7 +52,7 @@ def _run_node(script, *args):
     cmd = engine.node_cmd(os.path.join("scripts", script), *args)
     try:
         r = subprocess.run(cmd, cwd=os.path.join(engine.engine_dir(), "renderer"), env=engine.node_env(),
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                            errors="replace", timeout=_TIMEOUT, creationflags=rbxpaths.no_window())
     except (OSError, subprocess.TimeoutExpired) as e:
         raise engine.EngineError(f"{script} could not run: {e}")
@@ -70,17 +70,17 @@ def _run_node(script, *args):
 
 
 def _decode_16k(path, out_wav):
-    r = subprocess.run([engine.ffmpeg(), "-y", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
+    r = subprocess.run([engine.ffmpeg(), "-nostdin", "-y", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
                         "-c:a", "pcm_s16le", "-f", "wav", out_wav],
-                       env=engine.tool_env(), capture_output=True)
+                       env=engine.tool_env(), stdin=subprocess.DEVNULL, capture_output=True)
     if r.returncode != 0:
         raise ValueError(f"Could not read audio from {path}: " + r.stderr.decode("utf-8", "replace").strip()[-300:])
 
 
 def _to_pcm16(src, dst):
     """Kokoro writes 32-bit float wav; 16-bit PCM at the same 24 kHz opens everywhere."""
-    r = subprocess.run([engine.ffmpeg(), "-y", "-v", "error", "-i", src, "-c:a", "pcm_s16le", "-f", "wav", dst],
-                       env=engine.tool_env(), capture_output=True)
+    r = subprocess.run([engine.ffmpeg(), "-nostdin", "-y", "-v", "error", "-i", src, "-c:a", "pcm_s16le", "-f", "wav", dst],
+                       env=engine.tool_env(), stdin=subprocess.DEVNULL, capture_output=True)
     if r.returncode != 0:
         raise engine.EngineError("Could not convert the voice to wav: " + r.stderr.decode("utf-8", "replace").strip()[-300:])
 

@@ -192,7 +192,7 @@ def _run_renderer(recipe_path, video, layout, cover, cover_t, report):
     cmd = engine.node_cmd(script, recipe_path, video, *(["--layout", layout] if layout else []),
                           "--still", str(cover_t), cover)
     with tempfile.TemporaryFile() as err:
-        with subprocess.Popen(cmd, env=engine.node_env(), stdout=subprocess.PIPE, stderr=err,
+        with subprocess.Popen(cmd, env=engine.node_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err,
                               text=True, encoding="utf-8", errors="replace") as proc:
             final = None
             for line in proc.stdout:    # no overall timeout: a long render reports progress until it ends

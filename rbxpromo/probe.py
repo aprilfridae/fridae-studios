@@ -32,7 +32,7 @@ AUDIO_RATE = 8000
 
 def _run_json(args):
     r = subprocess.run([engine.ffprobe(), "-v", "error", "-of", "json"] + args,
-                       env=engine.tool_env(), capture_output=True)
+                       env=engine.tool_env(), stdin=subprocess.DEVNULL, capture_output=True)
     if r.returncode != 0:
         raise ValueError("ffprobe could not read the clip: " + r.stderr.decode("utf-8", "replace").strip()[-300:])
     return json.loads(r.stdout.decode("utf-8", "replace") or "{}")
@@ -99,9 +99,9 @@ def _loud_windows(path, warnings):
     import tempfile
     err = tempfile.TemporaryFile()
     proc = subprocess.Popen(
-        [engine.ffmpeg(), "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(AUDIO_RATE),
+        [engine.ffmpeg(), "-nostdin", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(AUDIO_RATE),
          "-c:a", "pcm_s16le", "-f", "wav", "-"],
-        stdout=subprocess.PIPE, stderr=err, env=engine.tool_env())
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, env=engine.tool_env())
     out, size, finished = [], AUDIO_RATE * 2, False
     try:
         head = proc.stdout.read(12)                     # RIFF....WAVE

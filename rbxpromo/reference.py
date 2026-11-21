@@ -74,8 +74,9 @@ def beats_from_samples(samples, rate):
 def _decode_mono(path):
     """Mono 8 kHz samples (float, -1..1) of the file's audio via a WAV pipe; None if it has no audio track."""
     import numpy as np
-    r = subprocess.run([engine.ffmpeg(), "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(BEAT_RATE),
-                        "-c:a", "pcm_s16le", "-f", "wav", "-"], env=engine.tool_env(), capture_output=True)
+    r = subprocess.run([engine.ffmpeg(), "-nostdin", "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(BEAT_RATE),
+                        "-c:a", "pcm_s16le", "-f", "wav", "-"], env=engine.tool_env(),
+                       stdin=subprocess.DEVNULL, capture_output=True)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg could not decode the audio of %s: %s"
                            % (path, r.stderr.decode("utf-8", "replace").strip()[-300:]))

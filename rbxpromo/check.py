@@ -158,9 +158,9 @@ def integrated_loudness(samples, rate=_RATE):
 def _decode_audio(video):
     """(float samples in -1..1 shaped (frames, channels) at 48 kHz, or None when the file has no audio track)."""
     import numpy as np
-    r = subprocess.run([engine.ffmpeg(), "-v", "error", "-i", video, "-vn", "-ar", str(_RATE),
+    r = subprocess.run([engine.ffmpeg(), "-nostdin", "-v", "error", "-i", video, "-vn", "-ar", str(_RATE),
                         "-c:a", "pcm_s24le", "-f", "wav", "-"],
-                       env=engine.tool_env(), capture_output=True)
+                       env=engine.tool_env(), stdin=subprocess.DEVNULL, capture_output=True)
     err = r.stderr.decode("utf-8", "replace").strip()
     if r.returncode != 0:
         if "does not contain any stream" in err or "Output file #0 does not contain" in err:
