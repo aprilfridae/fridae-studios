@@ -3,6 +3,8 @@ import json
 import os
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -161,6 +163,86 @@ class StageTests(unittest.TestCase):
         self.call("stage", id="idea", status="start")
         names = os.listdir(os.path.join(self.project, ".fridae"))
         self.assertFalse([n for n in names if n.endswith(".tmp")])
+
+    def test_supersede_keeps_a_decision(self):
+        old = self.filed_id(self.call("review", title="v1", summary="s", blocking=True))
+        item = self.item(old)
+        item["status"] = "approved"
+        self.write_item(item)
+        text = self.call("review", title="v2", summary="s", replaces=old)
+        self.assertEqual(self.item(old)["status"], "approved")
+        self.assertIn("already approved", text)
+        self.assertIn(old + ":approved", rbxstage.load_run(self.project)["read_decisions"] + [old + ":approved"])
+        self.assertIn("v1", self.call("decisions"))
+
+    def test_replaces_unknown_id(self):
+        with self.assertRaises(KitError):
+            self.call("review", title="v2", summary="s", replaces="deadbeef")
+
+    def test_changes_then_approved_delivers_twice(self):
+        rid = self.filed_id(self.call("review", title="Art", summary="s"))
+        item = self.item(rid)
+        item.update(status="changes", note="bigger")
+        self.write_item(item)
+        self.assertIn("changes wanted", self.call("decisions"))
+        item.update(status="approved", note="")
+        self.write_item(item)
+        self.assertIn("approved", self.call("decisions"))
+        self.assertIn("No new decisions", self.call("decisions"))
+
+    def test_concurrent_decisions_exactly_once(self):
+        ids = []
+        for n in range(5):
+            rid = self.filed_id(self.call("review", title="T%d" % n, summary="s"))
+            item = self.item(rid)
+            item["status"] = "approved"
+            self.write_item(item)
+            ids.append(rid)
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(self.call("decisions"))) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        joined = "\n".join(out)
+        for rid in ids:
+            self.assertEqual(joined.count("[%s]" % rid), 1)
+
+    def test_concurrent_lessons_lose_none(self):
+        threads = [threading.Thread(target=self.call, args=("lesson",), kwargs={"text": "lesson %d" % n}) for n in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        with open(os.path.join(self.project, ".fridae", "lessons.md"), encoding="utf-8") as f:
+            text = f.read()
+        for n in range(20):
+            self.assertIn("lesson %d\n" % n, text)
+
+    def test_gate_refuses_while_another_blocking_item_waits(self):
+        self.call("stage", id="design", status="start")
+        first = self.filed_id(self.call("review", title="A", summary="s", blocking=True))
+        self.call("review", title="B", summary="s", blocking=True)
+        item = self.item(first)
+        item["status"] = "approved"
+        self.write_item(item)
+        with self.assertRaises(KitError):
+            self.call("stage", id="design", status="done")
+
+    def test_lock_taken_over_when_stale_and_released(self):
+        os.makedirs(os.path.join(self.project, ".fridae"))
+        lock = rbxstage.lock_file(self.project)
+        with open(lock, "w") as f:
+            f.write("1 0")
+        old = time.time() - 60
+        os.utime(lock, (old, old))
+        with rbxstage.locked(self.project):
+            self.assertTrue(os.path.exists(lock))
+        self.assertFalse(os.path.exists(lock))
+        with self.assertRaises(RuntimeError):
+            with rbxstage.locked(self.project):
+                raise RuntimeError("boom")
+        self.assertFalse(os.path.exists(lock))
 
     def test_mcp_tool(self):
         res = rbxkit_mcp.handle({"method": "tools/call", "params": {"name": "rbx_stage", "arguments": dict(self.a, action="status")}})

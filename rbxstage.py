@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import time
+from contextlib import contextmanager
 import uuid
 
 import rbxpaths
@@ -34,6 +35,49 @@ def _write_atomic(path, write):
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
+
+
+LOCK_WAIT = 5.0
+LOCK_STALE = 10.0
+
+
+def lock_file(project):
+    return os.path.join(_dir(project), ".lock")
+
+
+@contextmanager
+def locked(project):
+    """One lock per project for every read-modify-write of studio.json and review items.
+
+    The lock is <project>/.fridae/.lock, created exclusively and holding the pid and time. It is retried for about
+    5 seconds, taken over when older than 10 seconds, and always removed on the way out. Not re-entrant.
+    """
+    path = lock_file(project)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    deadline = time.time() + LOCK_WAIT
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(path).st_mtime > LOCK_STALE:
+                    os.remove(path)
+                    continue
+            except OSError:
+                continue  # it vanished between the two calls: try again at once
+            if time.time() > deadline:
+                raise KitError("Another Fridae Studios process is updating this game's Studio files. Try again in a moment.")
+            time.sleep(0.02)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("%d %f" % (os.getpid(), time.time()))
+        yield
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _write_json(path, data):
@@ -136,7 +180,7 @@ def _roster_names():
 
 def _unread(project, run, items):
     read = set(run.get("read_decisions") or [])
-    return [i for i in items if i.get("status") in ("approved", "changes") and i["id"] not in read]
+    return [i for i in items if i.get("status") in ("approved", "changes") and "%s:%s" % (i["id"], i["status"]) not in read]
 
 
 def _status(project):
@@ -172,6 +216,11 @@ def _stage(project, a):
     status = (a.get("status") or "").strip().lower()
     if status not in ("start", "done"):
         raise KitError("status must be 'start' or 'done'.")
+    with locked(project):
+        return _stage_locked(project, sid, status)
+
+
+def _stage_locked(project, sid, status):
     run = load_run(project)
     entry = [s for s in run["stages"] if s["id"] == sid][0]
     now = time.time()
@@ -183,10 +232,11 @@ def _stage(project, a):
         msg = "Stage %s started." % sid
     else:
         if sid in (run.get("gates") or []):
-            approved = [i for i in load_items(project) if i.get("stage") == sid and i.get("blocking") and i.get("status") == "approved"]
-            if not approved:
-                raise KitError("The %s stage is a gate: the user has to approve its blocking review item first. File one with "
-                                "action 'review' (blocking true), wait for the decision, then finish the stage." % sid)
+            mine = [i for i in load_items(project) if i.get("stage") == sid and i.get("blocking") and i.get("status") != "superseded"]
+            if not any(i.get("status") == "approved" for i in mine) or any(i.get("status") in OPEN for i in mine):
+                raise KitError("The %s stage is a gate: the user has to approve its blocking review item first, and none of its "
+                                "blocking items may still be waiting or need changes. File one with action 'review' "
+                                "(blocking true), wait for the decision, then finish the stage." % sid)
         entry.update(status="done", ended=now)
         msg = "Stage %s done." % sid
     save_run(project, run)
@@ -249,19 +299,31 @@ def _review(project, a):
             "title": title[:120], "summary": (a.get("summary") or "").strip()[:4000], "media": kept,
             "blocking": bool(a.get("blocking")), "status": "waiting", "note": "", "created": now, "decided": 0,
             "replaces": replaces, "by_chat": os.environ.get("RBXKIT_AGENT_ID") or ""}
-    _write_json(_item_path(project, item_id), item)
-    if old:
-        old["status"] = "superseded"
-        _write_json(_item_path(project, replaces), old)
+    note = ""
+    with locked(project):
+        _write_json(_item_path(project, item_id), item)
+        if old:
+            cur = _read_json(_item_path(project, replaces))  # re-read: the user may have decided it meanwhile
+            if cur and cur.get("status") in OPEN:
+                cur["status"] = "superseded"
+                cur["superseded_by"] = item_id
+                _write_json(_item_path(project, replaces), cur)
+            elif cur:
+                note = " The old item [%s] was already %s, so it was left as it is." % (replaces, cur.get("status"))
     msg = "Filed review item [%s] %s%s." % (item_id, title, " (blocking)" if item["blocking"] else "")
     if replaces:
-        msg += " It replaces [%s]." % replaces
+        msg += " It replaces [%s]." % replaces + note
     if skipped:
         msg += "\nNot attached: " + "; ".join(skipped) + "."
     return msg
 
 
 def _decisions(project):
+    with locked(project):
+        return _decisions_locked(project)
+
+
+def _decisions_locked(project):
     run = load_run(project)
     new = _unread(project, run, load_items(project))
     if not new:
@@ -272,7 +334,7 @@ def _decisions(project):
             lines.append("[%s] %s: approved.%s" % (i["id"], i.get("title", ""), " Note: " + i["note"] if i.get("note") else ""))
         else:
             lines.append("[%s] %s: changes wanted. %s" % (i["id"], i.get("title", ""), i.get("note") or "(no note)"))
-    run["read_decisions"] = list(run.get("read_decisions") or []) + [i["id"] for i in new]
+    run["read_decisions"] = list(run.get("read_decisions") or []) + ["%s:%s" % (i["id"], i["status"]) for i in new]
     save_run(project, run)
     return "\n".join(lines)
 
@@ -286,19 +348,14 @@ def _lesson(project, a):
         raise KitError("scope must be 'game' or 'all'.")
     path = os.path.join(_dir(project), "lessons.md") if scope == "game" else os.path.join(rbxpaths.WORK, "studio-lessons.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    try:
-        with open(path, encoding="utf-8") as f:
-            old = f.read()
-    except OSError:
-        old = ""
-    if old and not old.endswith("\n"):
-        old += "\n"
     line = "- %s: %s\n" % (time.strftime("%Y-%m-%d"), text)
-
-    def w(tmp):
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(old + line)
-    _write_atomic(path, w)
+    with open(path, "ab+") as f:  # append-only, one write, so two writers never lose a line
+        f.seek(0, os.SEEK_END)
+        if f.tell():
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                line = "\n" + line
+        f.write(line.encode("utf-8"))
     return "Lesson saved for %s." % ("this game" if scope == "game" else "all games")
 
 
