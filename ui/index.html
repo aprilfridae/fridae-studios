@@ -715,6 +715,9 @@ body.proj #pd, body.guide #gd { transform: none; }
               <span class="pr-label">Go back</span>
               <button class="pill" id="rv-undo" title="Put the game back as it was at one of the run's checkpoints">Undo this run</button>
               <div id="rv-undo-box"></div>
+              <span class="pr-label">Stop for good</span>
+              <button class="pill" id="rv-end" title="Stop this run so a new one can start. The game's files, review items and checkpoints stay.">End this run</button>
+              <div id="rv-end-box"></div>
             </details>
           </div>
           <p class="rv-err" id="rv-err"></p>
@@ -933,8 +936,8 @@ const GUIDE = [
   ]],
   ["Bigger jobs", [
     ["Full auto", "Pick Full auto in the menu under the message box and it keeps going by itself without asking permission: it decides, builds, tests, fixes and carries on until the job is done.", "Build a first playable of this game and keep going until it works: "],
-    ["Studio mode", "Pick Studio in the menu under the message box in a game's chat and say what to make, or press Start a studio run on a Research idea. A Lead takes the game through design, build, test, launch and promotion, handing each part to an expert by name, and keeps going. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause.", "@review"],
-    ["Review", "Where a studio run's finished work waits with its pictures or clips. Needs your answer holds what stops the run; To look at holds the rest, and the run keeps going while it waits. Approve, or Change with a short note and a fresh expert of the same kind redoes it. Approve all signs off everything in To look at. Pause and Resume sit on the run's line; Run settings has where it waits for your approval, Experts at once (1 to 4) and Undo this run. A paused run keeps your messages until you press Resume.", "@review"],
+    ["Studio mode", "Pick Studio in the menu under the message box in a game's chat and say what to make, or press Start a studio run on a Research idea. A Lead takes the game through design, build, test, launch and promotion, handing each part to an expert by name, and keeps going. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Update next to the Studio plugin, then restart Studio). Experts ask before running programs you haven't allowed.", "@review"],
+    ["Review", "Where a studio run's finished work waits with its pictures or clips. Needs your answer holds what stops the run; To look at holds the rest, and the run keeps going while it waits. Approve, or Change with a short note and a fresh expert of the same kind redoes it. Approve all signs off everything in To look at. Pause and Resume sit on the run's line; Run settings has where it waits for your approval, Experts at once (1 to 4), Undo this run and End this run (it stops for good and keeps everything, so a new run can start). A paused run keeps your messages until you press Resume.", "@review"],
     ["Follow a game's progress", "The Board tab has a board for each game: what is being worked on, what needs you, and what is done. Agents keep it up to date as they work, and you can add, move and hand out cards yourself.", "@board"],
     ["See everything at once", "The Overview tab draws every chat, helper and project as a live graph, with a list of what each one is doing and a Stop for each.", "@overview"],
     ["Split the work", "Hands parts of a big job to helper chats that work at the same time, then checks each one.", "Split this into parallel tasks and build it: "],
@@ -943,8 +946,8 @@ const GUIDE = [
   ["Safety net", [
     ["Checkpoint", "Saves every script into the project folder and its history, so changes can be compared and restored.", "Take a checkpoint"],
     ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
-    ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open; the night's files stay in git history."],
-    ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
+    ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
+    ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
     ["Usage", "The count at the top is today's tokens across every chat. Click it for each AI and the last seven days."],
   ]],
 ];
@@ -1073,13 +1076,16 @@ function paintRail() {
   $("rail-title").textContent = aiName(viewAi) + " chats";
   paintHead();
   $("rail-count").textContent = working ? working + " working" : "";
-  $("b-new").disabled = agents.size >= (status.max_agents || 8);
+  /* finished helpers stay open to read but hold no agent slot */
+  $("b-new").disabled = (typeof status.slots_used === "number" ? status.slots_used : agents.size) >= (status.max_agents || 8);
 }
 function selectionHint() {
   const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
   const it = pl.selection.items || []; const first = it[0] ? it[0].path.split(".").pop() + " (" + it[0].class + ")" : "";
   return '<span class="sel" title="The agent is told what you have selected in Studio.">Selected in Studio: ' + esc(first) + (pl.selection.count > 1 ? " +" + (pl.selection.count - 1) : "") + "</span>";
 }
+let nowHold = 0;        /* until when a note under the message box is kept */
+let startingRun = "";   /* the chat a studio run is being started from, until its first event or an error */
 function paintComposer() {
   const p = agents.get(current); const b = !!(p && p.busy);
   if (typeof paintAiPick === "function") paintAiPick();
@@ -1089,7 +1095,11 @@ function paintComposer() {
   sendBtn.title = stop ? "Stop" : b ? "Send. It waits until the agent finishes, then goes straight to it." : "";
   sendBtn.disabled = !b && !something;
   box.placeholder = b ? "Add to it while it works. Sent the moment it finishes." : "What should we build or test?";
-  $("now").innerHTML = b ? '<span class="now">' + esc(p.now || "Starting") + "</span>" : selectionHint() || studioHint();
+  /* a note just put under the box (note, noteReview) stays its time; a run being started says so until its Lead answers */
+  if (b) $("now").innerHTML = '<span class="now">' + esc(p.now || "Starting") + "</span>";
+  else if (Date.now() < nowHold) return;
+  else if (startingRun && p && startingRun === p.id) $("now").innerHTML = '<span class="now">Starting the studio run\u2026</span>';
+  else $("now").innerHTML = selectionHint() || studioHint();
 }
 /* The bar above the conversation: the chat's name (press to rename) and its game. */
 function paintHead() {
@@ -1430,6 +1440,7 @@ function onEvent(e) {
     paintRail(); loadHistory(); return;
   }
   const p = pane(e.agent);
+  if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
   if (e.kind === "agent_new") {
     p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert;
     if (!current || (e.id > bootMark && !e.background)) select(p.id);
@@ -1505,6 +1516,7 @@ function onEvent(e) {
     u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
     const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
     if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
+    if (e.fallback) { const f = el("span", "tag enter"); f.textContent = e.fallback; p.col.appendChild(f); }
   } else if (e.kind === "tool") {
     const s = steps(p);
     s.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
@@ -1623,7 +1635,7 @@ function send() {
   if (!text && !ready.length) return;
   if (pending.some((a) => !a.name && !a.failed)) return;  /* an upload is still in flight */
   const names = ready.map((a) => a.name);
-  if (runMode === "studio") { studioSend(p, text, ready); return; }
+  if (runMode === "studio" || leadsRun(p)) { studioSend(p, text, ready); return; }
   box.value = ""; pending = []; paintAtts(); fit();
   /* a chat started from a researched idea carries the idea's details with its first message */
   const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
@@ -1641,7 +1653,12 @@ async function studioSend(p, text, ready) {
     if (link) noteReview(why, link); else note(why);
   };
   const pr = p.project;
-  if (!pr) return back("Studio needs a game folder. Start a folder for this game first, or pick another mode.");
+  /* no game folder: this message goes as Ask me, and the app says so in the chat */
+  if (!pr) {
+    const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
+    api("/api/send", { agent: p.id, text: full, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: false, full: false, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
+    return;
+  }
   let r; try { r = await api("/api/review?path=" + encodeURIComponent(pr.path)); } catch (e) { r = null; }
   if (!r || !r.ok) return back((r && r.error) || "Could not reach the app.");
   rvAll[pr.path] = r;
@@ -1654,8 +1671,10 @@ async function studioSend(p, text, ready) {
   if (runActive(r.run)) return back("This game's studio run is led by another chat.", pr.path);
   if (names.length) return back("Send files once the run has started: the message that starts it is words only.");
   if (!text) return back("Say what to make, then send.");
+  startingRun = p.id; paintComposer();
   let res; try { res = await api("/api/studio-run", { action: "start", path: pr.path, idea: full, agent: p.id }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
-  if (!res.ok) return back(res.error || "Could not start the studio run.");
+  if (!res.ok) { startingRun = ""; return back(res.error || "Could not start the studio run."); }
+  if (res.agent && res.agent !== p.id) startingRun = "";
   p.seed = null;
   if (res.warning) note(res.warning);
   loadReview(pr.path);
@@ -1665,7 +1684,7 @@ function noteReview(text, path) {
   const n = $("now"); n.replaceChildren();
   const w = el("span", "warn"); w.textContent = text + " ";
   const b = el("button", "linkish", "Open Review"); b.onclick = () => openInReview(path);
-  n.append(w, b); clearTimeout(noteReview.t); noteReview.t = setTimeout(paintComposer, 6000);
+  n.append(w, b); nowHold = Date.now() + 6000; clearTimeout(noteReview.t); noteReview.t = setTimeout(paintComposer, 6000);
 }
 // one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
 // keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
@@ -1686,12 +1705,17 @@ function applyMode() { fullAuto = runMode !== "ask"; overNight = runMode === "ni
 applyMode();
 let selfTest = false;
 try { selfTest = localStorage.getItem("selftest") === "1"; } catch (e) {}
+/* this chat leads its game's running studio run: whatever is chosen, what it sends goes in Studio mode */
+function leadsRun(p) {
+  const r = p && p.project && rvAll[p.project.path];
+  return !!(r && runActive(r.run) && r.run.lead === p.id);
+}
 function paintSwitch() {
-  const why = studioWhy();
+  const why = studioWhy(), lead = leadsRun(agents.get(current)), shown = lead ? "studio" : runMode;
   $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
   const seg = $("run-mode"); seg.innerHTML = "";
   RUN_MODES.forEach(([id, name, note]) => {
-    const b = el("button", id === runMode ? "on" : "", esc(name)); b.title = note;
+    const b = el("button", id === shown ? "on" : "", esc(name)); b.title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : note;
     if (id === "studio" && why) { b.disabled = true; b.title = why; }
     b.onclick = () => {
       runMode = id; applyMode(); try { localStorage.setItem("runmode", id); } catch (e) {} paintSwitch(); paintModel(); paintComposer();
@@ -1700,7 +1724,7 @@ function paintSwitch() {
     };
     seg.appendChild(b);
   });
-  $("run-note").textContent = RUN_MODES.find((m) => m[0] === runMode)[2];
+  $("run-note").textContent = lead ? "This chat leads the game's studio run, so what you send here goes to it in Studio mode." : RUN_MODES.find((m) => m[0] === runMode)[2];
   $("run-why").textContent = why; $("run-why").hidden = !why;
 }
 /* Studio needs a game folder, and helper agents on the chat's AI; "" when it can be used */
@@ -1712,8 +1736,8 @@ function studioWhy() {
 }
 /* under the message box while Studio is chosen: what the next message will do */
 function studioHint() {
-  const p = agents.get(current); if (runMode !== "studio" || !p) return "";
-  if (!p.project) return '<span class="sel">Studio needs a game folder: start a folder for this game first.</span>';
+  const p = agents.get(current); if (!p || (runMode !== "studio" && !leadsRun(p))) return "";
+  if (!p.project) return '<span class="sel">Studio needs a game folder, so a message here goes as Ask me.</span>';
   const r = rvAll[p.project.path], run = r && r.run, name = p.project.name;
   const text = runActive(run) ? (run.lead === p.id ? "Studio: this chat leads " + name + "'s run. Answer it in Review." : "Studio: another chat leads " + name + "'s run.") : "Studio: your message starts a studio run for " + name + ".";
   return '<span class="sel">' + esc(text) + "</span>";
@@ -1749,7 +1773,7 @@ function paintAtts() {
   });
 }
 function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ? Object.keys(p.asks) : []; return ids.length ? ids[0] : null; }
-function note(text) { $("now").innerHTML = '<span class="warn">' + esc(text) + "</span>"; setTimeout(paintComposer, 3500); }
+function note(text) { $("now").innerHTML = '<span class="warn">' + esc(text) + "</span>"; nowHold = Date.now() + 3500; setTimeout(paintComposer, 3500); }
 function addFile(file) {
   if (!file) return;
   if (/^(video|audio)\//.test(file.type || "")) { note("Use Add clips for videos and music: they are used where they are, not copied."); return; }
@@ -1845,7 +1869,7 @@ const menu = $("settings-panel"), modelBtn = $("model");
 function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen);
-  const modes = [runMode === "studio" ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
+  const modes = [runMode === "studio" || leadsRun(p) ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
   $("model-name").textContent = [cur ? cur[1] : aiName(ai), EFFORT_NAMES[effort]].concat(modes).join(" \u00b7 ");
   const box0 = $("model-menu"); box0.innerHTML = "";
   if (!list.length) box0.appendChild(el("p", "sub", "Its model list has not arrived yet.")).style.margin = "0 8px 6px";
@@ -2508,7 +2532,7 @@ function paintReviewPick() {
   if (sig === paintReviewPick.sig) return; paintReviewPick.sig = sig;
   sel.replaceChildren(...rows.map(([path, label]) => new Option(label, path, false, path === rvPath)));
 }
-$("rv-proj").onchange = () => { rvPath = $("rv-proj").value; $("rv-undo-box").replaceChildren(); paintReview(); loadReview(rvPath); };
+$("rv-proj").onchange = () => { rvPath = $("rv-proj").value; $("rv-undo-box").replaceChildren(); $("rv-end-box").replaceChildren(); paintReview(); loadReview(rvPath); };
 /* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
    same confirm step as the night's undo */
 const cpName = (c) => (c.stage === "start" ? "Start of the run" : "After " + stageName(c.stage).toLowerCase()) + " \u00b7 " + ago(c.at || 0);
@@ -2551,13 +2575,30 @@ function undoRunCard(path, onDone) {
   return card;
 }
 $("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(rvPath)); };
+/* "End this run": a confirm, then the run is switched off. Nothing is deleted, and a new run may start. */
+$("rv-end").onclick = () => {
+  const box = $("rv-end-box"), path = rvPath;
+  const card = el("div", "ask night-ask enter", '<h4>End this run?</h4><p></p><div class="act"><button class="pill main">End this run</button><button class="pill">Keep it</button></div>');
+  card.querySelector("p").textContent = "The Lead stops after what it is doing now and starts nothing new; experts already at work finish. The game's files, review items, checkpoints and board stay as they are. Afterwards you can start a new run for this game.";
+  const [go, keep] = card.querySelectorAll(".pill");
+  keep.onclick = () => card.remove();
+  go.onclick = async () => {
+    go.disabled = keep.disabled = true; go.textContent = "Ending...";
+    let r; try { r = await api("/api/studio-run", { path, action: "end" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+    if (r && r.ok) { card.remove(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
+    loadReview(path);
+  };
+  box.replaceChildren(card);
+};
 /* the run line: what the run is doing, and the one button that changes it */
 function runState(r, run) {
   if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
   if (run.paused) return ["Paused", "Nothing new is handed out. Experts already at work finish what they are doing.", "resume"];
   if (!r.lead_live) return ["Paused — the Lead's chat is closed", "Resume starts a new Lead chat that reads the run and carries on where it stopped.", "resume"];
   if (!r.lead_active) return ["Paused", "The Lead is not working on the run right now (the app was restarted, or the run stopped). Resume picks it up where it stopped.", "resume"];
-  if (run.note === "slots") return ["Waiting for a free agent slot", "Every agent slot is in use. Close a chat you are done with and the run carries on.", "pause"];
+  if (run.note === "slots") return r.waiting
+    ? ["Waiting for a free agent slot", "Every agent slot is in use: the run's own experts count too. The Lead is woken as soon as one is free; closing a chat you are done with frees one. Resume tries again now.", "resume"]
+    : ["Waiting for a free agent slot", "Every agent slot is in use: the run's own experts count too. The Lead waits for its experts, then tries again.", "pause"];
   if (r.waiting) return ["Waiting for you", "It has done all it can until you answer what is under Needs your answer.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
 }
@@ -2589,7 +2630,8 @@ $("rv-toggle").onclick = async () => {
 function paintRun(r) {
   const run = r && r.run && r.run.on ? r.run : null;
   $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
-  $("rv-empty-h").textContent = (projects.projects || []).length ? "No studio run for this game" : "No game yet";
+  const ended = r && r.run && !r.run.on && r.run.ended;
+  $("rv-empty-h").textContent = !(projects.projects || []).length ? "No game yet" : ended ? "The last studio run was ended " + ago(r.run.ended) : "No studio run for this game";
   $("rv-note").textContent = run && run.started ? "Run started " + ago(run.started) : "";
   if (!run) return;
   const [state, why, action] = runState(r, run);
@@ -2650,6 +2692,8 @@ function rvItemCard(it, r) {
   input.onblur = () => { if (rvDeferred) setTimeout(paintReview, 0); };
   return card;
 }
+/* a needs card was done: the Lead of the game's studio run is told, so a run waiting on it goes on */
+function needsDone(path, c) { if (path && c && c.title) api("/api/review", { path, action: "needs_done", title: c.title }).catch(() => {}); }
 /* a board card in the needs column: only the user can do it, so it is answered here too */
 function rvNeedCard(c, path) {
   const card = el("div", "ask rv-item enter", '<div class="meta">On the board</div><h4></h4><p></p><div class="act"><button class="pill main">Done</button><button class="pill">Open the board</button></div><p class="rv-err"></p><div class="rv-said"></div>');
@@ -2662,6 +2706,7 @@ function rvNeedCard(c, path) {
     let r; try { r = await api("/api/board", { path, action: "move", id: c.id, column: "done" }); } catch (e) { r = { ok: false }; }
     if (!r || !r.ok) { done.disabled = false; err.textContent = (r && r.error) || "Could not move the card."; return; }
     rvDone.set(c.id, { at: Date.now() });
+    needsDone(path, c);
     card.querySelector(".rv-said").textContent = "Done: " + (c.title || ""); card.classList.add("done");
     paintReviewBadge(); paintReview();
   };
@@ -2705,7 +2750,7 @@ $("rv-all").onclick = async () => {
   const b = $("rv-all"), path = rvPath, r = rvAll[path];
   const open = ((r && r.items) || []).filter((i) => i.status === "waiting" && !i.blocking && !rvDone.has(i.id));
   b.disabled = true; $("rv-err").textContent = "";
-  let res; try { res = await api("/api/review", { path, action: "approve_all" }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+  let res; try { res = await api("/api/review", { path, action: "approve_all", ids: open.map((i) => i.id) }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
   b.disabled = false;
   if (!res.ok) { $("rv-err").textContent = res.error || "Could not approve them."; return; }
   open.forEach((i) => {
@@ -2992,7 +3037,11 @@ function paintBoard() {
     }
     col.addEventListener("dragover", (e) => { if (boardDrag) { e.preventDefault(); col.classList.add("over"); } });
     col.addEventListener("dragleave", () => col.classList.remove("over"));
-    col.addEventListener("drop", (e) => { e.preventDefault(); col.classList.remove("over"); const id = boardDrag; boardDrag = null; if (id) boardAct({ action: "move", id, column: key }); });
+    col.addEventListener("drop", (e) => {
+      e.preventDefault(); col.classList.remove("over"); const id = boardDrag; boardDrag = null; if (!id) return;
+      const was = ((boardData && boardData.cards) || []).find((c) => c.id === id), path = boardPath;
+      boardAct({ action: "move", id, column: key }).then((r) => { if (r && r.ok && key === "done" && was && was.column === "needs") needsDone(path, was); });
+    });
     cols.appendChild(col);
   });
 }
