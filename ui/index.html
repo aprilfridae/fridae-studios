@@ -1396,7 +1396,9 @@ function promoCard(c) {
     }, 600);
   };
   const ck = c.check || {}, check = card.querySelector(".check");
-  check.textContent = ck.passed ? "Checked: safe areas, hook, loudness" : "Problems:\n" + ((ck.problems || []).join("\n") || "the check did not run");
+  const notes = (ck.notes || []).filter(Boolean);   /* e.g. "loudness was not checked": one line each under the check line */
+  check.textContent = (ck.passed ? "Checked: safe areas, hook, loudness" : "Problems:\n" + ((ck.problems || []).join("\n") || "the check did not run"))
+    + (notes.length ? "\n" + notes.join("\n") : "");
   check.classList.toggle("bad", !ck.passed);
   const [download, reveal, chat] = card.querySelectorAll(".act button"), extras = card.querySelector(".act input");
   download.onclick = async () => {

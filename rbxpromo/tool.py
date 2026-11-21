@@ -57,7 +57,13 @@ def styles_sheet(items, out_jpg, cols=4, cell=(270, 480), label=34):
         with Image.open(it["still"]) as im:
             sheet.paste(im.convert("RGB").resize(cell), (x, y + label))
         draw.text((x + 8, y + 10), it["name"], fill=(255, 255, 255))
-    sheet.save(out_jpg, quality=88)
+    part = out_jpg + ".part"
+    try:
+        sheet.save(part, format="JPEG", quality=88)
+        os.replace(part, out_jpg)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
     return out_jpg
 
 

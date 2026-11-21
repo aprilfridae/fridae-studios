@@ -427,6 +427,7 @@ def t_vault(a):
 # would take longer than PROMO_SYNC_SECONDS. The child processes rbxpromo starts never read our stdin (the
 # protocol channel) and never write our stdout.
 PROMO_SYNC_SECONDS = 60
+PROMO_JOB_WAIT_SECONDS = 45     # action 'job' waits this long for a running job before replying "running"
 PROMO_JOB_READ_TTL = 300        # a finished job is forgotten this long after its result was read
 PROMO_JOB_KEEP = 3600           # ... or this long after it finished if nobody read it
 _JOBS = {}
@@ -480,7 +481,7 @@ def _start_promo_job(fn, args):
 def _job_reply(job):
     if job["finished"] is None:
         return result(_promo_text({"job": job["id"], "state": "running", "progress": round(job["progress"], 3),
-                                   "next": "Call rbx_promo again with action 'job' and this id in a minute."}), True, False)
+                                   "next": "Still running. Call rbx_promo again with action 'job' and this id (each call waits up to %d s)." % PROMO_JOB_WAIT_SECONDS}), True, False)
     job["read"] = time.time()
     if job["error"] is not None:
         return _promo_failure(job["error"])
@@ -499,6 +500,7 @@ def t_promo(a):
         if not job:
             return result("No promo job with id '%s'. A job is forgotten after its result was read, or an hour after it "
                           "finished, and when the app restarts. Start the render again." % a.get("id", ""), False)
+        job["thread"].join(PROMO_JOB_WAIT_SECONDS)      # well under the client's 600 s call timeout
         return _job_reply(job)
     if action == "install":
         return result("The app installs the promo engine: ask the user to open Setup and press Install on the Promo engine row.", False)

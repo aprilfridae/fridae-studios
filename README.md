@@ -65,19 +65,23 @@ in Cursor, Codex, Gemini CLI and other agents.
 
 ## Promo maker
 
-Ask a chat for a promo of your game and it cuts your gameplay clips into a
-vertical 1080x1920 video for TikTok, YouTube Shorts and Instagram Reels: hook
-title, word-by-word captions, an optional spoken voice-over, a cover image and
-a post caption. It checks its own render (captions clear of the platforms'
-buttons, a hook in the first seconds, readable text, sensible loudness) and
-shows the finished video in the chat with buttons to save it or show it in its
-folder. Nothing is posted or uploaded; your clips are read where they are and
-never copied.
+The Promos tab cuts your gameplay clips into a vertical 1080x1920 video for
+TikTok, YouTube Shorts and Instagram Reels: hook title, word-by-word captions,
+an optional spoken voice-over, a cover image and a post caption. Fill in the
+New promo form (clips, optional music, an optional saved TikTok to copy the
+pacing of, style, length, voice-over script, what it should show, project) and
+press Make promo; an agent makes it in a chat of its own (you can also just ask
+any chat for a promo). With no music the game sound stays; tick "Mute game
+sound" to add a TikTok sound later. The agent checks its own render (captions
+clear of the platforms' buttons, a hook in the first seconds, readable text,
+sensible loudness), and the finished video lands in the tab's library with its
+check result, the post caption, Download and Show in folder. Nothing is posted
+or uploaded; your clips are read where they are and never copied.
 
 - **It downloads its engine on first use** (about 730 MB: a portable Node.js,
   the Remotion renderer with its headless browser, a speech recognition model
-  and a voice model). Install it from Setup, Connections, Promo engine, or let
-  the agent ask. It goes in your own app data folder (macOS:
+  and a voice model). Install it from Setup (Connections, Promo engine) or from
+  the Promos tab. It goes in your own app data folder (macOS:
   `~/Library/Application Support/Fridae Studios/engine`; Windows:
   `%LOCALAPPDATA%\Fridae Studios\engine`), not in Documents, so iCloud or
   OneDrive do not sync it; an engine an earlier version put in
@@ -89,7 +93,8 @@ never copied.
   people; larger companies need a Remotion company licence to use the promo
   maker.
 - **Music is your responsibility.** Use your own track or one that is
-  free-licensed, or post the video silent and add a sound inside TikTok.
+  free-licensed, or leave music out (and mute the game sound) and add a sound
+  inside TikTok.
 - **Reference TikToks must be saved video files** (the agent can study a saved
   video's shots, words and beats); links are not downloaded.
 

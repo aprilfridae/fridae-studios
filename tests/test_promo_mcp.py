@@ -4,7 +4,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from unittest import mock
 
 import rbxkit_mcp
-from rbxpromo import engine, tool
+from rbxpromo import engine, reference, tool
 from rbxpromo.recipe import RecipeError
 
 KIT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -92,7 +92,7 @@ class ToolTests(unittest.TestCase):
             time.sleep(2)
             return {"video": "x.mp4", "duration": 3}
         with mock.patch.object(engine, "status", return_value=READY), mock.patch.dict(tool.ACTIONS, {"render": slow}), \
-                mock.patch.object(rbxkit_mcp, "PROMO_SYNC_SECONDS", 1):
+                mock.patch.object(rbxkit_mcp, "PROMO_SYNC_SECONDS", 1), mock.patch.object(rbxkit_mcp, "PROMO_JOB_WAIT_SECONDS", 0.1):
             first = json.loads(text(call({"action": "render", "recipe": "r.json"})))
             self.assertEqual(first["state"], "running")
             self.assertEqual(len(first["job"]), 32)
@@ -104,6 +104,23 @@ class ToolTests(unittest.TestCase):
         self.assertFalse(done["isError"])
         self.assertEqual(json.loads(text(done))["video"], "x.mp4")
 
+    def test_job_call_waits_for_the_render_to_finish(self):
+        def slow(args, progress):
+            time.sleep(0.8)
+            return {"video": "x.mp4", "duration": 3}
+        with mock.patch.object(engine, "status", return_value=READY), mock.patch.dict(tool.ACTIONS, {"render": slow}), \
+                mock.patch.object(rbxkit_mcp, "PROMO_SYNC_SECONDS", 0.05), mock.patch.object(rbxkit_mcp, "PROMO_JOB_WAIT_SECONDS", 10):
+            first = json.loads(text(call({"action": "render", "recipe": "r.json"})))
+            self.assertEqual(first["state"], "running")
+            t0 = time.time()
+            done = call({"action": "job", "id": first["job"]})      # no sleep: the call itself waits
+        self.assertLess(time.time() - t0, 5)
+        self.assertFalse(done["isError"])
+        self.assertEqual(json.loads(text(done))["video"], "x.mp4")
+
+    def test_job_wait_stays_under_the_mcp_timeout(self):
+        self.assertTrue(30 <= rbxkit_mcp.PROMO_JOB_WAIT_SECONDS <= 60, rbxkit_mcp.PROMO_JOB_WAIT_SECONDS)
+
     def test_job_unknown_id(self):
         res = call({"action": "job", "id": "nope"})
         self.assertTrue(res["isError"])
@@ -114,7 +131,7 @@ class ToolTests(unittest.TestCase):
             time.sleep(1.5)
             raise RecipeError(["scene 0: clip file not found: a.mp4", "'fps' must be 30 or 60."])
         with mock.patch.object(engine, "status", return_value=READY), mock.patch.dict(tool.ACTIONS, {"render": bad}), \
-                mock.patch.object(rbxkit_mcp, "PROMO_SYNC_SECONDS", 1):
+                mock.patch.object(rbxkit_mcp, "PROMO_SYNC_SECONDS", 1), mock.patch.object(rbxkit_mcp, "PROMO_JOB_WAIT_SECONDS", 0.1):
             jid = json.loads(text(call({"action": "render", "recipe": "r.json"})))["job"]
             time.sleep(1)
             res = call({"action": "job", "id": jid})
@@ -139,6 +156,43 @@ class ToolTests(unittest.TestCase):
             rbxkit_mcp._forget_old_jobs()
         self.assertNotIn(read["id"], rbxkit_mcp._JOBS)
         self.assertIn(unread["id"], rbxkit_mcp._JOBS)
+
+    def test_corrupt_cached_still_is_rendered_again(self):
+        import tempfile
+        from PIL import Image
+        from rbxpromo import render
+        renders = []
+
+        def fake_still(recipe_path, out_jpg, seconds):
+            renders.append(out_jpg)
+            Image.new("RGB", (108, 192), (90, 40, 160)).save(out_jpg)
+            return out_jpg
+        with tempfile.TemporaryDirectory() as out, mock.patch.object(engine, "promo_hash", return_value="b" * 40), \
+                mock.patch.object(render, "render_still", fake_still):
+            items = reference.styles(out)
+            with open(items[0]["still"], "wb") as f:
+                f.write(b"half a jpeg")
+            n = len(renders)
+            again = reference.styles(out)
+            self.assertEqual(len(renders), n + 1)
+            with Image.open(again[0]["still"]) as im:
+                im.load()
+            tool.styles_sheet(again, os.path.join(out, "sheet_styles.jpg"))
+            self.assertEqual([f for f in os.listdir(out) if "part" in f or "tmp" in f], [])
+
+    def test_failed_still_render_leaves_no_file(self):
+        import tempfile
+        from rbxpromo import render
+
+        def broken(recipe_path, out_jpg, seconds):
+            with open(out_jpg, "wb") as f:
+                f.write(b"partial")
+            raise engine.EngineError("renderer died")
+        with tempfile.TemporaryDirectory() as out, mock.patch.object(engine, "promo_hash", return_value="c" * 40), \
+                mock.patch.object(render, "render_still", broken):
+            with self.assertRaises(engine.EngineError):
+                reference.styles(out)
+            self.assertEqual(os.listdir(out), [])
 
     def test_styles_reuses_stills_and_returns_one_sheet_image(self):
         import tempfile

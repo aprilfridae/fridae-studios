@@ -159,6 +159,16 @@ def _about(name):
         return str(json.load(f).get("about", ""))
 
 
+def _readable_image(path):
+    from PIL import Image
+    try:
+        with Image.open(path) as im:
+            im.load()
+        return True
+    except (OSError, ValueError, SyntaxError):
+        return False
+
+
 def styles(out_dir):
     """[{"name","about","still"}] for every style; each still is rendered once per promo-source hash."""
     from rbxpromo import render
@@ -167,13 +177,21 @@ def styles(out_dir):
     items = []
     for name in STYLES:
         still = os.path.join(out_dir, "%s-%s.jpg" % (name, tag))
+        if os.path.isfile(still) and not _readable_image(still):
+            os.remove(still)                        # a broken cached still is rendered again
         if not os.path.isfile(still):
             recipe = {"version": 1, "size": [1080, 1920], "fps": 30, "style": name,
                       "scenes": [{"title": "YOUR GAME", "duration": 2.0}]}
-            with tempfile.TemporaryDirectory() as tmp:
-                rp = os.path.join(tmp, "recipe.json")
-                rbxpaths.write_json(rp, recipe)
-                render.render_still(rp, still, STILL_AT)
+            part = os.path.join(out_dir, "%s-%s.part.jpg" % (name, tag))   # never a half-written still under the real name
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    rp = os.path.join(tmp, "recipe.json")
+                    rbxpaths.write_json(rp, recipe)
+                    render.render_still(rp, part, STILL_AT)
+                os.replace(part, still)
+            finally:
+                if os.path.exists(part):
+                    os.remove(part)
             for old in glob.glob(os.path.join(glob.escape(out_dir), glob.escape(name) + "-*.jpg")):
                 if old != still and re.fullmatch(re.escape(name) + r"-[0-9a-f]{12}\.jpg", os.path.basename(old)):
                     os.remove(old)

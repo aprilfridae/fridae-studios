@@ -70,8 +70,8 @@ buttons.
    notes), then render it (see the recipe below).
 5. **Render.** `render` with `recipe`. It validates, renders, writes the
    outputs and runs `check` itself. A render of more than a minute returns a
-   `{"job": id}` at once: call `action: "job"` with `id` every minute or so
-   until it reports the result. The progress is a number from 0 to 1. A job
+   `{"job": id}`: call `action: "job"` with `id` again and again (each call
+   waits up to 45 s for it) until it reports the result. The progress is a number from 0 to 1. A job
    id is forgotten after its result was read; if you lose it, render again.
 6. **Look at the sheet.** The result returns `sheet.jpg` (twelve frames)
    and `cover.jpg` as images. Look at them: is the hook visible in the first
