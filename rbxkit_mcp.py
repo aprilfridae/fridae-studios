@@ -210,7 +210,12 @@ def _one_guide(topic):
     return text
 
 
-GUIDE_CAP = 30000  # bytes of guide text one rbx_guide call returns at most (past the first guide)
+GUIDE_CAP = 30000         # bytes one rbx_guide call returns at most to a helper agent (past the first guide)
+GUIDE_CAP_CHAT = 120000   # and to an ordinary chat, which loads its guides in one call (routing.txt)
+
+
+def _guide_cap():
+    return GUIDE_CAP if (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip() else GUIDE_CAP_CHAT
 
 
 def t_guide(a):
@@ -222,6 +227,7 @@ def t_guide(a):
     if not wanted:
         lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
         return result("\n".join(lines), True, False)
+    cap = _guide_cap()
     out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
     for topic in wanted:
         text = _one_guide(topic) if topic in GUIDES else _reference(topic)
@@ -230,7 +236,7 @@ def t_guide(a):
             continue
         part = "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text
         n = len(part.encode("utf-8")) + 2
-        if out and (left or size + n > GUIDE_CAP):
+        if out and (left or size + n > cap):
             left.append(topic)  # the first guide always comes whole; the rest only while the answer stays small
             continue
         out.append(part)
@@ -240,7 +246,7 @@ def t_guide(a):
     body = PREFACE + "\n\n".join(out)
     if left:
         body += ("\n\n(Left out to keep this answer under %d KB: %s. Ask for them in another rbx_guide call, two topics "
-                 "at a time.)" % (GUIDE_CAP // 1000, ", ".join(left)))
+                 "at a time.)" % (cap // 1000, ", ".join(left)))
     if unknown:
         body += "\n\n(No such guide: " + ", ".join(unknown) + ")"
     return result(body, True, False)
@@ -561,8 +567,8 @@ def schema(props, required=()):
 S = {"type": "string"}
 TOOLS = [
     ("rbx_guide", "Read rbxkit guides. Before a Roblox task, load every relevant guide in one call by passing several names in "
-     "`topics` (always include 'workflow'; add the style guide for modelling, UI and effects). One answer holds about 30 KB at most: "
-     "topics left out are named, so ask for them in another call. With no arguments, lists the topics.",
+     "`topics` (always include 'workflow'; add the style guide for modelling, UI and effects). One answer holds about 30 KB at most for a helper agent "
+     "(120 KB for a chat): topics left out are named, so ask for them in another call. With no arguments, lists the topics.",
      schema({"topics": {"type": "array", "items": {"type": "string"},
                         "description": "Guide names: workflow, playtest, ui-design, ui-helpers, ui-audit, sim-ui, vfx, vfx-basics, tester, web-to-roblox, "
                                        "emil-design-eng, motion-design, redesign-skill, reference-design-contract, "

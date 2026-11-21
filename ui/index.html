@@ -2591,7 +2591,7 @@ $("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren
 $("rv-end").onclick = () => {
   const box = $("rv-end-box"), path = rvPath;
   const card = el("div", "ask night-ask enter", '<h4>End this run?</h4><p></p><div class="act"><button class="pill main">End this run</button><button class="pill">Keep it</button></div>');
-  card.querySelector("p").textContent = "The Lead stops after what it is doing now and starts nothing new; experts already at work finish. The game's files, review items, checkpoints and board stay as they are. Afterwards you can start a new run for this game.";
+  card.querySelector("p").textContent = "The Lead and the experts it started are stopped now, and nothing new starts. The game's files, review items, checkpoints and board stay as they are. Afterwards you can start a new run for this game.";
   const [go, keep] = card.querySelectorAll(".pill");
   keep.onclick = () => card.remove();
   go.onclick = async () => {

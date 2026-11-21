@@ -179,16 +179,23 @@ class RosterTests(unittest.TestCase):
         self.assertIn("Script writer", rbxstage.run("status", {"project": self.project}))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class GuideLoadTests(unittest.TestCase):
     """Live run L7: a 6-topic rbx_guide call returned 62 KB and the expert tried to parse it with a shell command."""
 
-    def text(self, topics):
-        res = rbxkit_mcp.t_guide({"topics": topics})
+    def text(self, topics, role="worker"):
+        with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ROLE": role}):
+            res = rbxkit_mcp.t_guide({"topics": topics})
         return res["content"][0]["text"]
+
+    def test_an_ordinary_chat_gets_up_to_120_kb(self):
+        topics = ["workflow", "unslop", "emil-design-eng", "motion-design", "studio"]
+        text = self.text(topics, role="")
+        for t in topics:
+            self.assertIn("GUIDE: " + t, text, "one call still loads a chat's guides (routing.txt)")
+        self.assertNotIn("Left out", text)
+        big = self.text(list(rbxkit_mcp.GUIDES), role="")
+        self.assertLessEqual(len(big.encode("utf-8")), rbxkit_mcp.GUIDE_CAP_CHAT + 40000)
+        self.assertIn("Left out to keep this answer under 120 KB", big)
 
     def test_one_answer_stays_under_the_cap_and_names_what_was_left_out(self):
         topics = ["workflow", "unslop", "emil-design-eng", "motion-design", "studio"]
@@ -216,3 +223,7 @@ class GuideLoadTests(unittest.TestCase):
                 text = " ".join(f.read().split())
             self.assertIn("at most two topics per rbx_guide call", text, name)
             self.assertIn("Never use shell commands to post-process a tool's output", text, name)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -107,10 +107,6 @@ class ExpertSpawnTests(unittest.TestCase):
         self.assertIn("Coder: Shop", text)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LeadWaitTests(unittest.TestCase):
     """rbx_team wait hands a studio run's Lead back early (live run L4), and refuses experts on an ended run (L2)."""
 
@@ -164,12 +160,21 @@ class LeadWaitTests(unittest.TestCase):
         self.assertIn("Still running: w1", out)
         self.assertIn("have not failed", out)
 
-    def test_ended_run_returns_at_once(self):
+    def test_run_ended_during_the_wait_returns(self):
         import time
-        self.run_file(on=False, ended=time.time())
+        self.run_file()
+        threading.Timer(0.6, lambda: self.run_file(on=False, ended=time.time())).start()
         out, took = self.wait()
-        self.assertLess(took, 1.5)
-        self.assertIn("ended", out)
+        self.assertLess(took, 2)
+        self.assertIn("ended in Review", out)
+
+    def test_run_ended_before_the_wait_is_no_run(self):
+        import time
+        self.run_file(on=False, ended=time.time() - 60)
+        with mock.patch.object(rbxteam, "LEAD_WAIT", 0.5):
+            out, took = self.wait(1)
+        self.assertGreaterEqual(took, 0.9, "it waits on its helpers like any chat: no early return, no slices")
+        self.assertNotIn("Returned early", out)
 
     def test_nudge_returns_and_is_taken(self):
         self.run_file()
@@ -211,3 +216,7 @@ class LeadWaitTests(unittest.TestCase):
         self.run_file(on=False, ended=time.time(), lead="someone-else")
         rid, res = rbxteam.spawn("worker", "More", ExpertSpawnTests.TASK, expert="coder")
         self.assertIsNone(res, "nobody picks it up in a test, but it was asked for")
+
+
+if __name__ == "__main__":
+    unittest.main()

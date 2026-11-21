@@ -141,11 +141,12 @@ def _take_nudge():
     return data if isinstance(data, dict) else {}
 
 
-def _early(run):
-    """Why a studio Lead's wait should return now, or None."""
+def _early(run, since):
+    """Why a studio Lead's wait (begun at `since`) should return now, or None. A run that ended before the wait began is
+    no run at all: the former Lead's chat then waits on its helpers like any chat."""
     if run is not None:
         if _ended(run):
-            return "ended"
+            return "ended" if run["ended"] >= since else None
         if run.get("on") is True and run.get("paused") is True:
             return "paused"
     nudge = _take_nudge() if run is not None and run.get("on") is True else None
@@ -162,15 +163,17 @@ def wait(ids, timeout=600):
     if not ids:
         raise TeamError("Give 'ids': the task ids to wait for (spawn returns them).")
     timeout = max(1, min(MAX_WAIT, int(timeout or 600)))
-    lead = _my_run() is not None
-    slice_end = time.time() + LEAD_WAIT if lead else None
-    deadline = time.time() + timeout
+    began = time.time()
+    first = _my_run()
+    lead = first is not None and not _ended(first)  # an ended run's former Lead waits as before
+    slice_end = began + LEAD_WAIT if lead else None
+    deadline = began + timeout
     while True:
         res = {i: _result(i) for i in ids}
         if all(r and r.get("status") in FINISHED for r in res.values()) or time.time() >= deadline:
             return res, None
         if lead:
-            why = _early(_my_run())
+            why = _early(_my_run(), began)
             if why:
                 return res, why
             if time.time() >= slice_end:
