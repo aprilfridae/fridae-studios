@@ -16,9 +16,9 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     agents::{self, BUS, MAX_AGENTS, MODELS},
     antigravity,
-    attach, board, codex,
+    attach, board, codex, media,
     paths::{self, PATHS, VERSION},
-    plugin, projects, research, team, textures, update, usage,
+    plugin, projects, promo, research, team, textures, update, usage,
 };
 
 type Reply = Response<Cursor<Vec<u8>>>;
@@ -81,6 +81,36 @@ fn send_file(path: PathBuf) -> Reply {
 
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// A URL path segment with its %XX escapes decoded.
+fn unescape(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i], s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// GET /media/promo/<card id>/<video|cover>: only the file the card names, streamed with byte ranges.
+fn promo_media(path: &str, range: &str) -> media::Streamed {
+    let mut parts = path.trim_start_matches("/media/promo/").splitn(2, '/');
+    let (id, what) = (unescape(parts.next().unwrap_or("")), parts.next().unwrap_or(""));
+    match promo::media(&id, what) {
+        Some((file, ctype)) => media::serve(&file, ctype, range),
+        None => media::missing(),
+    }
 }
 
 fn query(url: &str, key: &str) -> Option<String> {
@@ -256,6 +286,8 @@ fn post(path: &str, body: Value) -> Reply {
             send_json(json!({"ok": true, "commands": paths::set_allowed(&names, body["allow"].as_bool().unwrap_or(false))}))
         }
         "/api/git" => send_json(projects::git(&text_of("path"), &text_of("action"), &body)),
+        "/api/pick-files" => send_json(json!({"paths": promo::pick_files(&text_of("kind"))})),
+        "/api/promo" => send_json(promo::act(&body)),
         "/api/copy" => send_json(json!({"ok": textures::set_clipboard_text(&text_of("text"))})),
         "/api/texture" => {
             let rid = paths::base_name(&text_of("id"));
@@ -360,7 +392,14 @@ fn handle(mut req: Request, token: &str) {
     let local = is_local(&req);
     let open_file = path.starts_with("/fonts/") || path == "/logo.png";
     let given = Some(head(&req, "X-Token")).filter(|t| !t.is_empty()).or_else(|| query(&url, "t")).unwrap_or_default();
-    let resp = if !local || !(open_file || same(&given, token)) {
+    let allowed = local && (open_file || same(&given, token));
+    if allowed && *req.method() == Method::Get && path.starts_with("/media/promo/") {
+        // a <video> carries the token in the address, like the chat's images
+        let resp = promo_media(&path, &head(&req, "Range"));
+        let _ = req.respond(resp);
+        return;
+    }
+    let resp = if !allowed {
         forbidden()
     } else if *req.method() == Method::Get {
         get(&path, &url)
@@ -380,6 +419,7 @@ pub fn start(token: String) -> String {
     let url = format!("http://127.0.0.1:{port}/?t={token}");
     thread::spawn(textures::watch);
     thread::spawn(team::watch);
+    thread::spawn(promo::watch);
     plugin::start();
     antigravity::load_models();
     codex::load_models();

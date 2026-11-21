@@ -221,6 +221,15 @@ div.g-row { cursor: default; }
 .ask.done { padding: 9px 14px; }
 .ask.done h4 { margin: 0; font-weight: 500; color: var(--dim); font-size: 13px; }
 .ask.done p, .ask.done pre, .ask.done .act, .ask.done .wait { display: none; }
+/* a finished promo: the video, its caption, and what to do with it */
+.promo video { display: block; width: 100%; max-width: 360px; aspect-ratio: 9 / 16; max-height: 70vh; margin: 2px 0 10px; border-radius: var(--r-m); background: #000; }
+.promo .meta { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 0 0 8px; }
+.promo textarea { display: block; width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical; margin: 0 0 6px; padding: 10px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); color: var(--text); font: 13px/1.5 var(--sans); }
+.promo .saved { font-size: 12px; color: var(--dim); margin: 0 0 10px; min-height: 18px; }
+.promo .check { font-size: 13px; color: var(--dim); margin: 0 0 12px; white-space: pre-line; }
+.promo .check.bad { color: var(--text); border-left: 2px solid var(--dim); padding-left: 10px; }
+.promo .act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.promo label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--dim); }
 .undo-turn { display: inline-block; margin: 2px 0 10px; font-size: 12px; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
 .undo-turn:hover { color: var(--text); }
 .undo-turn.said { text-decoration: none; cursor: default; }
@@ -495,6 +504,7 @@ body.proj #pd, body.guide #gd { transform: none; }
         <div class="composer"><div class="inner">
           <div class="atts" id="atts"></div>
           <button class="clip" id="attach" aria-label="Attach files" title="Attach images or documents. You can also paste them or drop them on the window."><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="2.5"/><circle cx="5.7" cy="6.5" r="1.1"/><path d="M2.5 11.5l3.2-3 2.3 2 2.2-2.4 3.3 3.4"/></svg></button>
+          <button class="clip" id="add-clips" aria-label="Add clips" title="Add video clips. They are used where they are on your computer, not copied. You can also drop videos and music on the window."><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="10" rx="2.5"/><path d="M6.5 6.2v3.6L9.6 8z"/></svg></button>
           <input type="file" id="file" multiple hidden>
           <textarea id="box" rows="1" placeholder="What should we build or test?" autofocus></textarea>
           <button class="send" id="send" aria-label="Send" disabled>
@@ -1147,6 +1157,9 @@ function settle(p) {
 function onEvent(e) {
   if (e.kind === "setup") { $("setup-out").textContent = e.text; return; }
   if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
+  if (e.kind === "clips") { if (e.id > bootMark) addClips(e.paths || []); return; }
+  if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
+  if (e.kind === "promo" && !e.agent) e.agent = current;   /* a promo with no chat of its own shows in the one in front */
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
@@ -1180,6 +1193,9 @@ function onEvent(e) {
     skip.onclick = () => api("/api/texture", { id: e.req, action: "skip" });
     p.turn.appendChild(card); p.turn._steps = null;
     p.asks = p.asks || {}; p.asks[e.req] = card; p.now = "Waiting for your image";
+  } else if (e.kind === "promo") {
+    if (!p.turn) newTurn(p);
+    p.turn.appendChild(promoCard(e.card || {})); p.turn._steps = null;
   } else if (e.kind === "texdone") {
     const card = p.asks && p.asks[e.req];
     if (card) { card.classList.add("done"); card.querySelector("h4").textContent = e.ok ? "Image received" : "Texture skipped"; delete p.asks[e.req]; }
@@ -1284,6 +1300,35 @@ function paintQueue(p, items) {
   p.col.appendChild(p.qbox);
 }
 
+/* ---------- promo card: a finished promo from the promo tool ---------- */
+function promoCard(c) {
+  const id = encodeURIComponent(c.id || ""), src = (what) => "/media/promo/" + id + "/" + what + "?t=" + TOKEN;
+  const card = el("div", "ask promo enter", "<h4></h4><video controls playsinline preload=\"metadata\"></video><div class=\"meta\"></div><textarea aria-label=\"Post caption\" spellcheck=\"true\"></textarea><div class=\"saved\"></div><div class=\"check\"></div><div class=\"act\"><button class=\"pill main\">Download</button><button class=\"pill\">Show in folder</button><label><input type=\"checkbox\"> include cover and caption</label></div><div class=\"promo-post\"></div>");
+  card.querySelector("h4").textContent = "Promo ready";
+  const video = card.querySelector("video"); video.src = src("video"); video.poster = src("cover");
+  const secs = Number(c.duration) || 0;
+  card.querySelector(".meta").textContent = [c.style, secs ? Math.floor(secs / 60) + ":" + String(Math.round(secs % 60)).padStart(2, "0") : ""].filter(Boolean).join("  \u00b7  ");
+  const caption = card.querySelector("textarea"), saved = card.querySelector(".saved");
+  caption.value = c.caption_text || "";
+  let timer = null;
+  caption.oninput = () => {
+    saved.textContent = ""; clearTimeout(timer);
+    timer = setTimeout(async () => { const r = await api("/api/promo", { action: "caption", id: c.id, text: caption.value }); saved.textContent = r.ok ? "Caption saved to caption.txt" : "Could not save the caption."; }, 600);
+  };
+  const ck = c.check || {}, check = card.querySelector(".check");
+  check.textContent = ck.passed ? "Checked: safe areas, hook, loudness" : "Problems:\n" + ((ck.problems || []).join("\n") || "the check did not run");
+  check.classList.toggle("bad", !ck.passed);
+  const [download, reveal] = card.querySelectorAll(".act button"), extras = card.querySelector(".act input");
+  download.onclick = async () => {
+    download.disabled = true;
+    const r = await api("/api/promo", { action: "save", id: c.id, extras: extras.checked });
+    download.disabled = false;
+    saved.textContent = r.ok ? "Saved to " + r.path : r.cancelled ? "" : r.error || "Could not save the promo.";
+  };
+  reveal.onclick = async () => { const r = await api("/api/promo", { action: "reveal", id: c.id }); if (!r.ok) saved.textContent = r.error || "The video is no longer there."; };
+  return card;
+}
+
 /* ---------- actions ---------- */
 function fit() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 168) + "px"; paintComposer(); }
 function send() {
@@ -1363,6 +1408,7 @@ function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ?
 function note(text) { $("now").innerHTML = '<span class="warn">' + esc(text) + "</span>"; setTimeout(paintComposer, 3500); }
 function addFile(file) {
   if (!file) return;
+  if (/^(video|audio)\//.test(file.type || "")) { note("Use Add clips for videos and music: they are used where they are, not copied."); return; }
   const image = isImage(file);
   const ask = image ? waitingAsk() : null;
   if (ask) { const r = new FileReader(); r.onload = () => api("/api/texture", { id: ask, action: "image", data: r.result }); r.readAsDataURL(file); return; }
@@ -1394,6 +1440,28 @@ const composer = document.querySelector(".composer");
 ["dragleave", "drop"].forEach((n) => document.addEventListener(n, () => composer.classList.remove("drop")));
 document.addEventListener("drop", (e) => { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); [...e.dataTransfer.files].forEach(addFile); });
 $("attach").onclick = () => $("file").click();
+/* Videos and music go in the message as [clip: <path>] lines: the agent uses them where they are, nothing is copied. */
+function addClips(paths) {
+  composer.classList.remove("drop");
+  if (!paths.length) return;
+  const lines = paths.map((p) => "[clip: " + p + "]").join("\n");
+  box.value = box.value.replace(/\s+$/, "") + (box.value.trim() ? "\n" : "") + lines + "\n";
+  fit(); box.focus();
+}
+$("add-clips").onclick = async () => { const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); };
+/* A file the app attached itself: it was dropped together with videos, so the page never saw the drop. */
+async function attachedHere(e) {
+  composer.classList.remove("drop");
+  if (!e.ok) { note(e.error || "Could not attach " + (e.label || "that file") + "."); return; }
+  const url = "/att/" + encodeURIComponent(e.name) + "?t=" + TOKEN, ask = e.kind === "image" ? waitingAsk() : null;
+  if (ask) {
+    const blob = await (await fetch(url)).blob(), r = new FileReader();
+    r.onload = () => api("/api/texture", { id: ask, action: "image", data: r.result }); r.readAsDataURL(blob); return;
+  }
+  if (pending.length >= MAX_ATTACH) { note("Up to " + MAX_ATTACH + " files per message."); return; }
+  pending.push({ image: e.kind === "image", label: e.label, preview: e.kind === "image" ? url : "", name: e.name, failed: false });
+  paintAtts(); paintComposer();
+}
 $("file").onchange = (e) => { [...e.target.files].forEach(addFile); e.target.value = ""; };
 
 /* ---------- model, effort and modes: one menu under the message box ---------- */

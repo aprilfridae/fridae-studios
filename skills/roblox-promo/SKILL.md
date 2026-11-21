@@ -54,7 +54,9 @@ buttons.
    moments, motion, warnings and a frame sheet image. Look at every sheet.
    Pick moments from the cuts, loud windows and motion: a loud window
    usually means something happened. Clips are used where they are; they are
-   never copied.
+   never copied. Files the user adds with Add clips or drops on the window
+   arrive in their message as `[clip: <path>]` lines: those are the paths
+   (a music file among them is the song, unless they say otherwise).
 3. **Plan.** Decide the one idea, the hook, the order of 4-10 shots, the
    style, the caption words and the end card. Run `styles` once if the user has no
    preference: it returns one sheet image with every style's still, labelled

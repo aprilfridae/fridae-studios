@@ -12,9 +12,11 @@ mod antigravity;
 mod attach;
 mod board;
 mod codex;
+mod media;
 mod paths;
 mod plugin;
 mod projects;
+mod promo;
 mod research;
 mod server;
 mod splash;
@@ -170,7 +172,16 @@ fn main() {
     }
     let data = if paths::packaged() { PATHS.home.join("webview") } else { paths::work("webview") };
     let mut context = WebContext::new(Some(data));
-    let built = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url).build(&window);
+    let builder = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url);
+    // videos and music dropped on the window are used by path, never uploaded; other drops go to the page as before.
+    // Not on Windows: there wry's handler replaces WebView2's own, which would stop cards dragging on the board, so a
+    // dropped video reaches the page, which points to Add clips instead.
+    #[cfg(not(windows))]
+    let builder = builder.with_drag_drop_handler(|e| match e {
+        wry::DragDropEvent::Drop { paths, .. } => promo::dropped(paths),
+        _ => false,
+    });
+    let built = builder.build(&window);
     let _webview = match built {
         Ok(view) => view,
         Err(_) => {
