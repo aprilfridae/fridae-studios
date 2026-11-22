@@ -162,7 +162,7 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
   Lead of a run with that note has it cleared and is woken with "An agent slot is free. Carry on." (`slot_freed`).
 - `studio_run.rs`: the routes' work. `GET /api/review?path=`, `POST /api/review {path, action: approve | change |
   approve_all | needs_done, id?, note?, ids?, title?}` (`approve_all` approves only the `ids` the page shows;
-  `needs_done` tells the Lead "Board: <title> — done" after a needs card is done in Review or on the Board), `POST
+  `needs_done` tells the Lead "Board: <title> — done" after a needs card is done in Review), `POST
   /api/studio-run {path, action: start | resume | pause | settings | undo | end, ...}` (`end` sets `on: false` and
   `ended`, stops the Lead carrying on, and deletes nothing; a new run may then start),
   `GET /media/review/<key>/<id>/<file>` (key = first 12 hex of the SHA-1 of the stored project path; served only for
@@ -183,6 +183,21 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
   false`: the agents' Studio steps since the night began are undone by time, as before, even when Studio was closed
   when it began (the scripts are still saved to disk first, so it too needs the current plugin).
 - `ui/index.html`: the Review tab, Studio in the run-mode menu, experts by name, the undo picker.
+
+**The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists All projects, the games
+(`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
+front (`""` for No project, `null` on the All projects and New project pages) and `view` is `chat`, `review`,
+`promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start All projects opens when a
+game has a run going or something waiting for the user. Chats are grouped by `agent.project`, not by AI. A helper
+(an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
+log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
+`parent`, `team` and `expert` in `agent_new`. The All projects graph (`overviewWanted` / `overviewFrame`) draws games,
+their open and saved chats, and experts tied to their Lead; it runs only while that page is in front.
+- `POST /api/ai {agent, ai}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
+  otherwise the session is dropped and `handover` holds the chat so far as text (user and agent messages only,
+  newest kept under 24,000 characters), sent ahead of the next message and saved with the chat. The chat logs
+  `{"kind": "ai", "ai", "from"}`; the page shows one line for it.
+- Usage lines carry `project` (the chat's game) so Review and All projects can show what a game has cost.
 
 **Testing without an AI.**
 - Python: `python3 -m unittest tests.test_stage tests.test_roster tests.test_team_expert tests.test_project_save

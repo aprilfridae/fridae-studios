@@ -617,7 +617,7 @@ pub fn list(path: &str) -> Value {
     })
 }
 
-/// A needs card on the board was marked done (in Review or on the Board tab): the Lead of the game's running run hears
+/// A needs card on the board was marked done (in Review): the Lead of the game's running run hears
 /// "Board: <title> — done". A waiting Lead is woken; a working one gets it with its next turn; a paused run, or one
 /// whose Lead is not open, is not woken (the card is on the board for when it goes on). Returns whether a Lead was told.
 fn needs_done(project: &Path, title: &str) -> Result<Value, String> {

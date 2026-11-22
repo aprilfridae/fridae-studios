@@ -3,8 +3,9 @@ Fridae Studios - an AI helper for building Roblox games
 
 Double-click  Fridae Studios.exe  and tell it what you want built or tested.
 
-It needs three things on your computer. The dots at the top of the window
-are filled when each one is found; "Setup" explains anything missing.
+It needs three things on your computer. The dots at the bottom left of the
+window are filled when each one is found; Setup (the cog beside them)
+explains anything missing.
 
 1. Claude Code, signed in with your own account
    https://claude.com/claude-code
@@ -23,8 +24,12 @@ include. If it is missing, it opens in Edge or Chrome instead.
 Windows may warn the first time you run it, because the program is not
 signed: choose "More info" then "Run anyway".
 
-Press "Guide" at the top of the window for everything it can do and what
-each control is for.
+Press the question mark at the bottom left of the window for the Guide:
+everything it can do and what each control is for.
+
+The left side lists your games. "All projects" shows every game at work at
+once; pick a game for its Chat, Review and Promos; "New project" makes a
+new game folder or finds ideas from Roblox's charts.
 
 Things to try
 -------------

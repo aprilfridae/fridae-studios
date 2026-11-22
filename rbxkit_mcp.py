@@ -865,7 +865,7 @@ TOOLS = [
              "limit": {"type": "integer", "description": "search: how many to return, 1 to 20 (default 10)"},
              "universe_ids": {"type": "array", "items": {"type": "integer"}, "description": "details: universe ids (not place ids), up to 50"}},
             ["action"]), t_market),
-    ("rbx_board", "The game's board, shown to the user in the app's Board tab: columns todo (planned), doing (being worked on now), "
+    ("rbx_board", "The game's board, (the user sees its needs cards in the game's Review tab): columns todo (planned), doing (being worked on now), "
      "needs (something only the user can do or decide) and done. Only for chats that belong to a game project. Keep it true: "
      "'add' a card in doing when you start a real piece of work, 'move' it to done when it is finished and checked, add one in "
      "needs for each thing you need from the user (one clear action per card), and add planned work in todo. Action 'list' "

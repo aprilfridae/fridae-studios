@@ -1,4 +1,4 @@
-//! The Research tab: a snapshot of Roblox's public charts, and an agent that
+//! The New project page's Ideas: a snapshot of Roblox's public charts, and an agent that
 //! turns it into game ideas backed by those numbers.
 
 use std::{
@@ -47,7 +47,7 @@ fn running() -> Option<String> {
     agents::agents().iter().find(|a| a.role().as_deref() == Some("research") && a.busy()).map(|a| a.id.clone())
 }
 
-/// Everything the Research tab shows.
+/// Everything the Ideas list shows.
 pub fn state() -> Value {
     let error = fs::read_to_string(dir().join("market-error.txt")).unwrap_or_default();
     json!({

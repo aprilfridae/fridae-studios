@@ -45,8 +45,24 @@ On a Mac:
 2. **Blender** (any recent version).
 3. **Roblox Studio** with its MCP server turned on (Assistant settings).
 
-The dots at the top of the window show whether each one is found, and Setup
-explains anything missing.
+The dots at the bottom left of the window show whether each one is found, and Setup
+(the cog beside them) explains anything missing.
+
+## Finding your way
+
+The left side lists your games. **All projects**, at the top, is one page for every game at work: a card per game
+with its run, who is working on what, what needs you and what it has cost, beside a live graph of the games, their
+chats and the experts each Lead started. Pick a game and it has three tabs:
+
+- **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. Under the message
+  box, switch between **Claude** and **Gemini** at any time: in a chat that has started, the other AI is handed the
+  chat so far and carries on. Experts a Lead starts show as one line each inside its chat; open the line to read
+  that expert's work, or stop it.
+- **Review**: what is happening on the game and what needs you (see Studio mode below).
+- **Promos**: promo videos from your clips.
+
+**New project**, at the bottom of the list, makes a game folder (or adds one you have) and finds game ideas from
+Roblox's live charts. Chats from before projects, or made without one, sit under **No project**.
 
 ## What it does
 
@@ -83,7 +99,7 @@ make now and then, and the run keeps going.
   can show Claude Code as ready while it is signed out, and a signed-out run
   stops after three failed turns.
 - Keep Roblox Studio open on the game, with the Fridae plugin connected (the
-  Studio plugin dot at the top), for as long as the run builds.
+  Studio plugin dot at the bottom left), for as long as the run builds.
 - Update the plugin to 2.8.0: in Setup, press **Update** next to the Studio
   plugin, then restart Studio. An older plugin now blocks the Studio part of undo, for Overnight's
   Undo the night as well as for Undo this run (the files can still go back).
@@ -92,7 +108,7 @@ make now and then, and the run keeps going.
 chat without one a message sent with Studio chosen goes as Ask me), pick
 **Studio** in the menu under the message box, and send your idea in one line,
 for example "A small obby with three checkpoints and a coin shop". Or press
-**Start a studio run** on one of the Research tab's ideas. Whatever is chosen
+**Start a studio run** on one of the ideas on the New project page. Whatever is chosen
 in the menu, what you send in the Lead's own chat goes to the run.
 
 **When it stops for you.** By default only twice: to approve the **design
@@ -101,12 +117,17 @@ yourself (publish, make it public, set prices live). Fridae never publishes,
 spends money or Robux, or deletes your work. You can change where it stops in
 the Review tab's Run settings.
 
-**The Review tab.** Everything else the experts finish lands in **To look
-at**, with its pictures or clips, while the run carries on. What does stop the
-run is under **Needs your answer**. On each item press **Approve**, or
-**Change** and write a short note: a fresh expert of the same kind redoes the
-work with your note, and the new version replaces the old one in Review.
-**Approve all** signs off everything in To look at at once.
+**The Review tab.** At the top, the run's state with Pause or Resume, its
+stages, and Run settings; under it **Right now** (who is working on what, and
+what the game has cost so far). What stops the run is under **Needs you**,
+with the to-dos only you can do (press **Done** on those). Everything else the
+experts finish lands in **To look at**, with its pictures or clips, while the
+run carries on. On each item press **Approve**, or write a short note and
+press **Ask for changes**: a fresh expert of the same kind redoes the work
+with your note, and the new version replaces the old one in Review.
+**Approve all** signs off everything in To look at at once. **Tell the run
+something** sends the Lead a message without leaving the page, and earlier
+decisions are folded away at the bottom.
 
 **Pause and Resume.** Pause stops the Lead handing out new work; experts
 already working finish. While a run is paused, your messages to the Lead wait

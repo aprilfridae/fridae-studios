@@ -1939,7 +1939,7 @@ pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
 }
 
 /// Start an agent with a role of its own: a worker or reviewer for another agent (`team_id` is that
-/// request), or the Research tab's researcher.
+/// request), or the New project page's researcher.
 pub fn spawn_helper(team_id: Option<&str>, role: &str, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
     spawn_named(team_id, Some(role), name, project, ai, parent, None)
 }
