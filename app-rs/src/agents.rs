@@ -75,6 +75,9 @@ pub struct Ask {
     /// A message the app itself sends to a studio run's Lead (Resume, a decision, a free slot, a board card), not one
     /// the user typed: Stop and End this run drop it from the queue (`drop_wakes`).
     pub wake: bool,
+    /// A message the page sends for the user without their words (the blocked-command card's "You may now run ...").
+    /// Like a wake, it is left out of the chat handed to another AI (`handover_text`).
+    pub app: bool,
 }
 
 /// What kind of turn just ended, for deciding what happens next.
@@ -586,6 +589,9 @@ struct State {
     /// The chat so far, as text, for the AI a started chat was switched to: it goes with that AI's first message
     /// (see `switch_ai` and `handover_text`).
     handover: Option<String>,
+    /// A turn of this chat has ended (or it was reopened from a saved log): a helper that is not working then holds no
+    /// slot. A helper just started holds one until its first turn is under way, so quick spawns cannot overshoot.
+    turned: bool,
     /// Messages the user sent while this chat was working, with their own settings. They go together as the next turn.
     queue: Vec<(String, String, Ask)>,
     /// A helper whose result has been handed back: while it is not working it holds no agent slot (see `holds_slot`).
@@ -600,10 +606,15 @@ struct State {
     stuck_turns: u32,
 }
 
-/// Whether a chat counts toward MAX_AGENTS. A helper that has finished (its result is handed back and it is not working)
-/// stays open to read but frees its slot; if the user messages it, it counts again while it works.
+/// An expert, a helper or the researcher: a chat the app started for another chat, not one of the user's own.
+fn is_helper(st: &State) -> bool {
+    st.parent.is_some() || st.team.is_some() || st.role.as_deref() == Some("research")
+}
+
+/// Whether a chat counts toward MAX_AGENTS. A helper that is not working (finished, failed or stopped) holds none: it
+/// stays open to read, and takes a slot again only while it works. One just started holds a slot until its first turn.
 fn holds_slot(st: &State) -> bool {
-    !(st.team.is_some() && st.result_written && !working(st))
+    !(is_helper(st) && !working(st) && (st.turned || st.result_written))
 }
 
 /// Whether a message to a chat must be refused for want of a slot: a chat that holds none now (a finished helper)
@@ -664,6 +675,11 @@ fn working_helper_of(st: &State, lead: &str) -> bool {
     !lead.is_empty() && st.team.is_some() && st.parent.as_deref() == Some(lead) && working(st)
 }
 
+/// Every chat `lead` started, working or not (closing the Lead or ending its run closes them).
+pub fn helpers_of(lead: &str) -> Vec<Arc<Agent>> {
+    agents().into_iter().filter(|a| !lead.is_empty() && a.st.lock().unwrap().parent.as_deref() == Some(lead)).collect()
+}
+
 /// The helpers `lead` started that are working now (End this run stops them).
 pub fn working_helpers_of(lead: &str) -> Vec<Arc<Agent>> {
     agents().into_iter().filter(|a| working_helper_of(&a.st.lock().unwrap(), lead)).collect()
@@ -689,21 +705,48 @@ fn ai_label(kind: &str) -> &'static str {
     }
 }
 
+/// The message as the AI gets it: after a switch of AI, the chat so far goes first. The handover stays in the state
+/// until the new AI has a conversation of its own (`got_session`).
+fn with_handover(st: &State, text: &str) -> String {
+    match &st.handover {
+        Some(chat) => chat.clone() + text,
+        None => text.to_string(),
+    }
+}
+
+/// The AI opened (or carried on) a conversation: anything handed over is in it now.
+fn got_session(st: &mut State, id: String) {
+    st.session = Some(id);
+    st.handover = None;
+}
+
 /// The chat so far as text, for the AI a started chat is switched to: the user's messages and the agent's replies,
 /// oldest first, without tool steps, pictures or the loop's own carry-on messages. When it is longer than `cap`
 /// characters the oldest messages are left out (and it says so); a single message longer than that keeps its end.
 fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
-    let lines: Vec<String> = log
+    // which AI wrote each reply: the one the chat began on, then each switch's new one
+    let mut ai = log
         .iter()
-        .filter_map(|e| {
-            let text = e["text"].as_str().map(str::trim).filter(|t| !t.is_empty())?;
-            match e["kind"].as_str() {
-                Some("user") if e["auto"] != true => Some(format!("User: {text}")),
-                Some("text") => Some(format!("Agent: {text}")),
-                _ => None,
-            }
-        })
-        .collect();
+        .find(|e| e["kind"] == "ai" && e["from"].is_string())
+        .and_then(|e| e["from"].as_str())
+        .map(ai_label)
+        .unwrap_or(from)
+        .to_string();
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for e in log {
+        if e["kind"] == "ai" && e["from"].is_string() {
+            ai = ai_label(e["ai"].as_str().unwrap_or("")).to_string();
+            continue;
+        }
+        let Some(text) = e["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) else { continue };
+        match e["kind"].as_str() {
+            // only what the user typed: the loop's carry-ons and the app's own wakes and messages are left out
+            Some("user") if e["auto"] != true && e["app"] != true => lines.push(("User".to_string(), text.to_string())),
+            Some("text") => lines.push((ai.clone(), text.to_string())),
+            _ => {}
+        }
+    }
+    let lines: Vec<String> = lines.into_iter().map(|(who, text)| format!("{who}: {text}")).collect();
     let mut kept: Vec<String> = Vec::new();
     let mut size = 0;
     let mut cut = false;
@@ -712,9 +755,11 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
         if size + n > cap {
             cut = true;
             if kept.is_empty() {
-                // one very long message: its end, which is what was said last
-                let tail: String = line.chars().rev().take(cap).collect::<Vec<_>>().into_iter().rev().collect();
-                kept.push(tail);
+                // one very long message: its end, which is what was said last, still saying who said it
+                let who = line.split_once(": ").map(|(w, _)| w).unwrap_or("");
+                let room = cap.saturating_sub(who.chars().count() + 4);
+                let tail: String = line.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
+                kept.push(format!("{who}: …{}", tail.trim_start()));
             }
             break;
         }
@@ -725,7 +770,7 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
     let body = if kept.is_empty() { "(nothing was said yet)".to_string() } else { kept.join("\n\n") };
     format!(
         "[This conversation began with {from}; the user switched it to you, so you carry it on. The chat so far, as text \
-         (the user's messages and the agent's replies, without tool steps{}):\n\n{body}\n\nEnd of the chat so far. The \
+         (the user's own messages and each AI's replies, without tool steps{}):\n\n{body}\n\nEnd of the chat so far. The \
          user's new message follows.]\n\n",
         if cut { "; the oldest messages are left out" } else { "" }
     )
@@ -1368,7 +1413,7 @@ impl Agent {
         self.put(
             "user",
             json!({
-                "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto,
+                "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto, "app": ask.wake || ask.app,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
                 "studio": ask.studio, "studio_waiting": false, "fallback": fallback,
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
@@ -1443,11 +1488,9 @@ impl Agent {
             self.st.lock().unwrap().ai = Some(kind.clone());
             self.put("ai", json!({"ai": kind}));
         }
-        // the AI was switched in a started chat: the new one gets the chat so far with its first message
-        let handed = self.st.lock().unwrap().handover.take();
-        if let Some(chat) = &handed {
-            text = chat.clone() + &text;
-        }
+        // the AI was switched in a started chat: the new one gets the chat so far with its first message. It is kept
+        // until that AI has opened a conversation (`got_session`), so a first turn that fails or is stopped hands it over again.
+        text = with_handover(&self.st.lock().unwrap(), &text);
         // what the two switches under the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
         let mut prompt = SYSTEM_PROMPT.to_string() + &switches;
@@ -1528,7 +1571,7 @@ impl Agent {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                self.st.lock().unwrap().handover = handed; // the chat so far goes with the next try
+                self.st.lock().unwrap().turned = true;
                 self.put("error", json!({"text": format!("Could not start the agent: {e}")}));
                 self.put("done", json!({}));
                 team::release(self);
@@ -1584,7 +1627,7 @@ impl Agent {
                     let outs = if kind == "gemini" { gemini.feed(&e) } else { chatgpt.feed(&e) };
                     for out in outs {
                         match out {
-                            Out::Conversation(id) => self.st.lock().unwrap().session = Some(id),
+                            Out::Conversation(id) => got_session(&mut self.st.lock().unwrap(), id),
                             Out::Model(name) => self.put("model", json!({"name": name})),
                             Out::Tool(name) => {
                                 // these AIs do not say what a tool was asked, so any rbxkit, Studio or file tool counts
@@ -1608,7 +1651,7 @@ impl Agent {
                     continue;
                 }
                 if let Some(s) = e["session_id"].as_str().filter(|s| !s.is_empty()) {
-                    self.st.lock().unwrap().session = Some(s.to_string());
+                    got_session(&mut self.st.lock().unwrap(), s.to_string());
                 }
                 match e["type"].as_str().unwrap_or("") {
                     "system" if e["subtype"] == "init" => {
@@ -1700,6 +1743,7 @@ impl Agent {
             let mut st = self.st.lock().unwrap();
             st.running = false;
             st.pid = None;
+            st.turned = true;
             std::mem::take(&mut st.stopped)
         };
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
@@ -2030,8 +2074,14 @@ pub fn keep_awake() {
 pub fn remember_open() {
     let dir = paths::work("chats");
     let _ = fs::create_dir_all(&dir);
-    let ids: Vec<String> = agents().iter().filter(|a| a.has_messages()).map(|a| a.id.clone()).collect();
+    // experts, helpers and the researcher are not reopened as chats: their logs are read when their line is opened
+    let ids: Vec<String> = agents().iter().filter(|a| a.has_messages() && !is_helper(&a.st.lock().unwrap())).map(|a| a.id.clone()).collect();
     let _ = fs::write(dir.join("_open.txt"), ids.join("\n"));
+}
+
+/// Whether a saved chat is an expert, a helper or the researcher (see `is_helper`).
+fn saved_helper(d: &Value) -> bool {
+    d["parent"].is_string() || d["team"].is_string() || d["role"] == "research"
 }
 
 /// Reopen the chats that were open last time.
@@ -2041,10 +2091,10 @@ pub fn restore_open() -> usize {
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .map(|id| {
+        .filter_map(|id| {
             let d: Value = fs::read_to_string(chat_file(id)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null);
-            let finished = d["team"].is_string() && d["result_written"] == true;
-            (id.to_string(), !finished, d["updated"].as_f64().unwrap_or(0.0))
+            // a list written before helpers were left out may still name some: they stay closed
+            (!saved_helper(&d)).then(|| (id.to_string(), true, d["updated"].as_f64().unwrap_or(0.0)))
         })
         .collect();
     restore_order(&listed, MAX_AGENTS).iter().filter(|id| open_chat(id).is_some()).count()
@@ -2098,6 +2148,9 @@ fn saved_in(dir: &std::path::Path, open: &[String]) -> Vec<Value> {
             "ai": d["ai"].as_str().unwrap_or("claude"),
             // the window lists a game's earlier chats under the game, and never an expert's
             "project": d["project"], "role": d["role"], "parent": d["parent"],
+            // an expert's request and name, so a review item that names only the request can still say who made it
+            "team": d["team"],
+            "expert": if d["expert"].is_string() { json!(d["name"].as_str().unwrap_or("").split(':').next().unwrap_or("").trim()) } else { Value::Null },
         }));
     }
     out.sort_by(|a, b| b["updated"].as_f64().partial_cmp(&a["updated"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
@@ -2135,6 +2188,9 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         let mut st = agent.st.lock().unwrap();
         st.team = d["team"].as_str().map(str::to_string);
         st.result_written = d["result_written"].as_bool().unwrap_or(false);
+        st.parent = d["parent"].as_str().map(str::to_string);
+        st.role = d["role"].as_str().map(str::to_string);
+        st.turned = true; // a saved chat: whatever it was doing is over
     }
     {
         let mut all = AGENTS.lock().unwrap();
@@ -2211,6 +2267,10 @@ pub fn remove_agent(agent_id: &str) {
         team::release(&agent);
         agent.save();
         BUS.put("agent_removed", json!({"agent": agent.id}));
+        // closing a Lead (or any chat) closes the experts it started: none is left holding a slot unseen
+        for helper in helpers_of(&agent.id) {
+            remove_agent(&helper.id);
+        }
         remember_open();
         team::slot_freed(); // a waiting studio run may have been short of a slot
     }
@@ -2474,7 +2534,7 @@ mod tests {
         ];
         let h = handover_text(&log, "Claude", HANDOVER_CAP);
         assert!(h.starts_with("[This conversation began with Claude;"));
-        assert!(h.contains("User: Make a café sign\n\nAgent: Done: the sign is by the spawn.\nSTATUS: DONE\n\nUser: Make it bigger"));
+        assert!(h.contains("User: Make a café sign\n\nClaude: Done: the sign is by the spawn.\nSTATUS: DONE\n\nUser: Make it bigger"));
         assert!(!h.contains("Blender") && !h.contains("Carry on") && !h.contains("Stopped") && !h.contains("/img/"));
         assert!(!h.contains("left out"), "nothing was cut");
         assert!(h.ends_with("follows.]\n\n"), "the user's new message goes right after it");
@@ -2487,12 +2547,73 @@ mod tests {
         let h = handover_text(&log, "Claude", 1_000);
         assert!(h.contains("message 49") && !h.contains("message 0 "), "the newest stay, the oldest go");
         assert!(h.contains("the oldest messages are left out"));
-        let body = h.split("\n\n").filter(|l| l.starts_with("User:") || l.starts_with("Agent:")).map(|l| l.chars().count() + 2).sum::<usize>();
+        let body = h.split("\n\n").filter(|l| l.starts_with("User:") || l.starts_with("Claude:")).map(|l| l.chars().count() + 2).sum::<usize>();
         assert!(body <= 1_000, "kept {body} characters");
         // one message longer than the cap keeps its end, where it finished
         let long = vec![json!({"kind": "user", "text": format!("start {} the end", "y".repeat(5_000))})];
         let h = handover_text(&long, "Claude", 300);
         assert!(h.contains("the end") && !h.contains("start "));
+        assert!(h.contains("User: …y"), "the kept end still says who said it");
+    }
+
+    #[test]
+    fn handover_leaves_out_the_apps_messages_and_names_each_ai() {
+        let log = vec![
+            json!({"kind": "ai", "ai": "claude"}),
+            json!({"kind": "user", "text": "Build the shop"}),
+            json!({"kind": "text", "text": "The shop is in."}),
+            json!({"kind": "user", "text": "Review: Shop — approved", "app": true}),
+            json!({"kind": "user", "text": "You may now run git. Run what was refused and carry on.", "app": true}),
+            json!({"kind": "ai", "ai": "gemini", "from": "claude"}),
+            json!({"kind": "user", "text": "Make it blue"}),
+            json!({"kind": "text", "text": "It is blue now."}),
+        ];
+        let h = handover_text(&log, "Gemini", HANDOVER_CAP);
+        assert!(h.contains("User: Build the shop\n\nClaude: The shop is in.\n\nUser: Make it blue\n\nGemini: It is blue now."), "{h}");
+        assert!(!h.contains("approved") && !h.contains("may now run"), "the app's own messages are not the user's");
+    }
+
+    #[test]
+    fn a_handover_stays_until_the_new_ai_has_a_session() {
+        let mut st = State { handover: Some("[chat so far]\n\n".into()), ..Default::default() };
+        assert_eq!(with_handover(&st, "Hi"), "[chat so far]\n\nHi");
+        // the first turn failed or was stopped before a session: the next message carries it again
+        assert_eq!(with_handover(&st, "Again"), "[chat so far]\n\nAgain");
+        got_session(&mut st, "s-1".into());
+        assert_eq!(st.session.as_deref(), Some("s-1"));
+        assert_eq!(with_handover(&st, "Next"), "Next", "once the AI has the chat, it is not sent twice");
+    }
+
+    #[test]
+    fn a_helper_that_is_not_working_holds_no_slot() {
+        let mut st = State { turned: true, ..Default::default() };
+        assert!(holds_slot(&st), "the user's own chat holds one, working or not");
+        st.parent = Some("lead".into());
+        assert!(!holds_slot(&st), "an expert stopped or failed, with no result written");
+        st.running = true;
+        assert!(holds_slot(&st), "while it works");
+        let st = State { role: Some("research".into()), turned: true, ..Default::default() };
+        assert!(!holds_slot(&st), "a researcher that is done");
+        let fresh = State { parent: Some("lead".into()), ..Default::default() };
+        assert!(holds_slot(&fresh), "one just started holds its slot until its first turn is under way");
+    }
+
+    #[test]
+    fn helpers_are_not_reopened_as_chats() {
+        assert!(saved_helper(&json!({"parent": "c1", "team": "w1"})));
+        assert!(saved_helper(&json!({"role": "research"})));
+        assert!(saved_helper(&json!({"team": "w1"})));
+        assert!(!saved_helper(&json!({"role": null, "parent": null, "name": "My chat"})));
+    }
+
+    #[test]
+    fn closing_a_lead_closes_its_experts() {
+        let lead = new_background_chat("Lead: close test", None).unwrap();
+        let x = Expert { id: "coder".into(), name: "Coder".into(), text: "Write code.".into() };
+        let e = spawn_expert("w-close-test", "worker", "Coder: close test", None, None, Some(&lead.id), x).unwrap();
+        assert_eq!(helpers_of(&lead.id).len(), 1);
+        remove_agent(&lead.id);
+        assert!(get(&e.id).is_none(), "the expert went with its Lead");
     }
 
     #[test]
@@ -2520,7 +2641,7 @@ mod tests {
             assert_eq!(st.ai.as_deref(), Some("claude"));
             assert!(st.session.is_none(), "the other AI starts a fresh session");
             let h = st.handover.as_deref().unwrap();
-            assert!(h.contains("began with Gemini") && h.contains("User: Build an obby") && h.contains("Agent: Three checkpoints are in."));
+            assert!(h.contains("began with Gemini") && h.contains("User: Build an obby") && h.contains("Gemini: Three checkpoints are in."));
         }
         // the switch is in the chat's log, so the window says so after a restart too
         assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "ai" && e["from"] == "gemini" && e["ai"] == "claude"));

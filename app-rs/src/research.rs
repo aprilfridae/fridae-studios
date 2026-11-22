@@ -61,6 +61,10 @@ pub fn find_ideas(focus: &str, ai: Option<&str>, model: Option<&str>) -> Value {
     if let Some(id) = running() {
         return json!({"ok": true, "agent": id});
     }
+    // an earlier researcher that is done is closed first, so Find ideas never piles them up
+    for old in agents::agents().into_iter().filter(|a| a.role().as_deref() == Some("research") && !a.busy()) {
+        agents::remove_agent(&old.id);
+    }
     let focus = focus.trim();
     let name = if focus.is_empty() { "Research: game ideas".to_string() } else { format!("Research: {focus}") };
     let Some(agent) = agents::spawn_helper(None, "research", &name, None, ai.filter(|a| paths::AIS.contains(a)).map(str::to_string), None) else {
@@ -87,5 +91,19 @@ pub fn finished(agent: &Agent) {
         let _ = fs::create_dir_all(dir());
         let saved = json!({"when": paths::now_secs(), "name": agent.name(), "agent": agent.id, "text": text});
         let _ = fs::write(dir().join("ideas.json"), saved.to_string());
+        // its ideas are stored, so the researcher closes itself once its turn has wound down (it holds no slot
+        // meanwhile; its log stays saved)
+        let id = agent.id.clone();
+        thread::spawn(move || {
+            for _ in 0..100 {
+                thread::sleep(std::time::Duration::from_millis(300));
+                if agents::get(&id).is_none_or(|a| !a.busy()) {
+                    break;
+                }
+            }
+            if agents::get(&id).is_some_and(|a| !a.busy()) {
+                agents::remove_agent(&id);
+            }
+        });
     }
 }

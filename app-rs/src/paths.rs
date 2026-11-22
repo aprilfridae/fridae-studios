@@ -296,12 +296,16 @@ pub fn find_ai(kind: &str) -> Option<PathBuf> {
 
 /// The AI new chats start on, chosen in Setup. Claude unless the user picked another.
 pub fn default_ai() -> String {
-    match load_config().get("chat_ai").and_then(Value::as_str) {
+    ai_choice(load_config().get("chat_ai").and_then(Value::as_str)).to_string()
+}
+
+/// The AI new chats start on, from the saved choice. ChatGPT is no longer offered in the window, so a choice of it made
+/// before reads as Claude, as the window shows it.
+fn ai_choice(saved: Option<&str>) -> &'static str {
+    match saved {
         Some("gemini" | "antigravity") => "gemini",
-        Some("chatgpt") => "chatgpt",
         _ => "claude",
     }
-    .to_string()
 }
 
 /// The launch file Roblox Studio creates when its MCP server is turned on.
@@ -472,6 +476,14 @@ pub fn stamp() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_saved_chatgpt_default_reads_as_claude() {
+        assert_eq!(super::ai_choice(Some("chatgpt")), "claude");
+        assert_eq!(super::ai_choice(Some("gemini")), "gemini");
+        assert_eq!(super::ai_choice(Some("antigravity")), "gemini");
+        assert_eq!(super::ai_choice(None), "claude");
+    }
+
     use super::*;
 
     #[test]
