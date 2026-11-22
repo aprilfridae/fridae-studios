@@ -670,7 +670,7 @@ body.proj #pd, body.guide #gd { transform: none; }
         <button class="icon" id="b-setup" aria-label="Setup" title="Setup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
       </div>
     </div>
-    <div class="pop" id="use-pop"><h5>Used today</h5><div id="use-rows"></div><h5>Last 7 days</h5><div id="use-week"></div><p class="u-note">New tokens (read, written and cache-stored), counted from what each AI reports after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules, so this is a guide to how hard it is working, not a bill.</p></div>
+    <div class="pop" id="use-pop"><h5>Used today</h5><div id="use-rows"></div><h5>This week, by AI</h5><div id="use-week"></div><p class="u-note">New tokens (read, written and cache-stored), counted from what each AI reports after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules, so this is a guide to how hard it is working, not a bill.</p></div>
     <div class="pop" id="conn-pop"><h5>Connections</h5><div id="needs"></div><div class="act"><button class="pill" id="conn-setup">Open Setup</button></div></div>
   </aside>
 
@@ -1002,7 +1002,7 @@ const GUIDE = [
     ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
     ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for each AI and the last seven days. A game's Review shows what that game has cost."],
+    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for today and for this week, each split by AI (Claude and Gemini). A game's Review shows what that game has cost."],
     ["Your notes", "When you correct an agent, turn down something it made or point it at a better way, it saves a short note of what you want instead, and later agents look there before they start. Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude chats from their next turn; Gemini chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Notes for everything stay on this computer; a game's notes live in its folder and travel with it. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
@@ -1647,10 +1647,19 @@ async function paintUsage() {
   $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
     '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(s.total - s.cached) + "</span><small>" + s.turns + (s.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " \u00b7 about $" + s.cost.toFixed(2) + " at API prices" : "") + "</small></div>").join("")
     : '<div class="u-row"><small>Nothing yet today.</small></div>';
-  const days = [];
-  for (let i = 6; i >= 0; i--) { const from = today - i * 86400, s = sum(recs.filter((x) => x.t >= from && x.t < from + 86400)); days.push([new Date(from * 1000).toLocaleDateString([], { weekday: "short" }), s.total - s.cached]); }
-  const top = Math.max(1, ...days.map((d) => d[1]));
-  $("use-week").innerHTML = '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>";
+  /* the last seven days, one block per AI: the week's total, then a bar a day */
+  const bars = (list) => {
+    const days = [];
+    for (let i = 6; i >= 0; i--) { const from = today - i * 86400, d = sum(list.filter((x) => x.t >= from && x.t < from + 86400)); days.push([new Date(from * 1000).toLocaleDateString([], { weekday: "short" }), d.total - d.cached]); }
+    return days;
+  };
+  const perAi = AIS.map(([id]) => { const list = recs.filter((x) => x.ai === id); return [id, sum(list), bars(list)]; });
+  const top = Math.max(1, ...perAi.flatMap(([, , days]) => days.map((d) => d[1])));
+  $("use-week").innerHTML = perAi.map(([id, w, days]) =>
+    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(w.total - w.cached) + "</span><small>" + (w.turns
+      ? w.turns + (w.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(w.input) + " in, " + fmtTokens(w.output) + " out" + (w.cost ? " \u00b7 about $" + w.cost.toFixed(2) + " at API prices" : "")
+      : "Not used this week.") + "</small></div>"
+    + (w.turns ? '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>" : "")).join("");
 }
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
