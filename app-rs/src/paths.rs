@@ -1353,7 +1353,9 @@ pub fn program_name(command: &str) -> Option<String> {
 /// lone `&`, `|&` or an empty part refuses. Nor does anything that reads another process's environment pass
 /// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`). When unsure, no: the card
 /// shows, with the reason (`refusal_reason`). The native allow lists of Claude Code (`Bash(<p>:*)`)
-/// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AIs whose requests the app answers (OpenCode).
+/// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AIs whose requests the app answers (OpenCode,
+/// and Gemini on its kept process, `acp::decide`: which shell agy runs a command with was not measured, so its
+/// process is told `SHELL=/bin/sh`).
 #[allow(unused_assignments)] // the last word's end leaves its flags unread
 pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
     let c = command.trim_matches([' ', '\t']);

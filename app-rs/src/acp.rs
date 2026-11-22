@@ -312,12 +312,15 @@ fn answer(options: &Value, allow: bool) -> Value {
 
 // ------------------------------------------------------------------ a turn's updates
 
-/// Whether a line is work the agent began by itself when it comes with no turn of the app's on the process: a tool
-/// call starting, or a permission request (`live::Live` ends the process at such a line). What trails a turn (a
-/// cancelled tool's last `tool_call_update`, usage, the title) is not.
+/// Whether a line is work the agent began by itself when it comes with no turn of the app's on the process: the
+/// agent speaking, a tool call starting, or a permission request (`live::Live` ends the process at such a line).
+/// Measured: a turn ended with a command still running in the background, and when the command ended agy asked the
+/// model again and wrote an answer nobody had asked for (`tests/fixtures/gemini/acp-background.wire`). What trails a
+/// turn (a tool's last `tool_call_update`, usage, the title) is not such work.
 pub fn stray(line: &[u8]) -> bool {
     let Ok(m) = serde_json::from_slice::<Value>(line) else { return false };
-    m["method"] == "session/request_permission" || (m["method"] == "session/update" && m["params"]["update"]["sessionUpdate"] == "tool_call")
+    let update = m["params"]["update"]["sessionUpdate"].as_str().unwrap_or("");
+    m["method"] == "session/request_permission" || (m["method"] == "session/update" && matches!(update, "tool_call" | "agent_message_chunk" | "agent_thought_chunk"))
 }
 
 /// The mode a session is in, as a list of its options says (`configOptions`), when it says.
@@ -517,6 +520,9 @@ pub struct End {
     pub ended: bool,
     /// this process cannot serve the message as a process per message would (the model or effort is not offered)
     pub unfit: bool,
+    /// the turn ended with a tool call still open: a command it left running in the background. The agent starts
+    /// work by itself when such a command ends (measured), so the process is not kept.
+    pub background: bool,
 }
 
 /// A process's session, kept on it between turns.
@@ -591,7 +597,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
     let mut c = Client { live, host };
     let gone = |c: &mut Client, unfit: bool| {
         c.host.end();
-        End { ended: true, unfit }
+        End { ended: true, unfit, background: false }
     };
     let known = live.state().and_then(|s| s.downcast::<Session>().ok());
     let session = match known {
@@ -691,7 +697,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             for o in left {
                 c.host.out(o);
             }
-            return End { ended: true, unfit: false };
+            return End { ended: true, ..End::default() };
         };
         let Some(m) = line.and_then(|l| serde_json::from_slice::<Value>(&l).ok()) else { continue };
         let mut long_tool = false;
@@ -743,7 +749,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 c.host.out(o);
             }
             c.host.activity(false, false);
-            return End::default();
+            return End { background: t.tool_open(), ..End::default() };
         }
         c.host.activity(long_tool, t.tool_open());
     }
@@ -943,6 +949,7 @@ mod tests {
     fn what_trails_a_turn_is_not_taken_for_work_begun_alone_but_a_tool_call_or_a_request_is() {
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/request_permission","params":{},"id":"4"}"#));
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"c"}}}"#));
+        assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}"#));
         assert!(!stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","status":"failed"}}}"#));
         assert!(!stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"usage_update","used":3}}}"#));
         assert!(!stray(br#"{"jsonrpc":"2.0","result":{"stopReason":"end_turn"},"id":7}"#));

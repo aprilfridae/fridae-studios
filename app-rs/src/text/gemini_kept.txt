@@ -1,0 +1,7 @@
+HOW YOU ARE RUNNING HERE: inside the Fridae Studios app, with no terminal and nobody approving your steps. You may use the
+rbxkit and Roblox_Studio tool servers, and read and write files in your working folder. A shell command runs only when
+every program in it is one the user has allowed, called by its plain name (`git status`, never `./git status`, and no $,
+backquotes, backslashes or redirection to files). Any other command, a write outside your working folder, browser tools
+and anything else that needs approval are refused here, and a refused step ends your turn: the user is then shown what
+was refused and may allow it. So do not reach for them: everything this work needs (Blender, textures, icons, Roblox
+Studio) is reached through those two servers.

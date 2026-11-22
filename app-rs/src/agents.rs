@@ -1,5 +1,5 @@
-//! The event log the window reads, the agents (one headless Claude Code process
-//! per chat), and saved chats.
+//! The event log the window reads, the agents (one headless process of the chat's AI: kept open for the chat where
+//! the AI can be, `Kept`, else one per turn), and saved chats.
 
 use std::{
     collections::HashMap,
@@ -48,6 +48,8 @@ const WORKER_PROMPT: &str = include_str!("text/worker.txt");
 const CRITIC_PROMPT: &str = include_str!("text/critic.txt");
 const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
+/// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
+const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
 const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
@@ -1386,7 +1388,8 @@ impl GeminiLaunch {
             // as a process per message has it: Ask me writes in the workspace only
             writes: vec![s.workspace.to_path_buf()],
             reads: vec![s.kit.to_path_buf(), s.work.join("attachments"), s.work.join("chat-images")],
-            protected: s.protected.to_vec(),
+            // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
+            protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
             agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
         };
         let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers: s.servers.clone(), model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules };
@@ -1408,6 +1411,14 @@ impl GeminiLaunch {
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, "gemini");
+        // the app's check of a command is written for `/bin/sh` (`paths::command_allowed`): the shell agy is told
+        // of, and none of the variables a shell acts on at start
+        cmd.env("SHELL", "/bin/sh");
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(paths::shell_injected) {
+                cmd.env_remove(k);
+            }
+        }
         if let Some(h) = agy_home() {
             cmd.env("HOME", h);
         }
@@ -1490,11 +1501,14 @@ impl Kept for GeminiLaunch {
 
     fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
         let resume = a.st.lock().unwrap().session.clone();
-        let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some(("gemini", live.pid)) };
+        // the servers a process per message left in the workspace's list would be started a second time
+        antigravity::unwrite_servers(&self.spec.cwd, &self.spec.servers);
+        let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
         let mut t = host.t;
         t.ended = end.ended;
         t.unfit = end.unfit;
+        t.background_left = end.background;
         t
     }
 }
@@ -2386,6 +2400,8 @@ impl Agent {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
                 prompt += &opencode::instructions(project.as_deref(), &paths::allowed_commands(), ask.full);
+            } else if kind == "gemini" && !ask.full && self.live_allowed() {
+                prompt += GEMINI_KEPT_PROMPT;
             } else {
                 prompt += OTHER_AI_PROMPT;
             }

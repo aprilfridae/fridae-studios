@@ -149,6 +149,20 @@ fn write_servers(workspace: &Path, servers: &Value) {
     let _ = fs::write(path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
 }
 
+/// Takes our servers out of the workspace's list again, leaving any the user put there. A kept process is handed
+/// them over its protocol (`acp::servers_param`), and agy also starts every server of this list when a prompt comes
+/// (measured), so one left here by an earlier process per message would run twice.
+pub fn unwrite_servers(workspace: &Path, servers: &Value) {
+    let path = workspace.join(".agents").join("mcp_config.json");
+    let Some(mut cfg) = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return };
+    let Some(list) = cfg["mcpServers"].as_object_mut() else { return };
+    let before = list.len();
+    list.retain(|name, _| servers.get(name).is_none());
+    if list.len() != before {
+        let _ = fs::write(path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    }
+}
+
 /// The line that carries a message in on stdin.
 pub fn message_line(text: &str) -> String {
     json!({"event": "user", "message": {"content": text}}).to_string() + "\n"
