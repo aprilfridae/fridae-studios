@@ -1971,7 +1971,6 @@ function ideaCard(i) {
     if (!r.ok) { why.textContent = (r.error || "Could not start the run.") + " The folder " + made.project.name + " was made; start the run from a chat for it."; return; }
     rvPath = made.project.path; setView("review");
   };
-  start.style.cssText = "background: var(--text); color: var(--accent-ink); border-color: transparent; font-weight: 500;";
   start.onclick = async () => {
     const r = await api("/api/new", { ai: viewAi });
     if (!r.ok) { start.textContent = "All eight chats are in use"; return; }
