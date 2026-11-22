@@ -55,7 +55,8 @@ agent reads the built-in guides and uses the tools itself.
 
 | Tool | Does |
 |---|---|
-| `rbx_guide` | The how-to guides: workflow, playtest, ui-design, sim-ui, vfx |
+| `rbx_guide` | The how-to guides: workflow, playtest, ui-design, sim-ui, vfx; one `section`, or an outline of a large guide |
+| `rbx_vault` | One lookup over the Roblox vault, the guides, the team's expert notes and this game's notes (see below) |
 | `rbx_blender` | Runs Python in headless Blender: model, check for floating parts, render, export, animate |
 | `rbx_texture` | Draws particle textures and flipbook sheets, checks them, previews them in Studio for free |
 | `rbx_check_images` | Checks any texture or flipbook sheet from its pixels |
@@ -209,6 +210,57 @@ from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (regist
   `python3 rbx.py stage ... --project <game>`, and the page follows them. The packaged app
   (`build-out/Fridae Studios.app/Contents/MacOS/Fridae Studios`) ignores `FRIDAE_KIT` and keeps its config, games
   and work folder in `$HOME/Documents/Fridae Studios`, so give it the scratch `HOME` and put `config.json` there.
+
+## How agents find knowledge
+
+Agents look things up rather than load whole guides (a live run once pulled 62 KB of guides in one call).
+`rbx_vault` is the one lookup; its engine is `rbxvault.py`. It searches four **shelves**, and nothing is copied:
+the files stay where they are, plain Markdown that Obsidian can open.
+
+| Shelf | What | Ranked by | Cache |
+|---|---|---|---|
+| `vault` | the LihFolk vault notes (`guides/lihfolk-vault`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
+| `guides` | every Markdown guide in `rbxkit_mcp.GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
+| `team` | `team/experts/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
+| `game` | the game's `GAME.md`, `.fridae/lessons.md`, and `work/studio-lessons.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
+
+A section is a `##` or `###` heading with its own text (`#` lines inside code fences do not count); the text before
+the first heading is the `(opening)` section, and a file with no headings is one `(whole file)` section. A cache is
+rebuilt when its list of files or any file's modification time or size changes. Cold build on a Mac: about 0.3 s
+for the guides and team sections, about 2.6 s for the vault (the same as before).
+
+The tool:
+
+- `search` (`query`, `shelf`: all|vault|guides|team|game, default all; `k` or `count`, default 5, 3 for the vault
+  alone, at most 8). Results are labelled by shelf, with a 2-3 line snippet, the section's size, and the exact
+  `read` arguments. `shelf: vault` answers exactly as the vault always did (with symptom lines).
+- `read` (`title`, `heading` words, optional `shelf`) returns one section, at most 12 KB; a larger section returns
+  its first part and lists its sub-headings. No heading lists the sections. `sections` (`title`) lists headings
+  with sizes. `list` and `api` are unchanged.
+
+`rbx_guide` stays for what must be read in full. A guide over 12 KB comes as its opening (front-matter description
+and everything before the first `##`) plus its sections with sizes, unless it is on `ALWAYS_WHOLE` in
+`rbxkit_mcp.py` or the call passes `whole: true`. `section` returns one section of one guide.
+
+**What is always whole, and why.** Rules an agent must always follow are never left to search. They live in:
+
+- the system prompt texts, `app-rs/src/text/*.txt` and `routing.txt` (compiled into the app), which every agent of
+  that kind gets every time;
+- the always-whole guides: `workflow`, `studio`, `critic`, `producer`, `game-bible` (and any guide under 12 KB,
+  which always comes whole anyway).
+
+Everything else in the guides is craft knowledge that is fine to find by search. When you add a rule that must
+always apply, put it in one of those places, never only in a large guide or a vault note.
+
+**Adding a guide so it is found.** Register it in `GUIDES` in `rbxkit_mcp.py` (or drop a `SKILL.md` folder into
+`guides/roblox-skills/` or `guides/lihfolk/`, which register themselves). Give it front matter with a `description`
+(it is searched with every section of that guide), a `#` title, and `##`/`###` headings that say what each part is
+for in plain words ("Saving player data", not "Notes"): headings weigh most in the ranking. Put long material in
+`references/*.md` beside it; those are indexed too. Name it in `routing.txt` and in the expert files that need it.
+
+**Measuring.** `.venv/bin/python tests/knowledge_bench.py` prints, for six fixed tasks, the characters an agent took
+in the old way (the whole guides routing.txt or its expert file named) against one search plus the top three
+sections. `tests/test_knowledge.py` checks that each task finds an expected guide in its top five.
 
 ## Folders
 

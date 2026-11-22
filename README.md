@@ -60,6 +60,10 @@ explains anything missing.
 - Runs several chats at once, saves every chat, and can check its own work in
   rounds with the Self-test switch.
 
+The agents look things up instead of reading whole manuals: one search covers the bundled Roblox
+notes, Fridae's own how-to guides, the Studio team's notes and your game's own notes (GAME.md and the lessons a run
+keeps), and the agent reads only the part it needs. The rules every agent must follow are always given in full.
+
 `fridae-cli --mcp` (`fridae-cli.exe` on Windows) is a standard MCP tool server, so the same tools work
 in Cursor, Codex, Gemini CLI and other agents.
 
