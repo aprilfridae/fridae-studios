@@ -60,7 +60,7 @@ end
 - [[HttpService and External APIs]]: outbound request caps.
 - [[Network Performance]]: inbound floods as a performance problem.
 - [[Matchmaking Queues with MemoryStore]]: MemoryStore request budgets.
-- [[Skill - Roblox Secure Remotes]]: a review checklist that requires limits.
+- Skill - Roblox Secure Remotes: a review checklist that requires limits.
 - [[Hunting Memory Leaks Step by Step]]: per-player tables not cleared on leave.
 - [[Input Responsiveness Buffering and Coyote Time]]: server cooldown grace for early inputs.
 

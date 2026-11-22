@@ -50,6 +50,6 @@ Active Spender: A paying user, the unit of Creator Rewards payouts. (from [[Glos
 [[Session Length]]
 
 ### Root notes
-[[Glossary]] · [[Open Questions - Whole Vault]] · [[Skill - Roblox Monetization Compliance]]
+[[Glossary]] · Open Questions - Whole Vault · Skill - Roblox Monetization Compliance
 
 <!-- atlas:generated -->

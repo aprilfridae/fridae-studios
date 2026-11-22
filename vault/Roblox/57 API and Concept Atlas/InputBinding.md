@@ -51,6 +51,6 @@ API snapshot: class, inherits `Instance` (`_tools/roblox_api.json`, docs build o
 [[ContextActionService - Engine Reference Card]] · [[UserInputService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

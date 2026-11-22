@@ -42,6 +42,6 @@ API snapshot: member of `BasePart` (`_tools/roblox_api.json`, docs build of 2026
 [[BasePart - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

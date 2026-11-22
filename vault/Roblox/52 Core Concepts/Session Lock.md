@@ -56,7 +56,7 @@ Returning `nil` from the transform cancels the update (Roblox docs, `UpdateAsync
 - [[Economy Exploits - Dupes Races and Purchase Abuse]]: dupes that rely on two sessions.
 - [[Server Shutdowns Soft Updates and Migration]]: mass handoffs during updates.
 - [[Saved Inventory End to End]]: a worked inventory on a locked profile.
-- [[Skill - Roblox DataStore Safety]]: a review checklist that includes locks.
+- Skill - Roblox DataStore Safety: a review checklist that includes locks.
 - [[MemoryStore Service]]: fast, expiring state that complements the lock.
 
 Related concepts: [[Idempotency]], [[Data Schema Versioning]], [[Rate Limiting]].

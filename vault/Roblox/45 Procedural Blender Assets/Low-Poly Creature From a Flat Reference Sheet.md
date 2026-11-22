@@ -230,7 +230,7 @@ Export is GLB with `export_yup=True` and animations on. [[Exporting FBX vs GLB]]
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Procedural Blender Assets Start Here]] · [[Concept Sheets]] · Topology and Edge Flow · Untextured Stylised Modelling Start Here · Skinning Weights · Meshing Voxels for Roblox - Greedy Meshing and Export
+[[Procedural Blender Assets Start Here]] · Concept Sheets · Topology and Edge Flow · Untextured Stylised Modelling Start Here · Skinning Weights · Meshing Voxels for Roblox - Greedy Meshing and Export
 <!-- auto-links:end -->
 
 <!-- related:start -->

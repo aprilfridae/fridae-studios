@@ -260,7 +260,7 @@ Products change: prices, contents, ids. Rules:
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Robux Price Points and Offer Design]] · [[Skill - Roblox Monetization Compliance]] · Limited-Time Offers - Design and Ethics · Shop with Game Passes and Developer Products End to End · Genre Playbook - Simulators · Currency Architecture - Soft Hard and Event Currencies
+[[Robux Price Points and Offer Design]] · Skill - Roblox Monetization Compliance · Limited-Time Offers - Design and Ethics · Shop with Game Passes and Developer Products End to End · Genre Playbook - Simulators · Currency Architecture - Soft Hard and Event Currencies
 <!-- auto-links:end -->
 
 <!-- related:start -->

@@ -38,6 +38,6 @@ MagicaVoxel is the fastest tool for hand-built voxel art: box, voxel, face and l
 [[Keeping a Mixed Asset Library Consistent]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

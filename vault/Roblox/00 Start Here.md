@@ -6,13 +6,13 @@ tags: [index, start, type/hub, level/beginner, api/Terrain, api/Animator, api/Da
 
 A field guide to **every aspect of making games in Roblox Studio**, written at senior-developer depth: Studio and workflow, Luau, architecture and networking, data, UI, world building, lighting/VFX/audio, animation, gameplay systems, game design, monetization and live ops, performance and testing, production, 3D modeling, AI tools, MCP and AI agents, and pipelines.
 
-About 1,300 notes (roughly twenty-five thick textbooks of original LihFolk writing), plus 9 skeleton rigs, 10 concept sheets, procedural Blender assets, and the LihFolk Claude Code plugin with 22 AI skills.
+About 1,300 notes (roughly twenty-five thick textbooks of original LihFolk writing), plus 9 skeleton rigs and procedural Blender assets. (Fridae's copy leaves out the concept sheets and the LihFolk plugin's AI skills.)
 
 ## How to read the labels
 - **Roblox docs**: the official engine reference and Creator Hub guides, checked in October 2026. Roblox changes fast, so anything marked "as of October 2026" (prices, payouts, policies, betas) is worth rechecking.
 - **Measured / the reference project**: one live action game, which was built over many months and partly with AI agents connected to Studio and Blender. Its numbers, bugs and fixes are real and kept, but its name and identifiers are not.
 - **Rule of thumb**: experience and craft knowledge, labelled as such.
-- **Unverified**: something no official source confirmed. Conflicts are collected in [[Open Questions - Whole Vault]] (the Animation section keeps its own detailed [[Open Questions]]).
+- **Unverified**: something no official source confirmed. The Animation section keeps its open conflicts in [[Open Questions]].
 
 ## Reading paths
 
@@ -43,7 +43,7 @@ About 1,300 notes (roughly twenty-five thick textbooks of original LihFolk writi
 [[Anti-Exploit Start Here]] → [[How Exploits Work - The Client Boundary]] → [[Threat Modeling a Roblox Game]] → [[Server Authority and Validation]] → [[Remote Abuse Patterns and Rate Limiting in Practice]] → [[Testing Your Own Remotes - Fuzzing and Abuse Tests]] → [[False Positives Lag and Fair Enforcement]]
 
 **Building a feature from scratch:**
-[[Worked Builds Start Here]] → [[Saved Inventory End to End]] → [[Shop with Game Passes and Developer Products End to End]] → [[Luau Cookbook Start Here]] → [[AI Skills Start Here]]
+[[Worked Builds Start Here]] → [[Saved Inventory End to End]] → [[Shop with Game Passes and Developer Products End to End]] → [[Luau Cookbook Start Here]]
 
 **Launching and growing a game:**
 [[Marketing and Growth Start Here]] → [[Launch Strategy - The First Two Weeks]] → [[Community and Moderation Start Here]] → [[Business and Careers Start Here]] → [[Top Games Case Studies Start Here]]
@@ -389,9 +389,6 @@ Start at [[Animation Start Here]] (reading paths and full map) and [[Animation G
 ### 18 Rigs and Skeletons (9 rigs, .fbx .glb .blend)
 - [[Skeleton Library]]
 
-### 19 Concept Sheets (10 sheets, 4K PNG)
-- [[Concept Sheets]]
-
 ### 21 LihFolk UI Design System
 - [[LihFolk UI Design System]]
 
@@ -474,19 +471,6 @@ Start at [[Animation Start Here]] (reading paths and full map) and [[Animation G
 - [[Cookbook - Tables Strings and Time]]
 - [[Cookbook - UI]]
 - [[Luau Cookbook Start Here]]
-
-### 31 LihFolk AI Skills (11 notes)
-- [[AI Skills Start Here]]
-- [[Skill - Roblox Anti-Exploit Review]]
-- [[Skill - Roblox Asset Import]]
-- [[Skill - Roblox DataStore Safety]]
-- [[Skill - Roblox Debugging]]
-- [[Skill - Roblox Monetization Compliance]]
-- [[Skill - Roblox Performance Audit]]
-- [[Skill - Roblox Secure Remotes]]
-- [[Skill - Roblox System Builder]]
-- [[Skill - Roblox UI Builder]]
-- [[Skill - Roblox Vault Research]]
 
 ### 32 Case Studies of Top Roblox Games (12 notes)
 - [[Top Games Case Studies Start Here]]
@@ -747,4 +731,3 @@ Start at [[Field Notes Start Here]]: 20 hard-won lessons from a shipped action R
 ### Reference
 - [[Obsidian Vaults for AI Agents - Structure, Graph and Theming]] (how this vault is structured and searched)
 - [[Glossary]], [[Animation Glossary]]
-- [[Open Questions - Whole Vault]]

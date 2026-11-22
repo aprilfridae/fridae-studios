@@ -176,7 +176,7 @@ Concrete rules of thumb:
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Robux Price Points and Offer Design]] · [[Skill - Roblox Monetization Compliance]] · Official Docs - Monetization · Shop with Game Passes and Developer Products End to End · Subscriptions and Recurring Revenue · Limited-Time Offers - Design and Ethics
+[[Robux Price Points and Offer Design]] · Skill - Roblox Monetization Compliance · Official Docs - Monetization · Shop with Game Passes and Developer Products End to End · Subscriptions and Recurring Revenue · Limited-Time Offers - Design and Ethics
 <!-- auto-links:end -->
 
 <!-- related:start -->

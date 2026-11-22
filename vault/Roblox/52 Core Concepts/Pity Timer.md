@@ -53,7 +53,7 @@ end
 - [[Probability and Statistics for Designers]]: the maths of streaks.
 - [[Ethical Design and Player Trust]]: why caps on bad luck build trust.
 - [[Procedural Loot and Item Generation]]: pity on generated loot.
-- [[Skill - Roblox Monetization Compliance]]: compliance review for paid rolls.
+- Skill - Roblox Monetization Compliance: compliance review for paid rolls.
 
 Related concepts: [[Expected Value]], [[Variance]], [[Faucets and Sinks]].
 

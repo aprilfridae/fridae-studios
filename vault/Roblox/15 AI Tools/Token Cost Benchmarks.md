@@ -96,8 +96,8 @@ Savings never justify a wrong answer. TL;DR blocks are **extractive**: their bul
 
 ## See also
 
-- [[AI Skills Start Here]]
-- [[Skill - Roblox Vault Research]]
+- AI Skills Start Here
+- Skill - Roblox Vault Research
 - [[What AI Models Get Wrong in Roblox]]
 
 ## Connected notes

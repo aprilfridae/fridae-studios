@@ -279,7 +279,7 @@ See also: [[Layout - Scale Offset and Constraints]], [[Safe Areas and Insets]], 
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox UI Builder]] · Safe Area · Cookbook - UI · Readable Text and UI Scale · UI Asset Pipeline · Official Docs - UI
+Skill - Roblox UI Builder · Safe Area · Cookbook - UI · Readable Text and UI Scale · UI Asset Pipeline · Official Docs - UI
 <!-- auto-links:end -->
 
 <!-- related:start -->

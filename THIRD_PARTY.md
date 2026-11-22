@@ -33,7 +33,7 @@ Clean Roblox by diggofun / TemporaryLooker22 (MIT). See
 
 ## LihFolk Vault V2
 
-`vault/Roblox/` (a trimmed copy: 1,321 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
+`vault/Roblox/` (a trimmed copy: 1,308 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
 `45 Procedural Blender Assets/scripts`, the dated API snapshot) and `vault/Fridae/Guides/LihFolk/` (12 guides with their Luau
 modules, examples, scripts and rubrics) are from LihFolk Vault V2 by LihFolk,
 https://github.com/lihfolk-cy/v2-vault, licensed CC BY 4.0 (`licenses/lihfolk-vault-LICENSE.md`).
@@ -41,7 +41,9 @@ Changes: each guide's `SKILL.md` is now `<folder>.md` inside Fridae's one vault;
 mentions of LihFolk guides left out (because rbxkit already had one on the subject) point at rbxkit's.
 `rbxvault.py` is LihFolk's `_tools/vault.py` search, reading from rbxkit's folders, with rbxkit's section search
 added around it. Trimmed from the copy (2026-11): the generated index and router pages `INDEX.md`, `INDEX_SLIM.md`,
-`ROUTER.md`, the visual home page `000 Home.md` and the Obsidian `_templates/` (the search replaces them); the
+`ROUTER.md`, the visual home page `000 Home.md` and the Obsidian `_templates/` (the search replaces them); the LihFolk
+plugin's own `Skill - …` notes and `AI Skills Start Here` (they describe that plugin's skills), `Open Questions - Whole
+Vault`, and the Concept Sheets note (its images were already left out). Links to removed notes became plain text. The
 original is at the link above, and everything removed is in this repository's git history.
 Left out: the Obsidian theme, renders and images, the LihFolk UI kit, Figma, asset-pack, council, hook and
 benchmark parts, and guides whose subject rbxkit already covered (secure remotes, anti-exploit review,

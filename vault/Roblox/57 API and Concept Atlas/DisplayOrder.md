@@ -43,6 +43,6 @@ API snapshot: member of `ScreenGui` (`_tools/roblox_api.json`, docs build of 202
 [[Colourblind Palettes Text Size and Tooltips]]
 
 ### Root notes
-[[Skill - Roblox UI Builder]]
+Skill - Roblox UI Builder
 
 <!-- atlas:generated -->

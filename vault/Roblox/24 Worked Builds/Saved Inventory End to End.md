@@ -1172,7 +1172,7 @@ What it does not stop on its own: dupes through a future trading feature, and ec
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox DataStore Safety]] · Debugging DataStore Problems · Cookbook - Data and Saving · Genre Systems Start Here · Skill - Roblox System Builder · Session Lock
+Skill - Roblox DataStore Safety · Debugging DataStore Problems · Cookbook - Data and Saving · Genre Systems Start Here · Skill - Roblox System Builder · Session Lock
 <!-- auto-links:end -->
 
 <!-- related:start -->

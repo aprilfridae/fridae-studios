@@ -46,6 +46,6 @@ API snapshot: member of `StarterGui` (`_tools/roblox_api.json`, docs build of 20
 [[Block and Mute Respecting Platform Rules]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

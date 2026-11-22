@@ -32,7 +32,7 @@
   "Session Locking and Profile Libraries",
   "DataStore Fundamentals",
   "Resetting One Player's Data Safely",
-  "AI Pitfalls - Data and Monetization"
+  "Data Loss Prevention and Recovery"
  ],
  "leaderboard": [
   "OrderedDataStores and Leaderboards",

@@ -62,7 +62,7 @@ Related concepts: [[Draw Calls]], [[Instance Count]], [[Object Pooling]], [[Dete
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox Performance Audit]] · Game Feel Start Here · [[Triangle Budget]] · [[Core Concepts Start Here]] · Art Budgets - Triangles Draw Calls Memory · Luau Performance Patterns with Benchmarks
+Skill - Roblox Performance Audit · Game Feel Start Here · [[Triangle Budget]] · [[Core Concepts Start Here]] · Art Budgets - Triangles Draw Calls Memory · Luau Performance Patterns with Benchmarks
 <!-- auto-links:end -->
 
 <!-- related:start -->

@@ -48,6 +48,6 @@ Weighted Normal makes custom normals weighted by face area (or angle), so big fl
 [[Bevels Chamfers and Edge Highlights Without Textures]] · [[Modelling Nuance Start Here]] · [[Style Bibles for Consistent Models]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

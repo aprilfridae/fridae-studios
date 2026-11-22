@@ -71,7 +71,7 @@ API snapshot: service, inherits `Instance` (`_tools/roblox_api.json`, docs build
 [[TextChatService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 Also mentioned in (not linked): 00 Start Here · Accessibility Start Here · Community and Moderation Start Here · Engine Reference Cards Start Here · Kill Credit, Assists, Kill Feed and Death Recaps · Localization Pipeline · Nametags and Overhead Bars - Cost and Visibility Rules · Narrative Start Here · Notification and Toast Systems · Player-Driven Trading Economies · Procedural Loot and Item Generation · Rate Limiting · Roblox Policies Ratings and Compliance · Social Design and Multiplayer Play · Trading Systems Without Duplication · Weekend Build - Roleplay Town with Jobs and Paychecks · What AI Models Get Wrong in Roblox
 

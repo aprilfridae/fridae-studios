@@ -81,7 +81,7 @@ This store is built around **eggs and luck**, so it is the most compliance-sensi
 - **"Magic Eggs"** as a paid egg type would be a paid random item: full outcomes, odds summing to 100%, value in every outcome.
 - Gate all of it with `PolicyService` fail-closed and offer a compliant path to restricted players ([[Regional Compliance - Paid Random Items and Country Rules]]).
 - **Storage and equip slots** are clean convenience passes.
-- See [[Paid Random Items and Odds Disclosure in Practice]] and [[Skill - Roblox Monetization Compliance]].
+- See [[Paid Random Items and Odds Disclosure in Practice]] and Skill - Roblox Monetization Compliance.
 
 ## Retention hooks
 

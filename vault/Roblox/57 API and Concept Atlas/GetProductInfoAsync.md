@@ -61,6 +61,6 @@ API snapshot: member of `MarketplaceService` (`_tools/roblox_api.json`, docs bui
 [[MarketplaceService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]] · [[Skill - Roblox Monetization Compliance]]
+Open Questions - Whole Vault · Skill - Roblox Monetization Compliance
 
 <!-- atlas:generated -->

@@ -54,7 +54,7 @@ content.Parent = playerGui
 - [[Readable Text and UI Scale]]: text near edges.
 - [[Input Remapping and One-Handed Play]]: reach and placement.
 - [[Choosing GUI 2D or Locked-Camera 2.5D]]: full-screen 2D games and insets.
-- [[Skill - Roblox UI Builder]]: a review checklist that includes safe areas.
+- Skill - Roblox UI Builder: a review checklist that includes safe areas.
 - [[Menu Archetypes - Shop Settings Codes Rewards]]: where menu buttons sit.
 
 Related concepts: [[Accessibility Contrast]], [[Onboarding Funnel]], [[Thumbnail Contrast]].

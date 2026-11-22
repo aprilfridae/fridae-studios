@@ -69,6 +69,6 @@ Exponential backoff gives the service time to recover instead of hammering it in
 [[DataStoreService - Engine Reference Card]] · [[HttpService - Engine Reference Card]] · [[MemoryStoreService - Engine Reference Card]] · [[TeleportService - Engine Reference Card]]
 
 ### Root notes
-[[Skill - Roblox DataStore Safety]]
+Skill - Roblox DataStore Safety
 
 <!-- atlas:generated -->

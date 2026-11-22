@@ -49,6 +49,6 @@ API snapshot: member of `Decal`, `ImageButton`, `ImageLabel`, `SurfaceAppearance
 [[The Gradient Palette Texture Workflow]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

@@ -489,7 +489,7 @@ end
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox Secure Remotes]] · Rate Limiting · Anti-Exploit Start Here · Replication Boundary · Debugging Client-Server Desync · Skill - Roblox Anti-Exploit Review
+Skill - Roblox Secure Remotes · Rate Limiting · Anti-Exploit Start Here · Replication Boundary · Debugging Client-Server Desync · Skill - Roblox Anti-Exploit Review
 <!-- auto-links:end -->
 
 <!-- related:start -->

@@ -148,7 +148,7 @@ Highlights are popular for hit flashes, outlines and selection, and they have a 
 
 Whatever the current number, the same practices apply: one Highlight per *group* where possible (a Highlight on a Model or Folder outlines all descendants), pools with caps, delete rather than disable Highlights you will not reuse, and decide priority (hit flash beats ambient outline). A disabled Highlight left on a model can also block another outline effect on that model (Measured). See [[Highlights and Selection Effects]].
 
-The discrepancy is recorded for [[Open Questions - Whole Vault]].
+The discrepancy is recorded for Open Questions - Whole Vault.
 
 ---
 

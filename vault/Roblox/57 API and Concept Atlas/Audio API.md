@@ -65,7 +65,7 @@ Audio API: The newer audio graph: AudioPlayer, AudioEmitter, AudioListener, Wire
 [[SoundService - Engine Reference Card]]
 
 ### Root notes
-[[00 Start Here]] · [[Glossary]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · [[Glossary]] · Open Questions - Whole Vault
 
 Also mentioned in (not linked): Community and Moderation Start Here
 

@@ -49,6 +49,6 @@ API snapshot: service, inherits `Instance` (`_tools/roblox_api.json`, docs build
 [[Texel Density]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

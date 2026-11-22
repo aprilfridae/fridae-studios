@@ -42,6 +42,6 @@ API snapshot: member of `MaterialVariant`, `TerrainDetail` (`_tools/roblox_api.j
 [[MaterialService and Custom Materials]] · [[Materials and Surfaces Start Here]] · [[Stylised vs Realistic Material Pipelines]] · [[Terrain Materials and Painting]] · [[Tiling Trim Sheets and Decal Tricks]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

@@ -155,7 +155,7 @@ What the originals in this section did to stay ahead:
 | Paid luck and eggs | Fish It luck passes, Tap Simulator luck and egg passes | high: numerical odds summing to 100%, live odds under boosts, value in every outcome, `PolicyService` fail-closed (Roblox docs, 2026-05-26) |
 | Influence over others | vote multipliers, information passes, theft tools | allowed in some forms, costly to approval |
 
-Go deeper: [[Paid Random Items and Odds Disclosure in Practice]], [[Regional Compliance - Paid Random Items and Country Rules]], [[Robux Price Points and Offer Design]], [[Skill - Roblox Monetization Compliance]].
+Go deeper: [[Paid Random Items and Odds Disclosure in Practice]], [[Regional Compliance - Paid Random Items and Country Rules]], [[Robux Price Points and Offer Design]], Skill - Roblox Monetization Compliance.
 
 ## 11. The LihFolk fast-build kit
 

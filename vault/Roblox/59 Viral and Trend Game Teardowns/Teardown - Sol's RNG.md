@@ -80,7 +80,7 @@ Sol's RNG is a useful compliance case because its core randomness is **earned**,
 - **Paid potions or luck boosts,** if sold for Robux, are probability modifiers: state the effect numerically before purchase and update displayed odds live while active.
 - **Season premium passes** with fixed rewards are fine; if a pass grants random rewards, disclose them.
 - Gate every paid random path with `PolicyService` fail-closed and offer a compliant alternative to restricted players ([[Regional Compliance - Paid Random Items and Country Rules]]).
-- See [[Paid Random Items and Odds Disclosure in Practice]] and [[Skill - Roblox Monetization Compliance]].
+- See [[Paid Random Items and Odds Disclosure in Practice]] and Skill - Roblox Monetization Compliance.
 
 ## Retention hooks
 

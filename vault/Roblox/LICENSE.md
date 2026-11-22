@@ -30,5 +30,5 @@ documentation before relying on limits, prices or policies. Test all code before
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Legal Basics - IP Licenses and Assets]] · [[AI Skills Start Here]] · [[Skill - Roblox Asset Import]]
+[[Legal Basics - IP Licenses and Assets]] · AI Skills Start Here · Skill - Roblox Asset Import
 <!-- auto-links:end -->

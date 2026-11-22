@@ -37,6 +37,6 @@ API snapshot: service, inherits `Instance` (`_tools/roblox_api.json`, docs build
 [[Animator - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

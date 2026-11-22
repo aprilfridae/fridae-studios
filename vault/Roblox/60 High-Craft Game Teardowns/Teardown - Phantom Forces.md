@@ -93,7 +93,7 @@ StyLiS Studios was founded in 2014 by two developers, with a third main member j
 3. **Client hit, server check** with a rewind window: [[Client Prediction and Reconciliation for Combat]].
 4. **Kill feed and death recap:** [[Kill Credit, Assists, Kill Feed and Death Recaps]].
 5. **Matchmaking or server browser:** [[Server Hop Rejoin and Server Lists with Ping]].
-6. **Run `lihfolk:roblox-anti-exploit-review`** on the weapon remotes before launch; see [[Skill - Roblox Anti-Exploit Review]].
+6. **Run `lihfolk:roblox-anti-exploit-review`** on the weapon remotes before launch; see Skill - Roblox Anti-Exploit Review.
 
 ## Numbers to remember
 

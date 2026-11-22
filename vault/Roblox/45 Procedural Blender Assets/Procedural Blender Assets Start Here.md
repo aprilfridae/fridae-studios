@@ -38,7 +38,7 @@ The `scripts` folder holds the build scripts behind these notes (boss owl and it
 ## Related notes elsewhere
 
 - Modelling foundations: [[Low-Poly and Stylized Modeling]], [[Organic and Creature Modeling]], [[Modeling Weapons and Props]], [[Posing and Silhouettes]], [[Topology and Edge Flow]].
-- Pipeline: [[Art Pipeline - Concept to In-Game Asset]] (build from a script, not by hand), [[Concept Sheets]], [[AI 3D Model Generation Outside Roblox]].
+- Pipeline: [[Art Pipeline - Concept to In-Game Asset]] (build from a script, not by hand), Concept Sheets, [[AI 3D Model Generation Outside Roblox]].
 - Rigging: [[Skeleton Library]] (the Bird_Winged rig used here), [[Creature Rig Conventions]], [[Weight Painting and Skinning for Roblox]], [[Bones and Skinned Meshes]].
 - Getting it into Roblox: [[Exporting and Validating Models for Roblox]], [[Retopology and Decimation]], [[Art Budgets - Triangles Draw Calls Memory]].
 - Effects and lighting: [[VFX Design Playbook]], [[Beams and Trails]], [[Particle Emitters In Depth]], [[Stylized Lighting Recipes]].

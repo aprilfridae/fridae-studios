@@ -60,7 +60,7 @@ Related concepts: [[Draw Calls]], [[Frame Budget]], [[Object Pooling]], [[Stream
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Triangle Budget]] · [[Skill - Roblox Performance Audit]] · [[Core Concepts Start Here]] · Art Budgets - Triangles Draw Calls Memory · Performance Fundamentals · Instances Attributes and Tags
+[[Triangle Budget]] · Skill - Roblox Performance Audit · [[Core Concepts Start Here]] · Art Budgets - Triangles Draw Calls Memory · Performance Fundamentals · Instances Attributes and Tags
 <!-- auto-links:end -->
 
 <!-- related:start -->

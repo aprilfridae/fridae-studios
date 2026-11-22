@@ -51,7 +51,7 @@ Nine starter rigs you can import, animate and reskin. Each folder in this sectio
 
 **Measured:** the files were exported from Blender 5.2 and checked by name and size. They have **not** been imported into Roblox Studio in this build, so test-import one before relying on it.
 
-Related: [[Blender Workflow for Roblox Creators]], [[Exporting and Validating Models for Roblox]], [[Concept Sheets]].
+Related: [[Blender Workflow for Roblox Creators]], [[Exporting and Validating Models for Roblox]], Concept Sheets.
 
 ## Nuances and edge cases
 

@@ -61,6 +61,6 @@ API snapshot: service, inherits `Instance` (`_tools/roblox_api.json`, docs build
 [[Keeping a Mixed Asset Library Consistent]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

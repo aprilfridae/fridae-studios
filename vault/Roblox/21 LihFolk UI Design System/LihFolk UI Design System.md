@@ -48,7 +48,7 @@ Each menu owns a header colour: Shop **Tangerine**, Codes **Lagoon**, Rebirth **
 2. Copy the example closest to your menu into `StarterPlayerScripts` (files ending in `.client.luau` become LocalScripts).
 3. Change the content: window name and title, theme, items, and the remote names your server uses.
 4. Replace placeholders: every `id = 0` (game passes, products) and any icon you want to show as art.
-5. Build the server side with [[Skill - Roblox System Builder]]: the UI renders state the server owns and sends intents. It never decides prices, rewards or rebirths.
+5. Build the server side with Skill - Roblox System Builder: the UI renders state the server owns and sends intents. It never decides prices, rewards or rebirths.
 6. Test at phone, tablet and PC sizes with touch, mouse and gamepad, then score against the UI rubric (see section 5).
 
 ```lua

@@ -53,7 +53,7 @@ The Docs page for the console lists four tools in the tools dropdown; other Docs
 | **Server Jobs** | engine job rates; Docs: check "Steps Per Sec" under Heartbeat for server tick rate | Docs (identify page) |
 | **Server Stats** | includes average data ping | Docs (identify page) |
 
-The console page and the "identify performance issues" page disagree about which tabs exist (the second mentions Server Jobs and Server Stats, the first does not). If a tab described here is missing in your client, check the tools dropdown; layouts change. Recorded for [[Open Questions - Whole Vault]].
+The console page and the "identify performance issues" page disagree about which tabs exist (the second mentions Server Jobs and Server Stats, the first does not). If a tab described here is missing in your client, check the tools dropdown; layouts change. Recorded for Open Questions - Whole Vault.
 
 Note that the **Network** tool here is about HTTP web calls (asset fetches, HttpService), not game replication traffic. Replication is in the stat overlays and the MicroProfiler networking labels ([[Network Performance]]).
 

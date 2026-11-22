@@ -134,7 +134,7 @@ Seven-player servers keep every pen inside one screen's worth of travel, so thef
 | Hatch, rarity, size, mutation | One weighted table that feeds both the roll and the odds panel | [[Pet Hatching and Following End to End]], [[Drop Tables Rarity and Pity Systems]] |
 | Steal from players | Lock or grace window, carry slow-down, one-hit return | [[Rate Limiting and Abuse Prevention]] |
 | Saving | Session-locked profiles, autosave, receipts idempotent | [[Session Locking and Profile Libraries]], [[LihFolk Systems Library]] |
-| Passes and products | Self-only multipliers first; paid eggs only with the odds path | [[Shop with Game Passes and Developer Products End to End]], [[Skill - Roblox Monetization Compliance]] |
+| Passes and products | Self-only multipliers first; paid eggs only with the odds path | [[Shop with Game Passes and Developer Products End to End]], Skill - Roblox Monetization Compliance |
 
 A tiny server-side speed sanity check for a speed-gated world:
 

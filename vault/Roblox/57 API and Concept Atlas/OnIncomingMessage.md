@@ -43,6 +43,6 @@ API snapshot: member of `TextChannel`, `TextChatService` (`_tools/roblox_api.jso
 [[TextChatService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

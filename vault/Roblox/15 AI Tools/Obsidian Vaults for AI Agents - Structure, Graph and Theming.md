@@ -80,7 +80,7 @@ Skills, hooks, CI and scripts address the vault by path. Renaming the vault fold
 ## See also
 
 - [[Documentation and Knowledge Bases]]
-- [[AI Skills Start Here]]
+- AI Skills Start Here
 - [[Benchmark - Does a Knowledge Vault Make AI Better at Roblox]]
 
 ## Connected notes

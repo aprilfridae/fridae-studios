@@ -54,6 +54,6 @@ API snapshot: class, inherits `Instance`, not creatable with `Instance.new` (`_t
 [[API Renames and Deprecations 2025-2026]] · [[Engine and API Changes 2025-2026]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

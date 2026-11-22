@@ -53,5 +53,5 @@ The first five builds share the `PlayerData` profile module from [[Saved Invento
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox System Builder]] · Genre Systems Start Here · Tycoon Plots and Droppers End to End · Idempotency · Skill - Roblox DataStore Safety · Genre Playbook - Party and Minigame Collections
+Skill - Roblox System Builder · Genre Systems Start Here · Tycoon Plots and Droppers End to End · Idempotency · Skill - Roblox DataStore Safety · Genre Playbook - Party and Minigame Collections
 <!-- auto-links:end -->

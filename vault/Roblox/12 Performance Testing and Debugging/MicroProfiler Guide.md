@@ -30,7 +30,7 @@ Source labels: **Docs** (Creator Hub, as of October 2026), **Measured** (the ref
 | Phone or tablet | in the in-game Settings menu, set MicroProfiler to On; then on a computer on the same network, open the IP address and port the device shows in a browser (the Docs example uses port 1338) |
 | Live server | join on the desktop client with edit permission, open the Developer Console (Ctrl+F9 / F9), choose MicroProfiler, Server tab, set frames (max 60) and start delay (max 4 s), click Begin server recording; the console prints the file path a few seconds later |
 
-**Docs disagree on the shortcut.** The MicroProfiler reference says Ctrl+F6; the "use the MicroProfiler" walkthrough and the "identify performance issues" page say **Ctrl+Alt+F6**. If one does nothing, try the other. The Performance Summary overlay is Ctrl+Shift+F5 in the walkthrough. Tracked for [[Open Questions - Whole Vault]].
+**Docs disagree on the shortcut.** The MicroProfiler reference says Ctrl+F6; the "use the MicroProfiler" walkthrough and the "identify performance issues" page say **Ctrl+Alt+F6**. If one does nothing, try the other. The Performance Summary overlay is Ctrl+Shift+F5 in the walkthrough. Tracked for Open Questions - Whole Vault.
 
 ### Pausing and dumps
 - **Pause** with Ctrl+P (Cmd+P) or the Pause menu item. Pausing switches to the detailed view so you can inspect a frame.
@@ -274,7 +274,7 @@ An inventory screen gave each rare item card its own animation loop (glow pulse,
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox Performance Audit]] · Frame Budget · Luau Performance and Native Codegen · Task Library Coroutines and Yielding · Luau Garbage Collection and the Memory Model · Official Docs - Performance
+Skill - Roblox Performance Audit · Frame Budget · Luau Performance and Native Codegen · Task Library Coroutines and Yielding · Luau Garbage Collection and the Memory Model · Official Docs - Performance
 <!-- auto-links:end -->
 
 <!-- related:start -->

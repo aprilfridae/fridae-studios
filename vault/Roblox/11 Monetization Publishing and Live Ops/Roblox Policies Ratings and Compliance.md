@@ -276,7 +276,7 @@ Before each release:
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Paid Random Items and Odds Disclosure in Practice]] · [[Skill - Roblox Monetization Compliance]] · Pity Timer · Expected Value · Pet Hatching and Following End to End · Genre Playbook - Simulators
+[[Paid Random Items and Odds Disclosure in Practice]] · Skill - Roblox Monetization Compliance · Pity Timer · Expected Value · Pet Hatching and Following End to End · Genre Playbook - Simulators
 <!-- auto-links:end -->
 
 <!-- related:start -->

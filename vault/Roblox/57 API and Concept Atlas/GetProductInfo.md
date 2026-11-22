@@ -48,6 +48,6 @@ API snapshot: member of `MarketplaceService`; flagged deprecated (`_tools/roblox
 [[MarketplaceService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

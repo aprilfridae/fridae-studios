@@ -395,7 +395,7 @@ Every remote shipped in a live game is callable by every player. Debug remotes (
 
 ## Connected notes
 <!-- auto-links:start -->
-[[Skill - Roblox Secure Remotes]] · Cookbook - Remotes and Networking · [[Remote Abuse Patterns and Rate Limiting in Practice]] · Network Bandwidth Budgets and Measuring Them · How Exploits Work - The Client Boundary · Official Docs - Scripting and Luau
+Skill - Roblox Secure Remotes · Cookbook - Remotes and Networking · [[Remote Abuse Patterns and Rate Limiting in Practice]] · Network Bandwidth Budgets and Measuring Them · How Exploits Work - The Client Boundary · Official Docs - Scripting and Luau
 <!-- auto-links:end -->
 
 <!-- related:start -->

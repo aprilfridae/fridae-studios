@@ -45,6 +45,6 @@ API snapshot: class, inherits `Constraint` (`_tools/roblox_api.json`, docs build
 [[Official Docs - Physics]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

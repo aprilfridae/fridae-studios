@@ -52,6 +52,6 @@ Flipbooks are 1024 x 1024 frames with a 2x2, 4x4 or 8x8 grid, one clipped frame 
 [[ParticleEmitter - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

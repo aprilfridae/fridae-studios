@@ -52,6 +52,6 @@ API snapshot: member of `GlobalDataStore`, `MemoryStoreHashMap`, `MemoryStoreQue
 [[DataStoreService - Engine Reference Card]] · [[MemoryStoreService - Engine Reference Card]]
 
 ### Root notes
-[[Open Questions - Whole Vault]]
+Open Questions - Whole Vault
 
 <!-- atlas:generated -->

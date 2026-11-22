@@ -60,6 +60,6 @@ API snapshot: member of `RemoteFunction` (`_tools/roblox_api.json`, docs build o
 [[RemoteEvent - Engine Reference Card]]
 
 ### Root notes
-[[Skill - Roblox Secure Remotes]]
+Skill - Roblox Secure Remotes
 
 <!-- atlas:generated -->

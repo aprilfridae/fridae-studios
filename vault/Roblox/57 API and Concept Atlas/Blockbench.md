@@ -35,6 +35,6 @@ Blockbench builds models from boxes, each with six UV-mapped faces, and paints a
 [[MagicaVoxel Goxel and Blockbench Workflows Compared]] · [[Voxel Modelling Start Here]] · [[Voxel Palettes - Ramps Hue Shifting and Limits]] · [[Voxel Scale Grids and Stud Alignment]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

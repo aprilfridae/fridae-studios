@@ -36,6 +36,6 @@ API snapshot: service, inherits `Instance` (`_tools/roblox_api.json`, docs build
 [[API Renames and Deprecations 2025-2026]] · [[Avatar Context Menus Profiles and Social Surfaces]] · [[Commerce and Physical Goods]] · [[Platform Features Start Here]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

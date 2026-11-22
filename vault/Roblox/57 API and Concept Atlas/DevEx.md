@@ -56,6 +56,6 @@ DevEx is requested by a person, so group revenue reaches a person through group 
 [[Team Collaboration Start Here]] · [[Working with Contractors and Revenue Splits]]
 
 ### Root notes
-[[00 Start Here]] · [[Open Questions - Whole Vault]]
+[[00 Start Here]] · Open Questions - Whole Vault
 
 <!-- atlas:generated -->

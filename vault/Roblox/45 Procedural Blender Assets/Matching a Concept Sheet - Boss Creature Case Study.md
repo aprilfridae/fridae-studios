@@ -66,7 +66,7 @@ The pose was set only by rotating bones in armature space (rotate each pose bone
 - [ ] Every render compared side by side with the concept at the same angle, plus a silhouette render.
 - [ ] Rig names from a known skeleton; rigid where the style allows, blended only where it bends.
 
-Related: [[Posing and Silhouettes]], [[Concept Sheets]], [[Procedural Blender Assets Start Here]].
+Related: [[Posing and Silhouettes]], Concept Sheets, [[Procedural Blender Assets Start Here]].
 
 ## Nuances and edge cases
 

@@ -52,7 +52,7 @@ Multiply budget by copies for each row and compare the total with the scene budg
 - [[UGC Avatar Items and Accessories]]: UGC limits.
 - [[Low-Poly Tree Set Worked Example]]: budgets applied to a tree set.
 - [[Foliage Props and Scatter]]: the multiplier problem.
-- [[Skill - Roblox Asset Import]]: an import checklist with budgets.
+- Skill - Roblox Asset Import: an import checklist with budgets.
 
 Related concepts: [[Draw Calls]], [[Texel Density]], [[Skinning Weights]], [[Instance Count]].
 
