@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::paths::{self, PATHS};
 
 /// Settings every git the app runs starts with: no hooks, no fsmonitor program.
-pub const GIT_SAFE: [&str; 4] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+pub const GIT_SAFE: [&str; 6] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgsign=false"];
 
 pub fn git_installed() -> bool {
     paths::which("git").is_some()

@@ -166,7 +166,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "env_keys": paths::env_keys_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -410,6 +410,11 @@ fn post(path: &str, body: Value) -> Reply {
             }
             None => send_json(json!({"ok": false, "url": null})),
         },
+        "/api/env-keys" => {
+            let on = body["on"].as_bool().unwrap_or(false);
+            paths::update_config(|cfg| cfg.insert("use_env_keys".into(), json!(on)));
+            send_json(json!({"ok": true, "env_keys": paths::env_keys_on()}))
+        }
         "/api/gemini" => {
             paths::update_config(|cfg| {
                 if !body["use_api"].is_null() {

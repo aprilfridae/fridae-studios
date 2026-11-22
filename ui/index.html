@@ -892,6 +892,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <section data-s="connections">
       <h3>The AIs</h3>
       <div id="ai-list"></div>
+      <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment (off: an AI signed in with your plan is never billed to an API key set on this computer, such as ANTHROPIC_API_KEY; turn on if you sign in with a key or a company gateway)</label>
       <h3>Roblox Studio plugin</h3>
       <p class="sub" id="plug-state"></p>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove</button></div>
@@ -1053,6 +1054,7 @@ const CONTROLS = [
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
+  ["API keys on this computer", "Setup, The AIs, Use API keys from my environment. Off unless you turn it on: an AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set."],
   ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
   ["Text size", "Ctrl (Command on a Mac) and + or - makes everything bigger or smaller, and 0 resets it. It is also in Setup, under General."],
   ["Selected in Studio", "With the Studio plugin connected, the line under the message box shows what you have selected. The agent is told, so \"this\" means that."],
@@ -1713,7 +1715,7 @@ function paintLimits() {
   const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
   const keys = Object.keys(all).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
   /* the other AIs' tools do not report their limits: one line each, for the AIs this computer offers */
-  const others = AIS.filter(([id]) => !caps(id).limits).map(([id, name]) => "<h5>Plan usage limits \u00b7 " + esc(name) + '</h5><div class="u-row"><small>' + esc(name) + "\u2019s tool does not report its limits, so they cannot be shown here.</small></div>").join("");
+  const others = AIS.filter(([id]) => caps(id).limits === false).map(([id, name]) => "<h5>Plan usage limits \u00b7 " + esc(name) + '</h5><div class="u-row"><small>' + esc(name) + "\u2019s tool does not report its limits, so they cannot be shown here.</small></div>").join("");
   if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div>' + others; return; }
   const seen = Math.max(...keys.map((k) => all[k].seen || 0));
   const mins = Math.max(0, Math.round((Date.now() / 1000 - seen) / 60));
@@ -2133,6 +2135,8 @@ function leadsRun(p) {
   return !!(r && runActive(r.run) && r.run.lead === p.id);
 }
 function paintSwitch() {
+  // a mode this chat's AI cannot keep to is never left selected (a saved choice, or the chat's AI switched): Ask me
+  { const a = chatAi(agents.get(current)); if (a && runMode !== "ask" && !modeKept(a, runMode)) { runMode = "ask"; applyMode(); } }
   const why = studioWhy(), lead = leadsRun(agents.get(current)), shown = lead ? "studio" : runMode;
   $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
   const seg = $("run-mode"); seg.innerHTML = "";
@@ -3583,6 +3587,7 @@ $("upd-auto").onclick = async () => { const on = $("upd-auto").getAttribute("ari
 function paintGemini() { $("gem-state").textContent = ((status.ai || {}).installed || {}).gemini ? "Textures are generated through Antigravity on your own Google account, with nothing extra to pay. If that fails, " + (status.gemini_api ? "your API key is used next." : "you are shown the prompt to run in Gemini yourself.") : status.gemini_api ? "Textures are generated automatically with your API key. Google charges for each one." : "Textures are made through your own Gemini chat, which costs nothing extra." + (status.gemini ? " A key is saved but switched off." : "");
   $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; }
 $("gem-save").onclick = async () => { const k = $("gem-key").value.trim(); if (!k) return; await api("/api/gemini", { key: k }); $("gem-key").value = ""; refresh(); };
+$("env-keys").onchange = async (e) => { await api("/api/env-keys", { on: e.target.checked }); refresh(); };
 $("gem-api").onclick = async () => { await api("/api/gemini", { use_api: $("gem-api").getAttribute("aria-checked") !== "true" }); refresh(); };
 $("gem-clear").onclick = async () => { await api("/api/gemini", { key: "" }); refresh(); };
 /* functions, not consts: they are needed while the page is still loading */
@@ -3740,7 +3745,7 @@ $("plug-remove").onclick = async () => { await api("/api/plugin", { action: "rem
 async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintModel(); paintLimits();
-  paintNeeds(); paintSide(); paintGemini(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
+  paintNeeds(); paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys; paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}

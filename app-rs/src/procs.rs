@@ -83,6 +83,10 @@ pub fn record(owner: &str, pid: u32) {
     }
     let Some((pgid, started, command)) = describe(pid) else { return };
     let app = me();
+    // an app that cannot describe itself writes no ledger: another copy could not tell it from a crashed run
+    if app["started"].as_str().is_none_or(str::is_empty) {
+        return;
+    }
     let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let file = mine();
     let mut v = read_in(&file);
@@ -140,6 +144,9 @@ pub fn reap_orphans() -> usize {
             v => (v["app"].clone(), v["processes"].as_array().cloned().unwrap_or_default()),
         };
         let app_pid = app["pid"].as_u64().map(|p| p as u32).unwrap_or(0);
+        if app["started"].as_str().is_none_or(str::is_empty) {
+            continue; // not told apart from a running copy: left alone
+        }
         let this_run = app_pid == std::process::id() && app["started"] == here["started"];
         if this_run || (app_pid != std::process::id() && same(&app, describe(app_pid).as_ref())) {
             continue; // this run's own, or a copy of the app still running: that app's to end
@@ -149,8 +156,8 @@ pub fn reap_orphans() -> usize {
             if !same(e, describe(pid).as_ref()) {
                 continue; // gone, or its pid is someone else's now
             }
-            // its own group when it was started in one (with the groups of what runs below it: a tool's shell may
-            // be in one of its own), else the process alone
+            // its own group (with the groups of what runs below it: a tool's shell may be in one of its own). Every
+            // process the app records is started in a group of its own; one that is not is ended alone
             let pgid = e["pgid"].as_u64().map(|g| g as u32).unwrap_or(0);
             if pgid == pid {
                 for g in tree_groups(pid) {
@@ -159,7 +166,7 @@ pub fn reap_orphans() -> usize {
                     }
                 }
             } else {
-                groups.push(pid);
+                let _ = std::process::Command::new("kill").arg(pid.to_string()).stderr(std::process::Stdio::null()).status();
             }
         }
         let _ = fs::remove_file(&file);

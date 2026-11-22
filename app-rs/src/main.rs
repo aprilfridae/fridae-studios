@@ -146,6 +146,7 @@ fn main() {
     // what a crash of the app left running (an AI's processes, OpenCode's server and its helper) ends now, before
     // any turn can start (see procs)
     procs::reap_orphans();
+    paths::note_allowed(); // the allowed list as it is, for the check after each turn (paths::guard_allowed)
     opencode::reap();
     let testing = env::var("RBXKIT_SELFTEST").ok().filter(|v| !v.is_empty());
     agents::new_agent(None);

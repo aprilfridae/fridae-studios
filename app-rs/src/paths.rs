@@ -236,8 +236,9 @@ pub fn leader_exited(pid: u32, limit: std::time::Duration) -> bool {
 }
 
 /// A turn with no output at all for this long is ended (not a Lead waiting on its experts, nor while a texture is
-/// being made: those wait on purpose).
-pub const STALL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// being made: those wait on purpose). Longer than a tool server call may take (`MCP_TOOL_TIMEOUT`, 15 minutes), so a
+/// tool that hangs returns a time-out the AI can act on instead of ending the turn.
+pub const STALL: std::time::Duration = std::time::Duration::from_secs(20 * 60);
 
 /// What the chat is told when a turn was ended for that.
 pub fn stall_message() -> String {
@@ -314,6 +315,58 @@ pub fn drain_tail(mut r: impl std::io::Read, cap: usize) -> String {
         }
     }
     String::from_utf8_lossy(&kept.into_iter().collect::<Vec<u8>>()).trim().to_string()
+}
+
+/// The longest line of an AI's output that is kept (a tool result carrying a big picture can be one line).
+pub const LINE_CAP: usize = 64 * 1024 * 1024;
+
+/// The lines of `r`, each at most `cap` bytes: a longer one is read to its end and dropped, and comes as None (so the
+/// chat can say so) instead of being held whole in memory. Ends at the end of `r` or on a read error.
+pub struct CappedLines<R: std::io::BufRead> {
+    r: R,
+    cap: usize,
+}
+
+impl<R: std::io::BufRead> CappedLines<R> {
+    pub fn new(r: R, cap: usize) -> Self {
+        CappedLines { r, cap }
+    }
+}
+
+impl<R: std::io::BufRead> Iterator for CappedLines<R> {
+    type Item = Option<Vec<u8>>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut line = Vec::new();
+        let mut over = false;
+        let mut any = false;
+        loop {
+            let buf = match self.r.fill_buf() {
+                Ok(b) => b,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => return None,
+            };
+            if buf.is_empty() {
+                return any.then_some(if over { None } else { Some(line) });
+            }
+            any = true;
+            let (take, done) = match buf.iter().position(|&b| b == b'\n') {
+                Some(i) => (i, true),
+                None => (buf.len(), false),
+            };
+            if !over {
+                if line.len() + take > self.cap {
+                    over = true;
+                    line = Vec::new();
+                } else {
+                    line.extend_from_slice(&buf[..take]);
+                }
+            }
+            self.r.consume(if done { take + 1 } else { take });
+            if done {
+                return Some(if over { None } else { Some(line) });
+            }
+        }
+    }
 }
 
 /// Variables of a Claude Code that runs the app (while developing it): a Claude child given them would think it runs
@@ -450,10 +503,21 @@ pub fn load_config() -> Map<String, Value> {
 /// renamed over it), so a reader never sees half a file and two changes never undo each other.
 pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R {
     let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    keep_unreadable(&config_file());
     let mut cfg = load_config();
     let out = change(&mut cfg);
     write_config(&config_file(), &cfg);
     out
+}
+
+/// A settings file that exists but does not read as settings (a hand edit with a stray comma, an empty file after a
+/// crash) is kept beside it as `config.json.bad-<time>` before a change writes a fresh one, so nothing in it is lost.
+fn keep_unreadable(path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else { return };
+    if serde_json::from_str::<Value>(&text).ok().is_some_and(|v| v.is_object()) {
+        return;
+    }
+    let _ = fs::copy(path, path.with_file_name(format!("config.json.bad-{}", stamp())));
 }
 
 fn write_config(path: &Path, cfg: &Map<String, Value>) {
@@ -461,9 +525,26 @@ fn write_config(path: &Path, cfg: &Map<String, Value>) {
     let _ = fs::create_dir_all(dir);
     if let Ok(text) = serde_json::to_string_pretty(cfg) {
         let tmp = dir.join(format!(".config.json.{}-{}.tmp", std::process::id(), stamp()));
-        if fs::write(&tmp, text).is_ok() && fs::rename(&tmp, path).is_err() {
+        // on disk before it replaces the old file (a power cut just after leaves the old or the new, never an empty one)
+        let written = fs::File::create(&tmp).and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(text.as_bytes())?;
+            f.sync_all()
+        });
+        if written.is_err() {
             let _ = fs::remove_file(&tmp);
+            return;
         }
+        // Windows refuses a rename over a file another program has open for a moment (a virus scanner): tried again
+        for attempt in 0..5 {
+            if fs::rename(&tmp, path).is_ok() {
+                return;
+            }
+            if attempt < 4 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        let _ = fs::remove_file(&tmp);
     }
 }
 
@@ -625,6 +706,31 @@ pub fn allowed_commands() -> Vec<String> {
     load_config().get("allowed_commands").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
 }
 
+/// The allowed list as the app last saw or wrote it (Setup, the blocked card): a change to the file made otherwise
+/// while the app runs (an AI's file tool past its rules: Antigravity's deny rule compares case, so `CONFIG.JSON` gets
+/// past `write_file(.../config.json)`; measured) is put back after the turn (`guard_allowed`).
+static KNOWN_ALLOWED: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+
+/// Notes the allowed list as it is now (at start).
+pub fn note_allowed() {
+    *KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()) = Some(allowed_commands());
+}
+
+/// After a turn: when the allowed list in the settings file is not the one the app knows, the known one is written
+/// back. True when it was.
+pub fn guard_allowed() -> bool {
+    let known = KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let Some(known) = known else { return false };
+    if allowed_commands() == known {
+        return false;
+    }
+    update_config(|cfg| cfg.insert("allowed_commands".into(), serde_json::json!(known)));
+    true
+}
+
+/// The chat's line when that happened.
+pub const ALLOWED_PUT_BACK: &str = "The list of programs agents may run was changed during this turn by something other than Setup, so Fridae put it back as it was.";
+
 /// Held by the tests that change the allowed list, so they never run into each other (they share one settings file).
 #[cfg(test)]
 pub static ALLOWED_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -641,6 +747,7 @@ pub fn set_allowed(names: &[String], allow: bool) -> Vec<String> {
         }
         list.sort();
         cfg.insert("allowed_commands".into(), serde_json::json!(list));
+        *KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()) = Some(list.clone());
         list
     })
 }
@@ -899,6 +1006,15 @@ mod tests {
         // ps is refused even when the user allowed it
         assert!(!command_allowed("ps -ax", &["ps".to_string()]));
         assert_eq!(command_programs("git log 2>&1/../../x.txt"), ["git"]);
+        // a list changed in the file behind the app's back is put back after the turn
+        {
+            let _held = ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let before = set_allowed(&["zzprobe".to_string()], false);
+            update_config(|c| c.insert("allowed_commands".into(), serde_json::json!(["sh"])));
+            assert!(guard_allowed());
+            assert_eq!(allowed_commands(), before);
+            assert!(!guard_allowed());
+        }
         assert_eq!(command_programs("git status && ./rm x; ls | wc"), ["git", "rm", "ls", "wc"]);
         for ok in ["ls 2>/dev/null", "ls > /dev/null", "ls 2> /dev/null && git status", "git commit -m \"a (b) {c} ~d *\"", "git log --format=%H:%an,x@y+z", "git log -- 'a ~ * ( ) ! \"'", "ls 2"] {
             assert!(command_allowed(ok, &allowed), "{ok}");
@@ -906,6 +1022,31 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn an_over_long_output_line_is_dropped_not_held() {
+        let text = b"short\n0123456789abcdef\nlast";
+        let got: Vec<Option<Vec<u8>>> = CappedLines::new(std::io::BufReader::with_capacity(4, &text[..]), 8).collect();
+        assert_eq!(got, vec![Some(b"short".to_vec()), None, Some(b"last".to_vec())]);
+        let got: Vec<Option<Vec<u8>>> = CappedLines::new(&b"a\n\nb\n"[..], 8).collect();
+        assert_eq!(got, vec![Some(b"a".to_vec()), Some(vec![]), Some(b"b".to_vec())]);
+    }
+
+    #[test]
+    fn an_unreadable_settings_file_is_kept_before_it_is_replaced() {
+        let dir = test_dir("bad-config");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        fs::write(&f, "{\"allowed_commands\": [\"git\"],}").unwrap();
+        keep_unreadable(&f);
+        let kept: Vec<_> = fs::read_dir(&dir).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("config.json.bad-")).collect();
+        assert_eq!(kept.len(), 1);
+        assert!(fs::read_to_string(kept[0].path()).unwrap().contains("git"));
+        write_config(&f, &serde_json::from_str("{\"a\": 1}").unwrap());
+        keep_unreadable(&f); // readable now: nothing more kept
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+    }
 
     #[test]
     fn old_test_folders_are_known_by_name_only() {

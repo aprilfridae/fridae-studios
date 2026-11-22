@@ -24,7 +24,7 @@ fn replay(ai: &str, case: &str, resume: Option<&str>, exit: (bool, i32)) -> (Vec
         st.session = resume.map(str::to_string);
         st.running = true;
     }
-    let last = Mutex::new((std::time::Instant::now(), false));
+    let last = Mutex::new((std::time::Instant::now(), false, false));
     let t = a.consume(&out[..], ai, &last, || {});
     let stopped = a.turn_over();
     a.after_turn(ai, t, &err, Some(exit), stopped);
@@ -143,4 +143,22 @@ fn every_fixture_is_scrubbed() {
         }
     }
     assert!(n >= 20);
+}
+
+#[test]
+fn full_auto_deny_rules_as_claude_and_antigravity_kept_them() {
+    // Claude Code in bypassPermissions: `Edit(//.../a/config.json)` refused config.json and CONFIG.JSON (it ignores
+    // case), a `[cC]...` rule refused b/CONFIG.JSON, another file was written; the turn reads as an ordinary reply
+    let (ev, _) = replay("claude", "full-auto-deny-rules", None, (true, 0));
+    assert_eq!(said(&ev, "tool").len(), 4, "{:?}", kinds(&ev));
+    let text = said(&ev, "text").join("\n");
+    assert_eq!(text.matches("refused").count(), 3, "{text}");
+    assert!(text.contains("other.txt: ok"), "{text}");
+    assert!(!kinds(&ev).contains(&"error"));
+    // Antigravity with --dangerously-skip-permissions: `write_file(.../a/config.json)` refused config.json but not
+    // CONFIG.JSON (it compares case: the app puts the allowed list back after a turn, paths::guard_allowed);
+    // `write_file(<folder>)` refused a file inside it
+    let (ev, _) = replay("gemini", "full-auto-deny-rules", None, (true, 0));
+    let text = said(&ev, "text").join("\n");
+    assert!(text.contains("a/config.json refused") && text.contains("CONFIG.JSON ok") && text.contains("c/x.txt refused") && text.contains("other.txt ok"), "{text}");
 }

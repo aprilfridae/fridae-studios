@@ -248,8 +248,10 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     (`paths::drain_tail`, `TAIL`).
   - Stop is confirmed: the turn's tree gets SIGTERM (every group in it), up to 15 s (`paths::STOP_WAIT`) for its
     output to end, then SIGKILL, and the chat gets one line saying it had to be ended (`paths::killed_message`)
-    before "Stopped.". What its tools left in groups of their own after it ended in time gets 2 s more, then
-    SIGKILL. A gate (`TurnProc::reaped`) keeps the leader from being reaped while its group is signalled, so a group
+    before "Stopped.". What is left after it ended in time, in its own group or in groups its tools were put in,
+    gets 2 s more, then SIGKILL. At every end (Stop or not), once the output has ended, whatever is left in the
+    turn's own group is ended for every AI (SIGTERM, SIGKILL after 2 s), and the error output is waited for only 4 s
+    more, so a child that ignores SIGTERM and holds it can neither outlive the turn nor keep the chat busy (tested). A gate (`TurnProc::reaped`) keeps the leader from being reaped while its group is signalled, so a group
     ID never names someone else's. Measured with a real Cursor turn in `sleep 90`: Stop ended it and the `sleep` in
     0.2 s (before this, signalling the turn's group alone left Cursor's shell running until the command ended).
     OpenCode's Stop interrupts the session, waits the same 15 s, then ends the server.
@@ -257,14 +259,21 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     which ends with `done`: the page settles the turn's open steps on it, and a chat reopened without one is settled
     at once (`open_chat`). Quitting ends every turn's tree, then waits up to 3 s for the chats to settle before they
     are saved.
-  - Stall guard: a turn with no output line for 15 minutes (`paths::STALL`) is ended with a plain message
-    (`stall_message`); not while its last line started one of the app's tools that wait on purpose (`rbx_team`,
-    `rbx_texture`, `rbx_generate_texture`), while a texture is being made, or while it is a Lead with experts working
-    (`watch_stall`, checked every 5 s). OpenCode applies the same constant to its events.
+  - Stall guard: a turn with no output line for 20 minutes (`paths::STALL`, longer than a tool server call may take,
+    `MCP_TOOL_TIMEOUT` 15 minutes, so a hung tool returns a time-out the AI can act on) is ended with a plain message
+    (`stall_message`); 60 minutes when its last line started a tool (`STALL_WORKING`: a long build); never while its
+    last line started one of the app's tools that wait on purpose (`rbx_team`, `rbx_texture`,
+    `rbx_generate_texture`), while a texture is being made, or while it is a Lead with experts working, and the quiet
+    clock starts again when such a wait ends (`watch_stall`, checked every 5 s; it decides under the same gate the
+    turn's end is noted under, so a turn that just ended is never called stalled, and a stopped turn says
+    "Stopped."). OpenCode applies the same constants to its events.
   - Environment (`paths::child_env`): every AI's process (turns and model listings) goes without a parent Claude
     Code's `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`,
     `CLAUDE_PID` and `CLAUDE_AGENT_SDK_VERSION`, and without the provider keys that would bill an API account instead
-    of the plan the user signed in with (`plan_keys`): Claude Code `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+    of the plan the user signed in with (`plan_keys`), unless the user turned on the Setup switch "Use API keys from
+    my environment" (`use_env_keys`, off by default so Fridae never spends money the user did not agree to; on, the
+    keys are left alone; a failed sign-in while such a key is set names the switch, `agents::key_note`; the six Claude
+    session variables go either way): Claude Code `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
     (`CLAUDE_CODE_OAUTH_TOKEN`, a plan's own token, stays); Cursor `CURSOR_API_KEY`; Codex `OPENAI_API_KEY`,
     `CODEX_API_KEY`; OpenCode's server `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`,
     `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`,
@@ -469,7 +478,7 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   `STOP_WAIT`, then the server is ended, and the chat says "The connection to OpenCode was lost and could not be
   restored" (measured by stopping the server with SIGSTOP mid-command: about a minute, server and command gone). A
   permission answer that does not reach OpenCode is tried twice more, then the turn is ended the same way, so a
-  request is never left open. The general stall guard (`paths::STALL`, 15 minutes without any event, not while a
+  request is never left open. The general stall guard (`paths::STALL`, 20 minutes without any event, not while a
   Lead waits on experts or a texture is made) ends a turn that keeps sending only heartbeats. After the turn the
   chat's tool servers are removed again (`DELETE /api/experimental/mcp/<name>`).
 - **Models** come from `opencode models` run with the app's folders (so Fridae's sign-in decides them), cached, and
@@ -561,7 +570,7 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   chat whose turn the app no longer follows still interrupts its saved session. Stop and a given-up turn end only the
   server their turn ran on (`stop_server_of`, by its password), never one another chat started since.
 - **Ends of a turn**: the chat's tool servers are removed from the folder however the turn ended, early ones too
-  (refused instructions, Stop before the message, a refused prompt). A turn that sends nothing for 15 minutes is
+  (refused instructions, Stop before the message, a refused prompt). A turn that sends nothing for 20 minutes is
   ended (`paths::STALL`), 60 while a tool call is open (`STALL_WORKING`: a long build may send no event; not
   measured whether OpenCode sends any while a command runs), never while one of the app's tools waits on purpose; the
   check runs before a reconnect, so a server that only goes silent and comes back is ended too. After the stream is
@@ -718,9 +727,18 @@ is an example the user can paste into their own House rules.
   `paths::update_config`: read, change and write under one lock, the file replaced whole (a temporary file renamed
   over it), so a reader never sees half a file and two changes never undo each other. `rbx.py` (`rbx doctor`)
   replaces it the same way, but takes no lock with the app (it writes only the Blender path, rarely). Every AI's
-  rules deny agents writing it: Claude Code `--disallowedTools Edit(//<path>)` (held in bypass mode too), Antigravity
-  `permissions.deny: write_file(<path>)`, Cursor's and OpenCode's deny rules. Measured for Cursor and OpenCode; the
-  Claude and Antigravity rules were not tried in a real turn. A shell command in Full auto can still write it on
+  rules deny agents writing it: Claude Code `--disallowedTools Edit(//<path>)` (on Windows by its documented POSIX
+  form, `C:\Users\a` as `//c/Users/a`, `agents::claude_edit_rule`), Antigravity `permissions.deny:
+  write_file(<path>)`, Cursor's and OpenCode's deny rules. Measured for all four. Claude Code (haiku, bypass mode, a
+  folder with a space; recorded as `tests/fixtures/claude/full-auto-deny-rules.ndjson`): `config.json` and
+  `CONFIG.JSON` refused under a rule for `config.json` (its matching ignores case), a `[cC]...` rule held, another
+  file was written. Antigravity (gemini-3.8-flash-low, `--dangerously-skip-permissions`, recorded as
+  `tests/fixtures/gemini/full-auto-deny-rules.ndjson`): `config.json` and a file inside a denied folder refused, but
+  `CONFIG.JSON` was written: its rule compares case and has no documented any-case form. So after every turn of any
+  AI the app compares the allowed-programs list in the file with the one it knows (Setup, the card) and puts its own
+  back, saying so in the chat (`paths::guard_allowed`); the rest of a case-variant write to the settings by
+  Antigravity is not caught. Settings writes are synced before the rename, retried on Windows, and a file that does not
+  read as settings is kept as `config.json.bad-<time>` before a change replaces it. A shell command in Full auto can still write it on
   every AI but Cursor's sandbox (and there too when running from source). The same deny now covers all of the app's
   own files (`paths::app_protected`: `config.json`, the process ledger, usage and limits, saved chats, the expert,
   stage and texture request and result folders, the tool-server configs in `work/agent-tools`, the undo copies),
@@ -731,11 +749,14 @@ is an example the user can paste into their own House rules.
   (2026.11.22, Ask me, `git` allowed): `./git status`, `bin/git status` and `FOO=1 ./git status` were refused, but
   `git --version > <any file>` ran, also outside the workspace: Cursor's allow rule does not look at redirections.
   Not changed (Cursor offers no rule for it); noted as a gap.
-- **The app's git checkpoints** run with `-c core.hooksPath=/dev/null -c core.fsmonitor=false`
-  (`projects::GIT_SAFE`, `rbxproject.py`), so hooks or an fsmonitor program an agent wrote into the game's `.git` are
-  never run by the app (measured: a pre-commit hook ran without these settings, not with them). Not closed: a game's
-  `.gitattributes` filter driver needs a `filter.<name>.clean` command in git config, which an agent could also
-  write into `.git/config`; the app's checkpoints would run it.
+- **The app's git checkpoints** run with `-c core.hooksPath=/dev/null -c core.fsmonitor=false -c
+  commit.gpgsign=false` (`projects::GIT_SAFE`, `rbxproject.py`), so hooks, an fsmonitor program or a `gpg.program`
+  an agent wrote into the game's `.git` are never run by the app (measured: a pre-commit hook ran without these
+  settings, not with them). Not closed: a game's `.gitattributes` filter driver needs a `filter.<name>.clean` command
+  in git config, which an agent could also write into `.git/config`; the app's checkpoints would run it. Push (only
+  when the user presses it) runs `core.sshCommand` and `credential.helper` from the game's config: not overridden,
+  since that would also turn off the user's own helper (the keychain). Ask me keeps OpenCode out of `.git`; Claude
+  Code protects `.git` itself.
 
 ## Credits
 

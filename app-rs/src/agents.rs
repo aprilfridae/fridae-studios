@@ -4,7 +4,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufReader, Write},
     process::{Command, Stdio},
     sync::{
         Arc, Condvar, LazyLock, Mutex,
@@ -739,7 +739,12 @@ impl TurnProc {
     /// The process groups of the turn's tree (`procs::tree_groups`): its own, unless its leader has been reaped, and
     /// those its tools' shells were put in. Call with the gate held.
     fn groups(&self, reaped: bool) -> Vec<u32> {
-        crate::procs::tree_groups(self.pid).into_iter().filter(|&g| g != self.pid || !reaped).collect()
+        // once the leader is reaped its pid may belong to another process: nothing is looked up from it then (its
+        // children have new parents anyway)
+        if reaped {
+            return Vec::new();
+        }
+        crate::procs::tree_groups(self.pid)
     }
 
     /// Unix: sends `sig` to each of `groups` (the turn's own only while its leader is unreaped). True when any had
@@ -767,9 +772,9 @@ impl TurnProc {
     }
 
     /// Stop, confirmed: the turn is asked to end (SIGTERM to its tree's groups), given STOP_WAIT to end by itself, and
-    /// killed if it has not (noted, so the chat says so). What its tools left running in groups of their own after it
-    /// ended in time gets STOP_GRACE more, then SIGKILL. Blocks: call it off the page's thread. Windows: taskkill /T at
-    /// once, as before.
+    /// killed if it has not (noted, so the chat says so). What is left after its output ended in time, in its own group
+    /// (while the leader is unreaped) or in groups its tools' shells were put in, gets STOP_GRACE more, then SIGKILL.
+    /// Blocks: call it off the page's thread. Windows: taskkill /T at once, as before.
     fn stop(&self) {
         if cfg!(windows) {
             self.end();
@@ -788,12 +793,11 @@ impl TurnProc {
             }
             return;
         }
-        let others: Vec<u32> = groups.into_iter().filter(|&g| g != self.pid).collect();
         let until = std::time::Instant::now() + paths::STOP_GRACE;
-        while self.signal("-0", &others) && std::time::Instant::now() < until {
+        while self.signal("-0", &groups) && std::time::Instant::now() < until {
             thread::sleep(Duration::from_millis(100));
         }
-        self.signal("-KILL", &others);
+        self.signal("-KILL", &groups);
     }
 
     /// The leader is about to be reaped: nothing signals its group from now on.
@@ -803,22 +807,37 @@ impl TurnProc {
 }
 
 /// While a turn runs: every 5 seconds, a turn that sent nothing for STALL (and is not waiting on purpose: on its
-/// experts, a texture, or one of the app's tools that waits long) is ended. `last` holds when the last line came and
-/// whether it started such a tool.
-fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::Instant, bool)>>) {
+/// experts, a texture, or one of the app's tools that waits long) is ended; STALL_WORKING when its last line started a
+/// tool. `last` holds when the last line came, whether it started such a long tool, and whether it started any tool.
+fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::Instant, bool, bool)>>) {
     while !tp.done.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_secs(5));
-        let (quiet, long_tool) = {
-            let l = last.lock().unwrap_or_else(|e| e.into_inner());
-            (l.0.elapsed(), l.1)
-        };
-        let waiting = long_tool || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
-        if paths::stalled(quiet, waiting, false) && !tp.done.load(Ordering::SeqCst) {
+        let mut l = last.lock().unwrap_or_else(|e| e.into_inner());
+        let waiting = l.1 || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
+        if waiting {
+            // the quiet clock starts again when a wait on purpose ends, not when it began
+            l.0 = std::time::Instant::now();
+            continue;
+        }
+        let (quiet, tool_open) = (l.0.elapsed(), l.2);
+        drop(l);
+        if paths::stalled(quiet, false, tool_open) {
+            // decided against the turn's own end under one lock: a turn that ended meanwhile is not called stalled
+            let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            if tp.done.load(Ordering::SeqCst) {
+                return;
+            }
             tp.stalled.store(true, Ordering::SeqCst);
+            drop(_gate);
             tp.end();
             return;
         }
     }
+}
+
+/// Whether a line of Claude Code's output starts any tool (a long build may then send nothing for a while).
+fn claude_starts_tool(e: &Value) -> bool {
+    e["type"] == "assistant" && e["message"]["content"].as_array().into_iter().flatten().any(|b| b["type"] == "tool_use")
 }
 
 /// Whether a line of Claude Code's output starts one of the app's tools that wait long on purpose.
@@ -844,6 +863,20 @@ struct TurnEnd {
     result_said: bool,
 }
 
+/// The line for a failed sign-in when a provider key is set in the app's environment but kept from the AI (the Setup
+/// switch "Use API keys from my environment" is off). None when the failure is not about signing in, or no such key.
+fn key_note(kind: &str, said: &str, present: &[&str], keys_on: bool) -> Option<String> {
+    let s = said.to_lowercase();
+    let sign_in = ["not signed in", "not logged in", "/login", "log in", "login", "api key", "unauthorized", "authentication", "401", "invalid x-api-key"].iter().any(|w| s.contains(w));
+    (!keys_on && sign_in && !present.is_empty()).then(|| {
+        format!(
+            "{} is set on this computer, but Fridae keeps it from {} so you are never billed to it by surprise. If you sign in with that key or a company gateway, turn on Setup, The AIs, \"Use API keys from my environment\".",
+            present.join(", "),
+            ai_label(kind)
+        )
+    })
+}
+
 /// What a refused command becomes in the chat: the blocked card for the programs the user has not allowed, and a
 /// plain line when every program in it is allowed already (it was refused for its form, such as `./git`: allowing
 /// cannot help).
@@ -852,6 +885,25 @@ fn blocked_or_note(commands: Vec<Value>, allowed: &[String]) -> (Vec<Value>, Opt
     let card: Vec<Value> = commands.into_iter().filter(|c| !c["name"].as_str().is_some_and(|n| allowed.iter().any(|a| a == n))).collect();
     let note = (card.len() < all).then_some(FORM_REFUSED);
     (card, note)
+}
+
+/// The programs Claude Code refused in a turn (its result's `permission_denials`), for the card: every program of a
+/// refused command (each part of `git status && rm -rf build`) the user has not allowed; a command whose programs are
+/// all allowed is listed by its first, so the plain line says it was its form.
+fn claude_blocked(denials: &Value, allowed: &[String]) -> Vec<Value> {
+    let mut blocked: Vec<Value> = Vec::new();
+    for d in denials.as_array().into_iter().flatten() {
+        let Some(cmd) = d["tool_input"]["command"].as_str() else { continue };
+        let programs = paths::command_programs(cmd);
+        let missing: Vec<String> = programs.iter().filter(|p| !allowed.contains(p)).cloned().collect();
+        let names = if missing.is_empty() { programs.into_iter().take(1).collect() } else { missing };
+        for name in names {
+            if !blocked.iter().any(|b| b["name"] == name) {
+                blocked.push(json!({"name": name, "command": cmd.chars().take(200).collect::<String>()}));
+            }
+        }
+    }
+    blocked
 }
 
 /// The line for a command refused although its program is allowed.
@@ -1898,7 +1950,7 @@ impl Agent {
         // the error output is always read to its end (a full pipe would block the AI), and only its tail is kept
         let stderr = child.stderr.take();
         let err_reader = thread::spawn(move || stderr.map(|e| paths::drain_tail(e, paths::TAIL)).unwrap_or_default());
-        let last = Arc::new(Mutex::new((std::time::Instant::now(), false)));
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, false)));
         {
             let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
             thread::spawn(move || watch_stall(me, tp, last));
@@ -1915,17 +1967,25 @@ impl Agent {
 
     /// A command-line AI's output, line by line, through its parser and into the chat (the real transport is the
     /// child's stdout; the replay tests hand it recorded output instead).
-    fn consume(self: &Arc<Self>, out: impl std::io::Read, kind: &str, last: &Mutex<(std::time::Instant, bool)>, mut on_first: impl FnMut()) -> TurnEnd {
+    fn consume(self: &Arc<Self>, out: impl std::io::Read, kind: &str, last: &Mutex<(std::time::Instant, bool, bool)>, mut on_first: impl FnMut()) -> TurnEnd {
         let mut t = TurnEnd::default();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         let mut first = true;
         // the conversation this turn asked to go on with: an AI that reports another one started afresh
         let asked = self.st.lock().unwrap().session.clone();
         {
-            for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
+            let mut cut_said = false;
+            for raw in paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP) {
                 if std::mem::take(&mut first) {
                     on_first();
                 }
+                let Some(raw) = raw else {
+                    if !cut_said {
+                        self.put("error", json!({"text": "One step's output was too large to show (over 64 MB), so it was left out."}));
+                        cut_said = true;
+                    }
+                    continue;
+                };
                 let Ok(e) = serde_json::from_slice::<Value>(&raw) else { continue };
                 if kind != "claude" {
                     let outs = match kind {
@@ -1933,13 +1993,13 @@ impl Agent {
                         "cursor" => cursor_turn.feed(&e),
                         _ => chatgpt.feed(&e),
                     };
-                    *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), starts_long_tool(&outs));
+                    *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), starts_long_tool(&outs), outs.iter().any(|o| matches!(o, Out::Tool(_) | Out::ToolArgs(..))));
                     for out in outs {
                         self.take(out, &mut t);
                     }
                     continue;
                 }
-                *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e));
+                *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e), claude_starts_tool(&e));
                 if let Some(s) = e["session_id"].as_str().filter(|s| !s.is_empty()) {
                     got_session(&mut self.st.lock().unwrap(), s.to_string());
                 }
@@ -2007,14 +2067,8 @@ impl Agent {
                         t.got_result = true;
                         self.used_in(&usage::Turn::from_claude_session(&e), e["session_id"].as_str());
                         // commands the agent was not allowed to run: the page offers to allow each program
-                        let mut blocked: Vec<Value> = Vec::new();
-                        for d in e["permission_denials"].as_array().into_iter().flatten() {
-                            let Some(cmd) = d["tool_input"]["command"].as_str() else { continue };
-                            if let Some(name) = paths::program_name(cmd).filter(|n| !blocked.iter().any(|b| b["name"] == *n)) {
-                                blocked.push(json!({"name": name, "command": cmd.chars().take(200).collect::<String>()}));
-                            }
-                        }
-                        let (blocked, note) = blocked_or_note(blocked, &paths::allowed_commands());
+                        let allowed = paths::allowed_commands();
+                        let (blocked, note) = blocked_or_note(claude_blocked(&e["permission_denials"], &allowed), &allowed);
                         if !blocked.is_empty() {
                             self.put("blocked", json!({"commands": blocked}));
                         }
@@ -2040,8 +2094,10 @@ impl Agent {
             }
         }
         let now = self.st.lock().unwrap().session.clone();
+        // only where another id is known to mean a new conversation (Antigravity: measured, it starts one silently
+        // for an id it does not have); a Claude Code that gave a fork a new id would otherwise be told off wrongly
         if let (Some(a), Some(n)) = (&asked, &now) {
-            if a != n {
+            if a != n && kind == "gemini" {
                 self.put("error", json!({"text": format!("{} could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.", ai_label(kind))}));
             }
         }
@@ -2051,20 +2107,32 @@ impl Agent {
     /// The end of a command-line AI's turn, once its output has ended: its error output, Cursor's helpers, the leader
     /// reaped and forgotten, then `after_turn`.
     fn finish_turn(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>, t: TurnEnd, err_reader: thread::JoinHandle<String>) {
-        tp.done.store(true, Ordering::SeqCst);
-        let err = err_reader.join().unwrap_or_default();
-        // Cursor leaves a helper of its own running after the turn (its "worker-server", with a language server), in the
-        // turn's process group: it is ended now, before the leader is reaped (so the group's ID cannot have been reused),
-        // and without waiting for it, so nothing outlives the turn or the app and the turn is not held up
-        if kind == "cursor" {
-            // the leader may still be saving the chat after its output closed: it gets a few seconds to exit first
-            paths::leader_exited(child.id(), LEADER_GRACE);
-            paths::end_group_soon(child.id());
+        {
+            // under the gate the stall guard decides under, so a turn that ends now is never called stalled
+            let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            tp.done.store(true, Ordering::SeqCst);
         }
+        // whatever is left in the turn's own process group once its output has ended (Cursor's "worker-server" with a
+        // language server, a build tool, a script that ignores SIGTERM) is ended now, for every AI: SIGTERM, then
+        // SIGKILL after STOP_GRACE, before the leader is reaped (so the group's ID cannot have been reused), without
+        // waiting for it. The leader may still be saving the chat after its output closed: it gets a few seconds to
+        // exit by itself first.
+        paths::leader_exited(child.id(), LEADER_GRACE);
+        paths::end_group_soon(child.id());
+        // the error output, waited for only so long: a process outside the group that still holds it never keeps the
+        // turn busy (its reader is left to finish by itself)
+        let until = std::time::Instant::now() + paths::STOP_GRACE + Duration::from_secs(2);
+        while !err_reader.is_finished() && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(50));
+        }
+        let err = if err_reader.is_finished() { err_reader.join().unwrap_or_default() } else { String::new() };
         tp.reaping();
         let status = child.wait().ok();
         crate::procs::forget(child.id());
         let stopped = self.turn_over();
+        if paths::guard_allowed() {
+            self.put("error", json!({"text": paths::ALLOWED_PUT_BACK}));
+        }
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
@@ -2142,6 +2210,9 @@ impl Agent {
         let mut t = TurnEnd::default();
         let ended = opencode::run(&spec, |out| self.take(out, &mut t));
         let stopped = self.turn_over();
+        if paths::guard_allowed() {
+            self.put("error", json!({"text": paths::ALLOWED_PUT_BACK}));
+        }
         if ended.killed {
             // after Stop: it did not stop in time; otherwise the turn already said why OpenCode was ended
             let text = if stopped {
@@ -2160,7 +2231,7 @@ impl Agent {
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
         let TurnEnd { got_result, result_error, result_text, result_said } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
-        if err == STALLED {
+        if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
         } else if (!got_result || result_error) && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
@@ -2180,6 +2251,12 @@ impl Agent {
             let code = exit.map(|(_, c)| c).unwrap_or(-1);
             let plain = if result_error { format!("The agent stopped with an error ({result_text}).") } else { format!("The agent exited unexpectedly (code {code}).") };
             self.put("error", json!({"text": if tail.is_empty() { plain } else { tail }}));
+        }
+        // signed out while a key the app keeps from the AI is set on this computer: say which switch lets it through
+        if !stopped && (!got_result || result_error) {
+            if let Some(note) = key_note(kind, &format!("{err}\n{result_text}"), &paths::env_keys_present(kind), paths::env_keys_on()) {
+                self.put("error", json!({"text": note}));
+            }
         }
         team::finished(self, stopped);
         research::finished(self);
@@ -2670,8 +2747,16 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
     if !settled {
         BUS.put("done", json!({"agent": agent.id})); // it was closed mid-reply: settle the view
     }
-    // an idle fresh chat that was only a placeholder makes way for the reopened one
-    let placeholders: Vec<Arc<Agent>> = agents().into_iter().filter(|o| o.id != agent.id && o.st.lock().unwrap().log.is_empty() && !o.busy()).collect();
+    // an idle fresh chat that was only a placeholder makes way for the reopened one: never a chat the app started with
+    // a name (a studio run's Lead or a helper that has not said anything yet: removing it here, bypassing
+    // remove_agent, left its experts open; this was the race behind a flaky test)
+    let placeholders: Vec<Arc<Agent>> = agents()
+        .into_iter()
+        .filter(|o| o.id != agent.id && !o.busy() && {
+            let st = o.st.lock().unwrap();
+            st.log.is_empty() && !st.named && !is_helper(&st)
+        })
+        .collect();
     for other in placeholders {
         AGENTS.lock().unwrap().retain(|a| a.id != other.id);
         BUS.put("agent_removed", json!({"agent": other.id}));
@@ -2879,7 +2964,22 @@ pub fn test_servers(no_studio: bool) -> Value {
 /// Claude Code's deny rules for the app's own files (`paths::app_protected`): `Edit(//<path>)`, with `/**` for a
 /// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool).
 fn claude_denied() -> Vec<String> {
-    paths::app_protected().into_iter().map(|(p, dir)| format!("Edit(/{}{})", p.display(), if dir { "/**" } else { "" })).collect()
+    paths::app_protected().into_iter().map(|(p, dir)| claude_edit_rule(&p.display().to_string(), dir, cfg!(windows))).collect()
+}
+
+/// Claude Code's deny rule for an absolute path, by its documented syntax (code.claude.com/docs/en/permissions, "Read
+/// and Edit"): gitignore patterns where `//` starts an absolute path; on Windows paths are matched in POSIX form, so
+/// `C:\Users\a` is `//c/Users/a`. A folder gets `/**`. (Matching ignores case: measured, Claude Code in bypass mode
+/// refused `CONFIG.JSON` under a rule for `config.json`, in a folder with a space.)
+fn claude_edit_rule(path: &str, dir: bool, windows: bool) -> String {
+    let posix = if windows {
+        let p = path.replace('\\', "/");
+        let b = p.as_bytes();
+        if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() { format!("/{}{}", (b[0] as char).to_ascii_lowercase(), &p[2..]) } else { p }
+    } else {
+        path.to_string()
+    };
+    format!("Edit(/{posix}{})", if dir { "/**" } else { "" })
 }
 
 fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
@@ -3130,6 +3230,23 @@ mod tests {
     }
 
     #[test]
+    fn reopening_a_chat_never_drops_a_lead_that_has_not_spoken_yet() {
+        // the race behind the flaky test above: a chat reopened elsewhere took a silent Lead for a placeholder
+        let lead = new_background_chat("Lead: reopen race", None).unwrap();
+        let x = Expert { id: "coder".into(), name: "Coder".into(), text: "Write code.".into() };
+        let e = spawn_expert("w-reopen-race", "worker", "Coder: reopen race", None, None, Some(&lead.id), x).unwrap();
+        let saved = new_background_chat("Saved: reopen race", None).unwrap();
+        saved.put("user", json!({"text": "hello"}));
+        let id = saved.id.clone();
+        remove_agent(&id);
+        let back = open_chat(&id).expect("reopened");
+        assert!(get(&lead.id).is_some() && get(&e.id).is_some(), "the silent Lead and its expert are still open");
+        remove_agent(&lead.id);
+        remove_agent(&back.id);
+        assert!(get(&e.id).is_none());
+    }
+
+    #[test]
     fn switching_a_started_chat_hands_the_chat_over() {
         let a = Agent::detached_for_test("switch-test", None);
         // before anything is said: only the chat's AI is set, nothing is handed over
@@ -3339,6 +3456,89 @@ mod tests {
                 assert!(t.elapsed() < paths::STOP_WAIT, "a turn that ends when asked is not waited for");
             }
         }
+    }
+
+    #[test]
+    fn claudes_refused_compound_command_offers_the_program_that_is_missing() {
+        let allowed = vec!["git".to_string()];
+        let d = json!([{"tool_name": "Bash", "tool_input": {"command": "git status && rm -rf build"}}]);
+        let (card, note) = blocked_or_note(claude_blocked(&d, &allowed), &allowed);
+        assert_eq!(card.iter().map(|c| c["name"].as_str().unwrap()).collect::<Vec<_>>(), ["rm"]);
+        assert!(note.is_none(), "not the form line: rm is simply not allowed");
+        let d = json!([{"tool_name": "Bash", "tool_input": {"command": "./git status"}}]);
+        let (card, note) = blocked_or_note(claude_blocked(&d, &allowed), &allowed);
+        assert!(card.is_empty() && note.is_some(), "all allowed: it was the form");
+    }
+
+    #[test]
+    fn claudes_deny_rules_are_absolute_on_every_system() {
+        assert_eq!(claude_edit_rule("/Users/a/Documents/Fridae Studios/config.json", false, false), "Edit(//Users/a/Documents/Fridae Studios/config.json)");
+        assert_eq!(claude_edit_rule("/Users/a/Documents/Fridae Studios/work/chats", true, false), "Edit(//Users/a/Documents/Fridae Studios/work/chats/**)");
+        assert_eq!(claude_edit_rule(r"C:\Users\a\Documents\Fridae Studios\config.json", false, true), "Edit(//c/Users/a/Documents/Fridae Studios/config.json)");
+        assert_eq!(claude_edit_rule(r"D:\Fridae\work\processes", true, true), "Edit(//d/Fridae/work/processes/**)");
+        for r in claude_denied() {
+            assert!(r.starts_with("Edit(//"), "{r}");
+        }
+    }
+
+    #[test]
+    fn a_failed_sign_in_with_a_kept_key_names_the_switch() {
+        let note = key_note("claude", "Not logged in \u{b7} Please run /login", &["ANTHROPIC_API_KEY"], false).unwrap();
+        assert!(note.contains("ANTHROPIC_API_KEY") && note.contains("Use API keys from my environment"));
+        assert!(key_note("claude", "Not logged in", &["ANTHROPIC_API_KEY"], true).is_none(), "switch on: the key was passed");
+        assert!(key_note("claude", "Not logged in", &[], false).is_none(), "no key set");
+        assert!(key_note("claude", "The model is overloaded", &["ANTHROPIC_API_KEY"], false).is_none(), "not about signing in");
+    }
+
+    #[test]
+    fn the_switch_decides_whether_provider_keys_reach_an_ai() {
+        // a Claude session's variables always go; a provider key only while the switch is off
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let was = paths::env_keys_on();
+        for on in [false, true] {
+            paths::update_config(|c| c.insert("use_env_keys".into(), json!(on)));
+            assert!(paths::env_dropped("CLAUDECODE", "claude") && paths::env_dropped("CLAUDE_CODE_SESSION_ID", "chatgpt"));
+            assert_eq!(paths::env_dropped("ANTHROPIC_API_KEY", "claude"), !on);
+            assert_eq!(paths::env_dropped("ANTHROPIC_AUTH_TOKEN", "claude"), !on);
+            assert!(!paths::env_dropped("ANTHROPIC_BASE_URL", "claude"));
+        }
+        paths::update_config(|c| c.insert("use_env_keys".into(), json!(was)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_ignores_term_and_holds_the_error_output_neither_survives_nor_keeps_the_turn_busy() {
+        // the AI answers and exits; a child of it in its group ignores SIGTERM and keeps the error output open
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner()); // the turn's end checks the allowed list
+        let dir = paths::test_dir("stray-child");
+        fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("pid");
+        let script = format!(
+            "(trap '' TERM; exec sleep 60) >/dev/null & echo $! > '{}'; echo '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"s1\"}}'",
+            pidfile.display()
+        );
+        let mut c = Command::new("sh");
+        c.args(["-c", &script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        paths::own_group(&mut c);
+        let child = c.spawn().unwrap();
+        let a = Agent::detached_for_test("stray", None);
+        let tp = a.set_turn_pid_for_test(child.id());
+        let t = std::time::Instant::now();
+        let reader = {
+            let a = a.clone();
+            thread::spawn(move || a.read(child, "claude", tp))
+        };
+        while !reader.is_finished() && t.elapsed() < Duration::from_secs(20) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(reader.is_finished(), "the turn ended");
+        assert!(!a.st.lock().unwrap().running, "and the chat is not busy");
+        let pid = fs::read_to_string(&pidfile).unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while !gone(pid.trim()) && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(gone(pid.trim()), "the child that ignored SIGTERM was killed");
     }
 
     #[cfg(unix)]
