@@ -580,6 +580,8 @@ def _section_docs(shelf, title, path, rel, label_hint=""):
     p = parse_sections(text)
     label = p["label"] or label_hint or title
     tok = ptokens if shelf in PERSONAL else stokens
+    # on the user's own shelves, what an agent learned (a lesson) is shown apart from what the user said (a note)
+    lesson = shelf in PERSONAL and (p["fm"].get("kind") == "lesson" or title in ("lessons.md", "studio-lessons"))
     out = []
     for i, s in enumerate(p["sections"]):
         own = p["body"][s["start"]:s["own_end"]]
@@ -592,7 +594,8 @@ def _section_docs(shelf, title, path, rel, label_hint=""):
         out.append({"shelf": shelf, "title": title, "label": label, "rel": rel, "path": path, "i": i,
                     "heading": s["heading"], "parents": s["parents"], "level": s["level"],
                     "size": len(p["body"][s["start"]:s["end"]].encode("utf-8")),
-                    "own": len(own.strip()), "tf": tf, "len": {k: sum(c.values()) for k, c in tf.items()}})
+                    "own": len(own.strip()), "tf": tf, "len": {k: sum(c.values()) for k, c in tf.items()},
+                    "lesson": lesson})
     return out
 
 
@@ -907,13 +910,21 @@ def _vault_section_hint(d):
 PROMOTE_AT = 0.2  # a shelf's best hit is moved up only when it matches at least this well
 
 
-def interleave(pool, k):
+def personal_match(q, d):
+    """A note on the user's own shelves may be moved up only when it shares at least two of the query's words, or
+    half of them: one shared word is not enough to put it above everything else."""
+    want = [t for t, w in pquery_terms(q).items() if w >= 1]
+    have = sum(1 for t in want if any(d["tf"][f].get(t) for f in d["tf"]))
+    return have >= 2 or (want and 2 * have >= len(want))
+
+
+def interleave(pool, k, may_promote=lambda item: True):
     """The k results to show: first the best hit of each shelf that has a good one (best first), then the rest by
     score. Without this one shelf (usually the vault, whose notes are long) can fill every place."""
     pool = sorted(pool, key=lambda x: -x[0])
     firsts, seen = [], set()
     for item in pool:
-        if item[1] not in seen and item[0] >= PROMOTE_AT:
+        if item[1] not in seen and item[0] >= PROMOTE_AT and may_promote(item):
             seen.add(item[1])
             firsts.append(item)
     rest = [item for item in pool if not any(item is f for f in firsts)]
@@ -941,7 +952,7 @@ def combined_search(q, shelves, k):
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    pool = interleave(pool, k)
+    pool = interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2]))
     if not pool:
         return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
     out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
@@ -968,7 +979,8 @@ def combined_search(q, shelves, k):
             s = p["sections"][d["i"]] if p and d["i"] < len(p["sections"]) else None
             where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
             label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
-            out.append("%d. [%s] %s%s › %s  (%s)" % (rank, shelf, d["title"], label, where, size_text(d["size"])))
+            kind = " [lesson]" if d.get("lesson") else ""
+            out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
             if s:
                 text = p["body"][s["start"]:s["own_end"]]
                 if not s["level"] and p["description"]:

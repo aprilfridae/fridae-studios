@@ -92,8 +92,9 @@ class WriteTests(NotesTestCase):
             self.assertEqual(f.read(), "# House rules\n\n- Always ask for my Illustrator exports first.\n")
 
     def test_titles_are_sanitised(self):
-        cases = {"../../etc/passwd": "etc passwd", "..\\..\\boot.ini": "boot.ini", "CON": "CON note",
-                 "com1.txt": "com1.txt note", "House rules": "House rules note", "a:b*c?d\"e<f>g|h": "a b c d e f g h",
+        cases = {"../../etc/passwd": "etc passwd", "..\\..\\boot.ini": "boot.ini", "CON": "Note - CON",
+                 "com1.txt": "Note - com1.txt", "con.txt": "Note - con.txt", "LPT¹ draft": "LPT¹ draft",
+                 "lpt¹.md": "Note - lpt¹.md", "COM³": "Note - COM³", "House rules": "House rules note", "a:b*c?d\"e<f>g|h": "a b c d e f g h",
                  "  Café menü  ": "Café menü", "...": "Note", "line\nbreak\ttab": "line break tab"}
         for raw, want in cases.items():
             self.assertEqual(rbxnotes.safe_title(raw), want, raw)
@@ -137,6 +138,11 @@ class ManageTests(NotesTestCase):
     def test_forget_moves_to_trash(self):
         self.vault("note", text="wrong idea", title="Wrong idea")
         self.vault("note", text="wrong idea again", title="Wrong idea")
+        # a partial title moves nothing: it lists the candidates
+        with self.assertRaises(KitError) as cm:
+            self.vault("forget", title="wrong", scope="all")
+        self.assertIn("Wrong idea 2", str(cm.exception))
+        self.assertEqual(len(self.files(os.path.join(self.home, "notes"))), 2)
         out = self.vault("forget", title="wrong idea", scope="all")
         self.assertIn(".trash", out)
         notes = os.path.join(self.home, "notes")
@@ -198,7 +204,7 @@ class SearchTests(NotesTestCase):
         with open(old, "w", encoding="utf-8") as f:
             f.write("- 2026-10-01: Test every menu on a phone emulator.\n")
         text = self.vault("search", query="phone emulator menu", shelf="yours")
-        self.assertIn("[yours] studio-lessons", text)
+        self.assertIn("[yours] [lesson] studio-lessons", text)
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.isfile(os.path.join(self.home, "notes", rbxnotes.LESSONS_NAME)))
         # if it could not be moved, the old place is still read
@@ -215,6 +221,116 @@ class SearchTests(NotesTestCase):
             self.assertNotIn("Zebra", f.read())
         self.vault("forget", title="Zebra", scope="all")
         self.assertIn("No match", self.vault("search", query="zebra crossings", shelf="yours"))
+
+
+class Round3Tests(NotesTestCase):
+    def rules(self, folder=None):
+        with open(os.path.join(folder or os.path.join(self.home, "notes"), rbxnotes.RULES_NAME), encoding="utf-8") as f:
+            return f.read()
+
+    def test_parallel_rule_writers_lose_nothing(self):
+        errors = []
+
+        def add(n):
+            try:
+                self.vault("note", text="Rule %d." % n, rule=True)
+            except KitError as e:
+                errors.append(e)
+        threads = [threading.Thread(target=add, args=(n,)) for n in range(25)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(errors, [])
+        text = self.rules()
+        for n in range(25):
+            self.assertIn("- Rule %d.\n" % n, text)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "notes", ".lock")))
+
+    def test_an_overfull_rules_file_can_shrink(self):
+        notes = os.path.join(self.home, "notes")
+        os.makedirs(notes)
+        with open(os.path.join(notes, rbxnotes.RULES_NAME), "w", encoding="utf-8") as f:
+            f.write("# House rules\n\n" + "".join("- Hand-written rule %d %s\n" % (n, "x" * 60) for n in range(40)))
+        self.assertEqual(self.vault("rule_edit", old="rule 7 ", text="", scope="all"), "House rule removed.")
+        self.assertEqual(self.vault("rule_edit", old="rule 8 ", text="Shorter.", scope="all"), "House rule changed.")
+        with self.assertRaises(KitError):
+            self.vault("rule_edit", old="rule 9 ", text="y" * 200, scope="all")
+        with self.assertRaises(KitError):
+            self.vault("note", text="One more.", rule=True)
+
+    def test_a_long_rule_is_refused_with_how_to_shorten(self):
+        with self.assertRaises(KitError) as cm:
+            self.vault("note", text="z " * 200, rule=True)
+        self.assertIn("keeping the user's key words", str(cm.exception))
+        self.assertIn(str(rbxnotes.RULE_CAP), str(cm.exception))
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_symlinks_are_not_followed(self):
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(outside)
+        with open(os.path.join(outside, "Secret.md"), "w", encoding="utf-8") as f:
+            f.write("secret zebra")
+        notes = os.path.join(self.home, "notes")
+        os.makedirs(notes)
+        os.symlink(os.path.join(outside, "Secret.md"), os.path.join(notes, "Linked.md"))
+        self.assertEqual(rbxnotes.note_files(notes), [])
+        self.assertIn("No match", self.vault("search", query="secret zebra", shelf="yours"))
+        # a notes folder that is itself a link elsewhere is refused for writing
+        game = os.path.join(self.project, ".fridae")
+        os.symlink(outside, os.path.join(game, "notes"))
+        with self.in_project(), self.assertRaises(KitError) as cm:
+            self.vault("note", text="game note", scope="game")
+        self.assertIn("leads somewhere else", str(cm.exception))
+        self.assertEqual(sorted(os.listdir(outside)), ["Secret.md"])
+
+    def test_one_shared_word_does_not_promote_a_note(self):
+        self.vault("note", text="The lobby music is a calm piano loop.", title="Lobby music")
+        text = self.vault("search", query="save player coins between sessions datastore", k=5)
+        first = [l for l in text.splitlines() if l[:3] in ("1. ", "2. ", "3. ")]
+        self.assertFalse(any("[yours]" in l for l in first), text[:600])
+        self.vault("note", text="Player coins are saved with ProfileStore between sessions.", title="Coins saving")
+        text = self.vault("search", query="save player coins between sessions", k=5)
+        self.assertIn("[yours] Coins saving", text)
+
+    def test_a_fact_only_in_game_notes_is_found(self):
+        with self.in_project():
+            self.vault("note", text="The boss arena's lava rises every 45 seconds; the user wants it slower on phones.",
+                       title="Boss arena lava")
+            self.assertIn("[game] Boss arena lava", self.vault("search", query="how fast does the lava rise in the boss arena", shelf="game"))
+            self.assertIn("[game] Boss arena lava", self.vault("search", query="how fast does the lava rise in the boss arena"))
+
+    def test_helpers_keep_lessons_to_the_game(self):
+        import rbxstage
+        with self.in_project(), mock.patch.dict(os.environ, {"RBXKIT_AGENT_ROLE": "worker"}):
+            for call in (lambda: self.vault("note", text="x", scope="all"),
+                         lambda: self.vault("note", text="Always x.", rule=True, scope="game"),
+                         lambda: self.vault("rule_edit", old="x", text="y", scope="game"),
+                         lambda: rbxstage.run("lesson", {"project": self.project, "text": "Gaps for JumpPower 50.",
+                                                         "scope": "all"})):
+                with self.assertRaises(KitError):
+                    call()
+            rbxstage.run("lesson", {"project": self.project, "text": "Gaps for JumpPower 50 need 12 studs.", "scope": "game"})
+            text = self.vault("search", query="JumpPower gaps", shelf="game")
+        self.assertIn("[game] [lesson]", text)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "notes")))
+        with self.in_project():  # the Lead or an ordinary chat may save for every game
+            rbxstage.run("lesson", {"project": self.project, "text": "Brief experts with GAME.md's remotes.", "scope": "all"})
+        self.assertIn("[yours] [lesson]", self.vault("search", query="brief experts remotes", shelf="yours"))
+
+
+class StudioOffTests(unittest.TestCase):
+    def test_studio_tools_refuse_when_studio_is_off(self):
+        import rbxstudio
+        with mock.patch.dict(os.environ, {"FRIDAE_NO_STUDIO": "1", "RBXKIT_STUDIO_MCP": __file__}):
+            self.assertIsNone(rbxstudio.launcher())
+            with self.assertRaises(rbxstudio.StudioError) as cm:
+                with rbxstudio.Studio():
+                    pass
+            self.assertIn("Studio is off", str(cm.exception))
+            res = rbxkit_mcp.t_snippet({"name": "vfx_capture"})
+            self.assertTrue(res["isError"])
+            self.assertIn("Studio is off", res["content"][0]["text"])
 
 
 if __name__ == "__main__":

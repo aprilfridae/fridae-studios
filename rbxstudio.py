@@ -36,8 +36,18 @@ class StudioError(KitError):
     pass
 
 
+STUDIO_OFF = "Studio is off for this run (FRIDAE_NO_STUDIO is set): nothing reads or changes a Roblox Studio place."
+
+
+def studio_off():
+    """True when the app was started with FRIDAE_NO_STUDIO: no tool may reach an open Studio place."""
+    return bool(os.environ.get("FRIDAE_NO_STUDIO"))
+
+
 def launcher():
-    """The file that starts Studio's MCP server, or None."""
+    """The file that starts Studio's MCP server, or None (always None when Studio is off for this run)."""
+    if studio_off():
+        return None
     path = os.environ.get("RBXKIT_STUDIO_MCP")
     if not path and os.name == "nt":
         path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Roblox", "mcp.bat")
@@ -74,6 +84,8 @@ class Studio:
 
     # ------------------------------------------------------- connection
     def __enter__(self):
+        if studio_off():
+            raise StudioError(STUDIO_OFF)
         path = launcher()
         if not path:
             raise StudioError("Roblox Studio's MCP server was not found (no mcp.bat in %LOCALAPPDATA%\\Roblox). Install or "

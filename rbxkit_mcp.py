@@ -378,7 +378,8 @@ def t_guide(a):
     cap = _guide_cap()
     out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
     for topic in wanted:
-        text = guide_text(topic, whole, outline)
+        # a rules guide bundled with others comes whole; only a call for that one guide alone gets its outline
+        text = guide_text(topic, whole, outline and not (topic in ALWAYS_WHOLE and len(wanted) > 1))
         if text is None:
             unknown.append(topic)
             continue
@@ -401,6 +402,9 @@ def t_guide(a):
 
 
 def t_snippet(a):
+    import rbxstudio
+    if rbxstudio.studio_off():
+        return result(rbxstudio.STUDIO_OFF, False)
     folder = os.path.join(KIT, "studio")
     names = sorted(f[:-4] for f in os.listdir(folder) if f.endswith(".lua"))
     name = (a.get("name") or "").replace(".lua", "")

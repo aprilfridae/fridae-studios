@@ -232,10 +232,10 @@ class GameShelfTests(unittest.TestCase):
             self.assertIn("Decision log", text)
             self.assertIn("lantern skins", text)
             text = rbxvault.run("search", {"query": "lantern flicker fade", "shelf": "game"})
-            self.assertIn("[game] lessons.md", text)
+            self.assertIn("[game] [lesson] lessons.md", text)
             # lessons for every game are on the yours shelf now (A12), with or without a project
             text = rbxvault.run("search", {"query": "phone emulator menu", "shelf": "yours"})
-            self.assertIn("[yours] studio-lessons", text)
+            self.assertIn("[yours] [lesson] studio-lessons", text)
             out = rbxvault.run("read", {"shelf": "game", "title": "GAME.md", "heading": "decision log"})
             self.assertIn("Phones first", out)
             all_text = rbxvault.run("search", {"query": "lantern skins decision log", "k": 8})
@@ -371,11 +371,18 @@ class GuideToolTests(unittest.TestCase):
             self.assertLess(len(text.encode("utf-8")), rbxkit_mcp.RULES_CAP + 6000, topic)
 
     def test_outline_on_request_for_any_guide(self):
-        _, text = self.guide(topics=["roblox-luau", "critic"], outline=True)
+        _, text = self.guide(topics=["roblox-luau", "economy-design"], outline=True)
         self.assertEqual(text.count("## Sections of this guide"), 2)
-        self.assertLess(len(text), len(rbxkit_mcp._one_guide("roblox-luau")) + len(rbxkit_mcp._one_guide("critic")))
+        self.assertLess(len(text), len(rbxkit_mcp._one_guide("roblox-luau")) + len(rbxkit_mcp._one_guide("economy-design")))
         _, text = self.guide(topic="roblox-luau", outline="true")
         self.assertIn("## Sections of this guide", text)
+
+    def test_rules_guides_come_whole_when_bundled_with_outlines(self):
+        _, text = self.guide(topics=["workflow", "roblox-luau"], outline=True)
+        self.assertIn(rbxkit_mcp._one_guide("workflow")[:2000], text)
+        self.assertEqual(text.count("## Sections of this guide"), 1)
+        _, text = self.guide(topic="workflow", outline=True)
+        self.assertIn("## Sections of this guide", text, "asked alone, its outline is given")
 
     def test_claude_code_skill_names_are_accepted(self):
         for alias, topic in rbxkit_mcp.GUIDE_ALIASES.items():

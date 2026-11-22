@@ -6,6 +6,7 @@ Two folders, same shape (one Markdown file per note, plus `House rules.md`):
 They are searched as rbx_vault shelves `yours` and `game` (indexed fresh each time), and the app appends both House
 rules files to every agent's instructions. Nothing here reads or writes outside those two folders.
 """
+import contextlib
 import os
 import re
 import tempfile
@@ -22,7 +23,9 @@ RULES_NAME = "House rules.md"
 LESSONS_NAME = "studio-lessons.md"  # lessons for every game, from before notes (moved here from the work folder)
 TRASH = ".trash"
 TITLE_MAX = 80
-_RESERVED = {"con", "prn", "aux", "nul"} | {"com%d" % i for i in range(1, 10)} | {"lpt%d" % i for i in range(1, 10)}
+_RESERVED = ({"con", "prn", "aux", "nul"} | {"com%s" % i for i in "123456789¹²³"} |
+             {"lpt%s" % i for i in "123456789¹²³"})
+LOCK_WAIT, LOCK_STALE = 5.0, 10.0
 _KEPT_NAMES = {RULES_NAME[:-3].casefold(), LESSONS_NAME[:-3].casefold()}
 
 
@@ -40,12 +43,23 @@ def project_dir():
 
 
 def folder(scope, project):
-    """The notes folder for a scope ('game' needs a project)."""
+    """The notes folder for a scope ('game' needs a project). Refused when the folder (or the game's .fridae) is a
+    link that leads somewhere else: notes are read and written only where they belong."""
     if scope == "all":
-        return home_notes()
-    if not project:
+        root, base = home_notes(), rbxpaths.HOME_DIR
+    elif not project:
         raise KitError("This chat has no game project, so there are no game notes. Use scope 'all'.")
-    return game_notes(project)
+    else:
+        root, base = game_notes(project), project
+    if not _where_expected(root, base):
+        raise KitError("The notes folder %s leads somewhere else (a link); notes are not read or written there." % root)
+    return root
+
+
+def _where_expected(root, base):
+    """True when root, followed through any links, is still base's own sub-folder of the same name."""
+    want = os.path.join(os.path.realpath(base), os.path.relpath(root, base))
+    return os.path.realpath(root) == os.path.normpath(want)
 
 
 def scope_arg(a, project, default=True):
@@ -71,7 +85,9 @@ def safe_title(title):
     if not t:
         t = "Note"
     stem = t.split(".")[0].strip().casefold()
-    if stem in _RESERVED or t.casefold() in _KEPT_NAMES:
+    if stem in _RESERVED:
+        t = "Note - " + t  # a Windows device name before the first dot, whatever follows it
+    elif t.casefold() in _KEPT_NAMES:
         t += " note"
     return t
 
@@ -113,6 +129,37 @@ def _atomic_write(path, text):
         raise
 
 
+@contextlib.contextmanager
+def _locked(root):
+    """One writer at a time for a notes folder's House rules: <root>/.lock created exclusively, retried for about
+    5 seconds, taken over when older than 10 seconds."""
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, ".lock")
+    deadline = time.time() + LOCK_WAIT
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except (FileExistsError, PermissionError):
+            try:
+                if time.time() - os.stat(path).st_mtime > LOCK_STALE:
+                    os.remove(path)
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                raise KitError("Another agent is changing the house rules. Try again in a moment.")
+            time.sleep(0.02)
+    os.close(fd)
+    try:
+        yield
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _reserve(root, title):
     """Claim a free file name for a title ('Title.md', then 'Title 2.md', ...) without racing another writer."""
     os.makedirs(root, exist_ok=True)
@@ -146,7 +193,7 @@ def note_files(root):
     out = []
     for f in sorted(os.listdir(root)):
         p = os.path.join(root, f)
-        if f.endswith(".md") and not f.startswith(".") and f != RULES_NAME and os.path.isfile(p):
+        if f.endswith(".md") and not f.startswith(".") and f != RULES_NAME and os.path.isfile(p) and not os.path.islink(p):
             out.append((f[:-3], p))
     return out
 
@@ -155,12 +202,14 @@ def shelf_files(root):
     """Everything a shelf indexes from a notes folder: the notes and House rules.md."""
     files = note_files(root)
     rules = os.path.join(root, RULES_NAME)
-    if os.path.isfile(rules):
+    if os.path.isfile(rules) and not os.path.islink(rules):
         files.append((RULES_NAME[:-3], rules))
     return files
 
 
 def rules_text(root):
+    if os.path.islink(os.path.join(root, RULES_NAME)):
+        return ""
     try:
         with open(os.path.join(root, RULES_NAME), encoding="utf-8") as f:
             return f.read()
@@ -220,17 +269,18 @@ def add_rule(text, scope="all", project=None):
     if not rule:
         raise KitError("Give the rule in 'text', as one short sentence.")
     if len(rule) > RULE_CAP:
-        raise KitError("A house rule holds at most %d characters (this one has %d). Say it shorter; put the reasons "
-                       "in a note." % (RULE_CAP, len(rule)))
+        raise KitError("A house rule holds at most %d characters (this one has %d). Shorten it, keeping the user's key "
+                       "words, and put the reasons in a note." % (RULE_CAP, len(rule)))
     root = folder(scope, project)
     path = _note_path(root, RULES_NAME)
-    old = rules_text(root).rstrip("\n")
-    new = (old + "\n" if old else "# House rules\n\n") + "- " + rule + "\n"
-    if len(new) > RULES_FILE_CAP:
-        raise KitError("The %s house rules are full (%d characters at most). Merge or replace an existing rule with "
-                       "action 'rule_edit' (old: a fragment of the rule, text: the new wording, or empty to remove)." % (
-                           "game's" if scope == "game" else "for-everything", RULES_FILE_CAP))
-    _atomic_write(path, new)
+    with _locked(root):
+        old = rules_text(root).rstrip("\n")
+        new = (old + "\n" if old else "# House rules\n\n") + "- " + rule + "\n"
+        if len(new) > RULES_FILE_CAP:
+            raise KitError("The %s house rules are full (%d characters at most). Merge or replace an existing rule with "
+                           "action 'rule_edit' (old: a fragment of the rule, text: the new wording, or empty to remove)." % (
+                               "game's" if scope == "game" else "for-everything", RULES_FILE_CAP))
+        _atomic_write(path, new)
     return path
 
 
@@ -240,25 +290,27 @@ def rule_edit(old, new, scope, project=None):
     if not old:
         raise KitError("rule_edit needs 'old': a few words of the rule to change.")
     if len(new) > RULE_CAP:
-        raise KitError("A house rule holds at most %d characters." % RULE_CAP)
+        raise KitError("A house rule holds at most %d characters. Shorten it, keeping the user's key words." % RULE_CAP)
     root = folder(scope, project)
     path = _note_path(root, RULES_NAME)
-    text = rules_text(root)
-    lines = text.splitlines()
-    hits = [i for i, l in enumerate(lines) if l.lstrip().startswith(("- ", "* ")) and old in " ".join(l.split()).casefold()]
-    if not hits:
-        raise KitError("No house rule contains '%s'. The rules:\n%s" % (old, "\n".join(rule_lines(text)) or "(none)"))
-    if len(hits) > 1:
-        raise KitError("Several house rules contain '%s'; give more of the words:\n%s" % (
-            old, "\n".join(lines[i] for i in hits)))
-    if new:
-        lines[hits[0]] = "- " + new
-    else:
-        del lines[hits[0]]
-    out = "\n".join(lines).rstrip("\n") + "\n"
-    if len(out) > RULES_FILE_CAP:
-        raise KitError("That would make the house rules longer than %d characters; say it shorter." % RULES_FILE_CAP)
-    _atomic_write(path, out)
+    with _locked(root):
+        text = rules_text(root)
+        lines = text.splitlines()
+        hits = [i for i, l in enumerate(lines) if l.lstrip().startswith(("- ", "* ")) and old in " ".join(l.split()).casefold()]
+        if not hits:
+            raise KitError("No house rule contains '%s'. The rules:\n%s" % (old, "\n".join(rule_lines(text)) or "(none)"))
+        if len(hits) > 1:
+            raise KitError("Several house rules contain '%s'; give more of the words:\n%s" % (
+                old, "\n".join(lines[i] for i in hits)))
+        if new:
+            lines[hits[0]] = "- " + new
+        else:
+            del lines[hits[0]]
+        out = "\n".join(lines).rstrip("\n") + "\n"
+        # the cap only stops a file from growing: an overfull file (edited by hand) can always shrink
+        if len(out) > RULES_FILE_CAP and len(out) > len(text):
+            raise KitError("That would make the house rules longer than %d characters; say it shorter." % RULES_FILE_CAP)
+        _atomic_write(path, out)
     return "changed" if new else "removed"
 
 
@@ -269,10 +321,13 @@ def forget(title, scope, project=None):
         raise KitError("forget needs the note's 'title' (action 'notes' lists them).")
     root = folder(scope, project)
     files = note_files(root)
-    hit = [p for t, p in files if t.casefold() == want] or [p for t, p in files if want in t.casefold()]
-    if len(hit) != 1:
-        raise KitError(("Several notes match '%s'; give the exact title." if hit else "No note called '%s'.") % title +
-                       " Notes: " + ", ".join(t for t, _ in files[:30]))
+    hit = [p for t, p in files if t.casefold() == want]
+    if len(hit) != 1:  # only an exact title moves a note; a partial one only lists the candidates
+        near = [t for t, _ in files if want in t.casefold()]
+        if near:
+            raise KitError("No note is called exactly '%s'. Did you mean: %s? Give the exact title." % (
+                title, "; ".join(near[:20])))
+        raise KitError("No note called '%s'. Notes: %s" % (title, ", ".join(t for t, _ in files[:30])))
     src = hit[0]
     trash = os.path.join(root, TRASH)
     os.makedirs(trash, exist_ok=True)
@@ -312,11 +367,30 @@ def counts(project=None):
 
 
 # ------------------------------------------------------------------ rbx_vault actions
+def is_helper():
+    """An expert or helper started by another agent (it does not talk to the user directly)."""
+    return bool((os.environ.get("RBXKIT_AGENT_ROLE") or "").strip())
+
+
+def check_helper(scope, rule=False):
+    """Helpers keep what they learn to this game: no notes or lessons for every game, and no house rules."""
+    if not is_helper():
+        return
+    if rule:
+        raise KitError("Only a chat the user is talking to can add a house rule. Report the user's preference to "
+                       "your Lead instead.")
+    if scope == "all":
+        raise KitError("An expert saves notes and lessons for this game only (scope game): what holds for every game "
+                       "is the user's to say, through the Lead or their own chat.")
+
+
 def run(action, a):
     project = project_dir()
     if action == "note":
         scope = scope_arg(a, project)
-        if a.get("rule") is True or str(a.get("rule")).lower() == "true":
+        rule = a.get("rule") is True or str(a.get("rule")).lower() == "true"
+        check_helper(scope, rule)
+        if rule:
             add_rule(a.get("text"), scope, project)
             return ("House rule saved (%s). Every agent gets it from the next turn on." %
                     ("this game" if scope == "game" else "everything"))
@@ -330,17 +404,21 @@ def run(action, a):
         return "Notes, newest first:\n" + "\n".join("- %s  (%s, %s)" % (t, sc, w) for w, t, sc in rows[:60])
     if action == "forget":
         scope = scope_arg(a, project)
+        check_helper(scope)
         name = forget(a.get("title"), scope, project)
         return "Moved '%s' to the notes folder's .trash (not deleted)." % name
     if action == "rule_edit":
         scope = scope_arg(a, project)
+        check_helper(scope, rule=True)
         done = rule_edit(a.get("old"), a.get("text") if a.get("text") is not None else a.get("new"), scope, project)
         return "House rule %s." % done
     raise KitError("Unknown notes action: %s." % action)
 
 
 def lesson(text, scope, project):
-    """rbx_stage lesson: a note like any other (the Lead's lessons are notes)."""
+    """rbx_stage lesson: what an agent learned, kept apart from what the user said (front matter kind: lesson, shown
+    as [lesson] in search, never a house rule). Helpers may only save lessons for this game."""
+    check_helper(scope)
     text = " ".join((text or "").split())
     if not text:
         raise KitError("Give the lesson as one short sentence in 'text'.")
