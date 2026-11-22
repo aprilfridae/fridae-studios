@@ -465,9 +465,9 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     // never OpenCode's own settings, wherever they are; Ask me: never a git folder (a hook or an alias written there
     // would run when an allowed `git` runs, as Claude Code also keeps `.git` protected). Written again after the
     // same-shaped folders are given back below, so those never reopen them.
-    let mut fixed: Vec<&str> = vec![".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"];
+    let mut fixed: Vec<String> = [".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"].iter().map(|s| s.to_string()).collect();
     if !full {
-        fixed.extend([".git/*", "*/.git/*"]);
+        fixed.extend(paths::ASK_ME_NEVER_UNDER.iter().flat_map(|n| [format!("{n}/*"), format!("*/{n}/*")]));
     }
     for p in &fixed {
         r.push(rule("edit", p, "deny"));
@@ -640,17 +640,21 @@ fn relative_pattern(base: &str, pattern: &str) -> Option<String> {
 /// holds the programs agents may run), and the home folder's hidden files and folders (shell start-up files, other
 /// tools' settings) and Library.
 fn protected(home: &Path) -> Vec<String> {
-    let mut list: Vec<String> = spellings(&store());
-    for (p, _) in paths::app_protected() {
-        list.extend(spellings(&p));
-    }
-    if !home.as_os_str().is_empty() {
-        for h in spellings(home) {
-            list.push(format!("{h}/.*")); // a pattern on purpose: every hidden name
-            list.push(format!("{h}/Library"));
+    let mut list: Vec<String> = Vec::new();
+    // the one list the app's gates share (`paths::never_written`), as OpenCode's patterns
+    for place in paths::never_written(home, &[store()]) {
+        match place {
+            paths::NoWrite::Place(p) if p.parent() == Some(home) => list.extend(spellings(home).into_iter().map(|h| format!("{h}/{}", p.file_name().unwrap_or_default().to_string_lossy()))),
+            paths::NoWrite::Place(p) => list.extend(spellings(&p)),
+            paths::NoWrite::HiddenIn(h) => list.extend(spellings(&h).into_iter().map(|h| format!("{h}/.*"))), // a pattern on purpose: every hidden name
         }
     }
     list
+}
+
+/// Where the app keeps OpenCode's own data, for the other gate (`acp::Rules`).
+pub fn own_store() -> PathBuf {
+    store()
 }
 
 /// Our tool servers as OpenCode takes them (`PUT /api/experimental/mcp/<name>`), under the chat's own names, with the
@@ -1532,7 +1536,7 @@ pub struct Decision {
 static REFUSED: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
 static ONCE: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
 
-fn note_refused(agent_id: &str, refused: &[Value]) {
+pub fn note_refused(agent_id: &str, refused: &[Value]) {
     let mut g = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
     let set = g.get_or_insert_with(HashMap::new).entry(agent_id.to_string()).or_default();
     for r in refused.iter().filter(|r| r["once"] == true) {
@@ -1556,7 +1560,7 @@ pub fn approve_once(agent_id: &str, command: &str) -> bool {
 /// Whether every command of a request is one the user said may run once in this chat, or one the app approves anyway
 /// (an allowed program, plainly written: the parts OpenCode lists beside the whole command); if so the approvals are
 /// used up.
-fn take_once(agent_id: &str, action: &str, resources: &[String], allowed: &[String]) -> bool {
+pub fn take_once(agent_id: &str, action: &str, resources: &[String], allowed: &[String]) -> bool {
     if action != "shell" || resources.is_empty() || resources.iter().any(|c| paths::reads_other_env(c)) {
         return false;
     }
@@ -1570,6 +1574,12 @@ fn take_once(agent_id: &str, action: &str, resources: &[String], allowed: &[Stri
         set.remove(c);
     }
     true
+}
+
+/// Whether the user said this exact text (a card of this chat showed it) may go ahead one time; if so the approval
+/// is used up. For what is not a command (a web lookup asked for by Gemini, `acp::decide`).
+pub fn take_exact(agent_id: &str, text: &str) -> bool {
+    ONCE.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.get_mut(agent_id)).is_some_and(|s| s.remove(text))
 }
 
 /// The longest command a card offers to run once: what the card shows in full, as one line.

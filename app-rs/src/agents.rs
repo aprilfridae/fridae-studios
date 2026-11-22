@@ -1,5 +1,5 @@
-//! The event log the window reads, the agents (one headless Claude Code process
-//! per chat), and saved chats.
+//! The event log the window reads, the agents (one headless process of the chat's AI: kept open for the chat where
+//! the AI can be, `Kept`, else one per turn), and saved chats.
 
 use std::{
     collections::HashMap,
@@ -48,6 +48,8 @@ const WORKER_PROMPT: &str = include_str!("text/worker.txt");
 const CRITIC_PROMPT: &str = include_str!("text/critic.txt");
 const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
+/// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
+const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
 const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
@@ -575,6 +577,9 @@ struct State {
     /// twice, and the chat stays on a process per turn for the rest of this run of the app.
     live: Option<Arc<Live>>,
     live_fails: u32,
+    /// Kept processes of this chat that are being closed (`retire`): until each is gone it may still hold the
+    /// conversation, and an AI whose conversation takes one process at a time waits for them (`Kept::alone`).
+    retiring: Vec<Arc<Live>>,
     /// The chat was closed (`remove_agent`): a turn still ending on its kept process closes that process.
     closed: bool,
     log: Vec<Value>,
@@ -806,7 +811,10 @@ impl TurnProc {
         if self.tool_open.load(Ordering::SeqCst) {
             self.discard.store(true, Ordering::SeqCst);
         }
-        live.interrupt();
+        // by its own protocol: Claude Code's interrupt request, an ACP agent's `session/cancel`
+        if live.ask_stop().is_none() {
+            live.interrupt();
+        }
         let until = std::time::Instant::now() + paths::STOP_WAIT;
         // Claude Code may answer that the message was still queued: nothing was stopped, so the process is ended
         let unstopped = || self.requeued.load(Ordering::SeqCst);
@@ -998,6 +1006,9 @@ struct TurnEnd {
     /// a kept process's turn ended with a task of its own still running in the background: Claude Code starts a turn
     /// by itself when such a task finishes (measured), so the process is not kept
     background_left: bool,
+    /// the kept process cannot serve this message as a process per turn would (an ACP agent that does not offer the
+    /// model or effort asked for): it was ended, and the message goes to a process of its own, with no failure counted
+    unfit: bool,
 }
 
 /// A turn read from a chat's kept Claude Code process (`consume_lines`): its process, the id its message was sent
@@ -1169,6 +1180,16 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
     )
 }
 
+/// Notes a kept process the chat gives up, before it is closed: it counts as there until it has been reaped.
+fn retire(st: &mut State, live: &Arc<Live>) {
+    st.retiring.retain(|l| !l.reaped());
+    st.retiring.push(live.clone());
+}
+
+/// How long a turn waits for the chat's earlier kept processes to be gone (closing one takes under half a second
+/// for agy; at most `CLOSE_WAIT` and the kill's grace).
+const RETIRE_WAIT: Duration = Duration::from_secs(12);
+
 /// How often keeping a Claude Code process may fail in one chat (it could not start, or died) before the chat stays
 /// on a process per turn for the rest of this run of the app.
 const LIVE_FAILS: u32 = 2;
@@ -1270,6 +1291,312 @@ impl ClaudeLaunch {
     fn key(&self) -> String {
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, self.keys_on]).to_string()
     }
+}
+
+/// An AI kept open for a chat (`caps.live`): what its process is started with for a message, and how a turn runs on
+/// it. Everything else about keeping a process is the same for every AI (`Agent::live_turn`, `read_live`): the launch
+/// key, the fallback to a process per turn, idle closing, the ledger.
+trait Kept: Clone + Send + 'static {
+    /// The AI's id ("claude", "gemini").
+    fn ai(&self) -> &'static str;
+    /// Everything a kept process is started with, or decides by, that a later message could need otherwise.
+    fn key(&self) -> String;
+    /// Starts the process to keep, resuming `session` when the chat has one.
+    fn start(&self, session: Option<&str>, key: String) -> std::io::Result<Arc<Live>>;
+    /// The same message for a process of its own (the fallback): its command and what goes in on its stdin.
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String);
+    /// One turn on the kept process: the message written and the output read to the turn's end. `first`: the
+    /// process's first turn.
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd;
+    /// Whether a conversation of this AI's takes one process at a time: a turn then waits until the chat's earlier
+    /// kept processes are gone before it touches the conversation (agy keeps each in a database file of its own;
+    /// Claude Code's new process was measured beside its old one).
+    fn alone(&self) -> bool {
+        false
+    }
+}
+
+impl Kept for ClaudeLaunch {
+    fn ai(&self) -> &'static str {
+        "claude"
+    }
+
+    fn key(&self) -> String {
+        ClaudeLaunch::key(self)
+    }
+
+    fn start(&self, session: Option<&str>, key: String) -> std::io::Result<Arc<Live>> {
+        Live::start(self.command(true, session), key)
+    }
+
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
+        (self.command(false, session), text.to_string())
+    }
+
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
+        let message = claude_live::message_id();
+        if live.say(&message, text).is_err() {
+            tp.end(); // its output then ends, and the turn with it (`read_live`: nothing shown, so it is sent again)
+        }
+        let rx = live.lines();
+        let mut lines = std::iter::from_fn(|| rx.recv().ok());
+        // noted in the ledger again at a new process's first line, as a per-turn process is: the command line the
+        // ledger matches on is the one it has by then
+        let on_first = || {
+            if first {
+                crate::procs::record("claude", live.pid);
+            }
+        };
+        a.consume_lines(&mut lines, "claude", last, on_first, Some(LiveTurn { tp, message: &message, first, marks: &live.marks_turns }))
+    }
+}
+
+/// What a Gemini turn is started with on the kept path (`agy acp`, see `acp`), and what its permission requests are
+/// answered by. Built afresh for every message from the app's memory, as Claude's is; a kept process started with
+/// anything else (`key`) is closed and a new one resumes the conversation, so no mode, folder, tool server, model or
+/// allowed program can go stale inside one. The same settings give the per-message command (`per_turn`), which is
+/// today's `antigravity::command` and resumes the same conversation: agy keeps both kinds in one store.
+#[derive(Clone)]
+struct GeminiLaunch {
+    exe: std::path::PathBuf,
+    /// arguments before all others: none for agy (the tests' stand-in is a shell script given to `sh`)
+    first: Vec<std::ffi::OsString>,
+    /// agy's data folder when it is not `~/.gemini` (FRIDAE_AGY_DIR, testing only): given as `--gemini-dir`
+    data_dir: Option<std::path::PathBuf>,
+    /// the workspace, the tool servers, the model and effort, and the rules its requests are answered by
+    spec: crate::acp::Spec,
+    /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
+    keys_on: bool,
+    /// the programs the user allowed, and a fingerprint of every guarded setting (`paths::GUARDED`): a change to
+    /// any of them starts another process
+    allowed: Vec<String>,
+    guarded: String,
+}
+
+/// Everything a Gemini turn's start depends on, as `send` has it for a message.
+struct GeminiSettings<'a> {
+    exe: &'a std::path::Path,
+    agent_id: &'a str,
+    /// the chat's folder: its game, or the app's folder for the chat
+    workspace: &'a std::path::Path,
+    servers: &'a Value,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+    /// Full auto or Studio
+    full: bool,
+    kit: &'a std::path::Path,
+    work: &'a std::path::Path,
+    /// what no AI's file tools may write (`paths::never_written`): places, and folders whose hidden names count
+    protected: &'a [std::path::PathBuf],
+    hidden_in: &'a [std::path::PathBuf],
+    /// where the app's tool server notes its results' pictures for this chat
+    pictures: Option<&'a std::path::Path>,
+    /// the programs the user allowed, and all the guarded settings, from the app's memory
+    allowed: &'a [String],
+    guarded: &'a Map<String, Value>,
+    keys_on: bool,
+    /// the home folder agy runs with, and its data folder when not `<home>/.gemini`
+    home: &'a std::path::Path,
+    data_dir: Option<&'a std::path::Path>,
+}
+
+impl GeminiLaunch {
+    fn new(s: &GeminiSettings) -> GeminiLaunch {
+        use sha2::{Digest, Sha256};
+        let rules = crate::acp::Rules {
+            full: s.full,
+            agent_id: s.agent_id.to_string(),
+            servers: s.servers.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+            // as a process per message has it: Ask me writes in the workspace only
+            writes: vec![s.workspace.to_path_buf()],
+            reads: vec![s.kit.to_path_buf(), s.work.join("attachments"), s.work.join("chat-images")],
+            // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
+            protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
+            hidden_in: s.hidden_in.to_vec(),
+            agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
+        };
+        // the app's tool server is told where to note its results' pictures (a tool's result does not come over ACP)
+        let mut servers = s.servers.clone();
+        if let (Some(file), true) = (s.pictures, servers["rbxkit"].is_object()) {
+            servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
+        }
+        let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
+        // a fingerprint, not the settings themselves: one of them is the user's Gemini key
+        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
+    }
+
+    /// The kept process: `agy acp`, in the chat's workspace.
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.exe);
+        cmd.args(&self.first).arg("acp");
+        if let Some(d) = &self.data_dir {
+            cmd.arg("--gemini-dir").arg(d);
+        }
+        cmd.current_dir(&self.spec.cwd);
+        // a texture request may wait minutes for the user
+        cmd.env("MCP_TOOL_TIMEOUT", "900000");
+        paths::quiet(&mut cmd);
+        paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
+        paths::child_env(&mut cmd, "gemini");
+        // the app's check of a command is written for `/bin/sh` (`paths::command_allowed`): the shell agy is told
+        // of, and none of the variables a shell acts on at start
+        cmd.env("SHELL", antigravity::shell_override().unwrap_or_else(|| "/bin/sh".into()));
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(paths::shell_injected) {
+                cmd.env_remove(k);
+            }
+        }
+        if let Some(h) = agy_home() {
+            cmd.env("HOME", h);
+        }
+        cmd
+    }
+
+    /// Everything a kept process was started with, or answers requests by, that a later message could need otherwise.
+    fn key(&self) -> String {
+        let r = &self.spec.rules;
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
+               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
+        .to_string()
+    }
+}
+
+/// What an ACP turn needs of the chat's turn (`acp::Host`).
+struct AcpHost<'a> {
+    a: &'a Arc<Agent>,
+    tp: &'a TurnProc,
+    last: &'a Mutex<(std::time::Instant, bool, bool)>,
+    t: TurnEnd,
+    /// the ledger's entry is still the one from the start: noted again at the process's first line
+    renote: Option<(&'static str, u32)>,
+}
+
+impl crate::acp::Host for AcpHost<'_> {
+    fn out(&mut self, out: Out) {
+        self.a.take(out, &mut self.t);
+    }
+
+    fn heard(&mut self) {
+        if let Some((owner, pid)) = self.renote.take() {
+            crate::procs::record(owner, pid);
+        }
+        self.tp.heard.store(true, Ordering::SeqCst);
+    }
+
+    fn taken(&mut self) {
+        self.tp.taken();
+    }
+
+    fn activity(&mut self, long_tool: bool, tool_open: bool) {
+        self.tp.tool_open.store(tool_open, Ordering::SeqCst);
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), long_tool, tool_open);
+    }
+
+    fn began(&mut self) {
+        self.t.began = true;
+    }
+
+    fn end(&mut self) {
+        self.tp.end();
+    }
+
+    fn stopped(&mut self) -> bool {
+        self.a.st.lock().unwrap().stopped
+    }
+
+    fn note(&mut self, text: &str) {
+        self.a.note(text);
+    }
+}
+
+impl Kept for GeminiLaunch {
+    fn ai(&self) -> &'static str {
+        "gemini"
+    }
+
+    fn key(&self) -> String {
+        GeminiLaunch::key(self)
+    }
+
+    fn start(&self, _session: Option<&str>, key: String) -> std::io::Result<Arc<Live>> {
+        // the conversation is resumed over the protocol, not by an argument (`acp::turn`)
+        Live::start_as(self.command(), key, "gemini", crate::acp::stray)
+    }
+
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
+        let s = &self.spec;
+        // (a process per message hands its tools' results over itself: its tool server notes no pictures)
+        let mut servers = s.servers.clone();
+        if let Some(env) = servers["rbxkit"]["env"].as_object_mut() {
+            env.remove("FRIDAE_TOOL_PICTURES");
+        }
+        let mut cmd = Command::new(&self.exe);
+        cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
+        cmd.current_dir(&s.cwd);
+        if let Some(h) = agy_home() {
+            cmd.env("HOME", h);
+        }
+        (cmd, antigravity::message_line(text))
+    }
+
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
+        let resume = a.st.lock().unwrap().session.clone();
+        // the servers a process per message left in the workspace's list would be started a second time: taken out
+        // for the turn, and the list put back as it was when the turn is over, however it ends
+        let list_was = antigravity::unwrite_servers(&self.spec.cwd, &self.spec.servers);
+        // this turn's pictures start from nothing
+        if let Some(file) = &self.spec.pictures {
+            let _ = file.parent().map(fs::create_dir_all);
+            let _ = fs::write(file, "");
+        }
+        let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
+        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
+        let mut t = host.t;
+        if let Some(was) = list_was {
+            antigravity::rewrite_list(&self.spec.cwd, &was);
+        }
+        if end.background && !a.st.lock().unwrap().stopped {
+            a.put("error", json!({"text": "Gemini left a command running when its turn ended. Fridae ended that command with the turn: nothing of a chat's runs on once the chat shows it has finished."}));
+        }
+        t.ended = end.ended;
+        t.unfit = end.unfit;
+        t.background_left = end.background;
+        t
+    }
+
+    fn alone(&self) -> bool {
+        true
+    }
+}
+
+/// The home folder and data folder agy runs with when they are not the app's own (testing only, see
+/// `antigravity::home_override`).
+fn agy_home() -> Option<std::path::PathBuf> {
+    antigravity::home_override()
+}
+
+fn agy_dir() -> Option<std::path::PathBuf> {
+    antigravity::dir_override()
+}
+
+/// The switch that turns keeping a process off for an AI: `FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`.
+fn per_turn_forced(ai: &str) -> bool {
+    std::env::var(format!("FRIDAE_{}_PER_TURN", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
+}
+
+/// AIs whose kept process is built and tested but not the default yet, with why. Each is kept open only when asked
+/// for (`FRIDAE_<AI>_KEPT=1`); taking an AI off this list makes its kept process the default.
+///
+/// Gemini: over ACP agy cuts off every call to a tool server after three minutes, whatever time limit the server's
+/// entry asks for (measured twice with a stand-in server; a process per message gives 15 minutes). A Lead waiting
+/// for its experts, a texture waiting for the user and a Blender build all take longer, so by default they would
+/// fail where they work today.
+const KEPT_ON_REQUEST: &[&str] = &["gemini"];
+
+/// Whether an AI the table says can be kept open is kept open on this run of the app.
+fn kept_wanted(ai: &str) -> bool {
+    !KEPT_ON_REQUEST.contains(&ai) || std::env::var(format!("FRIDAE_{}_KEPT", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
 }
 
 /// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
@@ -1378,6 +1705,7 @@ impl Agent {
                 st.halted = true;
                 // an ended run's Lead keeps no Claude Code process (one still in a turn goes with the idle rule)
                 if let Some(l) = st.live.take() {
+                    retire(&mut st, &l);
                     thread::spawn(move || l.close());
                 }
             }
@@ -1611,7 +1939,9 @@ impl Agent {
         self.put("ai", json!({"ai": kind, "from": from}));
         self.save();
         // the AI it leaves keeps no process
-        if let Some(l) = self.st.lock().unwrap().live.take() {
+        let left = self.st.lock().unwrap().live.take();
+        if let Some(l) = left {
+            retire(&mut self.st.lock().unwrap(), &l);
             thread::spawn(move || l.close());
         }
         Ok(true)
@@ -2144,6 +2474,8 @@ impl Agent {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
                 prompt += &opencode::instructions(project.as_deref(), &paths::allowed_commands(), ask.full);
+            } else if kind == "gemini" && !ask.full && self.live_allowed() {
+                prompt += GEMINI_KEPT_PROMPT;
             } else {
                 prompt += OTHER_AI_PROMPT;
             }
@@ -2181,8 +2513,43 @@ impl Agent {
         }
         let cmd = match kind.as_str() {
             "gemini" => {
-                text = antigravity::message_line(&text);
-                antigravity::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full)
+                let mut servers = servers.clone();
+                if agy_home().is_some() {
+                    servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
+                }
+                // the one list of what no file tool may write, as OpenCode's rules have it
+                let (mut protected, mut hidden_in) = (Vec::new(), Vec::new());
+                for place in paths::never_written(&paths::home_dir(), &[opencode::own_store()]) {
+                    match place {
+                        paths::NoWrite::Place(p) => protected.push(p),
+                        paths::NoWrite::HiddenIn(h) => hidden_in.push(h),
+                    }
+                }
+                if let Some(h) = agy_home() {
+                    hidden_in.push(h.clone());
+                    protected.push(h.join("Library"));
+                }
+                let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let launch = GeminiLaunch::new(&GeminiSettings {
+                    exe: &exe,
+                    agent_id: &self.id,
+                    workspace: &workspace,
+                    servers: &servers,
+                    model,
+                    effort,
+                    full: ask.full,
+                    kit: &PATHS.kit,
+                    work: &PATHS.work,
+                    protected: &protected,
+                    hidden_in: &hidden_in,
+                    pictures: Some(&pictures),
+                    allowed: &paths::allowed_commands(),
+                    guarded: &paths::guarded_settings(),
+                    keys_on: paths::env_keys_on(),
+                    home: &agy_home().unwrap_or_else(paths::home_dir),
+                    data_dir: agy_dir().as_deref(),
+                });
+                return self.kept_turn(&launch, &text);
             }
             "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
             // its models carry their own effort in the id, so the effort setting is not passed
@@ -2215,11 +2582,40 @@ impl Agent {
 
     /// A Claude Code turn: on the chat's kept process when that works here, on a process of its own otherwise.
     fn claude_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) {
+        self.kept_turn(launch, text)
+    }
+
+    /// A turn of an AI that can be kept open (`caps.live`): on the chat's kept process when that works here, on a
+    /// process of its own otherwise.
+    fn kept_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) {
         if self.live_allowed() && self.live_turn(launch, text) {
             return;
         }
+        if launch.alone() {
+            self.wait_retired();
+        }
         let session = self.st.lock().unwrap().session.clone();
-        self.spawn_turn(launch.command(false, session.as_deref()), "claude", text);
+        let (cmd, input) = launch.per_turn(session.as_deref(), text);
+        self.spawn_turn(cmd, launch.ai(), &input);
+    }
+
+    /// Waits until the kept processes this chat gave up are gone (or Stop is pressed, or `RETIRE_WAIT` has passed):
+    /// never two processes on one conversation.
+    fn wait_retired(&self) {
+        let until = std::time::Instant::now() + RETIRE_WAIT;
+        loop {
+            {
+                let mut st = self.st.lock().unwrap();
+                st.retiring.retain(|l| !l.reaped());
+                if st.retiring.is_empty() || st.stopped || st.closed {
+                    return;
+                }
+            }
+            if std::time::Instant::now() >= until {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Starts a command-line AI's process for one turn, hands it the message and reads it to its end on a thread of
@@ -2230,7 +2626,11 @@ impl Agent {
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, kind);
-        let mut child = match cmd.spawn() {
+        let spawned = {
+            let _one_at_a_time = paths::spawn_lock();
+            cmd.spawn()
+        };
+        let mut child = match spawned {
             Ok(c) => c,
             Err(e) => {
                 self.st.lock().unwrap().turned = true;
@@ -2257,18 +2657,20 @@ impl Agent {
         true
     }
 
-    /// Whether this chat's Claude turns go to one kept process (`claude_live`): where Claude Code's interrupt was
-    /// measured (not Windows), unless `FRIDAE_CLAUDE_PER_TURN=1` says a process per turn, and until keeping one has
-    /// failed twice in this chat.
+    /// Whether this chat's turns go to one kept process (`live`): an AI the table says works that way (`caps.live`),
+    /// where its Stop was measured (not Windows), when it is the default for that AI or was asked for
+    /// (`KEPT_ON_REQUEST`), unless its switch says a process per turn
+    /// (`FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`), and until keeping one has failed twice in this chat.
     fn live_allowed(&self) -> bool {
-        crate::caps::of(&self.ai()).live && !cfg!(windows) && std::env::var("FRIDAE_CLAUDE_PER_TURN").map_or(true, |v| v != "1") && self.st.lock().unwrap().live_fails < LIVE_FAILS
+        let ai = self.ai();
+        crate::caps::of(&ai).live && !cfg!(windows) && kept_wanted(&ai) && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
     }
 
     /// Sends a turn's message to the chat's kept Claude Code process, starting one when the chat has none, when the
     /// one it has was started with other arguments (another mode, model, effort, allowed program, house rule, folder:
     /// it is closed, and the new one resumes the conversation), or when it has died meanwhile. False when that did
     /// not work: the turn then goes to a process of its own.
-    fn live_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) -> bool {
+    fn live_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) -> bool {
         let key = launch.key();
         let held = self.st.lock().unwrap().live.take();
         let live = match held {
@@ -2277,7 +2679,9 @@ impl Agent {
                 if l.key == key && !l.strayed() {
                     self.st.lock().unwrap().live_fails += 1; // it died between two turns
                 }
-                // closed beside the new one, which resumes the conversation: Stop is never kept waiting for it
+                // closed beside the new one, so Stop is never kept waiting for it (the new one's turn waits for it
+                // to be gone before it resumes the conversation, where the AI needs that: `Kept::alone`)
+                retire(&mut self.st.lock().unwrap(), &l);
                 thread::spawn(move || l.close());
                 None
             }
@@ -2290,7 +2694,7 @@ impl Agent {
             Some(l) => l,
             None => {
                 let session = self.st.lock().unwrap().session.clone();
-                match Live::start(launch.command(true, session.as_deref()), key) {
+                match launch.start(session.as_deref(), key) {
                     Ok(l) => l,
                     Err(_) => {
                         self.st.lock().unwrap().live_fails += 1;
@@ -2307,6 +2711,7 @@ impl Agent {
             if st.halted || st.closed {
                 st.turned = true;
                 if st.closed {
+                    retire(&mut st, &live);
                     thread::spawn(move || live.close());
                 } else {
                     st.live = Some(live); // nothing was written to it: it stays for the next message
@@ -2341,7 +2746,8 @@ impl Agent {
     /// turn that had shown nothing yet and was not stopped is sent again to a process of its own, so the user gets
     /// the answer and not the failure; one that showed nothing at all within START_WAIT also keeps the chat on a
     /// process per turn from then on.
-    fn read_live(self: &Arc<Self>, live: Arc<Live>, tp: Arc<TurnProc>, launch: ClaudeLaunch, text: &str) {
+    fn read_live<L: Kept>(self: &Arc<Self>, live: Arc<Live>, tp: Arc<TurnProc>, launch: L, text: &str) {
+        let kind = launch.ai();
         let last = Arc::new(Mutex::new((std::time::Instant::now(), false, false)));
         {
             let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
@@ -2352,23 +2758,11 @@ impl Agent {
             thread::spawn(move || watch_start(tp));
         }
         let first = live.turns.fetch_add(1, Ordering::SeqCst) == 0;
-        let message = claude_live::message_id();
-        live.set_in_turn(true);
-        if live.say(&message, text).is_err() {
-            tp.end(); // its output then ends, and the turn with it (below: nothing shown, so it is sent again)
+        if launch.alone() {
+            self.wait_retired();
         }
-        let mut t = {
-            let rx = live.lines();
-            let mut lines = std::iter::from_fn(|| rx.recv().ok());
-            // noted in the ledger again at a new process's first line, as a per-turn process is: the command line
-            // the ledger matches on is the one it has by then
-            let on_first = || {
-                if first {
-                    crate::procs::record("claude", live.pid);
-                }
-            };
-            self.consume_lines(&mut lines, "claude", &last, on_first, Some(LiveTurn { tp: &tp, message: &message, first, marks: &live.marks_turns }))
-        };
+        live.set_in_turn(true);
+        let mut t = launch.turn(self, &live, &tp, text, &last, first);
         live.set_in_turn(false);
         {
             // under the gate the stall guard decides under, so a turn that ends now is never called stalled
@@ -2393,13 +2787,16 @@ impl Agent {
                 if drop_it && mine(&st) {
                     st.live = None;
                 }
+                if drop_it {
+                    retire(&mut st, &live);
+                }
                 drop_it
             };
             let stopped = self.turn_over();
             if killed {
-                self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+                self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
             }
-            self.after_turn("claude", t, "", Some((true, 0)), stopped);
+            self.after_turn(kind, t, "", Some((true, 0)), stopped);
             if drop_it {
                 live.close(); // after the turn is over for the chat: an expert reports without waiting for the exit
             }
@@ -2432,12 +2829,14 @@ impl Agent {
         let stopped_now = asked_to_stop || self.st.lock().unwrap().stopped;
         let lost = !t.got_result && !stopped_now && !killed && !stalled && !shutting() && !live.strayed() && !err.contains("No conversation found");
         if lost {
-            if !silent {
+            // a message the kept process could not serve at all is no failure of keeping one
+            if !silent && !t.unfit {
                 self.st.lock().unwrap().live_fails += 1;
             }
             if !t.began {
                 let session = self.st.lock().unwrap().session.clone();
-                if !self.spawn_turn(launch.command(false, session.as_deref()), "claude", text) {
+                let (cmd, input) = launch.per_turn(session.as_deref(), text);
+                if !self.spawn_turn(cmd, kind, &input) {
                     self.turn_over();
                 }
                 return;
@@ -2445,12 +2844,12 @@ impl Agent {
         }
         let stopped = self.turn_over();
         if killed {
-            self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+            self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
         let err = if stalled { STALLED.to_string() } else { err };
         // a failed result is the turn's end even though the process was then closed by the app (its exit says nothing)
         let exit = if t.got_result { Some((true, 0)) } else { status };
-        self.after_turn("claude", t, &err, exit, stopped);
+        self.after_turn(kind, t, &err, exit, stopped);
     }
 
     /// Closes the chat's kept Claude Code process, when it has one and no turn is running on it. Blocks for as long
@@ -2458,7 +2857,11 @@ impl Agent {
     fn close_live(&self) {
         let live = {
             let mut st = self.st.lock().unwrap();
-            if st.running || st.sending { None } else { st.live.take() }
+            let live = if st.running || st.sending { None } else { st.live.take() };
+            if let Some(l) = &live {
+                retire(&mut st, l);
+            }
+            live
         };
         if let Some(l) = live {
             l.close();
@@ -3565,7 +3968,15 @@ fn no_studio() -> bool {
 }
 
 fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>) -> Value {
-    mcp_servers_with(agent_id, agent_name, project, role, no_studio())
+    #[allow(unused_mut)]
+    let mut servers = mcp_servers_with(agent_id, agent_name, project, role, no_studio());
+    // FRIDAE_STUDIO_STANDIN=<a Python script> (testing only, debug builds only): a stand-in tool server under the
+    // name Roblox Studio's has, for a copy of the app that must not reach the user's Studio (FRIDAE_NO_STUDIO)
+    #[cfg(debug_assertions)]
+    if let Some(script) = std::env::var_os("FRIDAE_STUDIO_STANDIN").filter(|v| !v.is_empty()) {
+        servers["Roblox_Studio"] = json!({"type": "stdio", "command": "/usr/bin/python3", "args": [script.to_string_lossy()]});
+    }
+    servers
 }
 
 fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool) -> Value {
@@ -3724,6 +4135,10 @@ mod replay_tests;
 #[cfg(test)]
 #[path = "live_tests.rs"]
 mod live_tests;
+
+#[cfg(test)]
+#[path = "acp_tests.rs"]
+mod acp_tests;
 
 #[cfg(test)]
 mod tests {

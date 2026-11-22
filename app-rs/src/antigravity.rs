@@ -1,5 +1,9 @@
 //! Gemini as a chat's AI, through Google's Antigravity command-line tool `agy` run without its own interface.
 //!
+//! This file is a process per message, which is how a Gemini chat runs by default, and what it shares with the other
+//! way, one `agy acp` process kept open for the chat (`acp.rs`, `agents::GeminiLaunch`; built, on request only, see
+//! DEVELOPING.md): the model list, the standing instructions, the `Out` values a turn is read into.
+//!
 //!   agy --input-format stream-json --output-format stream-json --mode accept-edits --settings {...}
 //!
 //! One JSON line with the message goes in on stdin; one JSON event per line comes out: `init`, then
@@ -38,6 +42,9 @@ pub fn load_models() {
         cmd.arg("models");
         paths::quiet(&mut cmd);
         paths::child_env(&mut cmd, "gemini");
+        if let Some(h) = home_override() {
+            cmd.env("HOME", h);
+        }
         let Ok(out) = cmd.output() else { return };
         let list = String::from_utf8_lossy(&out.stdout)
             .lines()
@@ -47,6 +54,42 @@ pub fn load_models() {
             .collect();
         let _ = MODELS.set(list);
     });
+}
+
+/// FRIDAE_AGY_HOME and FRIDAE_AGY_DIR (testing only, debug builds only): a copy of the app with a scratch HOME gives
+/// agy alone the real one, where it finds its sign-in, and its kept process a data folder of its own (`agy acp
+/// --gemini-dir`), so nothing is written among the user's own agy conversations. The app's tool server gets the
+/// app's HOME back in its entry.
+#[cfg(debug_assertions)]
+pub fn home_override() -> Option<std::path::PathBuf> {
+    std::env::var_os("FRIDAE_AGY_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
+}
+
+#[cfg(debug_assertions)]
+pub fn dir_override() -> Option<std::path::PathBuf> {
+    std::env::var_os("FRIDAE_AGY_DIR").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn home_override() -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(not(debug_assertions))]
+pub fn dir_override() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// FRIDAE_AGY_SHELL (testing only, debug builds only): the SHELL a kept agy is told of instead of `/bin/sh`, to
+/// measure whether it goes by it.
+#[cfg(debug_assertions)]
+pub fn shell_override() -> Option<std::ffi::OsString> {
+    std::env::var_os("FRIDAE_AGY_SHELL").filter(|v| !v.is_empty())
+}
+
+#[cfg(not(debug_assertions))]
+pub fn shell_override() -> Option<std::ffi::OsString> {
+    None
 }
 
 /// The models Antigravity offers, as (id, name). Empty until the list has arrived.
@@ -69,32 +112,27 @@ pub fn default_model() -> Option<String> {
 }
 
 /// A model's name for showing, from its id.
-fn model_name(id: &str) -> String {
+pub fn model_name(id: &str) -> String {
     models().iter().find(|(known, _)| known == id).map(|(_, name)| name.clone()).unwrap_or_else(|| id.to_string())
 }
 
-/// The command for one turn in `workspace`, with our tool servers written where Antigravity looks for them.
-pub fn command(exe: &Path, workspace: &Path, servers: &Value, conversation: Option<&str>, model: Option<&str>, effort: Option<&str>, full: bool) -> Command {
+/// The arguments of the command for one turn in `workspace` (run there), with our tool servers written where
+/// Antigravity looks for them.
+pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, model: Option<&str>, effort: Option<&str>, full: bool) -> Vec<String> {
     write_servers(workspace, servers);
     let allowed: Vec<String> = servers.as_object().map(|s| s.keys().map(|name| format!("mcp({name}/*)")).collect()).unwrap_or_default();
-    let mut cmd = Command::new(exe);
-    cmd.args(["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"])
-        // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
-        .arg(json!({"permissions": {"allow": allowed, "deny": denied()}}).to_string());
+    let mut args: Vec<String> = ["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"].iter().map(|a| a.to_string()).collect();
+    // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
+    args.push(json!({"permissions": {"allow": allowed, "deny": denied()}}).to_string());
     if full {
-        cmd.arg("--dangerously-skip-permissions"); // full auto: nothing is refused
+        args.push("--dangerously-skip-permissions".into()); // full auto: nothing is refused
     }
-    if let Some(id) = conversation {
-        cmd.args(["--conversation", id]);
+    for (flag, value) in [("--conversation", conversation), ("--model", model), ("--effort", effort)] {
+        if let Some(v) = value {
+            args.extend([flag.to_string(), v.to_string()]);
+        }
     }
-    if let Some(m) = model {
-        cmd.args(["--model", m]);
-    }
-    if let Some(e) = effort {
-        cmd.args(["--effort", e]);
-    }
-    cmd.current_dir(workspace);
-    cmd
+    args
 }
 
 /// Antigravity's deny rules for the app's own files (`paths::app_protected`): `write_file(<absolute path>)`, which
@@ -120,7 +158,42 @@ fn write_servers(workspace: &Path, servers: &Value) {
         cfg["mcpServers"][name] = server;
     }
     let _ = fs::create_dir_all(&dir);
-    let _ = fs::write(path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes());
+}
+
+/// Takes our servers out of the workspace's list again, leaving any the user put there. A kept process is handed
+/// them over its protocol (`acp::servers_param`), and agy also starts every server of this list when a prompt comes
+/// (measured), so one left here by an earlier process per message would run twice.
+///
+/// The file is replaced whole (a temporary file renamed over it), never written in place, and one that does not
+/// read as a list is left alone. Returns the file as it was when it was changed, for `rewrite_list` to put back
+/// once the turn is over.
+pub fn unwrite_servers(workspace: &Path, servers: &Value) -> Option<Vec<u8>> {
+    let path = workspace.join(".agents").join("mcp_config.json");
+    let was = fs::read(&path).ok()?;
+    let mut cfg = serde_json::from_slice::<Value>(&was).ok()?;
+    let list = cfg["mcpServers"].as_object_mut()?;
+    let before = list.len();
+    list.retain(|name, _| servers.get(name).is_none());
+    if list.len() == before {
+        return None;
+    }
+    replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes()).then_some(was)
+}
+
+/// Puts the workspace's list back as `unwrite_servers` found it.
+pub fn rewrite_list(workspace: &Path, was: &[u8]) {
+    replace_whole(&workspace.join(".agents").join("mcp_config.json"), was);
+}
+
+/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it.
+fn replace_whole(path: &Path, bytes: &[u8]) -> bool {
+    let tmp = path.with_extension(format!("json.{}.tmp", paths::random_hex(1)));
+    let done = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
+    if !done {
+        let _ = fs::remove_file(&tmp);
+    }
+    done
 }
 
 /// The line that carries a message in on stdin.
@@ -268,6 +341,9 @@ impl Turn {
     }
 }
 
+/// What the chat is told when nobody is signed in to Antigravity.
+pub const SIGNED_OUT: &str = "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again.";
+
 /// A plain-language message for what Antigravity wrote on stderr, if we recognise it.
 pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
     let low = stderr.to_lowercase();
@@ -283,7 +359,7 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
         return Some(format!("Gemini tried to {what}, which this app does not allow, and stopped there. Ask again, and tell it to use the building tools."));
     }
     if !got_result && (low.contains("authentication required") || low.contains("not authenticated") || low.contains("please sign in") || low.contains("login required")) {
-        return Some("Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again.".to_string());
+        return Some(SIGNED_OUT.to_string());
     }
     None
 }
