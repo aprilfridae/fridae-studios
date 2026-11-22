@@ -585,10 +585,12 @@ and none was seen on a kept process). Three measurements decide what else runs o
   entry asks for (`timeout`, `timeoutMs`, `timeout_ms`, `requestTimeout`, `timeoutSeconds`, `timeout_seconds`,
   `toolTimeout`, `tool_timeout`, together) and whatever `MCP_TOOL_TIMEOUT` or `MCP_TIMEOUT` say; Cursor sends a server
   no progress token, so the server cannot keep a call alive either. That is under the 15 minutes the app asks every
-  AI for, which is why the kept process is on request. **A process per message was measured with the same
-  60-second limit** (a 90-second call, `MCP_TOOL_TIMEOUT=900000` set as `spawn_turn` sets it), so nothing is lost
-  against today; but it means a Lead's `rbx_team wait`, a texture waiting for the user or a long Blender call fails
-  on Cursor on either path, which the per-message section below did not know.
+  AI for, and was why the kept process was put on request. **A process per message was measured with the same
+  60-second limit** (a 90-second call, `MCP_TOOL_TIMEOUT=900000` set as `spawn_turn` sets it): a Lead's `rbx_team
+  wait`, a texture waiting for the user or a long Blender call failed on Cursor on either path. The app's tool
+  server now answers inside the limit on both paths and keeps longer work going as a job ("Long tool calls" below),
+  so this no longer costs anything; the kept process stays on request for the first reason, the sandbox, and for
+  how narrow that makes it.
 - **Only Auto has a known id on both paths** (`cursor::kept_model`): `auto` per message is `default[]` here. A
   process per message lists 284 model ids (`gpt-5.3-codex-low-fast`), a session 49, each one fixed variant
   (`gpt-5.3-codex[reasoning=medium,fast=false]`); no other spelling is taken (`Invalid model value`), and the plain
