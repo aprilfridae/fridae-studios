@@ -33,13 +33,16 @@ Clean Roblox by diggofun / TemporaryLooker22 (MIT). See
 
 ## LihFolk Vault V2
 
-`guides/lihfolk-vault/` (1,330 notes, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
+`guides/lihfolk-vault/` (a trimmed copy: 1,321 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
 `45 Procedural Blender Assets/scripts`, the dated API snapshot) and `guides/lihfolk/` (11 guides with their Luau
 modules, examples, scripts and rubrics) are from LihFolk Vault V2 by LihFolk,
 https://github.com/lihfolk-cy/v2-vault, licensed CC BY 4.0 (`licenses/lihfolk-vault-LICENSE.md`).
 Changes: guide text that pointed at the Claude Code plugin's folders now points at the `rbx_vault` tool;
 mentions of LihFolk guides left out (because rbxkit already had one on the subject) point at rbxkit's.
-`rbxvault.py` is LihFolk's `_tools/vault.py` search, reading from rbxkit's folders.
+`rbxvault.py` is LihFolk's `_tools/vault.py` search, reading from rbxkit's folders, with rbxkit's section search
+added around it. Trimmed from the copy (2026-11): the generated index and router pages `INDEX.md`, `INDEX_SLIM.md`,
+`ROUTER.md`, the visual home page `000 Home.md` and the Obsidian `_templates/` (the search replaces them); the
+original is at the link above, and everything removed is in this repository's git history.
 Left out: the Obsidian theme, renders and images, the LihFolk UI kit, Figma, asset-pack, council, hook and
 benchmark parts, and guides whose subject rbxkit already covered (secure remotes, anti-exploit review,
 DataStore safety, performance audit, monetization compliance, UI builder). The LihFolk Asset Pack is not included.

@@ -1,8 +1,9 @@
-"""Search and read the LihFolk vault bundled in guides/lihfolk-vault.
+"""Search and read the LihFolk vault bundled in guides/lihfolk-vault, and Fridae's other knowledge shelves.
 
 The search engine below is LihFolk's `_tools/vault.py` from LihFolk Vault V2
-(https://github.com/lihfolk-cy/v2-vault), CC BY 4.0, (c) 2026 LihFolk, used with two changes: it reads the
-vault from rbxkit's guides folder and keeps its index cache in the work folder. `run()` at the end is rbxkit's.
+(https://github.com/lihfolk-cy/v2-vault), CC BY 4.0, (c) 2026 LihFolk, used with these changes: it reads the
+vault from rbxkit's guides folder (a trimmed copy), keeps its index cache in the work folder, and a read is capped.
+Everything from "shelves (rbxkit)" on is rbxkit's.
 """
 import hashlib
 import json
@@ -23,7 +24,7 @@ def cache_path(name="lihfolk-vault-index.json"):
     return os.path.join(rbxpaths.WORK, "cache", name)
 
 START, END = "<!-- tldr:start -->", "<!-- tldr:end -->"
-SKIP_ROOT = {"INDEX.md", "INDEX_SLIM.md", "ROUTER.md", "SYMPTOMS.md", "LICENSE.md", "000 Home.md"}
+SKIP_ROOT = {"SYMPTOMS.md", "LICENSE.md"}  # Fridae's copy dropped INDEX, INDEX_SLIM, ROUTER and 000 Home (search replaces them)
 FIELDS = {"title": 4.0, "tags": 2.5, "tldr": 2.0, "heads": 1.5, "body": 0.4, "sym": 2.0}  # sym = SYMPTOMS.md lines
 K1, B = 1.2, 0.75
 SYMPTOM_WEIGHT = 0.0  # extra boost from matched symptom lines; 0 = symptoms act only as the sym field
@@ -385,7 +386,7 @@ def main():
                           "symptoms": [s["line"] for s in symptoms]}, indent=1))
         return
     if not results:
-        print("no match; try other words or grep LihFolk Vault V2/INDEX_SLIM.md")
+        print("no match; try other words")
         return
     if mode == "paths":
         for s, d in results:

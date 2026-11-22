@@ -1,3 +1,6 @@
+> Fridae Studios' copy: `INDEX.md`, `INDEX_SLIM.md`, `ROUTER.md`, `000 Home.md` and `_templates/` were removed (the
+> `rbx_vault` search replaces the index pages) and the build scripts are not bundled. See THIRD_PARTY.md.
+
 # Vault tools
 
 Python 3, standard library only. Everything here is deterministic, and every check runs on GitHub on each push (`.github/workflows/vault-checks.yml`).
