@@ -477,6 +477,10 @@ fn claim_lead(project: &Path, expected: &str, new_lead: Option<&str>) -> Result<
             return (false, Ok(Claim::Taken(now)));
         }
         run["paused"] = json!(false);
+        // the reason a run stopped by itself goes with the pause
+        if run["note"].as_str().is_some_and(|n| n == "failed" || n.starts_with("limit:")) {
+            run.as_object_mut().map(|o| o.remove("note"));
+        }
         if let Some(id) = new_lead {
             run["lead"] = json!(id);
         }

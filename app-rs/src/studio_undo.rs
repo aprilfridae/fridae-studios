@@ -675,6 +675,24 @@ pub fn pause_if_lead(agent: &Agent) {
     });
 }
 
+/// A run that stopped by itself (out of usage, or three failed turns) is paused with the reason in "note"; Resume
+/// clears both. Only this chat's own going run is touched.
+pub fn pause_with_note(agent: &Agent, note: &str) {
+    let Some(project) = agent.project() else { return };
+    let dir = Path::new(&project);
+    if !studio_run::run_file(dir).is_file() {
+        return;
+    }
+    let _ = change_run(dir, |r| {
+        let go = r.is_object() && running(r) && r["lead"] == agent.id.as_str();
+        if go {
+            r["paused"] = json!(true);
+            r["note"] = json!(note);
+        }
+        (go, ())
+    });
+}
+
 /// Take a finished stage's checkpoint and append it (only while the stage is still done).
 fn take_stage_checkpoint(req: &Value) {
     let Some(project) = studio_run::project_of(req["project"].as_str().unwrap_or("")) else { return };

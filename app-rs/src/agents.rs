@@ -201,6 +201,16 @@ fn back_to_wait(st: &mut State, left: f64) {
 const NEXT_STEP: &str = "Carry on with the next step.";
 const TURN_FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
 
+/// Whether a failed turn's message says the AI plan's usage limit was reached ("You've hit your 5-hour limit · resets
+/// 12:50am"): trying again at once only fails again, so a studio run pauses instead.
+fn usage_limit(msg: &str) -> bool {
+    let low = msg.to_lowercase();
+    low.contains("limit") && (low.contains("hit your") || low.contains("usage limit") || low.contains("rate limit") || low.contains("resets"))
+}
+
+const LIMIT_END: &str = "Studio run paused: the AI's usage limit was reached. Press Resume in Review once it is back.";
+const FAILED_END: &str = "Studio run stopped: three turns in a row failed.";
+
 /// Whether Claude Code's closing "result" event reports a finished turn. "Not logged in" arrives as a result with
 /// is_error set, and must count as a failed turn, not as a reply.
 fn result_ok(e: &Value) -> bool {
@@ -224,7 +234,7 @@ fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) ->
                 state.fails += 1;
                 if state.fails >= 3 {
                     state.night = false;
-                    Step::End(if studio { "Studio run stopped: three turns in a row failed." } else { "Overnight mode stopped: three turns in a row failed." })
+                    Step::End(if studio { FAILED_END } else { "Overnight mode stopped: three turns in a row failed." })
                 } else {
                     Step::CarryOn(TURN_FAILED)
                 }
@@ -1472,6 +1482,7 @@ impl Agent {
         });
         let mut got_result = false;
         let mut result_error = false; // the AI answered, but its result says the turn failed (signed out, out of turns...)
+        let mut result_text = String::new(); // what that failed result said
         let (mut gemini, mut chatgpt) = (antigravity::Turn::default(), codex::Turn::default());
         if let Some(out) = child.stdout.take() {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
@@ -1582,6 +1593,7 @@ impl Agent {
                         if !result_ok(&e) {
                             result_error = true;
                             let msg = e["result"].as_str().or(e["subtype"].as_str()).filter(|s| !s.is_empty()).unwrap_or("The agent stopped with an error.");
+                            result_text = msg.to_string();
                             self.put("error", json!({"text": msg}));
                         }
                     }
@@ -1658,6 +1670,13 @@ impl Agent {
             let step = next_step(loop_mode(stopped, !held.is_empty(), night, st.last_ask.studio), got_result && !result_error, &said, &mut ls);
             let step = pause_step(step, paused, &mut st.pause_told, &mut ls);
             let step = ended_step(step, ended, &mut ls);
+            // out of usage: the next turn would only fail the same way, so the run stops here, paused, until Resume
+            let step = if night && st.last_ask.studio && !stopped && !ended && result_error && usage_limit(&result_text) {
+                ls.night = false;
+                Step::End(LIMIT_END)
+            } else {
+                step
+            };
             st.autopilot_left = ls.autopilot_left;
             st.overnight_fails = ls.fails;
             st.overnight_done = ls.done;
@@ -1683,6 +1702,12 @@ impl Agent {
         }
         if let Some(why) = night_over {
             self.put("error", json!({"text": why}));
+            // a run that stopped on failures is paused, with the reason, so Review says why and offers Resume
+            if why == LIMIT_END {
+                studio_undo::pause_with_note(self, &format!("limit: {}", result_text.chars().take(200).collect::<String>()));
+            } else if why == FAILED_END {
+                studio_undo::pause_with_note(self, "failed");
+            }
         }
         // the board follows the chat: still working, waiting on the user, or finished
         if let Some(p) = self.project() {
@@ -2762,6 +2787,10 @@ mod tests {
     #[test]
     fn an_error_result_is_a_failed_turn() {
         let signed_out = json!({"type": "result", "subtype": "success", "is_error": true, "result": "Not logged in · Please run /login"});
+        assert!(usage_limit("You've hit your 5-hour limit \u{b7} resets 12:50am (America/Los_Angeles)"));
+        assert!(usage_limit("Claude usage limit reached. Your limit will reset at 3pm."));
+        assert!(!usage_limit("Not logged in \u{b7} Please run /login"));
+        assert!(!usage_limit("The stone limit is 40 per player"));
         assert!(!result_ok(&signed_out));
         assert!(result_ok(&json!({"type": "result", "subtype": "success", "is_error": false, "result": "Done."})));
         assert!(result_ok(&json!({"type": "result", "result": "Done."})));

@@ -2610,6 +2610,8 @@ $("rv-end").onclick = () => {
 /* the run line: what the run is doing, and the one button that changes it */
 function runState(r, run) {
   if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
+  if (run.paused && String(run.note || "").startsWith("limit:")) return ["Paused — the AI's usage limit was reached", (run.note.slice(6).trim() + " Press Resume once it is back.").trim(), "resume"];
+  if (run.paused && run.note === "failed") return ["Paused — three turns in a row failed", "Open the Lead's chat to see what went wrong, then press Resume.", "resume"];
   if (run.paused) return ["Paused", "Nothing new is handed out. Experts already at work finish what they are doing.", "resume"];
   if (!r.lead_live) return ["Paused — the Lead's chat is closed", "Resume starts a new Lead chat that reads the run and carries on where it stopped.", "resume"];
   if (!r.lead_active) return ["Paused", "The Lead is not working on the run right now (the app was restarted, or the run stopped). Resume picks it up where it stopped.", "resume"];

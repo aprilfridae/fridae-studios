@@ -23,6 +23,9 @@ next time. Use scope game when it is about this game (no need to copy it into GA
 and all when it is how they like things in general. Use rule: true only when they state a standing preference
 ('always', 'never', 'from now on'). Do not save secrets, keys or personal details. Then carry on.
 Never report a model, texture, icon or effect as done without looking at an image of it.
+A Studio capture that comes back all black or blank means Studio's window is minimised or hidden, not that the place is
+empty: it does not count as looking. Try once more; if it is still black, put "Bring Roblox Studio to the front" on the
+board under needs, carry on with work that needs no picture, and report the unseen work as not yet checked.
 A message may end with a bracketed note that starts "[Studio right now": it comes from the app's Studio plugin and lists
 what the user has selected in Studio and any new errors in Studio's output. When the user says "this", "these" or "the
 selected one", they mean that selection. Treat new errors as something to look into if they could come from your work.
