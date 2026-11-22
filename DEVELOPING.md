@@ -345,31 +345,58 @@ stdin, with an id of the app's own. The old way, a process per turn with `--resu
   turn (each carries its `seen` time).
 - **A turn's lines** go through `consume_lines`, the same parser as a per-turn process, which stops at the `result`.
   A thread reads the process's output for as long as it lives; a turn first drops what was written since the last
-  one, and until Claude Code marks the turn with the message's id, an answer or good result is taken to be left over
-  from the turn before (a failed result always ends the turn).
+  one, and until Claude Code says it has *started* on the message (the `started` mark, the `init` line naming the
+  id, the message played back; a `queued` mark only says the message was read), an answer or good result is taken
+  to be left over from the turn before (a failed result always ends the turn).
+- **Claude Code starts turns by itself.** Measured (`tests/fixtures/claude/live-background.ndjson`): a turn started
+  a shell task with `run_in_background` and ended; seven seconds later, with nothing sent, the task finished and
+  Claude Code ran a whole turn of its own (`init`, an answer, a `result`). Nobody asked for such a turn, the chat
+  shows none of it and Stop would not find it, so it is never left to run: a turn that ends with a background task
+  still open (`background_tasks_changed` with tasks, or `task_started` with `is_backgrounded`) has its process
+  closed at once, and the reading thread ends the process, tree and all, at the first `init` or `assistant` line
+  that comes while the app has no turn on it (`Live::strayed`; not counted as a failure). The next message starts
+  a process that resumes, which is what a process per turn always did.
 - **Mode, model, effort, allowed programs, house rules, project, tool servers** are start arguments. Every message
   builds them as a per-turn process would get them (`ClaudeLaunch`); a kept process started with anything else is
   closed and a new one started with `--resume`. Nothing can go stale inside a kept process.
-- **Stop** (`TurnProc::stop_live`): once Claude Code has taken the message (its `init` line; waited for up to 5 s),
-  the app writes `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`. Measured: a
-  `control_response` in 20 ms and the turn's `result` (`error_during_execution`) 10 ms later, with a running shell
-  command ended by Claude Code itself; what Claude had written so far is still shown. The process stays. Tool
-  processes left in groups the turn added are ended; never the process's own group, which holds its tool servers.
-  No `result` within `STOP_WAIT`: the whole tree is killed and the chat says so, as before.
+- **Stop** (`TurnProc::stop_live`). Before Claude Code has started on the message, an interrupt ends nothing and the
+  message runs afterwards (its answer to an interrupt lists what is "still queued"), so the process is ended at
+  once, tree and all, and the chat says "Stopped.": nothing has run, and the next message resumes. Once it has
+  started, the app writes `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`. Measured:
+  a `control_response` in 20 ms and the turn's `result` (`error_during_execution`) 10 ms later, with a running shell
+  command ended by Claude Code itself; what Claude had written so far is still shown. No `result` within
+  `STOP_WAIT`, or an answer that the message is still queued: the whole tree is killed (and after the wait the chat
+  says so, as before). After a confirmed Stop the process stays, unless a tool call was open as Stop landed: the
+  app's tool server (`rbxkit_mcp.py`) handles one call at a time and may still be in a Blender or Studio call that
+  the interrupt does not reach, so the process is closed with everything in its group and the next message starts
+  one that resumes. Otherwise only tool processes in groups the turn added are ended; never the process's own
+  group, which holds its tool servers. Stop, or closing the chat, while a message is still being sent (the old
+  process is closed on a thread of its own, beside the new one) cancels the turn before the message is written.
 - **When it fails**: could not start, or died before the turn showed anything: the same message goes to a per-turn
-  process at once. Died mid-turn: said as before ("exited unexpectedly", or its error output), not sent twice; the
-  next message starts a process with `--resume`. Died between turns: replaced without a word. Two failures in a chat
-  keep that chat on a process per turn for the rest of the run. `FRIDAE_CLAUDE_PER_TURN=1` forces a process per turn
-  everywhere. Windows always uses a process per turn (the interrupt was not measured there).
+  process at once. Showed no sign of having read the message within 90 s (`START_WAIT`, `watch_start`): ended, the
+  message sent per turn, and the chat stays on a process per turn. Died mid-turn: said as before ("exited
+  unexpectedly", or its error output), not sent twice; the next message starts a process with `--resume`. Died
+  between turns: replaced without a word. A turn whose `result` is a failure (signed out, a conversation that
+  cannot be resumed): the process is closed, its stdin first and its output read to the end, so the reason it gives
+  on its error output is the turn's ("No conversation found" reads as it does per turn). Two failures in a chat
+  keep that chat on a process per turn for the rest of the run. `FRIDAE_CLAUDE_PER_TURN=1` forces a process per
+  turn everywhere. Windows always uses a process per turn (the interrupt was not measured there).
 - **Closing** (stdin closed, 5 s to exit, then its tree ended): an expert's or helper's after every turn (they hold
   nothing between jobs); a chat's after 10 minutes idle (`claude_live::IDLE`), or when more than 3 idle ones are open
   (`KEEP`, longest idle first; `keep_lives` looks every 15 s); when the chat is closed or switched to another AI; all
   of them when the app quits. A kept process is in the process ledger like any other.
-- **Tests**: `src/live_tests.rs`. Five recordings of a kept process (`tests/fixtures/claude/live-*.ndjson`: a plain
+- **Tests**: `src/live_tests.rs`. Six recordings of a kept process (`tests/fixtures/claude/live-*.ndjson`: a plain
   reply, two messages, a tool call, Stop while a shell command ran with a message after it, a process killed
-  mid-turn) replayed through `consume_lines` and `after_turn`; and whole turns against a stand-in process (a shell
-  script that answers as Claude Code does on the wire): one process across messages, a restart with `--resume` for
-  other arguments, Stop confirmed and Stop ignored, the three ways of dying, helpers, idle closing.
+  mid-turn, a background task and the turn Claude Code then started by itself) replayed through `consume_lines` and
+  `after_turn`; the launch key for every setting a turn is started with (`ClaudeLaunch::new` takes them all, so a
+  new one cannot be added without it); and whole turns against a stand-in process (a shell script that answers as
+  Claude Code does on the wire): one process across messages, a restart with `--resume` for other arguments, Stop
+  confirmed, ignored, before the start, in a tool call and while sending, every way of failing, helpers, idle
+  closing, quitting.
+- **Known and left**: the instructions list the other named or busy chats (`team_prompt`), so a studio run's Lead
+  starts a new process whenever that list changes (safe, about a second each; moving the list into the message
+  would change what every AI is told, so it was not done here). An ended run's Lead still in a turn keeps its
+  process until the idle rule closes it.
 - **Trying it by hand** with the scratch copy above: a scratch HOME hides Claude Code's sign-in (keychain), so give
   the Claude child the real one with `FRIDAE_CLAUDE_HOME=$HOME` (debug builds only, compiled out of release builds;
   the app's tool server gets the app's HOME back in its entry), add `USER=$USER` to the `env -i` line (without it

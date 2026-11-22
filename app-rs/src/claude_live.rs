@@ -6,6 +6,13 @@
 //!
 //! A thread reads the output for as long as the process lives and hands the lines over a channel, so nothing the tool
 //! writes between two turns blocks it, and a turn starts by dropping what is left from before its message.
+//!
+//! Claude Code can start a turn by itself: measured, seven seconds after a turn that left a shell task in the
+//! background, when the task finished (`tests/fixtures/claude/live-background.ndjson`). Nobody asked for that turn,
+//! the chat shows nothing of it and Stop would not find it, so it is never left to run: the reading thread ends the
+//! process, tree and all, at the first line of a turn that begins while the app has none on it (`strayed`), and a
+//! turn that leaves a background task has its process closed at once (`Agent::read_live`). The next message starts a
+//! process that resumes the conversation, as a process per turn always did.
 
 use std::{
     collections::VecDeque,
@@ -25,7 +32,7 @@ use serde_json::json;
 use crate::{paths, procs};
 
 /// How long a process whose stdin was closed gets to exit by itself before its tree is ended.
-const CLOSE_WAIT: Duration = Duration::from_secs(5);
+pub const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// A user's chat or a Lead idle this long has its process closed (the next message starts one with `--resume`).
 pub const IDLE: Duration = Duration::from_secs(10 * 60);
 /// At most this many idle processes stay open; the longest idle goes first.
@@ -49,6 +56,16 @@ pub struct Live {
     pub turns: AtomicU32,
     idle_since: Mutex<Instant>,
     requests: AtomicU32,
+    /// The app has a turn on it (from just before its message is written until its `result` is read).
+    in_turn: Arc<AtomicBool>,
+    /// It began a turn nobody asked for and was ended for it.
+    strayed: Arc<AtomicBool>,
+}
+
+/// Whether a line begins or belongs to a turn's work: the `init` line every turn starts with, or the AI speaking.
+fn turn_line(line: &[u8]) -> bool {
+    let Ok(e) = serde_json::from_slice::<serde_json::Value>(line) else { return false };
+    e["type"] == "assistant" || (e["type"] == "system" && e["subtype"] == "init")
 }
 
 impl Live {
@@ -60,9 +77,17 @@ impl Live {
         let pid = child.id();
         procs::record("claude", pid); // ended at the next start if the app crashes meanwhile
         let (tx, rx) = mpsc::channel();
+        let (in_turn, strayed) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
         if let Some(out) = child.stdout.take() {
+            let (in_turn, strayed) = (in_turn.clone(), strayed.clone());
             thread::spawn(move || {
                 for line in paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP) {
+                    // a turn nobody asked for: ended where it begins (the app holds the process unreaped, so the
+                    // pid is still its own)
+                    if !in_turn.load(Ordering::SeqCst) && !strayed.load(Ordering::SeqCst) && line.as_deref().is_some_and(turn_line) {
+                        strayed.store(true, Ordering::SeqCst);
+                        thread::spawn(move || paths::end_trees(&procs::tree_groups(pid)));
+                    }
                     if tx.send(line).is_err() {
                         break;
                     }
@@ -88,6 +113,8 @@ impl Live {
             turns: AtomicU32::new(0),
             idle_since: Mutex::new(Instant::now()),
             requests: AtomicU32::new(0),
+            in_turn,
+            strayed,
         }))
     }
 
@@ -96,6 +123,31 @@ impl Live {
         let Some(pipe) = stdin.as_mut() else { return Err(std::io::ErrorKind::BrokenPipe.into()) };
         pipe.write_all(format!("{line}\n").as_bytes())?;
         pipe.flush()
+    }
+
+    /// The app's turn on it begins (before its message is written) or has ended (its `result` was read).
+    pub fn set_in_turn(&self, on: bool) {
+        self.in_turn.store(on, Ordering::SeqCst);
+    }
+
+    /// It began a turn nobody asked for and was ended for it (not a failure of keeping a process).
+    pub fn strayed(&self) -> bool {
+        self.strayed.load(Ordering::SeqCst)
+    }
+
+    /// Closes its stdin (it then exits by itself: measured, in about a second) and waits up to `wait` for its output
+    /// to end, dropping what it still writes. True when the output ended.
+    pub fn shut(&self, wait: Duration) -> bool {
+        drop(self.stdin.lock().unwrap_or_else(|e| e.into_inner()).take());
+        let rx = self.lines.lock().unwrap_or_else(|e| e.into_inner());
+        let until = Instant::now() + wait;
+        loop {
+            match rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                Ok(_) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+                Err(mpsc::RecvTimeoutError::Timeout) => return false,
+            }
+        }
     }
 
     /// Sends one message. `uuid` comes back in the lines that mark the turn it starts.
@@ -235,6 +287,32 @@ mod tests {
         assert!(!live.drain(), "its output has ended");
         assert!(live.say("c", "late").is_err());
         live.close(); // a second close is nothing
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_turn_it_starts_by_itself_ends_it_and_one_the_app_asked_for_does_not() {
+        // speaks half a second after each message line, whoever is listening
+        let talker = || {
+            let mut cmd = Command::new("/bin/sh");
+            cmd.args(["-c", r#"while read -r line; do sleep 0.5; echo '{"type":"system","subtype":"init"}'; echo '{"type":"assistant"}'; echo '{"type":"result"}'; done"#]);
+            paths::own_group(&mut cmd);
+            Live::start(cmd, "k".into()).unwrap()
+        };
+        let asked = talker();
+        asked.set_in_turn(true);
+        asked.say("a", "hi").unwrap();
+        for _ in 0..3 {
+            asked.lines().recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        asked.set_in_turn(false);
+        assert!(!asked.strayed() && !asked.exited(), "the app's own turn is left alone");
+        // the same lines with no turn of the app's on it
+        asked.say("b", "hi").unwrap();
+        assert!(paths::leader_exited(asked.pid, Duration::from_secs(8)), "ended at the first line of the turn");
+        assert!(asked.strayed());
+        assert!(asked.shut(Duration::from_secs(5)), "its output has ended");
+        asked.close();
     }
 
     #[cfg(unix)]

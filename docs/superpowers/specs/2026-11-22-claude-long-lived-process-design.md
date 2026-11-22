@@ -152,3 +152,17 @@ Names, the exact shape of `ClaudeLive`, how `consume` is split to read from a ke
 - Seen in the scratch run: Stop while Claude was writing still showed what it had written so far, then "Stopped.".
 - A studio run ended in Review closes its Lead's process when the Lead is not in a turn; one still in a turn goes
   with the idle rule.
+
+## After review (same day)
+
+The design said the process "then waits" between turns. Measured since: it does not always. A turn that leaves a
+shell task in the background is followed, when the task ends, by a turn Claude Code starts by itself. Changed:
+
+- A process is not kept after a turn that left a background task, a turn that failed, or a Stop that landed in a
+  tool call (the app's tool server may still be working). A turn that begins with none of the app's on the process
+  ends the process at its first line.
+- Stop before Claude Code has started on the message ends the process at once instead of writing an interrupt that
+  would end nothing. `queued` is no longer taken as the start.
+- Stop or closing the chat while a message is being sent cancels the turn; the old process is closed on its own thread.
+- A process that shows nothing within 90 s of a message is ended, the message goes per turn, and the chat stays there.
+- The message is written by the turn's own thread, after Stop can find the turn.

@@ -7,7 +7,7 @@
 
 use std::{path::Path, sync::Mutex};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -27,8 +27,10 @@ struct Replayed {
     /// the process's output ended before the turn's result
     ended: bool,
     began: bool,
-    /// Claude Code was seen to take the message
+    /// Claude Code was seen to start on the message
     taken: bool,
+    /// the turn left a task of its own running in the background
+    background_left: bool,
 }
 
 /// One turn read from `lines` as `read_live` reads it; `stop`: Stop was pressed during it.
@@ -43,10 +45,10 @@ fn turn(a: &Arc<Agent>, lines: &mut dyn Iterator<Item = claude_live::Line>, mess
     let tp = TurnProc::new(u32::MAX);
     let last = Mutex::new((std::time::Instant::now(), false, false));
     let t = a.consume_lines(lines, "claude", &last, || {}, Some(LiveTurn { tp: &tp, message, first, marks }));
-    let (ended, began) = (t.ended, t.began);
+    let (ended, began, background_left) = (t.ended, t.began, t.background_left);
     let stopped = a.turn_over();
     a.after_turn("claude", t, "", Some(if ended { (false, -1) } else { (true, 0) }), stopped);
-    Replayed { events: a.st.lock().unwrap().log[before..].to_vec(), ended, began, taken: tp.acked.load(Ordering::SeqCst) }
+    Replayed { events: a.st.lock().unwrap().log[before..].to_vec(), ended, began, taken: tp.acked.load(Ordering::SeqCst), background_left }
 }
 
 fn kinds(ev: &[Value]) -> Vec<&str> {
@@ -143,8 +145,120 @@ fn recorded_process_that_dies_mid_turn() {
     let r = turn(&a, &mut recorded("live-dies"), M1, true, &AtomicBool::new(false), false);
     assert!(r.ended && r.began, "it had started, so the message is not sent a second time");
     assert_eq!(said(&r.events, "tool"), ["Running a command"]);
-    assert_eq!(said(&r.events, "error"), ["The agent exited unexpectedly (code -1)."]);
+    // (the exit code is this helper's own; the stand-in tests below end a real process through `read_live`)
+    assert!(said(&r.events, "error")[0].starts_with("The agent exited unexpectedly"), "{:?}", r.events);
     assert_eq!(session(&a).as_deref(), Some(S1), "the next message resumes it");
+}
+
+#[test]
+fn recorded_turn_that_leaves_a_background_task_and_the_turn_claude_code_then_starts_by_itself() {
+    // recorded: a turn that started a shell task in the background and ended; seven seconds later, with nothing
+    // sent, Claude Code noted the task's end and began a turn of its own (`init`, an answer, a `result`)
+    let a = Agent::detached_for_test("live-background", None);
+    let marks = AtomicBool::new(false);
+    let mut lines = recorded("live-background");
+    let r = turn(&a, &mut lines, M1, true, &marks, false);
+    assert_eq!(said(&r.events, "text"), ["started"]);
+    assert!(r.background_left, "so `read_live` closes the process before that turn can begin");
+    assert!(!r.ended);
+    let rest: Vec<Value> = lines.flatten().filter_map(|l| serde_json::from_slice(&l).ok()).collect();
+    assert!(rest.iter().any(|e| e["type"] == "system" && e["subtype"] == "init"), "the turn nobody asked for");
+    assert!(rest.iter().any(|e| e["type"] == "result"));
+    // read as the next message's turn (as if the process had been kept and its lines were still in the pipe), none
+    // of it is taken for that message's answer: the message's id never comes, so its good result is passed over
+    let b = Agent::detached_for_test("live-background-next", None);
+    let mut all = recorded("live-background");
+    let first = all.by_ref().position(|l| l.is_some_and(|l| String::from_utf8_lossy(&l).contains("\"type\":\"result\""))).unwrap();
+    assert!(first > 5);
+    let next = turn(&b, &mut all, M2, false, &AtomicBool::new(true), false);
+    assert!(said(&next.events, "text").is_empty(), "{:?}", next.events);
+    assert!(next.ended && !next.began && !next.taken, "nothing of it counted as the turn");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_kept_process_playing_that_recording_is_ended_when_the_turn_nobody_asked_for_begins() {
+    let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("claude").join("live-background.ndjson");
+    let own = fs::read_to_string(&file).unwrap().lines().position(|l| l.contains("\"type\":\"result\"")).unwrap() + 1;
+    // the asked-for turn's lines when the message is read; the rest a second later, by itself, as recorded
+    let mut cmd = Command::new("/bin/sh");
+    cmd.args(["-c", &format!("read -r l; head -n {own} \"$1\"; sleep 1; tail -n +{} \"$1\"; sleep 300", own + 1), "sh"]).arg(&file);
+    paths::own_group(&mut cmd);
+    let live = Live::start(cmd, "k".into()).unwrap();
+    live.set_in_turn(true);
+    live.say(M1, "go").unwrap();
+    loop {
+        let line = live.lines().recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        if String::from_utf8_lossy(&line).contains("\"type\":\"result\"") {
+            break;
+        }
+    }
+    live.set_in_turn(false);
+    assert!(!live.strayed());
+    assert!(paths::leader_exited(live.pid, Duration::from_secs(8)), "ended at its `init` line");
+    assert!(live.strayed());
+    live.close();
+}
+
+fn settings<'a>(servers: &'a Value, allowed: &'a [String], denied: &'a [String]) -> ClaudeSettings<'a> {
+    ClaudeSettings {
+        exe: Path::new("/bin/claude"),
+        mcp_config: Path::new("/work/agent-tools/c1.json"),
+        servers,
+        allowed,
+        denied,
+        full: false,
+        prompt: "the rules",
+        kit: Path::new("/kit"),
+        project: Some("/games/a"),
+        model: Some("opus"),
+        effort: Some("high"),
+        work: Path::new("/work"),
+        keys_on: false,
+    }
+}
+
+#[test]
+fn the_launch_key_changes_with_everything_a_turn_is_started_with() {
+    let servers = json!({"rbxkit": {"env": {"RBXKIT_PROJECT": "/games/a", "FRIDAE_GEMINI_USE_API": "0"}}});
+    let (allowed, denied) = (vec!["git".to_string()], vec!["Edit(//kit/config.json)".to_string()]);
+    let base = || settings(&servers, &allowed, &denied);
+    let key = |s: ClaudeSettings| ClaudeLaunch::new(&s).key();
+    let same = key(base());
+    assert_eq!(key(base()), same, "the same settings: the process is kept");
+    let other_servers = json!({"rbxkit": {"env": {"RBXKIT_PROJECT": "/games/a", "FRIDAE_GEMINI_USE_API": "1"}}});
+    let more_allowed = vec!["git".to_string(), "python3".to_string()];
+    let more_denied = vec!["Edit(//kit/config.json)".to_string(), "Edit(//work/usage.jsonl)".to_string()];
+    let changed: Vec<(&str, ClaudeSettings)> = vec![
+        ("the mode", ClaudeSettings { full: true, ..base() }),
+        ("an allowed program", ClaudeSettings { allowed: &more_allowed, ..base() }),
+        ("a refused file", ClaudeSettings { denied: &more_denied, ..base() }),
+        ("the instructions (a mode's text, a house rule, the team)", ClaudeSettings { prompt: "the rules\n\nNever use red.", ..base() }),
+        ("the model", ClaudeSettings { model: Some("haiku"), ..base() }),
+        ("no model", ClaudeSettings { model: None, ..base() }),
+        ("the effort", ClaudeSettings { effort: Some("low"), ..base() }),
+        ("the game folder", ClaudeSettings { project: Some("/games/b"), ..base() }),
+        ("no game folder", ClaudeSettings { project: None, ..base() }),
+        ("the tool servers (a setting they are handed)", ClaudeSettings { servers: &other_servers, ..base() }),
+        ("the tool-server file", ClaudeSettings { mcp_config: Path::new("/work/agent-tools/c2.json"), ..base() }),
+        ("the provider-keys switch", ClaudeSettings { keys_on: true, ..base() }),
+        ("the program", ClaudeSettings { exe: Path::new("/other/claude"), ..base() }),
+        ("the kit folder", ClaudeSettings { kit: Path::new("/kit2"), ..base() }),
+    ];
+    let mut seen = vec![same.clone()];
+    for (what, s) in changed {
+        let k = key(s);
+        assert!(!seen.contains(&k), "{what} must start another process");
+        seen.push(k);
+    }
+    // and the two commands a launch gives differ only in how the message goes in and the conversation resumed
+    let l = ClaudeLaunch::new(&base());
+    let args = |c: Command| c.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>();
+    let (kept, per_turn) = (args(l.command(true, Some("S"))), args(l.command(false, Some("S"))));
+    assert_eq!(kept[..4], ["-p", "--input-format", "stream-json", "--replay-user-messages"]);
+    assert_eq!(kept[4..], per_turn[1..], "the same rules either way");
+    assert_eq!(per_turn[per_turn.len() - 2..], ["--resume", "S"]);
+    assert!(per_turn.windows(2).any(|w| w == ["--permission-mode", "acceptEdits"]) && per_turn.contains(&"Bash(git:*)".to_string()) && per_turn.contains(&"Edit(//kit/config.json)".to_string()));
 }
 
 // ------------------------------------------------------------ stand-in process
@@ -167,6 +281,15 @@ while read -r line; do
     *control_request*) echo '{"type":"control_response","response":{"subtype":"success"}}'
        echo '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"S1"}';;
     *die-early*) exit 3;;
+    *mute*) sleep 300;;
+    *slow*) sleep 1; echo "$init"; say "late"; echo "$ok";;
+    *no-conv*) echo '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"S0"}'
+       echo "No conversation found with session ID: S0" >&2; exit 1;;
+    *signed-out*) echo "$init"; echo '{"type":"result","is_error":true,"result":"Not logged in","session_id":"S1"}';;
+    *background*) echo "$init"; echo '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1"}]}'; say "started"; echo "$ok";;
+    *in-a-tool*) echo "$init"
+       echo '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__rbxkit__rbx_blender","input":{}}]}}'
+       sleep 300 >/dev/null 2>&1 & echo $! > "$0.tool";;
     *die-late*) echo "$init"; say "half"; echo "boom" >&2; exit 3;;
     *hang*) echo "$init";;
     *deaf*) echo "$init"; trap '' TERM; while read -r l; do :; done; sleep 300;;
@@ -193,7 +316,7 @@ done
         }
 
         fn launch(&self, extra: &[&str]) -> ClaudeLaunch {
-            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new() }
+            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new(), keys_on: false }
         }
 
         /// Sends a message the kept way and waits for the turn to end. False: it went to no kept process.
@@ -213,6 +336,20 @@ done
                 assert!(std::time::Instant::now() < until, "the turn never ended: {:?}", self.a.st.lock().unwrap().log);
                 thread::sleep(Duration::from_millis(20));
             }
+        }
+
+        /// Waits until the running turn's process says `what` of it (Claude Code started on the message, a tool is open).
+        fn until(&self, what: impl Fn(&TurnProc) -> bool) {
+            let tp = self.a.st.lock().unwrap().proc_.clone().unwrap();
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while !what(&tp) {
+                assert!(std::time::Instant::now() < until);
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn started(&self) {
+            self.until(|tp| tp.acked.load(Ordering::SeqCst));
         }
 
         fn pid(&self) -> Option<u32> {
@@ -243,6 +380,11 @@ done
         paths::leader_exited(pid, Duration::ZERO)
     }
 
+    /// Within a few seconds (a process given up is closed beside the next turn, not before it).
+    fn goes(pid: u32) -> bool {
+        paths::leader_exited(pid, Duration::from_secs(10))
+    }
+
     #[test]
     fn two_messages_run_on_one_process_and_other_arguments_start_another_that_resumes() {
         let c = Chat::new("reuse");
@@ -259,7 +401,7 @@ done
         c.wait();
         let second = c.pid().unwrap();
         assert_ne!(second, first);
-        assert!(gone(first), "the old process was closed");
+        assert!(goes(first), "the old process was closed");
         assert_eq!(c.said("text").last().map(String::as_str), Some("reply 1"), "a new process");
         assert!(c.starts()[1].ends_with("--model other --resume S1"), "{:?}", c.starts());
         assert_eq!(c.fails(), 0);
@@ -271,11 +413,12 @@ done
         let c = Chat::new("stop");
         assert!(c.start("hang"));
         let pid = c.pid().unwrap();
+        c.started();
         let pressed = std::time::Instant::now();
-        c.a.stop(); // at once: Stop itself waits until Claude Code has taken the message
+        c.a.stop();
         c.wait();
-        assert!(pressed.elapsed() < Duration::from_millis(1500), "confirmed by the interrupt, not by the kill after STOP_WAIT: {:?}", pressed.elapsed());
-        assert_eq!(c.said("error"), ["Stopped."]);
+        assert!(pressed.elapsed() < paths::STOP_WAIT, "confirmed by the interrupt, not by the kill after STOP_WAIT: {:?}", pressed.elapsed());
+        assert_eq!(c.said("error"), ["Stopped."], "and no word of a kill");
         assert_eq!(c.pid(), Some(pid), "kept");
         assert!(!gone(pid));
         assert!(c.send("again"));
@@ -289,6 +432,7 @@ done
         let c = Chat::new("deaf");
         assert!(c.start("deaf"));
         let pid = c.pid().unwrap();
+        c.started();
         let pressed = std::time::Instant::now();
         c.a.stop();
         c.wait();
@@ -381,6 +525,175 @@ done
         // the closed chat's next message starts a process that resumes
         assert!(chats[0].send("back"));
         assert!(chats[0].starts()[1].ends_with("--resume S1"));
+    }
+
+    #[test]
+    fn stop_before_claude_code_has_started_on_the_message_ends_the_process_at_once() {
+        // a slow start (a long conversation resumed, tool servers connecting): an interrupt would end nothing and
+        // the message would run afterwards, so nothing is written and the process goes
+        let c = Chat::new("stop-early");
+        assert!(c.start("slow"));
+        let pid = c.pid().unwrap();
+        let pressed = std::time::Instant::now();
+        c.a.stop();
+        c.wait();
+        assert!(pressed.elapsed() < paths::STOP_WAIT, "{:?}", pressed.elapsed());
+        assert_eq!(c.said("error"), ["Stopped."], "cleanly: no \"did not stop\"");
+        assert!(c.said("text").is_empty(), "the message never ran");
+        assert_eq!(c.pid(), None);
+        assert!(goes(pid));
+        assert_eq!(c.fails(), 0);
+        assert!(c.send("again"));
+        assert_eq!(c.said("text"), ["reply 1"]);
+    }
+
+    #[test]
+    fn stop_during_a_tool_call_gives_the_process_up_with_what_its_tool_server_was_doing() {
+        let c = Chat::new("stop-in-tool");
+        assert!(c.start("in-a-tool"));
+        let pid = c.pid().unwrap();
+        c.until(|tp| tp.tool_open.load(Ordering::SeqCst));
+        let tool: u32 = loop {
+            if let Some(p) = fs::read_to_string(c.script.with_extension("sh.tool")).ok().and_then(|t| t.trim().parse().ok()) {
+                break p;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert!(paths::signal_group(pid, "-0") && !gone(tool), "the call is at work, in the process's own group");
+        let pressed = std::time::Instant::now();
+        c.a.stop();
+        c.wait();
+        assert!(pressed.elapsed() < paths::STOP_WAIT, "confirmed by the interrupt: {:?}", pressed.elapsed());
+        assert_eq!(c.said("error"), ["Stopped."]);
+        assert_eq!(c.pid(), None, "not kept: the next message must not wait behind the call");
+        assert!(goes(pid));
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        let alive = |p: u32| Command::new("kill").args(["-0", &p.to_string()]).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        while alive(tool) && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(tool), "what the tool call had started is ended");
+        assert_eq!(c.fails(), 0);
+        assert!(c.send("again"));
+        assert!(c.starts()[1].ends_with("--resume S1"), "{:?}", c.starts());
+    }
+
+    #[test]
+    fn stop_or_closing_the_chat_while_the_message_is_being_sent_cancels_the_turn() {
+        // Stop pressed after `send` began and before the turn exists is noted as `halted` (`stop_turn`)
+        let c = Chat::new("stop-sending");
+        assert!(c.send("one"));
+        let pid = c.pid().unwrap();
+        c.a.st.lock().unwrap().halted = true;
+        assert!(c.send("two"), "handled: it goes nowhere else");
+        assert_eq!(c.said("text"), ["reply 1"], "the message was not written");
+        assert_eq!(c.said("error"), ["Stopped."]);
+        assert_eq!(c.pid(), Some(pid), "the process, which was told nothing, stays");
+        c.a.st.lock().unwrap().halted = false;
+        // with other arguments (a mode change): the old process is closed beside the cancelled turn
+        c.a.st.lock().unwrap().halted = true;
+        assert!(c.a.live_turn(&c.launch(&["--permission-mode", "bypassPermissions"]), "three"));
+        c.wait();
+        assert_eq!(c.said("text"), ["reply 1"]);
+        assert!(goes(pid));
+        // a chat closed meanwhile keeps nothing
+        let closed = Chat::new("closed-sending");
+        closed.a.st.lock().unwrap().closed = true;
+        assert!(closed.send("one"));
+        assert!(closed.said("text").is_empty());
+        assert_eq!(closed.pid(), None);
+    }
+
+    #[test]
+    fn a_process_that_never_answers_has_its_message_sent_per_turn_and_the_chat_stays_there() {
+        let c = Chat::new("mute");
+        let sent = std::time::Instant::now();
+        assert!(c.send("mute"));
+        assert!(sent.elapsed() >= START_WAIT, "it was given the wait");
+        assert_eq!(c.said("text"), ["per turn"], "without the user typing it again");
+        assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
+        assert_eq!(c.fails(), LIVE_FAILS);
+        assert!(!c.a.live_allowed(), "for the rest of this run of the app");
+        assert_eq!(c.pid(), None);
+    }
+
+    #[test]
+    fn a_kept_process_that_cannot_resume_says_so_as_a_per_turn_one_does() {
+        let c = Chat::new("no-conv");
+        c.a.st.lock().unwrap().session = Some("S0".into());
+        assert!(c.send("no-conv"));
+        assert!(c.starts()[0].ends_with("--resume S0"));
+        let errors = c.said("error");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].starts_with("The memory of this earlier chat is no longer on this computer"), "{errors:?}");
+        assert_eq!(c.a.st.lock().unwrap().session, None, "forgotten, so the next message starts afresh");
+        assert_eq!(c.starts().len(), 1, "not sent a second time");
+        assert_eq!((c.fails(), c.pid()), (0, None));
+    }
+
+    #[test]
+    fn a_failed_turn_and_a_turn_that_left_a_background_task_keep_no_process() {
+        let c = Chat::new("signed-out");
+        assert!(c.send("signed-out"));
+        assert_eq!(c.said("error"), ["Not logged in"]);
+        assert_eq!((c.fails(), c.pid()), (0, None), "a new process gets to find the sign-in");
+        assert!(c.send("again"));
+        assert_eq!(c.starts().len(), 2);
+        let b = Chat::new("background");
+        assert!(b.send("background"));
+        let first = b.starts().len();
+        assert_eq!(b.said("text"), ["started"]);
+        assert_eq!((b.fails(), b.pid()), (0, None), "Claude Code would begin a turn by itself when the task ends");
+        assert!(b.send("again"));
+        assert_eq!(b.starts().len(), first + 1);
+        assert!(b.starts()[first].ends_with("--resume S1"));
+    }
+
+    #[test]
+    fn a_kept_process_that_cannot_be_started_sends_the_turn_to_a_process_of_its_own() {
+        let c = Chat::new("no-start");
+        let mut launch = c.launch(&[]);
+        launch.exe = "/nonexistent/claude".into();
+        c.a.claude_turn(&launch, "hello");
+        c.wait();
+        assert_eq!(c.fails(), 1, "the kept way failed");
+        // and the per-turn way was tried next with the same message (here it cannot start either, and says so)
+        let errors = c.said("error");
+        assert!(errors.len() == 1 && errors[0].starts_with("Could not start the agent"), "{errors:?}");
+        // where the program is there, the same call ends in a reply: kept first...
+        let ok = Chat::new("start");
+        ok.a.claude_turn(&ok.launch(&[]), "hello");
+        ok.wait();
+        assert_eq!(ok.said("text"), ["reply 1"]);
+        // ...and per turn once the kept way is off for the chat
+        ok.a.st.lock().unwrap().live_fails = LIVE_FAILS;
+        ok.a.close_live();
+        ok.a.claude_turn(&ok.launch(&[]), "hello");
+        ok.wait();
+        assert_eq!(ok.said("text"), ["reply 1", "per turn"]);
+        assert!(ok.starts()[1].starts_with("-p --resume S1") || ok.starts()[1] == "-p --resume S1", "{:?}", ok.starts());
+    }
+
+    #[test]
+    fn quitting_leaves_no_kept_process() {
+        let (idle, busy) = (Chat::new("quit-idle"), Chat::new("quit-busy"));
+        assert!(idle.send("one"));
+        assert!(busy.start("hang"));
+        busy.started();
+        let (p1, p2) = (idle.pid().unwrap(), busy.pid().unwrap());
+        // as `shut_down` does: the running turns ended, then the kept processes
+        let turns: Vec<Arc<TurnProc>> = [&idle, &busy].iter().filter_map(|c| c.a.stop_turn()).collect();
+        assert_eq!(turns.len(), 1);
+        for t in &turns {
+            t.end();
+        }
+        end_kept(&[idle.a.clone(), busy.a.clone()], &turns);
+        assert!(gone(p1), "the idle one is ended before `end_kept` returns");
+        assert!(goes(p2));
+        busy.wait();
+        assert_eq!((idle.pid(), busy.pid()), (None, None));
+        assert_eq!(busy.said("error"), ["Stopped."]);
+        assert_eq!(busy.fails(), 0);
     }
 
     #[test]
