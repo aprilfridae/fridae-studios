@@ -1,6 +1,6 @@
 # One long-lived Claude Code process per chat: design
 
-Status: waiting for approval. Nothing is built yet.
+Status: approved by the user on 2026-11-22 and built. "As built" at the end lists what changed while building.
 
 ## Why
 
@@ -137,3 +137,18 @@ killed after the wait and said; idle and over-the-cap processes are closed; quit
 ## Left to the builder
 
 Names, the exact shape of `ClaudeLive`, how `consume` is split to read from a kept reader, and thread layout.
+
+## As built
+
+- The process is started with `--replay-user-messages` too, and each message carries an id of the app's. Claude
+  Code marks a turn with that id (`command_lifecycle` lines, `init`'s `user_message_uuids`, the played-back message),
+  which is how a turn's lines are told from an earlier turn's. A thread reads the output all the time and a turn
+  starts by dropping what is left over.
+- Measured: an interrupt while a shell command ran ended the command (Claude Code's doing) and the turn in 30 ms.
+  The tool's shell had a process group of its own; the tool server shares the Claude process's group.
+- Stop ends only groups the turn added to the process's tree, read when Claude Code takes the message.
+- A resume that fails ("No conversation found") is not counted as a failure of the kept process and is said as before.
+- `FRIDAE_CLAUDE_HOME` (debug builds only) was added for trying it with a scratch home.
+- Seen in the scratch run: Stop while Claude was writing still showed what it had written so far, then "Stopped.".
+- A studio run ended in Review closes its Lead's process when the Lead is not in a turn; one still in a turn goes
+  with the idle rule.

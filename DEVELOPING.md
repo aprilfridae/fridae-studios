@@ -297,7 +297,8 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
   stdout, then `after_turn` with the recorded stderr and exit code) and `src/opencode_replay.rs` (through `turn_on`
   against a stand-in HTTP server that answers each call as OpenCode did and streams the recording as `/api/event`).
   Cases: Claude plain reply with its `rate_limit_event`, a resumed session with two commands, a resume of a
-  conversation that is gone; Gemini plain reply, a resumed turn with a file written and a command refused, a resume
+  conversation that is gone (and five recordings of a kept process, see "Claude Code: one process kept open per
+  chat"); Gemini plain reply, a resumed turn with a file written and a command refused, a resume
   of a conversation agy no longer has; Cursor plain reply, a command, a refused `./git`, a resumed chat, signed out;
   OpenCode plain reply, resumed session, a command, a refused command answered, a failed turn, the free-usage limit.
   `every_fixture_is_scrubbed` fails if the user's folder, the scratch path or an email shows up. To add one, record
@@ -324,6 +325,57 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
 - Usage: Claude Code's `total_cost_usd` is the session's running total, so `usage.rs` logs each turn's difference
   from that session's previous total (`session` and `session_cost` are kept in `work/usage.jsonl` so this survives a
   restart); token counts are already per turn. Lines written before this change hold running totals.
+
+## Claude Code: one process kept open per chat
+
+A Claude chat keeps one process, `claude -p --input-format stream-json --replay-user-messages --output-format
+stream-json --verbose ...`, open across turns (`app-rs/src/claude_live.rs` is the process and its pipes;
+`Agent::live_turn` and `read_live` in `agents.rs` run a turn on it). Each message is one JSON `user` line on its
+stdin, with an id of the app's own. The old way, a process per turn with `--resume`, is still there
+(`Agent::spawn_turn`, `read`, `finish_turn`) and is the fallback. Checked against Claude Code 2.1.319;
+`caps.rs` says which AI works this way (`live`). The design is `docs/superpowers/specs/2026-11-22-claude-long-lived-process-design.md`.
+
+- **What was measured** (cheapest model, real runs): five messages on one process and one session id; every turn
+  starts with `command_lifecycle` lines (`queued`, `started`) carrying the message's id and a `system/init` line whose
+  `user_message_uuids` holds it, the message is played back (`isReplay`) just before the first answer, and the turn
+  ends with a `result` line; a `command_lifecycle` `completed` or `cancelled` follows the result. The process then
+  waits. Closing its stdin: exit 0 in about a second (so a kept process also ends by itself when the app dies).
+  `total_cost_usd` is the session's running total, as `usage.rs` already takes it. `rate_limit_event` came with a
+  process's first turn only, so in a long chat the plan-limit numbers are older than they were with a process per
+  turn (each carries its `seen` time).
+- **A turn's lines** go through `consume_lines`, the same parser as a per-turn process, which stops at the `result`.
+  A thread reads the process's output for as long as it lives; a turn first drops what was written since the last
+  one, and until Claude Code marks the turn with the message's id, an answer or good result is taken to be left over
+  from the turn before (a failed result always ends the turn).
+- **Mode, model, effort, allowed programs, house rules, project, tool servers** are start arguments. Every message
+  builds them as a per-turn process would get them (`ClaudeLaunch`); a kept process started with anything else is
+  closed and a new one started with `--resume`. Nothing can go stale inside a kept process.
+- **Stop** (`TurnProc::stop_live`): once Claude Code has taken the message (its `init` line; waited for up to 5 s),
+  the app writes `{"type":"control_request","request_id":…,"request":{"subtype":"interrupt"}}`. Measured: a
+  `control_response` in 20 ms and the turn's `result` (`error_during_execution`) 10 ms later, with a running shell
+  command ended by Claude Code itself; what Claude had written so far is still shown. The process stays. Tool
+  processes left in groups the turn added are ended; never the process's own group, which holds its tool servers.
+  No `result` within `STOP_WAIT`: the whole tree is killed and the chat says so, as before.
+- **When it fails**: could not start, or died before the turn showed anything: the same message goes to a per-turn
+  process at once. Died mid-turn: said as before ("exited unexpectedly", or its error output), not sent twice; the
+  next message starts a process with `--resume`. Died between turns: replaced without a word. Two failures in a chat
+  keep that chat on a process per turn for the rest of the run. `FRIDAE_CLAUDE_PER_TURN=1` forces a process per turn
+  everywhere. Windows always uses a process per turn (the interrupt was not measured there).
+- **Closing** (stdin closed, 5 s to exit, then its tree ended): an expert's or helper's after every turn (they hold
+  nothing between jobs); a chat's after 10 minutes idle (`claude_live::IDLE`), or when more than 3 idle ones are open
+  (`KEEP`, longest idle first; `keep_lives` looks every 15 s); when the chat is closed or switched to another AI; all
+  of them when the app quits. A kept process is in the process ledger like any other.
+- **Tests**: `src/live_tests.rs`. Five recordings of a kept process (`tests/fixtures/claude/live-*.ndjson`: a plain
+  reply, two messages, a tool call, Stop while a shell command ran with a message after it, a process killed
+  mid-turn) replayed through `consume_lines` and `after_turn`; and whole turns against a stand-in process (a shell
+  script that answers as Claude Code does on the wire): one process across messages, a restart with `--resume` for
+  other arguments, Stop confirmed and Stop ignored, the three ways of dying, helpers, idle closing.
+- **Trying it by hand** with the scratch copy above: a scratch HOME hides Claude Code's sign-in (keychain), so give
+  the Claude child the real one with `FRIDAE_CLAUDE_HOME=$HOME` (debug builds only, compiled out of release builds;
+  the app's tool server gets the app's HOME back in its entry), add `USER=$USER` to the `env -i` line (without it
+  Claude Code reports "Not logged in"), and link `<scratch>/home/.local/bin/claude` to the real program. Pick Haiku
+  under the message box first: each turn uses the user's Claude plan. `work/processes/<app pid>.json` then shows one
+  `claude` entry across several messages.
 
 ## Cursor as a chat's AI
 

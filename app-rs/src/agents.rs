@@ -665,7 +665,8 @@ pub fn slots_used() -> usize {
     slots_taken(&AGENTS.lock().unwrap())
 }
 
-/// One chat. One headless Claude Code turn at a time; events go to the bus.
+/// One chat. One turn at a time (Claude Code's on a process kept open for the chat, see `claude_live`); events go
+/// to the bus.
 pub struct Agent {
     pub id: String,
     st: Mutex<State>,
@@ -1147,6 +1148,9 @@ impl ClaudeLaunch {
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, "claude");
+        if let Some(h) = claude_home() {
+            cmd.env("HOME", h);
+        }
         cmd
     }
 
@@ -1154,6 +1158,19 @@ impl ClaudeLaunch {
     fn key(&self) -> String {
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, paths::env_keys_on()]).to_string()
     }
+}
+
+/// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
+/// Claude Code alone, which finds its sign-in through the home folder's keychain (as FRIDAE_CURSOR_HOME does for
+/// Cursor). The app's tool server gets the app's HOME back in its entry.
+#[cfg(debug_assertions)]
+fn claude_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("FRIDAE_CLAUDE_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+fn claude_home() -> Option<std::path::PathBuf> {
+    None
 }
 
 /// Starts, once, the thread that closes kept Claude Code processes nobody is using: one whose chat has been idle for
@@ -1247,6 +1264,10 @@ impl Agent {
             st.autopilot_left = 0;
             if !working(&st) {
                 st.halted = true;
+                // an ended run's Lead keeps no Claude Code process (one still in a turn goes with the idle rule)
+                if let Some(l) = st.live.take() {
+                    thread::spawn(move || l.close());
+                }
             }
             (std::mem::take(&mut st.studio_waiting), requeued)
         };
@@ -2055,6 +2076,10 @@ impl Agent {
             // its models carry their own effort in the id, so the effort setting is not passed
             "cursor" => cursor::command(&exe, &workspace, &servers, session.as_deref(), model, ask.full, project.as_deref(), &PATHS.kit),
             _ => {
+                let mut servers = servers.clone();
+                if claude_home().is_some() {
+                    servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
+                }
                 let mut args: Vec<std::ffi::OsString> = Vec::new();
                 let mut add = |a: &[&str]| args.extend(a.iter().map(std::ffi::OsString::from));
                 add(&["--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config"]);
