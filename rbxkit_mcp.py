@@ -901,11 +901,14 @@ def _end_jobs(jobs):
             j.cancelled = True
             _LONG.pop(j.name, None)
         _LANE_TURN.notify_all()
-        procs = [j.proc for j in jobs if j.proc is not None]
+        # only jobs still running: a finished job's process is gone, and its number may be another process's by now
+        procs = [j.proc for j in jobs if j.proc is not None and j.proc.returncode is None]
     if procs:
         _signal_jobs(procs, "SIGTERM")
         time.sleep(KILL_GRACE)
         _signal_jobs(procs, "SIGKILL")
+        for p in procs:
+            _reaper_tell("-", p.pid)
     return [j.name for j in jobs]
 
 
