@@ -1,6 +1,7 @@
 //! The event log the window reads, the agents (one headless process of the chat's AI: kept open for the chat where
 //! the AI can be, `Kept`, else one per turn), and saved chats.
 
+use crate::paths::Start;
 use std::{
     collections::HashMap,
     fs,
@@ -679,6 +680,10 @@ pub struct Agent {
     pub id: String,
     st: Mutex<State>,
     save_lock: Mutex<()>,
+    /// Tests only: the test (its thread) that made this chat. The chats of all tests are in one list, and a free
+    /// slot wakes every waiting Lead in it (`team::slot_freed`): a test's Lead is woken by its own test alone.
+    #[cfg(test)]
+    maker: thread::ThreadId,
 }
 
 static AGENTS: Mutex<Vec<Arc<Agent>>> = Mutex::new(Vec::new());
@@ -1198,6 +1203,15 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
     )
 }
 
+/// A hand-over (`handover_text`) for the same AI carrying on in a new conversation of its own (a kept Cursor chat
+/// that goes on per message): its opening says that, not that the user switched AIs.
+fn same_ai_handover(text: &str) -> String {
+    match (text.strip_prefix("[This conversation began with "), text.find("; the user switched it to you, so you carry it on.")) {
+        (Some(_), Some(at)) => format!("[This chat carries on here in a new conversation, so you do not remember it{}", &text[at + "; the user switched it to you, so you carry it on".len()..]),
+        _ => text.to_string(),
+    }
+}
+
 /// Notes a kept process the chat gives up, before it is closed: it counts as there until it has been reaped.
 fn retire(st: &mut State, live: &Arc<Live>) {
     st.retiring.retain(|l| !l.reaped());
@@ -1582,7 +1596,7 @@ impl Kept for GeminiLaunch {
             let _ = fs::write(file, "");
         }
         let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
-        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
+        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, None, &mut host);
         let mut t = host.t;
         if let Some(was) = list_was {
             antigravity::rewrite_list(&self.spec.cwd, &was);
@@ -1598,6 +1612,16 @@ impl Kept for GeminiLaunch {
 
     fn alone(&self) -> bool {
         true
+    }
+
+    fn fall_back(&self, a: &Arc<Agent>, text: &str) -> (Command, String) {
+        // the workspace's list of tool servers, where a process per message finds the app's tools, is a link the
+        // app did not make: it is not written, and the chat is told why its tools may be missing
+        if antigravity::list_is_link(&self.spec.cwd) {
+            a.put("error", json!({"text": antigravity::LIST_IS_A_LINK}));
+        }
+        let session = a.st.lock().unwrap().session.clone();
+        self.per_turn(session.as_deref(), text)
     }
 }
 
@@ -1770,12 +1794,21 @@ impl Kept for CursorLaunch {
             let _ = fs::write(file, "");
         }
         let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
-        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
+        // should Cursor not have the conversation after all, the new one it makes gets this message as a
+        // conversation's first: the standing instructions, the chat so far as text, the message
+        let fresh = resume.as_ref().map(|_| {
+            let st = a.st.lock().unwrap();
+            let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
+            let had = st.log[..upto].iter().any(|e| matches!(e["kind"].as_str(), Some("user") | Some("text")));
+            let chat = if had { same_ai_handover(&handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP)) } else { String::new() };
+            antigravity::with_instructions(&self.prompt, &(chat + &self.body))
+        });
+        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, fresh.as_deref(), &mut host);
         let mut t = host.t;
         // a command the turn started and left running: nothing of a chat's runs on once the chat shows it has finished
         let left = end.background || (!end.ended && tp.left_running());
         if left && !a.st.lock().unwrap().stopped {
-            a.put("error", json!({"text": "Cursor left a command running when its turn ended. Fridae ended that command with the turn: nothing of a chat's runs on once the chat shows it has finished."}));
+            a.put("error", json!({"text": "Something Cursor started in this turn was still running when the turn ended. Fridae ended it with the turn: nothing of a chat's runs on once the chat shows it has finished."}));
         }
         t.ended = end.ended;
         t.unfit = end.unfit;
@@ -1789,8 +1822,13 @@ impl Kept for CursorLaunch {
     }
 
     fn fits(&self, a: &Arc<Agent>) -> bool {
-        let session = a.st.lock().unwrap().session.clone();
-        !self.full && self.kept_model && session.as_deref().is_none_or(|s| self.kept_session(s))
+        let (session, helper) = {
+            let st = a.st.lock().unwrap();
+            (st.session.clone(), is_helper(&st) || st.role.is_some())
+        };
+        // an expert, a helper or the researcher stays on a process per message whatever the switch says: how experts
+        // and studio runs work is not changed by this, and none was seen running on a kept Cursor process
+        !helper && !self.full && self.kept_model && session.as_deref().is_none_or(|s| self.kept_session(s))
     }
 
     fn fall_back(&self, a: &Arc<Agent>, text: &str) -> (Command, String) {
@@ -1806,7 +1844,7 @@ impl Kept for CursorLaunch {
         let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
         let had = st.log[..upto].iter().any(|e| matches!(e["kind"].as_str(), Some("user") | Some("text")));
         if had && st.handover.is_none() {
-            st.handover = Some(handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP));
+            st.handover = Some(same_ai_handover(&handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP)));
         }
         let text = antigravity::with_instructions(&self.prompt, &with_handover(&st, &self.body));
         drop(st);
@@ -1918,7 +1956,19 @@ fn close_idle_lives(chats: Vec<Arc<Agent>>, idle: Duration, keep: usize) -> usiz
 
 impl Agent {
     fn new(id: String, name: &str) -> Arc<Agent> {
-        Arc::new(Agent { id, st: Mutex::new(State { name: name.to_string(), ..Default::default() }), save_lock: Mutex::new(()) })
+        Arc::new(Agent {
+            id,
+            st: Mutex::new(State { name: name.to_string(), ..Default::default() }),
+            save_lock: Mutex::new(()),
+            #[cfg(test)]
+            maker: thread::current().id(),
+        })
+    }
+
+    /// Tests only: whether the running test made this chat.
+    #[cfg(test)]
+    pub fn of_this_test(&self) -> bool {
+        self.maker == thread::current().id()
     }
 
     pub fn name(&self) -> String {
@@ -2463,7 +2513,7 @@ impl Agent {
         let name: String = WORDS.find_iter(what).take(4).map(|w| capitalize(w.as_str())).collect();
         let name = if name.is_empty() { "Texture".to_string() } else { name };
         // a command typed by the user always goes through their own Gemini chat, never the paid API
-        let out = paths::cli(&["gen", what, "--kind", kind, "--name", &name, "--folder", "chat", "--agent", &self.id, "--no-api"]).output();
+        let out = paths::cli(&["gen", what, "--kind", kind, "--name", &name, "--folder", "chat", "--agent", &self.id, "--no-api"]).run_output();
         let result = match out {
             Ok(o) if o.status.success() => {
                 let text = String::from_utf8_lossy(&o.stdout).to_string();
@@ -2922,8 +2972,7 @@ impl Agent {
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, kind);
         let spawned = {
-            let _one_at_a_time = paths::spawn_lock();
-            cmd.spawn()
+            cmd.start()
         };
         let mut child = match spawned {
             Ok(c) => c,
@@ -4344,7 +4393,7 @@ fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
 
 /// Run the setup check and show its report in the window.
 pub fn run_setup() {
-    let text = match paths::cli(&["doctor"]).output() {
+    let text = match paths::cli(&["doctor"]).run_output() {
         Ok(o) => {
             let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if out.is_empty() { String::from_utf8_lossy(&o.stderr).trim().to_string() } else { out }
@@ -4755,7 +4804,7 @@ mod tests {
         let mut c = Command::new("sh");
         c.args(["-c", "sleep 60 & echo $!; wait"]).stdout(Stdio::piped());
         paths::own_group(&mut c);
-        let mut child = c.spawn().unwrap();
+        let mut child = c.start().unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         (child, line.trim().to_string())
@@ -4764,7 +4813,7 @@ mod tests {
     #[cfg(unix)]
     fn gone(pid: &str) -> bool {
         for _ in 0..60 {
-            if !Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().unwrap().success() {
+            if !Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).run_status().unwrap().success() {
                 return true;
             }
             thread::sleep(Duration::from_millis(100));
@@ -4792,7 +4841,7 @@ mod tests {
             let mut c = Command::new("sh");
             c.args(["-c", if ignores { "trap '' TERM; sleep 60 & echo $!; wait" } else { "sleep 60 & echo $!; wait" }]).stdout(Stdio::piped());
             paths::own_group(&mut c);
-            let mut child = c.spawn().unwrap();
+            let mut child = c.start().unwrap();
             let mut line = String::new();
             BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
             let a = Agent::detached_for_test(&format!("confirmed{ignores}"), None);
@@ -4902,7 +4951,7 @@ mod tests {
         let mut c = Command::new("sh");
         c.args(["-c", &script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::own_group(&mut c);
-        let child = c.spawn().unwrap();
+        let child = c.start().unwrap();
         let a = Agent::detached_for_test("stray", None);
         let tp = a.set_turn_pid_for_test(child.id());
         let t = std::time::Instant::now();
@@ -4925,7 +4974,7 @@ mod tests {
 
     #[cfg(unix)]
     fn signal_alive(group: u32) -> bool {
-        Command::new("kill").args(["-0", "--", &format!("-{group}")]).stderr(Stdio::null()).status().unwrap().success()
+        Command::new("kill").args(["-0", "--", &format!("-{group}")]).stderr(Stdio::null()).run_status().unwrap().success()
     }
 
     #[test]
@@ -4944,7 +4993,7 @@ mod tests {
         let mut c = Command::new("sh");
         c.args(["-c", "trap '' TERM; sleep 60 & echo $!; wait"]).stdout(Stdio::piped());
         paths::own_group(&mut c);
-        let mut child = c.spawn().unwrap();
+        let mut child = c.start().unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         let group = child.id();

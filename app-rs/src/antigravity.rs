@@ -19,6 +19,7 @@
 //! - Tools on a server are all called through one built-in tool, `call_mcp_tool`, which names the real one in
 //!   its parameters.
 
+use crate::paths::Start;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -45,7 +46,7 @@ pub fn load_models() {
         if let Some(h) = home_override() {
             cmd.env("HOME", h);
         }
-        let Ok(out) = cmd.output() else { return };
+        let Ok(out) = cmd.run_output() else { return };
         let list = String::from_utf8_lossy(&out.stdout)
             .lines()
             .filter_map(|l| l.split_once('\t'))
@@ -157,6 +158,9 @@ pub(crate) fn write_servers(workspace: &Path, servers: &Value) {
         }
         cfg["mcpServers"][name] = server;
     }
+    if list_is_link(workspace) {
+        return; // not the app's to write: `list_is_link`
+    }
     let _ = fs::create_dir_all(&dir);
     replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes());
 }
@@ -170,6 +174,9 @@ pub(crate) fn write_servers(workspace: &Path, servers: &Value) {
 /// once the turn is over.
 pub fn unwrite_servers(workspace: &Path, servers: &Value) -> Option<Vec<u8>> {
     let path = workspace.join(".agents").join("mcp_config.json");
+    if list_is_link(workspace) {
+        return None;
+    }
     let was = fs::read(&path).ok()?;
     let mut cfg = serde_json::from_slice::<Value>(&was).ok()?;
     let list = cfg["mcpServers"].as_object_mut()?;
@@ -186,25 +193,28 @@ pub fn rewrite_list(workspace: &Path, was: &[u8]) {
     replace_whole(&workspace.join(".agents").join("mcp_config.json"), was);
 }
 
-/// The file a path names: when it is a symbolic link, what the link points at (followed up to eight links, also to
-/// a file that is not there yet), else the path itself.
-fn through_links(path: &Path) -> std::path::PathBuf {
-    let mut p = path.to_path_buf();
-    for _ in 0..8 {
-        match fs::read_link(&p) {
-            Ok(to) if to.is_absolute() => p = to,
-            Ok(to) => p = p.parent().unwrap_or(Path::new(".")).join(to),
-            Err(_) => break,
-        }
-    }
-    p
+/// Whether the workspace's list of tool servers is a symbolic link. The app makes no such link, so one is the
+/// user's or came with the game's folder, and it may name any file (a shell start-up file, the app's settings): the
+/// app neither writes through it nor replaces it. The list is then not written, and the chat is told
+/// (`LIST_IS_A_LINK`).
+pub fn list_is_link(workspace: &Path) -> bool {
+    is_link(&workspace.join(".agents").join("mcp_config.json")) || is_link(&workspace.join(".agents"))
 }
 
-/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it. A list that is a
-/// symbolic link stays one: the file it names is the one replaced (a rename over the link itself would leave a plain
-/// file in its place and the user's shared list untouched).
+fn is_link(path: &Path) -> bool {
+    path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// What a chat is told when the list could not be written for that reason.
+pub const LIST_IS_A_LINK: &str = "This folder's list of tool servers for Gemini (.agents/mcp_config.json) is a link to another file. Fridae does not write through a link it did not make, so it could not put its building tools on that list, and Gemini may not have them in this chat. Replace the link with a plain file (or remove it) and send your message again.";
+
+/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it. Never through a
+/// symbolic link, and never over one: a link here is not the app's (see `list_is_link`), so it is left as it is and
+/// nothing is written. False when nothing was written.
 fn replace_whole(path: &Path, bytes: &[u8]) -> bool {
-    let path = &through_links(path);
+    if is_link(path) || path.parent().is_some_and(is_link) {
+        return false;
+    }
     let tmp = path.with_extension(format!("json.{}.tmp", paths::random_hex(1)));
     let done = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
     if !done {

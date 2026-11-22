@@ -372,7 +372,7 @@ fn post(path: &str, body: Value) -> Reply {
                     let copied = textures::set_clipboard_text(prompt);
                     // developer aid: FRIDAE_GEMINI_URL points the button at a test page
                     let page = std::env::var("FRIDAE_GEMINI_URL").unwrap_or_else(|_| "https://gemini.google.com/app".to_string());
-                    let opened = open::that(page).is_ok();
+                    let opened = crate::paths::open_that(page).is_ok();
                     if copied && opened {
                         textures::paste_into_gemini();
                     }
@@ -450,7 +450,7 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/connect" | "/api/agents" => send_json(json!({"text": agents::connect_other_agents()})),
         "/api/open" => {
             let _ = fs::create_dir_all(&PATHS.work);
-            let _ = open::that(&PATHS.work);
+            let _ = crate::paths::open_that(&PATHS.work);
             send_json(json!({"ok": true}))
         }
         _ => not_found(),

@@ -9,6 +9,7 @@
 //! file of another copy of the app still running, are left alone. Unix only; on Windows nothing is recorded (the
 //! processes there are ended with `taskkill /T` as before).
 
+use crate::paths::Start;
 use std::{fs, path::Path, path::PathBuf, process::Command, sync::Mutex};
 
 use serde_json::{Value, json};
@@ -22,9 +23,9 @@ fn folder() -> PathBuf {
     crate::paths::PATHS.work.join("processes")
 }
 
-/// This run's file.
-fn mine() -> PathBuf {
-    folder().join(format!("{}.json", std::process::id()))
+/// This run's file, in a ledger folder.
+fn mine_in(dir: &std::path::Path) -> PathBuf {
+    dir.join(format!("{}.json", std::process::id()))
 }
 
 /// What `ps` says about a process: (process group, start time, command line). None when it is gone.
@@ -32,7 +33,7 @@ pub fn describe(pid: u32) -> Option<(u32, String, String)> {
     if cfg!(windows) || pid <= 1 {
         return None;
     }
-    let out = Command::new("ps").args(["-o", "pgid=", "-o", "lstart=", "-o", "command=", "-p", &pid.to_string()]).env("LC_ALL", "C").output().ok()?;
+    let out = Command::new("ps").args(["-o", "pgid=", "-o", "lstart=", "-o", "command=", "-p", &pid.to_string()]).env("LC_ALL", "C").run_output().ok()?;
     parse_ps(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -78,6 +79,11 @@ fn me() -> Value {
 
 /// Note a process the app started (by `owner`, such as "opencode" or "claude"), once it is running.
 pub fn record(owner: &str, pid: u32) {
+    record_in(&folder(), owner, pid)
+}
+
+/// The same, in a ledger folder (the app has one; a test of the ledger itself uses its own).
+fn record_in(dir: &std::path::Path, owner: &str, pid: u32) {
     if cfg!(windows) {
         return;
     }
@@ -88,7 +94,7 @@ pub fn record(owner: &str, pid: u32) {
         return;
     }
     let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let file = mine();
+    let file = mine_in(dir);
     let mut v = read_in(&file);
     v["app"] = app;
     let mut list = v["processes"].as_array().cloned().unwrap_or_default();
@@ -100,8 +106,12 @@ pub fn record(owner: &str, pid: u32) {
 
 /// Drop a process from the ledger once it has ended (or the app has ended it).
 pub fn forget(pid: u32) {
+    forget_in(&folder(), pid)
+}
+
+fn forget_in(dir: &std::path::Path, pid: u32) {
     let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let file = mine();
+    let file = mine_in(dir);
     let mut v = read_in(&file);
     let Some(list) = v["processes"].as_array_mut() else { return };
     let before = list.len();
@@ -127,10 +137,14 @@ fn same(entry: &Value, now: Option<&(u32, String, String)>) -> bool {
 /// each recorded process still running exactly as recorded (with its process group), and remove the file. Returns
 /// how many were ended.
 pub fn reap_orphans() -> usize {
+    reap_in(&folder())
+}
+
+fn reap_in(dir: &std::path::Path) -> usize {
     let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: Vec<u32> = Vec::new();
     #[cfg_attr(test, allow(unused_mut))]
-    let mut files: Vec<PathBuf> = fs::read_dir(folder()).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let mut files: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     // the single ledger file of earlier versions
     #[cfg(not(test))]
     files.push(crate::paths::PATHS.work.join("processes.json"));
@@ -166,7 +180,7 @@ pub fn reap_orphans() -> usize {
                     }
                 }
             } else {
-                let _ = std::process::Command::new("kill").arg(pid.to_string()).stderr(std::process::Stdio::null()).status();
+                let _ = std::process::Command::new("kill").arg(pid.to_string()).stderr(std::process::Stdio::null()).run_status();
             }
         }
         let _ = fs::remove_file(&file);
@@ -183,7 +197,7 @@ pub fn tree_groups(leader: u32) -> Vec<u32> {
     if cfg!(windows) {
         return vec![leader];
     }
-    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "pgid=", "-o", "ppid="]).env("LC_ALL", "C").output() else { return vec![leader] };
+    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "pgid=", "-o", "ppid="]).env("LC_ALL", "C").run_output() else { return vec![leader] };
     groups_below(&String::from_utf8_lossy(&out.stdout), leader, own_group())
 }
 
@@ -226,7 +240,7 @@ pub fn orphans_under(prefix: &str) -> Vec<(u32, u32)> {
     if cfg!(windows) || prefix.len() < 8 {
         return Vec::new();
     }
-    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "pgid=", "-o", "ppid=", "-o", "command="]).env("LC_ALL", "C").output() else { return Vec::new() };
+    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "pgid=", "-o", "ppid=", "-o", "command="]).env("LC_ALL", "C").run_output() else { return Vec::new() };
     under(&String::from_utf8_lossy(&out.stdout), prefix)
 }
 
@@ -280,17 +294,19 @@ mod tests {
 
     #[test]
     fn a_crashed_runs_processes_are_ended_at_start_up_and_this_runs_are_kept() {
-        let _ = fs::remove_dir_all(folder());
+        // a ledger folder of its own: every test that starts an AI records into the one the tests share
+        let dir = crate::paths::test_dir("procs-ledger-test");
+        let _ = fs::remove_dir_all(&dir);
         let spawn = |secs: &str| {
             let mut cmd = Command::new("sleep");
             cmd.arg(secs);
             crate::paths::own_group(&mut cmd);
-            cmd.spawn().unwrap()
+            cmd.start().unwrap()
         };
         // this run's own process: recorded in its file, and left alone by the reap (M3: a turn may already be running)
         let mut own = spawn("30");
-        record("test", own.id());
-        assert_eq!(read_in(&mine())["processes"][0]["command"], "sleep 30");
+        record_in(&dir, "test", own.id());
+        assert_eq!(read_in(&mine_in(&dir))["processes"][0]["command"], "sleep 30");
         // a crashed run's file: an app pid that is gone, a process still running exactly as recorded, and one whose
         // start time no longer matches (someone else's process now)
         let mut left = spawn("32");
@@ -299,18 +315,18 @@ mod tests {
         let crashed = json!({"app": {"pid": 999_999, "started": "Mon Jan  1 00:00:00 2001", "command": "fridae"}, "processes": [
             {"owner": "test", "pid": left.id(), "pgid": g, "started": started, "command": command},
             {"owner": "test", "pid": other.id(), "pgid": other.id(), "started": "Mon Jan  1 00:00:00 2001", "command": "sleep 31"}]});
-        write_in(&folder().join("999999.json"), &crashed);
-        assert_eq!(reap_orphans(), 1);
+        write_in(&dir.join("999999.json"), &crashed);
+        assert_eq!(reap_in(&dir), 1);
         assert!(left.wait().is_ok());
-        assert!(!folder().join("999999.json").exists(), "the crashed run's file is gone");
+        assert!(!dir.join("999999.json").exists(), "the crashed run's file is gone");
         assert!(other.try_wait().unwrap().is_none(), "not an exact match: still running");
         assert!(own.try_wait().unwrap().is_none(), "this run's own process is never reaped");
-        assert_eq!(read_in(&mine())["processes"].as_array().unwrap().len(), 1);
+        assert_eq!(read_in(&mine_in(&dir))["processes"].as_array().unwrap().len(), 1);
         for c in [&mut other, &mut own] {
             let _ = c.kill();
             let _ = c.wait();
         }
-        forget(own.id());
-        assert!(!mine().exists(), "an empty ledger leaves no file");
+        forget_in(&dir, own.id());
+        assert!(!mine_in(&dir).exists(), "an empty ledger leaves no file");
     }
 }

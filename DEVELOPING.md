@@ -408,6 +408,19 @@ stdin, with an id of the app's own. The old way, a process per turn with `--resu
   under the message box first: each turn uses the user's Claude plan. `work/processes/<app pid>.json` then shows one
   `claude` entry across several messages.
 
+- **Starting processes**: nothing in the app calls `Command::spawn`, `output` or `status` itself. Every start (each
+  AI, `ps`, `kill`, `git`, the kit's Python, OpenCode's server, the system's opener) goes through `paths::Start`
+  (`start`, `run_output`, `run_status`), which holds one lock across the making of the pipes and the start, never
+  while the child runs; `app-rs/clippy.toml` forbids the bare methods. Why: on a Mac a new pipe is not
+  close-on-exec from the moment it exists, so a process forked by another thread in that moment keeps the pipe's
+  end. Measured before this: a kept process being replaced, whose closing begins with a `ps`, was left open about
+  once in a hundred replacements, because its replacement held `ps`'s pipe. After: the test that replaces Claude's
+  kept process, alone on one thread, 3,200 runs with no failure.
+- **A list of tool servers that is a symbolic link** (`<game>/.agents/mcp_config.json`, or `.agents` itself; Codex's
+  `.codex/config.toml` the same) is neither written through nor replaced: the app makes no such link, and one that
+  came with a game's folder may name any file. The list is then not written, and a Gemini chat that runs a process
+  per message is told why its tools may be missing (`antigravity::LIST_IS_A_LINK`).
+
 ## Gemini: one `agy acp` process kept open per chat (built, on request)
 
 A Gemini chat can keep one process, `agy acp`, open across turns, as a Claude chat keeps Claude Code. It speaks the
@@ -555,8 +568,9 @@ Checked against cursor-agent 2026.11.22 on the model Auto. How Cursor runs per m
 is what differs when it is kept.
 
 **It is not the default, and it is for Ask me only.** `FRIDAE_CURSOR_KEPT=1` turns it on (`agents::KEPT_ON_REQUEST`);
-`FRIDAE_CURSOR_PER_TURN=1` turns it off whatever else is set; Windows does not offer Cursor at all. Three measurements
-decide what runs on it (`CursorLaunch::fits`):
+`FRIDAE_CURSOR_PER_TURN=1` turns it off whatever else is set; Windows does not offer Cursor at all. An expert, a
+helper or the researcher never runs on it, whatever the switch says (how experts and studio runs work is not changed,
+and none was seen on a kept process). Three measurements decide what else runs on it (`CursorLaunch::fits`):
 
 - **Cursor's sandbox is not applied over ACP**, so Full auto and Studio always run a process per message. Measured:
   started with `--sandbox enabled` (and with `sandbox.mode: enabled` in its settings file too), a command not on the
@@ -600,7 +614,12 @@ What else was measured, and what the build does with it:
   the list, and a file-tool write outside the workspace folders, arrive as `session/request_permission` (`Not in
   allowlist: <program>`; the file in a `diff`; options `allow-once`, `allow-always`, `reject-once`). **The app
   answers every request no** (`Turn::cursor_request`), never yes and never "always": a program becomes the blocked
-  card at the turn's end, as per message; in Full auto's rules (not run this way today) it would get no card. A
+  card at the turn's end, as per message; in Full auto's rules (not run this way today) it would get no card. The
+  card names the programs Cursor says are missing (`Not in allowlist: curl, git --version` lists each part of the
+  command its list does not cover), not the command's first word. **A compound command is asked about for every
+  part that is not allowed**, also with an allowed program in it: recorded with `git` allowed, `git --version &&
+  ./git`, `git --version; curl ...`, `git --version | cat`, `git $(echo --version)` and `./git` were each asked
+  about (`./git`, `curl`, `cat`, `echo`, `./git`), and a planted `./git` never ran. A
   refusal does not end Cursor's turn: the model is told "Rejected" and carries on. After Stop every request is
   answered `cancelled`. `cursor/ask_question` and the like are answered "not offered", so nothing waits on them
   (not seen in a turn).
@@ -629,13 +648,16 @@ What else was measured, and what the build does with it:
   {providerIdentifier, toolName, args}`); the chat shows each step once, by the names a process per message gives.
   Cursor thinks before each of its messages, so a thought after text ends that message (two answers with a step
   between that the client is not told of are shown as two: recorded). Signed out: `session/new` answers `-32000
-  Authentication required`. A session Cursor does not have: said in one line and a new one made.
+  Authentication required`. A session Cursor does not have: a new one is made on the same process and given the
+  message as a conversation's first (the standing instructions, the chat so far as text, the message), and the
+  chat is told in one line.
 - **Ending it**: `cursor-agent acp` does not exit when its stdin closes, so the holder ends it with a signal
   (`Live::ends_by_signal`: SIGTERM to each group of its tree, SIGKILL to what is left after the grace) instead of
   waiting `CLOSE_WAIT`. Stop is `session/cancel` (measured: the turn over 0.05 s after Stop through the app, the
   running `sleep` gone); before Cursor has shown work on the message the process is ended instead, as for Gemini.
 - **A command left running**: after a turn, a process group in the kept process's tree that was not there when it
-  took the message means a command outlived the turn (`TurnProc::left_running`); the process is closed with all it
+  took the message means something the turn started outlived it (`TurnProc::left_running`: a command, each of which
+  Cursor runs in a group of its own; a group a tool server made would count too); the process is closed with all it
   started and the chat is told, as when a turn ends with a tool call open. Cursor putting a command in the
   background was not provoked (an allowed `sleep 47` ran in the foreground to its end).
 - **The launch key** (`CursorLaunch::key`): the program, the chat's folder, the kit, the game, the tool servers as
@@ -652,10 +674,11 @@ What else was measured, and what the build does with it:
 - **Tests**: `acp.rs` (Cursor's tool calls, requests, endings, from real lines), `usage.rs`, and
   `src/cursor_live_tests.rs`: the launch key for every setting, which messages fit, turns against a stand-in (one
   process across messages, the hand-over, a chat that stays per message, load, Stop early, confirmed and ignored,
-  every way of failing, a request after Stop, a command left running, closing by signal), and six recordings
-  (`tests/fixtures/cursor/acp-*.wire`: a tool, an allowed program, a refused one with its card, a refused write and
-  a second message on the same process; Stop mid-command; a process killed mid-turn; a session Cursor does not
-  have; two messages with no tool between; signed out), made through the app and scrubbed as Gemini's.
+  every way of failing, a request after Stop, a command left running, closing by signal, helpers kept off), and
+  eight recordings (`tests/fixtures/cursor/acp-*.wire`: a tool, an allowed program, a refused one with its card, a
+  refused write and a second message on the same process; Stop mid-command; a process killed mid-turn; a session
+  Cursor does not have; two messages with no tool between; signed out; the five compound commands with nothing
+  allowed, and with `git` allowed), made through the app and scrubbed as Gemini's.
 - **Trying it by hand** with the scratch copy above: `FRIDAE_CURSOR_KEPT=1`, `FRIDAE_CURSOR_HOME=$HOME` (a scratch
   HOME hides the sign-in; without it you get the signed-out line), `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`,
   `{"chat_ai": "cursor"}`. Cursor's settings and sessions are then under the scratch home's `Library/Application

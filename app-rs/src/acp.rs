@@ -498,6 +498,8 @@ pub struct Turn {
     pictures_seen: usize,
     /// the agent said something or called a tool
     pub began: bool,
+    /// Cursor: it thought about the message (so the turn used something, also when it was stopped before it spoke)
+    thought: bool,
     said: bool,
     /// a request of this turn was refused by the app (the agent then ends the turn without a word)
     pub refused: bool,
@@ -512,7 +514,7 @@ impl Turn {
     }
 
     pub fn of(agent: Agent, full: bool, servers: &[String], pictures: Option<&Path>) -> Turn {
-        Turn { agent, full, kinds: HashMap::new(), commands: HashMap::new(), named: HashSet::new(), tools: HashMap::new(), blocked: Vec::new(), servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, said: false, refused: false, mode_lost: false }
+        Turn { agent, full, kinds: HashMap::new(), commands: HashMap::new(), named: HashSet::new(), tools: HashMap::new(), blocked: Vec::new(), servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, thought: false, said: false, refused: false, mode_lost: false }
     }
 
     pub fn tool_open(&self) -> bool {
@@ -563,7 +565,10 @@ impl Turn {
             // Cursor thinks before each of its messages, also between two with no tool call the client is told of
             // (recorded: a step of its own it does not show): what it wrote before is a message of its own, shown as
             // one, as a process per message shows each
-            "agent_thought_chunk" if self.agent == Agent::Cursor => self.flush(&mut out),
+            "agent_thought_chunk" if self.agent == Agent::Cursor => {
+                self.thought = true;
+                self.flush(&mut out)
+            }
             "tool_call" | "tool_call_update" if self.agent == Agent::Cursor => self.cursor_tool(u, &mut out),
             "config_option_update" | "current_mode_update" if self.agent == Agent::Cursor => {}
             "tool_call" | "tool_call_update" => {
@@ -690,13 +695,29 @@ impl Turn {
         let id = tool["toolCallId"].as_str().unwrap_or("");
         let kind = tool["kind"].as_str().or(self.kinds.get(id).map(String::as_str)).unwrap_or("");
         if kind == "execute" && !self.full {
-            let titled = tool["title"].as_str().map(|t| t.trim()).map(|t| t.strip_prefix('`').and_then(|t| t.strip_suffix('`')).unwrap_or(t).to_string());
+            // the command: what the call's `tool_call` gave, else the title when it is a command between backquotes
+            let titled = tool["title"].as_str().map(str::trim).and_then(|t| t.strip_prefix('`')).and_then(|t| t.strip_suffix('`')).map(str::to_string);
             let command = self.commands.get(id).cloned().or(titled).unwrap_or_default();
-            if let Some(name) = paths::program_name(&command).filter(|n| !self.blocked.iter().any(|b| b["name"] == *n)) {
-                self.blocked.push(json!({"name": name, "command": command.chars().take(200).collect::<String>()}));
+            // the programs: the ones Cursor says are missing (recorded: `Not in allowlist: curl, git --version`, each
+            // part of the command that its list does not cover, a path such as `./git` among them), else the
+            // command's first
+            let missing: Vec<String> = tool["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c["content"]["text"].as_str())
+                .filter_map(|t| t.trim().strip_prefix("Not in allowlist:"))
+                .flat_map(|list| list.split(',').filter_map(paths::program_name).collect::<Vec<_>>())
+                .collect();
+            let names = if missing.is_empty() { paths::program_name(&command).into_iter().collect() } else { missing };
+            for name in names {
+                if !command.is_empty() && !self.blocked.iter().any(|b| b["name"] == name) {
+                    self.blocked.push(json!({"name": name, "command": command.chars().take(200).collect::<String>()}));
+                }
             }
         }
         self.refused = true;
+        self.began = true;
         Verdict { allow: false, outs: Vec::new(), note: None }
     }
 
@@ -718,7 +739,9 @@ impl Turn {
             out.push(Out::Finished);
             return;
         }
-        out.push(Out::Usage(usage::Turn::not_reported()));
+        if self.began || self.thought {
+            out.push(Out::Usage(usage::Turn::not_reported()));
+        }
         match answer["result"]["stopReason"].as_str().unwrap_or("") {
             "end_turn" => {
                 if !self.said && self.seen.is_empty() {
@@ -932,11 +955,17 @@ fn cursor_lost(error: &Value) -> bool {
     said.contains("session") && said.contains("not found")
 }
 
+const CURSOR_RENEWED: &str = "Cursor could not find this chat's earlier conversation, so it started a new one, which was handed the chat so far as text (the user's messages and Cursor's replies, without tool steps).";
 const CURSOR_LOST: &str = "Cursor could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.";
 
 /// One turn on a kept ACP process: on its first, the handshake and the session (`resume`: the chat's conversation, if
 /// it has one); then the message, and the agent's updates and requests until the prompt is answered.
-pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, host: &mut dyn Host) -> End {
+///
+/// `fresh`: the message as a new conversation's first gets it (the standing instructions, the chat so far as text,
+/// the message), for when the chat's conversation turns out to be gone and a new one is made in its place: the
+/// message then goes in that form, so the new conversation has its instructions and knows the chat.
+pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, fresh: Option<&str>, host: &mut dyn Host) -> End {
+    let mut text = text;
     let rx = live.lines();
     let cursor = spec.agent == Agent::Cursor;
     let mut c = Client { live, host, agent: spec.agent };
@@ -969,7 +998,13 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 // answer) and has no `session/resume`. A session Cursor no longer has is said, and a new one made
                 Some(id) if cursor => match c.call(&rx, "session/load", place(json!({"sessionId": id}))) {
                     Err(CallError::Rpc(e)) if cursor_lost(&e) => {
-                        c.host.out(Out::Error(CURSOR_LOST.into()));
+                        match fresh {
+                            Some(first) => {
+                                text = first;
+                                c.host.out(Out::Error(CURSOR_RENEWED.into()));
+                            }
+                            None => c.host.out(Out::Error(CURSOR_LOST.into())),
+                        }
                         c.call(&rx, "session/new", place(json!({})))
                     }
                     Err(CallError::Rpc(e)) if !signed_out(&e) => return gone(&mut c, false),
@@ -1588,6 +1623,21 @@ mod tests {
         assert!(end.iter().any(|o| matches!(o, Out::Usage(u) if u.unreported && u.total() == 0)));
         assert!(matches!(end.last(), Some(Out::Finished)));
         assert!(!end.iter().any(|o| matches!(o, Out::Error(_) | Out::Failed(_))));
+        // a compound command with an allowed program in it (recorded with `git` allowed): the card names what Cursor
+        // says is missing, each once, not the command's first word; a path to a program is named by the program
+        let mut t = Turn::of(Agent::Cursor, false, &[], None);
+        let asks = |command: &str, missing: &str| json!({"toolCallId": command, "title": format!("`{command}`"), "kind": "execute", "status": "pending", "content": [{"type": "content", "content": {"type": "text", "text": format!("Not in allowlist: {missing}")}}]});
+        t.cursor_request(&asks("git --version; curl -sS -m 5 -o /dev/null https://example.com", "curl"));
+        t.cursor_request(&asks("git --version | cat", "cat"));
+        t.cursor_request(&asks("git --version && ./git", "./git"));
+        t.cursor_request(&asks("ls -la && ./git", "./git, ls -la"));
+        let Some(Out::Blocked(card)) = t.finish(&json!({"result": {"stopReason": "end_turn"}})).into_iter().find(|o| matches!(o, Out::Blocked(_))) else { panic!("the card") };
+        assert_eq!(card.iter().map(|c| c["name"].as_str().unwrap()).collect::<Vec<_>>(), ["curl", "cat", "git", "ls"]);
+        assert_eq!(card[0]["command"], "git --version; curl -sS -m 5 -o /dev/null https://example.com");
+        // a title that is no command between backquotes names no program
+        let mut t = Turn::of(Agent::Cursor, false, &[], None);
+        t.cursor_request(&json!({"toolCallId": "x", "title": "Run command", "kind": "execute"}));
+        assert!(!t.finish(&json!({"result": {"stopReason": "end_turn"}})).iter().any(|o| matches!(o, Out::Blocked(_))));
         // without the earlier `tool_call`, the command is read from the request's title
         let mut t = Turn::of(Agent::Cursor, false, &[], None);
         t.cursor_request(&v(CURSOR_ASKS_COMMAND));
@@ -1597,8 +1647,14 @@ mod tests {
     #[test]
     fn cursors_turn_endings_and_errors_are_said_in_its_name() {
         let end = |answer: Value| Turn::of(Agent::Cursor, false, &[], None).finish(&answer);
-        assert!(matches!(&end(json!({"result": {"stopReason": "end_turn"}}))[..], [Out::Usage(_), Out::Error(e), Out::Finished] if e == "Cursor ended this turn without saying anything."));
-        assert!(matches!(&end(json!({"result": {"stopReason": "max_turn_requests"}}))[..], [Out::Usage(_), Out::Error(e), Out::Finished] if e == "Cursor stopped: max_turn_requests."));
+        // (a turn Cursor never started on, such as one stopped at once, is no turn whose usage went unreported)
+        assert!(matches!(&end(json!({"result": {"stopReason": "end_turn"}}))[..], [Out::Error(e), Out::Finished] if e == "Cursor ended this turn without saying anything."));
+        assert!(matches!(&end(json!({"result": {"stopReason": "max_turn_requests"}}))[..], [Out::Error(e), Out::Finished] if e == "Cursor stopped: max_turn_requests."));
+        assert!(matches!(&end(json!({"result": {"stopReason": "cancelled"}}))[..], [Out::Finished]));
+        // one it thought about and was stopped in is
+        let mut thought = Turn::of(Agent::Cursor, false, &[], None);
+        thought.feed(&json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "The"}}));
+        assert!(matches!(&thought.finish(&json!({"result": {"stopReason": "cancelled"}}))[..], [Out::Usage(u), Out::Finished] if u.unreported));
         // an error's words are in `data.message` (measured: `message` is only "Invalid params")
         let failed = end(json!({"error": {"code": -32602, "message": "Invalid params", "data": {"message": "Invalid model value: auto"}}}));
         assert!(matches!(&failed[..], [Out::Failed(e), Out::Finished] if e == "Cursor could not run this message: Invalid model value: auto"));

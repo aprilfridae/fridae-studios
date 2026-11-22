@@ -12,6 +12,7 @@
 //! line that comes while the app has no turn on it (`strayed`; each protocol says which lines those are). The next
 //! message starts a process that resumes the conversation, as a process per turn always did.
 
+use crate::paths::Start;
 use std::{
     collections::VecDeque,
     io::{BufReader, Write},
@@ -100,8 +101,7 @@ impl Live {
     pub fn start_as(mut cmd: Command, key: String, owner: &'static str, stray: fn(&[u8]) -> bool) -> std::io::Result<Arc<Live>> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = {
-            let _one_at_a_time = paths::spawn_lock();
-            cmd.spawn()?
+            cmd.start()?
         };
         let pid = child.id();
         procs::record(owner, pid); // ended at the next start if the app crashes meanwhile

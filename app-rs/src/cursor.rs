@@ -35,6 +35,7 @@
 //!   folders, no network); other tool servers and writes outside the workspace are still refused. That is stricter
 //!   than Claude Code's bypass mode, never looser.
 
+use crate::paths::Start;
 use std::{
     collections::HashSet,
     env, fs,
@@ -73,7 +74,7 @@ pub fn load_models() {
                 cmd.arg("models");
                 environment(&mut cmd);
                 paths::quiet(&mut cmd);
-                cmd.output().ok()
+                cmd.run_output().ok()
             })
             .map(|out| parse_models(&String::from_utf8_lossy(&out.stdout)))
             .unwrap_or_default();

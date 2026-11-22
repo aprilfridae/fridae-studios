@@ -82,7 +82,7 @@ while IFS= read -r line; do
       printf '%s\n' "$line" >> "$0.asked"
       if [ "$(grep -c '' "$0.asked")" = 2 ] && [ -z "$asks" ]; then say "carried on"; echo "{\"jsonrpc\":\"2.0\",\"id\":$prompt,\"result\":{\"stopReason\":\"end_turn\"}}"; fi;;
     *'"method":"session/prompt"'*)
-      prompt=$id
+      prompt=$id; printf '%s\n' "$line" >> "$0.prompts"
       case "$line" in
         *die-early*) exit 3;;
         *die-late*) say "half"; echo "boom" >&2; exit 3;;
@@ -94,8 +94,8 @@ while IFS= read -r line; do
           case "$line" in *asks*) asks=1;; esac
           say "I will run two commands."
           # a command not on the allow list, then a write outside the workspace: each asked about, as recorded
-          tool '{"sessionUpdate":"tool_call","toolCallId":"c1","title":"`git status`","kind":"execute","status":"pending","rawInput":{"command":"git status"}}'
-          echo '{"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{"sessionId":"S1","toolCall":{"toolCallId":"c1","title":"`git status`","kind":"execute","status":"pending","content":[{"type":"content","content":{"type":"text","text":"Not in allowlist: git"}}]},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"allow-always","name":"Allow always","kind":"allow_always"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}}'
+          tool '{"sessionUpdate":"tool_call","toolCallId":"c1","title":"`zzgit status`","kind":"execute","status":"pending","rawInput":{"command":"zzgit status"}}'
+          echo '{"jsonrpc":"2.0","id":0,"method":"session/request_permission","params":{"sessionId":"S1","toolCall":{"toolCallId":"c1","title":"`zzgit status`","kind":"execute","status":"pending","content":[{"type":"content","content":{"type":"text","text":"Not in allowlist: zzgit"}}]},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"allow-always","name":"Allow always","kind":"allow_always"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}}'
           tool '{"sessionUpdate":"tool_call_update","toolCallId":"c1","status":"completed"}'
           tool '{"sessionUpdate":"tool_call","toolCallId":"c2","title":"Edit File","kind":"edit","status":"pending","rawInput":{}}'
           echo '{"jsonrpc":"2.0","id":1,"method":"session/request_permission","params":{"sessionId":"S1","toolCall":{"toolCallId":"c2","title":"Write /outside/x.txt","kind":"edit","status":"pending","content":[{"type":"diff","path":"/outside/x.txt","oldText":null,"newText":"x"}]},"options":[{"optionId":"allow-once","name":"Allow once","kind":"allow_once"},{"optionId":"allow-always","name":"Allow always","kind":"allow_always"},{"optionId":"reject-once","name":"Reject","kind":"reject_once"}]}}'
@@ -447,7 +447,7 @@ mod stand_in {
         assert!(starts[1].starts_with("-p --output-format stream-json") && starts[1].ends_with("--sandbox enabled"), "{starts:?}");
         assert!(!starts[1].contains("--resume"), "never asked to resume a conversation it does not have: {starts:?}");
         let got = c.per_message_input();
-        assert!(got.starts_with(&antigravity::with_instructions("[standing instructions]", "[This conversation began with Cursor")), "a new conversation's first message: instructions, then the chat so far: {got}");
+        assert!(got.starts_with(&antigravity::with_instructions("[standing instructions]", "[This chat carries on here in a new conversation, so you do not remember it. The chat so far, as text")), "a new conversation's first message: instructions, then the chat so far: {got}");
         assert!(got.contains("User: the first message") && got.contains("Cursor: reply 1"), "the chat so far, as text: {got}");
         assert!(got.ends_with("now in full auto"), "then the message, once: {got}");
         assert_eq!(got.matches("now in full auto").count(), 1);
@@ -508,6 +508,20 @@ mod stand_in {
         let errors = c.said("error");
         assert!(errors.len() == 1 && errors[0].starts_with("Cursor could not find this chat's earlier conversation"), "{errors:?}");
         assert_eq!(c.session().as_deref(), Some("S1"));
+        // (a chat with nothing said before: the new conversation still gets its standing instructions)
+        let first = fs::read_to_string(c.script.with_extension("sh.prompts")).unwrap();
+        assert!(first.contains("[standing instructions]") && first.contains("hello") && !first.contains("The chat so far"), "{first}");
+        // with a chat so far, the new conversation is handed it, and the line says so
+        let k = Chat::new("lost-with-history");
+        k.a.put("user", json!({"text": "before"}));
+        k.a.put("text", json!({"text": "an answer"}));
+        k.has_kept("GONE");
+        k.send("and now");
+        let errors = k.said("error");
+        assert!(errors.len() == 1 && errors[0].contains("was handed the chat so far as text"), "{errors:?}");
+        let first = fs::read_to_string(k.script.with_extension("sh.prompts")).unwrap();
+        assert!(first.contains("[standing instructions]") && first.contains("User: before") && first.contains("Cursor: an answer") && first.matches("and now").count() == 1, "{first}");
+        assert_eq!((k.fails(), k.kept_starts()), (0, 1), "on the same kept process: no failure, no second start");
         // any other error from the load: the kept way is given up, and the message goes per message with the chat
         // handed over (the conversation cannot be opened there either)
         let b = Chat::new("load-broken");
@@ -636,7 +650,7 @@ mod stand_in {
 
     #[test]
     fn what_cursors_own_rules_ask_about_is_refused_a_program_gets_its_card_and_the_turn_carries_on() {
-        // (no test allows `git`: the tests that change the allowed programs only take `ls` off)
+        // (`zzgit`: a program no test ever allows, so no other test's allowed list changes the card)
         let c = Chat::new("refused");
         c.send("refused-twice");
         // both requests answered no, by the option's kind, never "always"
@@ -652,7 +666,7 @@ mod stand_in {
         let ev = c.events();
         let cards: Vec<&Value> = ev.iter().filter(|e| e["kind"] == "blocked").collect();
         assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0]["commands"], json!([{"name": "git", "command": "git status"}]));
+        assert_eq!(cards[0]["commands"], json!([{"name": "zzgit", "command": "zzgit status"}]));
         assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
         assert!(c.pid().is_some(), "a refusal is no failure: the process is kept");
         // in Full auto's rules (not run on a kept process today) a refused program would get no card
@@ -696,7 +710,7 @@ mod stand_in {
         let left: u32 = fs::read_to_string(c.script.with_extension("sh.left")).unwrap().trim().parse().unwrap();
         assert_eq!(c.said("text"), ["reply 1", "started it"]);
         let errors = c.said("error");
-        assert!(errors.len() == 1 && errors[0].contains("left a command running"), "{errors:?}");
+        assert!(errors.len() == 1 && errors[0].contains("was still running when the turn ended"), "{errors:?}");
         assert_eq!(c.pid(), None);
         assert!(goes(pid));
         assert!(paths::leader_exited(left, Duration::from_secs(10)), "the command it left is ended with the process");
@@ -713,11 +727,25 @@ mod stand_in {
         c.a.close_live();
         assert!(began.elapsed() < crate::live::CLOSE_WAIT, "ended by a signal, not waited for: {:?}", began.elapsed());
         assert!(gone(pid));
-        let helper = Chat::new("helper");
-        helper.a.st.lock().unwrap().parent = Some("lead".into());
-        helper.send("job");
-        assert_eq!(helper.pid(), None, "an expert holds nothing between jobs");
-        assert_eq!(helper.said("text"), ["reply 1"]);
+        // an expert, a helper started with a role, the researcher: never on a kept process, whatever the switch says
+        for (name, set) in [("helper-expert", 0), ("helper-team", 1), ("helper-research", 2), ("helper-role", 3)] {
+            let helper = Chat::new(name);
+            {
+                let mut st = helper.a.st.lock().unwrap();
+                match set {
+                    0 => st.parent = Some("lead".into()),
+                    1 => st.team = Some("w123".into()),
+                    2 => st.role = Some("research".into()),
+                    _ => st.role = Some("worker".into()),
+                }
+            }
+            assert!(helper.a.live_allowed() && !helper.launch_with("job", |_| {}).fits(&helper.a), "{name}");
+            helper.send("job");
+            assert_eq!(helper.kept_starts(), 0, "{name}: {:?}", helper.starts());
+            assert_eq!(helper.said("text"), ["per message"], "{name}");
+            assert_eq!((helper.pid(), helper.fails()), (None, 0), "{name}");
+            assert!(helper.said("error").is_empty(), "{name}: {:?}", helper.said("error"));
+        }
         // quitting ends an idle one before it returns
         let idle = Chat::new("quit-idle");
         idle.send("one");
@@ -874,6 +902,43 @@ mod recorded {
         assert_eq!(c.said("text"), ["again", "again"], "not run together as one");
         assert!(c.said("error").is_empty());
         c.clean();
+    }
+
+    #[test]
+    fn recorded_compound_commands_are_each_asked_about_for_the_part_that_is_not_allowed() {
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = paths::set_allowed(&["git".to_string()], false);
+        // recorded, with nothing allowed: `git --version && ./git`, `git --version; curl ...`, `git --version | cat`,
+        // `git $(echo --version)` and `./git` (a planted script that only writes a marker, and never ran). Cursor
+        // asked about each, naming every part its list does not cover; the app answered each no
+        let c = Chat::playing("rec-compound", "acp-compound-nothing-allowed");
+        c.ask("the five commands");
+        assert_eq!(c.said("tool"), ["Running a command"; 5]);
+        assert_eq!(c.recorded_answers(), ["reject-once"; 5]);
+        let ev = c.events();
+        let card = ev.iter().find(|e| e["kind"] == "blocked").expect("the card");
+        let names: Vec<&str> = card["commands"].as_array().unwrap().iter().filter_map(|x| x["name"].as_str()).collect();
+        assert_eq!(names, ["git", "curl", "cat", "echo"], "each program Cursor said was missing, once");
+        assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
+        c.clean();
+        // recorded, with `git` allowed (a new process, which loaded the conversation): Cursor still asked about all
+        // five, now naming only what is not `git`: `./git` (twice), `curl`, `cat`, `echo` (inside `$( )`). An
+        // allowed program in a command does not let the rest of the command through, over ACP as per message
+        let _ = paths::set_allowed(&["git".to_string()], true);
+        let d = Chat::playing("rec-compound-allowed", "acp-compound-one-allowed");
+        d.has_kept(S1);
+        d.ask("the five commands again");
+        let _ = paths::set_allowed(&["git".to_string()], false);
+        assert_eq!(d.said("tool"), ["Running a command"; 5]);
+        assert_eq!(d.recorded_answers(), ["reject-once"; 5], "every one asked about, none run on its own");
+        let ev = d.events();
+        let card = ev.iter().find(|e| e["kind"] == "blocked").expect("the card");
+        let names: Vec<&str> = card["commands"].as_array().unwrap().iter().filter_map(|x| x["name"].as_str()).collect();
+        assert_eq!(names, ["curl", "cat", "echo"], "the programs that could be allowed; `./git` is not one: it is `git` by a path");
+        assert!(d.said("error").iter().any(|e| e.contains("plain name")), "{:?}", d.said("error"));
+        let said = d.said("text").join("\n");
+        assert_eq!(said.matches("Rejected").count(), 5, "{said}");
+        d.clean();
     }
 
     #[test]

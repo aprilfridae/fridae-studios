@@ -626,7 +626,8 @@ mod stand_in {
         // in the turn: one of the app's tools, let through
         let asked = c.script.with_extension("sh.asked");
         let until = std::time::Instant::now() + Duration::from_secs(10);
-        while !asked.exists() && std::time::Instant::now() < until {
+        // (until the stand-in has written the whole line, not only made the file)
+        while !fs::read_to_string(&asked).is_ok_and(|t| t.ends_with('\n')) && std::time::Instant::now() < until {
             thread::sleep(Duration::from_millis(10));
         }
         let first: Value = serde_json::from_str(&fs::read_to_string(&asked).unwrap()).unwrap();
@@ -708,39 +709,51 @@ mod stand_in {
     }
 
     #[test]
-    fn a_list_of_tool_servers_that_is_a_symbolic_link_stays_one() {
-        // the user keeps one list for several games and links it into each (as the list was written before it was
-        // replaced whole): the link is followed and the file it names is replaced, never the link
+    fn a_list_of_tool_servers_that_is_a_symbolic_link_is_neither_written_through_nor_replaced() {
+        // a game folder can come with `.agents/mcp_config.json` as a link to any file (a shell start-up file, the
+        // app's settings): the app made no such link, so it writes nothing through it and does not replace it
         let c = Chat::new("linked-list");
-        let (shared, list) = (c.dir.join("shared").join("my-servers.json"), c.dir.join(".agents").join("mcp_config.json"));
-        fs::create_dir_all(shared.parent().unwrap()).unwrap();
+        let (target, list) = (c.dir.join("elsewhere").join("zshrc"), c.dir.join(".agents").join("mcp_config.json"));
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
         fs::create_dir_all(list.parent().unwrap()).unwrap();
-        fs::write(&shared, r#"{"mcpServers": {"mine": {"command": "my-server"}}}"#).unwrap();
-        std::os::unix::fs::symlink(&shared, &list).unwrap();
+        fs::write(&target, "export PATH=/usr/bin\n").unwrap();
+        std::os::unix::fs::symlink(&target, &list).unwrap();
         let is_link = || list.symlink_metadata().unwrap().file_type().is_symlink();
-        let read = || serde_json::from_str::<Value>(&fs::read_to_string(&shared).unwrap()).unwrap();
+        let untouched = || fs::read_to_string(&target).unwrap() == "export PATH=/usr/bin\n";
         let servers = json!({"rbxkit": {"command": "python3", "args": [], "env": {}}});
-        // a process per message adds the app's entry
+        assert!(antigravity::list_is_link(&c.dir));
         antigravity::write_servers(&c.dir, &servers);
-        assert!(is_link(), "still a link");
-        assert_eq!(read()["mcpServers"]["mine"]["command"], "my-server");
-        assert_eq!(read()["mcpServers"]["rbxkit"]["command"], "python3", "written to the file the link names");
-        // a kept turn takes it out and puts the list back
-        let was = antigravity::unwrite_servers(&c.dir, &servers).expect("changed");
+        assert!(is_link() && untouched(), "a process per message's list");
+        // a link to a list that does read as one (the user's own, shared between games) is left alone as well
+        fs::write(&target, r#"{"mcpServers": {"rbxkit": {"command": "other"}, "mine": {"command": "my-server"}}}"#).unwrap();
+        let shared = fs::read_to_string(&target).unwrap();
+        antigravity::write_servers(&c.dir, &servers);
+        assert!(antigravity::unwrite_servers(&c.dir, &servers).is_none(), "a kept turn takes nothing out of it");
+        antigravity::rewrite_list(&c.dir, b"{}");
         assert!(is_link());
-        assert!(read()["mcpServers"].get("rbxkit").is_none());
-        antigravity::rewrite_list(&c.dir, &was);
-        assert!(is_link());
-        assert_eq!(read()["mcpServers"]["rbxkit"]["command"], "python3");
-        for dir in [list.parent().unwrap(), shared.parent().unwrap()] {
-            assert_eq!(fs::read_dir(dir).unwrap().count(), 1, "no half-written file left in {}", dir.display());
-        }
-        // a link to a file that is not there yet (by a relative name): the file is made where the link points
+        assert_eq!(fs::read_to_string(&target).unwrap(), shared);
+        // a link to a file that is not there, and the folder itself as a link: nothing is made
         fs::remove_file(&list).unwrap();
-        std::os::unix::fs::symlink("../shared/later.json", &list).unwrap();
+        std::os::unix::fs::symlink("../elsewhere/later.json", &list).unwrap();
         antigravity::write_servers(&c.dir, &servers);
-        assert!(is_link());
-        assert!(fs::read_to_string(c.dir.join("shared").join("later.json")).unwrap().contains("rbxkit"));
+        assert!(is_link() && !c.dir.join("elsewhere").join("later.json").exists());
+        fs::remove_file(&list).unwrap();
+        fs::remove_dir(c.dir.join(".agents")).unwrap();
+        std::os::unix::fs::symlink(c.dir.join("elsewhere"), c.dir.join(".agents")).unwrap();
+        antigravity::write_servers(&c.dir, &servers);
+        assert!(antigravity::list_is_link(&c.dir) && !c.dir.join("elsewhere").join("mcp_config.json").exists());
+        for dir in [c.dir.join("elsewhere")] {
+            assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no half-written file left in {}", dir.display());
+        }
+        // the chat is told, once per message that goes to a process per message
+        c.a.st.lock().unwrap().kept_asked = false;
+        c.send("hello");
+        assert_eq!(c.said("error"), [antigravity::LIST_IS_A_LINK]);
+        assert_eq!(c.said("text"), ["per message"]);
+        // a plain file is written as before
+        fs::remove_file(c.dir.join(".agents")).unwrap();
+        antigravity::write_servers(&c.dir, &servers);
+        assert!(fs::read_to_string(&list).unwrap().contains("rbxkit") && !antigravity::list_is_link(&c.dir));
     }
 
     #[test]

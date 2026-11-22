@@ -114,6 +114,11 @@ pub const SLOT_FREE: &str = "An agent slot is free. Carry on.";
 /// the note cleared and is woken with SLOT_FREE.
 pub fn slot_freed() {
     for lead in agents::agents() {
+        // (tests share the list of chats: another test's turn ending must not wake this test's waiting Lead)
+        #[cfg(test)]
+        if !lead.of_this_test() {
+            continue;
+        }
         if lead_to_wake(&lead) {
             lead.wake_studio(SLOT_FREE);
         }

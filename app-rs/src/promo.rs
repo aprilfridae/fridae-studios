@@ -12,6 +12,7 @@
 //! `rbx promo install --json-progress` run in the background, its progress lines passed on as
 //! `promo_engine` events.
 
+use crate::paths::Start;
 use std::{
     collections::HashMap,
     fs,
@@ -95,7 +96,7 @@ fn reveal(card: &Value) -> bool {
     let mut c = Command::new(cmd);
     c.args(args);
     paths::quiet(&mut c);
-    c.spawn().is_ok()
+    c.start().is_ok()
 }
 
 /// Copy the video to `dest`; with `extras`, the cover and caption beside it under the same base name.
@@ -367,7 +368,7 @@ fn kill_tree(child: &mut Child) {
     };
     kill.stdout(Stdio::null()).stderr(Stdio::null());
     paths::quiet(&mut kill);
-    let _ = kill.status();
+    let _ = kill.run_status();
     let _ = child.kill(); // in case the group kill could not run
 }
 
@@ -404,7 +405,7 @@ fn install_state() -> Value {
 }
 
 fn engine_status() -> Value {
-    let out = paths::cli(&["promo", "status", "--json"]).output();
+    let out = paths::cli(&["promo", "status", "--json"]).run_output();
     let (engine, error) = match out {
         Ok(o) if o.status.success() => match serde_json::from_slice::<Value>(&o.stdout) {
             Ok(v) if v.is_object() => (v, String::new()),
@@ -439,8 +440,7 @@ fn run_install() {
     // an install runs for minutes: started one at a time with the AIs' processes (`paths::spawn_lock`), so it never
     // inherits a kept process's pipes
     let spawned = {
-        let _one_at_a_time = paths::spawn_lock();
-        install_command().spawn()
+        install_command().start()
     };
     let mut child = match spawned {
         Ok(c) => c,
@@ -717,7 +717,7 @@ mod tests {
             use std::os::unix::process::CommandExt;
             c.process_group(0);
         }
-        let mut child = c.stdout(Stdio::piped()).spawn().unwrap();
+        let mut child = c.stdout(Stdio::piped()).start().unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         let grandchild = line.trim().to_string();
@@ -725,7 +725,7 @@ mod tests {
         let _ = child.wait();
         let mut gone = false;
         for _ in 0..50 {
-            gone = !Command::new("kill").args(["-0", &grandchild]).stderr(Stdio::null()).status().unwrap().success();
+            gone = !Command::new("kill").args(["-0", &grandchild]).stderr(Stdio::null()).run_status().unwrap().success();
             if gone {
                 break;
             }

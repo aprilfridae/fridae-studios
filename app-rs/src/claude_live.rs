@@ -9,6 +9,8 @@
 //! begins (`turn_line`, `Live::strayed`), and a turn that leaves a background task has its process closed at once
 //! (`Agent::read_live`).
 
+#[cfg(test)]
+use crate::paths::Start;
 use std::{process::Command, sync::Arc};
 #[cfg(test)]
 use std::{process::Stdio, time::Duration};
@@ -124,7 +126,7 @@ mod tests {
         let live = Live::start(cmd, "k".into()).unwrap();
         let child: String = String::from_utf8_lossy(&live.lines().recv_timeout(Duration::from_secs(5)).unwrap().unwrap()).trim().to_string();
         live.kill();
-        let gone = |pid: &str| Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| !s.success());
+        let gone = |pid: &str| Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).run_status().is_ok_and(|s| !s.success());
         assert!(gone(&live.pid.to_string()));
         assert!(gone(&child), "what it started went with it");
     }

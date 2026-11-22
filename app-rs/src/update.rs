@@ -5,6 +5,7 @@
 //! against the checksum GitHub reports, unpacks it beside the work folder, and
 //! swaps it in with a tiny script that runs after the app has closed.
 
+use crate::paths::Start;
 use std::{
     fs,
     io::{Read, Write},
@@ -180,7 +181,7 @@ pub fn apply(relaunch: bool) -> bool {
         cmd.arg("relaunch");
     }
     cmd.current_dir(folder).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    cmd.spawn().is_ok()
+    cmd.start().is_ok()
 }
 
 /// Remove the download folder left by an installed update. The installer may still be closing, so keep trying
