@@ -37,6 +37,7 @@ pub fn load_models() {
         let mut cmd = Command::new(exe);
         cmd.arg("models");
         paths::quiet(&mut cmd);
+        paths::child_env(&mut cmd, "gemini");
         let Ok(out) = cmd.output() else { return };
         let list = String::from_utf8_lossy(&out.stdout)
             .lines()

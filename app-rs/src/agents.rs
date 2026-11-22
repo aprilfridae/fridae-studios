@@ -4,11 +4,11 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Write},
     process::{Command, Stdio},
     sync::{
         Arc, Condvar, LazyLock, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -26,6 +26,8 @@ use crate::{
 
 pub const MAX_AGENTS: usize = 8;
 pub const MAX_ATTACH: usize = 10;
+/// The error text a turn ended by the stall guard carries to `after_turn`.
+const STALLED: &str = "\u{0}stalled";
 /// How long a turn's leader gets to exit by itself once its output has closed, before its group is ended (Cursor).
 const LEADER_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// Aliases the agent CLI resolves to the latest model of each family.
@@ -565,6 +567,8 @@ struct State {
     running: bool,
     stopped: bool,
     pid: Option<u32>,
+    /// The running turn's process (the command-line AIs; not OpenCode, which runs on the app's server).
+    proc_: Option<Arc<TurnProc>>,
     log: Vec<Value>,
     session: Option<String>,
     tools: HashMap<String, String>,
@@ -711,6 +715,120 @@ pub fn get(id: &str) -> Option<Arc<Agent>> {
 
 fn is_user(e: &Value) -> bool {
     e["kind"] == "user"
+}
+
+/// A running turn's process, for the command-line AIs (Claude Code, Antigravity, Cursor, Codex): its pid, which is
+/// also its process group on Unix (`paths::own_group`), how it ended, and a gate held while it is signalled, so its
+/// leader is never reaped meanwhile (an unreaped leader keeps the group's ID reserved: a signal can only reach it).
+pub struct TurnProc {
+    pid: u32,
+    reaped: Mutex<bool>,
+    /// its output has ended (the turn is over, whatever is left running)
+    done: AtomicBool,
+    /// Stop asked it to end and it had not after STOP_WAIT, so it was killed
+    killed: AtomicBool,
+    /// nothing came for STALL, so it was ended
+    stalled: AtomicBool,
+}
+
+impl TurnProc {
+    fn new(pid: u32) -> Arc<TurnProc> {
+        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false) })
+    }
+
+    /// The process groups of the turn's tree (`procs::tree_groups`): its own, unless its leader has been reaped, and
+    /// those its tools' shells were put in. Call with the gate held.
+    fn groups(&self, reaped: bool) -> Vec<u32> {
+        crate::procs::tree_groups(self.pid).into_iter().filter(|&g| g != self.pid || !reaped).collect()
+    }
+
+    /// Unix: sends `sig` to each of `groups` (the turn's own only while its leader is unreaped). True when any had
+    /// members.
+    fn signal(&self, sig: &str, groups: &[u32]) -> bool {
+        let reaped = self.reaped.lock().unwrap_or_else(|e| e.into_inner());
+        let mut any = false;
+        for &g in groups.iter().filter(|&&g| g != self.pid || !*reaped) {
+            any |= paths::signal_group(g, sig);
+        }
+        any
+    }
+
+    /// Ends the turn's processes now, its whole tree: SIGTERM, then SIGKILL after STOP_GRACE (Unix); taskkill /T on
+    /// Windows.
+    fn end(&self) {
+        let reaped = self.reaped.lock().unwrap_or_else(|e| e.into_inner());
+        if cfg!(windows) {
+            if !*reaped {
+                paths::end_trees(&[self.pid]);
+            }
+            return;
+        }
+        paths::end_trees(&self.groups(*reaped));
+    }
+
+    /// Stop, confirmed: the turn is asked to end (SIGTERM to its tree's groups), given STOP_WAIT to end by itself, and
+    /// killed if it has not (noted, so the chat says so). What its tools left running in groups of their own after it
+    /// ended in time gets STOP_GRACE more, then SIGKILL. Blocks: call it off the page's thread. Windows: taskkill /T at
+    /// once, as before.
+    fn stop(&self) {
+        if cfg!(windows) {
+            self.end();
+            return;
+        }
+        let groups = self.groups(*self.reaped.lock().unwrap_or_else(|e| e.into_inner()));
+        self.signal("-TERM", &groups);
+        let until = std::time::Instant::now() + paths::STOP_WAIT;
+        while !self.done.load(Ordering::SeqCst) && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(100));
+        }
+        if !self.done.load(Ordering::SeqCst) {
+            if self.signal("-0", &groups) {
+                self.killed.store(true, Ordering::SeqCst);
+                self.signal("-KILL", &groups);
+            }
+            return;
+        }
+        let others: Vec<u32> = groups.into_iter().filter(|&g| g != self.pid).collect();
+        let until = std::time::Instant::now() + paths::STOP_GRACE;
+        while self.signal("-0", &others) && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(100));
+        }
+        self.signal("-KILL", &others);
+    }
+
+    /// The leader is about to be reaped: nothing signals its group from now on.
+    fn reaping(&self) {
+        *self.reaped.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+}
+
+/// While a turn runs: every 5 seconds, a turn that sent nothing for STALL (and is not waiting on purpose: on its
+/// experts, a texture, or one of the app's tools that waits long) is ended. `last` holds when the last line came and
+/// whether it started such a tool.
+fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::Instant, bool)>>) {
+    while !tp.done.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_secs(5));
+        let (quiet, long_tool) = {
+            let l = last.lock().unwrap_or_else(|e| e.into_inner());
+            (l.0.elapsed(), l.1)
+        };
+        let waiting = long_tool || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
+        if paths::stalled(quiet, waiting) && !tp.done.load(Ordering::SeqCst) {
+            tp.stalled.store(true, Ordering::SeqCst);
+            tp.end();
+            return;
+        }
+    }
+}
+
+/// Whether a line of Claude Code's output starts one of the app's tools that wait long on purpose.
+fn claude_starts_long_tool(e: &Value) -> bool {
+    e["type"] == "assistant" && e["message"]["content"].as_array().into_iter().flatten().any(|b| b["type"] == "tool_use" && b["name"].as_str().is_some_and(paths::waits_long))
+}
+
+/// The same for what another AI's parser made of a line.
+fn starts_long_tool(outs: &[Out]) -> bool {
+    outs.iter().any(|o| matches!(o, Out::Tool(n) | Out::ToolArgs(n, _) if paths::waits_long(n)))
 }
 
 /// What a turn's events said about how it went.
@@ -907,10 +1025,13 @@ impl Agent {
 
     /// A turn "running" as the given process, for the Stop tests.
     #[cfg(test)]
-    pub fn set_turn_pid_for_test(&self, pid: u32) {
+    pub fn set_turn_pid_for_test(&self, pid: u32) -> Arc<TurnProc> {
         let mut st = self.st.lock().unwrap();
         st.running = true;
         st.pid = Some(pid);
+        let tp = TurnProc::new(pid);
+        st.proc_ = Some(tp.clone());
+        tp
     }
 
     /// The text of the chat's latest "user" event (what was sent), for tests.
@@ -1707,6 +1828,7 @@ impl Agent {
         cmd.env("MCP_TOOL_TIMEOUT", "900000").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
+        paths::child_env(&mut cmd, &kind);
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -1717,17 +1839,20 @@ impl Agent {
                 return;
             }
         };
+        crate::procs::record(&kind, child.id()); // ended at the next start if the app crashes meanwhile
+        let tp = TurnProc::new(child.id());
         {
             let mut st = self.st.lock().unwrap();
             st.running = true;
             st.stopped = false;
             st.pid = Some(child.id());
+            st.proc_ = Some(tp.clone());
         }
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(text.as_bytes());
         }
         let me = self.clone();
-        thread::spawn(move || me.read(child, &kind));
+        thread::spawn(move || me.read(child, &kind, tp));
     }
 
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
@@ -1746,19 +1871,25 @@ impl Agent {
         }
     }
 
-    fn read(self: &Arc<Self>, mut child: std::process::Child, kind: &str) {
+    fn read(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>) {
+        // the error output is always read to its end (a full pipe would block the AI), and only its tail is kept
         let stderr = child.stderr.take();
-        let err_reader = thread::spawn(move || {
-            let mut s = Vec::new();
-            if let Some(mut e) = stderr {
-                let _ = e.read_to_end(&mut s);
-            }
-            String::from_utf8_lossy(&s).trim().to_string()
-        });
+        let err_reader = thread::spawn(move || stderr.map(|e| paths::drain_tail(e, paths::TAIL)).unwrap_or_default());
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false)));
+        {
+            let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
+            thread::spawn(move || watch_stall(me, tp, last));
+        }
         let mut t = TurnEnd::default();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
+        let mut first = true;
         if let Some(out) = child.stdout.take() {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
+                if std::mem::take(&mut first) {
+                    // noted again as it is now: a launcher script (cursor-agent's) has replaced itself with the real
+                    // program by its first line, so the command line the ledger matches on is that one
+                    crate::procs::record(kind, child.id());
+                }
                 let Ok(e) = serde_json::from_slice::<Value>(&raw) else { continue };
                 if kind != "claude" {
                     let outs = match kind {
@@ -1766,11 +1897,13 @@ impl Agent {
                         "cursor" => cursor_turn.feed(&e),
                         _ => chatgpt.feed(&e),
                     };
+                    *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), starts_long_tool(&outs));
                     for out in outs {
                         self.take(out, &mut t);
                     }
                     continue;
                 }
+                *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e));
                 if let Some(s) = e["session_id"].as_str().filter(|s| !s.is_empty()) {
                     got_session(&mut self.st.lock().unwrap(), s.to_string());
                 }
@@ -1859,6 +1992,7 @@ impl Agent {
                 }
             }
         }
+        tp.done.store(true, Ordering::SeqCst);
         let err = err_reader.join().unwrap_or_default();
         // Cursor leaves a helper of its own running after the turn (its "worker-server", with a language server), in the
         // turn's process group: it is ended now, before the leader is reaped (so the group's ID cannot have been reused),
@@ -1868,8 +2002,14 @@ impl Agent {
             paths::leader_exited(child.id(), LEADER_GRACE);
             paths::end_group_soon(child.id());
         }
+        tp.reaping();
         let status = child.wait().ok();
+        crate::procs::forget(child.id());
         let stopped = self.turn_over();
+        if tp.killed.load(Ordering::SeqCst) {
+            self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
+        }
+        let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else { err };
         self.after_turn(kind, t, &err, status.map(|s| (s.success(), s.code().unwrap_or(-1))), stopped);
     }
 
@@ -1878,6 +2018,7 @@ impl Agent {
         let mut st = self.st.lock().unwrap();
         st.running = false;
         st.pid = None;
+        st.proc_ = None;
         st.turned = true;
         std::mem::take(&mut st.stopped)
     }
@@ -1945,7 +2086,9 @@ impl Agent {
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
         let TurnEnd { got_result, result_error, result_text } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
-        if !got_result && err.contains("No conversation found") {
+        if err == STALLED {
+            self.put("error", json!({"text": paths::stall_message()}));
+        } else if !got_result && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
             self.put("error", json!({"text": "The memory of this earlier chat is no longer on this computer, so the agent has lost its context. Send your message again and it will carry on from what you tell it."}));
         } else if stopped {
@@ -2106,17 +2249,17 @@ impl Agent {
             thread::spawn(move || opencode::stop(&id, saved));
             return;
         }
-        if let Some(pid) = self.stop_turn() {
-            // Windows: taskkill, there and then, as always. Unix: SIGTERM now and SIGKILL after a grace, off this thread
+        if let Some(tp) = self.stop_turn() {
+            // Windows: taskkill, there and then, as always. Unix: asked to end, killed after STOP_WAIT, off this thread
             #[cfg(windows)]
-            paths::end_trees(&[pid]);
+            tp.stop();
             #[cfg(not(windows))]
-            thread::spawn(move || paths::end_trees(&[pid]));
+            thread::spawn(move || tp.stop());
         }
     }
 
-    /// Everything `stop` does but ending the process, whose pid it returns (None when no turn is running).
-    fn stop_turn(&self) -> Option<u32> {
+    /// Everything `stop` does but ending the process, which it returns (None when no turn is running).
+    fn stop_turn(&self) -> Option<Arc<TurnProc>> {
         team::release(self); // a stopped expert no longer holds the game
         // the app's own queued wakes go with the turn; what the user typed stays queued
         if drop_wakes(&mut self.st.lock().unwrap().queue, false) {
@@ -2138,7 +2281,7 @@ impl Agent {
                 return None;
             }
             st.stopped = true;
-            (st.pid.filter(|_| st.running), st.making)
+            (st.proc_.clone().filter(|_| st.running), st.making)
         };
         if making {
             textures::skip_for(&self.id); // the waiting texture tool then ends by itself
@@ -2508,9 +2651,23 @@ pub fn shut_down() {
     set_shutting(true); // first: a turn ended below must not send its held messages as a new agent
     crate::promo::stop_install();
     // every running agent is ended, and the app waits for them (at most the stop grace), so none outlives it
-    let pids: Vec<u32> = agents().iter().filter_map(|a| a.stop_turn()).collect();
-    paths::end_trees(&pids);
+    let turns: Vec<Arc<TurnProc>> = agents().iter().filter_map(|a| a.stop_turn()).collect();
+    {
+        // every gate is held while the groups are ended, so no leader is reaped meanwhile
+        let gates: Vec<_> = turns.iter().map(|t| t.reaped.lock().unwrap_or_else(|e| e.into_inner())).collect();
+        let groups: Vec<u32> = if cfg!(windows) {
+            turns.iter().zip(&gates).filter(|(_, g)| !***g).map(|(t, _)| t.pid).collect()
+        } else {
+            turns.iter().zip(&gates).flat_map(|(t, g)| t.groups(**g)).collect()
+        };
+        paths::end_trees(&groups);
+    }
     opencode::shut_down(); // the app's OpenCode server, with every OpenCode turn
+    // each ended turn settles its chat ("Stopped.", then done) before the chats are saved, for a moment at most
+    let until = std::time::Instant::now() + Duration::from_secs(3);
+    while agents().iter().any(|a| a.st.lock().unwrap().running) && std::time::Instant::now() < until {
+        thread::sleep(Duration::from_millis(50));
+    }
 
     for a in agents() {
         a.save();
@@ -3064,6 +3221,58 @@ mod tests {
         let _ = child.wait(); // as read() does; the test itself (the app) is still here to do it
         assert!(gone(&grandchild), "the grandchild {grandchild} is still running");
         assert!(a.st.lock().unwrap().stopped);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_is_confirmed_a_turn_that_ignores_it_is_killed_after_the_wait_and_said() {
+        use std::io::BufRead;
+        for ignores in [true, false] {
+            let mut c = Command::new("sh");
+            c.args(["-c", if ignores { "trap '' TERM; sleep 60 & echo $!; wait" } else { "sleep 60 & echo $!; wait" }]).stdout(Stdio::piped());
+            paths::own_group(&mut c);
+            let mut child = c.spawn().unwrap();
+            let mut line = String::new();
+            BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+            let a = Agent::detached_for_test(&format!("confirmed{ignores}"), None);
+            let tp = a.set_turn_pid_for_test(child.id());
+            let t = std::time::Instant::now();
+            // the reader's part: the output ends when the group is gone, then the leader is reaped
+            let reader = {
+                let tp = tp.clone();
+                thread::spawn(move || {
+                    while signal_alive(tp.pid) {
+                        thread::sleep(Duration::from_millis(50));
+                    }
+                    tp.done.store(true, Ordering::SeqCst);
+                    tp.reaping();
+                    child.wait()
+                })
+            };
+            a.stop_turn().unwrap().stop();
+            let _ = reader.join();
+            assert!(gone(line.trim()), "the grandchild is gone");
+            assert_eq!(tp.killed.load(Ordering::SeqCst), ignores, "killed only when it did not end when asked");
+            if ignores {
+                assert!(t.elapsed() >= paths::STOP_WAIT, "it was given the whole wait first");
+            } else {
+                assert!(t.elapsed() < paths::STOP_WAIT, "a turn that ends when asked is not waited for");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn signal_alive(group: u32) -> bool {
+        Command::new("kill").args(["-0", "--", &format!("-{group}")]).stderr(Stdio::null()).status().unwrap().success()
+    }
+
+    #[test]
+    fn a_long_waiting_tool_is_recognised_in_every_ais_output() {
+        let claude = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "mcp__rbxkit__rbx_team", "input": {}}]}});
+        assert!(claude_starts_long_tool(&claude));
+        assert!(!claude_starts_long_tool(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash"}]}})));
+        assert!(starts_long_tool(&[Out::Tool("mcp__rbxkit__rbx_texture".into())]));
+        assert!(!starts_long_tool(&[Out::Text("rbx_team".into())]));
     }
 
     #[cfg(unix)]

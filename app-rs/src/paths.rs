@@ -197,14 +197,7 @@ pub fn end_group_soon(group: u32) {
         if group <= 1 || group == std::process::id() {
             return;
         }
-        let signal = move |sig: &str| {
-            Command::new("kill")
-                .args([sig, "--", &format!("-{group}")])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-        };
+        let signal = move |sig: &str| signal_group(group, sig);
         signal("-TERM");
         std::thread::spawn(move || {
             std::thread::sleep(STOP_GRACE);
@@ -257,8 +250,100 @@ pub fn waits_long(tool: &str) -> bool {
     ["rbx_team", "rbx_texture", "rbx_generate_texture"].iter().any(|w| t == *w || t.ends_with(&format!("_{w}")))
 }
 
+/// Whether a turn that has sent nothing for `quiet` is stalled: STALL or more, and not waiting on purpose.
+pub fn stalled(quiet: std::time::Duration, waiting_long: bool) -> bool {
+    quiet >= STALL && !waiting_long
+}
+
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
+
+/// How long Stop waits for a turn to end by itself, once asked, before its processes are killed (every AI).
+pub const STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(if cfg!(test) { 2 } else { 15 });
+
+/// What the chat is told when a turn did not end within STOP_WAIT of Stop and was killed.
+pub fn killed_message(ai: &str) -> String {
+    format!("{ai} did not stop within {} seconds of Stop, so Fridae ended it.", STOP_WAIT.as_secs())
+}
+
+/// Unix: sends `sig` ("-TERM", "-KILL", "-0") to process group `group`; true when the group had a member. Never the
+/// app's own group, nor 0 or 1.
+pub fn signal_group(group: u32, sig: &str) -> bool {
+    #[cfg(unix)]
+    {
+        if group <= 1 || group == std::process::id() {
+            return false;
+        }
+        Command::new("kill")
+            .args([sig, "--", &format!("-{group}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (group, sig);
+        false
+    }
+}
+
+/// How much of a child's error output is kept: it is always read to the end (a full pipe would block the child),
+/// and only this much of its tail is kept.
+pub const TAIL: usize = 64 * 1024;
+
+/// Reads `r` to its end and returns the last `cap` bytes of it, as text.
+pub fn drain_tail(mut r: impl std::io::Read, cap: usize) -> String {
+    let mut kept: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                kept.extend(&buf[..n]);
+                let over = kept.len().saturating_sub(cap);
+                kept.drain(..over);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&kept.into_iter().collect::<Vec<u8>>()).trim().to_string()
+}
+
+/// Variables of a Claude Code that runs the app (while developing it): a Claude child given them would think it runs
+/// inside that one (nested-session checks, its messaging socket). Removed from every AI's process.
+pub const CLAUDE_SESSION_VARS: [&str; 6] = ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_PID", "CLAUDE_AGENT_SDK_VERSION"];
+
+/// Provider API keys that would make an AI bill an API account instead of the plan the user signed in with. Removed
+/// from that AI's process. The Gemini keys stay where nothing else would use them: the app's textures read them
+/// (`rbxgen.py`), and Antigravity signs in with the user's Google account by its own settings.
+pub fn plan_keys(ai: &str) -> &'static [&'static str] {
+    match ai {
+        "claude" => &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+        "cursor" => &["CURSOR_API_KEY"],
+        "chatgpt" => &["OPENAI_API_KEY", "CODEX_API_KEY"],
+        // OpenCode's server would add a provider for each of these, billed to that key; its tool servers get the
+        // Gemini keys back (textures)
+        "opencode" => &[
+            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "XAI_API_KEY", "DEEPSEEK_API_KEY",
+            "MISTRAL_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "AWS_BEARER_TOKEN_BEDROCK", "AZURE_OPENAI_API_KEY",
+            "CURSOR_API_KEY",
+        ],
+        _ => &[],
+    }
+}
+
+/// The environment hygiene every AI's process gets (see CLAUDE_SESSION_VARS, plan_keys); Antigravity is also told not
+/// to update itself mid-turn.
+pub fn child_env(cmd: &mut Command, ai: &str) {
+    for k in CLAUDE_SESSION_VARS.iter().chain(plan_keys(ai)) {
+        cmd.env_remove(k);
+    }
+    if ai == "gemini" {
+        cmd.env("AGY_CLI_DISABLE_AUTO_UPDATE", "1");
+    }
+}
 
 /// Ends each process (started with `own_group`) and everything it started, and returns once they are gone.
 /// Unix: SIGTERM to each process group, then SIGKILL to any group still there after `STOP_GRACE`. A pid that is
@@ -276,14 +361,7 @@ pub fn end_trees(pids: &[u32]) {
     {
         let me = std::process::id();
         let groups: Vec<u32> = pids.iter().copied().filter(|&p| p > 1 && p != me).collect();
-        let signal = |sig: &str, group: u32| {
-            Command::new("kill")
-                .args([sig, "--", &format!("-{group}")])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|s| s.success())
-        };
+        let signal = |sig: &str, group: u32| signal_group(group, sig);
         for &g in &groups {
             signal("-TERM", g);
         }
@@ -746,5 +824,45 @@ mod tests {
         assert!(base.join(&me).exists(), "this run's own folder stays");
         assert!(temp.join("fridae-update-webview").exists());
         assert!(PATHS.work.starts_with(env::temp_dir().join("fridae-tests").join(&me)));
+    }
+
+    #[test]
+    fn a_turn_is_stalled_only_after_the_whole_wait_and_never_while_waiting_on_purpose() {
+        assert!(!stalled(STALL - std::time::Duration::from_secs(1), false));
+        assert!(stalled(STALL, false));
+        assert!(!stalled(STALL * 4, true), "a Lead waiting on experts or a texture is not stalled");
+        assert!(waits_long("mcp__rbxkit__rbx_team") && waits_long("rbx_texture") && !waits_long("rbx_teamwork") && !waits_long("Bash"));
+    }
+
+    #[test]
+    fn only_the_tail_of_a_long_error_output_is_kept() {
+        let big = "x".repeat(200_000) + "THE END";
+        let tail = drain_tail(big.as_bytes(), 1000);
+        assert_eq!(tail.len(), 1000);
+        assert!(tail.ends_with("THE END"));
+        assert_eq!(drain_tail("  short \n".as_bytes(), TAIL), "short");
+    }
+
+    #[test]
+    fn ai_processes_lose_the_parent_claude_session_and_ambient_api_keys() {
+        let removed = |ai: &str| {
+            let mut c = Command::new("true");
+            child_env(&mut c, ai);
+            let mut gone: Vec<String> = c.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k.to_string_lossy().into_owned()).collect();
+            gone.sort();
+            let set: Vec<(String, String)> = c.get_envs().filter_map(|(k, v)| v.map(|v| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))).collect();
+            (gone, set)
+        };
+        let (claude, set) = removed("claude");
+        for k in CLAUDE_SESSION_VARS.iter().chain(&["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) {
+            assert!(claude.contains(&k.to_string()), "{k}");
+        }
+        assert!(!claude.contains(&"CLAUDE_CODE_OAUTH_TOKEN".to_string()), "the plan's own token stays");
+        assert!(set.is_empty());
+        let (gemini, set) = removed("gemini");
+        assert!(!gemini.iter().any(|k| k.contains("GEMINI") || k.contains("GOOGLE")), "textures read the Gemini key");
+        assert_eq!(set, [("AGY_CLI_DISABLE_AUTO_UPDATE".to_string(), "1".to_string())]);
+        assert!(removed("cursor").0.contains(&"CURSOR_API_KEY".to_string()));
+        assert!(removed("opencode").0.contains(&"OPENAI_API_KEY".to_string()) && removed("opencode").0.contains(&"GEMINI_API_KEY".to_string()));
     }
 }

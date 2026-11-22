@@ -208,6 +208,7 @@ fn cursor_home() -> PathBuf {
 
 /// Cursor's settings and data folders are the app's (see the top of this file).
 fn environment(cmd: &mut Command) {
+    paths::child_env(cmd, "cursor");
     cmd.env("CURSOR_CONFIG_DIR", config_dir()).env("CURSOR_DATA_DIR", data_dir());
     if let Some(h) = home_override() {
         cmd.env("HOME", h);

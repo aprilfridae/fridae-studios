@@ -125,6 +125,7 @@ fn same(entry: &Value, now: Option<&(u32, String, String)>) -> bool {
 pub fn reap_orphans() -> usize {
     let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: Vec<u32> = Vec::new();
+    #[cfg_attr(test, allow(unused_mut))]
     let mut files: Vec<PathBuf> = fs::read_dir(folder()).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     // the single ledger file of earlier versions
     #[cfg(not(test))]
@@ -148,15 +149,68 @@ pub fn reap_orphans() -> usize {
             if !same(e, describe(pid).as_ref()) {
                 continue; // gone, or its pid is someone else's now
             }
-            // its own group when it was started in one, else the process alone
+            // its own group when it was started in one (with the groups of what runs below it: a tool's shell may
+            // be in one of its own), else the process alone
             let pgid = e["pgid"].as_u64().map(|g| g as u32).unwrap_or(0);
-            groups.push(if pgid == pid { pgid } else { pid });
+            if pgid == pid {
+                for g in tree_groups(pid) {
+                    if !groups.contains(&g) {
+                        groups.push(g);
+                    }
+                }
+            } else {
+                groups.push(pid);
+            }
         }
         let _ = fs::remove_file(&file);
     }
     let ended = groups.len();
     crate::paths::end_trees(&groups);
     ended
+}
+
+/// The process groups of `leader`'s whole tree: its own, and that of each process below it (Cursor runs each shell
+/// command in a group of its own, so a signal to the turn's group alone leaves it running). Never the app's own
+/// group. Unix; on Windows just the leader (taskkill /T follows the tree there).
+pub fn tree_groups(leader: u32) -> Vec<u32> {
+    if cfg!(windows) {
+        return vec![leader];
+    }
+    let Ok(out) = Command::new("ps").args(["-A", "-o", "pid=", "-o", "pgid=", "-o", "ppid="]).env("LC_ALL", "C").output() else { return vec![leader] };
+    groups_below(&String::from_utf8_lossy(&out.stdout), leader, own_group())
+}
+
+/// The app's own process group.
+fn own_group() -> u32 {
+    describe(std::process::id()).map(|(g, _, _)| g).unwrap_or(0)
+}
+
+fn groups_below(text: &str, leader: u32, app_group: u32) -> Vec<u32> {
+    let rows: Vec<(u32, u32, u32)> = text
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            Some((w.next()?.parse().ok()?, w.next()?.parse().ok()?, w.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut below = vec![leader];
+    let mut i = 0;
+    while i < below.len() {
+        let parent = below[i];
+        for &(pid, _, ppid) in &rows {
+            if ppid == parent && !below.contains(&pid) {
+                below.push(pid);
+            }
+        }
+        i += 1;
+    }
+    let mut groups = vec![leader];
+    for &(pid, pgid, _) in &rows {
+        if below.contains(&pid) && pgid > 1 && pgid != app_group && !groups.contains(&pgid) {
+            groups.push(pgid);
+        }
+    }
+    groups
 }
 
 /// Every orphaned process (its parent gone) whose command line starts with `prefix` (an executable inside one of the
@@ -200,6 +254,15 @@ mod tests {
         assert!(!same(&e, Some(&(5, "Sun Nov 22 04:13:37 2026".into(), "opencode serve".into()))), "a reused pid starts at another time");
         assert!(!same(&e, Some(&(5, "Sun Nov 22 04:13:36 2026".into(), "vim".into()))));
         assert!(!same(&e, None));
+    }
+
+    #[test]
+    fn a_turns_tree_includes_the_groups_its_shells_were_put_in() {
+        // 10 the turn (its own group), 11 its helper in the group, 12 a shell Cursor put in group 12 with 13 under it,
+        // 14 something in the app's group 1000 (signalled as part of 10's group never), 20 unrelated
+        let ps = "  10 10 1000\n  11 10 10\n  12 12 10\n  13 12 12\n  14 1000 11\n  20 20 1\n  bad\n";
+        assert_eq!(groups_below(ps, 10, 1000), [10, 12]);
+        assert_eq!(groups_below("", 10, 1000), [10], "the turn's own group at least");
     }
 
     #[test]

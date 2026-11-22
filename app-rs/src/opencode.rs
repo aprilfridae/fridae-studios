@@ -70,8 +70,8 @@ static WATCHING: AtomicBool = AtomicBool::new(false);
 
 /// How long the server is kept without a turn before it is stopped (the next turn starts it again in a second or two).
 const IDLE: Duration = Duration::from_secs(10 * 60);
-/// How long Stop waits for OpenCode to end a turn by itself before the server is ended.
-const STOP_WAIT: Duration = Duration::from_secs(12);
+/// How long Stop waits for OpenCode to end a turn by itself before the server is ended (the same wait as every AI's).
+const STOP_WAIT: Duration = paths::STOP_WAIT;
 /// The event stream sends a heartbeat every 10 to 15 seconds: this long without anything means it is stuck.
 const SILENCE: Duration = Duration::from_secs(45);
 /// The instructions entry the app keeps on each session.
@@ -165,6 +165,7 @@ fn environment(cmd: &mut Command) {
     for k in DROPPED {
         cmd.env_remove(k);
     }
+    paths::child_env(cmd, "opencode"); // a parent Claude Code's session, and provider keys of the user's
     cmd.env("XDG_DATA_HOME", s.join("data"))
         .env("XDG_STATE_HOME", s.join("state"))
         .env("XDG_CACHE_HOME", s.join("cache"))
@@ -1096,7 +1097,15 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
     // the chat's tool servers for its folder (added again every turn: an idle folder drops them, and an unchanged one
     // keeps its connection)
     let mut bad = Vec::new();
-    let mine = servers_config(&spec.agent_id, &spec.servers, &users_xdg());
+    // the tool servers get the user's XDG folders back, and the Gemini keys the server itself goes without (the
+    // app's textures read them)
+    let mut extra = users_xdg();
+    for k in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
+        if let Some(v) = env::var(k).ok().filter(|v| !v.is_empty()) {
+            extra.push((k.to_string(), v));
+        }
+    }
+    let mine = servers_config(&spec.agent_id, &spec.servers, &extra);
     for (name, cfg) in &mine {
         match call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), Some(&json!({"config": cfg}))) {
             Ok((s, _)) if s < 300 => {}

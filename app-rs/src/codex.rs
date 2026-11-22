@@ -33,6 +33,7 @@ pub fn load_models() {
         let mut cmd = Command::new(exe);
         cmd.args(["debug", "models"]);
         paths::quiet(&mut cmd);
+        paths::child_env(&mut cmd, "chatgpt");
         let Ok(out) = cmd.output() else { return };
         let Ok(d) = serde_json::from_slice::<Value>(&out.stdout) else { return };
         let mut list: Vec<(i64, String, String)> = d["models"]

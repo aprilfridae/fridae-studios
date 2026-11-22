@@ -235,9 +235,46 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
   projects named with spaces and accents; under `cfg(test)` everything, the work folder included, goes in
   `<temp>/fridae-tests/<pid>/`, whatever `RBXKIT_WORK` says, so nothing writes to the real work folder; the next test
   run clears the folders of runs that are over).
-- Stop: every agent starts in its own process group on macOS and Linux, and Stop (or quitting the app) sends the
-  group SIGTERM, then SIGKILL after 2 s; Windows keeps `taskkill /T /F`. The tests check it with a real shell that
-  starts a grandchild.
+- AI processes (`agents.rs` `TurnProc`, `procs.rs`; Unix first, Windows unchanged: `taskkill /T /F` at once and no
+  ledger there):
+  - Every turn of a command-line AI (Claude Code, Antigravity, Cursor, Codex) starts in a process group of its own and
+    is noted in the process ledger (`work/processes/<app pid>.json`: pid, group, start time, command line), noted again
+    at its first output line (cursor-agent's launcher script has replaced itself with node by then, which changes the
+    command line) and dropped once reaped. At the next start, an entry of a crashed app still running exactly as
+    noted is ended with its whole tree (`procs::tree_groups`: Cursor runs each shell command in a group of its own).
+    Measured with a real Cursor turn running `sleep 120`, app SIGKILLed: the next start ended cursor-agent, its
+    worker-server, its language server and the `sleep`. OpenCode's server goes through the same ledger.
+  - The error output is always read to its end on a thread of its own, and only its last 64 KB are kept
+    (`paths::drain_tail`, `TAIL`).
+  - Stop is confirmed: the turn's tree gets SIGTERM (every group in it), up to 15 s (`paths::STOP_WAIT`) for its
+    output to end, then SIGKILL, and the chat gets one line saying it had to be ended (`paths::killed_message`)
+    before "Stopped.". What its tools left in groups of their own after it ended in time gets 2 s more, then
+    SIGKILL. A gate (`TurnProc::reaped`) keeps the leader from being reaped while its group is signalled, so a group
+    ID never names someone else's. Measured with a real Cursor turn in `sleep 90`: Stop ended it and the `sleep` in
+    0.2 s (before this, signalling the turn's group alone left Cursor's shell running until the command ended).
+    OpenCode's Stop interrupts the session, waits the same 15 s, then ends the server.
+  - Every ending (result, Stop, failure, the process exiting, the stall guard, quitting) goes through `after_turn`,
+    which ends with `done`: the page settles the turn's open steps on it, and a chat reopened without one is settled
+    at once (`open_chat`). Quitting ends every turn's tree, then waits up to 3 s for the chats to settle before they
+    are saved.
+  - Stall guard: a turn with no output line for 15 minutes (`paths::STALL`) is ended with a plain message
+    (`stall_message`); not while its last line started one of the app's tools that wait on purpose (`rbx_team`,
+    `rbx_texture`, `rbx_generate_texture`), while a texture is being made, or while it is a Lead with experts working
+    (`watch_stall`, checked every 5 s). OpenCode applies the same constant to its events.
+  - Environment (`paths::child_env`): every AI's process (turns and model listings) goes without a parent Claude
+    Code's `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`,
+    `CLAUDE_PID` and `CLAUDE_AGENT_SDK_VERSION`, and without the provider keys that would bill an API account instead
+    of the plan the user signed in with (`plan_keys`): Claude Code `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+    (`CLAUDE_CODE_OAUTH_TOKEN`, a plan's own token, stays); Cursor `CURSOR_API_KEY`; Codex `OPENAI_API_KEY`,
+    `CODEX_API_KEY`; OpenCode's server `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`,
+    `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`,
+    `GOOGLE_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AZURE_OPENAI_API_KEY`,
+    `CURSOR_API_KEY` (its tool servers get the two Gemini keys back). Antigravity keeps the Gemini keys (the app's
+    textures read them, and agy signs in by its own settings) and gets `AGY_CLI_DISABLE_AUTO_UPDATE=1`. Measured: a
+    Cursor turn started from an app with `CLAUDECODE`, a fake `CLAUDE_CODE_SESSION_ID` and a fake `CURSOR_API_KEY`
+    ran on the sign-in, and its process had none of them. On Windows the same variables are removed.
+  - The tests check Stop with real shells that start a grandchild, one of them ignoring SIGTERM (killed after the
+    wait, and said), and the tree, tail and environment rules.
 - The app by hand, in a scratch folder so the real `Documents/Fridae Studios` is never touched. Make
   `<scratch>/kit` with symlinks to this repo's `ui`, `team`, `rbxkit_mcp.py` and `rbx.py` and its own `config.json`
   (`{"chat_ai": "claude", "projects": [{"name": "...", "path": "<scratch game folder>"}]}`; `git init` the game),
@@ -478,7 +515,7 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     `git log $(./git)`, backticks and `git --version > /tmp/x` were refused (a planted `git` script never ran);
     `sh -c ./git` and `git --version; whoami` showed the card for `sh` and `whoami`; `git --version`,
     `git --version; ls` and `git --version 2>&1` ran.
-- **Stop**: `POST /api/session/<id>/interrupt` (in its own thread), then up to 12 seconds (`STOP_WAIT`) for the turn's
+- **Stop**: `POST /api/session/<id>/interrupt` (in its own thread), then up to 15 seconds (`STOP_WAIT`, the same as every AI's) for the turn's
   end event (measured: about 0.1 s, the running shell command is ended). If none comes, the whole server is ended
   and the chat says so: that also ends any other OpenCode chat that was working, which the message says. A Stop on a
   chat whose turn the app no longer follows still interrupts its saved session.
