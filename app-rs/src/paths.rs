@@ -345,6 +345,15 @@ pub fn tail_text(kept: &std::sync::Mutex<std::collections::VecDeque<u8>>) -> Str
     String::from_utf8_lossy(&k.iter().copied().collect::<Vec<u8>>()).trim().to_string()
 }
 
+/// Held while an AI's process is started. On a Mac a new pipe is not closed-on-exec from the moment it exists (there
+/// is no `pipe2`), so a process forked by another thread in that moment inherits it for good: a kept process's stdin
+/// would then stay open in another chat's AI, and closing it would not end the process until it is killed (seen
+/// in the tests as a close that took its whole grace). Starting them one at a time closes that window among them.
+pub fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// The longest line of an AI's output that is kept (a tool result carrying a big picture can be one line).
 pub const LINE_CAP: usize = 64 * 1024 * 1024;
 
@@ -1382,9 +1391,9 @@ pub fn program_name(command: &str) -> Option<String> {
 /// lone `&`, `|&` or an empty part refuses. Nor does anything that reads another process's environment pass
 /// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`). When unsure, no: the card
 /// shows, with the reason (`refusal_reason`). The native allow lists of Claude Code (`Bash(<p>:*)`)
-/// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AIs whose requests the app answers (OpenCode,
-/// and Gemini on its kept process, `acp::decide`: which shell agy runs a command with was not measured, so its
-/// process is told `SHELL=/bin/sh`).
+/// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AI whose requests the app answers and whose shell
+/// is the app's own (OpenCode). Not for Gemini's kept process (`acp::decide`): agy runs commands through zsh and the
+/// user's `.zshenv` whatever SHELL says (measured), so there every command is asked about.
 #[allow(unused_assignments)] // the last word's end leaves its flags unread
 pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
     let c = command.trim_matches([' ', '\t']);

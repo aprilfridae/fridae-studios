@@ -112,6 +112,8 @@ impl Chat {
         fs::create_dir_all(dir.join("ws")).unwrap();
         let script = dir.join("agy.sh");
         fs::write(&script, SCRIPT).unwrap();
+        // Gemini's kept process is asked for (it is not the default yet: `KEPT_ON_REQUEST`); every test here wants it
+        unsafe { std::env::set_var("FRIDAE_GEMINI_KEPT", "1") };
         let a = Agent::detached_for_test(&format!("acp-{name}"), None);
         a.st.lock().unwrap().ai = Some("gemini".into());
         Chat { a, script, dir }
@@ -354,8 +356,14 @@ fn the_switch_that_forces_a_process_per_message_is_per_ai() {
     assert!(!per_turn_forced("gemini") && !per_turn_forced("claude"));
     unsafe { std::env::set_var("FRIDAE_TESTAI_PER_TURN", "0") };
     assert!(!per_turn_forced("testai"));
+    // an AI whose kept process is not the default yet is kept only when asked for
+    assert!(KEPT_ON_REQUEST.contains(&"gemini") && !KEPT_ON_REQUEST.contains(&"claude"));
+    assert!(kept_wanted("claude"));
+    unsafe { std::env::remove_var("FRIDAE_TESTAI_KEPT") };
+    assert!(kept_wanted("testai"), "not on the list: the default");
     // and the table says which AIs keep a process at all
     let c = Chat::new("caps");
+    assert!(kept_wanted("gemini"), "asked for by these tests");
     assert!(c.a.live_allowed());
     c.a.st.lock().unwrap().ai = Some("cursor".into());
     assert!(!c.a.live_allowed(), "only an AI the table says keeps a process");
@@ -710,8 +718,9 @@ mod stand_in {
 
 /// Real traffic, played back (see the top of this file). The recordings name the scratch folder they were made in as
 /// `/scratch`; it becomes the test's own folder as the recording is handed to the stand-in, so the app's answers to
-/// agy's requests are decided on folders that exist, as they were when it was recorded. All but one were made with
-/// Gemini 3.8 Flash at low effort, in Ask me, with `sleep` the one program allowed.
+/// agy's requests are decided on folders that exist, as they were when it was recorded. All but one were made
+/// through the app with Gemini 3.8 Flash at low effort. The stand-in compares each line the app sends with the line
+/// it sent when recorded (a request by its method, an answer to agy whole): `clean` says none differed.
 #[cfg(unix)]
 mod recorded {
     use super::*;
@@ -719,24 +728,37 @@ mod recorded {
     const S1: &str = "00000000-0000-4000-8000-0000000000a1";
     const S2: &str = "00000000-0000-4000-8000-0000000000a2";
 
+    /// How a recording's messages were sent.
+    #[derive(Clone, Copy)]
+    struct As {
+        effort: Option<&'static str>,
+        full: bool,
+    }
+
+    const ASK_ME: As = As { effort: Some("low"), full: false };
+
     impl Chat {
         fn recorded(name: &str, case: &str) -> Chat {
             let c = Chat::playing(name, case);
             fs::create_dir_all(c.dir.join("game")).unwrap();
+            fs::create_dir_all(c.dir.join("kit")).unwrap();
+            fs::write(c.dir.join("kit").join("config.json"), "{}").unwrap();
             c
         }
 
-        /// A message sent as the recordings' were: the game as the workspace, the app's tool server, low effort.
-        fn say(&self, text: &str, effort: Option<&str>) {
-            let servers = json!({"rbxkit": {"command": "python3", "args": ["/scratch/kit/rbxkit_mcp.py"], "env": {"RBXKIT_PROJECT": "/scratch/game"}}});
-            let (guarded, game) = (Map::new(), self.dir.join("game"));
-            let mut l = GeminiLaunch::new(&GeminiSettings { workspace: &game, servers: &servers, effort, ..self.settings(&json!({}), &guarded, &[]) });
+        /// A message sent as the recordings' were: the game as the workspace, the app's two tool servers, the app's
+        /// settings file among what no file tool may write.
+        fn say(&self, text: &str, how: As) {
+            let servers = json!({"rbxkit": {"command": "python3", "args": ["/scratch/kit/rbxkit_mcp.py"], "env": {"RBXKIT_PROJECT": "/scratch/game"}},
+                                 "Roblox_Studio": {"command": "/usr/bin/python3", "args": ["/scratch/studio_standin.py"]}});
+            let (guarded, game, protected) = (Map::new(), self.dir.join("game"), vec![self.dir.join("kit").join("config.json")]);
+            let mut l = GeminiLaunch::new(&GeminiSettings { workspace: &game, servers: &servers, effort: how.effort, full: how.full, ..self.settings(&json!({}), &guarded, &protected) });
             l.first = vec![self.script.clone().into()];
             self.a.kept_turn(&l, text);
         }
 
         fn ask(&self, text: &str) {
-            self.say(text, Some("low"));
+            self.say(text, ASK_ME);
             self.wait();
         }
 
@@ -744,20 +766,24 @@ mod recorded {
         fn tokens(&self) -> Vec<(u64, u64, u64)> {
             self.events().iter().filter(|e| e["kind"] == "usage").map(|e| (e["input"].as_u64().unwrap(), e["output"].as_u64().unwrap(), e["cache_read"].as_u64().unwrap())).collect()
         }
-    }
 
-    /// `sleep` allowed for the test, as it was when the recordings were made.
-    struct SleepAllowed(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+        /// The user pressed "Run it once" on the card for this command, as when the recording was made (or, for the
+        /// recordings made while the app still approved allowed programs by itself, in place of that).
+        fn once(&self, command: &str) {
+            opencode::note_refused(&self.a.id, &[json!({"command": command, "once": true})]);
+            assert!(opencode::approve_once(&self.a.id, command));
+        }
 
-    fn sleep_allowed() -> SleepAllowed {
-        let held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = paths::set_allowed(&["sleep".to_string()], true);
-        SleepAllowed(held)
-    }
+        /// Every line the app sent was the line it sent when this was recorded.
+        fn clean(&self) {
+            let diff = fs::read_to_string(self.script.with_extension("sh.mismatch")).unwrap_or_default();
+            assert!(diff.is_empty(), "the app no longer sends what it sent when this was recorded:\n{diff}");
+        }
 
-    impl Drop for SleepAllowed {
-        fn drop(&mut self) {
-            let _ = paths::set_allowed(&["sleep".to_string()], false);
+        /// What the app answered agy's permission requests in the recording being played, in order.
+        fn recorded_answers(&self) -> Vec<String> {
+            let all = fs::read_to_string(self.script.with_extension("sh.wire")).unwrap();
+            all.lines().filter_map(|l| l.strip_prefix("> ")).filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter_map(|m| m["result"]["outcome"]["optionId"].as_str().map(str::to_string)).collect()
         }
     }
 
@@ -765,8 +791,9 @@ mod recorded {
     fn recorded_tool_calls_allowed_one_refused_with_its_card_then_a_plain_reply_on_the_same_process() {
         let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = paths::set_allowed(&["ls".to_string()], false);
-        // recorded: one of the app's tools, a file written in the game, a file read (agy does not ask for reads), then
-        // `ls -la`, a program the user had not allowed: refused, and agy ended the turn there without a word
+        // recorded: one of the app's tools, a file written in the game, a file read there (agy does not ask about a
+        // read inside its workspace), then `ls -la`, a program the user had not allowed: refused, and agy ended the
+        // turn there without a word
         let c = Chat::recorded("rec-two", "acp-two");
         c.ask("the first message");
         assert_eq!(c.said("tool"), ["Updating the board", "Writing a file", "Reading a file", "Running a command"]);
@@ -777,6 +804,7 @@ mod recorded {
         assert_eq!(c.kinds().last().map(String::as_str), Some("done"));
         assert_eq!(c.tokens(), [(26959, 251, 55103)], "usage from the prompt's answer");
         assert_eq!(c.session().as_deref(), Some(S1));
+        assert!(c.a.notes_for_test().iter().any(|n| n.contains("ls -la")), "the agent is told with the next message what was not run");
         let pid = c.pid().expect("a refusal is no failure: the process is kept");
         // the second message, on the same process: a plain reply
         c.ask("the second message");
@@ -785,33 +813,41 @@ mod recorded {
         assert_eq!(c.tokens().len(), 2);
         assert_eq!(c.starts(), ["acp"], "one process for both");
         assert_eq!(c.fails(), 0);
+        assert_eq!(c.recorded_answers(), ["allow", "allow", "deny"]);
+        c.clean();
     }
 
     #[test]
     fn recorded_turn_that_left_a_command_in_the_background_keeps_no_process() {
-        let _sleep = sleep_allowed();
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = paths::set_allowed(&["ls".to_string()], false);
         // recorded: `sleep 61` was let run, went to the background after five seconds, and agy ended the turn with
         // the tool call still open. A minute later, with nothing sent, it asked the model again and wrote "done".
         let c = Chat::recorded("rec-background", "acp-background");
         c.ask("the first message");
         c.ask("the second message");
         let pid = c.pid().unwrap();
+        c.once("sleep 61");
         c.ask("the third message");
         assert_eq!(c.said("text").last().map(String::as_str), Some("Launched the command `sleep 61` in the background and waiting for it to finish."));
         assert_eq!(c.pid(), None, "not kept: what it would do by itself later is never left to run");
         assert!(goes(pid));
         assert_eq!(c.fails(), 0);
+        let errors = c.said("error");
+        assert!(errors.len() == 1 && errors[0].contains("left a command running"), "said in one line: {errors:?}");
         assert!(!c.said("text").iter().any(|t| t.contains("done")), "the answer nobody asked for is not the chat's");
         // and that answer, coming with no turn on the process, is what ends a process (`Live::strayed`)
         let all = fs::read_to_string(c.script.with_extension("sh.wire")).unwrap();
         let after: Vec<&str> = all.lines().skip_while(|l| !l.contains("\"id\":8}")).skip(1).filter_map(|l| l.strip_prefix("< ")).collect();
         assert_eq!(after.len(), 3);
         assert_eq!(after.iter().map(|l| acp::stray(l.as_bytes())).collect::<Vec<_>>(), [false, true, false], "the tool's last update, the answer, usage");
+        c.clean();
     }
 
     #[test]
     fn recorded_stop_mid_turn_is_confirmed_by_the_cancelled_prompt() {
-        let _sleep = sleep_allowed();
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = paths::set_allowed(&["ls".to_string()], false);
         // recorded: Stop pressed in the page while `sleep 61` ran: `session/cancel`, the command's tool call failed,
         // and the prompt answered `cancelled`. (The recording is of a process's first, second and fourth turns: the
         // third, the background one above, is left out, so its request number is passed over here.)
@@ -820,7 +856,8 @@ mod recorded {
         c.ask("the second message");
         let pid = c.pid().unwrap();
         c.a.st.lock().unwrap().live.as_ref().unwrap().next_request();
-        c.say("the message that is stopped", Some("low"));
+        c.once("sleep 61");
+        c.say("the message that is stopped", ASK_ME);
         c.until(|tp| tp.tool_open.load(Ordering::SeqCst) && tp.acked.load(Ordering::SeqCst));
         thread::sleep(Duration::from_millis(200)); // the request for `sleep 61` is answered by now
         let pressed = std::time::Instant::now();
@@ -833,16 +870,17 @@ mod recorded {
         assert_eq!(c.pid(), None, "Stop landed in a tool call, so the process is given up, as Claude Code's is");
         assert!(goes(pid));
         assert_eq!(c.fails(), 0);
+        c.clean(); // the line the app sent for Stop was `session/cancel`, where it was when recorded
     }
 
     #[test]
     fn recorded_process_killed_mid_turn_is_said_and_the_message_is_not_sent_twice() {
-        let _sleep = sleep_allowed();
         // recorded: a new process resumed the chat's conversation, `sleep 61` was let run, and the process was
         // killed (SIGKILL) while it ran: the output ends with the prompt unanswered
         let c = Chat::recorded("rec-dies", "acp-dies");
         c.mark("dies");
         c.a.st.lock().unwrap().session = Some(S1.into());
+        c.once("sleep 61");
         c.ask("the message");
         assert_eq!(c.said("tool"), ["Running a command"]);
         let errors = c.said("error");
@@ -850,29 +888,48 @@ mod recorded {
         assert_eq!(c.starts(), ["acp"], "no second process: the command had already run");
         assert_eq!((c.fails(), c.pid()), (1, None));
         assert_eq!(c.session().as_deref(), Some(S1), "the next message resumes it");
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_process_that_dies_at_its_start_has_the_message_sent_per_message() {
+        // recorded: the kept process was killed as it started, before it answered anything (all there is of it is
+        // the app's first line); live, the message then went to a process per message and was answered
+        let c = Chat::recorded("rec-dies-at-start", "acp-dies-at-start");
+        c.mark("dies");
+        c.ask("Reply with exactly: ok");
+        assert_eq!(c.said("text"), ["per message"]);
+        assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
+        assert_eq!(c.per_message_input(), antigravity::message_line("Reply with exactly: ok"), "the same message, once");
+        assert_eq!((c.fails(), c.pid()), (1, None));
+        assert_eq!(c.starts().len(), 2);
+        c.clean();
     }
 
     #[test]
     fn recorded_signed_out() {
         // recorded: `session/new` answered `Authentication required`
         let c = Chat::recorded("rec-signed-out", "acp-signed-out");
-        c.say("hello", Some("high"));
+        c.say("hello", As { effort: Some("high"), full: false });
         c.wait();
         assert_eq!(c.said("error"), [antigravity::SIGNED_OUT]);
         assert_eq!(c.kinds(), ["error", "done"]);
         assert_eq!(c.starts(), ["acp"]);
         assert_eq!((c.fails(), c.pid(), c.session()), (0, None, None));
+        c.clean();
     }
 
     #[test]
     fn recorded_conversation_made_by_a_process_per_message_carries_on_and_a_write_outside_the_chat_is_refused() {
-        // recorded by the probe (its own client; no effort set, so its requests come in the app's number and order):
+        // recorded by the research probe (its own client; no effort set, so its requests come in the app's number and
+        // order, but they are its own, so what the app sends is not compared line by line here):
         // a conversation made by `agy` per message was resumed over ACP and carried on. agy kept the folder the
         // conversation was saved with, and asked to write there: not this chat's folder, so the app says no, as the
         // probe did, and agy ended the turn.
         let c = Chat::recorded("rec-resumed", "acp-resumed-per-message");
+        c.mark("loose");
         c.a.st.lock().unwrap().session = Some(S2.into());
-        c.say("the message", None);
+        c.say("the message", As { effort: None, full: false });
         c.wait();
         assert_eq!(c.said("tool"), ["Writing a file"]);
         let errors = c.said("error");
@@ -882,5 +939,110 @@ mod recorded {
         assert_eq!(c.session().as_deref(), Some(S2), "the same conversation: no word of a new one");
         assert!(c.pid().is_some());
         assert_eq!(c.starts(), ["acp"]);
+        assert_eq!(c.recorded_answers(), ["deny"]);
+    }
+
+    #[test]
+    fn recorded_read_outside_the_chats_folders_is_asked_about_and_refused() {
+        // recorded: agy asked before reading a file outside its workspace (it does not for one inside, above), and the
+        // app said no
+        let c = Chat::recorded("rec-read-outside", "acp-read-outside");
+        c.ask("the message");
+        assert_eq!(c.said("tool"), ["Reading a file"]);
+        let errors = c.said("error");
+        assert!(errors.len() == 1 && errors[0].contains("outside/secret.txt") && errors[0].contains("outside this chat's folders"), "{errors:?}");
+        assert!(c.said("text").is_empty());
+        assert_eq!(c.recorded_answers(), ["deny"]);
+        assert!(c.pid().is_some());
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_command_gets_its_card_and_runs_once_the_user_says_so_on_the_same_process() {
+        let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = paths::set_allowed(&["whichshell".to_string()], true);
+        // recorded on the last build: a command whose program the user had allowed is still asked about (agy runs
+        // commands with its own shell and the user's start-up file), with the offer to run it once
+        let c = Chat::recorded("rec-once", "acp-command-once");
+        c.ask("the first message");
+        let ev = c.events();
+        let card = ev.iter().find(|e| e["kind"] == "refused").expect("the card");
+        assert_eq!((card["commands"][0]["command"].clone(), card["commands"][0]["once"].clone()), (json!("whichshell two"), json!(true)));
+        assert!(!ev.iter().any(|e| e["kind"] == "blocked"), "its program is allowed: no offer to allow it");
+        let pid = c.pid().unwrap();
+        // "Run it once", then the page's message: the same command runs, and one of the app's tools after it
+        assert!(opencode::approve_once(&c.a.id, "whichshell two"));
+        c.ask("the second message");
+        let _ = paths::set_allowed(&["whichshell".to_string()], false);
+        assert_eq!(c.said("tool"), ["Running a command", "Running a command", "Checking images"]);
+        assert_eq!(c.said("text"), ["done"]);
+        assert_eq!(c.pid(), Some(pid), "the same process for both messages");
+        assert_eq!(c.recorded_answers(), ["deny", "allow", "allow"]);
+        assert_eq!(c.starts(), ["acp"]);
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_tools_of_the_server_named_as_roblox_studios_pass_and_a_call_of_three_minutes_is_cut_off_by_agy() {
+        // recorded with a stand-in server under the name Roblox Studio's has: agy names its tools
+        // `mcp_Roblox_Studio_<tool>`, the gate lets them through, and they count as Studio steps. The second call
+        // waited 190 seconds: agy gave it up after three minutes, whatever time limit the server's entry asked for
+        let c = Chat::recorded("rec-studio-tool", "acp-studio-tool");
+        c.ask("the message");
+        let tools: Vec<Value> = c.events().into_iter().filter(|e| e["kind"] == "tool").collect();
+        assert_eq!(c.said("tool"), ["Checking Studio", "wait job finished"]);
+        assert!(tools.iter().all(|t| t["studio"] == true), "{tools:?}");
+        assert_eq!(c.said("text"), ["Encountered error in tool execution: MCP tool call to server \"Roblox_Studio\" timed out after 3m0s: context deadline exceeded"]);
+        assert_eq!(c.recorded_answers(), ["allow", "allow"]);
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_web_search_and_a_read_of_a_web_address_are_not_asked_about() {
+        // recorded while the app still approved allowed programs by itself: here the user's "Run it once" stands in
+        // for that. agy then read a web address with its file-reading tool (which failed) and searched the web, and
+        // asked about neither: the only request in the recording is the command's
+        let c = Chat::recorded("rec-web", "acp-web-search");
+        c.once("whichshell one");
+        c.ask("the message");
+        assert_eq!(c.said("tool"), ["Running a command", "Reading a file", "Searching the web"]);
+        assert_eq!(c.said("text"), ["done"]);
+        assert_eq!(c.recorded_answers(), ["allow"]);
+        let all = fs::read_to_string(c.script.with_extension("sh.wire")).unwrap();
+        assert_eq!(all.lines().filter(|l| l.starts_with("< ") && l.contains("\"method\":\"session/request_permission\"")).count(), 1);
+        assert!(all.contains("\"name\":\"search_web\"") && all.contains("\"kind\":\"search\""));
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_studio_mode_lead_turn() {
+        // recorded in Studio mode (Full auto's rules): the Lead called the app's team tool twice and ended the turn
+        // waiting for the user
+        let c = Chat::recorded("rec-studio-lead", "acp-studio-lead");
+        c.say("the message", As { effort: Some("low"), full: true });
+        c.wait();
+        assert_eq!(c.said("tool"), ["Working with other agents", "Working with other agents"]);
+        assert!(c.said("text").last().is_some_and(|t| t.ends_with("STATUS: WAITING")), "{:?}", c.said("text"));
+        assert!(c.said("error").is_empty());
+        assert_eq!(c.recorded_answers(), ["allow", "allow"]);
+        assert!(c.pid().is_some());
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_expert_on_gemini_is_refused_the_apps_settings_in_another_case_and_keeps_no_process() {
+        // recorded: a helper started for a Lead (no effort set) asked to write `CONFIG.JSON` in the kit folder with
+        // its file tool; the app said no, and its report went back to the Lead
+        let c = Chat::recorded("rec-expert", "acp-expert");
+        c.a.st.lock().unwrap().parent = Some("lead".into());
+        c.say("the task", As { effort: None, full: false });
+        c.wait();
+        assert_eq!(c.said("tool"), ["Writing a file"]);
+        let errors = c.said("error");
+        assert!(errors.len() == 1 && errors[0].to_lowercase().contains("kit/config.json") && errors[0].contains("no AI's file tools may change"), "{errors:?}");
+        assert_eq!(fs::read_to_string(c.dir.join("kit").join("config.json")).unwrap(), "{}");
+        assert_eq!(c.recorded_answers(), ["deny"]);
+        assert_eq!(c.pid(), None, "an expert holds nothing between jobs");
+        c.clean();
     }
 }

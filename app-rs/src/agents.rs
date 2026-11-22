@@ -1585,6 +1585,20 @@ fn per_turn_forced(ai: &str) -> bool {
     std::env::var(format!("FRIDAE_{}_PER_TURN", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
 }
 
+/// AIs whose kept process is built and tested but not the default yet, with why. Each is kept open only when asked
+/// for (`FRIDAE_<AI>_KEPT=1`); taking an AI off this list makes its kept process the default.
+///
+/// Gemini: over ACP agy cuts off every call to a tool server after three minutes, whatever time limit the server's
+/// entry asks for (measured twice with a stand-in server; a process per message gives 15 minutes). A Lead waiting
+/// for its experts, a texture waiting for the user and a Blender build all take longer, so by default they would
+/// fail where they work today.
+const KEPT_ON_REQUEST: &[&str] = &["gemini"];
+
+/// Whether an AI the table says can be kept open is kept open on this run of the app.
+fn kept_wanted(ai: &str) -> bool {
+    !KEPT_ON_REQUEST.contains(&ai) || std::env::var(format!("FRIDAE_{}_KEPT", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
+}
+
 /// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
 /// Claude Code alone, which finds its sign-in through the home folder's keychain (as FRIDAE_CURSOR_HOME does for
 /// Cursor). The app's tool server gets the app's HOME back in its entry.
@@ -2612,7 +2626,11 @@ impl Agent {
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, kind);
-        let mut child = match cmd.spawn() {
+        let spawned = {
+            let _one_at_a_time = paths::spawn_lock();
+            cmd.spawn()
+        };
+        let mut child = match spawned {
             Ok(c) => c,
             Err(e) => {
                 self.st.lock().unwrap().turned = true;
@@ -2640,11 +2658,12 @@ impl Agent {
     }
 
     /// Whether this chat's turns go to one kept process (`live`): an AI the table says works that way (`caps.live`),
-    /// where its Stop was measured (not Windows), unless its switch says a process per turn
+    /// where its Stop was measured (not Windows), when it is the default for that AI or was asked for
+    /// (`KEPT_ON_REQUEST`), unless its switch says a process per turn
     /// (`FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`), and until keeping one has failed twice in this chat.
     fn live_allowed(&self) -> bool {
         let ai = self.ai();
-        crate::caps::of(&ai).live && !cfg!(windows) && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
+        crate::caps::of(&ai).live && !cfg!(windows) && kept_wanted(&ai) && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
     }
 
     /// Sends a turn's message to the chat's kept Claude Code process, starting one when the chat has none, when the

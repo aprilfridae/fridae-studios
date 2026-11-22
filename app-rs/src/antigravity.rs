@@ -1,8 +1,8 @@
 //! Gemini as a chat's AI, through Google's Antigravity command-line tool `agy` run without its own interface.
 //!
-//! A chat's turns go to one `agy acp` process kept open for it (`acp.rs`, `agents::GeminiLaunch`). This file is the
-//! other way, a process per message, which is the fallback (and all there is on Windows), and what both ways share:
-//! the model list, the standing instructions, the `Out` values a turn is read into.
+//! This file is a process per message, which is how a Gemini chat runs by default, and what it shares with the other
+//! way, one `agy acp` process kept open for the chat (`acp.rs`, `agents::GeminiLaunch`; built, on request only, see
+//! DEVELOPING.md): the model list, the standing instructions, the `Out` values a turn is read into.
 //!
 //!   agy --input-format stream-json --output-format stream-json --mode accept-edits --settings {...}
 //!

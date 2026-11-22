@@ -1,5 +1,6 @@
 //! The Agent Client Protocol (ACP), spoken to an AI kept open for a chat: JSON-RPC 2.0, one message per line over the
-//! process's stdin and stdout, protocol version 1. Gemini runs this way through `agy acp` (checked against agy 1.5.14;
+//! process's stdin and stdout, protocol version 1. Gemini can run this way through `agy acp` (on request only for
+//! now, `agents::KEPT_ON_REQUEST`; checked against agy 1.5.14;
 //! DEVELOPING.md has what was measured, and the recordings are `tests/fixtures/gemini/acp-*.wire`). The process and
 //! its pipes are `live::Live`; keeping it, and falling back to a process per message, is `agents.rs`, as for Claude.
 //!
@@ -630,9 +631,11 @@ pub struct Spec {
     pub pictures: Option<PathBuf>,
 }
 
-/// The tool servers as `session/new` takes them: {name, command, args, env: [{name, value}]}. A texture request may
-/// wait minutes for the user, so each is given the per-message path's time limit (`timeoutSeconds`: taken by agy's
-/// `session/new`, measured; whether it is kept to was not).
+/// The tool servers as `session/new` takes them: {name, command, args, env: [{name, value}]}. Each asks for the
+/// per-message path's time limit (`timeoutSeconds`), which agy takes and does **not** keep to: measured twice, a
+/// call to a server handed over this way is cut off after three minutes ("timed out after 3m0s"), also with
+/// `timeout_seconds`, `timeout_ms`, `timeoutMs`, `requestTimeout` and `timeout` set. This is why Gemini's kept
+/// process is not the default yet (`agents::KEPT_ON_REQUEST`).
 pub fn servers_param(servers: &Value) -> Value {
     let list: Vec<Value> = servers
         .as_object()

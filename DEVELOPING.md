@@ -299,8 +299,8 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
   Cases: Claude plain reply with its `rate_limit_event`, a resumed session with two commands, a resume of a
   conversation that is gone (and five recordings of a kept process, see "Claude Code: one process kept open per
   chat"); Gemini plain reply, a resumed turn with a file written and a command refused, a resume
-  of a conversation agy no longer has (and six recordings of a kept process, see "Gemini: one `agy acp` process kept
-  open per chat"); Cursor plain reply, a command, a refused `./git`, a resumed chat, signed out;
+  of a conversation agy no longer has (and thirteen recordings of a kept process, see "Gemini: one `agy acp` process
+  kept open per chat"); Cursor plain reply, a command, a refused `./git`, a resumed chat, signed out;
   OpenCode plain reply, resumed session, a command, a refused command answered, a failed turn, the free-usage limit.
   `every_fixture_is_scrubbed` fails if the user's folder, the scratch path or an email shows up. To add one, record
   with the real tool into a scratch folder and scrub the same way; nothing in them may be typed by hand.
@@ -406,15 +406,25 @@ stdin, with an id of the app's own. The old way, a process per turn with `--resu
   under the message box first: each turn uses the user's Claude plan. `work/processes/<app pid>.json` then shows one
   `claude` entry across several messages.
 
-## Gemini: one `agy acp` process kept open per chat
+## Gemini: one `agy acp` process kept open per chat (built, on request)
 
-A Gemini chat keeps one process, `agy acp`, open across turns, as a Claude chat keeps Claude Code. It speaks the Agent
-Client Protocol (ACP: JSON-RPC, one message per line, protocol version 1). `app-rs/src/acp.rs` is the client and the
-app's answers to agy's permission requests; `GeminiLaunch` in `agents.rs` is what a process is started with. The holder
-of the process (`live.rs`) and every rule for keeping one (`Agent::live_turn`, `read_live`, the `Kept` trait) are the
-same code that keeps Claude Code's: an AI is kept open when `caps.rs` says `live`. The old way, a process per message
-(`antigravity.rs`), is the fallback and all there is on Windows. Checked against agy 1.5.14. The design is
-`docs/superpowers/specs/2026-11-22-live-gemini-cursor-design.md`; Cursor speaks the same protocol and is not built yet.
+A Gemini chat can keep one process, `agy acp`, open across turns, as a Claude chat keeps Claude Code. It speaks the
+Agent Client Protocol (ACP: JSON-RPC, one message per line, protocol version 1). `app-rs/src/acp.rs` is the client and
+the app's answers to agy's permission requests; `GeminiLaunch` in `agents.rs` is what a process is started with. The
+holder of the process (`live.rs`) and every rule for keeping one (`Agent::live_turn`, `read_live`, the `Kept` trait)
+are the same code that keeps Claude Code's: an AI can be kept open when `caps.rs` says `live`. Checked against agy
+1.5.14. The design is `docs/superpowers/specs/2026-11-22-live-gemini-cursor-design.md`; Cursor speaks the same
+protocol and is not built yet.
+
+**It is not the default.** By default every Gemini message still starts a process of its own (`antigravity.rs`),
+because of one measured loss: over ACP agy cuts off every call to a tool server after three minutes ("MCP tool call
+... timed out after 3m0s"), whatever limit the server's entry asks for (`timeoutSeconds`, and `timeout_seconds`,
+`timeout_ms`, `timeoutMs`, `requestTimeout`, `timeout`, tried together). A process per message has 15 minutes. A
+Lead waiting for its experts, a texture waiting for the user and a Blender build take longer than three. agy does
+start the servers of `<workspace>/.agents/mcp_config.json` over ACP too (where the per-message limit is set), but
+only once a prompt has come: in a session with servers from that list alone, the first message had no tools.
+`FRIDAE_GEMINI_KEPT=1` turns the kept process on (`agents::KEPT_ON_REQUEST`; taking Gemini off that list makes it the
+default); `FRIDAE_GEMINI_PER_TURN=1` turns it off whatever else is set; Windows is always per message.
 
 - **What goes over the wire**: `initialize` (the app offers no file system and no terminal, so agy edits and runs
   things itself); `session/new`, or `session/resume` with the chat's conversation id; `session/set_mode default`;
@@ -422,85 +432,117 @@ same code that keeps Claude Code's: an AI is kept open when `caps.rs` says `live
   for `thought_level` when the message sets an effort; then `session/prompt` per message, whose answer is the end of
   the turn (`stopReason`, `usage`). `session/update` notifications in between are read by `acp::Turn` into the same
   `Out` values `antigravity::Turn` gives, so cards, usage and `after_turn` are untouched. The tool servers go in
-  `session/new` (`mcpServers`, each with `timeoutSeconds: 900`: taken, not shown to be kept to).
-- **What was measured** (Gemini 3.8 Flash at low effort, six real turns through this client, plus handshakes that use
-  no model turn): a conversation made by a process per message is resumed over ACP and the other way round (one
-  store, `~/.gemini/antigravity-cli/conversations`), with the mode `default` and agy's default model, whatever it
-  ran with before. `session/set_config_option` takes the joined ids (`gemini-3.8-flash-low` sets model and level);
-  a level a model does not offer is an error (`xhigh` for Flash). In mode `default` agy asks before each tool server
-  call, command and file write (`session/request_permission`), and **not before reading a file** (`read_file` ran
-  without a request). Its own allow and deny rules are not applied. A refusal ends the turn at once with `end_turn`
-  and no text. Cancel: answered `cancelled` (6 ms), the running command ended. agy runs a command given to it
-  directly under itself, in a process group of the command's own. **agy also starts the servers listed in
-  `<workspace>/.agents/mcp_config.json`** when a prompt comes, besides those handed over the protocol. A tool
-  server's result is **not** in the stream (the finished `tool_call_update` has no `rawOutput` or `content`); a
-  command's is. Signed out: `session/new` answers `-32000 Authentication required`. Closing stdin: exit in under
-  half a second.
-- **agy carries on by itself after a turn.** Measured (`tests/fixtures/gemini/acp-background.wire`): `sleep 61` went
-  to the background after five seconds, agy ended the turn with the tool call still open, and when the command
-  ended a minute later it asked the model again and wrote an answer, with nothing sent. So a turn that ends with a
-  tool call open has its process closed at once (`End::background`, with everything the process started), and the
+  `session/new` (`mcpServers`); the app's entries are taken out of the workspace's list for the turn (agy would
+  start them a second time) and the list is put back as it was afterwards, replaced whole both times.
+- **What was measured** (Gemini 3.8 Flash at low effort, 18 real turns through this client in two rounds, plus
+  handshakes that use no model turn):
+  - A conversation made by a process per message is resumed over ACP and the other way round (one store,
+    `~/.gemini/antigravity-cli/conversations`), with the mode `default` and agy's default model.
+  - `session/set_config_option` takes the joined ids (`gemini-3.8-flash-low` sets model and level); a level a model
+    does not offer is an error (`xhigh` for Flash).
+  - In mode `default` agy asks (`session/request_permission`) before each tool server call, command and file write,
+    and before reading a file **outside** its workspace. It does not ask before reading a file inside it, before
+    `search_web`, or before `read_file` on a web address (which fails). Per message a read outside the workspace is
+    refused too ("required the read_file permission"). Its own allow and deny rules are not applied over ACP.
+  - A refusal ends the turn at once with `end_turn` and no text.
+  - agy names a server's tools `mcp_<server>_<tool>`: `mcp_rbxkit_rbx_board`, `mcp_Roblox_Studio_get_studio_state`
+    (a stand-in server under Studio's name).
+  - A tool server's result is not in the stream (the finished `tool_call_update` has no `rawOutput` or `content`);
+    a command's is.
+  - **Commands run through zsh**, which reads the user's `.zshenv` first (a marker planted through `ZDOTDIR` was
+    written; `.zprofile`, `.zshrc` and `.zlogin` were not), whatever `SHELL` the process is given. The command is
+    then agy's direct child, in a process group of its own.
+  - Cancel: answered `cancelled` (6 ms), the running command ended.
+  - Signed out: `session/new` answers `-32000 Authentication required`. Closing stdin: exit in under half a second.
+- **agy carries on by itself after a turn.** Measured (`acp-background.wire`): `sleep 61` went to the background
+  after five seconds, agy ended the turn with the tool call still open, and when the command ended a minute later
+  it asked the model again and wrote an answer, with nothing sent. So a turn that ends with a tool call open has its
+  process closed at once with everything it started (`End::background`; the chat is told in one line), and the
   reading thread ends a process at the first answer, tool call or permission request that comes with no turn of
   the app's on it (`acp::stray`, `Live::strayed`), as for Claude Code.
-- **The app is the gate** (`acp::decide`), in every mode, because agy's own rules do not apply here. A request that
-  cannot be read (no tool call, no id, arguments that are no object, a path that is relative or has `..`) is
-  refused. The app's tool servers' tools (`mcp_<server>_<tool>`) always pass. **Ask me**: a command passes only by
-  `paths::command_allowed` with the user's allowed programs read from the app's memory at that moment, or as the
-  one command a "Run it once" card approved (`opencode::decide` makes the same cards as for OpenCode); a write
-  passes inside the chat's workspace (the game, or the chat's own folder) or agy's scratch folder for that
-  conversation (`antigravity-cli/brain/<id>`), and never to the app's own files; a read, should agy ask, inside the
-  workspace, the kit, attachments and chat pictures; a web lookup passes; anything else is refused with a line
-  naming it. **Full auto and Studio**: the mode stays `default` and everything passes except a file tool's write
-  to one of the app's own files (`paths::app_protected`, compared in any case of letters, so `CONFIG.JSON` is
-  refused too: stricter than a process per message, where agy's rule compares case) or a write that names no file.
-  `--dangerously-skip-permissions` is not used. The workspace's `.agents/mcp_config.json` counts as one of the
-  app's files for this (agy starts what it lists). A session seen in another mode than `default` is ended. The
-  answer picks agy's option by its `kind` (`allow_once`, `reject_once`), never an "always". What the gate cannot
-  see: file reads (agy does not ask), and what a command the user allowed does.
+- **The app is the gate** (`acp::decide`), in every mode, because agy's own rules do not apply here. What no file
+  tool may write comes from `paths::never_written`, the one list OpenCode's rules are made from too (the app's own
+  files, the app's OpenCode store, every hidden name in the home folder and its `Library`), plus the workspace's
+  `.agents/mcp_config.json` (agy starts what it lists); `paths::ASK_ME_NEVER_UNDER` (`.git`) is shared the same way.
+  - Every mode: a request that cannot be read is refused (no tool call, no id, arguments that are no object, a
+    path argument that is not text); so is a tool of kind `switch_mode`; the app's tool servers' tools pass
+    (`rbxkit`'s only when the tool is an `rbx_` one, so a server named `rbxkit_x` is not taken for it). After Stop
+    every request is answered `cancelled`.
+  - **Ask me**: no command runs by the app's say alone, also for an allowed program: the app's check
+    (`paths::command_allowed`) is written for `/bin/sh` and agy's shell reads the user's start-up file. Each
+    command gets a card: "allow this program" for one not allowed, else why and "Run it once", which lets that
+    exact command through one time (`COMMANDS_BY_APP`; the cards and the one-time store are `opencode::decide`'s).
+    A write passes inside the chat's workspace (the game, or the chat's own folder) or agy's scratch folder for
+    that conversation (`antigravity-cli/brain/<id>`), never under a `.git` folder in any case of letters (a hook or
+    an alias there would run with an allowed `git`), never to what no file tool may write, and never to a place
+    that holds such a file (a delete or move of the folder above it). A read agy asks about passes inside the
+    workspace, the kit, attachments and chat pictures, and never for the app's own settings, saved chats or the
+    other protected files. A path that is relative or has `..` cannot be judged and is refused. Anything else is
+    refused with a line naming it. The agent is told what was refused with the user's next message (agy takes no
+    reason with a refusal).
+  - **Full auto and Studio**: the mode stays `default` and everything passes except a file tool's write to what no
+    file tool may write (compared in any case of letters, so `CONFIG.JSON` is refused: stricter than a process per
+    message, where agy's rule compares case), a write that names no file, and an unknown tool that names a path the
+    app cannot check. A relative path is taken from the workspace. `--dangerously-skip-permissions` is not used.
+  - A session seen in another mode than `default` is ended. The answer picks agy's option by its `kind`
+    (`allow_once`, `reject_once`), never an "always".
+  - What the gate cannot see: reads inside the workspace and web searches (agy does not ask), and what a command
+    the user let run does. Tool names in `WRITERS` and `READERS` are only those seen in a recording; other tools
+    are told by ACP's `kind`.
+- **Pictures**: a tool server's result does not reach the app, so `rbxkit_mcp.py` notes the image files of each
+  result (`note_pictures`, one JSON line per result) in the file the app names in its entry
+  (`FRIDAE_TOOL_PICTURES`, `work/tool-pictures/<chat>.jsonl`, one of the protected folders, emptied at each turn's
+  start), and `acp::Turn` shows the new lines' pictures when an `rbx_` call completes, through `pictures_in` as per
+  message. A missing or unreadable file shows nothing. A process per message is not handed the variable. Pictures
+  the Studio server returns as image data are not recovered (per message they were only found by a path in the
+  text, too).
 - **The launch key** (`GeminiLaunch::key`): the program, the workspace, the tool servers with their environment,
-  the model, the effort, the mode, the chat, the folders and protected files the gate decides by, agy's data
-  folder, the provider-keys switch, the allowed programs, and a fingerprint of every guarded setting
-  (`paths::GUARDED`; a hash, since one is the Gemini key). Any change closes the process and the next one resumes
-  the conversation. The gate's rules are built per message as well, so no turn is judged by an earlier message's.
-- **Standing instructions** still go on top of a conversation's first message, exactly as per message (agy's
-  `_meta.antigravity.systemPrompt.append` is not used: not measured on `session/resume`, and the fallback would
-  have to repeat them). On the kept path the text says allowed programs run (`text/gemini_kept.txt`).
+  the model, the effort, the mode, the chat, every folder and protected place the gate decides by, agy's data
+  folder, the pictures file, the provider-keys switch, the allowed programs, and a fingerprint of every guarded
+  setting (`paths::GUARDED`; a hash, since one is the Gemini key). Any change closes the process and the next one
+  resumes the conversation. The gate's rules are built per message as well.
+- **One process on a conversation.** agy keeps a conversation in a file of its own, so a turn (kept or per message)
+  first waits until the chat's earlier kept processes are gone (`State::retiring`, `Kept::alone`, at most 12 s;
+  Stop ends the wait). A `session/resume` that fails is tried once more a second later; only agy's own "Failed to
+  read session" (measured for an unknown id) then starts a new conversation, and the chat is told; any other error
+  gives the process up and the message goes per message with the conversation kept.
+- **Standing instructions** still go on top of a conversation's first message, exactly as per message. On the kept
+  path the text is `text/gemini_kept.txt` (commands are asked about; a command must finish inside the turn).
 - **Stop**: before agy has shown work on the message (an answer piece, a tool call, usage above zero), the process
   is ended at once, tree and all, and the next message resumes: a cancel that early was not measured. After that,
   `session/cancel`, and `STOP_WAIT` for the prompt's answer; then the kill. A Stop that lands in a tool call gives
-  the process up afterwards, as for Claude Code (the app's tool server may still be at work).
+  the process up afterwards, as for Claude Code.
 - **When it fails** is `read_live`, as for Claude: could not start, another protocol version, `set_mode` refused,
-  or died before anything was shown: the same message goes to a process per message, which resumes the same
-  conversation (`--conversation`), once. A model or effort agy does not offer over ACP: per message too, not
-  counted as a failure. Died mid-turn: said, not sent twice. Signed out: said once, no second process. A
-  conversation agy no longer has: a new one, and the chat is told, as per message. `stopReason: refusal` is said as
-  a usage limit (read in t3code, not measured), in words `usage_limit` knows. Two failures keep the chat on a
-  process per message for this run. `FRIDAE_GEMINI_PER_TURN=1` turns the kept path off everywhere.
-- **Known and left**: thumbnails of pictures the building tools make are not shown on the kept path, since a tool
-  server's result does not reach the app (per message, `pictures_in` reads them from the result). A command still
-  running when its process is killed from outside is left to end by itself (its parent is gone before the app can
-  read its group). Which shell agy runs commands with was not measured; the process is given `SHELL=/bin/sh` and
-  none of the variables a shell acts on at start (`paths::shell_injected`). A real usage limit and a tool call
-  longer than a few minutes were not seen.
-- **Tests**: `acp.rs` (every decision of the gate, the answer's option, stray lines, stop reasons) and
-  `src/acp_tests.rs`: the launch key for every setting; six recordings (`tests/fixtures/gemini/acp-*.wire`) played
-  back by a stand-in process that waits for a line wherever the app sent one and writes agy's lines in between, so
-  the client, the gate and the whole turn run as recorded (tool calls allowed and one refused with its card then a
-  plain reply on the same process, a command left in the background, Stop mid-turn, a process killed mid-turn,
-  signed out, a per-message conversation resumed); and turns against a stand-in that answers as agy does (one
-  process across messages, a restart that resumes, Stop early, confirmed and ignored, every way of failing).
+  or died before anything was shown: the same message goes to a process per message, once (checked live with a
+  process killed at its start). A model or effort agy does not offer over ACP: per message too, not counted as a
+  failure. Died mid-turn: said, not sent twice. Signed out: said once, no second process. `stopReason: refusal` is
+  said as a usage limit (read in t3code, not measured), in words `usage_limit` knows. Two failures keep the chat
+  on a process per message for this run.
+- **Known and left**: the three-minute limit above. A command still running when its process is killed from
+  outside is left to end by itself. A process that stops answering after it has a session falls to the 20-minute
+  stall guard, not to the start watchdog (a model may think longer than the watchdog's 90 s before its first
+  line, so silence after a prompt cannot be told from work). A real usage limit was not seen.
+- **Tests**: `acp.rs` (every decision of the gate, the answer's option, stray lines, stop reasons, long waits,
+  pictures), `tests/test_tool_pictures.py`, and `src/acp_tests.rs`: the launch key for every setting; thirteen
+  recordings (`tests/fixtures/gemini/acp-*.wire`) played back by a stand-in process that waits for a line wherever
+  the app sent one, compares it with the line the app sent when recorded (a request by its method, an answer to
+  agy whole) and writes agy's lines in between; and turns against a stand-in that answers as agy does (one process
+  across messages, a restart that resumes and waits for the old process, Stop early, confirmed and ignored, a
+  request after Stop, a resume tried twice, every way of failing).
 - **Recording**: `FRIDAE_LIVE_RECORD=<folder>` (debug builds only) writes everything a kept process is sent (`> `)
   and writes (`< `) to `<folder>/<ai>-<pid>.wire`. Fixtures are whole lines of such files cut at turn boundaries and
   scrubbed: the scratch folder becomes `/scratch` (the tests put their own folder there), session ids
   `00000000-…`, the plan's name, the home folder and user name. `acp-resumed-per-message.wire` is the research
-  probe's recording, whose requests come in the app's number and order.
-- **Trying it by hand** with the scratch copy above: a scratch HOME hides agy's sign-in, so give agy the real one
-  with `FRIDAE_AGY_HOME=$HOME`, keep its conversations out of yours with `FRIDAE_AGY_DIR=<scratch>/gemini`
-  (`agy acp --gemini-dir`; both debug builds only), set `FRIDAE_AGY=$HOME/.local/bin/agy` and `{"chat_ai":
-  "gemini"}`, and **pick the cheapest model and Low effort under the message box before the first message** (the
-  menu starts on agy's first model). `agy models` still runs with the real HOME at start and writes its own
-  housekeeping under `~/.gemini/antigravity-cli` (logs, cache, the update check). `work/processes/<app pid>.json`
-  shows one `gemini` entry across messages.
+  probe's recording. Recordings made before the app stopped approving commands by itself are played with the
+  user's "Run it once" standing in for that approval.
+- **Trying it by hand** with the scratch copy above: `FRIDAE_GEMINI_KEPT=1`; a scratch HOME hides agy's sign-in, so
+  give agy the real one with `FRIDAE_AGY_HOME=$HOME`, keep its conversations out of yours with
+  `FRIDAE_AGY_DIR=<scratch>/gemini` (`agy acp --gemini-dir`; a process per message cannot be given one and writes
+  to `~/.gemini`), set `FRIDAE_AGY=$HOME/.local/bin/agy` and `{"chat_ai": "gemini"}`, and **pick the cheapest model
+  and Low effort before the first message** (the menu starts on agy's first model). `FRIDAE_STUDIO_STANDIN=<a
+  Python tool server>` puts a stand-in under Roblox Studio's server name; `FRIDAE_AGY_SHELL` sets the SHELL agy is
+  told of (all debug builds only). `agy models` runs with the real HOME at start and writes its own housekeeping
+  under `~/.gemini/antigravity-cli`. `work/processes/<app pid>.json` shows one `gemini` entry across messages.
 
 ## Cursor as a chat's AI
 
@@ -1013,8 +1055,8 @@ is an example the user can paste into their own House rules.
   Cursor by its rules; for agy by exact case only (see above: Ask me does not write outside the workspace, Full auto
   lets a case variant through). The guarded settings above do not depend on it.
 - **Allowed programs are matched by each tool's own rules** for Claude Code (`Bash(<p>:*)`) and Cursor
-  (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode and for Gemini on its kept process, whose requests the app answers (the app's check never
-  approves a command for Claude, Cursor or a per-message Antigravity, so the shells those run commands in are their own matter). Measured for Cursor
+  (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode, whose requests the app answers (the app's check never
+  approves a command for Claude, Cursor or Antigravity: on Gemini's kept process every command is asked about, since agy runs them through zsh and the user's `.zshenv`). Measured for Cursor
   (2026.11.22, Ask me, `git` allowed): `./git status`, `bin/git status` and `FOO=1 ./git status` were refused, but
   `git --version > <any file>` ran, also outside the workspace: Cursor's allow rule does not look at redirections.
   Not changed (Cursor offers no rule for it); noted as a gap.

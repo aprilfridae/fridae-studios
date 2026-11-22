@@ -44,7 +44,8 @@ pub struct Caps {
     pub grouped_models: bool,
     /// Keeps one process open per chat and takes messages and Stop over its own protocol (Claude Code's stream-json
     /// input, `claude_live`; Gemini over ACP, `agy acp`, `acp`), with a process per turn as the fallback; the others
-    /// run a process per turn, or on the app's own server (OpenCode).
+    /// run a process per turn, or on the app's own server (OpenCode). Whether an AI that can be kept open is, by
+    /// default, is `agents::KEPT_ON_REQUEST` (Gemini is not yet: see DEVELOPING.md).
     pub live: bool,
     pub modes: Modes,
 }

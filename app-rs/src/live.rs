@@ -97,7 +97,10 @@ impl Live {
     /// it began by itself when the line comes with no turn of the app's on the process.
     pub fn start_as(mut cmd: Command, key: String, owner: &'static str, stray: fn(&[u8]) -> bool) -> std::io::Result<Arc<Live>> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn()?;
+        let mut child = {
+            let _one_at_a_time = paths::spawn_lock();
+            cmd.spawn()?
+        };
         let pid = child.id();
         procs::record(owner, pid); // ended at the next start if the app crashes meanwhile
         let (tx, rx) = mpsc::channel();
