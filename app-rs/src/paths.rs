@@ -242,6 +242,21 @@ pub fn leader_exited(pid: u32, limit: std::time::Duration) -> bool {
     }
 }
 
+/// A turn with no output at all for this long is ended (not a Lead waiting on its experts, nor while a texture is
+/// being made: those wait on purpose).
+pub const STALL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// What the chat is told when a turn was ended for that.
+pub fn stall_message() -> String {
+    format!("Nothing came from the AI for {} minutes, so Fridae ended this turn. Send your message again to carry on.", STALL.as_secs() / 60)
+}
+
+/// Tools of the app's own that wait long on purpose (a Lead waiting on experts, a texture being made): no stall then.
+pub fn waits_long(tool: &str) -> bool {
+    let t = tool.rsplit("__").next().unwrap_or(tool);
+    ["rbx_team", "rbx_texture", "rbx_generate_texture"].iter().any(|w| t == *w || t.ends_with(&format!("_{w}")))
+}
+
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
 
@@ -291,6 +306,19 @@ pub fn end_trees(pids: &[u32]) {
 /// The app's settings file. Every AI's rules deny writing it.
 pub fn config_file() -> PathBuf {
     PATHS.home.join("config.json")
+}
+
+/// What no agent's file tools may write, in any mode, on any AI whose rules the app sets: the app's settings, and the
+/// files in the work folder the app reads and acts on (the process ledger, which it uses to end processes; the
+/// requests its tools leave for it; every chat's saved state; the tool lists it gives Claude Code; undo copies; usage).
+/// As (path, is a folder). The tool servers write some of these themselves; the rules bind only the agents' own tools.
+pub fn app_protected() -> Vec<(PathBuf, bool)> {
+    let w = &PATHS.work;
+    let mut out = vec![(config_file(), false), (w.join("processes.json"), false), (w.join("usage.jsonl"), false), (w.join("limits.json"), false)];
+    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo"] {
+        out.push((w.join(d), true));
+    }
+    out
 }
 
 /// One lock around every change to the settings file, so two changes never interleave (reads need none: the file is
@@ -508,6 +536,77 @@ pub fn program_name(command: &str) -> Option<String> {
     (!name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))).then_some(name)
 }
 
+/// Whether the app itself may approve this shell command because the user allowed its program(s): only when every
+/// part of it starts with a program the user allowed, named exactly (no folder part like `./git` or `/tmp/x/python`,
+/// no quotes, no variable set in front, same spelling), and it holds nothing the allow list was not written for:
+/// command substitution (backticks, `$(`), variables, a redirection other than `2>&1` or `>/dev/null`, a background `&`
+/// or a line break. Parts joined by `;`, `&&`, `||` or `|` must each pass. When unsure, no: the blocked card shows.
+/// The native allow lists of Claude Code (`Bash(<p>:*)`) and Cursor (`Shell(<p>)`) decide for those AIs; this is for
+/// the AIs whose requests the app answers (OpenCode).
+pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
+    let c = command.trim();
+    if c.is_empty() || c.contains(['`', '\n', '\r', '$', '\\']) {
+        return false;
+    }
+    // the two harmless redirections are taken out; any other `<` or `>` is a write or read the list was not written for
+    let c = c.replace("2>&1", " ").replace(">/dev/null", " ").replace("> /dev/null", " ");
+    if c.contains(['<', '>']) {
+        return false;
+    }
+    // split into parts at ; && || | (a lone & sends a part to the background: refused)
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let chars: Vec<char> = c.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => {}
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch == ';' || ch == '|' => {
+                parts.push(std::mem::take(&mut cur));
+                if chars.get(i + 1) == Some(&'|') {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            None if ch == '&' => {
+                if chars.get(i + 1) != Some(&'&') {
+                    return false;
+                }
+                parts.push(std::mem::take(&mut cur));
+                i += 2;
+                continue;
+            }
+            None => {}
+        }
+        cur.push(ch);
+        i += 1;
+    }
+    if quote.is_some() {
+        return false;
+    }
+    parts.push(cur);
+    parts.iter().all(|part| {
+        let Some(first) = part.split_whitespace().next() else { return false };
+        first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !first.starts_with('.') && allowed.iter().any(|a| a == first)
+    })
+}
+
+/// The programs a command line starts, by name (each part after `;`, `&&`, `||`, `|`), for the blocked card.
+pub fn command_programs(command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in command.split([';', '|', '&', '\n']) {
+        if let Some(n) = program_name(part.trim()).filter(|n| !out.contains(n)) {
+            out.push(n);
+        }
+    }
+    out
+}
+
 /// The paid API is only used when a key exists AND the user switched it on.
 pub fn gemini_api_on() -> bool {
     !gemini_key().is_empty() && load_config().get("gemini_use_api").and_then(Value::as_bool).unwrap_or(false)
@@ -600,6 +699,22 @@ mod tests {
         assert_eq!(super::ai_choice(Some("opencode")), if cfg!(windows) { "claude" } else { "opencode" });
         assert_eq!(super::AIS.contains(&"opencode"), !cfg!(windows));
         assert!(super::find_opencode().is_none() || !cfg!(windows));
+    }
+
+    #[test]
+    fn only_an_exactly_named_allowed_program_is_approved() {
+        let allowed = vec!["git".to_string(), "ls".to_string(), "python3".to_string()];
+        for ok in ["git status", "git", "ls -la", "git log --oneline | ls", "git add . && git commit -m 'a; b'", "ls 2>&1", "ls >/dev/null", "git status; ls"] {
+            assert!(command_allowed(ok, &allowed), "{ok}");
+        }
+        for bad in [
+            "./git status", "bin/git", "/tmp/x/python3 -c 1", "/usr/bin/git", "GIT status", "gitk", "git; curl x", "git && ./x",
+            "FOO=1 git", "\"git\" status", "'git'", "g\\it", "git $(curl x)", "git `id`", "git > /etc/x", "ls < /etc/passwd",
+            "git status &", "git\nrm -rf x", "git status | sh", "ls ${HOME}", "", "git 'unclosed", ".git",
+        ] {
+            assert!(!command_allowed(bad, &allowed), "{bad}");
+        }
+        assert!(!command_allowed("git status", &["gitk".to_string()]));
     }
 
     use super::*;

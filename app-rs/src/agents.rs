@@ -1682,7 +1682,7 @@ impl Agent {
                     // the app's settings (allowed programs, keys) are never written by an agent, in any mode: deny rules
                     // hold in bypass mode too. `//` makes the path absolute in Claude Code's rules.
                     .arg("--disallowedTools")
-                    .arg(format!("Edit(/{})", paths::config_file().display()))
+                    .args(claude_denied())
                     // full auto skips every other permission check
                     .args(["--permission-mode", if ask.full { "bypassPermissions" } else { "acceptEdits" }, "--append-system-prompt", &prompt, "--add-dir"])
                     .arg(&PATHS.kit);
@@ -2100,12 +2100,10 @@ impl Agent {
     pub fn stop(&self) {
         // OpenCode: the server is asked to end the turn, and ended itself if it does not (see `opencode::stop`)
         if self.ai() == "opencode" {
-            let running = self.st.lock().unwrap().running;
+            let saved = self.st.lock().unwrap().session.clone();
             let _ = self.stop_turn();
-            if running {
-                let id = self.id.clone();
-                thread::spawn(move || opencode::stop(&id));
-            }
+            let id = self.id.clone();
+            thread::spawn(move || opencode::stop(&id, saved));
             return;
         }
         if let Some(pid) = self.stop_turn() {
@@ -2646,8 +2644,17 @@ pub fn test_servers(no_studio: bool) -> Value {
     mcp_servers_with("c1-test", "Test chat", Some("/games/g"), None, no_studio)
 }
 
+/// Claude Code's deny rules for the app's own files (`paths::app_protected`): `Edit(//<path>)`, with `/**` for a
+/// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool).
+fn claude_denied() -> Vec<String> {
+    paths::app_protected().into_iter().map(|(p, dir)| format!("Edit(/{}{})", p.display(), if dir { "/**" } else { "" })).collect()
+}
+
 fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
-    let path = PATHS.work.join(format!("agent-tools-{agent_id}.json"));
+    // in a folder of its own, which no agent's file tools may write (paths::app_protected)
+    let dir = PATHS.work.join("agent-tools");
+    let _ = fs::create_dir_all(&dir);
+    let path = dir.join(format!("{agent_id}.json"));
     let _ = fs::write(&path, json!({"mcpServers": servers}).to_string());
     path
 }

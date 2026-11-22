@@ -29,8 +29,8 @@
 //!   turn: Ask me starts from "deny everything" and allows reading, the chat's own tools, the programs the user
 //!   allowed, web pages, and writing in the chat's folders. Any other command *asks*: the app refuses it on the spot
 //!   and shows its blocked-command card, and a program the user allows from that card is answered "once" from then on.
-//!   Full auto and Studio start from "allow everything", as Claude Code's bypass mode does. In every mode the same
-//!   denies follow: Code Mode, OpenCode's own sub-agents, skills, questions, other chats' tools, and writes to
+//!   Full auto and Studio allow shell, edits and folders everywhere on top of the same "deny everything" start (a tool
+//!   not named stays hidden), as Claude Code's bypass mode allows them. In every mode the same denies follow: Code Mode, OpenCode's own sub-agents, skills, questions, other chats' tools, and writes to
 //!   OpenCode's settings, the app's settings and the home folder's hidden files and Library.
 //! - One server serves every chat, and tool servers are added per folder, so each chat's tool servers carry a name
 //!   of their own (`chat_prefix`): a chat never reaches another chat's tools, which act as that other chat.
@@ -106,16 +106,40 @@ fn users_xdg() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Environment variables of OpenCode's own that would point it back at the user's setup, a server, or a password.
-const DROPPED: [&str; 10] = [
-    "OPENCODE_CONFIG", "OPENCODE_CONFIG_CONTENT", "OPENCODE_CLI_CONFIG_CONTENT", "OPENCODE_DB", "OPENCODE_SERVER_PASSWORD", "OPENCODE_PASSWORD",
-    "OPENCODE_SESSION_ID", "OPENCODE_CONFIG_PROJECT_DISABLE", "OPENCODE_API_KEY", "XDG_CONFIG_DIRS",
-];
+/// Environment variables that would point OpenCode back at the user's setup, a server, a password or a username: every
+/// inherited `OPENCODE_*` is removed (`environment`), and these as well.
+const DROPPED: [&str; 1] = ["XDG_CONFIG_DIRS"];
+
+/// The variables that carry the server's password (2.x's, and 1.x's): set for the server only, and blanked for every
+/// shell command (`shell_wrapper`) and tool server (`servers_config`) it starts, so the model cannot read them.
+const SECRETS: [&str; 4] = ["OPENCODE_PASSWORD", "OPENCODE_SERVER_PASSWORD", "OPENCODE_USERNAME", "OPENCODE_SERVER_USERNAME"];
+
+/// The shell OpenCode runs commands with (its `shell` setting): a small script of the app's that removes the password
+/// variables, then runs the user's shell. OpenCode passes its arguments on (`-c <command>`).
+fn shell_wrapper() -> PathBuf {
+    let path = store().join("bin").join("fridae-shell");
+    let real = env::var("SHELL").ok().filter(|s| s.starts_with('/') && Path::new(s).is_file() && !s.contains(['\'', '\n'])).unwrap_or_else(|| "/bin/sh".to_string());
+    let text = format!("#!/bin/sh\n# Fridae Studios: OpenCode's shell, without the app's server password\nunset {}\nexec '{real}' \"$@\"\n", SECRETS.join(" "));
+    if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
+        let _ = fs::create_dir_all(path.parent().unwrap());
+        let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+        if fs::write(&tmp, &text).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o700));
+            }
+            let _ = fs::rename(&tmp, &path);
+        }
+    }
+    path
+}
 
 /// The settings of the app's OpenCode folder: never update the user's OpenCode, never share a chat, no snapshots or
 /// language servers in the game's folder, and policies that leave only the chats' own tool servers and no skills.
 fn settings() -> Value {
     json!({
+        "shell": shell_wrapper(),
         "update": "disable", "autoupdate": false, "share": "disabled", "snapshots": false, "lsp": false, "formatter": false,
         "automations": false, "warming": false,
         "policies": [rule("mcp.use", "*", "deny"), rule("mcp.use", "fr*", "allow"), rule("skill.use", "*", "deny")],
@@ -125,6 +149,19 @@ fn settings() -> Value {
 /// Every OpenCode process the app starts runs in the app's folders (see the top of this file).
 fn environment(cmd: &mut Command) {
     let s = store();
+    #[cfg(unix)]
+    {
+        // the database holds the sign-in: the app's OpenCode folder is the user's alone (Linux's ~/.local/share may
+        // be readable by others)
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::create_dir_all(&s);
+        let _ = fs::set_permissions(&s, fs::Permissions::from_mode(0o700));
+    }
+    for (k, _) in env::vars_os() {
+        if k.to_string_lossy().starts_with("OPENCODE_") {
+            cmd.env_remove(&k);
+        }
+    }
     for k in DROPPED {
         cmd.env_remove(k);
     }
@@ -137,7 +174,11 @@ fn environment(cmd: &mut Command) {
         .env("OPENCODE_DISABLE_AUTOUPDATE", "1");
     let cfg = s.join("config");
     let _ = fs::create_dir_all(&cfg);
-    let _ = fs::write(cfg.join("opencode.json"), serde_json::to_string_pretty(&settings()).unwrap_or_default());
+    // replaced whole (several threads may start commands at once)
+    let tmp = cfg.join(format!(".opencode.json.{}-{}.tmp", std::process::id(), paths::stamp()));
+    if fs::write(&tmp, serde_json::to_string_pretty(&settings()).unwrap_or_default()).is_ok() && fs::rename(&tmp, cfg.join("opencode.json")).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
     // testing only, never in a release build: extra settings (a local stand-in model) for a scratch copy of the app
     #[cfg(debug_assertions)]
     if let Some(extra) = env::var_os("FRIDAE_OPENCODE_TEST_CONFIG").filter(|v| !v.is_empty()) {
@@ -203,7 +244,7 @@ fn provider_name(id: &str) -> String {
 /// The `provider/model` lines of `opencode models`, named "Provider · model" so models of the same name from two
 /// providers stay apart, OpenCode Go (the subscription) first, then OpenCode Zen, then the rest, each in OpenCode's order.
 pub fn parse_models(text: &str) -> Vec<(String, String)> {
-    let mut list: Vec<(usize, String, String)> = text
+    let mut list: Vec<(usize, String, String, String)> = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.contains(char::is_whitespace))
@@ -214,10 +255,12 @@ pub fn parse_models(text: &str) -> Vec<(String, String)> {
                 "opencode" => 1,
                 _ => 2,
             };
-            (rank, id.to_string(), format!("{} · {m}", provider_name(p)))
+            (rank, p.to_string(), id.to_string(), format!("{} · {m}", provider_name(p)))
         })
         .collect();
-    list.sort_by_key(|(rank, _, _)| *rank); // stable: OpenCode's own order within each provider
+    // grouped by provider (so the menu's heading for a provider comes once), OpenCode's own order within each
+    list.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    let list: Vec<(usize, String, String)> = list.into_iter().map(|(r, _, id, name)| (r, id, name)).collect();
     list.into_iter().map(|(_, id, name)| (id, name)).collect()
 }
 
@@ -334,13 +377,20 @@ fn server_name(agent_id: &str, server: &str) -> String {
     chat_prefix(agent_id) + &clean
 }
 
-/// The folders a turn works with: its working folder (the game's, or the chat's own when it has none), the kit, and
-/// the app's work folder (where attachments and made files live).
+/// The folders a turn works with, as Claude Code's are: its working folder (the game's, or the chat's own when it has
+/// none), the game and the kit; and folders it may only read (the user's attachments and the chat's pictures).
 pub struct Folders<'a> {
     pub location: &'a Path,
     pub project: Option<&'a Path>,
     pub kit: &'a Path,
-    pub work: &'a Path,
+    pub reads: Vec<PathBuf>,
+}
+
+/// An allow rule is never written for a folder whose name holds a glob character (`*`, `?`): as a pattern it would
+/// also match other folders. Such a folder is simply not allowed (deny rules may over-match: they keep `?`).
+fn allowable(dir: &Path) -> Vec<String> {
+    let all = spellings(dir);
+    if dir.display().to_string().contains(['*', '?']) { Vec::new() } else { all }
 }
 
 /// OpenCode's permission rules for a turn of chat `agent_id` (the last rule that matches wins). `allowed` the programs
@@ -360,23 +410,40 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
             r.push(rule(a, "*", "allow"));
         }
     } else {
-        // a command asks, so the app can refuse it with its card (or answer "once" for a program allowed meanwhile);
-        // the allowed programs run without asking ("git *" also matches a bare "git")
+        // every command asks, and the app answers: "once" when each program in it is one the user allowed, named
+        // plainly (`decide`), else a refusal and the card. No "<program> *" allow rule: OpenCode would then run an
+        // allowed program with a redirection to any file without asking (measured, 2.3.2: `git --version > /tmp/x`)
+        let _ = allowed;
         r.push(rule("shell", "*", "ask"));
-        for p in allowed {
-            r.push(rule("shell", &format!("{p} *"), "allow"));
-        }
-        // a path inside the working folder comes as a relative one; anything else (or one going up) is refused, then
-        // the chat's other folders are allowed again
+        // writing in the working folder: OpenCode names a file inside the git repository around it relative to the
+        // working folder (measured, 2.3.2: `abs.txt`, `sub/x.txt`, and `../sibling/x.txt` for a file beside the game in
+        // the same repository, with no folder question), and anything outside that repository by its absolute path,
+        // after asking about its folder. So a relative path is allowed unless it goes up (`../`); an absolute one only
+        // in the chat's folders
         r.push(rule("edit", "*", "allow"));
         r.push(rule("edit", "/*", "deny"));
         r.push(rule("edit", "../*", "deny"));
-        let mut dirs: Vec<&Path> = vec![folders.location, folders.kit, folders.work];
+        let mut dirs: Vec<&Path> = vec![folders.location, folders.kit];
         dirs.extend(folders.project);
+        let bases = allowable(folders.location);
         for d in dirs {
-            for p in spellings(d) {
+            for p in allowable(d) {
+                // and by the name OpenCode gives it when it shares a repository with the working folder (the kit, when
+                // the app runs from its source and the chat has no game)
+                for b in &bases {
+                    if let Some(rel) = relative_pattern(b, &p).filter(|r| r.starts_with("..")) {
+                        r.push(rule("edit", &format!("{rel}/*"), "allow"));
+                    }
+                }
                 r.push(rule("edit", &format!("{p}/*"), "allow"));
                 // outside the working folder OpenCode asks about the folder first: only these folders pass
+                r.push(rule("external_directory", &p, "allow"));
+                r.push(rule("external_directory", &format!("{p}/*"), "allow"));
+            }
+        }
+        // reading only: attachments and chat pictures (no edit rule, so writing there is refused)
+        for d in &folders.reads {
+            for p in allowable(d) {
                 r.push(rule("external_directory", &p, "allow"));
                 r.push(rule("external_directory", &format!("{p}/*"), "allow"));
             }
@@ -397,18 +464,46 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     for p in [".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"] {
         r.push(rule("edit", p, "deny"));
     }
+    // each protected place by its absolute path, and as OpenCode names it when it lies in the same git repository as
+    // the working folder (relative to it: `../../.zshrc` for a game inside a repository that holds the home folder)
+    let bases = spellings(folders.location);
     for p in protect {
-        r.push(rule("edit", p, "deny"));
-        r.push(rule("edit", &format!("{p}/*"), "deny"));
+        let mut forms = vec![p.clone()];
+        for b in &bases {
+            if let Some(rel) = relative_pattern(b, p).filter(|r| !forms.contains(r)) {
+                forms.push(rel);
+            }
+        }
+        for f in forms {
+            r.push(rule("edit", &f, "deny"));
+            r.push(rule("edit", &format!("{f}/*"), "deny"));
+        }
     }
     r
+}
+
+/// An absolute pattern written relative to an absolute folder (`/u/a/games/g` and `/u/a/.*` give `../../.*`), component
+/// by component; None when they share nothing but the root (OpenCode names such a file by its absolute path then).
+fn relative_pattern(base: &str, pattern: &str) -> Option<String> {
+    let b: Vec<&str> = base.split('/').filter(|c| !c.is_empty()).collect();
+    let p: Vec<&str> = pattern.split('/').filter(|c| !c.is_empty()).collect();
+    let common = b.iter().zip(&p).take_while(|(x, y)| x == y).count();
+    if common == 0 {
+        return None;
+    }
+    let mut parts: Vec<&str> = vec![".."; b.len() - common];
+    parts.extend(&p[common..]);
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// What no file tool may write in any mode, as patterns: the app's OpenCode folders, the app's own settings file (it
 /// holds the programs agents may run), and the home folder's hidden files and folders (shell start-up files, other
 /// tools' settings) and Library.
 fn protected(home: &Path) -> Vec<String> {
-    let mut list: Vec<String> = [store(), paths::PATHS.home.join("config.json")].iter().flat_map(|p| spellings(p)).collect();
+    let mut list: Vec<String> = spellings(&store());
+    for (p, _) in paths::app_protected() {
+        list.extend(spellings(&p));
+    }
     if !home.as_os_str().is_empty() {
         for h in spellings(home) {
             list.push(format!("{h}/.*")); // a pattern on purpose: every hidden name
@@ -428,6 +523,10 @@ pub fn servers_config(agent_id: &str, servers: &Value, extra: &[(String, String)
         let mut environment = s["env"].as_object().cloned().unwrap_or_default();
         for (k, v) in extra {
             environment.entry(k.clone()).or_insert_with(|| json!(v));
+        }
+        // the server's password never reaches a tool server
+        for k in SECRETS {
+            environment.insert(k.to_string(), json!(""));
         }
         out.push((
             server_name(agent_id, name),
@@ -470,16 +569,12 @@ struct Conn {
     auth: String,
 }
 
-/// A password nobody can guess: 24 random bytes as hex (from the system's random source; a hash of the time and the
-/// process as a fallback).
-fn password() -> String {
+/// A password nobody can guess: 24 random bytes from the system's random source, as hex. None when that cannot be
+/// read: the server is then not started (no guessable fallback).
+fn password() -> Option<String> {
     let mut bytes = [0u8; 24];
-    let ok = fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).is_ok();
-    if !ok {
-        let seed = format!("{:?}{}{:p}", std::time::SystemTime::now(), std::process::id(), &bytes);
-        bytes[..24].copy_from_slice(&Sha256::digest(seed.as_bytes())[..24]);
-    }
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).ok()?;
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// The port in the line the server prints once it listens ("server listening on http://127.0.0.1:58866").
@@ -488,19 +583,53 @@ fn listening_port(line: &str) -> Option<u16> {
     rest.trim().trim_end_matches('/').parse().ok()
 }
 
+/// Held while a server starts, so two turns never start two; the server's own lock is not held meanwhile, so Stop
+/// and the status page never wait for a start.
+static STARTING: Mutex<()> = Mutex::new(());
+
 /// The running server, started if need be. Any caller waits while it starts (a second or two).
 fn ensure() -> Result<Conn, String> {
-    let mut guard = SERVER.lock().unwrap();
-    if let Some(s) = guard.as_mut() {
-        if matches!(s.child.try_wait(), Ok(None)) {
-            s.last_used = Instant::now();
-            return Ok(Conn { port: s.port, auth: s.auth.clone() });
-        }
-        procs::forget(s.child.id());
-        *guard = None;
+    if let Some(c) = running_conn() {
+        return Ok(c);
     }
+    let _one = STARTING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = running_conn() {
+        return Ok(c);
+    }
+    let server = start_server()?;
+    let conn = Conn { port: server.port, auth: server.auth.clone() };
+    *SERVER.lock().unwrap() = Some(server);
+    if !WATCHING.swap(true, Ordering::SeqCst) {
+        std::thread::spawn(watch_idle);
+    }
+    Ok(conn)
+}
+
+/// The server while it runs (noting that it is used); a server that has exited is forgotten.
+fn running_conn() -> Option<Conn> {
+    let mut guard = SERVER.lock().unwrap();
+    let s = guard.as_mut()?;
+    if matches!(s.child.try_wait(), Ok(None)) {
+        s.last_used = Instant::now();
+        return Some(Conn { port: s.port, auth: s.auth.clone() });
+    }
+    procs::forget(s.child.id());
+    *guard = None;
+    None
+}
+
+/// End a server process that did not start right, and forget it.
+fn abandon(mut child: Child) {
+    let pid = child.id();
+    paths::end_trees(&[pid]);
+    let _ = child.wait();
+    procs::forget(pid);
+    sweep_helpers();
+}
+
+fn start_server() -> Result<Server, String> {
     let exe = paths::find_opencode().ok_or("OpenCode is not installed.")?;
-    let pw = password();
+    let pw = password().ok_or("Fridae could not make a password for OpenCode's server (the system's random source could not be read), so it did not start it.")?;
     let mut cmd = Command::new(&exe);
     cmd.args(["serve", "--hostname", "127.0.0.1", "--port", "0"]);
     environment(&mut cmd);
@@ -542,33 +671,39 @@ fn ensure() -> Result<Conn, String> {
     let port = match rx.recv_timeout(Duration::from_secs(30)) {
         Ok(p) => p,
         Err(_) => {
-            let pid = child.id();
-            paths::end_trees(&[pid]);
-            let _ = child.wait();
-            procs::forget(pid);
+            abandon(child);
             let said = tail.lock().unwrap().trim().to_string();
             return Err(if said.is_empty() { "OpenCode's server did not start.".to_string() } else { format!("OpenCode's server did not start: {said}") });
         }
     };
     let conn = Conn { port, auth: auth.clone() };
-    // this API is OpenCode 2's
-    match call(&conn, "GET", "/api/info", None) {
-        Ok((200, _)) => {}
-        Ok((404, _)) => {
-            let pid = child.id();
-            paths::end_trees(&[pid]);
-            let _ = child.wait();
-            procs::forget(pid);
-            return Err("Fridae needs OpenCode 2 or newer. Run `opencode upgrade` in a terminal, then send your message again.".to_string());
-        }
-        _ => {}
+    // this API is OpenCode 2's; and the password must be enforced: with it 200, without it 401, on the API and on the
+    // event stream, or the server is ended (a server any local program or web page could drive is never used)
+    let with = call(&conn, "GET", "/api/info", None).map(|(s, _)| s);
+    if with == Ok(404) {
+        abandon(child);
+        return Err("Fridae needs OpenCode 2 or newer. Run `opencode upgrade` in a terminal, then send your message again.".to_string());
     }
-    *guard = Some(Server { child, port, auth, last_used: Instant::now() });
-    drop(guard);
-    if !WATCHING.swap(true, Ordering::SeqCst) {
-        std::thread::spawn(watch_idle);
+    let without = [unauthenticated(port, "/api/info"), unauthenticated(port, "/api/event")];
+    if with != Ok(200) || without != [Some(401), Some(401)] {
+        abandon(child);
+        return Err(format!(
+            "OpenCode's server did not check its password the way Fridae requires (answered {} with it, {} and {} without it), so Fridae ended it. Updating OpenCode may help.",
+            with.map(|s| s.to_string()).unwrap_or_else(|_| "nothing".into()),
+            without[0].map(|s| s.to_string()).unwrap_or_else(|| "nothing".into()),
+            without[1].map(|s| s.to_string()).unwrap_or_else(|| "nothing".into())
+        ));
     }
-    Ok(conn)
+    Ok(Server { child, port, auth, last_used: Instant::now() })
+}
+
+/// The status a request with no password gets (None: no answer within 5 seconds).
+fn unauthenticated(port: u16, path: &str) -> Option<u16> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(5)).ok()?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+    s.write_all(format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: */*\r\nConnection: close\r\n\r\n").as_bytes()).ok()?;
+    read_head(&mut BufReader::new(s)).ok().map(|(status, _)| status)
 }
 
 /// The server's address while it runs, without starting it.
@@ -588,17 +723,35 @@ fn active() -> std::sync::MutexGuard<'static, Option<HashMap<String, Arc<Active>
 fn watch_idle() {
     loop {
         std::thread::sleep(Duration::from_secs(30));
-        let idle = active().as_ref().is_none_or(|a| a.is_empty()) && SERVER.lock().unwrap().as_ref().is_some_and(|s| s.last_used.elapsed() >= IDLE);
-        if idle {
-            stop_server();
-        }
+        stop_if_idle(IDLE);
+    }
+}
+
+/// Ends the server if no turn is running and none has used it for `idle`. Decided and taken under the server's lock
+/// (a turn notes its use under the same lock in `ensure`), so a turn that has just been given the server never has
+/// it ended under it.
+fn stop_if_idle(idle: Duration) {
+    let taken = {
+        let a = active();
+        let mut g = SERVER.lock().unwrap();
+        let quiet = a.as_ref().is_none_or(|a| a.is_empty()) && g.as_ref().is_some_and(|s| s.last_used.elapsed() >= idle);
+        if quiet { g.take() } else { None }
+    };
+    if let Some(s) = taken {
+        end_server(s);
     }
 }
 
 /// End the server and everything it started: its process group (SIGTERM, then SIGKILL after a grace), then the
 /// terminal helper it keeps in a group of its own (`opencode-pty`, which a SIGTERM to the server ends by itself).
 fn stop_server() {
-    let Some(mut s) = SERVER.lock().unwrap().take() else { return };
+    let taken = SERVER.lock().unwrap().take();
+    if let Some(s) = taken {
+        end_server(s);
+    }
+}
+
+fn end_server(mut s: Server) {
     let pid = s.child.id();
     paths::end_trees(&[pid]);
     let _ = s.child.wait();
@@ -751,10 +904,13 @@ struct Events {
 
 impl Events {
     fn open(conn: &Conn) -> Result<Events, String> {
-        let mut s = connect(conn, SILENCE)?;
+        // the answer's head must come quickly (a server that is stuck still accepts connections); then the stream
+        // may be quiet up to SILENCE between heartbeats
+        let mut s = connect(conn, Duration::from_secs(5))?;
         s.write_all(head(conn, "GET", "/api/event", "text/event-stream", "").as_bytes()).map_err(|e| e.to_string())?;
-        let mut r = BufReader::new(s);
+        let mut r = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);
         let (status, headers) = read_head(&mut r)?;
+        let _ = s.set_read_timeout(Some(SILENCE));
         if status != 200 {
             return Err(format!("OpenCode's event stream answered {status}."));
         }
@@ -775,6 +931,10 @@ impl Events {
                 Err(e) => return Err(e.to_string()),
             }
             let l = line.trim_end_matches(['\r', '\n']);
+            // a heartbeat (": heartbeat"): handed on as one, so the turn can check its stall guard between events
+            if l.starts_with(':') && data.is_empty() {
+                return Ok(Some(json!({"type": "heartbeat"})));
+            }
             if l.is_empty() {
                 if !data.is_empty() {
                     if let Ok(v) = serde_json::from_str::<Value>(&data) {
@@ -882,7 +1042,7 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
         Ok(c) => c,
         Err(e) => return fail(e),
     };
-    let folders = Folders { location: &spec.location, project: spec.project.as_deref(), kit: &paths::PATHS.kit, work: &paths::PATHS.work };
+    let folders = Folders { location: &spec.location, project: spec.project.as_deref(), kit: &paths::PATHS.kit, reads: vec![paths::work("attachments"), paths::work("chat-images")] };
     let rules = permissions(spec.full, &spec.agent_id, &paths::allowed_commands(), &folders, &protected(&paths::home_dir()));
     let model = spec.model.as_deref().and_then(model_ref);
     // the saved conversation, with this turn's rules, or a new one
@@ -918,11 +1078,27 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
     if let Some(m) = &spec.model {
         put(Out::Model(model_name(m)));
     }
+    // the rules must be the ones just written (a chat switched from Full auto to Ask me must not keep Full auto's):
+    // read back, and compared
+    match call(&conn, "GET", &format!("/api/session/{}", quote(&session)), None) {
+        Ok((200, v)) if rules_match(&v["data"]["permissions"], &rules) => {}
+        Ok((200, _)) => return fail("OpenCode did not take this chat's rules, so Fridae did not send the message. Updating OpenCode may help."),
+        Ok((s, v)) => return fail(format!("OpenCode could not show this chat ({s}): {}", said(&v))),
+        Err(e) => return fail(e),
+    }
+    // the environment shell commands run with: the app's own, without OpenCode's variables (the server's password
+    // among them); the shell script in the settings removes them as well
+    match call(&conn, "PUT", &format!("/api/session/{}/environment", quote(&session)), Some(&json!({"variables": shell_environment()}))) {
+        Ok((s, _)) if s < 300 => {}
+        Ok((s, v)) => return fail(format!("OpenCode did not take the environment for commands ({s}): {}", said(&v))),
+        Err(e) => return fail(e),
+    }
     // the chat's tool servers for its folder (added again every turn: an idle folder drops them, and an unchanged one
     // keeps its connection)
     let mut bad = Vec::new();
-    for (name, cfg) in servers_config(&spec.agent_id, &spec.servers, &users_xdg()) {
-        match call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(&name), at(&spec.location)), Some(&json!({"config": cfg}))) {
+    let mine = servers_config(&spec.agent_id, &spec.servers, &users_xdg());
+    for (name, cfg) in &mine {
+        match call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), Some(&json!({"config": cfg}))) {
             Ok((s, _)) if s < 300 => {}
             _ => bad.push(name.trim_start_matches(&chat_prefix(&spec.agent_id)).to_string()),
         }
@@ -952,18 +1128,29 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
     }
     let mut turn = Turn::new(&spec.agent_id, &spec.servers, spec.model.clone());
     let mut asked: std::collections::HashSet<String> = Default::default();
-    loop {
+    let mut progress = Instant::now();
+    let ended = loop {
         let e = match events.next() {
             Ok(Some(e)) => e,
-            Ok(None) => break,
-            Err(why) => {
-                for o in turn.finish() {
-                    put(o);
+            Ok(None) | Err(_) if me.killed.load(Ordering::SeqCst) => break Ended::default(),
+            Ok(None) | Err(_) => {
+                // the stream ended or went silent: try to get it back, and learn whether the turn is still going
+                match reconnect(&conn, &session) {
+                    Some((ev, true)) => {
+                        events = ev;
+                        continue;
+                    }
+                    Some((_, false)) => {
+                        put(Out::Error("The connection to OpenCode dropped; this turn's last steps may not show here.".into()));
+                        break Ended::default();
+                    }
+                    None => break give_up(&conn, &session, me, "The connection to OpenCode was lost and could not be restored, so Fridae ended the turn."),
                 }
-                let text = if why == "silent" { "OpenCode stopped answering (nothing came for 45 seconds)." } else { "The connection to OpenCode was lost." };
-                return fail(text);
             }
         };
+        if e["data"]["sessionID"] == session.as_str() && !e["type"].as_str().unwrap_or("").ends_with(".delta") {
+            progress = Instant::now();
+        }
         let step = turn.feed(&session, &e);
         for o in step.outs {
             put(o);
@@ -977,25 +1164,101 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
             if !d.once {
                 body["message"] = json!(d.message);
             }
-            let _ = call(&conn, "POST", &format!("/api/session/{}/permission/{}/reply", quote(&session), quote(&ask.id)), Some(&body));
+            let path = format!("/api/session/{}/permission/{}/reply", quote(&session), quote(&ask.id));
+            let replied = (0..2).any(|_| matches!(call(&conn, "POST", &path, Some(&body)), Ok((s, _)) if s < 300));
+            if !replied {
+                // unanswered, OpenCode would wait for ever: nothing more runs (closed), and the turn ends
+                break give_up(&conn, &session, me, "Fridae could not answer OpenCode's request to run something, so nothing more ran and the turn was ended.");
+            }
         }
         if step.ended {
-            for o in turn.finish() {
-                put(o);
-            }
-            return Ended::default();
+            break Ended::default();
         }
-    }
+        // nothing at all for STALL (heartbeats aside): ended, unless one of the app's tools that waits long is running
+        if progress.elapsed() >= paths::STALL && !turn.waiting_long() {
+            break give_up(&conn, &session, me, &paths::stall_message());
+        }
+    };
     for o in turn.finish() {
         put(o);
     }
-    fail(if me.killed.load(Ordering::SeqCst) { "" } else { "The connection to OpenCode was lost." })
+    // a chat that shares its folder with others leaves no tool servers behind there (each runs as this chat)
+    for (name, _) in &mine {
+        let _ = request(&conn, "DELETE", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), None, Duration::from_secs(10));
+    }
+    ended
+}
+
+/// The event stream again, a few times with growing waits; and whether the session is still running a turn.
+fn reconnect(conn: &Conn, session: &str) -> Option<(Events, bool)> {
+    for wait in [250u64, 1000, 3000] {
+        std::thread::sleep(Duration::from_millis(wait));
+        if let Ok(ev) = Events::open(conn) {
+            let busy = active_sessions(conn)?.get(session).is_some();
+            return Some((ev, busy));
+        }
+    }
+    None
+}
+
+/// The sessions running a turn now (`GET /api/session/active`), asked with a short wait; None when no answer.
+fn active_sessions(conn: &Conn) -> Option<Value> {
+    let (status, text) = request(conn, "GET", "/api/session/active", None, Duration::from_secs(3)).ok()?;
+    if status != 200 {
+        return None;
+    }
+    serde_json::from_str::<Value>(&text).ok().map(|v| v["data"].clone())
+}
+
+/// End a turn the app cannot follow any more: OpenCode is asked to stop it, and if it does not within STOP_WAIT the
+/// server is ended. The chat is told why.
+fn give_up(conn: &Conn, session: &str, me: &Active, why: &str) -> Ended {
+    let _ = request(conn, "POST", &format!("/api/session/{}/interrupt", quote(session)), None, Duration::from_secs(5));
+    let until = Instant::now() + STOP_WAIT;
+    while Instant::now() < until {
+        match active_sessions(conn) {
+            Some(a) if a.get(session).is_none() => return fail(why),
+            None => break,
+            _ => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
+    me.killed.store(true, Ordering::SeqCst);
+    stop_server();
+    fail(why)
+}
+
+/// Whether the rules OpenCode shows for a session are the ones written (same rules, same order).
+fn rules_match(shown: &Value, written: &[Value]) -> bool {
+    let Some(list) = shown.as_array() else { return false };
+    list.len() == written.len()
+        && list.iter().zip(written).all(|(a, b)| a["action"] == b["action"] && a["resource"] == b["resource"] && a["effect"] == b["effect"])
+}
+
+/// The environment shell commands get: the app's own, with every `OPENCODE_*` variable left out and the user's own
+/// XDG folders (the server runs with the app's).
+fn shell_environment() -> Map<String, Value> {
+    let mut out = Map::new();
+    for (k, v) in env::vars() {
+        if !k.starts_with("OPENCODE_") && !SECRETS.contains(&k.as_str()) {
+            out.insert(k, json!(v));
+        }
+    }
+    for (k, v) in users_xdg() {
+        out.insert(k, json!(v));
+    }
+    out
 }
 
 /// Stop a chat's turn: OpenCode is asked to end it; if it has not within STOP_WAIT, the server is ended (with every
-/// OpenCode turn running), and the turn says so. Blocks until then: call it off the page's thread.
-pub fn stop(agent_id: &str) {
-    let Some(me) = active().as_ref().and_then(|a| a.get(agent_id).cloned()) else { return };
+/// OpenCode turn running), and the turn says so. A chat whose turn the app no longer follows still has its saved
+/// session interrupted (so "press Stop" after a busy answer is true). Blocks until then: call it off the page's thread.
+pub fn stop(agent_id: &str, saved: Option<String>) {
+    let Some(me) = active().as_ref().and_then(|a| a.get(agent_id).cloned()) else {
+        if let (Some(s), Some(conn)) = (saved, current()) {
+            let _ = request(&conn, "POST", &format!("/api/session/{}/interrupt", quote(&s)), None, Duration::from_secs(5));
+        }
+        return;
+    };
     me.cancelled.store(true, Ordering::SeqCst);
     let session = me.session.lock().unwrap().clone();
     let until = Instant::now() + STOP_WAIT;
@@ -1025,26 +1288,36 @@ pub struct Decision {
 pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decision {
     if action == "shell" && !resources.is_empty() {
         let mut blocked: Vec<Value> = Vec::new();
+        let mut form = false;
         for command in resources {
-            match paths::program_name(command) {
-                Some(n) if allowed.contains(&n) => {}
-                Some(n) => {
-                    if !blocked.iter().any(|b| b["name"] == n) {
-                        blocked.push(json!({"name": n, "command": command.chars().take(200).collect::<String>()}));
-                    }
+            // approved only when every program in it is one the user allowed, named exactly (`paths::command_allowed`)
+            if paths::command_allowed(command, allowed) {
+                continue;
+            }
+            // the card offers the programs in it the user has not allowed; when there are none, it was the way it was
+            // written (a path in front, a substitution, a redirection), which allowing cannot fix
+            let missing: Vec<String> = paths::command_programs(command).into_iter().filter(|n| !allowed.contains(n)).collect();
+            if missing.is_empty() {
+                form = true;
+            }
+            for n in missing {
+                if !blocked.iter().any(|b| b["name"] == n) {
+                    blocked.push(json!({"name": n, "command": command.chars().take(200).collect::<String>()}));
                 }
-                None => blocked.push(json!({"name": "", "command": command.chars().take(200).collect::<String>()})),
             }
         }
-        if blocked.is_empty() {
+        if blocked.is_empty() && !form {
             return Decision { once: true, message: String::new(), blocked };
         }
-        let names: Vec<&str> = blocked.iter().filter_map(|b| b["name"].as_str()).filter(|n| !n.is_empty()).collect();
-        let message = format!(
-            "The user has not allowed {} here, so it was not run. Do not try another way to run it; say in one line what you wanted to run and why, and carry on with the rest.",
-            if names.is_empty() { "this command".to_string() } else { names.join(", ") }
-        );
-        blocked.retain(|b| b["name"] != "");
+        let names: Vec<&str> = blocked.iter().filter_map(|b| b["name"].as_str()).collect();
+        let message = if names.is_empty() {
+            "Not run: only the programs the user allowed run here, called by their plain name (\"git status\", not \"./git\" or a path), without command substitution, variables or redirection to files. Run it that way, or say in one line what you wanted to run and why, and carry on with the rest.".to_string()
+        } else {
+            format!(
+                "The user has not allowed {} here, so it was not run. Do not try another way to run it; say in one line what you wanted to run and why, and carry on with the rest.",
+                names.join(", ")
+            )
+        };
         return Decision { once: false, message, blocked };
     }
     let message = match action {
@@ -1077,6 +1350,8 @@ pub struct Turn {
     usage: crate::usage::Turn,
     cost: f64,
     answered: bool,
+    /// Tool calls started and not yet ended, by id.
+    open: std::collections::HashSet<String>,
 }
 
 impl Turn {
@@ -1084,7 +1359,12 @@ impl Turn {
     pub fn new(agent_id: &str, servers: &Value, model: Option<String>) -> Turn {
         let mut prefixes: Vec<(String, String)> = servers.as_object().map(|o| o.keys().map(|n| (server_name(agent_id, n) + "_", n.clone())).collect()).unwrap_or_default();
         prefixes.sort_by_key(|(p, _)| std::cmp::Reverse(p.len())); // the longest name first
-        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false }
+        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false, open: Default::default() }
+    }
+
+    /// Whether one of the app's tools that waits long on purpose is running (no stall then).
+    pub fn waiting_long(&self) -> bool {
+        self.open.iter().any(|id| self.tools.get(id).is_some_and(|n| paths::waits_long(n)))
     }
 
     /// A tool's name as the chat knows it: a server's tool as `mcp__<server>__<tool>`, as Claude Code names it (so
@@ -1136,9 +1416,14 @@ impl Turn {
                 // the name comes here; `session.tool.called` has only the call's id and input
                 if let (Some(id), Some(n)) = (d["id"].as_str(), d["name"].as_str()) {
                     self.tools.insert(id.to_string(), n.to_string());
+                    self.open.insert(id.to_string());
                 }
             }
+            "session.tool.failed" => {
+                self.open.remove(d["id"].as_str().unwrap_or(""));
+            }
             "session.tool.success" => {
+                self.open.remove(d["id"].as_str().unwrap_or(""));
                 let name = self.tools.get(d["id"].as_str().unwrap_or("")).cloned().unwrap_or_default();
                 let short = name.rsplit("__").next().unwrap_or("");
                 // only pictures from our own tools and Studio screenshots are shown
@@ -1215,9 +1500,17 @@ fn failure_text(err: &Value, model: Option<&str>) -> String {
             "{message}. Fridae's OpenCode cannot use {} now: it is not signed in to that provider, or the model is gone. Sign in under Setup, Connections, OpenCode for Fridae, or pick another model under the message box.",
             model.unwrap_or("this model")
         ),
-        "provider.free-limit" => format!("{message} Pick another model under the message box, or sign Fridae's OpenCode in to your plan under Setup, Connections."),
+        "provider.free-limit" => format!("{message}{} Pick another model under the message box, or sign Fridae's OpenCode in to your plan under Setup, Connections.", resets_in(err)),
+        t if t.contains("limit") || t.contains("quota") => format!("{message}{} Pick another model under the message box, or wait.", resets_in(err)),
         _ => message,
     }
+}
+
+/// " It resets in about 3 hours." from a limit error's `retryAfterMs`, or nothing.
+fn resets_in(err: &Value) -> String {
+    let Some(ms) = err["retryAfterMs"].as_u64().filter(|&m| m > 0) else { return String::new() };
+    let mins = ms.div_ceil(60_000);
+    if mins < 90 { format!(" It resets in about {mins} minutes.") } else { format!(" It resets in about {} hours.", (mins + 30) / 60) }
 }
 
 /// A plain-language message for why a turn could not run, if we recognise it.
@@ -1226,6 +1519,10 @@ pub fn explain(err: &str, got_result: bool) -> Option<String> {
         return None;
     }
     let low = err.to_lowercase();
+    // a 401 from the app's own server is its password, not a sign-in
+    if err.contains("(401)") {
+        return Some("Fridae's own OpenCode server refused its password. Quit and reopen Fridae Studios, then send your message again.".to_string());
+    }
     if low.contains("unauthorized") || low.contains("not authenticated") || low.contains("no credentials") {
         return Some("OpenCode is not signed in for Fridae. Open Setup, Connections, and press Sign in to OpenCode for Fridae, then send your message again.".to_string());
     }
@@ -1282,17 +1579,30 @@ pub fn login_line(line: &str) -> (Option<String>, Option<String>) {
 /// Start signing Fridae's OpenCode in to the user's OpenCode account (the OpenCode Console: OpenCode Go and Zen).
 pub fn login_start() -> Value {
     let Some(exe) = paths::find_opencode() else { return json!({"ok": false, "error": "OpenCode is not installed."}) };
-    if LOGIN.lock().unwrap().state == "waiting" {
-        return login_state();
-    }
-    let mut cmd = opencode(&exe);
-    cmd.args(["auth", "login", "opencode", "--method", "device"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    paths::own_group(&mut cmd);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
+    let mut child = {
+        // checked and started under one lock, so two quick clicks start one sign-in
+        let mut l = LOGIN.lock().unwrap();
+        if l.state == "waiting" {
+            drop(l);
+            return login_state();
+        }
+        let mut cmd = opencode(&exe);
+        cmd.args(["auth", "login", "opencode", "--method", "device"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        paths::own_group(&mut cmd);
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
+        };
+        procs::record("opencode-login", child.id());
+        *l = Login { pid: Some(child.id()), state: "waiting", ..Default::default() };
+        child
     };
-    *LOGIN.lock().unwrap() = Login { pid: Some(child.id()), state: "waiting", ..Default::default() };
+    // what it says on stderr is read (a full pipe would stop it) and dropped
+    if let Some(err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut BufReader::new(err), &mut std::io::sink());
+        });
+    }
     let stdout = child.stdout.take();
     std::thread::spawn(move || {
         let mut last = String::new();
@@ -1313,6 +1623,7 @@ pub fn login_start() -> Value {
             }
         }
         let ok = child.wait().is_ok_and(|s| s.success());
+        procs::forget(child.id());
         {
             let mut l = LOGIN.lock().unwrap();
             l.pid = None;
@@ -1322,8 +1633,15 @@ pub fn login_start() -> Value {
             }
         }
         // what it may now use; a server with no turn running starts again with the new sign-in
-        if ok && active().as_ref().is_none_or(|a| a.is_empty()) {
-            stop_server();
+        if ok {
+            stop_if_idle(Duration::ZERO);
+        }
+        // a list being loaded now was asked for before the sign-in: wait for it, then ask again
+        for _ in 0..240 {
+            if !LOADING.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
         }
         MODELS.lock().unwrap().0.clear();
         load_models();
@@ -1468,6 +1786,14 @@ mod tests {
         assert!(!d.once);
         assert_eq!(d.blocked.len(), 1);
         assert_eq!(d.blocked[0]["name"], "rm");
+        // a path in front of an allowed name, chaining with a program not allowed, a variable in front: never "once"
+        for bad in ["./git status", "bin/git", "/tmp/x/git", "git; curl x", "git && ./x", "FOO=1 git", "\"git\" status", "git $(id)"] {
+            assert!(!decide("shell", &[bad.into()], &["git".into()]).once, "{bad}");
+        }
+        let d = decide("shell", &["./git status".into()], &["git".into()]);
+        assert!(d.blocked.is_empty() && d.message.contains("plain name"), "allowing git again would not help: no card");
+        let d = decide("shell", &["git status; curl x".into()], &["git".into()]);
+        assert_eq!(d.blocked, vec![json!({"name": "curl", "command": "git status; curl x"})], "the card offers the program not allowed");
         // anything else that asks is refused, with no card
         let d = decide("external_directory", &["/Users/x/elsewhere/*".into()], &["git".into()]);
         assert!(!d.once && d.blocked.is_empty() && d.message.contains("outside"));
@@ -1566,18 +1892,23 @@ mod tests {
 
     #[test]
     fn ask_me_allows_ours_and_the_chats_folders_and_denies_the_rest() {
-        let f = Folders { location: Path::new("/games/Odd One In é"), project: Some(Path::new("/games/Odd One In é")), kit: Path::new("/kit"), work: Path::new("/work") };
+        let f = Folders { location: Path::new("/games/Odd One In é"), project: Some(Path::new("/games/Odd One In é")), kit: Path::new("/kit"), reads: vec![PathBuf::from("/work/attachments")] };
         let r = permissions(false, "c1", &["git".into()], &f, &["/h/.*".into(), "/kit/config.json".into()]);
         let has = |a: &str, res: &str, eff: &str| r.iter().any(|x| x == &rule(a, res, eff));
         let last = |a: &str, res: &str| r.iter().rposition(|x| x["action"] == a && x["resource"] == res);
         let mine = format!("{}*", chat_prefix("c1"));
         assert_eq!(r[0], rule("*", "*", "deny"), "everything else is refused");
-        assert!(has("shell", "git *", "allow") && has("shell", "*", "ask") && !has("shell", "*", "allow"));
-        assert!(last("shell", "git *") > last("shell", "*"), "an allowed program runs without asking");
+        assert!(has("shell", "*", "ask") && !has("shell", "*", "allow"));
+        assert!(!r.iter().any(|x| x["action"] == "shell" && x["effect"] == "allow"), "every command asks; the app answers an allowed one (decide)");
         assert!(has(&mine, "*", "allow") && last(&mine, "*") > last("fr????????-*", "*"), "this chat's tools, not another's");
-        assert!(has("edit", "/games/Odd One In é/*", "allow") && has("edit", "/kit/*", "allow") && has("edit", "/work/*", "allow"));
-        assert!(has("external_directory", "/work/*", "allow") && !has("external_directory", "*", "allow"), "only the chat's folders outside its own");
-        assert!(last("edit", "../*") > last("edit", "*"), "a path going up out of the game is refused");
+        assert!(has("edit", "/games/Odd One In é/*", "allow") && has("edit", "/kit/*", "allow"));
+        assert!(!r.iter().any(|x| x["action"] == "edit" && x["effect"] == "allow" && x["resource"].as_str().unwrap().starts_with("/work")), "never the whole work folder (as Claude)");
+        assert!(last("edit", "../*") > last("edit", "*"), "a relative path going up out of the game is refused");
+        assert!(has("external_directory", "/work/attachments/*", "allow") && !has("external_directory", "*", "allow"), "attachments may be read, nothing else outside");
+        // a folder whose name holds a glob character gets no allow rule (it would match other folders)
+        let odd = Folders { location: Path::new("/games/a*"), project: Some(Path::new("/games/a*")), kit: Path::new("/kit"), reads: vec![] };
+        let r2 = permissions(false, "c1", &[], &odd, &[]);
+        assert!(!r2.iter().any(|x| x["effect"] == "allow" && x["resource"].as_str().unwrap().starts_with("/games")));
         assert!(last("edit", "/kit/config.json") > last("edit", "/kit/*"), "the app's settings stay protected inside the kit");
         assert!(has("edit", "/h/.*/*", "deny") && has("edit", "*/.opencode/*", "deny"));
         for a in ["execute", "subagent", "skill", "question"] {
@@ -1589,8 +1920,26 @@ mod tests {
     }
 
     #[test]
+    fn protected_places_are_also_written_relative_to_the_working_folder() {
+        assert_eq!(relative_pattern("/Users/a/games/g", "/Users/a/.*").as_deref(), Some("../../.*"));
+        assert_eq!(relative_pattern("/Users/a/games/g", "/Users/a/games/g/.opencode").as_deref(), Some(".opencode"));
+        assert_eq!(relative_pattern("/Users/a/games/g", "/opt/x").as_deref(), None, "nothing shared: OpenCode uses the absolute path");
+        let f = Folders { location: Path::new("/Users/a/games/g"), project: Some(Path::new("/Users/a/games/g")), kit: Path::new("/kit"), reads: vec![] };
+        let r = permissions(true, "c1", &[], &f, &["/Users/a/.*".into(), "/Users/a/Library".into()]);
+        let at = |a: &str, res: &str, eff: &str| r.iter().position(|x| x == &rule(a, res, eff));
+        assert!(at("edit", "../../.*", "deny") > at("edit", "*", "allow"), "Full auto: ~/.zshrc named relative to a game inside a home-wide repository is refused");
+        assert!(at("edit", "../../Library/*", "deny").is_some());
+        // Ask me: the kit beside a chat folder in the same repository is allowed by its relative name too
+        let dev = Folders { location: Path::new("/src/work/opencode/c1"), project: None, kit: Path::new("/src"), reads: vec![] };
+        let r = permissions(false, "c1", &[], &dev, &["/src/config.json".into()]);
+        let at = |a: &str, res: &str, eff: &str| r.iter().position(|x| x == &rule(a, res, eff));
+        assert!(at("edit", "../../../*", "allow") > at("edit", "../*", "deny"));
+        assert!(at("edit", "../../../config.json", "deny") > at("edit", "../../../*", "allow"), "its settings file stays refused");
+    }
+
+    #[test]
     fn full_auto_allows_everything_but_keeps_the_denies() {
-        let f = Folders { location: Path::new("/g"), project: Some(Path::new("/g")), kit: Path::new("/kit"), work: Path::new("/work") };
+        let f = Folders { location: Path::new("/g"), project: Some(Path::new("/g")), kit: Path::new("/kit"), reads: vec![] };
         let r = permissions(true, "c1", &[], &f, &["/store".into()]);
         assert_eq!(r[0], rule("*", "*", "deny"), "a tool not named here (OpenCode's browser, say) is not offered");
         let at = |x: &Value| r.iter().position(|y| y == x).unwrap();
@@ -1607,7 +1956,8 @@ mod tests {
         let p = protected(Path::new("/Users/someone"));
         assert!(p.contains(&"/Users/someone/.*".to_string()) && p.contains(&"/Users/someone/Library".to_string()));
         assert!(p.iter().any(|x| x.ends_with("config.json")) && p.iter().any(|x| x.ends_with("opencode-store")));
-        assert!(protected(Path::new("")).len() <= 4, "no home: no home patterns");
+        assert!(p.iter().any(|x| x.ends_with("processes.json")) && p.iter().any(|x| x.ends_with("chats")) && p.iter().any(|x| x.ends_with("team-requests")), "the files the app acts on");
+        assert!(!protected(Path::new("")).iter().any(|x| x.ends_with("Library")), "no home: no home patterns");
     }
 
     #[test]
@@ -1626,9 +1976,9 @@ mod tests {
     fn http_pieces_read_what_the_server_sends() {
         assert_eq!(listening_port("server listening on http://127.0.0.1:58866"), Some(58866));
         assert_eq!(listening_port("something else"), None);
-        let pw = password();
+        let pw = password().unwrap();
         assert_eq!(pw.len(), 48);
-        assert_ne!(pw, password());
+        assert_ne!(Some(pw), password());
         assert_eq!(at(Path::new("/games/Odd One/é")), "?location%5Bdirectory%5D=%2Fgames%2FOdd%20One%2F%C3%A9");
         // a chunked body, as the event stream comes
         let stream = "data: {\"type\":\"server.connected\",\"data\":{}}\n\n: heartbeat\n\n";
@@ -1645,7 +1995,8 @@ mod tests {
         let body: Box<dyn Read + Send> = Box::new(Chunked { inner: r, left: 0, done: false });
         let mut ev = Events { r: BufReader::new(body) };
         assert_eq!(ev.next().unwrap().unwrap()["type"], "server.connected");
-        assert!(ev.next().unwrap().is_none(), "a heartbeat is no event; the stream then ends");
+        assert_eq!(ev.next().unwrap().unwrap()["type"], "heartbeat", "handed on, so the stall guard is checked");
+        assert!(ev.next().unwrap().is_none(), "the stream then ends");
     }
 
     #[test]
@@ -1654,5 +2005,8 @@ mod tests {
         assert!(explain("Error: Unauthorized", true).is_none());
         assert_eq!(explain("OpenCode is not installed.", false).as_deref(), Some("OpenCode is not installed."));
         assert!(explain("", false).is_none());
+        assert!(explain("OpenCode could not start a chat (401): ", false).unwrap().contains("refused its password"), "the app's own server, not a sign-in");
+        let free = serde_json::from_str::<Value>(FREE_LIMIT).unwrap();
+        assert!(failure_text(&free["data"]["error"], None).contains("It resets in about 12 hours."));
     }
 }

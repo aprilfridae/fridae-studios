@@ -376,11 +376,21 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
 
 - **Found** by `paths::find_opencode`: `FRIDAE_OPENCODE`, then `opencode` on PATH, then `~/.opencode/bin/opencode`.
 - **One server per app run**: `opencode serve --hostname 127.0.0.1 --port 0`, started on a chat's first OpenCode turn
-  (`ensure`). It listens on 127.0.0.1 only, on the free port it prints, behind basic auth with a random password
-  (24 bytes from `/dev/urandom`) that is only in its environment (`OPENCODE_PASSWORD`) and in the app's memory. It runs
-  in a process group of its own, is noted in the process ledger (below), is stopped after 10 minutes without a turn
-  (`IDLE`) and when the app quits, and needs OpenCode 2 (`GET /api/info`; a 404 says so in the chat). The user's
-  own background service (`opencode serve --service`, `~/.config/opencode/service.json`) is never used.
+  (`ensure`, one start at a time: `STARTING`). It listens on 127.0.0.1 only, on the free port it prints, behind basic
+  auth with a random password (24 bytes from `/dev/urandom`; no password, no server) that is only in its environment
+  (`OPENCODE_PASSWORD`) and in the app's memory. Before first use the app checks the lock (`unauthenticated`): 200
+  with the password and 401 without it on both `GET /api/info` and the event stream, else the server is ended and the
+  chat gets a plain error. It runs in a process group of its own, is noted in the process ledger (below), is stopped
+  after 10 minutes without a turn (`IDLE`, checked and stopped under the same locks a starting turn takes) and when
+  the app quits, and needs OpenCode 2 (`GET /api/info`; a 404 says so in the chat). The user's own background service
+  (`opencode serve --service`, `~/.config/opencode/service.json`) is never used.
+- **The password stays with the server** (measured with real turns): shell commands run through the app's own shell,
+  `fridae-shell` in the app's OpenCode folder (OpenCode's `shell` setting), which unsets `OPENCODE_PASSWORD`,
+  `OPENCODE_SERVER_PASSWORD` and the two username variables before running the user's shell; each turn also puts the
+  session's command environment (`PUT /api/session/<id>/environment`) without any `OPENCODE_*` variable; the tool
+  servers get those variables blank in their entry. `printenv` in a turn printed nothing, and `ps eww` showed them
+  blank for rbxkit and absent for a running command. Left: an allowed `ps eww` (Full auto, or a user who allowed `ps`)
+  can read the server's own environment, as any program of the same user can.
 - **A turn** (`run_with`): the saved session gets its rules rewritten (`PATCH /api/session/<id>`; a 404 starts a new
   session handed the chat so far, `agents::stale_chat`), or `POST /api/session` makes one titled "Fridae · <chat>"
   with the model and the chat's folder; the chat's tool servers are added for that folder
@@ -391,7 +401,16 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   `session.text.ended`, `session.tool.input.started` (the tool's name) and `session.tool.called` (its input),
   `session.tool.success` (pictures), `session.step.ended` and `session.step.failed` (that step's tokens and cost, so
   an interrupted step still counts), `permission.asked`, and the end: `session.execution.succeeded|failed|interrupted`.
-  Events of other sessions are skipped. 45 seconds without even a heartbeat ends the turn with an error (`SILENCE`).
+  Events of other sessions are skipped. Before the prompt the rules OpenCode shows for the session are read back and
+  must match what was written (`rules_match`), else the turn does not start. When the stream ends or goes 45 seconds
+  without even a heartbeat (`SILENCE`), it is opened again up to three times (0.25, 1 and 3 s apart); a session that
+  is no longer running is ended with an error, and when the stream cannot be restored the turn is interrupted, given
+  `STOP_WAIT`, then the server is ended, and the chat says "The connection to OpenCode was lost and could not be
+  restored" (measured by stopping the server with SIGSTOP mid-command: about a minute, server and command gone). A
+  permission answer that does not reach OpenCode is tried twice more, then the turn is ended the same way, so a
+  request is never left open. The general stall guard (`paths::STALL`, 15 minutes without any event, not while a
+  Lead waits on experts or a texture is made) ends a turn that keeps sending only heartbeats. After the turn the
+  chat's tool servers are removed again (`DELETE /api/experimental/mcp/<name>`).
 - **Models** come from `opencode models` run with the app's folders (so Fridae's sign-in decides them), cached, and
   refreshed with the status. The menu groups them by provider ("OpenCode Go · glm-5.3") with the filter, and hides
   effort (OpenCode's model ids carry their own). Default (`default_model`): the user's own `model` in
@@ -402,8 +421,8 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   run with `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under
   `~/Library/Application Support/Fridae Studios/opencode` on a Mac (`store()`; not Documents, which iCloud may sync,
   since the database holds the sign-in), with `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_DISABLE_CLAUDE_CODE` and
-  `OPENCODE_DISABLE_AUTOUPDATE`, and ten variables of the user's dropped (`DROPPED`: `OPENCODE_CONFIG`, passwords, API
-  keys, `XDG_CONFIG_DIRS`). Checked with `opencode debug config`: with `OPENCODE_CONFIG_DIR` set, only that folder is
+  `OPENCODE_DISABLE_AUTOUPDATE`, and every inherited `OPENCODE_*` variable plus `XDG_CONFIG_DIRS` dropped (`DROPPED`;
+  that covers `OPENCODE_CONFIG`, servers, passwords and usernames). Checked with `opencode debug config`: with `OPENCODE_CONFIG_DIR` set, only that folder is
   read, not `~/.config/opencode`. The tool servers get the user's XDG folders back in their entry (`users_xdg`). Its `opencode.json` is the app's (`settings()`, rewritten at every start): no updates, no
   sharing, no snapshots, no LSP or formatters, and policies that refuse every MCP server not named `fr*` and every
   skill. So Fridae's chats are not in the user's OpenCode (command line or desktop app), and nothing is written to
@@ -423,26 +442,49 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   worktree tools):
   - Every mode: `read`, `glob`, `grep`, `list` allowed; webfetch and websearch allowed; this chat's tools allowed,
     other chats' denied; `execute` (Code Mode), `subagent`, `task`, `skill`, `question` denied; edits denied to any
-    `.opencode` folder, `opencode.json(c)`, the app's OpenCode folder, the app's `config.json`, the home folder's
-    hidden files (`~/.*`) and `~/Library`.
-  - Ask me: `shell *` asks, `shell "<program> *"` allowed per program the user allowed; edits allowed in the chat's
-    folder, the game, the kit and the work folder (each spelling, `/private` included), and denied for `/*` and
-    `../*`; `external_directory` allowed only for those folders.
+    `.opencode` folder, `opencode.json(c)`, the app's OpenCode folder, the home folder's hidden files (`~/.*`),
+    `~/Library`, and the app's own files (`paths::app_protected`, the same list for every AI whose rules the app
+    writes): `config.json`, the process ledger, usage and limits, saved chats, the request, result and nudge folders
+    of experts, stages and textures, the tool-server configs and the undo copies.
+  - How OpenCode names a file (measured, 2.3.2): inside the git repository that holds the chat's working folder,
+    relative to that folder (`abs.txt`, `sub/x.txt`, `../sibling/x.txt` with no folder question); outside it, by
+    absolute path after an `external_directory` question. So the rules carry both forms: a relative pattern unless it
+    goes up (`../*` is denied), the chat's folders by absolute path and, when they share the repository with the
+    working folder (the kit in the dev layout), by their relative name too; each protected place is denied by its
+    absolute path and by its name relative to each spelling of the working folder.
+  - Ask me: `shell *` asks, with no allow rule (an allowed program with a redirection to any file would otherwise
+    run without asking: measured, `git --version > /tmp/x`); edits allowed in the chat's folder, the game and the kit,
+    the same set as Claude Code (each spelling, `/private` included), never the whole work folder; `external_directory`
+    allowed for those folders and, to read only, the attachments and chat-picture folders.
   - Full auto and Studio: shell, edit, `external_directory` allowed for `*`; the denies above still hold.
-  - A `permission.asked` for a shell command (`decide`): an allowed program is answered `once`; anything else is
-    rejected with a message to the model and the blocked-command card is shown; a program allowed from the card is
-    answered `once` from then on (it is in `allowed_commands`). Any other ask is rejected. Never `always`.
+  - A `permission.asked` for a shell command (`decide`, `paths::command_allowed`): answered `once` only when every
+    part (split on `;`, `&&`, `||`, `|`, as OpenCode itself asks per part) starts with a program the user allowed,
+    named exactly (not `./git`, `bin/git`, `/tmp/x/python`, `FOO=1 git`, quoted), with no backticks, `$`, backslash,
+    line break, background `&` or redirection other than `2>&1` and `>/dev/null`. A missing program shows the card;
+    a command refused only for its form gets a plain line to the model and no card (allowing would not help). A
+    program allowed from the card is answered `once` from then on. Any other ask is rejected. Never `always`.
   - Measured with real turns (opencode 2.3.2, game and outside folders under the home folder, not in temp):
-    Ask me: writes in the game (absolute and relative) and the work folder go through; an outside folder (absolute
+    Ask me: writes in the game (absolute and relative) go through (the work folder did too then; fix round 1 took it
+    out); an outside folder (absolute
     and `../outside`), the app's OpenCode settings, `~/.zshrc`, `game/.opencode/x.json` are refused; reads outside
     the chat's folders are refused (stricter than Claude Code). `whoami` (not allowed) showed the card, ran after
     being allowed mid-turn; `ls` ran. Full auto: an outside write and `id -un` go through; the app's OpenCode
     settings, `~/.zshrc`, the kit's `config.json` and `game/opencode.json` are refused.
+  - Fix round 1, measured again with a game nested in a larger git repository and with the dev layout (a chat with
+    no game inside the app's own repository): Ask me writes in the game (absolute, relative, deep) and the kit (by its
+    relative name) go through; the sibling folder (relative and absolute), the repository's README, an outside
+    folder, the kit's `config.json`, `chats/`, `processes/`, the work folder itself, attachments and `~/.zshrc` (as
+    `../../../home/.zshrc`) are refused. `./git status`, a path to git, `FOO=1 git status`, `git --version && ./git`,
+    `git log $(./git)`, backticks and `git --version > /tmp/x` were refused (a planted `git` script never ran);
+    `sh -c ./git` and `git --version; whoami` showed the card for `sh` and `whoami`; `git --version`,
+    `git --version; ls` and `git --version 2>&1` ran.
 - **Stop**: `POST /api/session/<id>/interrupt` (in its own thread), then up to 12 seconds (`STOP_WAIT`) for the turn's
   end event (measured: about 0.1 s, the running shell command is ended). If none comes, the whole server is ended
-  and the chat says so: that also ends any other OpenCode chat that was working, which the message says.
-- **Processes** (`app-rs/src/procs.rs`, a general ledger at `work/processes.json`: pid, process group, start time and
-  command line, with the app's own). Ending the server (SIGTERM to its group, then SIGKILL) also ends its
+  and the chat says so: that also ends any other OpenCode chat that was working, which the message says. A Stop on a
+  chat whose turn the app no longer follows still interrupts its saved session.
+- **Processes** (`app-rs/src/procs.rs`, a general ledger: one file per app run, `work/processes/<app pid>.json`, with
+  the app's own pid, start time and command line and, per process, pid, process group, start time and command line;
+  the file goes when its last process ends). Ending the server (SIGTERM to its group, then SIGKILL) also ends its
   `opencode-pty daemon`; any left with no parent under the app's OpenCode cache are swept (`sweep_helpers`). At
   start, `procs::reap_orphans` ends entries that still match exactly (pid, start time and command line) and whose app
   is gone, so a crash leaves nothing running after the next start (measured: server and rbxkit reaped, the chat
@@ -584,7 +626,15 @@ is an example the user can paste into their own House rules.
   rules deny agents writing it: Claude Code `--disallowedTools Edit(//<path>)` (held in bypass mode too), Antigravity
   `permissions.deny: write_file(<path>)`, Cursor's and OpenCode's deny rules. Measured for Cursor and OpenCode; the
   Claude and Antigravity rules were not tried in a real turn. A shell command in Full auto can still write it on
-  every AI but Cursor's sandbox (and there too when running from source).
+  every AI but Cursor's sandbox (and there too when running from source). The same deny now covers all of the app's
+  own files (`paths::app_protected`: `config.json`, the process ledger, usage and limits, saved chats, the expert,
+  stage and texture request and result folders, the tool-server configs in `work/agent-tools`, the undo copies),
+  for every AI and in every mode.
+- **Allowed programs are matched by each tool's own rules** for Claude Code (`Bash(<p>:*)`) and Cursor
+  (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode, whose requests the app answers. Measured for Cursor
+  (2026.11.22, Ask me, `git` allowed): `./git status`, `bin/git status` and `FOO=1 ./git status` were refused, but
+  `git --version > <any file>` ran, also outside the workspace: Cursor's allow rule does not look at redirections.
+  Not changed (Cursor offers no rule for it); noted as a gap.
 - **The app's git checkpoints** run with `-c core.hooksPath=/dev/null -c core.fsmonitor=false`
   (`projects::GIT_SAFE`, `rbxproject.py`), so hooks or an fsmonitor program an agent wrote into the game's `.git` are
   never run by the app (measured: a pre-commit hook ran without these settings, not with them). Not closed: a game's

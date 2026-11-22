@@ -1,14 +1,13 @@
-//! A small ledger of the long-lived helper processes the app starts (today: OpenCode's server), so one left behind by
-//! an app that crashed or was killed is ended the next time the app starts.
+//! A small ledger of the processes the app starts for the AIs (the per-turn command-line tools, OpenCode's server,
+//! sign-ins), so one left behind by an app that crashed or was killed is ended the next time the app starts.
 //!
-//! Each entry holds the process's pid, its process group, its start time and its command line as `ps` reports them,
-//! and the same for the copy of the app that started it. At start-up an entry is only acted on when a process with
-//! that pid is still there with exactly the same start time and command line (a pid the system has since given to
-//! anything else is never touched), and the app that started it is gone (another copy of the app still running keeps
-//! its own). Unix only; on Windows the
-//! ledger is kept empty (no helper that needs it runs there yet).
-//!
-//! Kept general on purpose, so the other AIs' long-lived helpers can be recorded the same way.
+//! Each copy of the app keeps its own file, `work/processes/<app pid>.json` (so two copies sharing a work folder never
+//! drop each other's entries): the app's own pid, start time and command line, and per process its pid, its process
+//! group, its start time and its command line as `ps` reports them. At start-up the files of apps that are gone are
+//! read: an entry is acted on only when a process with that pid is still there with exactly the same start time and
+//! command line (a pid the system has since given to anything else is never touched); this run's own file, and the
+//! file of another copy of the app still running, are left alone. Unix only; on Windows nothing is recorded (the
+//! processes there are ended with `taskkill /T` as before).
 
 use std::{fs, path::Path, path::PathBuf, process::Command, sync::Mutex};
 
@@ -16,11 +15,16 @@ use serde_json::{Value, json};
 
 static LOCK: Mutex<()> = Mutex::new(());
 
-fn ledger() -> PathBuf {
+fn folder() -> PathBuf {
     #[cfg(test)]
-    return crate::paths::test_dir("procs").join("processes.json");
+    return crate::paths::test_dir("procs");
     #[allow(unreachable_code)]
-    crate::paths::PATHS.work.join("processes.json")
+    crate::paths::PATHS.work.join("processes")
+}
+
+/// This run's file.
+fn mine() -> PathBuf {
+    folder().join(format!("{}.json", std::process::id()))
 }
 
 /// What `ps` says about a process: (process group, start time, command line). None when it is gone.
@@ -46,40 +50,64 @@ fn parse_ps(text: &str) -> Option<(u32, String, String)> {
     (!command.is_empty()).then(|| (pgid, started.join(" "), command))
 }
 
-fn read_in(file: &Path) -> Vec<Value> {
-    fs::read_to_string(file).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_array().cloned()).unwrap_or_default()
+/// A ledger file: {"app": {pid, started, command}, "processes": [...]}.
+fn read_in(file: &Path) -> Value {
+    fs::read_to_string(file).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({"processes": []}))
 }
 
-fn write_in(file: &Path, list: &[Value]) {
+fn write_in(file: &Path, v: &Value) {
     if let Some(dir) = file.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    let _ = fs::write(file, serde_json::to_string_pretty(&Value::Array(list.to_vec())).unwrap_or_default());
+    let tmp = file.with_extension("json.tmp");
+    if fs::write(&tmp, serde_json::to_string_pretty(v).unwrap_or_default()).is_ok() {
+        let _ = fs::rename(&tmp, file);
+    }
 }
 
-/// Note a process the app started (by `owner`, such as "opencode"), once it is running.
+/// This app's own pid, start time and command line (read once).
+fn me() -> Value {
+    static ME: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    ME.get_or_init(|| {
+        let pid = std::process::id();
+        let (started, command) = describe(pid).map(|(_, s, c)| (s, c)).unwrap_or_default();
+        json!({"pid": pid, "started": started, "command": command})
+    })
+    .clone()
+}
+
+/// Note a process the app started (by `owner`, such as "opencode" or "claude"), once it is running.
 pub fn record(owner: &str, pid: u32) {
+    if cfg!(windows) {
+        return;
+    }
     let Some((pgid, started, command)) = describe(pid) else { return };
-    let app = std::process::id();
-    let (app_started, app_command) = describe(app).map(|(_, s, c)| (s, c)).unwrap_or_default();
-    let _l = LOCK.lock().unwrap();
-    let file = ledger();
-    let mut list = read_in(&file);
+    let app = me();
+    let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let file = mine();
+    let mut v = read_in(&file);
+    v["app"] = app;
+    let mut list = v["processes"].as_array().cloned().unwrap_or_default();
     list.retain(|e| e["pid"].as_u64() != Some(pid as u64));
-    list.push(json!({"owner": owner, "pid": pid, "pgid": pgid, "started": started, "command": command,
-                     "app": {"pid": app, "started": app_started, "command": app_command}}));
-    write_in(&file, &list);
+    list.push(json!({"owner": owner, "pid": pid, "pgid": pgid, "started": started, "command": command}));
+    v["processes"] = Value::Array(list);
+    write_in(&file, &v);
 }
 
-/// Drop a process from the ledger once the app has ended it.
+/// Drop a process from the ledger once it has ended (or the app has ended it).
 pub fn forget(pid: u32) {
-    let _l = LOCK.lock().unwrap();
-    let file = ledger();
-    let mut list = read_in(&file);
+    let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let file = mine();
+    let mut v = read_in(&file);
+    let Some(list) = v["processes"].as_array_mut() else { return };
     let before = list.len();
     list.retain(|e| e["pid"].as_u64() != Some(pid as u64));
     if list.len() != before {
-        write_in(&file, &list);
+        if list.is_empty() {
+            let _ = fs::remove_file(&file);
+        } else {
+            write_in(&file, &v);
+        }
     }
 }
 
@@ -91,37 +119,43 @@ fn same(entry: &Value, now: Option<&(u32, String, String)>) -> bool {
     }
 }
 
-/// At start-up: end every recorded process still running exactly as recorded (with its process group) whose app is
-/// gone, and keep only the entries of a copy of the app still running. Returns how many were ended.
+/// At start-up: for every ledger file of an app that is gone (not this run, not another copy still running), end
+/// each recorded process still running exactly as recorded (with its process group), and remove the file. Returns
+/// how many were ended.
 pub fn reap_orphans() -> usize {
-    let _l = LOCK.lock().unwrap();
-    let file = ledger();
-    let list = read_in(&file);
-    if list.is_empty() {
-        return 0;
-    }
+    let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut groups: Vec<u32> = Vec::new();
-    let mut kept: Vec<Value> = Vec::new();
-    for e in &list {
-        let Some(pid) = e["pid"].as_u64().map(|p| p as u32) else { continue };
-        let now = describe(pid);
-        if !same(e, now.as_ref()) {
-            continue; // gone, or its pid is someone else's now
+    let mut files: Vec<PathBuf> = fs::read_dir(folder()).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    // the single ledger file of earlier versions
+    #[cfg(not(test))]
+    files.push(crate::paths::PATHS.work.join("processes.json"));
+    let here = me();
+    for file in files {
+        let raw = fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let Some(raw) = raw else { continue };
+        // earlier versions: a plain list, each entry with its own app
+        let (app, list) = match &raw {
+            Value::Array(l) => (l.first().map(|e| e["app"].clone()).unwrap_or(Value::Null), l.clone()),
+            v => (v["app"].clone(), v["processes"].as_array().cloned().unwrap_or_default()),
+        };
+        let app_pid = app["pid"].as_u64().map(|p| p as u32).unwrap_or(0);
+        let this_run = app_pid == std::process::id() && app["started"] == here["started"];
+        if this_run || (app_pid != std::process::id() && same(&app, describe(app_pid).as_ref())) {
+            continue; // this run's own, or a copy of the app still running: that app's to end
         }
-        let app = e["app"]["pid"].as_u64().map(|p| p as u32).unwrap_or(0);
-        if app != std::process::id() && same(&e["app"], describe(app).as_ref()) {
-            kept.push(e.clone()); // its app still runs: that app's to end
-            continue;
-        }
-        {
+        for e in &list {
+            let Some(pid) = e["pid"].as_u64().map(|p| p as u32) else { continue };
+            if !same(e, describe(pid).as_ref()) {
+                continue; // gone, or its pid is someone else's now
+            }
             // its own group when it was started in one, else the process alone
             let pgid = e["pgid"].as_u64().map(|g| g as u32).unwrap_or(0);
             groups.push(if pgid == pid { pgid } else { pid });
         }
+        let _ = fs::remove_file(&file);
     }
     let ended = groups.len();
     crate::paths::end_trees(&groups);
-    write_in(&file, &kept);
     ended
 }
 
@@ -175,30 +209,38 @@ mod tests {
     }
 
     #[test]
-    fn a_recorded_process_is_ended_at_start_up_and_a_changed_one_is_left() {
-        let file = ledger();
-        let _ = fs::remove_file(&file);
-        let mut cmd = Command::new("sleep");
-        cmd.arg("30");
-        crate::paths::own_group(&mut cmd);
-        let mut child = cmd.spawn().unwrap();
-        record("test", child.id());
-        let list = read_in(&file);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["command"], "sleep 30");
-        // an entry whose start time no longer matches is someone else's process now: left alone
-        let mut other = Command::new("sleep");
-        other.arg("31");
-        let mut other = other.spawn().unwrap();
-        let mut list = read_in(&file);
-        list.push(json!({"owner": "test", "pid": other.id(), "pgid": other.id(), "started": "Mon Jan  1 00:00:00 2001", "command": "sleep 31"}));
-        write_in(&file, &list);
+    fn a_crashed_runs_processes_are_ended_at_start_up_and_this_runs_are_kept() {
+        let _ = fs::remove_dir_all(folder());
+        let spawn = |secs: &str| {
+            let mut cmd = Command::new("sleep");
+            cmd.arg(secs);
+            crate::paths::own_group(&mut cmd);
+            cmd.spawn().unwrap()
+        };
+        // this run's own process: recorded in its file, and left alone by the reap (M3: a turn may already be running)
+        let mut own = spawn("30");
+        record("test", own.id());
+        assert_eq!(read_in(&mine())["processes"][0]["command"], "sleep 30");
+        // a crashed run's file: an app pid that is gone, a process still running exactly as recorded, and one whose
+        // start time no longer matches (someone else's process now)
+        let mut left = spawn("32");
+        let mut other = spawn("31");
+        let (g, started, command) = describe(left.id()).unwrap();
+        let crashed = json!({"app": {"pid": 999_999, "started": "Mon Jan  1 00:00:00 2001", "command": "fridae"}, "processes": [
+            {"owner": "test", "pid": left.id(), "pgid": g, "started": started, "command": command},
+            {"owner": "test", "pid": other.id(), "pgid": other.id(), "started": "Mon Jan  1 00:00:00 2001", "command": "sleep 31"}]});
+        write_in(&folder().join("999999.json"), &crashed);
         assert_eq!(reap_orphans(), 1);
-        assert!(child.wait().is_ok());
+        assert!(left.wait().is_ok());
+        assert!(!folder().join("999999.json").exists(), "the crashed run's file is gone");
         assert!(other.try_wait().unwrap().is_none(), "not an exact match: still running");
-        let _ = other.kill();
-        let _ = other.wait();
-        assert!(read_in(&file).is_empty());
-        forget(1);
+        assert!(own.try_wait().unwrap().is_none(), "this run's own process is never reaped");
+        assert_eq!(read_in(&mine())["processes"].as_array().unwrap().len(), 1);
+        for c in [&mut other, &mut own] {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        forget(own.id());
+        assert!(!mine().exists(), "an empty ledger leaves no file");
     }
 }

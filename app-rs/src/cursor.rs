@@ -144,7 +144,7 @@ pub fn gaps() -> Value {
 
 /// What the Experts table in Setup says beside Cursor: how an expert on Cursor differs from one on Claude. Experts
 /// run with Ask me's rules (the gap measured there).
-pub const EXPERT_GAP: &str = "On Cursor, an expert's file tools can also write into temp folders, which Claude's cannot. Everything else follows the same rules.";
+pub const EXPERT_GAP: &str = "On Cursor, an expert's file tools can also write into temp folders, which Claude's cannot, and a program you allowed may send its output into any file. Everything else follows the same rules.";
 
 /// Where the app keeps Cursor's settings and saved chats (`config`) and its approvals per workspace (`data`): the
 /// per-user app data folder, not Documents (which iCloud or OneDrive may sync). Cursor's account details (email and
@@ -281,7 +281,7 @@ fn as_pattern(path: &Path) -> String {
 /// What Cursor may do without asking. `servers` are ours; `allowed` the programs the user allowed; `theirs` the
 /// servers of the user's own Cursor setup (denied, as Claude Code is given only ours); `protect` folders its file tools
 /// must not write in.
-pub fn permissions(servers: &Value, allowed: &[String], theirs: &[String], protect: &[PathBuf]) -> Value {
+pub fn permissions(servers: &Value, allowed: &[String], theirs: &[String], protect: &[String]) -> Value {
     let ours: Vec<&String> = servers.as_object().map(|o| o.keys().collect()).unwrap_or_default();
     let mut allow: Vec<String> = ours.iter().map(|name| format!("Mcp({name}:*)")).collect();
     allow.extend(allowed.iter().map(|p| format!("Shell({p})")));
@@ -301,8 +301,7 @@ pub fn permissions(servers: &Value, allowed: &[String], theirs: &[String], prote
     }
     // never its own settings, permissions or tool lists, in any mode
     deny.push("Write(**/.cursor/**)".to_string());
-    for dir in protect {
-        let p = as_pattern(dir);
+    for p in protect {
         deny.push(format!("Write({p})"));
         deny.push(format!("Write({p}/**)"));
     }
@@ -313,10 +312,14 @@ pub fn permissions(servers: &Value, allowed: &[String], theirs: &[String], prote
 /// programs agents may run), and the home folder's hidden folders and files (shell start-up files, other tools'
 /// settings) and Library. Outside the workspace folders a write is refused anyway in every mode; these rules also
 /// cover the kit and the work folder, which are workspace folders.
-fn protected(home: &Path) -> Vec<PathBuf> {
-    let mut list = vec![config_dir(), data_dir(), paths::PATHS.home.join("config.json")];
+/// As patterns: paths with their glob characters made `?`, and `<home>/.*` written as a pattern on purpose (every
+/// hidden name; before, it went through `as_pattern` and became `.?`, two-letter names only).
+fn protected(home: &Path) -> Vec<String> {
+    let mut list: Vec<String> = [config_dir(), data_dir()].iter().map(|p| as_pattern(p)).collect();
+    list.extend(paths::app_protected().iter().map(|(p, _)| as_pattern(p)));
     if !home.as_os_str().is_empty() {
-        list.extend([home.join(".*"), home.join("Library")]);
+        let h = as_pattern(home);
+        list.extend([format!("{h}/.*"), format!("{h}/Library")]);
     }
     list
 }
@@ -792,14 +795,18 @@ mod tests {
     #[test]
     fn paths_with_glob_characters_still_match_themselves() {
         assert_eq!(as_pattern(Path::new("/Users/Ann [Work]/Lib*")), "/Users/Ann ?Work?/Lib?");
-        let p = permissions(&json!({}), &[], &[], &[PathBuf::from("/h/{a}")]);
-        assert!(p["deny"].as_array().unwrap().contains(&json!("Write(/h/?a?/**)")));
+        let list = protected(Path::new("/h/{a}"));
+        assert!(list.contains(&"/h/?a?/.*".to_string()), "every hidden name, the folder's own glob characters made ?");
+        assert!(list.contains(&"/h/?a?/Library".to_string()));
+        assert!(list.iter().any(|p| p.ends_with("processes.json")) && list.iter().any(|p| p.ends_with("agent-tools")), "the app's own files");
+        let p = permissions(&json!({}), &[], &[], &list);
+        assert!(p["deny"].as_array().unwrap().contains(&json!("Write(/h/?a?/.*)")));
     }
 
     #[test]
     fn permissions_allow_ours_and_deny_the_rest() {
         let servers = json!({"rbxkit": {"type": "stdio", "command": "py"}, "Roblox_Studio": {"type": "stdio", "command": "studio"}});
-        let p = permissions(&servers, &["git".into()], &["rbxkit".into(), "notion".into(), "notion".into()], &[PathBuf::from("/w/cursor/config")]);
+        let p = permissions(&servers, &["git".into()], &["rbxkit".into(), "notion".into(), "notion".into()], &["/w/cursor/config".to_string()]);
         let allow: Vec<&str> = p["allow"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         let deny: Vec<&str> = p["deny"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert!(allow.contains(&"Mcp(rbxkit:*)") && allow.contains(&"Mcp(Roblox_Studio:*)") && allow.contains(&"Shell(git)"));

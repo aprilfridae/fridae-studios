@@ -79,7 +79,7 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, conversation: Opti
     let mut cmd = Command::new(exe);
     cmd.args(["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"])
         // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
-        .arg(json!({"permissions": {"allow": allowed, "deny": [format!("write_file({})", crate::paths::config_file().display())]}}).to_string());
+        .arg(json!({"permissions": {"allow": allowed, "deny": denied()}}).to_string());
     if full {
         cmd.arg("--dangerously-skip-permissions"); // full auto: nothing is refused
     }
@@ -94,6 +94,12 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, conversation: Opti
     }
     cmd.current_dir(workspace);
     cmd
+}
+
+/// Antigravity's deny rules for the app's own files (`paths::app_protected`): `write_file(<absolute path>)`, which
+/// covers a folder's contents as its grants do.
+fn denied() -> Vec<String> {
+    crate::paths::app_protected().into_iter().map(|(p, _)| format!("write_file({})", p.display())).collect()
 }
 
 /// Add our servers to the workspace's list, leaving any the user put there.
