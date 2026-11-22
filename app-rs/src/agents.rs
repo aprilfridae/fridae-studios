@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     antigravity::{self, Out},
-    attach, board, codex,
+    attach, board, codex, cursor,
     paths::{self, PATHS},
     plugin, projects, research, studio_undo, team, textures, usage,
 };
@@ -598,7 +598,7 @@ struct State {
     /// with this many seconds of it left.
     studio_waiting: bool,
     overnight_left: f64,
-    /// Which AI this chat runs on ("claude", "gemini" or "chatgpt"). Open until the first message; a
+    /// Which AI this chat runs on ("claude", "gemini", "chatgpt" or "cursor"). Open until the first message; a
     /// conversation then stays with the AI it began on, because its memory lives with that AI.
     ai: Option<String>,
     /// The chat so far, as text, for the AI a started chat was switched to: it goes with that AI's first message
@@ -716,6 +716,7 @@ fn ai_label(kind: &str) -> &'static str {
     match kind {
         "gemini" => "Gemini",
         "chatgpt" => "ChatGPT",
+        "cursor" => "Cursor",
         _ => "Claude",
     }
 }
@@ -1430,11 +1431,12 @@ impl Agent {
             let task = if auto { None } else { Some(board::gist(text, 90)) };
             board::track(&p, &self.id, &self.name(), "doing", task.as_deref(), if auto { None } else { Some("") });
         }
-        // each AI has its own models: Claude's four families, or whatever Antigravity lists
+        // each AI has its own models: Claude's four families, or whatever Antigravity, Codex or Cursor lists
         // each AI starts on a set model rather than whatever its own program defaults to
         let model: Option<String> = match self.ai().as_str() {
             "claude" => Some(model.filter(|m| MODELS.contains(m)).unwrap_or("opus").to_string()),
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
+            "cursor" => model.filter(|m| cursor::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(cursor::default_model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
@@ -1502,6 +1504,7 @@ impl Agent {
         let Some(exe) = found else {
             let missing = match kind.as_str() {
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
+                "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae Studios.",
                 "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae Studios.",
                 _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae Studios. Or pick another AI under the message box.",
             };
@@ -1550,11 +1553,19 @@ impl Agent {
         let servers = mcp_servers(&self.id, &self.name(), project.as_deref(), role.as_deref());
         let session = self.st.lock().unwrap().session.clone();
         // every AI but Claude Code takes its standing instructions inside the conversation, and works in a folder
-        // of its own (the project, or one made for this chat) because that is where it looks for its tool servers
-        let workspace = project.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| paths::work(&kind).join(&self.id));
+        // of its own (the project, or one made for this chat) because that is where it looks for its tool servers.
+        // Cursor always works in the app's folder for the chat, with the game added, so nothing is written in the game.
+        let workspace = match (kind.as_str(), &project) {
+            ("cursor", _) => cursor::workspace(&self.id),
+            (_, Some(p)) => std::path::PathBuf::from(p),
+            (_, None) => paths::work(&kind).join(&self.id),
+        };
         if kind != "claude" {
             let _ = fs::create_dir_all(&workspace);
             prompt += OTHER_AI_PROMPT;
+            if kind == "cursor" {
+                prompt += &cursor::folder_note(project.as_deref());
+            }
             text = match &session {
                 None => antigravity::with_instructions(&prompt, &text),
                 Some(_) if !switches.is_empty() => antigravity::with_instructions(&switches, &text),
@@ -1567,6 +1578,8 @@ impl Agent {
                 antigravity::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full)
             }
             "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
+            // its models carry their own effort in the id, so the effort setting is not passed
+            "cursor" => cursor::command(&exe, &workspace, &servers, session.as_deref(), model, ask.full, project.as_deref(), &PATHS.kit),
             _ => {
                 let mut cmd = Command::new(&exe);
                 cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config"])
@@ -1649,12 +1662,16 @@ impl Agent {
         let mut got_result = false;
         let mut result_error = false; // the AI answered, but its result says the turn failed (signed out, out of turns...)
         let mut result_text = String::new(); // what that failed result said
-        let (mut gemini, mut chatgpt) = (antigravity::Turn::default(), codex::Turn::default());
+        let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         if let Some(out) = child.stdout.take() {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
                 let Ok(e) = serde_json::from_slice::<Value>(&raw) else { continue };
                 if kind != "claude" {
-                    let outs = if kind == "gemini" { gemini.feed(&e) } else { chatgpt.feed(&e) };
+                    let outs = match kind {
+                        "gemini" => gemini.feed(&e),
+                        "cursor" => cursor_turn.feed(&e),
+                        _ => chatgpt.feed(&e),
+                    };
                     for out in outs {
                         match out {
                             Out::Conversation(id) => got_session(&mut self.st.lock().unwrap(), id),
@@ -1664,7 +1681,9 @@ impl Agent {
                                 if progress_call(&name, &Value::Null) {
                                     self.st.lock().unwrap().turn_progress = true;
                                 }
-                                self.show_tool(&name, studio_tool(&name))
+                                // Cursor names a server's tool as mcp__<server>__<tool>, as Claude Code does
+                                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
+                                self.show_tool(&short, studio_tool(&name))
                             }
                             Out::Text(text) => self.put("text", json!({"text": text})),
                             Out::Pictures(paths) => {
@@ -1673,7 +1692,19 @@ impl Agent {
                                     self.put("images", json!({"urls": urls}));
                                 }
                             }
+                            Out::Encoded(list) => {
+                                let urls: Vec<String> = list.iter().filter_map(|d| attach::save_chat_image_b64(d)).collect();
+                                if !urls.is_empty() {
+                                    self.put("images", json!({"urls": urls}));
+                                }
+                            }
+                            Out::Blocked(commands) => self.put("blocked", json!({"commands": commands})),
                             Out::Error(text) => self.put("error", json!({"text": text})),
+                            Out::Failed(text) => {
+                                result_error = true;
+                                result_text = text.clone();
+                                self.put("error", json!({"text": text}));
+                            }
                             Out::Usage(turn) => self.used(&turn),
                             Out::Finished => got_result = true,
                         }
@@ -1770,6 +1801,11 @@ impl Agent {
         }
         let err = err_reader.join().unwrap_or_default();
         let status = child.wait().ok();
+        // Cursor leaves a helper of its own running after the turn (its "worker-server", with a language server), in the
+        // turn's process group: it is ended now, before the next turn can find it, so nothing outlives the turn or the app
+        if kind == "cursor" {
+            paths::end_trees(&[child.id()]);
+        }
         let stopped = {
             let mut st = self.st.lock().unwrap();
             st.running = false;
@@ -1786,6 +1822,7 @@ impl Agent {
         } else if let Some(why) = match kind {
             "gemini" => antigravity::explain(&err, got_result),
             "chatgpt" => codex::explain(&err).filter(|_| !got_result).map(str::to_string),
+            "cursor" => cursor::explain(&err, got_result),
             _ => None,
         } {
             self.put("error", json!({"text": why}));
@@ -2446,6 +2483,12 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
     servers
 }
 
+/// The servers an agent gets, with Studio on or off, for other modules' tests.
+#[cfg(test)]
+pub fn test_servers(no_studio: bool) -> Value {
+    mcp_servers_with("c1-test", "Test chat", Some("/games/g"), None, no_studio)
+}
+
 fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
     let path = PATHS.work.join(format!("agent-tools-{agent_id}.json"));
     let _ = fs::write(&path, json!({"mcpServers": servers}).to_string());
@@ -2527,8 +2570,8 @@ pub fn connect_other_agents() -> String {
         format!("Connected to: {}. Restart them to pick it up.", done.join(", "))
     };
     format!(
-        "{head}\n\nThose apps can now use the building tools from their own chat. The chat in this window only runs on Claude Code, \
-         so the agent dot here stays empty without it.\nIn Antigravity, reload the servers after this: type /mcp in the CLI, or open MCP \
+        "{head}\n\nThose apps can now use the building tools from their own chat. The chats in this window run Claude Code, Gemini \
+         (Antigravity) or Cursor themselves and need none of this.\nIn Antigravity, reload the servers after this: type /mcp in the CLI, or open MCP \
          Servers from the agent panel's menu. Also connect Roblox Studio there (Studio's Assistant settings list how).\n\n\
          For any other agent that supports MCP servers, add:\n{}",
         serde_json::to_string_pretty(&json!({"mcpServers": {"rbxkit": entry}})).unwrap_or_default()
@@ -2698,6 +2741,39 @@ mod tests {
         assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "ai" && e["from"] == "gemini" && e["ai"] == "claude"));
         // switching to the AI it is already on changes nothing
         assert_eq!(a.switch_ai("claude"), Ok(false));
+    }
+
+    #[test]
+    fn a_chat_switches_to_cursor_and_back() {
+        let a = Agent::detached_for_test("switch-cursor", None);
+        assert_eq!(a.switch_ai("claude"), Ok(false));
+        {
+            let mut st = a.st.lock().unwrap();
+            st.log.push(json!({"kind": "user", "text": "Make a lava floor"}));
+            st.log.push(json!({"kind": "text", "text": "The floor is in."}));
+            st.session = Some("claude-session".into());
+        }
+        // to Cursor: a fresh session, handed Claude's part of the chat
+        assert_eq!(a.switch_ai("cursor"), Ok(true));
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.ai.as_deref(), st.session.is_none()), (Some("cursor"), true));
+            let h = st.handover.as_deref().unwrap();
+            assert!(h.contains("User: Make a lava floor") && h.contains("Claude: The floor is in."));
+        }
+        // Cursor opens its conversation, answers, and the chat goes back to Claude with Cursor's reply under its name
+        {
+            let mut st = a.st.lock().unwrap();
+            got_session(&mut st, "cursor-chat".into());
+            assert!(st.handover.is_none(), "handed over once Cursor has a conversation");
+            st.log.push(json!({"kind": "user", "text": "Make it glow"}));
+            st.log.push(json!({"kind": "text", "text": "It glows now."}));
+        }
+        assert_eq!(a.switch_ai("claude"), Ok(true));
+        let st = a.st.lock().unwrap();
+        let h = st.handover.as_deref().unwrap();
+        assert!(h.contains("Cursor: It glows now.") && h.contains("User: Make it glow"), "{h}");
+        assert!(st.log.iter().any(|e| e["kind"] == "ai" && e["from"] == "cursor" && e["ai"] == "claude"));
     }
 
     #[test]

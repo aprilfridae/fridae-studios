@@ -12,6 +12,7 @@ mod antigravity;
 mod attach;
 mod board;
 mod codex;
+mod cursor;
 mod fridae_lock;
 mod limits;
 mod media;

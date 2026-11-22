@@ -282,14 +282,26 @@ pub fn find_codex() -> Option<PathBuf> {
     })
 }
 
+/// The Cursor Agent command-line tool, if it is installed. Its installer puts it in ~/.local/bin, which an app started
+/// from the Dock does not have on PATH.
+pub fn find_cursor() -> Option<PathBuf> {
+    env::var("FRIDAE_CURSOR").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("cursor-agent")).or_else(|| {
+        let name = if cfg!(windows) { "cursor-agent.cmd" } else { "cursor-agent" };
+        [home_dir().join(".local").join("bin").join(name), PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("cursor-agent").join(name)]
+            .into_iter()
+            .find(|p| p.is_file())
+    })
+}
+
 /// The AIs a chat can run on.
-pub const AIS: [&str; 3] = ["claude", "gemini", "chatgpt"];
+pub const AIS: [&str; 4] = ["claude", "gemini", "chatgpt", "cursor"];
 
 /// The program behind one of them, if it is installed.
 pub fn find_ai(kind: &str) -> Option<PathBuf> {
     match kind {
         "gemini" => find_antigravity(),
         "chatgpt" => find_codex(),
+        "cursor" => find_cursor(),
         _ => find_agent(),
     }
 }
@@ -304,6 +316,7 @@ pub fn default_ai() -> String {
 fn ai_choice(saved: Option<&str>) -> &'static str {
     match saved {
         Some("gemini" | "antigravity") => "gemini",
+        Some("cursor") => "cursor",
         _ => "claude",
     }
 }
@@ -482,6 +495,8 @@ mod tests {
         assert_eq!(super::ai_choice(Some("gemini")), "gemini");
         assert_eq!(super::ai_choice(Some("antigravity")), "gemini");
         assert_eq!(super::ai_choice(None), "claude");
+        assert_eq!(super::ai_choice(Some("cursor")), "cursor");
+        assert!(super::AIS.contains(&"cursor"));
     }
 
     use super::*;

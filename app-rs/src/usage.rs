@@ -1,4 +1,4 @@
-//! How much each turn used: tokens from every AI, and Claude Code's own cost estimate.
+//! How much each turn used: tokens from every AI (Claude, Gemini, ChatGPT, Cursor), and Claude Code's own cost estimate.
 //!
 //! One line per turn is appended to `work/usage.jsonl` ({t, ai, chat, input, output, cache_read, cache_write, cost},
 //! plus {session, session_cost} for Claude Code). Claude Code's `total_cost_usd` is the session's running total, so a
@@ -80,6 +80,13 @@ impl Turn {
         let n = |k: &str| u[k].as_u64().unwrap_or(0);
         let cached = n("cached_input_tokens");
         Turn { input: n("input_tokens").saturating_sub(cached), output: n("output_tokens") + n("reasoning_output_tokens"), cache_read: cached, ..Default::default() }
+    }
+
+    /// From Cursor's `result.usage`. Its input count leaves out the cached part (as Claude Code's does), and
+    /// `reasoningTokens` is taken to be part of `outputTokens` (OpenAI's way), so it is not added again.
+    pub fn from_cursor(u: &Value) -> Turn {
+        let n = |k: &str| u[k].as_u64().unwrap_or(0);
+        Turn { input: n("inputTokens"), output: n("outputTokens"), cache_read: n("cacheReadTokens"), cache_write: n("cacheWriteTokens"), ..Default::default() }
     }
 
     pub fn json(&self) -> Value {
@@ -220,6 +227,18 @@ mod tests {
         // a chat with no game: no project key at all, so older and newer lines read the same way
         assert!(line("gemini", "c2", None, &turn, None, 1.0).get("project").is_none());
         assert!(line("gemini", "c2", Some(""), &turn, None, 1.0).get("project").is_none());
+    }
+
+    #[test]
+    fn cursor_turns_are_logged_under_cursor() {
+        // a real `result.usage` from cursor-agent 2026.11.22
+        let u = json!({"inputTokens": 13200, "outputTokens": 428, "cacheReadTokens": 51840, "cacheWriteTokens": 0, "reasoningTokens": 199});
+        let t = Turn::from_cursor(&u);
+        assert_eq!((t.input, t.output, t.cache_read, t.cache_write, t.cost), (13200, 428, 51840, 0, None));
+        let l = line("cursor", "c3", Some("/games/g"), &t, None, 5.0);
+        assert_eq!((l["ai"].as_str(), l["total"].as_u64()), (Some("cursor"), Some(13200 + 428 + 51840)));
+        assert!(l.get("session").is_none(), "Cursor reports no cost, so no running total");
+        assert!(Turn::from_cursor(&json!({})).is_empty());
     }
 
     #[test]

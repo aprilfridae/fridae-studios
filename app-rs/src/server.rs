@@ -16,7 +16,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     agents::{self, BUS, MAX_AGENTS, MODELS},
     antigravity,
-    attach, board, codex, media,
+    attach, board, codex, cursor, media,
     paths::{self, PATHS, VERSION},
     plugin, projects, promo, promo_tab, research, studio_run, studio_watch, team, textures, update, usage,
 };
@@ -152,10 +152,11 @@ fn blender_found() -> bool {
 fn status() -> Value {
     json!({
         "agent": paths::find_ai(&paths::default_ai()).is_some(),
-        "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some()},
+        "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some()},
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
-                          "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},
-               "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model()}},
+                          "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
+                          "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},
+               "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
         "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
@@ -470,6 +471,7 @@ pub fn start(token: String) -> String {
     plugin::start();
     antigravity::load_models();
     codex::load_models();
+    cursor::load_models();
     thread::spawn(move || {
         // one thread per request, so a waiting long-poll never holds up anything else
         while let Ok(req) = server.recv() {

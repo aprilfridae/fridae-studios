@@ -138,7 +138,13 @@ pub enum Out {
     Text(String),
     /// Image files a tool reported making, to show as thumbnails.
     Pictures(Vec<String>),
+    /// Pictures a tool returned, as base64 (Cursor hands them back like Claude Code does).
+    Encoded(Vec<String>),
+    /// Commands that were refused because the user has not allowed their program: {name, command}.
+    Blocked(Vec<Value>),
     Error(String),
+    /// The AI answered, but its result says the turn failed: counted as a failed turn, like Claude Code's.
+    Failed(String),
     /// What the turn used.
     Usage(crate::usage::Turn),
     Finished,
