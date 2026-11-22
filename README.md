@@ -147,10 +147,11 @@ plain files in the app's vault: `vault/Fridae/Team/roster.json` and
 same name in that game's `.fridae/team/` folder (for example
 `.fridae/team/experts/designer.md`).
 
-**It learns.** At the end of each stage the Lead writes down one short lesson:
-for this game in `.fridae/lessons.md`, or for every game in
-`studio-lessons.md` in your work folder. It reads them at the start of every
-run. Edit or delete lines whenever you like.
+**It learns.** At the end of each stage the Lead writes down one short lesson,
+and whenever you correct an agent or ask for a change, it saves a short note
+of what you want instead, so the next agent gets there sooner. Your notes and
+house rules stay on this computer (Setup → General → Your notes opens the
+folder), and you can edit or delete them whenever you like.
 
 Review pictures and clips stay out of the game's git history (the run writes
 `.fridae/.gitignore`), so the repository stays small enough to push.

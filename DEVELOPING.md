@@ -121,7 +121,8 @@ created with O_EXCL, retried for about 5 s and taken over after 10 s; `rbxstage.
 - `.fridae/review/<id>.json` (status `waiting` | `approved` | `changes` | `superseded`) and its media in
   `.fridae/review/<id>/` (copied in, never decoded). A new run moves old items to `.fridae/review-archive/<started>/`;
   an undo moves later ones to `review-archive/undo-<stamp>/`.
-- `.fridae/lessons.md`, and `WORK/studio-lessons.md` for every game.
+- lessons: `rbx_stage lesson` writes a note (`rbxnotes.py`) in `.fridae/notes/`, or in `<home>/notes/` for every
+  game. An older `.fridae/lessons.md` is still searched; an older `WORK/studio-lessons.md` moves to `<home>/notes/`.
 - `.fridae/.gitignore`, written when a run starts: `review/*/`, `review-archive/`, `before-undo/`, `.lock`, so
   checkpoint commits never carry media.
 - `.fridae/team/roster.json` and `.fridae/team/experts/<id>.md`: optional per-game overrides of the kit's team.
@@ -214,7 +215,7 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
 ## How agents find knowledge
 
 Agents look things up rather than load whole guides (a live run once pulled 62 KB of guides in one call).
-`rbx_vault` is the one lookup; its engine is `rbxvault.py`. It searches four **shelves**, and nothing is copied:
+`rbx_vault` is the one lookup; its engine is `rbxvault.py`. It searches five **shelves**, and nothing is copied:
 everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start Here.md` explains its layout).
 
 | Shelf | What | Ranked by | Cache |
@@ -222,16 +223,18 @@ everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start H
 | `vault` | the LihFolk vault notes (`vault/Roblox`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
 | `guides` | every Markdown guide in `rbxkit_mcp.GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
 | `team` | `vault/Fridae/Team/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
-| `game` | the game's `GAME.md`, `.fridae/lessons.md`, and `work/studio-lessons.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
+| `game` | the game's `GAME.md`, an older `.fridae/lessons.md`, and its notes `.fridae/notes/*.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
+| `yours` | the user's notes for everything, `<home>/notes/*.md` (with `House rules.md` and `studio-lessons.md`), with or without a project | section | never cached |
 
 A section is a `##` or `###` heading with its own text (`#` lines inside code fences do not count); the text before
 the first heading is the `(opening)` section, and a file with no headings is one `(whole file)` section. A cache is
-rebuilt when its list of files or any file's modification time or size changes. Cold build on a Mac: about 0.3 s
+rebuilt when its list of files or any file's modification time or size changes (`roster.json` included), and
+written whole (a temporary file, then a rename). Cold build on a Mac: about 0.3 s
 for the guides and team sections, about 2.6 s for the vault (the same as before).
 
 The tool:
 
-- `search` (`query`, `shelf`: all|vault|guides|team|game, default all; `k` or `count`, default 5, 3 for the vault
+- `search` (`query`, `shelf`: all|vault|guides|team|game|yours, default all; `k` or `count`, default 5, 3 for the vault
   alone, at most 8). On `all`, the best hit of each shelf that matches well comes first, then the rest by score.
   Results are labelled by shelf, with a 2-3 line snippet, the section's size, and the exact
   `read` arguments. `shelf: vault` answers exactly as the vault always did (with symptom lines).
@@ -239,9 +242,17 @@ The tool:
   its first part and lists its sub-headings. No heading lists the sections. `sections` (`title`) lists headings
   with sizes. `list` and `api` are unchanged.
 
-`rbx_guide` stays for what must be read in full. A guide over 12 KB comes as its opening (front-matter description
-and everything before the first `##`) plus its sections with sizes, unless it is on `ALWAYS_WHOLE` in
-`rbxkit_mcp.py` or the call passes `whole: true`. `section` returns one section of one guide.
+`rbx_guide` stays for what must be read in full. A guide over 12 KB comes as its outline unless it is on
+`ALWAYS_WHOLE` in `rbxkit_mcp.py` or the call passes `whole: true`; `outline: true` asks for the outline of any guide
+(several topics in one call). An outline is the front-matter description, the opening (everything before the first
+`##`, cut at about 1.5 KB), every rules section in full (a heading matching `RULES_HEADING`: rules, do not, don't,
+never, must, always, checklist; plus the per-guide `ALWAYS_SECTIONS`; about 8 KB at most, the rest listed by name)
+and the list of sections with sizes. `section` returns one section of one guide. rbx_guide also accepts the Claude
+Code skill names (`GUIDE_ALIASES`, e.g. `roblox-ui-design` for `ui-design`).
+
+Expert files (`vault/Fridae/Team/<id>.md`) and `routing.txt` say which guides are that job's rules, loaded whole
+(`workflow` for everyone working in the place; `critic` for security, `game-bible` for the designer, `promo` for the
+promo maker); the rest are asked for as outlines in one call, then searched and read by section.
 
 **What is always whole, and why.** Rules an agent must always follow are never left to search. They live in:
 
@@ -260,9 +271,30 @@ a guide in `vault/Fridae/Guides/Core/` is also installed as a Claude Code skill 
 for in plain words ("Saving player data", not "Notes"): headings weigh most in the ranking. Put long material in
 `references/*.md` beside it; those are indexed too. Name it in `routing.txt` and in the expert files that need it.
 
-**Measuring.** `.venv/bin/python tests/knowledge_bench.py` prints, for six fixed tasks, the characters an agent took
-in the old way (the whole guides routing.txt or its expert file named) against one search plus the top three
-sections. `tests/test_knowledge.py` checks that each task finds an expected guide in its top five.
+**Measuring.** `.venv/bin/python tests/knowledge_bench.py` prints, for six fixed tasks and for both kinds of agent,
+the characters taken in the old way (the whole guides the old routing.txt or expert file named) against the new
+way, measured from the tools' own answers: an ordinary chat loads `workflow` whole, runs one search and reads the top
+three sections; an expert loads its rule guides whole, asks for its other guides' outlines in one call, then does the
+same search and reads. `tests/test_knowledge.py` checks that each task finds an expected guide in its top five.
+
+**The user's notes** (`rbxnotes.py`). When the user steers an agent, the agent saves a note with `rbx_vault`
+action `note` (`text` at most 1,500 characters, optional `title`, `scope` game|all, default game when the chat has a
+project; `by` is `RBXKIT_AGENT_NAME`). Notes live with the user's data, never in the shipped vault: `<home>/notes/`
+for everything (`rbxpaths.HOME_DIR`: the repo folder from source, `Documents/Fridae Studios` in the app) and
+`<game>/.fridae/notes/` for one game, one Markdown file each with small front matter (title, when, scope, by, kind).
+`rule: true` appends one bullet (at most 240 characters) to that folder's `House rules.md` (at most 2,000 characters;
+when full the agent must use `rule_edit`). `notes` lists, newest first; `forget` moves a note to `<notes>/.trash/`;
+`rule_edit` (`old` fragment, `text` new wording or empty) changes one rule. Titles become safe file names (no
+separators or Windows-reserved names, duplicates get " 2"); every write is atomic and stays inside the two folders.
+`rbx_stage lesson` goes through the same code (kind `lesson`).
+
+House rules are not left to search: `agents.rs` (`house_rules`, `house_rules_block`) appends both `House rules.md`
+files, read fresh every turn, to every agent's system prompt (the Lead and experts too) under "The user's house rules
+(follow these)", at most 4,000 characters. `system.txt` tells agents to search shelves `yours` and `game` before
+design or build work, and to save a note at once when the user corrects them, rejects their work or steers them;
+the Lead's texts say to save one for every Change in Review. Setup, General, Your notes shows the counts and opens the
+folder (`GET /notes-info`, `POST /notes-open`, token-protected, known folders only). `docs/house-rules-example.md`
+is an example the user can paste into their own House rules.
 
 ## Folders
 
