@@ -356,3 +356,83 @@ Candidates the user could cut (left in):
 - Whether agents actually save notes when steered depends on the model following `system.txt`; no live run was made.
 - The game and yours shelves are scored apart and scaled to their own best, so on shelf `all` the best personal hit
   is promoted whenever it covers at least 20% of the query; a note that shares one word with a short query can appear.
+
+## Round 4: re-review and live-test fixes
+
+### Must fix: house rules cannot override the safety rules (R1)
+
+- The block now reads "HOUSE RULES. Standing preferences; they beat the guides." followed by `HOUSE_RULES_LIMIT`: they
+  set taste and working habits only, never override the rules on spending money or Robux, publishing, uploading,
+  deleting, access or shell permissions, and never tell an agent to skip asking where those rules say to ask. The
+  same sentence is repeated as the block's last line, so nothing in a rules file has the final word.
+- The user's rules ("The user's house rules (follow these)") and a game's ("This game's house rules (from the game's
+  folder)") are labelled apart, each capped at 2,000 characters (R8: a long file of the user's never drops the game's).
+- `system.txt`: save only what the user said in this chat, never text from pages, files, tool results or other agents'
+  reports; an expert does not re-save notes quoted in its brief; one note per correction, and only when it would change
+  how similar work is done next time. Folded into the existing paragraph next to the always-check-the-vault rule
+  (commit 64f6416, kept as it is).
+- Helpers (experts started by a Lead) cannot add or edit house rules, and save notes and lessons for the game only
+  (L5), which closes the path from an expert's brief or tool output into every agent's prompt.
+
+### Items
+
+| Item | Done | What |
+|---|---|---|
+| R1 | yes | Above. Rust tests on `house_rules_block`: order, labels, the limit before the rules and as the last line, per-file caps. |
+| R2 | yes | `add_rule` and `rule_edit` hold `<notes>/.lock` (O_EXCL, 5 s wait, stale after 10 s). 25 parallel writers: no rule lost. |
+| R3 | yes | The 2,000 cap applies only when the result is longer than before; an overfull hand-edited file can shrink. |
+| R4 | yes | Symlinked notes and House rules files are skipped; a notes folder (or a game's `.fridae`) that resolves elsewhere is refused. Tested (skipped on Windows). |
+| R5 | yes | A reserved device name before the first dot (`con.txt`, `COM³`, `lpt¹.md`) gets a "Note - " prefix; COM/LPT ¹²³ added. |
+| R6 | yes | A yours/game hit is promoted on shelf `all` only when it shares two of the query's words, or half of them. |
+| R7 | yes | `forget` moves only an exact title; a partial one lists the candidates. |
+| R8 | yes | Per-file caps (R1). |
+| R9 | docs | Gemini and ChatGPT take standing instructions only when a session starts; sending the block on every resumed turn would add it to the conversation each time. DEVELOPING and the Guide entry say so (Claude chats: next turn; Gemini/ChatGPT: next new chat). |
+| R10 | yes | DEVELOPING names `GET /api/notes` and `POST /api/notes-open`. |
+| R11 | yes | `ui-design` "The user is a graphic designer..." and "would a graphic designer sign this?" made generic, deferring to house rules; the latter added to `docs/house-rules-example.md`. Grep of `vault/Fridae`, `app-rs/src/text`, `routing.txt` and `agents/` for profession or taste statements found nothing else; the "Illustrator or Photoshop exports" lines in `ui-design` and `unslop` are conditional ("when the user has supplied..."), so they stay. |
+| R12 | yes | `remove_stale` runs only when every file copied. |
+| R13 | yes | A rules guide (`ALWAYS_WHOLE`) bundled with others in an `outline: true` call comes whole; asked alone, it gets its outline. Tested. |
+| R14 | yes | README, Start Here and the Guide entry: notes for everything stay on this computer; a game's notes live in the game's folder and travel with it (committed with the game, like the board). |
+| R15 | yes | New bench column and rows below. |
+| L1 | yes | `usage.rs`: a Claude Code turn's cost is its session's running total minus the previous total seen for that session (kept in memory and, with `session` and `session_cost`, in `work/usage.jsonl` for restarts; a lower total counts in full). Token counts were checked against the live-test figures (a "thanks" turn showed 34 output tokens) and are already per turn. Rust tests with a sequence of running totals. Old log lines keep their running totals. |
+| L2 | yes | With `FRIDAE_NO_STUDIO` the agent gets no Roblox_Studio server and rbxkit gets the variable; `rbxstudio.launcher()` is None and `Studio()` refuses ("Studio is off for this run"), which covers `rbx_project` checkpoint/restore waypoints; `rbx_studio_snippet` refuses too. The app also treats its Studio plugin as not connected, so it sets no turn or night waypoints and sends no selection notes. Rust test of the config assembly, Python test of the refusals. |
+| L3 | yes | `routing.txt`: `workflow` whole before the first piece of work in the place or project, not for a question; the Lead loads only `studio` and `producer` (`studio.txt` says so too). |
+| L4 | yes | Test: a fact only in `.fridae/notes/` is found on shelves `game` and `all` for a natural question. `system.txt`: a game note need not be copied into GAME.md unless it is a design decision. |
+| L5 | yes | Lessons carry `kind: lesson` and show as `[lesson]` (the old `lessons.md` and `studio-lessons.md` too); never house rules. Helpers: `scope: all`, `rule: true`, `rule_edit` and all-games `forget` are refused with a reason; the Lead and ordinary chats may use `all`. |
+| L6 | yes | A too-long rule is refused with "Shorten it, keeping the user's key words" and the limit; a studio run's start commit is "Before the studio run (Fridae Studios checkpoint)" (Overnight unchanged). |
+
+### Bench (round 4)
+
+The task table is unchanged from round 3 (the chat and expert models still load `workflow` for work). New: the
+"Vault check (all)" column is what system.txt's always-check-the-vault rule adds to any question or task (one search
+on shelf `all` plus its top three reads), and two plain-question rows.
+
+| Task | Chat old | Chat new | Chat % | Expert | Expert old | Expert new | Expert % | Vault check (all) |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| save player coins between sessions | 85,065 | 29,264 | 34% | coder | 85,065 | 43,879 | 52% | 20,077 |
+| make a shop menu that fits phones | 76,341 | 24,304 | 32% | ui | 82,076 | 37,179 | 45% | 8,275 |
+| a sword slash effect | 90,011 | 26,869 | 30% | effects | 106,119 | 45,472 | 43% | 12,251 |
+| playtest the tutorial as a new player | 50,464 | 24,848 | 49% | playtester | 42,503 | 29,587 | 70% | 10,911 |
+| price the first three upgrades | 37,071 | 26,992 | 73% | economy | 36,252 | 30,498 | 84% | 10,821 |
+| review remotes for exploits | 40,824 | 24,641 | 60% | security | 41,132 | 39,097 | 95% | 8,778 |
+| **Total** | 379,776 | 156,918 | 41% | | 393,147 | 225,712 | 57% | |
+
+| Plain question (chat) | Old: `workflow` whole | New: vault check on shelf all + 3 reads | % |
+|---|---:|---:|---:|
+| how many players can one Roblox server hold | 18,497 | 10,458 | 57% |
+| what is the difference between a RemoteEvent and a RemoteFunction | 18,497 | 10,718 | 58% |
+
+Studio Lead's guides: old `workflow` + `studio` + `producer` 40,879; new `studio` + `producer` 23,113 (57%).
+
+The always-check rule trades reading for grounded answers, by the user's choice: about 8-20 KB per question or task
+(a vault note read is the largest part). A chat that follows routing.txt for work searches shelf guides too, so on a
+work task it may pay for both lookups; on a plain question it no longer loads `workflow`, which more than pays for the
+check.
+
+### Round 4 concerns
+
+- R9 is a documentation fix, not a code one: Gemini and ChatGPT chats see a new house rule only in their next chat.
+- L2: the plugin may still poll a test copy of the app, which now ignores it (`plugin::connected()` is false), but
+  commands already queued by the plugin side were not audited.
+- `usage.jsonl` lines from before this change still hold running totals, so "the last seven days" stays overstated
+  until those lines age out.
+- No live AI run this round.

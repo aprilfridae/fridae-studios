@@ -211,6 +211,12 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
   `python3 rbx.py stage ... --project <game>`, and the page follows them. The packaged app
   (`build-out/Fridae Studios.app/Contents/MacOS/Fridae Studios`) ignores `FRIDAE_KIT` and keeps its config, games
   and work folder in `$HOME/Documents/Fridae Studios`, so give it the scratch `HOME` and put `config.json` there.
+  `FRIDAE_NO_STUDIO=1` gives agents no Roblox_Studio server and passes the variable to rbxkit, whose Studio tools
+  (`rbxstudio.Studio`, so `rbx_project` checkpoint and restore waypoints, and `rbx_studio_snippet`) answer "Studio is
+  off for this run"; the app also treats its Studio plugin as not connected (no waypoints, no selection notes).
+- Usage: Claude Code's `total_cost_usd` is the session's running total, so `usage.rs` logs each turn's difference
+  from that session's previous total (`session` and `session_cost` are kept in `work/usage.jsonl` so this survives a
+  restart); token counts are already per turn. Lines written before this change hold running totals.
 
 ## How agents find knowledge
 
@@ -286,14 +292,23 @@ for everything (`rbxpaths.HOME_DIR`: the repo folder from source, `Documents/Fri
 when full the agent must use `rule_edit`). `notes` lists, newest first; `forget` moves a note to `<notes>/.trash/`;
 `rule_edit` (`old` fragment, `text` new wording or empty) changes one rule. Titles become safe file names (no
 separators or Windows-reserved names, duplicates get " 2"); every write is atomic and stays inside the two folders.
-`rbx_stage lesson` goes through the same code (kind `lesson`).
+`rbx_stage lesson` goes through the same code (kind `lesson`). A lesson is what an agent learned, a note what the user
+said: lessons are shown as `[lesson]` in search and never become house rules. Helpers (`RBXKIT_AGENT_ROLE` set) may
+save notes and lessons for the game only; `scope: all`, `rule: true` and `rule_edit` are refused for them. House rules
+writes hold `<notes>/.lock`; the 2,000 cap only stops a file growing (an overfull one can shrink); symlinked entries are
+skipped and a notes folder that resolves elsewhere is refused; `forget` moves only an exact title. On shelf `all` a
+personal note is promoted to the top group only when it shares two of the query's words, or half of them.
 
 House rules are not left to search: `agents.rs` (`house_rules`, `house_rules_block`) appends both `House rules.md`
-files, read fresh every turn, to every agent's system prompt (the Lead and experts too) under "The user's house rules
-(follow these)", at most 4,000 characters. `system.txt` tells agents to search shelves `yours` and `game` before
+files, read fresh every turn, to every agent's system prompt (the Lead and experts too): the user's under "The user's
+house rules (follow these)", the game's under "This game's house rules (from the game's folder)", each capped at
+2,000 characters, with `HOUSE_RULES_LIMIT` (they never override the rules on spending, publishing, uploading,
+deleting, access or shell permissions, nor skip asking) said before and after them. Claude Code gets the block every
+turn; Gemini and ChatGPT get standing instructions only when a chat's session starts, so a rule added mid-chat reaches
+them from their next new chat. `system.txt` tells agents to search shelves `yours` and `game` before
 design or build work, and to save a note at once when the user corrects them, rejects their work or steers them;
 the Lead's texts say to save one for every Change in Review. Setup, General, Your notes shows the counts and opens the
-folder (`GET /notes-info`, `POST /notes-open`, token-protected, known folders only). `docs/house-rules-example.md`
+folder (`GET /api/notes`, `POST /api/notes-open`, token-protected, known folders only). `docs/house-rules-example.md`
 is an example the user can paste into their own House rules.
 
 ## Folders

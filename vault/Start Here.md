@@ -26,7 +26,9 @@ it all at once: they search it with the `rbx_vault` tool and read only the secti
 Fridae keeps notes when you steer it: when you correct an agent, turn down something it made or point it at a
 better way, the agent saves a short note of what it was doing and what you want instead. Next time, agents search
 those notes before they start, so they reach your answer sooner. Your notes are not in this folder (it is replaced on
-every update): they stay on your computer, with your own data.
+every update). Notes for everything stay on this computer, with your own data; a game's notes live in the game's folder
+and travel with it (they are committed with the game, like the board). What an agent learned by itself is kept apart
+as a lesson (shown as `[lesson]` in search) and never becomes a house rule; experts may only save lessons for the game.
 
 - **For everything**: the `notes` folder in Fridae's home folder (`Documents/Fridae Studios/notes` in the app). Search
   shelf `yours`; it works in any chat, with or without a game.

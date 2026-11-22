@@ -149,9 +149,11 @@ same name in that game's `.fridae/team/` folder (for example
 
 **It learns.** At the end of each stage the Lead writes down one short lesson,
 and whenever you correct an agent or ask for a change, it saves a short note
-of what you want instead, so the next agent gets there sooner. Your notes and
-house rules stay on this computer (Setup → General → Your notes opens the
-folder), and you can edit or delete them whenever you like.
+of what you want instead, so the next agent gets there sooner. Notes and house
+rules for everything stay on this computer; a game's notes live in the game's
+folder and travel with it (they are committed with the game, like the board).
+Setup → General → Your notes opens the folder; edit or delete them whenever
+you like.
 
 Review pictures and clips stay out of the game's git history (the run writes
 `.fridae/.gitignore`), so the repository stays small enough to push.
