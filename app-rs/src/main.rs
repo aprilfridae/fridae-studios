@@ -18,6 +18,7 @@ mod cursor;
 mod expert_ai;
 mod fridae_lock;
 mod limits;
+mod live;
 mod media;
 mod notes;
 mod opencode;

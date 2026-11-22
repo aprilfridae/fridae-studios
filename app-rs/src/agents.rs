@@ -806,7 +806,10 @@ impl TurnProc {
         if self.tool_open.load(Ordering::SeqCst) {
             self.discard.store(true, Ordering::SeqCst);
         }
-        live.interrupt();
+        // by its own protocol: Claude Code's interrupt request, an ACP agent's `session/cancel`
+        if live.ask_stop().is_none() {
+            live.interrupt();
+        }
         let until = std::time::Instant::now() + paths::STOP_WAIT;
         // Claude Code may answer that the message was still queued: nothing was stopped, so the process is ended
         let unstopped = || self.requeued.load(Ordering::SeqCst);
@@ -998,6 +1001,9 @@ struct TurnEnd {
     /// a kept process's turn ended with a task of its own still running in the background: Claude Code starts a turn
     /// by itself when such a task finishes (measured), so the process is not kept
     background_left: bool,
+    /// the kept process cannot serve this message as a process per turn would (an ACP agent that does not offer the
+    /// model or effort asked for): it was ended, and the message goes to a process of its own, with no failure counted
+    unfit: bool,
 }
 
 /// A turn read from a chat's kept Claude Code process (`consume_lines`): its process, the id its message was sent
@@ -1270,6 +1276,63 @@ impl ClaudeLaunch {
     fn key(&self) -> String {
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, self.keys_on]).to_string()
     }
+}
+
+/// An AI kept open for a chat (`caps.live`): what its process is started with for a message, and how a turn runs on
+/// it. Everything else about keeping a process is the same for every AI (`Agent::live_turn`, `read_live`): the launch
+/// key, the fallback to a process per turn, idle closing, the ledger.
+trait Kept: Clone + Send + 'static {
+    /// The AI's id ("claude", "gemini").
+    fn ai(&self) -> &'static str;
+    /// Everything a kept process is started with, or decides by, that a later message could need otherwise.
+    fn key(&self) -> String;
+    /// Starts the process to keep, resuming `session` when the chat has one.
+    fn start(&self, session: Option<&str>, key: String) -> std::io::Result<Arc<Live>>;
+    /// The same message for a process of its own (the fallback): its command and what goes in on its stdin.
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String);
+    /// One turn on the kept process: the message written and the output read to the turn's end. `first`: the
+    /// process's first turn.
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd;
+}
+
+impl Kept for ClaudeLaunch {
+    fn ai(&self) -> &'static str {
+        "claude"
+    }
+
+    fn key(&self) -> String {
+        ClaudeLaunch::key(self)
+    }
+
+    fn start(&self, session: Option<&str>, key: String) -> std::io::Result<Arc<Live>> {
+        Live::start(self.command(true, session), key)
+    }
+
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
+        (self.command(false, session), text.to_string())
+    }
+
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
+        let message = claude_live::message_id();
+        if live.say(&message, text).is_err() {
+            tp.end(); // its output then ends, and the turn with it (`read_live`: nothing shown, so it is sent again)
+        }
+        let rx = live.lines();
+        let mut lines = std::iter::from_fn(|| rx.recv().ok());
+        // noted in the ledger again at a new process's first line, as a per-turn process is: the command line the
+        // ledger matches on is the one it has by then
+        let on_first = || {
+            if first {
+                crate::procs::record("claude", live.pid);
+            }
+        };
+        a.consume_lines(&mut lines, "claude", last, on_first, Some(LiveTurn { tp, message: &message, first, marks: &live.marks_turns }))
+    }
+}
+
+/// The switch that turns keeping a process off for an AI: `FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`.
+fn per_turn_forced(ai: &str) -> bool {
+    std::env::var(format!("FRIDAE_{}_PER_TURN", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
 }
 
 /// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
@@ -2215,11 +2278,18 @@ impl Agent {
 
     /// A Claude Code turn: on the chat's kept process when that works here, on a process of its own otherwise.
     fn claude_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) {
+        self.kept_turn(launch, text)
+    }
+
+    /// A turn of an AI that can be kept open (`caps.live`): on the chat's kept process when that works here, on a
+    /// process of its own otherwise.
+    fn kept_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) {
         if self.live_allowed() && self.live_turn(launch, text) {
             return;
         }
         let session = self.st.lock().unwrap().session.clone();
-        self.spawn_turn(launch.command(false, session.as_deref()), "claude", text);
+        let (cmd, input) = launch.per_turn(session.as_deref(), text);
+        self.spawn_turn(cmd, launch.ai(), &input);
     }
 
     /// Starts a command-line AI's process for one turn, hands it the message and reads it to its end on a thread of
@@ -2257,18 +2327,19 @@ impl Agent {
         true
     }
 
-    /// Whether this chat's Claude turns go to one kept process (`claude_live`): where Claude Code's interrupt was
-    /// measured (not Windows), unless `FRIDAE_CLAUDE_PER_TURN=1` says a process per turn, and until keeping one has
-    /// failed twice in this chat.
+    /// Whether this chat's turns go to one kept process (`live`): an AI the table says works that way (`caps.live`),
+    /// where its Stop was measured (not Windows), unless its switch says a process per turn
+    /// (`FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`), and until keeping one has failed twice in this chat.
     fn live_allowed(&self) -> bool {
-        crate::caps::of(&self.ai()).live && !cfg!(windows) && std::env::var("FRIDAE_CLAUDE_PER_TURN").map_or(true, |v| v != "1") && self.st.lock().unwrap().live_fails < LIVE_FAILS
+        let ai = self.ai();
+        crate::caps::of(&ai).live && !cfg!(windows) && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
     }
 
     /// Sends a turn's message to the chat's kept Claude Code process, starting one when the chat has none, when the
     /// one it has was started with other arguments (another mode, model, effort, allowed program, house rule, folder:
     /// it is closed, and the new one resumes the conversation), or when it has died meanwhile. False when that did
     /// not work: the turn then goes to a process of its own.
-    fn live_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) -> bool {
+    fn live_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) -> bool {
         let key = launch.key();
         let held = self.st.lock().unwrap().live.take();
         let live = match held {
@@ -2290,7 +2361,7 @@ impl Agent {
             Some(l) => l,
             None => {
                 let session = self.st.lock().unwrap().session.clone();
-                match Live::start(launch.command(true, session.as_deref()), key) {
+                match launch.start(session.as_deref(), key) {
                     Ok(l) => l,
                     Err(_) => {
                         self.st.lock().unwrap().live_fails += 1;
@@ -2341,7 +2412,8 @@ impl Agent {
     /// turn that had shown nothing yet and was not stopped is sent again to a process of its own, so the user gets
     /// the answer and not the failure; one that showed nothing at all within START_WAIT also keeps the chat on a
     /// process per turn from then on.
-    fn read_live(self: &Arc<Self>, live: Arc<Live>, tp: Arc<TurnProc>, launch: ClaudeLaunch, text: &str) {
+    fn read_live<L: Kept>(self: &Arc<Self>, live: Arc<Live>, tp: Arc<TurnProc>, launch: L, text: &str) {
+        let kind = launch.ai();
         let last = Arc::new(Mutex::new((std::time::Instant::now(), false, false)));
         {
             let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
@@ -2352,23 +2424,8 @@ impl Agent {
             thread::spawn(move || watch_start(tp));
         }
         let first = live.turns.fetch_add(1, Ordering::SeqCst) == 0;
-        let message = claude_live::message_id();
         live.set_in_turn(true);
-        if live.say(&message, text).is_err() {
-            tp.end(); // its output then ends, and the turn with it (below: nothing shown, so it is sent again)
-        }
-        let mut t = {
-            let rx = live.lines();
-            let mut lines = std::iter::from_fn(|| rx.recv().ok());
-            // noted in the ledger again at a new process's first line, as a per-turn process is: the command line
-            // the ledger matches on is the one it has by then
-            let on_first = || {
-                if first {
-                    crate::procs::record("claude", live.pid);
-                }
-            };
-            self.consume_lines(&mut lines, "claude", &last, on_first, Some(LiveTurn { tp: &tp, message: &message, first, marks: &live.marks_turns }))
-        };
+        let mut t = launch.turn(self, &live, &tp, text, &last, first);
         live.set_in_turn(false);
         {
             // under the gate the stall guard decides under, so a turn that ends now is never called stalled
@@ -2397,9 +2454,9 @@ impl Agent {
             };
             let stopped = self.turn_over();
             if killed {
-                self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+                self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
             }
-            self.after_turn("claude", t, "", Some((true, 0)), stopped);
+            self.after_turn(kind, t, "", Some((true, 0)), stopped);
             if drop_it {
                 live.close(); // after the turn is over for the chat: an expert reports without waiting for the exit
             }
@@ -2432,12 +2489,14 @@ impl Agent {
         let stopped_now = asked_to_stop || self.st.lock().unwrap().stopped;
         let lost = !t.got_result && !stopped_now && !killed && !stalled && !shutting() && !live.strayed() && !err.contains("No conversation found");
         if lost {
-            if !silent {
+            // a message the kept process could not serve at all is no failure of keeping one
+            if !silent && !t.unfit {
                 self.st.lock().unwrap().live_fails += 1;
             }
             if !t.began {
                 let session = self.st.lock().unwrap().session.clone();
-                if !self.spawn_turn(launch.command(false, session.as_deref()), "claude", text) {
+                let (cmd, input) = launch.per_turn(session.as_deref(), text);
+                if !self.spawn_turn(cmd, kind, &input) {
                     self.turn_over();
                 }
                 return;
@@ -2445,12 +2504,12 @@ impl Agent {
         }
         let stopped = self.turn_over();
         if killed {
-            self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+            self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
         let err = if stalled { STALLED.to_string() } else { err };
         // a failed result is the turn's end even though the process was then closed by the app (its exit says nothing)
         let exit = if t.got_result { Some((true, 0)) } else { status };
-        self.after_turn("claude", t, &err, exit, stopped);
+        self.after_turn(kind, t, &err, exit, stopped);
     }
 
     /// Closes the chat's kept Claude Code process, when it has one and no turn is running on it. Blocks for as long
