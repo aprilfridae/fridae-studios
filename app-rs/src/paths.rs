@@ -979,8 +979,8 @@ impl CopyLock {
                 return CopyLock(Some(lock));
             }
             let stale = fs::metadata(&lock).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a > std::time::Duration::from_secs(10));
-            if stale {
-                let _ = fs::remove_file(&lock);
+            // only go round again at once when the stale lock really went; one that cannot be removed waits like any other
+            if stale && fs::remove_file(&lock).is_ok() {
                 continue;
             }
             if std::time::Instant::now() > until {
