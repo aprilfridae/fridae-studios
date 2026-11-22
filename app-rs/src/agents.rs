@@ -435,7 +435,7 @@ fn progress_call(name: &str, input: &Value) -> bool {
     match short.as_str() {
         "rbx_stage" => action.map_or(input.is_null(), |a| matches!(a.as_str(), "stage" | "review" | "lesson")),
         "rbx_team" => action.map_or(input.is_null(), |a| a == "spawn"),
-        "write" | "edit" | "multiedit" | "notebookedit" | "write_file" | "edit_file" | "apply_patch" | "replace" => true,
+        "write" | "edit" | "multiedit" | "notebookedit" | "write_file" | "edit_file" | "apply_patch" | "replace" | "delete" => true,
         _ => studio_tool(name),
     }
 }
@@ -706,6 +706,20 @@ pub fn get(id: &str) -> Option<Arc<Agent>> {
 
 fn is_user(e: &Value) -> bool {
     e["kind"] == "user"
+}
+
+/// A Cursor chat whose saved conversation is gone: forget it, and hand over the chat so far (without the message being
+/// sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
+fn stale_cursor_chat(st: &mut State, saved: impl Fn(&str) -> bool) {
+    let Some(session) = st.session.clone() else { return };
+    if saved(&session) {
+        return;
+    }
+    st.session = None;
+    if st.handover.is_none() {
+        let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
+        st.handover = Some(handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP));
+    }
 }
 
 /// How much of a chat goes to the AI it is switched to: the newest part, about 6,000 words.
@@ -1436,7 +1450,7 @@ impl Agent {
         let model: Option<String> = match self.ai().as_str() {
             "claude" => Some(model.filter(|m| MODELS.contains(m)).unwrap_or("opus").to_string()),
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
-            "cursor" => model.filter(|m| cursor::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(cursor::default_model),
+            "cursor" => cursor::pick_model(model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
@@ -1523,6 +1537,11 @@ impl Agent {
         }
         // the AI was switched in a started chat: the new one gets the chat so far with its first message. It is kept
         // until that AI has opened a conversation (`got_session`), so a first turn that fails or is stopped hands it over again.
+        // Cursor asked to resume a chat it no longer has (its saved chats were cleared) starts an empty one under that id
+        // without a word: the chat starts afresh with the chat so far instead (up to this message, which follows anyway)
+        if kind == "cursor" {
+            stale_cursor_chat(&mut self.st.lock().unwrap(), cursor::chat_saved);
+        }
         text = with_handover(&self.st.lock().unwrap(), &text);
         // what the two switches under the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
@@ -1562,9 +1581,11 @@ impl Agent {
         };
         if kind != "claude" {
             let _ = fs::create_dir_all(&workspace);
-            prompt += OTHER_AI_PROMPT;
+            // Cursor has its own text: it may run the programs the user allowed, and a refused one becomes a card
             if kind == "cursor" {
-                prompt += &cursor::folder_note(project.as_deref());
+                prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
+            } else {
+                prompt += OTHER_AI_PROMPT;
             }
             text = match &session {
                 None => antigravity::with_instructions(&prompt, &text),
@@ -1685,6 +1706,13 @@ impl Agent {
                                 let short = name.rsplit("__").next().unwrap_or(&name).to_string();
                                 self.show_tool(&short, studio_tool(&name))
                             }
+                            Out::ToolArgs(name, input) => {
+                                if progress_call(&name, &input) {
+                                    self.st.lock().unwrap().turn_progress = true;
+                                }
+                                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
+                                self.show_tool(&short, studio_tool(&name))
+                            }
                             Out::Text(text) => self.put("text", json!({"text": text})),
                             Out::Pictures(paths) => {
                                 let urls: Vec<String> = paths.iter().filter_map(|p| fs::read(p).ok()).filter_map(|bytes| attach::save_chat_image(&bytes)).collect();
@@ -1800,12 +1828,13 @@ impl Agent {
             }
         }
         let err = err_reader.join().unwrap_or_default();
-        let status = child.wait().ok();
         // Cursor leaves a helper of its own running after the turn (its "worker-server", with a language server), in the
-        // turn's process group: it is ended now, before the next turn can find it, so nothing outlives the turn or the app
+        // turn's process group: it is ended now, before the leader is reaped (so the group's ID cannot have been reused),
+        // and without waiting for it, so nothing outlives the turn or the app and the turn is not held up
         if kind == "cursor" {
-            paths::end_trees(&[child.id()]);
+            paths::end_group_soon(child.id());
         }
+        let status = child.wait().ok();
         let stopped = {
             let mut st = self.st.lock().unwrap();
             st.running = false;
@@ -2665,6 +2694,24 @@ mod tests {
         let h = handover_text(&log, "Claude", HANDOVER_CAP);
         assert!(h.contains("User: Make it blue") && !h.contains("approved") && !h.contains("Resume"), "{h}");
         assert!(h.contains("User: (asked for changes in Review, on \"Map\") more trees near spawn"), "{h}");
+    }
+
+    #[test]
+    fn a_cursor_chat_it_no_longer_has_starts_again_with_the_chat_so_far() {
+        let log = vec![
+            json!({"kind": "user", "text": "Make a lava floor"}),
+            json!({"kind": "text", "text": "Done: lava floor at the start."}),
+            json!({"kind": "user", "text": "Now make it glow"}),
+        ];
+        let mut st = State { session: Some("abc".into()), log: log.clone(), ..Default::default() };
+        stale_cursor_chat(&mut st, |_| true);
+        assert_eq!(st.session.as_deref(), Some("abc"), "a chat Cursor still has is resumed");
+        assert!(st.handover.is_none());
+        stale_cursor_chat(&mut st, |_| false);
+        assert!(st.session.is_none());
+        let h = st.handover.clone().unwrap();
+        assert!(h.contains("Make a lava floor") && h.contains("lava floor at the start"));
+        assert!(!h.contains("Now make it glow"), "the message being sent is not handed over twice");
     }
 
     #[test]

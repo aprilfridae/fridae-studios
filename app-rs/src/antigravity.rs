@@ -135,6 +135,8 @@ pub enum Out {
     Conversation(String),
     Model(String),
     Tool(String),
+    /// A tool server's tool with its arguments (Cursor), so a status check is not taken for progress.
+    ToolArgs(String, Value),
     Text(String),
     /// Image files a tool reported making, to show as thumbnails.
     Pictures(Vec<String>),

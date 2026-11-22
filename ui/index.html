@@ -334,6 +334,9 @@ textarea::placeholder { color: var(--faint); }
 .att:hover button, .att button:focus-visible { opacity: 1; }
 .ext { font-family: var(--mono); font-size: 11px; letter-spacing: 0.01em; text-transform: uppercase; color: var(--dim); }
 .fname { font-size: 13px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#model-menu .mlist { max-height: 216px; overflow-y: auto; overscroll-behavior: contain; }
+#model-menu .mfind { display: block; width: calc(100% - 8px); margin: 0 4px 6px; padding: 6px 9px; font: inherit; font-size: 13px; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; }
+.aigap { max-width: 800px; margin: 4px auto 0; padding: 0 8px; font-size: 12.5px; color: var(--faint); }
 .hint { max-width: 800px; margin: 8px auto 0; padding: 0 8px; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--faint); min-height: 28px; }
 .hint #now { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint .now { color: var(--dim); }
@@ -732,6 +735,7 @@ body.proj #pd, body.guide #gd { transform: none; }
           </span>
           <span id="now"></span>
         </div>
+        <p class="aigap" id="ai-gap" hidden></p>
       </div>
     </div>
     </div>
@@ -898,7 +902,7 @@ body.proj #pd, body.guide #gd { transform: none; }
       <h3>Texture generation</h3>
       <p class="sub" id="gem-state"></p>
       <div class="keyrow"><input type="password" id="gem-key" placeholder="Gemini API key" autocomplete="off" spellcheck="false"><button class="pill" id="gem-save">Save</button></div>
-      <p class="sub">Without Antigravity, you get the prompt, make the image in your own Gemini chat, and it is picked up when you copy it. A key is only used if you switch it on below; Google then charges about 3 cents an image. The /texture, /particle and /decal commands always use your own chat. Textures only: never UI, icons or lettering.</p>
+      <p class="sub">Without Antigravity, you get the prompt, make the image in your own Gemini chat, and it is picked up when you copy it. A key is only used if you switch it on below; Google then charges about 3 cents an image. The /texture, /particle and /decal commands always use your own chat. Textures only: never UI, icons or lettering. Cursor chats use only a key saved here, not one set in your computer's environment.</p>
       <div class="act"><button class="switch" id="gem-api" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span class="swl">Use my API key (Google charges per image)</span></button><button class="pill" id="gem-clear">Remove key</button></div>
     </section>
     <section data-s="chats">
@@ -958,12 +962,14 @@ const $ = (id) => document.getElementById(id);
 const scroller = $("scroll"), box = $("box"), sendBtn = $("send");
 let after = 0, status = {};
 
-/* The AIs a chat can run on: [id, name, the program behind it, how to get it]. Any project's chats can use any of them. */
-const AIS = [
+/* The AIs a chat can run on: [id, name, the program behind it, how to get it]. Any project's chats can use any of them.
+   AIS is the ones this computer offers (status.ai.offered: Cursor is not offered on Windows yet). */
+const ALL_AIS = [
   ["claude", "Claude", "Claude Code", "Install Claude Code from claude.com/claude-code and sign in once."],
   ["gemini", "Gemini", "Google's Antigravity tool", "Install Antigravity's command-line tool (agy) from antigravity.google, then run agy once in a terminal to sign in."],
   ["cursor", "Cursor", "the Cursor Agent tool", "Install the Cursor Agent command-line tool from cursor.com/cli, then run cursor-agent login once in a terminal to sign in."],
 ];
+let AIS = ALL_AIS.slice();
 /* Which project is in front ("" is the chats with no project), which tab, and the chat last used in each project. */
 let curProj = null, view = "chat";
 let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
@@ -2264,14 +2270,30 @@ function paintModel() {
   const cur = list.find((m) => m[0] === chosen);
   const modes = [runMode === "studio" || leadsRun(p) ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
   $("model-name").textContent = [cur ? cur[1] : aiName(ai), ai === "cursor" ? "" : EFFORT_NAMES[effort]].filter(Boolean).concat(modes).join(" \u00b7 ");
-  const box0 = $("model-menu"); box0.innerHTML = "";
+  paintGap(ai, p);
+  /* a long list (Cursor offers hundreds) scrolls in a box of its own, with a filter, so the modes below stay in view */
+  const box0 = $("model-menu"), keep = box0.querySelector(".mlist"), top = keep ? keep.scrollTop : 0;
+  const hadFocus = document.activeElement && document.activeElement.classList.contains("mfind");
+  box0.innerHTML = "";
   if (!list.length) box0.appendChild(el("p", "sub", "Its model list has not arrived yet.")).style.margin = "0 8px 6px";
-  list.forEach(([id, name, note]) => {
+  if (modelFilterAi !== ai) { modelFilter = ""; modelFilterAi = ai; }
+  if (list.length > 12) {
+    const f = el("input", "mfind"); f.type = "search"; f.placeholder = "Find a model"; f.value = modelFilter; f.setAttribute("aria-label", "Find a model");
+    f.oninput = () => { modelFilter = f.value; paintModel(); };
+    box0.appendChild(f);
+    if (hadFocus) setTimeout(() => { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }, 0);
+  }
+  const words = list.length > 12 ? modelFilter.toLowerCase().split(/\s+/).filter(Boolean) : [];
+  const shown = list.filter(([id, name]) => words.every((w) => (id + " " + name).toLowerCase().includes(w)));
+  const lst = box0.appendChild(el("div", "mlist"));
+  if (list.length && !shown.length) lst.appendChild(el("p", "sub", "No model matches.")).style.margin = "0 8px 6px";
+  shown.forEach(([id, name, note]) => {
     const o = el("button", "opt", '<span class="tick">&bull;</span><span><b>' + esc(name) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
     o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
     o.onclick = () => { chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
-    box0.appendChild(o);
+    lst.appendChild(o);
   });
+  lst.scrollTop = top;
   const seg = $("effort"); seg.innerHTML = "";
   /* a Cursor model carries its effort in its id (Codex 5.3 High...), so there is nothing to set apart */
   seg.style.display = ai === "cursor" ? "none" : "";
@@ -2284,8 +2306,19 @@ function paintModel() {
     seg.appendChild(b);
   });
 }
+let modelFilter = "", modelFilterAi = "";
+/* one plain line under the message box when Cursor runs in Full auto or Studio and can do something there that Claude
+   cannot (status.ai.gaps, from the app; none today: its Full auto is sandboxed, so this stays hidden) */
+function paintGap(ai, p) {
+  const gaps = (((status.ai || {}).gaps || {})[ai]) || {}, mode = runMode === "studio" || leadsRun(p) ? "studio" : fullAuto ? "full" : "";
+  const text = (mode && gaps[mode]) || "", g = $("ai-gap");
+  g.textContent = text; g.hidden = !text;
+}
 function closeMenu() { menu.classList.remove("on"); modelBtn.setAttribute("aria-expanded", "false"); }
-modelBtn.onclick = (ev) => { ev.stopPropagation(); const open = !menu.classList.contains("on"); menu.classList.toggle("on", open); modelBtn.setAttribute("aria-expanded", open ? "true" : "false"); };
+modelBtn.onclick = (ev) => {
+  ev.stopPropagation(); const open = !menu.classList.contains("on"); menu.classList.toggle("on", open); modelBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) { const on = $("model-menu").querySelector('.mlist [aria-selected="true"]'); if (on) on.scrollIntoView({ block: "nearest" }); }
+};
 document.addEventListener("click", (ev) => { if (!ev.target.closest(".pick")) closeMenu(); });
 paintModel();
 box.addEventListener("input", fit);
@@ -3593,7 +3626,9 @@ function paintPlugin(note) {
 }
 $("plug-install").onclick = async () => { const r = await api("/api/plugin", { action: "install" }); await refresh(); if (!r.ok) paintPlugin(r.error || "Could not install the plugin."); };
 $("plug-remove").onclick = async () => { await api("/api/plugin", { action: "remove" }); await refresh(); paintPlugin("Removed. Studio stops using it the next time it starts."); };
-async function refresh() { try { status = await api("/api/status"); paintModel(); paintLimits();
+async function refresh() { try { status = await api("/api/status");
+  const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
+  paintModel(); paintLimits();
   paintNeeds(); paintSide(); paintGemini(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;

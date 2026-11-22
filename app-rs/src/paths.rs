@@ -186,6 +186,37 @@ pub fn own_group(c: &mut Command) {
     let _ = c;
 }
 
+/// Ends what a finished turn left running in its process group (Cursor's worker-server), without holding up the turn.
+/// Called once the turn's output has ended but before its leader is reaped: an unreaped leader keeps the group's ID
+/// reserved, so SIGTERM can only reach that group. Any member still there after `STOP_GRACE` gets SIGKILL from a
+/// background thread (members keep the ID reserved too; an empty group is not signalled). Not on Windows, where Cursor
+/// is not offered.
+pub fn end_group_soon(group: u32) {
+    #[cfg(unix)]
+    {
+        if group <= 1 || group == std::process::id() {
+            return;
+        }
+        let signal = move |sig: &str| {
+            Command::new("kill")
+                .args([sig, "--", &format!("-{group}")])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        signal("-TERM");
+        std::thread::spawn(move || {
+            std::thread::sleep(STOP_GRACE);
+            if signal("-0") {
+                signal("-KILL");
+            }
+        });
+    }
+    #[cfg(not(unix))]
+    let _ = group;
+}
+
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
 
@@ -285,6 +316,10 @@ pub fn find_codex() -> Option<PathBuf> {
 /// The Cursor Agent command-line tool, if it is installed. Its installer puts it in ~/.local/bin, which an app started
 /// from the Dock does not have on PATH.
 pub fn find_cursor() -> Option<PathBuf> {
+    // not on Windows yet: see DEVELOPING.md, "Cursor as a chat's AI"
+    if cfg!(windows) {
+        return None;
+    }
     env::var("FRIDAE_CURSOR").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("cursor-agent")).or_else(|| {
         let name = if cfg!(windows) { "cursor-agent.cmd" } else { "cursor-agent" };
         [home_dir().join(".local").join("bin").join(name), PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("cursor-agent").join(name)]
@@ -293,8 +328,8 @@ pub fn find_cursor() -> Option<PathBuf> {
     })
 }
 
-/// The AIs a chat can run on.
-pub const AIS: [&str; 4] = ["claude", "gemini", "chatgpt", "cursor"];
+/// The AIs a chat can run on. Cursor is not offered on Windows yet (see DEVELOPING.md).
+pub const AIS: &[&str] = if cfg!(windows) { &["claude", "gemini", "chatgpt"] } else { &["claude", "gemini", "chatgpt", "cursor"] };
 
 /// The program behind one of them, if it is installed.
 pub fn find_ai(kind: &str) -> Option<PathBuf> {
@@ -316,7 +351,7 @@ pub fn default_ai() -> String {
 fn ai_choice(saved: Option<&str>) -> &'static str {
     match saved {
         Some("gemini" | "antigravity") => "gemini",
-        Some("cursor") => "cursor",
+        Some("cursor") if AIS.contains(&"cursor") => "cursor",
         _ => "claude",
     }
 }
@@ -495,8 +530,10 @@ mod tests {
         assert_eq!(super::ai_choice(Some("gemini")), "gemini");
         assert_eq!(super::ai_choice(Some("antigravity")), "gemini");
         assert_eq!(super::ai_choice(None), "claude");
-        assert_eq!(super::ai_choice(Some("cursor")), "cursor");
-        assert!(super::AIS.contains(&"cursor"));
+        // Cursor is not offered on Windows yet: a saved choice of it reads as Claude there
+        assert_eq!(super::ai_choice(Some("cursor")), if cfg!(windows) { "claude" } else { "cursor" });
+        assert_eq!(super::AIS.contains(&"cursor"), !cfg!(windows));
+        assert_eq!(super::find_cursor().is_none() || !cfg!(windows), true);
     }
 
     use super::*;

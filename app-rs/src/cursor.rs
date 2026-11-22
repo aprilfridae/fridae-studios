@@ -1,64 +1,94 @@
 //! Cursor as a chat's AI, through the Cursor Agent command-line tool `cursor-agent` run without its own interface.
 //!
 //!   cursor-agent -p --output-format stream-json --trust --approve-mcps --workspace <chat folder>
-//!                --add-dir <kit> [--add-dir <game>] [--model <id>] [--resume <chat>] [--force]
+//!                --add-dir <kit> [--add-dir <game>] [--model <id>] [--resume <chat>] --sandbox disabled|enabled
 //!
 //! The message goes in on stdin; one JSON event per line comes out, close to Claude Code's: `system`/`init` (with
 //! the chat's `session_id`), `user`, `thinking`, `assistant` (one per message between tool steps), `tool_call`
 //! `started`/`completed` (`{"mcpToolCall": {args, result}}`, `shellToolCall`, `editToolCall`, ...), then `result`
 //! with the turn's token counts. Checked against cursor-agent 2026.11.22. A failure before the turn starts (signed
-//! out, an unknown model) prints one line on stderr and no events.
+//! out, an unknown model) prints one line on stderr and no events. Not offered on Windows yet (see DEVELOPING.md).
 //!
 //! How this differs from Claude Code, and why:
 //! - There is no flag for standing instructions, so they are placed at the top of a conversation's first message,
-//!   as for the other AIs that are not Claude.
+//!   as for the other AIs that are not Claude, with Cursor's own text (`text/cursor.txt`).
 //! - Nothing is written where Cursor keeps its own settings, and nothing in a game's folder. Every Fridae chat on
 //!   Cursor runs in a folder of the app's own (`work/cursor/chats/<chat>`, with an empty `.git` folder so Cursor takes
 //!   it as the project's top and looks no higher), whose `.cursor/mcp.json` holds our two tool servers; the game is
-//!   added with `--add-dir`. `CURSOR_CONFIG_DIR` and `CURSOR_DATA_DIR` point at `work/cursor/config` and
-//!   `work/cursor/data`, so Cursor's permissions file, its saved chats and its approvals for these chats are the
-//!   app's, and the user's own `~/.cursor/cli-config.json` (and the permissions in it) is neither read nor changed.
-//!   The sign-in is not in those folders (it is in the system keychain), so it still works.
-//! - Permissions (`work/cursor/config/cli-config.json`, rewritten before every turn): our tool servers and the
-//!   programs the user allowed (`Shell(<program>)`) are allowed; any other shell command is refused, because nobody is
-//!   there to approve it (the refusal is reported like Claude Code's, and the page offers to allow the program).
-//!   Tool servers the user set up for Cursor itself in `~/.cursor/mcp.json` are denied by name, and with
-//!   FRIDAE_NO_STUDIO anything named like Studio is denied too. Cursor lets its file tools write anywhere unless a
-//!   rule denies it (Claude Code only writes in its folders); the deny rules cover Cursor's own settings and the
-//!   hidden folders and Library of the home folder. See DEVELOPING.md for what that leaves open.
-//! - Full auto passes `--force`: shell commands run unasked, as in Claude Code's bypass mode; the deny rules for tool
-//!   servers still hold.
+//!   added with `--add-dir`. `CURSOR_CONFIG_DIR` and `CURSOR_DATA_DIR` point at the app's data folder (Application
+//!   Support on a Mac, not Documents), so Cursor's permissions file, its saved chats and its approvals for these chats
+//!   are the app's, and the user's own `~/.cursor/cli-config.json` is neither read nor changed. The sign-in is not in
+//!   those folders (it is in the system keychain), so it still works.
+//! - Permissions (`cli-config.json` there, rebuilt before every turn) run in allow-list mode, measured with real turns:
+//!   our tool servers and the programs the user allowed (`Shell(<program>)`) run; any other shell command, any other
+//!   tool server's tool, and a write outside the workspace folders (the chat's folder, the kit, the game) need
+//!   approval, so they are refused (a refused command is reported like Claude Code's, and the page offers to allow the
+//!   program). Cursor lets any write into temp folders through, by design. Deny rules (Cursor's own settings, the
+//!   app's config, the home folder's hidden files and Library, the user's own Cursor servers, Studio servers under
+//!   FRIDAE_NO_STUDIO) hold in every mode.
+//! - Full auto does not use `--force`: it keeps the allow list and turns Cursor's sandbox on. Allowed programs and our
+//!   tools run as before; any other command runs too, but sandboxed (writes only in the workspace folders and temp
+//!   folders, no network); other tool servers and writes outside the workspace are still refused. That is stricter
+//!   than Claude Code's bypass mode, never looser.
 
 use std::{
-    env,
     collections::HashSet,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
 
 use serde_json::{Map, Value, json};
 
 use crate::{antigravity::Out, paths};
 
-static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
+/// The models Cursor offers, and when the list was last asked for.
+static MODELS: Mutex<(Vec<(String, String)>, Option<Instant>)> = Mutex::new((Vec::new(), None));
+static LOADING: AtomicBool = AtomicBool::new(false);
 
 /// The model a Cursor chat starts on: Cursor's own choice per request.
 pub const DEFAULT_MODEL: &str = "auto";
 
-/// Ask Cursor which models this account may use (`cursor-agent models` prints "id - Name" lines). Done once, in the
-/// background, because it goes to the network.
+/// Ask Cursor which models this account may use (`cursor-agent models` prints "id - Name" lines), in the background
+/// because it goes to the network. An empty answer (signed out, offline, not installed yet) leaves the list empty, and
+/// `refresh_models` asks again later.
 pub fn load_models() {
+    if LOADING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    MODELS.lock().unwrap().1 = Some(Instant::now());
     std::thread::spawn(|| {
-        let Some(exe) = paths::find_cursor() else { return };
-        let mut cmd = Command::new(exe);
-        cmd.arg("models");
-        environment(&mut cmd);
-        paths::quiet(&mut cmd);
-        let Ok(out) = cmd.output() else { return };
-        let _ = MODELS.set(parse_models(&String::from_utf8_lossy(&out.stdout)));
+        let list = paths::find_cursor()
+            .and_then(|exe| {
+                let mut cmd = Command::new(exe);
+                cmd.arg("models");
+                environment(&mut cmd);
+                paths::quiet(&mut cmd);
+                cmd.output().ok()
+            })
+            .map(|out| parse_models(&String::from_utf8_lossy(&out.stdout)))
+            .unwrap_or_default();
+        if !list.is_empty() {
+            MODELS.lock().unwrap().0 = list;
+        }
+        LOADING.store(false, Ordering::SeqCst);
     });
+}
+
+/// While the list is empty, ask again at most once a minute (the page's status calls this).
+pub fn refresh_models() {
+    let due = {
+        let m = MODELS.lock().unwrap();
+        m.0.is_empty() && m.1.is_none_or(|t| t.elapsed().as_secs() >= 60)
+    };
+    if due {
+        load_models();
+    }
 }
 
 /// The "id - Name" lines of `cursor-agent models`, without the "(current, default)" notes.
@@ -78,63 +108,169 @@ pub fn parse_models(text: &str) -> Vec<(String, String)> {
 }
 
 /// The models Cursor offers, as (id, name). Empty until the list has arrived.
-pub fn models() -> &'static [(String, String)] {
-    MODELS.get().map(Vec::as_slice).unwrap_or(&[])
+pub fn models() -> Vec<(String, String)> {
+    MODELS.lock().unwrap().0.clone()
 }
 
 /// The model a Cursor chat uses unless the user picks another: Auto, unless the list came and lacks it.
 pub fn default_model() -> Option<String> {
-    default_of(models())
+    default_of(&models())
+}
+
+/// The model a turn asks for: the one chosen when Cursor lists it, or when the list has not arrived (Cursor itself
+/// then says if it does not know it); otherwise the default.
+pub fn pick_model(chosen: Option<&str>) -> Option<String> {
+    pick_from(&models(), chosen)
+}
+
+fn pick_from(list: &[(String, String)], chosen: Option<&str>) -> Option<String> {
+    match chosen.filter(|m| !m.is_empty()) {
+        Some(m) if list.is_empty() || list.iter().any(|(id, _)| id == m) => Some(m.to_string()),
+        _ => default_of(list),
+    }
 }
 
 fn default_of(list: &[(String, String)]) -> Option<String> {
     if list.is_empty() || list.iter().any(|(id, _)| id == DEFAULT_MODEL) { Some(DEFAULT_MODEL.to_string()) } else { list.first().map(|(id, _)| id.clone()) }
 }
 
-/// Where the app keeps what Cursor writes for its chats: `config` (permissions and saved chats), `data` (approvals
-/// per workspace) and `chats/<id>` (each chat's workspace).
-fn root() -> PathBuf {
-    paths::work("cursor")
+/// What Cursor can do in Full auto or in Studio that Claude Code cannot there, as one plain line the page shows under
+/// the message box. Nothing today: Claude Code runs both with every check off, while Cursor keeps its allow list and
+/// sandbox (measured, see DEVELOPING.md), so it can do less, never more. A gap found later goes here.
+pub fn gaps() -> Value {
+    json!({"full": null, "studio": null})
+}
+
+/// Where the app keeps Cursor's settings and saved chats (`config`) and its approvals per workspace (`data`): the
+/// per-user app data folder, not Documents (which iCloud or OneDrive may sync). Cursor's account details (email and
+/// name, no tokens) are cached there too.
+fn store() -> PathBuf {
+    #[cfg(test)]
+    return paths::test_dir("cursor-store");
+    #[allow(unreachable_code)]
+    {
+        let home = paths::home_dir();
+        let base = if cfg!(target_os = "macos") {
+            home.join("Library").join("Application Support")
+        } else {
+            env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local").join("share"))
+        };
+        base.join("Fridae Studios").join("cursor")
+    }
 }
 
 pub fn config_dir() -> PathBuf {
-    root().join("config")
+    store().join("config")
 }
 
 pub fn data_dir() -> PathBuf {
-    root().join("data")
+    store().join("data")
 }
 
 /// The folder a chat's Cursor works in.
 pub fn workspace(agent_id: &str) -> PathBuf {
-    root().join("chats").join(agent_id)
+    paths::work("cursor").join("chats").join(agent_id)
 }
 
-/// The home folder Cursor runs with. FRIDAE_CURSOR_HOME (testing only) gives a copy of the app with a scratch HOME the
-/// real one for Cursor alone, because Cursor finds its sign-in through the home folder's keychain.
+/// Whether Cursor still has a saved chat (`config/chats/<workspace hash>/<chat id>/`). Asked to resume one it does not
+/// have, Cursor quietly starts an empty chat under that id, so the app checks first.
+pub fn chat_saved(session: &str) -> bool {
+    chat_saved_in(&config_dir(), session)
+}
+
+fn chat_saved_in(config: &Path, session: &str) -> bool {
+    !session.is_empty()
+        && !session.contains(['/', '\\'])
+        && fs::read_dir(config.join("chats")).into_iter().flatten().flatten().any(|d| d.path().join(session).is_dir())
+}
+
+/// FRIDAE_CURSOR_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
+/// Cursor alone, because Cursor finds its sign-in through the home folder's keychain.
+#[cfg(debug_assertions)]
+fn home_override() -> Option<PathBuf> {
+    env::var_os("FRIDAE_CURSOR_HOME").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+fn home_override() -> Option<PathBuf> {
+    None
+}
+
+/// The home folder Cursor runs with.
 fn cursor_home() -> PathBuf {
-    env::var_os("FRIDAE_CURSOR_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(paths::home_dir)
-}
-
-fn home_override() -> bool {
-    env::var_os("FRIDAE_CURSOR_HOME").is_some_and(|v| !v.is_empty())
+    home_override().unwrap_or_else(paths::home_dir)
 }
 
 /// Cursor's settings and data folders are the app's (see the top of this file).
 fn environment(cmd: &mut Command) {
     cmd.env("CURSOR_CONFIG_DIR", config_dir()).env("CURSOR_DATA_DIR", data_dir());
-    if home_override() {
-        cmd.env("HOME", cursor_home());
+    if let Some(h) = home_override() {
+        cmd.env("HOME", h);
     }
 }
 
-/// The names of the tool servers the user set up for Cursor itself (`~/.cursor/mcp.json`), read only.
+/// The names of the tool servers the user set up for Cursor itself (`~/.cursor/mcp.json`), read only. Read the way
+/// Cursor reads it, comments and trailing commas allowed. A file that still cannot be read gives no names; their tools
+/// are refused anyway, since only ours are on the allow list.
 fn user_servers(home: &Path) -> Vec<String> {
-    fs::read_to_string(home.join(".cursor").join("mcp.json"))
+    fs::read_to_string(home.join(".cursor").join("mcp.json")).map(|s| server_names(&s)).unwrap_or_default()
+}
+
+fn server_names(text: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(&loose_json(text))
         .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .and_then(|v| v["mcpServers"].as_object().map(|o| o.keys().cloned().collect()))
         .unwrap_or_default()
+}
+
+/// JSON with comments and trailing commas made plain JSON (outside strings).
+fn loose_json(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut in_str) = (0, false);
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 1;
+            } else if c == '"' {
+                in_str = false;
+            }
+        } else if c == '"' {
+            in_str = true;
+            out.push(c);
+        } else if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            continue;
+        } else if c == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+            continue;
+        } else if c == ',' {
+            // a comma followed only by space before a closing bracket is dropped
+            let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+            if !matches!(next, Some('}') | Some(']')) {
+                out.push(c);
+            }
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// A path as a pattern: glob characters in it (a folder named "Ann [Work]") become `?`, which matches any one
+/// character, so the rule still covers the path (and at most a few look-alikes).
+fn as_pattern(path: &Path) -> String {
+    path.display().to_string().chars().map(|c| if matches!(c, '[' | ']' | '{' | '}' | '*' | '?') { '?' } else { c }).collect()
 }
 
 /// What Cursor may do without asking. `servers` are ours; `allowed` the programs the user allowed; `theirs` the
@@ -154,42 +290,55 @@ pub fn permissions(servers: &Value, allowed: &[String], theirs: &[String], prote
         }
     }
     // no Studio for this copy (FRIDAE_NO_STUDIO): whatever Studio server Cursor finds elsewhere is refused too
+    // (Cursor matches server names without regard to case: measured)
     if !ours.iter().any(|n| n.to_lowercase().contains("studio")) {
-        deny.extend(["Mcp(*studio*:*)", "Mcp(*Studio*:*)", "Mcp(*STUDIO*:*)"].map(str::to_string));
+        deny.push("Mcp(*studio*:*)".to_string());
     }
-    // its file tools may write anywhere unless denied: never its own settings, permissions or tool lists
+    // never its own settings, permissions or tool lists, in any mode
     deny.push("Write(**/.cursor/**)".to_string());
     for dir in protect {
-        deny.push(format!("Write({})", dir.display()));
-        deny.push(format!("Write({}/**)", dir.display()));
+        let p = as_pattern(dir);
+        deny.push(format!("Write({p})"));
+        deny.push(format!("Write({p}/**)"));
     }
     json!({"allow": allow, "deny": deny})
 }
 
-/// The folders Cursor's file tools are kept out of: the app's Cursor settings, and the home folder's hidden folders
-/// and files (shell start-up files, other tools' settings) and Library.
+/// What Cursor's file tools are kept out of: the app's Cursor settings, the app's own settings file (it holds the
+/// programs agents may run), and the home folder's hidden folders and files (shell start-up files, other tools'
+/// settings) and Library. Outside the workspace folders a write is refused anyway in every mode; these rules also
+/// cover the kit and the work folder, which are workspace folders.
 fn protected(home: &Path) -> Vec<PathBuf> {
-    let mut list = vec![config_dir(), data_dir()];
+    let mut list = vec![config_dir(), data_dir(), paths::PATHS.home.join("config.json")];
     if !home.as_os_str().is_empty() {
         list.extend([home.join(".*"), home.join("Library")]);
     }
     list
 }
 
-/// Write the permissions into the app's Cursor settings file, keeping what Cursor itself stores there.
+/// What Cursor itself keeps in its settings file that the app leaves alone (the model last used, the account and
+/// privacy caches). Everything else is rebuilt each turn, so nothing a turn wrote there lasts.
+const KEPT: [&str; 11] = [
+    "model", "selectedModel", "modelParameters", "modelSelectionHistory", "hasChangedDefaultModel", "exploreSubagentModel",
+    "privacyCache", "authInfo", "serverConfigCache", "autoReviewAvailabilityCache", "network",
+];
+
+/// Write the app's Cursor settings file: the permissions, with only `KEPT` of what was there.
 fn write_config(dir: &Path, permissions: &Value) {
     let path = dir.join("cli-config.json");
-    let mut cfg = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
-    if !cfg["version"].is_number() {
-        cfg["version"] = json!(1);
+    let old = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    let mut cfg = json!({"version": 1});
+    for k in KEPT {
+        if let Some(v) = old.get(k) {
+            cfg[k] = v.clone();
+        }
     }
     cfg["permissions"] = permissions.clone();
     cfg["approvalMode"] = json!("allowlist");
     cfg["autoAcceptWebSearch"] = json!(true); // as Claude Code's WebSearch is allowed
-    if !cfg["sandbox"].is_object() {
-        cfg["sandbox"] = json!({});
-    }
-    cfg["sandbox"]["mode"] = json!("disabled"); // the programs the user allowed run as they do for Claude Code
+    // off unless a turn asks for it (Full auto passes --sandbox enabled): the programs the user allowed run as they do
+    // for Claude Code
+    cfg["sandbox"] = json!({"mode": "disabled"});
     let _ = fs::create_dir_all(dir);
     // two chats may start at once: write a file of our own, then put it in place in one step
     let tmp = dir.join(format!("cli-config.json.{}-{}.tmp", std::process::id(), paths::stamp()));
@@ -207,7 +356,7 @@ const PASSED: [&str; 9] = ["RBXKIT_WORK", "RBXKIT_BLENDER", "RBXKIT_STUDIO_MCP",
 /// (FRIDAE_CURSOR_HOME), so the servers see the app's home folder, not Cursor's.
 fn passed_env() -> Vec<(String, String)> {
     let mut list: Vec<(String, String)> = PASSED.iter().filter_map(|k| env::var(k).ok().filter(|v| !v.is_empty()).map(|v| (k.to_string(), v))).collect();
-    if home_override() {
+    if home_override().is_some() {
         list.push(("HOME".to_string(), paths::home_dir().display().to_string()));
     }
     list
@@ -260,9 +409,9 @@ pub fn args(workspace: &Path, kit: &Path, project: Option<&str>, session: Option
     if let Some(s) = session.filter(|s| !s.is_empty()) {
         a.extend(["--resume".to_string(), s.to_string()]);
     }
-    if full {
-        a.push("--force".to_string()); // full auto: shell commands run unasked; the deny rules still hold
-    }
+    // Full auto: the allow list stays, and commands it does not cover run in Cursor's sandbox instead of being refused.
+    // Not `--force`, which would let anything run unconfined and other tool servers' tools through.
+    a.extend(["--sandbox".to_string(), if full { "enabled" } else { "disabled" }.to_string()]);
     a
 }
 
@@ -279,17 +428,15 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, session: Option<&s
     cmd
 }
 
-/// What Cursor is told about its folders: it does not work in the game's folder (as the project text says), but in
-/// the app's folder for the chat, with the game's folder added.
-pub fn folder_note(project: Option<&str>) -> String {
-    let mut s = String::from(
-        "\nFOR YOU, ON CURSOR: your working directory is a scratch folder the app keeps for this chat, not a game folder. \
-         Do not put work there. Commands the user has not allowed are refused, as are writes to Cursor's own settings.",
-    );
-    if let Some(p) = project.filter(|p| !p.is_empty()) {
-        s += &format!(" The game's folder is added to your workspace: read and write the game's files (GAME.md included) by their full paths under {p}.");
-    }
-    s + "\n"
+/// How Cursor runs here, in its own words (instead of the text the other AIs get): its folders, the allowed programs
+/// and the blocked card, Full auto's sandbox, the web.
+pub fn instructions(project: Option<&str>, allowed: &[String]) -> String {
+    let game = match project.filter(|p| !p.is_empty()) {
+        Some(p) => format!(" The game's folder is added to your workspace: read and write the game's files (GAME.md included) by their full paths under {p}."),
+        None => String::new(),
+    };
+    let programs = if allowed.is_empty() { "none yet".to_string() } else { allowed.join(", ") };
+    include_str!("text/cursor.txt").replace("{game}", &game).replace("{programs}", &programs)
 }
 
 /// The tool step one `tool_call` event is about: its kind (`mcpToolCall`, `shellToolCall`...) and its body.
@@ -326,7 +473,7 @@ impl Turn {
             }
             "tool_call" => {
                 let Some((kind, body)) = step(e) else { return out };
-                let id = e["call_id"].as_str().unwrap_or("").to_string();
+                let id = e["call_id"].as_str().filter(|s| !s.is_empty()).or(body["toolCallId"].as_str()).or(e["tool_call"]["toolCallId"].as_str()).unwrap_or("").to_string();
                 let args = &body["args"];
                 let name = match kind {
                     // it reads each tool's description before calling it: not worth a line in the chat
@@ -336,15 +483,30 @@ impl Turn {
                         let tool = args["toolName"].as_str().unwrap_or("a tool");
                         Some(if server.is_empty() { tool.to_string() } else { format!("mcp__{server}__{tool}") })
                     }
-                    "shellToolCall" => Some("run_command".to_string()),
+                    "shellToolCall" | "writeShellStdinToolCall" => Some("run_command".to_string()),
                     "editToolCall" => Some("Edit".to_string()),
                     "writeToolCall" => Some("Write".to_string()),
                     "readToolCall" => Some("Read".to_string()),
+                    "deleteToolCall" => Some("Delete".to_string()),
+                    "globToolCall" => Some("Glob".to_string()),
+                    "grepToolCall" | "semSearchToolCall" => Some("Grep".to_string()),
+                    "lsToolCall" => Some("list_dir".to_string()),
+                    "webSearchToolCall" => Some("WebSearch".to_string()),
+                    "webFetchToolCall" => Some("WebFetch".to_string()),
+                    // its own bookkeeping (to-do lists, plans, lint checks): not steps the user needs to see
+                    "updateTodosToolCall" | "readTodosToolCall" | "readLintsToolCall" | "createPlanToolCall" | "createGoalToolCall"
+                    | "updateGoalToolCall" | "awaitToolCall" | "partialToolCall" => None,
+                    "taskToolCall" => Some("Task".to_string()),
                     other => Some(other.trim_end_matches("ToolCall").to_string()),
                 };
-                // a step is announced once, whether we first hear of it starting or finishing
-                if let Some(name) = name.filter(|_| self.shown.insert(id)) {
-                    out.push(Out::Tool(name));
+                // a step is announced once, whether we first hear of it starting or finishing; a server's tool comes
+                // with its arguments, so a Lead's rbx_team wait or rbx_stage status is not taken for progress
+                if let Some(name) = name.filter(|_| id.is_empty() || self.shown.insert(id)) {
+                    if kind == "mcpToolCall" {
+                        out.push(Out::ToolArgs(name, args["args"].clone()));
+                    } else {
+                        out.push(Out::Tool(name));
+                    }
                 }
                 if e["subtype"] != "completed" {
                     return out;
@@ -394,6 +556,11 @@ impl Turn {
                     out.push(Out::Failed(why.map(str::to_string).unwrap_or_else(|| "Cursor stopped with an error.".to_string())));
                 }
                 out.push(Out::Finished);
+            }
+            // an error in the middle of a turn, if Cursor sends one: a failed turn
+            "error" => {
+                let why = e["message"].as_str().or(e["error"]["message"].as_str()).or(e["error"].as_str()).filter(|s| !s.trim().is_empty());
+                out.push(Out::Failed(why.map(str::to_string).unwrap_or_else(|| "Cursor stopped with an error.".to_string())));
             }
             _ => {}
         }
@@ -450,7 +617,7 @@ mod tests {
         assert!(matches!(&feed(&mut t, SAY)[0], Out::Text(s) if s.starts_with("I'll call")));
         assert!(feed(&mut t, DESCRIBE).is_empty(), "reading a tool's description is housekeeping");
         let start = feed(&mut t, MCP_START);
-        assert!(matches!(&start[..], [Out::Tool(n)] if n == "mcp__rbxkit__rbx_vault"));
+        assert!(matches!(&start[..], [Out::ToolArgs(n, a)] if n == "mcp__rbxkit__rbx_vault" && a["action"] == "search"), "a server's tool comes with what it was asked");
         assert!(feed(&mut t, MCP_DONE).is_empty(), "announced once; a text result has no pictures");
         let end = feed(&mut t, RESULT);
         let Out::Usage(u) = &end[0] else { panic!("usage first") };
@@ -464,7 +631,7 @@ mod tests {
     fn pictures_from_our_tools_are_shown() {
         let mut t = Turn::default();
         let out = feed(&mut t, PICTURES);
-        assert!(matches!(&out[0], Out::Tool(n) if n == "mcp__rbxkit__rbx_texture"));
+        assert!(matches!(&out[0], Out::ToolArgs(n, _) if n == "mcp__rbxkit__rbx_texture"));
         let Some(Out::Encoded(p)) = out.get(1) else { panic!("pictures expected") };
         assert_eq!(p.len(), 2);
         assert!(p[0].starts_with("iVBORw0KGgo"));
@@ -518,7 +685,64 @@ mod tests {
         let full = args(Path::new("/w"), Path::new("/kit"), None, None, None, true);
         assert_eq!(full.iter().filter(|x| *x == "--add-dir").count(), 1, "no game, only the kit");
         assert!(!full.contains(&"--resume".to_string()) && !full.contains(&"--model".to_string()));
-        assert_eq!(full.last().map(String::as_str), Some("--force"));
+        assert!(!full.contains(&"--force".to_string()), "full auto keeps the allow list");
+        assert_eq!(full[full.len() - 2..], ["--sandbox", "enabled"], "full auto runs other commands in Cursor's sandbox");
+        assert_eq!(a[a.len() - 2..], ["--sandbox", "disabled"], "otherwise allowed programs run as they do for Claude Code");
+    }
+
+    #[test]
+    fn other_steps_are_named_and_its_bookkeeping_is_hidden() {
+        let step = |kind: &str, id: &str| format!(r#"{{"type":"tool_call","subtype":"started","call_id":"{id}","tool_call":{{"{kind}":{{"args":{{}}}}}}}}"#);
+        let mut t = Turn::default();
+        for (kind, name) in [("globToolCall", "Glob"), ("grepToolCall", "Grep"), ("lsToolCall", "list_dir"), ("deleteToolCall", "Delete"), ("webSearchToolCall", "WebSearch")] {
+            assert!(matches!(&feed(&mut t, &step(kind, kind))[..], [Out::Tool(n)] if n == name), "{kind}");
+        }
+        for kind in ["updateTodosToolCall", "readTodosToolCall", "readLintsToolCall", "createPlanToolCall"] {
+            assert!(feed(&mut t, &step(kind, kind)).is_empty(), "{kind}");
+        }
+        // no call_id: the id inside the step is used, so a step is still announced once
+        let inner = r#"{"type":"tool_call","subtype":"started","tool_call":{"readToolCall":{"args":{}},"toolCallId":"r1"}}"#;
+        assert_eq!(feed(&mut t, inner).len(), 1);
+        assert!(feed(&mut t, &inner.replace("started", "completed")).is_empty());
+        let err = feed(&mut t, r#"{"type":"error","message":"Connection lost"}"#);
+        assert!(matches!(&err[..], [Out::Failed(m)] if m == "Connection lost"));
+    }
+
+    #[test]
+    fn a_model_the_list_lacks_falls_back_to_the_default() {
+        let list = vec![("auto".to_string(), "Auto".to_string()), ("gpt-5.3".to_string(), "GPT".to_string())];
+        assert_eq!(pick_from(&list, Some("gpt-5.3")).as_deref(), Some("gpt-5.3"));
+        assert_eq!(pick_from(&list, Some("gone-model")).as_deref(), Some("auto"));
+        assert_eq!(pick_from(&list, None).as_deref(), Some("auto"));
+        assert_eq!(pick_from(&[], Some("gpt-5.3")).as_deref(), Some("gpt-5.3"), "before the list arrives, Cursor itself checks");
+    }
+
+    #[test]
+    fn a_saved_chat_is_found_by_its_id() {
+        let cfg = crate::paths::test_dir("cursor-saved");
+        let _ = fs::remove_dir_all(&cfg);
+        fs::create_dir_all(cfg.join("chats").join("hash1").join("abc-123")).unwrap();
+        assert!(chat_saved_in(&cfg, "abc-123"));
+        assert!(!chat_saved_in(&cfg, "gone"));
+        assert!(!chat_saved_in(&cfg, ""));
+        assert!(!chat_saved_in(&cfg, "../hash1"));
+        let _ = fs::remove_dir_all(&cfg);
+    }
+
+    #[test]
+    fn the_users_cursor_servers_are_read_as_cursor_reads_them() {
+        let text = "{\n  // mine\n  \"mcpServers\": {\n    \"notion\": {\"url\": \"https://x.example/a//b\"}, /* off */\n    \"git\": {\"command\": \"g\",},\n  },\n}";
+        let mut names = server_names(text);
+        names.sort();
+        assert_eq!(names, ["git", "notion"]);
+        assert!(server_names("not json").is_empty());
+    }
+
+    #[test]
+    fn paths_with_glob_characters_still_match_themselves() {
+        assert_eq!(as_pattern(Path::new("/Users/Ann [Work]/Lib*")), "/Users/Ann ?Work?/Lib?");
+        let p = permissions(&json!({}), &[], &[], &[PathBuf::from("/h/{a}")]);
+        assert!(p["deny"].as_array().unwrap().contains(&json!("Write(/h/?a?/**)")));
     }
 
     #[test]
@@ -547,7 +771,7 @@ mod tests {
         assert!(file["mcpServers"]["rbxkit"].get("type").is_none());
         let p = permissions(&servers, &[], &["Roblox_Studio".into()], &[]);
         let deny: Vec<&str> = p["deny"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-        assert!(deny.contains(&"Mcp(Roblox_Studio:*)") && deny.contains(&"Mcp(*studio*:*)") && deny.contains(&"Mcp(*Studio*:*)"));
+        assert!(deny.contains(&"Mcp(Roblox_Studio:*)") && deny.contains(&"Mcp(*studio*:*)"), "Cursor matches server names in any case");
         assert!(!p["allow"].as_array().unwrap().iter().any(|a| a.as_str().unwrap().to_lowercase().contains("studio")));
     }
 
@@ -561,12 +785,13 @@ mod tests {
         assert!(ws.join(".git").is_dir(), "the workspace is its own project top");
         let cfg = dir.join("config");
         fs::create_dir_all(&cfg).unwrap();
-        fs::write(cfg.join("cli-config.json"), r#"{"version": 1, "model": {"modelId": "default"}, "sandbox": {"networkAccess": "x"}, "permissions": {"allow": ["Shell(*)"]}}"#).unwrap();
+        fs::write(cfg.join("cli-config.json"), r#"{"version": 1, "model": {"modelId": "default"}, "sandbox": {"networkAccess": "x"}, "permissions": {"allow": ["Shell(*)"]}, "maxMode": true, "attribution": {}}"#).unwrap();
         write_config(&cfg, &json!({"allow": ["Mcp(rbxkit:*)"], "deny": []}));
         let back: Value = serde_json::from_str(&fs::read_to_string(cfg.join("cli-config.json")).unwrap()).unwrap();
         assert_eq!(back["permissions"]["allow"], json!(["Mcp(rbxkit:*)"]), "the app's permissions replace any others");
         assert_eq!(back["model"]["modelId"], "default", "what Cursor keeps there stays");
-        assert_eq!((back["sandbox"]["mode"].as_str(), back["sandbox"]["networkAccess"].as_str()), (Some("disabled"), Some("x")));
+        assert_eq!(back["sandbox"], json!({"mode": "disabled"}), "nothing a turn wrote into the sandbox settings lasts");
+        assert!(back.get("maxMode").is_none() && back.get("attribution").is_none(), "only what Cursor itself keeps is kept");
         assert_eq!(back["approvalMode"], "allowlist");
         assert_eq!(back["autoAcceptWebSearch"], true);
         assert_eq!(fs::read_dir(&cfg).unwrap().count(), 1, "no temporary file left behind");

@@ -44,7 +44,7 @@ On a Mac:
    of its own; it drives Claude Code for you. It can drive Gemini (Google's
    Antigravity tool, `agy`) or **Cursor** instead, chat by chat: for Cursor,
    install the Cursor Agent command-line tool from [cursor.com/cli](https://cursor.com/cli)
-   and run `cursor-agent login` once in a terminal.
+   and run `cursor-agent login` once in a terminal (not offered on Windows yet).
 2. **Blender** (any recent version).
 3. **Roblox Studio** with its MCP server turned on (Assistant settings).
 

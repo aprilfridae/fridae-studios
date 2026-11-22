@@ -150,9 +150,12 @@ fn blender_found() -> bool {
 }
 
 fn status() -> Value {
+    cursor::refresh_models(); // asks Cursor again while its list is empty (signed out or offline when the app started)
     json!({
         "agent": paths::find_ai(&paths::default_ai()).is_some(),
         "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some()},
+               "offered": paths::AIS,
+               "gaps": {"cursor": cursor::gaps()},
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},

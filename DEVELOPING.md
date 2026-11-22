@@ -255,61 +255,89 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
 - **Found** by `paths::find_cursor`: `FRIDAE_CURSOR`, then `cursor-agent` on PATH, then `~/.local/bin/cursor-agent`
   (its installer's place; `widen_path` adds that folder for an app opened from Finder). Not the `agent` alias.
 - **A turn**: `cursor-agent -p --output-format stream-json --trust --approve-mcps --workspace <chat folder> --add-dir
-  <kit> [--add-dir <game>] [--model <id>] [--resume <chat id>] [--force]`, the message on stdin (no length limit
-  from a command line). Standing instructions go on top of a session's first message, as for Gemini (`with_instructions`),
-  plus `cursor::folder_note` (its working folder is not the game's). The effort setting is not passed and is hidden in
-  the menu: Cursor's model ids carry their own effort. Models come from `cursor-agent models` ("id - Name" lines),
-  default `auto`.
+  <kit> [--add-dir <game>] [--model <id>] [--resume <chat id>] --sandbox disabled|enabled`, the message on stdin (no
+  length limit from a command line). Standing instructions go on top of a session's first message, as for Gemini
+  (`with_instructions`), but with Cursor's own text (`text/cursor.txt`, filled by `cursor::instructions`): its working
+  folder is not the game's, it may run the programs the user allowed (listed), a refused one becomes the blocked card
+  and it carries on, Full auto's sandbox, web allowed, never its own settings. The effort setting is not passed and is
+  hidden in the menu: Cursor's model ids carry their own effort. Models come from `cursor-agent models` ("id - Name"
+  lines, 284 on a paid plan), default `auto`; an empty answer (signed out, offline) is asked again at most once a
+  minute from the page's status call; a chosen model the list lacks falls back to the default (`pick_model`). The
+  menu shows the list in its own scroll box, with a filter above 12 models, so the run modes stay in view.
+- **Resuming**: asked to `--resume` a chat it no longer has, Cursor quietly starts an empty one under that id, so
+  before each turn the app checks that Cursor's saved chat is there (`cursor::chat_saved`); if not, the chat starts
+  a new conversation handed the chat so far (`stale_cursor_chat`).
 - **Events** (`cursor::Turn`): `system/init` (session id, model), `assistant` text, `tool_call` started/completed
-  (`mcpToolCall` with `serverIdentifier`/`toolName`, shown as `mcp__<server>__<tool>` so Studio steps are recognised;
-  `getMcpToolsToolCall`, its look at a tool's description, is not shown; `shellToolCall`, `editToolCall`...). Pictures
-  come back in `result.success.content[].image.data` (base64), as Claude Code's do. A refused shell command
-  (`result.rejected`) becomes the same `blocked` card Claude Code's `permission_denials` give. `result.usage`
-  (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`) is logged under `ai: "cursor"`; Cursor
-  reports no cost and no plan limits. A failed `result` counts as a failed turn (`Out::Failed`).
+  (`mcpToolCall` with `serverIdentifier`/`toolName`, shown as `mcp__<server>__<tool>` so Studio steps are recognised,
+  and passed on with its arguments so a Lead's `rbx_team wait` is not counted as progress; `getMcpToolsToolCall`
+  and its bookkeeping steps (to-dos, plans, lint reads) are not shown; shell, edit, read, delete, glob, grep, ls, web
+  search have Claude Code's names). A step's id is `call_id`, or the `toolCallId` inside it. Pictures come back in
+  `result.success.content[].image.data` (base64), as Claude Code's do. A refused shell command (`result.rejected`)
+  becomes the same `blocked` card Claude Code's `permission_denials` give. `result.usage` (`inputTokens`,
+  `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`) is logged under `ai: "cursor"`; `outputTokens` is taken to
+  include `reasoningTokens` (not checked against Cursor's dashboard). Cursor reports no cost and no plan limits. A
+  failed `result`, or an `error` event mid-turn, counts as a failed turn (`Out::Failed`).
 - **Where its files go (the MCP route)**. Nothing in the user's Cursor setup and nothing in the game's folder:
   - each chat works in `work/cursor/chats/<chat id>/`, whose `.cursor/mcp.json` (the whole file is the app's) holds
     the agent's servers, and which has an empty `.git` folder: Cursor takes the nearest folder with `.git` as the
     project's top, and a work folder inside a git repository (running from source) would otherwise point it at the
     repository's `.cursor/mcp.json`. The game is added with `--add-dir`, so its own `.cursor/mcp.json` is not loaded.
-  - `CURSOR_CONFIG_DIR=work/cursor/config` (its `cli-config.json` with the app's permissions, and its saved chats) and
-    `CURSOR_DATA_DIR=work/cursor/data` (approvals and trust per workspace). The user's `~/.cursor/cli-config.json` is
-    neither read nor written. The sign-in lives in the keychain, found through HOME, so it still works.
+  - `CURSOR_CONFIG_DIR` (its `cli-config.json` with the app's permissions, and its saved chats) and `CURSOR_DATA_DIR`
+    (approvals and trust per workspace) are `config` and `data` under `~/Library/Application Support/Fridae
+    Studios/cursor` on a Mac (`$XDG_DATA_HOME` or `~/.local/share` elsewhere): not in Documents, which iCloud may sync,
+    since the saved chats and Cursor's account cache (email and name, no tokens) are there. `cli-config.json` is
+    rebuilt before every turn, keeping only what Cursor itself stores (model, account and privacy caches:
+    `cursor::KEPT`), so nothing a turn wrote there lasts. The user's `~/.cursor/cli-config.json` is neither read nor
+    written. The sign-in lives in the keychain, found through HOME, so it still works.
   - Cursor gives a tool server only HOME, PATH and the entry's own `env`, so the app's settings a server reads
     (`RBXKIT_WORK`, `RBXKIT_BLENDER`, `RBXKIT_STUDIO_*`, `FRIDAE_AGY`, Windows' `LOCALAPPDATA`/`APPDATA`/`USERPROFILE`,
-    `TMPDIR`; never a key or token) are copied into each entry (`cursor::PASSED`).
-  - Cursor starts a helper of its own (`worker-server`, with a TypeScript language server) that outlives the turn;
-    it is in the turn's process group, so `read` ends that group as soon as the turn's process exits.
+    `TMPDIR`; never a key or token) are copied into each entry (`cursor::PASSED`). So a Gemini API key set only in the
+    environment does not reach rbxkit in a Cursor chat: it has to be saved in Setup (Setup says so).
+  - Cursor starts a helper of its own (`worker-server`, with a TypeScript language server) that outlives the turn,
+    in the turn's process group. Once the turn's output ends, and before its process is reaped (so the group's id
+    cannot have been reused), `read` sends that group SIGTERM, and SIGKILL from a background thread after 2 s if
+    anything is left (`paths::end_group_soon`); the turn's end is not held up. Checked: nothing left after a turn.
   - Cursor still keeps its own housekeeping under the real `~/.cursor` (skills it syncs, `ai-tracking`), and it runs
     the user's hooks from `~/.cursor/hooks.json` (Roblox Studio installs some there, as it does for Claude Code in
     `~/.claude/settings.json`); `FRIDAE_NO_STUDIO` does not stop hooks, for either AI.
-- **Permissions** (`cursor::permissions`, written before every turn): allowed: `Mcp(<server>:*)` for our servers and
-  `Shell(<program>)` for each program the user allowed (Setup, or the blocked card), and web pages (`WebFetch(*)`,
-  `autoAcceptWebSearch`) as Claude Code's WebFetch and WebSearch are; those two were not tried in a real turn. Denied: every server named in the
-  user's `~/.cursor/mcp.json` that is not ours (ours wins a name clash, the workspace file comes first), so Cursor gets
-  only our servers as Claude Code does with `--strict-mcp-config`; with `FRIDAE_NO_STUDIO`, `Mcp(*studio*:*)` (and
-  case variants) as well; `Write(**/.cursor/**)`, the app's Cursor folders, and the home folder's hidden files and
-  folders and `Library`. Measured: a shell command not allowed is refused in `-p` mode; deny rules for tools hold even
-  with `--force`; a denied write is refused (`writePermissionDenied`).
-- **Safety gaps against Claude Code** (what Cursor's permission system cannot express):
-  - Cursor's file tools write anywhere a deny rule does not cover (an allow list does not limit writes, and deny wins
-    over allow, so "only these folders" cannot be said). Claude Code in `acceptEdits` only writes in its working
-    folders. The deny rules cover Cursor's own settings, the home folder's hidden files and `Library`; another game's
-    folder or Documents are not covered.
-  - Full auto (`--force`) lets shell commands run unasked, as Claude Code's bypass mode does, and a shell command can
-    then change anything, the app's Cursor settings included; only tool-server deny rules still hold.
-  - Servers from Cursor plugins (not in `mcp.json`) are not denied by name; in Ask me their tools need approval and are
-    refused, but full auto would allow them.
+- **Permissions** (`cursor::permissions`, written before every turn), allow-list mode: allowed: `Mcp(<server>:*)` for
+  our servers, `Shell(<program>)` for each program the user allowed (Setup, or the blocked card), and web pages
+  (`WebFetch(*)`, `autoAcceptWebSearch`) as Claude Code's WebFetch and WebSearch are (not tried in a real turn).
+  Denied, in every mode: every server named in the user's `~/.cursor/mcp.json` that is not ours (read as Cursor reads
+  it, comments and trailing commas allowed; ours wins a name clash); with `FRIDAE_NO_STUDIO`, `Mcp(*studio*:*)`
+  (Cursor matches server names without regard to case: measured); `Write(**/.cursor/**)`, the app's Cursor folders,
+  the app's `config.json` (it holds the allowed programs), and the home folder's hidden files and folders and
+  `Library`. Glob characters in those paths become `?`. Measured with real turns (cursor-agent 2026.11.22):
+  - Ask me: a shell command not allowed is refused (blocked card); a tool from any server not ours is refused (it
+    needs approval, which nobody gives), so servers from Cursor plugins, which are not in `mcp.json`, are refused too
+    (no plugin was installed to try, but any non-allowed server's tool was); a write outside the workspace folders
+    (chat folder, kit, game) is refused, e.g. `~/fridae-probe-outside/x.txt`; a write into a temp folder works.
+  - Full auto: not `--force` (which lets everything run unconfined and lets other servers' tools through) but the same
+    allow list with Cursor's sandbox on (`--sandbox enabled`). Checked in a real turn: our tools, an allowed program
+    (`git --version`) and a write in the game folder work; another program runs, sandboxed (`ls /` worked;
+    `curl` got no network; `mkdir` in the home folder: "Operation not permitted"); a write outside the workspace
+    folders is still refused.
+- **Safety gaps against Claude Code** (what Cursor can do that Claude Code cannot, in the same mode):
+  - Ask me: Cursor's file tools may write into temp folders (`/tmp`, `/private/var/folders`), which Claude Code's
+    `acceptEdits` would refuse. Writes elsewhere outside the workspace folders are refused, as for Claude Code.
+  - Full auto and Studio: none known. Claude Code runs those with every check off; Cursor keeps its allow list, deny
+    rules and sandbox, so it can do less. `cursor::gaps()` holds the one line the page would show under the message
+    box when Cursor is picked for Full auto or Studio; it is empty, so nothing shows. A gap found later goes there.
   - A game's own `.cursor/rules` or `AGENTS.md` may be read by Cursor (added folder); a game's `.cursor/cli.json`
     permissions are not loaded (the game is not the project's top), but this was not tested.
-  - On Windows nothing here was run: the permission paths use `\`, and a Cursor helper left after a turn is not ended
-    (`taskkill /T` cannot reach a child whose parent has exited).
   - The rules on publishing, spending and deleting are the app's prompts, the same text Claude gets; nothing in Cursor
     enforces them, as nothing in Claude Code does.
+- **Not on Windows yet**: `find_cursor` finds nothing and `paths::AIS` leaves Cursor out there, so it is neither
+  offered nor counted as installed (the page filters its AI list by `status.ai.offered`). Why: nothing was run there.
+  To turn it on, test on Windows: the permission patterns with `\` paths (do `Write(C:\...)` deny rules and the
+  workspace-folder check hold?), ending the worker-server after a turn (`taskkill /T` cannot reach a child whose
+  parent has exited, so it likely needs a Job Object), passing the message to `cursor-agent.cmd` (escaping), and
+  whether `--sandbox enabled` exists there at all (if not, Full auto has to stay Ask me's rules).
 - **Trying it by hand** with the scratch copy above: a scratch HOME hides Cursor's sign-in (keychain), so give the
-  Cursor child the real one with `FRIDAE_CURSOR_HOME=$HOME` (testing only: only Cursor's process gets it; the tool
-  servers get the app's HOME back in their entry) and `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`; put
-  `{"chat_ai": "cursor"}` in the kit's `config.json`. Each turn uses the user's Cursor plan.
+  Cursor child the real one with `FRIDAE_CURSOR_HOME=$HOME` (debug builds only, compiled out of release builds; only
+  Cursor's process gets it; the tool servers get the app's HOME back in their entry) and
+  `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`; put `{"chat_ai": "cursor"}` in the kit's `config.json`. Each turn
+  uses the user's Cursor plan.
 
 ## How agents find knowledge
 
