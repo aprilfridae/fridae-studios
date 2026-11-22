@@ -1,8 +1,9 @@
 """Studio mode, the agents' side: the run, review items for the user to sign off, decisions and lessons.
 
-Everything is small JSON in <project>/.fridae/ (studio.json, review/<id>.json, review/<id>/ media, lessons.md), so it
-travels with the game. The Fridae Studios app shows the review items; agents use rbx_stage. Nothing here prints:
-functions return text, because the MCP server speaks JSON-RPC over stdout.
+Everything is small JSON in <project>/.fridae/ (studio.json, review/<id>.json, review/<id>/ media), so it travels
+with the game; lessons are the user's notes (rbxnotes.py, .fridae/notes/). The Fridae Studios app shows the review
+items; agents use rbx_stage. Nothing here prints: functions return text, because the MCP server speaks JSON-RPC over
+stdout.
 
 A finished stage also asks the app for a checkpoint: WORK/stage-requests/<id>.json {"project", "stage", "lead"}. The
 app takes it and appends {"stage", "commit", "studio", "at"} to studio.json "checkpoints" (see app-rs/src/studio_undo.rs).
@@ -397,24 +398,14 @@ def _decisions_locked(project):
 
 
 def _lesson(project, a):
-    text = " ".join((a.get("text") or "").split())
-    if not text:
-        raise KitError("Give the lesson as one short sentence in 'text'.")
+    """A lesson is one of the user's notes (rbxnotes): this game's .fridae/notes/, or the notes for everything."""
+    import rbxnotes
     scope = (a.get("scope") or "game").strip().lower()
     if scope not in ("game", "all"):
         raise KitError("scope must be 'game' or 'all'.")
-    path = os.path.join(_dir(project), "lessons.md") if scope == "game" else os.path.join(rbxpaths.WORK, "studio-lessons.md")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = "- %s: %s\n" % (time.strftime("%Y-%m-%d"), text)
-    with open(path, "ab+") as f:  # append-only, one write, so two writers never lose a line
-        f.seek(0, os.SEEK_END)
-        if f.tell():
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                line = "\n" + line
-        f.write(line.encode("utf-8"))
-    return ("Lesson saved for %s. Lessons are searchable: rbx_vault action 'search' with shelf 'game' finds them, with "
-            "GAME.md's sections and decision log." % ("this game" if scope == "game" else "all games"))
+    title, _ = rbxnotes.lesson(a.get("text"), scope, project)
+    return ("Lesson saved for %s as the note '%s'. Notes are searchable: rbx_vault action 'search' with shelf '%s'." % (
+        "this game" if scope == "game" else "all games", title, "game" if scope == "game" else "yours"))
 
 
 def run(action, a):

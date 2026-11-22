@@ -443,8 +443,10 @@ def _list(folder):
 #   vault   the LihFolk vault notes (vault/Roblox)
 #   guides  every guide rbx_guide serves (rbxkit_mcp.GUIDES) and their references/ files
 #   team    the Studio team's expert files (vault/Fridae/Team/*.md, a game's .fridae/team/experts/ overrides them)
-#   game    this game's GAME.md and lessons (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
-SHELVES = ("vault", "guides", "team", "game")
+#   game    this game's GAME.md, lessons and notes (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
+#   yours   the user's notes for everything (<home>/notes, rbxnotes.py); indexed on the fly, works with no project
+SHELVES = ("vault", "guides", "team", "game", "yours")
+PERSONAL = ("game", "yours")  # the user's own shelves: short notes are fine there, and words are folded more
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
 GUIDES_CACHE_NAME = "knowledge-sections-index.json"
@@ -540,6 +542,31 @@ def squery_terms(q):
     return terms
 
 
+# The user's own shelves (game, yours) only: their notes are short and in their own words, so a few more word forms
+# are folded together. The vault and the kit shelves keep their ranking.
+_IRREGULAR = {"chos": "choos", "chosen": "choos", "picked": "pick", "mad": "mak", "made": "mak", "built": "build",
+              "went": "go", "gone": "go", "ran": "run", "wrote": "writ", "written": "writ", "liked": "lik",
+              "hated": "hat", "hate": "hat", "felt": "feel", "saw": "see", "seen": "see", "kept": "keep",
+              "bought": "buy", "sold": "sell", "paid": "pay", "taught": "teach", "thought": "think", "led": "lead"}
+_JOIN = re.compile(r"\b(data)[ \t-]+(stores?)\b", re.I)
+
+
+def _pfold(t):
+    t = _norm(t)
+    return _IRREGULAR.get(t, t)
+
+
+def ptokens(s):
+    return [_pfold(t) for t in tokens(_JOIN.sub(r"\1\2", s))]
+
+
+def pquery_terms(q):
+    terms = Counter()
+    for t, w in query_terms(_JOIN.sub(r"\1\2", q)).items():
+        terms[_pfold(t)] += w
+    return terms
+
+
 def _code_capped(text):
     return re.sub(r"```.*?```", lambda c: c.group(0)[:600], text, flags=re.S)
 
@@ -552,14 +579,15 @@ def _section_docs(shelf, title, path, rel, label_hint=""):
         return []
     p = parse_sections(text)
     label = p["label"] or label_hint or title
+    tok = ptokens if shelf in PERSONAL else stokens
     out = []
     for i, s in enumerate(p["sections"]):
         own = p["body"][s["start"]:s["own_end"]]
         if s["level"]:
             own = own.split("\n", 1)[1] if "\n" in own else ""
         heads = " ".join(s["parents"] + ([s["heading"]] if s["level"] else [label]))
-        f = {"title": stokens(title.replace("-", " ") + " " + label), "tldr": stokens(p["description"]),
-             "heads": stokens(heads), "body": stokens(_code_capped(own))}
+        f = {"title": tok(title.replace("-", " ") + " " + label), "tldr": tok(p["description"]),
+             "heads": tok(heads), "body": tok(_code_capped(own))}
         tf = {k: Counter(v) for k, v in f.items()}
         out.append({"shelf": shelf, "title": title, "label": label, "rel": rel, "path": path, "i": i,
                     "heading": s["heading"], "parents": s["parents"], "level": s["level"],
@@ -584,7 +612,7 @@ def guide_files():
         ref_dirs.add(refs)
         for f in sorted(os.listdir(refs)):
             path = os.path.join(refs, f)
-            if f.endswith(".md") and path not in seen:
+            if f.endswith(".md") and not f.startswith(".") and path not in seen:
                 out.append(("%s/%s" % (name, f[:-3]), path))
                 seen.add(path)
     return out
@@ -600,7 +628,8 @@ def kit_team_dir():
 def team_files(folder):
     if not os.path.isdir(folder):
         return []
-    return [(f[:-3], os.path.join(folder, f)) for f in sorted(os.listdir(folder)) if f.endswith(".md")]
+    return [(f[:-3], os.path.join(folder, f)) for f in sorted(os.listdir(folder)) if f.endswith(".md") and
+            not f.startswith(".")]
 
 
 def _team_label(expert_id):
@@ -618,11 +647,16 @@ def project_dir():
 
 
 def game_files(project):
-    """(title, path) for this game's own notes that exist."""
+    """(title, path) for this game's own notes that exist: GAME.md, the old lessons file and .fridae/notes/."""
+    import rbxnotes
     cands = [("GAME.md", os.path.join(project, "GAME.md")),
-             ("lessons.md", os.path.join(project, ".fridae", "lessons.md")),
-             ("studio-lessons.md", os.path.join(rbxpaths.WORK, "studio-lessons.md"))]
-    return [(t, p) for t, p in cands if os.path.isfile(p)]
+             ("lessons.md", os.path.join(project, ".fridae", "lessons.md"))]
+    return [(t, p) for t, p in cands if os.path.isfile(p)] + rbxnotes.shelf_files(rbxnotes.game_notes(project))
+
+
+def yours_files():
+    import rbxnotes
+    return rbxnotes.yours_files()
 
 
 def _kit_files():
@@ -633,8 +667,9 @@ def load_sections():
     """The cached part of the section index (guides and the kit's team files), rebuilt when any file changes."""
     files = _kit_files()
     h = hashlib.sha1(("%s|%s" % (INDEX_FORMAT, rbxpaths.VERSION)).encode())
-    # this file is stat'ed only when it exists: in the packaged app it lives inside the program's archive
-    for _, t, p in files + [("", "", os.path.abspath(__file__))]:
+    # this file is stat'ed only when it exists: in the packaged app it lives inside the program's archive;
+    # roster.json gives the team files their labels
+    for _, t, p in files + [("", "", os.path.abspath(__file__)), ("", "", os.path.join(TEAM, "roster.json"))]:
         if os.path.exists(p):
             st = os.stat(p)
             h.update(f"{t}|{p}|{st.st_mtime_ns}|{st.st_size}".encode())
@@ -652,18 +687,29 @@ def load_sections():
     for d in docs:
         if d["shelf"] == "team":
             d["label"] = _team_label(d["title"])
-    try:
+    tmp = None
+    try:  # written whole or not at all: a temporary file, then one rename
+        import tempfile
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"sig": sig, "docs": docs}, f)
+        os.replace(tmp, path)
     except OSError:
-        pass
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     return docs
 
 
 def section_corpus():
-    """Every section doc: the cached kit part, with a game's team overrides and the game shelf added on the fly."""
+    """Every section doc: the cached kit part, with the yours shelf, a game's team overrides and the game shelf added
+    on the fly."""
     docs = load_sections()
+    for t, p in yours_files():
+        docs = docs + _section_docs("yours", t, p, p)
     project = project_dir()
     if not project:
         return docs
@@ -686,17 +732,25 @@ def _coverage(terms, tf, fields):
 def search_sections(q, shelves, k, docs=None):
     """[(score, coverage, doc)] best sections on the given shelves."""
     docs = section_corpus() if docs is None else docs
-    terms = squery_terms(q)
-    scores = bm25f(terms, docs, SECTION_FIELDS)
     hits = []
-    for s, d in zip(scores, docs):
-        if s <= 0 or d["shelf"] not in shelves:
+    # The kit shelves and the user's own shelves are ranked apart, each with its own word folding and statistics.
+    # A handful of notes gives far smaller raw scores than a big corpus, so each group's scores are scaled to its own
+    # best (1.0); the order inside a group is unchanged.
+    for group, terms in ((False, squery_terms(q)), (True, pquery_terms(q))):
+        part = [d for d in docs if (d["shelf"] in PERSONAL) == group]
+        if not any(d["shelf"] in shelves for d in part):
             continue
-        if d["own"] < 120:  # a heading with almost nothing under it is a poor thing to read
-            s *= 0.5
-        if _NAV.match(d["heading"]):  # link lists and file lists rank below real explanations
-            s *= 0.5
-        hits.append((s, _coverage(terms, d["tf"], SECTION_FIELDS), d))
+        mine = []
+        for s, d in zip(bm25f(terms, part, SECTION_FIELDS), part):
+            if s <= 0 or d["shelf"] not in shelves:
+                continue
+            if d["own"] < 120 and not group:  # a heading with almost nothing under it is a poor thing to read
+                s *= 0.5
+            if _NAV.match(d["heading"]):  # link lists and file lists rank below real explanations
+                s *= 0.5
+            mine.append((s, _coverage(terms, d["tf"], SECTION_FIELDS), d))
+        top = max((h[0] for h in mine), default=1) or 1
+        hits += [(s / top, cov, d) for s, cov, d in mine]
     hits.sort(key=lambda x: -x[0])
     return hits[:k]
 
@@ -882,12 +936,11 @@ def combined_search(q, shelves, k):
     if sec_shelves:
         docs = section_corpus()
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
-        top = hits[0][0] if hits else 1  # one corpus, so one top score for its shelves
         taken = Counter()
-        for s, cov, d in hits:  # each shelf's own best k, by score
+        for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
-                pool.append((cov * s / top, d["shelf"], d))
+                pool.append((cov * s, d["shelf"], d))
     pool = interleave(pool, k)
     if not pool:
         return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
@@ -968,8 +1021,15 @@ def _vault_call(fn):
     return buf.getvalue().strip()
 
 
+NOTE_ACTIONS = ("note", "notes", "forget", "rule_edit")
+
+
 def run(action, a):
-    """rbx_vault: search (query, shelf, k), read (title, heading, shelf), sections (title, shelf), list (folder), api (names)."""
+    """rbx_vault: search (query, shelf, k), read (title, heading, shelf), sections (title, shelf), list (folder), api
+    (names), and the user's notes: note, notes, forget, rule_edit (rbxnotes.py)."""
+    if action in NOTE_ACTIONS:
+        import rbxnotes
+        return rbxnotes.run(action, a)
     if action == "list":
         if not os.path.isdir(KB):
             raise KitError("The LihFolk vault is not installed with this copy of rbxkit.")
@@ -991,7 +1051,7 @@ def run(action, a):
             return _vault_call(lambda: print_section(key, heading, load_index()))
         return read_file_section(where, key, heading, docs)
     if action != "search":
-        raise KitError("action must be search, read, sections, list or api.")
+        raise KitError("action must be search, read, sections, list, api, note, notes, forget or rule_edit.")
     q = (a.get("query") or "").strip()
     if not q:
         raise KitError("search needs a query: the task or bug in plain words.")

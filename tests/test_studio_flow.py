@@ -18,6 +18,7 @@ import rbxkit_mcp
 import rbxpaths
 import rbxstage
 import rbxteam
+import rbxvault
 
 
 class StubApp:
@@ -63,7 +64,9 @@ class StudioFlowTests(unittest.TestCase):
         os.makedirs(self.project)
         self.work = os.path.join(self.tmp, "work é")
         os.makedirs(self.work)
+        self.home = os.path.join(self.tmp, "home é")  # lessons for every game are notes in the home folder
         for p in (mock.patch.object(rbxpaths, "WORK", self.work),
+                  mock.patch.object(rbxpaths, "HOME_DIR", self.home),
                   mock.patch.object(rbxteam, "REQUESTS", os.path.join(self.work, "team-requests")),
                   mock.patch.object(rbxteam, "RESULTS", os.path.join(self.work, "team-results")),
                   mock.patch.object(rbxteam, "PICKUP", 5),
@@ -177,13 +180,15 @@ class StudioFlowTests(unittest.TestCase):
         old = [i for i in rbxstage.load_items(self.project) if i["id"] == shop][0]
         self.assertEqual((old["status"], old["superseded_by"]), ("superseded", new))
 
-        # lessons go to the game and to the work folder
+        # lessons are notes: for the game in .fridae/notes, for every game in the home folder's notes
         self.stage(action="lesson", text="Give the UI builder the button sizes in its brief.", scope="game")
         self.stage(action="lesson", text="Ask for bigger buttons on phones.", scope="all")
-        with open(os.path.join(self.project, ".fridae", "lessons.md"), encoding="utf-8") as f:
-            self.assertIn("button sizes", f.read())
-        with open(os.path.join(self.work, "studio-lessons.md"), encoding="utf-8") as f:
-            self.assertIn("bigger buttons", f.read())
+        for folder, words in ((os.path.join(self.project, ".fridae", "notes"), "button sizes"),
+                              (os.path.join(self.home, "notes"), "bigger buttons")):
+            [name] = [f for f in os.listdir(folder) if f.endswith(".md")]
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                self.assertIn(words, f.read())
+        self.assertIn("button sizes", rbxvault.run("search", {"query": "button sizes brief", "shelf": "game"}))
 
     def test_the_lead_cannot_be_spawned_and_experts_cannot_spawn(self):
         task = "x" * 90

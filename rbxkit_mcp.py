@@ -739,14 +739,27 @@ TOOLS = [
      "full (about 12 KB at most). 'sections' (title) lists a file's headings with sizes, 'list' (folder) browses the vault, "
      "'api' (names, e.g. 'BadgeService.AwardBadge') says whether an API is current or deprecated. Use the vault for limits, "
      "quotas, prices, policy and anything changed in 2025-2026. Trust labels: 'Roblox docs' and 'Measured' beat 'Rule of "
-     "thumb'. Cite note titles you used.",
-     schema({"action": {"type": "string", "enum": ["search", "read", "sections", "list", "api"]},
+     "thumb'. Cite note titles you used. The user's own notes: shelf 'yours' (how they like things, every game) and "
+     "'game' (this game) hold what the user taught agents; search them before design or build work. 'note' (text, at "
+     "most 1,500 characters; optional title; scope game or all; rule: true for a standing preference, one short "
+     "sentence added to the House rules every agent gets) saves one; 'notes' lists them, 'forget' (title, scope) moves "
+     "one to the trash, 'rule_edit' (scope, old: words of a rule, text: new wording or empty to remove) changes a rule.",
+     schema({"action": {"type": "string", "enum": ["search", "read", "sections", "list", "api", "note", "notes",
+                                                   "forget", "rule_edit"]},
              "query": {"type": "string", "description": "search: the task or bug in plain words"},
-             "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game"],
+             "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game", "yours"],
                        "description": "search/read/sections: where to look; default all (game only when the chat has a game project)"},
+             "text": {"type": "string", "description": "note: what you were doing, what the user wants instead and why "
+                      "(their words where you can); rule_edit: the rule's new wording, empty to remove it"},
+             "scope": {"type": "string", "enum": ["game", "all"], "description": "note/notes/forget/rule_edit: this "
+                       "game, or everything (default game when the chat has a game project)"},
+             "rule": {"type": "boolean", "description": "note: true adds one House rule (only for a standing "
+                      "preference: 'always', 'never', 'from now on')"},
+             "old": {"type": "string", "description": "rule_edit: a few words of the rule to change"},
              "k": {"type": "integer", "description": "search: results to return, default 5 (3 for shelf vault), at most 8"},
              "count": {"type": "integer", "description": "search: same as k (older name)"},
-             "title": {"type": "string", "description": "read/sections: the title from a search result"},
+             "title": {"type": "string", "description": "read/sections: the title from a search result; note: optional "
+                       "title; forget: the note's title"},
              "heading": {"type": "string", "description": "read: words from the heading of the one section to read"},
              "folder": {"type": "string", "description": "list: a folder like '24 Worked Builds'; empty for the top level"},
              "names": {"type": "string", "description": "api: API names separated by spaces"}}, ["action"]), t_vault),

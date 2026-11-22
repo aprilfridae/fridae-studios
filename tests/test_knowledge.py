@@ -18,15 +18,19 @@ _WORK = None
 
 
 def setUpModule():
-    """One temporary work folder for the whole module: index caches never touch the user's real work folder."""
-    global _WORK, _PATCH
+    """One temporary work folder and home for the whole module: index caches and notes never touch the user's real
+    folders."""
+    global _WORK, _PATCHES
     _WORK = tempfile.mkdtemp(prefix="knowledge work é ")
-    _PATCH = mock.patch.object(rbxpaths, "WORK", _WORK)
-    _PATCH.start()
+    _PATCHES = [mock.patch.object(rbxpaths, "WORK", _WORK),
+                mock.patch.object(rbxpaths, "HOME_DIR", os.path.join(_WORK, "home é"))]
+    for p in _PATCHES:
+        p.start()
 
 
 def tearDownModule():
-    _PATCH.stop()
+    for p in _PATCHES:
+        p.stop()
     shutil.rmtree(_WORK, True)
 
 
@@ -221,7 +225,7 @@ class GameShelfTests(unittest.TestCase):
         proj.write(os.path.join(".fridae", "lessons.md"), "- 2026-11-02: Lantern flicker VFX needs a 0.2 s fade.\n")
         with open(os.path.join(rbxpaths.WORK, "studio-lessons.md"), "w", encoding="utf-8") as f:
             f.write("- 2026-10-01: Test every menu on a phone emulator.\n")
-        self.addCleanup(os.remove, os.path.join(rbxpaths.WORK, "studio-lessons.md"))
+        self.addCleanup(shutil.rmtree, os.path.join(rbxpaths.HOME_DIR, "notes"), True)
         with mock.patch.dict(os.environ, {"RBXKIT_PROJECT": proj.path}):
             text = rbxvault.run("search", {"query": "shop skins pay to win decision", "shelf": "game"})
             self.assertIn("[game] GAME.md", text)
@@ -229,8 +233,9 @@ class GameShelfTests(unittest.TestCase):
             self.assertIn("lantern skins", text)
             text = rbxvault.run("search", {"query": "lantern flicker fade", "shelf": "game"})
             self.assertIn("[game] lessons.md", text)
-            text = rbxvault.run("search", {"query": "phone emulator menu", "shelf": "game"})
-            self.assertIn("studio-lessons.md", text)
+            # lessons for every game are on the yours shelf now (A12), with or without a project
+            text = rbxvault.run("search", {"query": "phone emulator menu", "shelf": "yours"})
+            self.assertIn("[yours] studio-lessons", text)
             out = rbxvault.run("read", {"shelf": "game", "title": "GAME.md", "heading": "decision log"})
             self.assertIn("Phones first", out)
             all_text = rbxvault.run("search", {"query": "lantern skins decision log", "k": 8})
@@ -393,7 +398,7 @@ class GuideToolTests(unittest.TestCase):
         v = tools["rbx_vault"]["inputSchema"]["properties"]
         for k in ("action", "query", "shelf", "k", "count", "title", "heading", "folder", "names"):
             self.assertIn(k, v)
-        self.assertEqual(v["shelf"]["enum"], ["all", "vault", "guides", "team", "game"])
+        self.assertEqual(v["shelf"]["enum"], ["all", "vault", "guides", "team", "game", "yours"])
 
 
 class VaultUnchangedTests(unittest.TestCase):

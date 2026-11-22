@@ -1,7 +1,7 @@
 """How much text an agent takes in for a task: the old way (whole guides) against the new way, for both kinds of agent.
 
 Run:  .venv/bin/python tests/knowledge_bench.py
-A measuring script, not a unit test. It uses a temporary work folder for the index caches, never the real one.
+A measuring script, not a unit test. It uses a temporary work folder and home, never the real ones.
 
 Old way: the whole guides routing.txt (an ordinary chat) or the expert's file (a Studio expert) named for the task,
 as those texts read before the knowledge lookup (commit 9b0e7fd).
@@ -108,6 +108,7 @@ def check_expert_files():
 def main():
     import rbxpaths
     rbxpaths.WORK = tempfile.mkdtemp(prefix="knowledge-bench ")
+    rbxpaths.HOME_DIR = os.path.join(rbxpaths.WORK, "home")  # no notes: the bench measures the shipped vault only
     os.environ["RBXKIT_PROJECT"] = ""
     import rbxvault
     t = time.time()

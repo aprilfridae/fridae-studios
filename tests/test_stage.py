@@ -29,6 +29,19 @@ class StageTests(unittest.TestCase):
         work = mock.patch.object(rbxpaths, "WORK", self.work)
         work.start()
         self.addCleanup(work.stop)
+        # lessons for every game are notes in the home folder: never the real one in tests
+        self.home = os.path.join(self.tmp, "home é")
+        home = mock.patch.object(rbxpaths, "HOME_DIR", self.home)
+        home.start()
+        self.addCleanup(home.stop)
+
+    def notes_text(self, folder):
+        out = []
+        for f in sorted(os.listdir(folder)):
+            if f.endswith(".md"):
+                with open(os.path.join(folder, f), encoding="utf-8") as fh:
+                    out.append(fh.read())
+        return "\n".join(out)
 
     def call(self, action, **kw):
         return rbxstage.run(action, dict(self.a, **kw))
@@ -186,15 +199,14 @@ class StageTests(unittest.TestCase):
         self.assertNotIn("Open one", self.call("status"))
 
     def test_lesson_scopes(self):
-        work = os.path.join(self.tmp, "work")
-        os.makedirs(work)
-        with mock.patch.object(rbxpaths, "WORK", work):
-            self.call("lesson", text="Keep menus small", scope="game")
-            self.call("lesson", text="Test on phones", scope="all")
-        with open(os.path.join(self.project, ".fridae", "lessons.md"), encoding="utf-8") as f:
-            self.assertIn("Keep menus small", f.read())
-        with open(os.path.join(work, "studio-lessons.md"), encoding="utf-8") as f:
-            self.assertIn("Test on phones", f.read())
+        # lessons are notes, written through the same code as rbx_vault action note
+        self.assertIn("note", self.call("lesson", text="Keep menus small", scope="game"))
+        self.call("lesson", text="Test on phones", scope="all")
+        game = self.notes_text(os.path.join(self.project, ".fridae", "notes"))
+        self.assertIn("Keep menus small", game)
+        self.assertIn("kind: lesson", game)
+        self.assertIn("Test on phones", self.notes_text(os.path.join(self.home, "notes")))
+        self.assertFalse(os.path.exists(os.path.join(self.work, "studio-lessons.md")))
 
     def test_no_project(self):
         with self.assertRaises(KitError):
@@ -281,8 +293,9 @@ class StageTests(unittest.TestCase):
             t.start()
         for t in threads:
             t.join()
-        with open(os.path.join(self.project, ".fridae", "lessons.md"), encoding="utf-8") as f:
-            text = f.read()
+        folder = os.path.join(self.project, ".fridae", "notes")
+        self.assertEqual(len([f for f in os.listdir(folder) if f.endswith(".md")]), 20)
+        text = self.notes_text(folder)
         for n in range(20):
             self.assertIn("lesson %d\n" % n, text)
 
