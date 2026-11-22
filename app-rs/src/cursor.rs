@@ -228,7 +228,7 @@ fn server_names(text: &str) -> Vec<String> {
 }
 
 /// JSON with comments and trailing commas made plain JSON (outside strings).
-fn loose_json(text: &str) -> String {
+pub(crate) fn loose_json(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let (mut i, mut in_str) = (0, false);

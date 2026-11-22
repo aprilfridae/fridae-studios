@@ -328,8 +328,20 @@ pub fn find_cursor() -> Option<PathBuf> {
     })
 }
 
-/// The AIs a chat can run on. Cursor is not offered on Windows yet (see DEVELOPING.md).
-pub const AIS: &[&str] = if cfg!(windows) { &["claude", "gemini", "chatgpt"] } else { &["claude", "gemini", "chatgpt", "cursor"] };
+/// OpenCode's command-line tool, if it is installed. Its installer puts it in ~/.opencode/bin, which is on no PATH an
+/// app gets (the installer adds it in the shell's start-up file).
+pub fn find_opencode() -> Option<PathBuf> {
+    // not on Windows yet: see DEVELOPING.md, "OpenCode as a chat's AI"
+    if cfg!(windows) {
+        return None;
+    }
+    env::var("FRIDAE_OPENCODE").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("opencode")).or_else(|| {
+        Some(home_dir().join(".opencode").join("bin").join("opencode")).filter(|p| p.is_file())
+    })
+}
+
+/// The AIs a chat can run on. Cursor and OpenCode are not offered on Windows yet (see DEVELOPING.md).
+pub const AIS: &[&str] = if cfg!(windows) { &["claude", "gemini", "chatgpt"] } else { &["claude", "gemini", "chatgpt", "cursor", "opencode"] };
 
 /// The program behind one of them, if it is installed.
 pub fn find_ai(kind: &str) -> Option<PathBuf> {
@@ -337,6 +349,7 @@ pub fn find_ai(kind: &str) -> Option<PathBuf> {
         "gemini" => find_antigravity(),
         "chatgpt" => find_codex(),
         "cursor" => find_cursor(),
+        "opencode" => find_opencode(),
         _ => find_agent(),
     }
 }
@@ -352,6 +365,7 @@ fn ai_choice(saved: Option<&str>) -> &'static str {
     match saved {
         Some("gemini" | "antigravity") => "gemini",
         Some("cursor") if AIS.contains(&"cursor") => "cursor",
+        Some("opencode") if AIS.contains(&"opencode") => "opencode",
         _ => "claude",
     }
 }
@@ -534,6 +548,10 @@ mod tests {
         assert_eq!(super::ai_choice(Some("cursor")), if cfg!(windows) { "claude" } else { "cursor" });
         assert_eq!(super::AIS.contains(&"cursor"), !cfg!(windows));
         assert_eq!(super::find_cursor().is_none() || !cfg!(windows), true);
+        // OpenCode likewise
+        assert_eq!(super::ai_choice(Some("opencode")), if cfg!(windows) { "claude" } else { "opencode" });
+        assert_eq!(super::AIS.contains(&"opencode"), !cfg!(windows));
+        assert!(super::find_opencode().is_none() || !cfg!(windows));
     }
 
     use super::*;

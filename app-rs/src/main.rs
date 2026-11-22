@@ -18,6 +18,7 @@ mod fridae_lock;
 mod limits;
 mod media;
 mod notes;
+mod opencode;
 mod paths;
 mod plugin;
 mod procs;
@@ -141,8 +142,11 @@ fn main() {
         let _ = fs::write(paths::work("version.txt"), VERSION);
         return;
     }
-    // what a crash of the app left running ends now (see procs)
-    thread::spawn(procs::reap_orphans);
+    // what a crash of the app left running (OpenCode's server and its helper) ends now (see procs)
+    thread::spawn(|| {
+        procs::reap_orphans();
+        opencode::reap();
+    });
     let testing = env::var("RBXKIT_SELFTEST").ok().filter(|v| !v.is_empty());
     agents::new_agent(None);
     agents::keep_awake();

@@ -10,7 +10,7 @@
 
 use serde_json::{Value, json};
 
-use crate::{agents, antigravity, cursor, paths};
+use crate::{agents, antigravity, cursor, opencode, paths};
 
 /// An AI and model asked for, by the table or by the Lead. Empty or "lead" means "Same as the Lead".
 #[derive(Clone, Copy, Default)]
@@ -55,6 +55,7 @@ pub fn ai_name(ai: &str) -> &'static str {
     match ai {
         "gemini" => "Gemini",
         "cursor" => "Cursor",
+        "opencode" => "OpenCode",
         "chatgpt" => "ChatGPT",
         _ => "Claude",
     }
@@ -117,6 +118,7 @@ pub fn models_of(ai: &str) -> Vec<String> {
         "claude" => agents::MODELS.iter().map(|m| m.to_string()).collect(),
         "gemini" => antigravity::models().iter().map(|(id, _)| id.clone()).collect(),
         "cursor" => cursor::models().into_iter().map(|(id, _)| id).collect(),
+        "opencode" => opencode::models().into_iter().map(|(id, _)| id).collect(),
         _ => Vec::new(),
     }
 }
@@ -126,6 +128,7 @@ pub fn default_of(ai: &str) -> Option<String> {
         "claude" => Some("opus".to_string()),
         "gemini" => antigravity::default_model(),
         "cursor" => cursor::default_model(),
+        "opencode" => opencode::default_model(),
         _ => None,
     }
 }
@@ -135,6 +138,7 @@ pub fn model_name(ai: &str, id: &str) -> String {
     let listed = match ai {
         "gemini" => antigravity::models().iter().find(|(m, _)| m == id).map(|(_, n)| n.clone()),
         "cursor" => cursor::models().into_iter().find(|(m, _)| m == id).map(|(_, n)| n),
+        "opencode" => Some(opencode::model_name(id)),
         _ => None,
     };
     listed.unwrap_or_else(|| {
@@ -210,6 +214,7 @@ pub fn listing() -> Value {
                 "claude" => agents::MODELS.iter().map(|m| json!([m, model_name("claude", m)])).collect(),
                 "gemini" => antigravity::models().iter().map(|(id, n)| json!([id, n])).collect(),
                 "cursor" => cursor::models().into_iter().map(|(id, n)| json!([id, n])).collect(),
+                "opencode" => opencode::models().into_iter().map(|(id, n)| json!([id, n])).collect(),
                 _ => Vec::new(),
             };
             json!({"id": ai, "name": ai_name(ai), "installed": (w.installed)(ai), "models": models, "default": default_of(ai)})

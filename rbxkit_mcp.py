@@ -906,7 +906,7 @@ TOOLS = [
              "ids": {"type": "array", "items": S, "description": "status (optional) and wait: task ids returned by spawn"},
              "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"},
              "expert": {"type": "string", "description": "spawn (Studio mode): a roster expert id such as coder or security; its role comes from the roster and the task is added to the expert's own instructions"},
-             "ai": {"type": "string", "enum": ["claude", "gemini", "cursor"], "description": "spawn (optional, use sparingly): run the new agent on this AI instead of your own. The user's Setup > Experts choice for that expert wins over it; an AI that is not installed is refused with the reason"},
+             "ai": {"type": "string", "enum": ["claude", "gemini", "cursor", "opencode"], "description": "spawn (optional, use sparingly): run the new agent on this AI instead of your own. The user's Setup > Experts choice for that expert wins over it; an AI that is not installed is refused with the reason"},
              "model": {"type": "string", "description": "spawn (optional): a model id of that AI (or of yours when ai is left out); one it does not offer falls back to its default, and the result says so"}}, ["action"]), t_team),
     ("rbx_promo", "Make vertical promo videos for a game (TikTok, Shorts, Reels): probe clips, render a recipe, check it. "
      "Read the guide first: rbx_guide topic `promo`. A long render returns a job id; poll it with action 'job'.",

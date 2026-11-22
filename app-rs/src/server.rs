@@ -16,7 +16,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     agents::{self, BUS, MAX_AGENTS, MODELS},
     antigravity,
-    attach, board, codex, cursor, expert_ai, media,
+    attach, board, codex, cursor, expert_ai, media, opencode,
     paths::{self, PATHS, VERSION},
     plugin, projects, promo, promo_tab, research, studio_run, studio_watch, team, textures, update, usage,
 };
@@ -151,15 +151,18 @@ fn blender_found() -> bool {
 
 fn status() -> Value {
     cursor::refresh_models(); // asks Cursor again while its list is empty (signed out or offline when the app started)
+    opencode::refresh_models();
     json!({
         "agent": paths::find_ai(&paths::default_ai()).is_some(),
-        "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some()},
+        "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some(), "opencode": paths::find_opencode().is_some()},
                "offered": paths::AIS,
-               "gaps": {"cursor": cursor::gaps()},
+               "gaps": {"cursor": cursor::gaps(), "opencode": opencode::gaps()},
+               "opencode": {"signed_in": opencode::signed_in(), "login": opencode::login_state()},
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
-                          "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},
-               "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model()}},
+                          "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
+                          "opencode": opencode::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>()},
+               "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
         "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
@@ -309,6 +312,16 @@ fn post(path: &str, body: Value) -> Reply {
                 None => send_json(json!({"ok": false})),
             }
         }
+        // Setup > Connections: Fridae's own OpenCode sign-in (OpenCode's device sign-in, approved in the browser)
+        "/api/opencode" => match text_of("action").as_str() {
+            "login" => send_json(opencode::login_start()),
+            "open" => send_json(json!({"ok": opencode::login_open()})),
+            "cancel" => {
+                opencode::login_cancel();
+                send_json(opencode::login_state())
+            }
+            _ => send_json(opencode::login_state()),
+        },
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
         "/api/unqueue" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.unqueue(&text_of("qid")))})),
         "/api/board" => {
@@ -484,6 +497,7 @@ pub fn start(token: String) -> String {
     antigravity::load_models();
     codex::load_models();
     cursor::load_models();
+    opencode::load_models();
     thread::spawn(move || {
         // one thread per request, so a waiting long-poll never holds up anything else
         while let Ok(req) = server.recv() {

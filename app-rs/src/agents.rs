@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     antigravity::{self, Out},
-    attach, board, codex, cursor,
+    attach, board, codex, cursor, opencode,
     paths::{self, PATHS},
     plugin, projects, research, studio_undo, team, textures, usage,
 };
@@ -598,7 +598,7 @@ struct State {
     /// with this many seconds of it left.
     studio_waiting: bool,
     overnight_left: f64,
-    /// Which AI this chat runs on ("claude", "gemini", "chatgpt" or "cursor"). Open until the first message; a
+    /// Which AI this chat runs on ("claude", "gemini", "chatgpt", "cursor" or "opencode"). Open until the first message; a
     /// conversation then stays with the AI it began on, because its memory lives with that AI.
     ai: Option<String>,
     /// The model this chat was started on (an expert placed by Setup > Experts or by its Lead's request): used when a
@@ -711,9 +711,19 @@ fn is_user(e: &Value) -> bool {
     e["kind"] == "user"
 }
 
-/// A Cursor chat whose saved conversation is gone: forget it, and hand over the chat so far (without the message being
-/// sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
-fn stale_cursor_chat(st: &mut State, saved: impl Fn(&str) -> bool) {
+/// What a turn's events said about how it went.
+#[derive(Default)]
+struct TurnEnd {
+    got_result: bool,
+    /// the AI answered, but its result says the turn failed (signed out, out of turns...)
+    result_error: bool,
+    /// what that failed result said
+    result_text: String,
+}
+
+/// A Cursor or OpenCode chat whose saved conversation is gone: forget it, and hand over the chat so far (without the
+/// message being sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
+fn stale_chat(st: &mut State, from: &str, saved: impl Fn(&str) -> bool) {
     let Some(session) = st.session.clone() else { return };
     if saved(&session) {
         return;
@@ -721,7 +731,7 @@ fn stale_cursor_chat(st: &mut State, saved: impl Fn(&str) -> bool) {
     st.session = None;
     if st.handover.is_none() {
         let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-        st.handover = Some(handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP));
+        st.handover = Some(handover_text(&st.log[..upto], from, HANDOVER_CAP));
     }
 }
 
@@ -734,6 +744,7 @@ fn ai_label(kind: &str) -> &'static str {
         "gemini" => "Gemini",
         "chatgpt" => "ChatGPT",
         "cursor" => "Cursor",
+        "opencode" => "OpenCode",
         _ => "Claude",
     }
 }
@@ -1463,6 +1474,7 @@ impl Agent {
             "claude" => Some(model.filter(|m| MODELS.contains(m)).unwrap_or("opus").to_string()),
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
             "cursor" => cursor::pick_model(model),
+            "opencode" => opencode::pick_model(model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
@@ -1531,6 +1543,7 @@ impl Agent {
             let missing = match kind.as_str() {
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
                 "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae Studios.",
+                "opencode" => "This chat is set to OpenCode, but OpenCode's command-line tool (opencode) was not found. Install it from https://opencode.ai, then reopen Fridae Studios. Fridae signs in to it on its own (Setup, Connections).",
                 "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae Studios.",
                 _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae Studios. Or pick another AI under the message box.",
             };
@@ -1552,7 +1565,13 @@ impl Agent {
         // Cursor asked to resume a chat it no longer has (its saved chats were cleared) starts an empty one under that id
         // without a word: the chat starts afresh with the chat so far instead (up to this message, which follows anyway)
         if kind == "cursor" {
-            stale_cursor_chat(&mut self.st.lock().unwrap(), cursor::chat_saved);
+            stale_chat(&mut self.st.lock().unwrap(), "Cursor", cursor::chat_saved);
+        }
+        // OpenCode: a chat its server no longer has (its folder was cleared) starts afresh the same way
+        if kind == "opencode" {
+            let session = self.st.lock().unwrap().session.clone();
+            let saved = session.as_deref().is_none_or(opencode::chat_saved);
+            stale_chat(&mut self.st.lock().unwrap(), "OpenCode", |_| saved);
         }
         text = with_handover(&self.st.lock().unwrap(), &text);
         // what the two switches under the message box add
@@ -1596,14 +1615,42 @@ impl Agent {
             // Cursor has its own text: it may run the programs the user allowed, and a refused one becomes a card
             if kind == "cursor" {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
+            } else if kind == "opencode" {
+                prompt += &opencode::instructions(project.as_deref(), &paths::allowed_commands(), ask.full);
             } else {
                 prompt += OTHER_AI_PROMPT;
             }
+            // OpenCode takes the standing instructions on the session itself, afresh every turn (see `opencode::run`)
             text = match &session {
+                _ if kind == "opencode" => text,
                 None => antigravity::with_instructions(&prompt, &text),
                 Some(_) if !switches.is_empty() => antigravity::with_instructions(&switches, &text),
                 Some(_) => text,
             };
+        }
+        // OpenCode runs on the app's own OpenCode server, not as a program per turn
+        if kind == "opencode" {
+            {
+                let mut st = self.st.lock().unwrap();
+                st.running = true;
+                st.stopped = false;
+                st.pid = None;
+            }
+            let spec = opencode::Spec {
+                agent_id: self.id.clone(),
+                title: format!("Fridae · {}", self.name()),
+                location: workspace.clone(),
+                project: project.as_ref().map(std::path::PathBuf::from),
+                servers: servers.clone(),
+                session: session.clone(),
+                model: model.map(str::to_string),
+                full: ask.full,
+                instructions: prompt.clone(),
+                text: text.clone(),
+            };
+            let me = self.clone();
+            thread::spawn(move || me.read_opencode(spec));
+            return;
         }
         let mut cmd = match kind.as_str() {
             "gemini" => {
@@ -1692,9 +1739,7 @@ impl Agent {
             }
             String::from_utf8_lossy(&s).trim().to_string()
         });
-        let mut got_result = false;
-        let mut result_error = false; // the AI answered, but its result says the turn failed (signed out, out of turns...)
-        let mut result_text = String::new(); // what that failed result said
+        let mut t = TurnEnd::default();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         if let Some(out) = child.stdout.take() {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
@@ -1706,48 +1751,7 @@ impl Agent {
                         _ => chatgpt.feed(&e),
                     };
                     for out in outs {
-                        match out {
-                            Out::Conversation(id) => got_session(&mut self.st.lock().unwrap(), id),
-                            Out::Model(name) => self.put("model", json!({"name": name})),
-                            Out::Tool(name) => {
-                                // these AIs do not say what a tool was asked, so any rbxkit, Studio or file tool counts
-                                if progress_call(&name, &Value::Null) {
-                                    self.st.lock().unwrap().turn_progress = true;
-                                }
-                                // Cursor names a server's tool as mcp__<server>__<tool>, as Claude Code does
-                                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
-                                self.show_tool(&short, studio_tool(&name))
-                            }
-                            Out::ToolArgs(name, input) => {
-                                if progress_call(&name, &input) {
-                                    self.st.lock().unwrap().turn_progress = true;
-                                }
-                                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
-                                self.show_tool(&short, studio_tool(&name))
-                            }
-                            Out::Text(text) => self.put("text", json!({"text": text})),
-                            Out::Pictures(paths) => {
-                                let urls: Vec<String> = paths.iter().filter_map(|p| fs::read(p).ok()).filter_map(|bytes| attach::save_chat_image(&bytes)).collect();
-                                if !urls.is_empty() {
-                                    self.put("images", json!({"urls": urls}));
-                                }
-                            }
-                            Out::Encoded(list) => {
-                                let urls: Vec<String> = list.iter().filter_map(|d| attach::save_chat_image_b64(d)).collect();
-                                if !urls.is_empty() {
-                                    self.put("images", json!({"urls": urls}));
-                                }
-                            }
-                            Out::Blocked(commands) => self.put("blocked", json!({"commands": commands})),
-                            Out::Error(text) => self.put("error", json!({"text": text})),
-                            Out::Failed(text) => {
-                                result_error = true;
-                                result_text = text.clone();
-                                self.put("error", json!({"text": text}));
-                            }
-                            Out::Usage(turn) => self.used(&turn),
-                            Out::Finished => got_result = true,
-                        }
+                        self.take(out, &mut t);
                     }
                     continue;
                 }
@@ -1815,7 +1819,7 @@ impl Agent {
                     }
                     "rate_limit_event" => crate::limits::record(&e),
                     "result" => {
-                        got_result = true;
+                        t.got_result = true;
                         self.used_in(&usage::Turn::from_claude_session(&e), e["session_id"].as_str());
                         // commands the agent was not allowed to run: the page offers to allow each program
                         let mut blocked: Vec<Value> = Vec::new();
@@ -1829,9 +1833,9 @@ impl Agent {
                             self.put("blocked", json!({"commands": blocked}));
                         }
                         if !result_ok(&e) {
-                            result_error = true;
+                            t.result_error = true;
                             let msg = e["result"].as_str().or(e["subtype"].as_str()).filter(|s| !s.is_empty()).unwrap_or("The agent stopped with an error.");
-                            result_text = msg.to_string();
+                            t.result_text = msg.to_string();
                             self.put("error", json!({"text": msg}));
                         }
                     }
@@ -1847,13 +1851,81 @@ impl Agent {
             paths::end_group_soon(child.id());
         }
         let status = child.wait().ok();
-        let stopped = {
-            let mut st = self.st.lock().unwrap();
-            st.running = false;
-            st.pid = None;
-            st.turned = true;
-            std::mem::take(&mut st.stopped)
-        };
+        let stopped = self.turn_over();
+        self.after_turn(kind, t, &err, status.map(|s| (s.success(), s.code().unwrap_or(-1))), stopped);
+    }
+
+    /// The chat's turn has ended: it is no longer running. Returns whether Stop ended it.
+    fn turn_over(&self) -> bool {
+        let mut st = self.st.lock().unwrap();
+        st.running = false;
+        st.pid = None;
+        st.turned = true;
+        std::mem::take(&mut st.stopped)
+    }
+
+    /// One thing an AI other than Claude Code reported during its turn.
+    fn take(self: &Arc<Self>, out: Out, t: &mut TurnEnd) {
+        match out {
+            Out::Conversation(id) => got_session(&mut self.st.lock().unwrap(), id),
+            Out::Model(name) => self.put("model", json!({"name": name})),
+            Out::Tool(name) => {
+                // these AIs do not say what a tool was asked, so any rbxkit, Studio or file tool counts
+                if progress_call(&name, &Value::Null) {
+                    self.st.lock().unwrap().turn_progress = true;
+                }
+                // Cursor and OpenCode name a server's tool as mcp__<server>__<tool>, as Claude Code does
+                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
+                self.show_tool(&short, studio_tool(&name))
+            }
+            Out::ToolArgs(name, input) => {
+                if progress_call(&name, &input) {
+                    self.st.lock().unwrap().turn_progress = true;
+                }
+                let short = name.rsplit("__").next().unwrap_or(&name).to_string();
+                self.show_tool(&short, studio_tool(&name))
+            }
+            Out::Text(text) => self.put("text", json!({"text": text})),
+            Out::Pictures(paths) => {
+                let urls: Vec<String> = paths.iter().filter_map(|p| fs::read(p).ok()).filter_map(|bytes| attach::save_chat_image(&bytes)).collect();
+                if !urls.is_empty() {
+                    self.put("images", json!({"urls": urls}));
+                }
+            }
+            Out::Encoded(list) => {
+                let urls: Vec<String> = list.iter().filter_map(|d| attach::save_chat_image_b64(d)).collect();
+                if !urls.is_empty() {
+                    self.put("images", json!({"urls": urls}));
+                }
+            }
+            Out::Blocked(commands) => self.put("blocked", json!({"commands": commands})),
+            Out::Error(text) => self.put("error", json!({"text": text})),
+            Out::Failed(text) => {
+                t.result_error = true;
+                t.result_text = text.clone();
+                self.put("error", json!({"text": text}));
+            }
+            Out::Usage(turn) => self.used(&turn),
+            Out::Finished => t.got_result = true,
+        }
+    }
+
+    /// An OpenCode turn, on the app's OpenCode server (see `opencode::run`), then the same ending as any turn.
+    fn read_opencode(self: &Arc<Self>, spec: opencode::Spec) {
+        let mut t = TurnEnd::default();
+        let ended = opencode::run(&spec, |out| self.take(out, &mut t));
+        let stopped = self.turn_over();
+        if ended.killed {
+            self.put("error", json!({"text": "OpenCode did not stop when asked within a few seconds, so Fridae ended it (and any other OpenCode chat that was working)."}));
+        }
+        let exit = (!ended.err.is_empty()).then_some((false, -1));
+        self.after_turn("opencode", t, &ended.err, exit, stopped);
+    }
+
+    /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
+    /// `exit` is how the AI's program ended (success, code), when there was one.
+    fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
+        let TurnEnd { got_result, result_error, result_text } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         if !got_result && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
@@ -1861,15 +1933,16 @@ impl Agent {
         } else if stopped {
             self.put("error", json!({"text": "Stopped."}));
         } else if let Some(why) = match kind {
-            "gemini" => antigravity::explain(&err, got_result),
-            "chatgpt" => codex::explain(&err).filter(|_| !got_result).map(str::to_string),
-            "cursor" => cursor::explain(&err, got_result),
+            "gemini" => antigravity::explain(err, got_result),
+            "chatgpt" => codex::explain(err).filter(|_| !got_result).map(str::to_string),
+            "cursor" => cursor::explain(err, got_result),
+            "opencode" => opencode::explain(err, got_result),
             _ => None,
         } {
             self.put("error", json!({"text": why}));
-        } else if !got_result && !status.map(|s| s.success()).unwrap_or(true) {
+        } else if !got_result && !exit.map(|(ok, _)| ok).unwrap_or(true) {
             let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
-            let code = status.and_then(|s| s.code()).unwrap_or(-1);
+            let code = exit.map(|(_, c)| c).unwrap_or(-1);
             self.put("error", json!({"text": if tail.is_empty() { format!("The agent exited unexpectedly (code {code}).") } else { tail }}));
         }
         team::finished(self, stopped);
@@ -2007,6 +2080,16 @@ impl Agent {
 
     /// Stop this chat's turn: the agent's process and everything it started end (see `paths::end_trees`).
     pub fn stop(&self) {
+        // OpenCode: the server is asked to end the turn, and ended itself if it does not (see `opencode::stop`)
+        if self.ai() == "opencode" {
+            let running = self.st.lock().unwrap().running;
+            let _ = self.stop_turn();
+            if running {
+                let id = self.id.clone();
+                thread::spawn(move || opencode::stop(&id));
+            }
+            return;
+        }
         if let Some(pid) = self.stop_turn() {
             // Windows: taskkill, there and then, as always. Unix: SIGTERM now and SIGKILL after a grace, off this thread
             #[cfg(windows)]
@@ -2411,6 +2494,8 @@ pub fn shut_down() {
     // every running agent is ended, and the app waits for them (at most the stop grace), so none outlives it
     let pids: Vec<u32> = agents().iter().filter_map(|a| a.stop_turn()).collect();
     paths::end_trees(&pids);
+    opencode::shut_down(); // the app's OpenCode server, with every OpenCode turn
+
     for a in agents() {
         a.save();
     }
@@ -2729,10 +2814,10 @@ mod tests {
             json!({"kind": "user", "text": "Now make it glow"}),
         ];
         let mut st = State { session: Some("abc".into()), log: log.clone(), ..Default::default() };
-        stale_cursor_chat(&mut st, |_| true);
+        stale_chat(&mut st, "Cursor", |_| true);
         assert_eq!(st.session.as_deref(), Some("abc"), "a chat Cursor still has is resumed");
         assert!(st.handover.is_none());
-        stale_cursor_chat(&mut st, |_| false);
+        stale_chat(&mut st, "Cursor", |_| false);
         assert!(st.session.is_none());
         let h = st.handover.clone().unwrap();
         assert!(h.contains("Make a lava floor") && h.contains("lava floor at the start"));
