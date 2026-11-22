@@ -6,6 +6,7 @@
 //! while a progress bar fills, opens the installed app and quits. Nothing here runs a console program, so no
 //! console window can appear. It uses nothing from `paths`, which would point at the download folder here.
 
+use crate::paths::Start;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -33,7 +34,7 @@ enum Msg {
 #[cfg(not(windows))]
 fn wait_for_exit(pid: u32, secs: u32) {
     for _ in 0..secs * 4 {
-        let alive = std::process::Command::new("kill").args(["-0", &pid.to_string()]).status().map(|s| s.success()).unwrap_or(false);
+        let alive = std::process::Command::new("kill").args(["-0", &pid.to_string()]).run_status().map(|s| s.success()).unwrap_or(false);
         if !alive {
             return;
         }
@@ -181,7 +182,7 @@ pub fn run(args: &[String]) {
             let _ = proxy.send_event(Msg::Progress(1.0, if ok { "Opening Fridae Studios".into() } else { "Some files could not be replaced. Opening anyway".into() }));
             if relaunch {
                 let exe = target.join(EXE_NAME);
-                let _ = Command::new(&exe).current_dir(&target).spawn();
+                let _ = Command::new(&exe).current_dir(&target).start();
             }
             thread::sleep(Duration::from_millis(if ok { 900 } else { 2500 }));
             let _ = proxy.send_event(Msg::Close);

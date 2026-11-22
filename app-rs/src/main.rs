@@ -40,6 +40,7 @@ mod textures;
 mod update;
 mod usage;
 
+use crate::paths::Start;
 use std::{env, fs, thread, time::Duration};
 
 use tao::{
@@ -214,10 +215,10 @@ fn main() {
                         .arg(format!("--app={url}"))
                         .arg("--window-size=1180,820")
                         .arg(format!("--user-data-dir={}", profile.display()))
-                        .status();
+                        .run_status();
                 }
                 None => {
-                    let _ = open::that(&url);
+                    let _ = crate::paths::open_that(&url);
                     loop {
                         thread::sleep(Duration::from_secs(3600));
                     }

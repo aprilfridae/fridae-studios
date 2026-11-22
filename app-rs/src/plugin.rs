@@ -6,6 +6,7 @@
 //! an agent's turn). The secret it sends was written into the plugin file when
 //! the app installed it.
 
+use crate::paths::Start;
 use std::{
     collections::HashMap,
     fs,
@@ -101,12 +102,12 @@ pub fn status() -> Value {
 fn studio_running() -> bool {
     // Studio writes this launcher when its connector is on; whether Studio itself is open matters only for the hint we show
     if !cfg!(windows) {
-        return std::process::Command::new("pgrep").args(["-x", "RobloxStudio"]).output().map(|o| o.status.success()).unwrap_or(false);
+        return std::process::Command::new("pgrep").args(["-x", "RobloxStudio"]).run_output().map(|o| o.status.success()).unwrap_or(false);
     }
     let mut cmd = std::process::Command::new("tasklist");
     cmd.args(["/FI", "IMAGENAME eq RobloxStudioBeta.exe", "/NH"]);
     paths::quiet(&mut cmd);
-    cmd.output().map(|o| String::from_utf8_lossy(&o.stdout).contains("RobloxStudioBeta")).unwrap_or(false)
+    cmd.run_output().map(|o| String::from_utf8_lossy(&o.stdout).contains("RobloxStudioBeta")).unwrap_or(false)
 }
 
 /// Put the plugin into Studio's local plugins folder. Studio loads it the next time it starts.

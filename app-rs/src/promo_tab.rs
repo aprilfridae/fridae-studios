@@ -1,6 +1,7 @@
 //! The Promos tab: the library of finished promos, starting a new promo in a chat of its own, and the
 //! style previews for its form. The cards themselves, their media and buttons are in promo.rs.
 
+use crate::paths::Start as _;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -213,7 +214,7 @@ pub fn style_still(name: &str) -> Option<PathBuf> {
 pub fn styles() -> Value {
     static ONE: Mutex<()> = Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-    let out = paths::cli(&["promo", "styles"]).output();
+    let out = paths::cli(&["promo", "styles"]).run_output();
     let parsed = match out {
         Ok(o) if o.status.success() => serde_json::from_slice::<Value>(&o.stdout).map_err(|_| "The styles could not be read.".to_string()),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().lines().last().unwrap_or("The styles could not be made.").to_string()),

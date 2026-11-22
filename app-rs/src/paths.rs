@@ -86,7 +86,7 @@ fn test_run_alive(pid: u32, folder: &Path) -> bool {
     #[cfg(unix)]
     {
         let _ = folder;
-        Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+        Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).run_status().is_ok_and(|s| s.success())
     }
     #[cfg(not(unix))]
     {
@@ -217,7 +217,7 @@ pub fn end_group_soon(group: u32) {
 /// Whether a process group has a member other than its leader (`ps`; no when it cannot be read).
 #[cfg(unix)]
 fn group_has_members(group: u32) -> bool {
-    let out = Command::new("ps").args(["-A", "-o", "pid=,pgid="]).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let out = Command::new("ps").args(["-A", "-o", "pid=,pgid="]).run_output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
     out.lines().any(|l| {
         let mut w = l.split_whitespace().filter_map(|x| x.parse::<u32>().ok());
         matches!((w.next(), w.next()), (Some(pid), Some(g)) if g == group && pid != group)
@@ -232,7 +232,7 @@ pub fn leader_exited(pid: u32, limit: std::time::Duration) -> bool {
     {
         let until = std::time::Instant::now() + limit;
         loop {
-            let state = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            let state = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).run_output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
             if state.is_empty() || state.starts_with('Z') {
                 return true;
             }
@@ -298,7 +298,7 @@ pub fn signal_group(group: u32, sig: &str) -> bool {
             .args([sig, "--", &format!("-{group}")])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status()
+            .run_status()
             .is_ok_and(|s| s.success())
     }
     #[cfg(not(unix))]
@@ -349,9 +349,58 @@ pub fn tail_text(kept: &std::sync::Mutex<std::collections::VecDeque<u8>>) -> Str
 /// is no `pipe2`), so a process forked by another thread in that moment inherits it for good: a kept process's stdin
 /// would then stay open in another chat's AI, and closing it would not end the process until it is killed (seen
 /// in the tests as a close that took its whole grace). Starting them one at a time closes that window among them.
-pub fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
+///
+/// That only holds when **every** start in the app takes it, short ones too: a `ps` started by `output()` makes its
+/// pipes like any other, and a process forked in that moment keeps `ps`'s writing end open, so `output()` never
+/// sees the end of `ps`'s output (measured: a kept process being closed, whose closing begins with a `ps`, hung
+/// for as long as its replacement lived, about one replacement in a hundred). So nothing in the app calls
+/// `Command::spawn`, `output` or `status` itself: every start goes through `Start` below (`clippy.toml` forbids the
+/// bare methods). The lock is held for the start alone, never while the child runs.
+fn spawn_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The only way the app starts a process: `Command`'s own `spawn`, `output` and `status`, with the making of the
+/// pipes and the start under `spawn_lock`, and the waiting outside it.
+pub trait Start {
+    /// `Command::spawn`.
+    fn start(&mut self) -> std::io::Result<std::process::Child>;
+    /// `Command::output`: no stdin, stdout and stderr collected.
+    fn run_output(&mut self) -> std::io::Result<std::process::Output>;
+    /// `Command::status`: stdin, stdout and stderr as the command has them set.
+    fn run_status(&mut self) -> std::io::Result<std::process::ExitStatus>;
+}
+
+impl Start for Command {
+    #[allow(clippy::disallowed_methods)]
+    fn start(&mut self) -> std::io::Result<std::process::Child> {
+        let _one_at_a_time = spawn_lock();
+        self.spawn()
+    }
+
+    fn run_output(&mut self) -> std::io::Result<std::process::Output> {
+        use std::process::Stdio;
+        self.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        self.start()?.wait_with_output()
+    }
+
+    fn run_status(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.start()?.wait()
+    }
+}
+
+/// Opens a file, folder or address with the system's own program for it (`open::that`, started as every process is).
+pub fn open_that(what: impl AsRef<std::ffi::OsStr>) -> std::io::Result<()> {
+    let mut last = std::io::Error::other("nothing on this system opens it");
+    for mut cmd in open::commands(what) {
+        match cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).run_status() {
+            Ok(s) if s.success() => return Ok(()),
+            Ok(s) => last = std::io::Error::other(format!("the opener ended with {s}")),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// The longest line of an AI's output that is kept (a tool result carrying a big picture can be one line).
@@ -457,7 +506,12 @@ pub fn env_keys_present(ai: &str) -> Vec<&'static str> {
 /// The environment hygiene every AI's process gets (see CLAUDE_SESSION_VARS, plan_keys, env_keys_on); Antigravity is
 /// also told not to update itself mid-turn.
 pub fn child_env(cmd: &mut Command, ai: &str) {
-    let keys_on = env_keys_on() && ai != "opencode";
+    child_env_with(cmd, ai, env_keys_on());
+}
+
+/// The same, with the Setup switch "Use API keys from my environment" given.
+pub fn child_env_with(cmd: &mut Command, ai: &str, keys_switch: bool) {
+    let keys_on = keys_switch && ai != "opencode";
     for k in CLAUDE_SESSION_VARS.iter().chain(plan_keys(ai).iter().filter(|_| !keys_on)) {
         cmd.env_remove(k);
     }
@@ -476,7 +530,7 @@ pub fn end_trees(pids: &[u32]) {
         let mut kill = Command::new("taskkill");
         kill.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         quiet(&mut kill);
-        let _ = kill.status();
+        let _ = kill.run_status();
     }
     #[cfg(unix)]
     {
@@ -2131,36 +2185,41 @@ mod tests {
         assert!(check_in(&mut b, &st).is_empty() && b.known.get("allowed_commands").is_none());
     }
 
-    /// The settings file changed as an AI's file tool would change it: written straight, not through the app.
-    fn tamper(key: &str, v: Value) {
-        let mut cfg = load_config();
-        cfg.insert(key.into(), v);
-        write_config(&config_file(), &cfg);
-    }
-
     #[test]
     fn guarded_settings_come_from_memory_and_a_tampered_file_is_put_back() {
-        let _held = ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let before = set_allowed(&["zzprobe".to_string()], false);
-        let keys_before = env_keys_on();
+        // on a store of its own (not the settings every test shares: each turn of any other test checks those at its
+        // end, and would be told "a setting was changed" by what this test does on purpose)
+        let st = home_store("tampered");
+        put(&st, serde_json::json!({"allowed_commands": ["git"], "use_env_keys": false, "chat_ai": "claude"}));
+        let mut g = start_in(&st);
+        let before = serde_json::json!(["git"]);
+        // the settings file changed as an AI's file tool would change it: written straight, not through the app
+        let tamper = |key: &str, v: Value| {
+            let mut cfg = file_of(&st);
+            cfg.insert(key.into(), v);
+            write_config(&st.config, &cfg);
+        };
         // mid-turn: the file says sh and the key switch on; nothing that decides reads it
         tamper("allowed_commands", serde_json::json!(["sh"]));
         tamper("use_env_keys", serde_json::json!(true));
-        assert_eq!(allowed_commands(), before, "a second turn's spawn and an OpenCode ask read the known list");
-        assert!(!command_allowed("sh -c x", &allowed_commands()));
-        assert_eq!(env_keys_on(), keys_before);
-        // the check puts the file back (another test's turn may have done so first: either way it is back)
-        let _ = check_settings();
-        assert_eq!(load_config().get("allowed_commands"), Some(&serde_json::json!(before)));
+        assert_eq!(g.known.get("allowed_commands"), Some(&before), "a second turn's spawn and an OpenCode ask read the known list");
+        assert_eq!(g.known.get("use_env_keys"), Some(&serde_json::json!(false)));
+        assert!(!command_allowed("sh -c x", &["git".to_string()]));
+        // the check puts the file back, and says which settings
+        let back = check_in(&mut g, &st);
+        assert!(back.contains(&"allowed_commands".to_string()) && back.contains(&"use_env_keys".to_string()), "{back:?}");
+        assert_eq!(file_of(&st).get("allowed_commands"), Some(&before));
+        assert_eq!(file_of(&st).get("use_env_keys"), Some(&serde_json::json!(false)));
+        assert!(check_in(&mut g, &st).is_empty(), "nothing more to put back");
         // a change through the app's own route is written over a tampered file, never merged with it, and is what
         // the copy outside the AIs' folders holds
         tamper("allowed_commands", serde_json::json!(["sh"]));
-        let now = set_allowed(&["zzprobe".to_string()], true);
-        assert!(!now.contains(&"sh".to_string()) && now.contains(&"zzprobe".to_string()));
-        let copy: Value = serde_json::from_str(&fs::read_to_string(guard_copy()).unwrap()).unwrap();
-        assert_eq!(copy["settings"].get("allowed_commands"), Some(&serde_json::json!(now)));
-        assert_eq!(copy["home"].as_str(), Some(real_home(&PATHS.home).as_str()), "the copy names its home");
-        let _ = set_allowed(&["zzprobe".to_string()], false);
+        let now = serde_json::json!(["git", "zzprobe"]);
+        update_in(&mut g, &st, |c| c.insert("allowed_commands".into(), serde_json::json!(["git", "zzprobe"])));
+        assert_eq!(file_of(&st).get("allowed_commands"), Some(&now));
+        let copy: Value = serde_json::from_str(&fs::read_to_string(&st.copy).unwrap()).unwrap();
+        assert_eq!(copy["settings"].get("allowed_commands"), Some(&now));
+        assert_eq!(copy["home"].as_str(), Some(real_home(&st.home).as_str()), "the copy names its home");
     }
 
     #[test]
@@ -2272,9 +2331,10 @@ mod tests {
 
     #[test]
     fn ai_processes_lose_the_parent_claude_session_and_ambient_api_keys() {
+        // (the switch is given, not read: another test turns the shared setting on for a moment)
         let removed = |ai: &str| {
             let mut c = Command::new("true");
-            child_env(&mut c, ai);
+            child_env_with(&mut c, ai, false);
             let mut gone: Vec<String> = c.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k.to_string_lossy().into_owned()).collect();
             gone.sort();
             let set: Vec<(String, String)> = c.get_envs().filter_map(|(k, v)| v.map(|v| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))).collect();

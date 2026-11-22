@@ -35,6 +35,7 @@
 //! - One server serves every chat, and tool servers are added per folder, so each chat's tool servers carry a name
 //!   of their own (`chat_prefix`): a chat never reaches another chat's tools, which act as that other chat.
 
+use crate::paths::Start;
 use std::{
     collections::HashMap,
     env, fs,
@@ -211,7 +212,7 @@ pub fn load_models() {
             let run = |args: &[&str]| {
                 let mut cmd = opencode(&exe);
                 cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
-                cmd.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+                cmd.run_output().ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
             };
             let list = parse_models(&run(&["models"]));
             if !list.is_empty() {
@@ -780,7 +781,12 @@ fn start_server() -> Result<Server, String> {
     cmd.env("OPENCODE_PASSWORD", &pw).current_dir(store()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
     paths::own_group(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start OpenCode: {e}"))?;
+    // one process is started at a time (`paths::spawn_lock`): a server started while a chat's kept process was being
+    // started could otherwise hold that process's pipes for as long as it lives
+    let spawned = {
+        cmd.start()
+    };
+    let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
     procs::record("opencode", child.id());
     let (tx, rx) = mpsc::channel::<u16>();
     let stdout = child.stdout.take();
@@ -1976,7 +1982,10 @@ pub fn login_start() -> Value {
         let mut cmd = opencode(&exe);
         cmd.args(["auth", "login", "opencode", "--method", "device"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::own_group(&mut cmd);
-        let child = match cmd.spawn() {
+        let spawned = {
+            cmd.start()
+        };
+        let child = match spawned {
             Ok(c) => c,
             Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
         };
@@ -2047,7 +2056,7 @@ pub fn login_start() -> Value {
 /// Open the sign-in page in the browser (only OpenCode's own page).
 pub fn login_open() -> bool {
     let url = LOGIN.lock().unwrap().url.clone();
-    url.starts_with("https://opencode.ai/") && open::that(&url).is_ok()
+    url.starts_with("https://opencode.ai/") && crate::paths::open_that(&url).is_ok()
 }
 
 /// End a sign-in that is still waiting (Cancel, or the app quitting).
@@ -2099,7 +2108,7 @@ mod tests {
         fs::write(dir.join("a.txt"), "x").unwrap();
         for c in ["echo status *(e:'./git':)", "echo diff =(./git)", "echo log (./git)", "echo x >/dev/null(e:'./git':)"] {
             let _ = std::process::Command::new(&w).arg("-c").arg(c).current_dir(&dir).env("SHELL", "/bin/zsh")
-                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).run_status();
             assert!(!mark.exists(), "{c} ran the planted script");
         }
     }

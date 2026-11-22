@@ -1,6 +1,7 @@
 //! The New project page's Ideas: a snapshot of Roblox's public charts, and an agent that
 //! turns it into game ideas backed by those numbers.
 
+use crate::paths::Start;
 use std::{
     fs,
     path::PathBuf,
@@ -32,7 +33,7 @@ pub fn refresh() {
     }
     let _ = fs::create_dir_all(dir());
     let out = dir().join("market.json");
-    let result = paths::cli(&["research", "snapshot", "--out", &out.display().to_string()]).output();
+    let result = paths::cli(&["research", "snapshot", "--out", &out.display().to_string()]).run_output();
     let problem = match result {
         Ok(o) if o.status.success() => String::new(),
         Ok(o) => String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect(),

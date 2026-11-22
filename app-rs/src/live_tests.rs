@@ -292,7 +292,7 @@ while read -r line; do
        sleep 300 >/dev/null 2>&1 & echo $! > "$0.tool";;
     *die-late*) echo "$init"; say "half"; echo "boom" >&2; exit 3;;
     *hang*) echo "$init";;
-    *deaf*) echo "$init"; trap '' TERM; while read -r l; do :; done; sleep 300;;
+    *'"text":"deaf'*) echo "$init"; trap '' TERM; while read -r l; do :; done; sleep 300;;
     *) n=$((n+1)); echo "$init"; say "reply $n"; echo "$ok";;
   esac
 done
@@ -568,7 +568,7 @@ done
         assert_eq!(c.pid(), None, "not kept: the next message must not wait behind the call");
         assert!(goes(pid));
         let until = std::time::Instant::now() + Duration::from_secs(10);
-        let alive = |p: u32| Command::new("kill").args(["-0", &p.to_string()]).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        let alive = |p: u32| Command::new("kill").args(["-0", &p.to_string()]).stderr(Stdio::null()).run_status().is_ok_and(|s| s.success());
         while alive(tool) && std::time::Instant::now() < until {
             thread::sleep(Duration::from_millis(50));
         }
@@ -700,7 +700,7 @@ done
     fn forcing_a_process_per_turn_is_one_capability_and_one_switch() {
         let c = Chat::new("caps");
         assert!(c.a.live_allowed());
-        c.a.st.lock().unwrap().ai = Some("cursor".into());
+        c.a.st.lock().unwrap().ai = Some("opencode".into());
         assert!(!c.a.live_allowed(), "only an AI the table says keeps a process");
     }
 }

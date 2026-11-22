@@ -1,6 +1,7 @@
 //! Game projects: one folder per game, holding GAME.md (the game bible), the
 //! place's exported scripts, and usually a git repository.
 
+use crate::paths::Start;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -24,7 +25,7 @@ fn run_git(dir: &Path, args: &[&str]) -> (bool, String) {
     let mut cmd = Command::new("git");
     cmd.args(GIT_SAFE).args(args).current_dir(dir).stdin(Stdio::null()).env("GIT_TERMINAL_PROMPT", "0");
     paths::quiet(&mut cmd);
-    match cmd.output() {
+    match cmd.run_output() {
         Ok(o) => {
             let mut text = String::from_utf8_lossy(&o.stdout).trim_end().to_string();
             let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
@@ -146,7 +147,7 @@ pub fn open(path: &str, what: &str) -> bool {
     }
     let dir = PathBuf::from(path);
     let target = if what == "bible" { dir.join("GAME.md") } else { dir };
-    target.exists() && open::that(target).is_ok()
+    target.exists() && crate::paths::open_that(target).is_ok()
 }
 
 // ---------------------------------------------------------------------- git

@@ -62,7 +62,7 @@ pub fn folder_for(scope: &str, project: &str, home: &Path, known: impl Fn(&str) 
 /// POST /api/notes-open {scope, path}: show the folder in Finder or Explorer, creating it if it is missing.
 pub fn open(scope: &str, project: &str) -> bool {
     let Some(dir) = folder_for(scope, project, &PATHS.home, projects::known) else { return false };
-    fs::create_dir_all(&dir).is_ok() && open::that(&dir).is_ok()
+    fs::create_dir_all(&dir).is_ok() && crate::paths::open_that(&dir).is_ok()
 }
 
 #[cfg(test)]

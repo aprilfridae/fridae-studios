@@ -16,6 +16,7 @@
 //! A finished stage asks for its checkpoint through a request file, `WORK/stage-requests/<id>.json`
 //! {"project", "stage", "lead"} (rbxstage.py); `watch` takes it and appends it.
 
+use crate::paths::Start;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -116,7 +117,7 @@ impl StudioLink for Live {
         let file = paths::work("tmp").join(format!("before-undo-{}.json", paths::random_hex(1)));
         fs::create_dir_all(file.parent().unwrap_or(Path::new("."))).map_err(|e| e.to_string())?;
         fs::write(&file, serde_json::to_vec(&data).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        let out = paths::cli(&["project", "save_scripts", "--from", &file.display().to_string(), "--out", &folder.display().to_string()]).output();
+        let out = paths::cli(&["project", "save_scripts", "--from", &file.display().to_string(), "--out", &folder.display().to_string()]).run_output();
         let _ = fs::remove_file(&file);
         match out {
             Ok(o) if o.status.success() => Ok(()),
@@ -803,7 +804,7 @@ mod tests {
     }
 
     fn git(dir: &Path, args: &[&str]) -> (bool, String) {
-        let o = std::process::Command::new("git").args(args).current_dir(dir).output().unwrap();
+        let o = std::process::Command::new("git").args(args).current_dir(dir).run_output().unwrap();
         (o.status.success(), String::from_utf8_lossy(&o.stdout).to_string())
     }
 

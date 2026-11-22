@@ -12,6 +12,7 @@
 //!   answer an approval question.
 //! - Its own commands run in its sandbox: they can write inside the workspace and nowhere else.
 
+use crate::paths::Start;
 use std::{collections::HashSet, fs, path::Path, process::Command};
 
 use serde_json::{Map, Value};
@@ -34,7 +35,7 @@ pub fn load_models() {
         cmd.args(["debug", "models"]);
         paths::quiet(&mut cmd);
         paths::child_env(&mut cmd, "chatgpt");
-        let Ok(out) = cmd.output() else { return };
+        let Ok(out) = cmd.run_output() else { return };
         let Ok(d) = serde_json::from_slice::<Value>(&out.stdout) else { return };
         let mut list: Vec<(i64, String, String)> = d["models"]
             .as_array()
@@ -118,6 +119,11 @@ fn write_servers(workspace: &Path, servers: &Value) {
         _ if old.trim().is_empty() => block + "\n",
         _ => format!("{}\n\n{}\n", old.trim_end(), block),
     };
+    // never through a symbolic link, nor over one: the app makes none, so it is not the app's to write
+    let link = |p: &Path| p.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink());
+    if link(&path) || link(&dir) {
+        return;
+    }
     let _ = fs::create_dir_all(&dir);
     let _ = fs::write(path, new);
 }
