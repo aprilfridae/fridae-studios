@@ -12,6 +12,7 @@ mod antigravity;
 mod attach;
 mod board;
 mod caps;
+mod claude_live;
 mod codex;
 mod cursor;
 mod expert_ai;

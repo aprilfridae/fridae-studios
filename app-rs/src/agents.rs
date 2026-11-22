@@ -19,7 +19,9 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     antigravity::{self, Out},
-    attach, board, codex, cursor, opencode,
+    attach, board,
+    claude_live::{self, Live},
+    codex, cursor, opencode,
     paths::{self, PATHS},
     plugin, projects, research, studio_undo, team, textures, usage,
 };
@@ -569,6 +571,12 @@ struct State {
     pid: Option<u32>,
     /// The running turn's process (the command-line AIs; not OpenCode, which runs on the app's server).
     proc_: Option<Arc<TurnProc>>,
+    /// Claude Code kept open for this chat between turns (`claude_live`), and how often that failed in this chat:
+    /// twice, and the chat stays on a process per turn for the rest of this run of the app.
+    live: Option<Arc<Live>>,
+    live_fails: u32,
+    /// The chat was closed (`remove_agent`): a turn still ending on its kept process closes that process.
+    closed: bool,
     log: Vec<Value>,
     session: Option<String>,
     tools: HashMap<String, String>,
@@ -657,7 +665,8 @@ pub fn slots_used() -> usize {
     slots_taken(&AGENTS.lock().unwrap())
 }
 
-/// One chat. One headless Claude Code turn at a time; events go to the bus.
+/// One chat. One turn at a time (Claude Code's on a process kept open for the chat, see `claude_live`); events go
+/// to the bus.
 pub struct Agent {
     pub id: String,
     st: Mutex<State>,
@@ -729,11 +738,96 @@ pub struct TurnProc {
     killed: AtomicBool,
     /// nothing came for STALL, so it was ended
     stalled: AtomicBool,
+    /// The turn runs on the chat's kept Claude Code process: Stop asks it to interrupt and it lives on.
+    live: Option<Arc<Live>>,
+    /// Claude Code has started on the turn's message (a kept process): an interrupt before that would end nothing.
+    acked: AtomicBool,
+    /// A kept process has shown that it read the turn's message (any line carrying the message's id, or the turn's
+    /// `init` line): one that shows nothing within START_WAIT is not taking messages (`watch_start`).
+    heard: AtomicBool,
+    /// It showed nothing in that time and was ended.
+    silent: AtomicBool,
+    /// Claude Code answered an interrupt with the turn's message "still queued": nothing was stopped.
+    requeued: AtomicBool,
+    /// A tool call of the turn is open right now (a kept process; kept up by `consume_lines`).
+    tool_open: AtomicBool,
+    /// The kept process is not used again after this turn: Stop landed while a tool call was open (the app's tool
+    /// server may still be working on it), or Claude Code said the message was still queued when it was interrupted.
+    discard: AtomicBool,
+    /// The process groups of a kept process's tree when it took the message (its own, its tool servers'): Stop ends
+    /// only what the turn added to them.
+    standing: Mutex<Vec<u32>>,
 }
+
+/// How long a kept Claude Code process has to show that it read a message before it is taken not to take messages.
+const START_WAIT: Duration = Duration::from_secs(if cfg!(test) { 2 } else { 90 });
 
 impl TurnProc {
     fn new(pid: u32) -> Arc<TurnProc> {
-        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false) })
+        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: None, acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+    }
+
+    /// A turn on a chat's kept Claude Code process.
+    fn on(live: &Arc<Live>) -> Arc<TurnProc> {
+        Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+    }
+
+    /// Claude Code has started on the turn's message (a kept process): noted once, with the groups its tree has now.
+    fn taken(&self) {
+        self.heard.store(true, Ordering::SeqCst);
+        if !self.acked.load(Ordering::SeqCst) {
+            *self.standing.lock().unwrap_or_else(|e| e.into_inner()) = crate::procs::tree_groups(self.pid);
+            self.acked.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Stop on a kept Claude Code process.
+    ///
+    /// Before Claude Code has started on the message (its `started` mark or the turn's `init` line), an interrupt
+    /// would end nothing and the message would run afterwards (measured: the answer to an interrupt lists what is
+    /// "still queued"). So the process is ended at once, tree and all, as a process per turn is: nothing has run, and
+    /// the next message starts one that resumes.
+    ///
+    /// Once it has started, it is asked to interrupt and given STOP_WAIT to end the turn with its `result` (measured:
+    /// 30 ms). A turn that does not end in time is killed with its whole tree (noted, so the chat says so). When a
+    /// tool call was open as Stop landed, the process is not used again (`discard`; `read_live` closes it, with all
+    /// it started): the app's tool server handles one call at a time and may still be in a Blender or Studio
+    /// call that Claude Code's interrupt does not reach. Otherwise the process lives on, and only what the turn's
+    /// tools left running in groups of their own is ended.
+    fn stop_live(&self, live: &Live) {
+        let done = || self.done.load(Ordering::SeqCst);
+        if done() {
+            return;
+        }
+        if !self.acked.load(Ordering::SeqCst) {
+            self.end();
+            return;
+        }
+        if self.tool_open.load(Ordering::SeqCst) {
+            self.discard.store(true, Ordering::SeqCst);
+        }
+        live.interrupt();
+        let until = std::time::Instant::now() + paths::STOP_WAIT;
+        // Claude Code may answer that the message was still queued: nothing was stopped, so the process is ended
+        let unstopped = || self.requeued.load(Ordering::SeqCst);
+        while !done() && !unstopped() && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(25));
+        }
+        if !done() {
+            if !unstopped() {
+                self.killed.store(true, Ordering::SeqCst);
+            }
+            self.end();
+            return;
+        }
+        if self.discard.load(Ordering::SeqCst) {
+            return; // the whole process goes (`read_live`)
+        }
+        let standing = self.standing.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let left: Vec<u32> = self.groups(*self.reaped.lock().unwrap_or_else(|e| e.into_inner())).into_iter().filter(|g| *g != self.pid && !standing.contains(g)).collect();
+        if left.iter().any(|&g| paths::signal_group(g, "-0")) {
+            paths::end_trees(&left);
+        }
     }
 
     /// The process groups of the turn's tree (`procs::tree_groups`): its own, unless its leader has been reaped, and
@@ -779,6 +873,9 @@ impl TurnProc {
         if cfg!(windows) {
             self.end();
             return;
+        }
+        if let Some(live) = &self.live {
+            return self.stop_live(live);
         }
         let groups = self.groups(*self.reaped.lock().unwrap_or_else(|e| e.into_inner()));
         self.signal("-TERM", &groups);
@@ -835,6 +932,27 @@ fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::In
     }
 }
 
+/// A kept Claude Code process that shows no sign of having read a turn's message within START_WAIT is not taking
+/// messages (a Claude Code whose input format changed, say): it is ended, and `read_live` sends the message to a
+/// process of its own and keeps the chat on those.
+fn watch_start(tp: Arc<TurnProc>) {
+    let until = std::time::Instant::now() + START_WAIT;
+    while !tp.done.load(Ordering::SeqCst) && !tp.heard.load(Ordering::SeqCst) {
+        if std::time::Instant::now() >= until {
+            // decided against the turn's own end under one lock, as the stall guard does
+            let gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            if tp.done.load(Ordering::SeqCst) || tp.heard.load(Ordering::SeqCst) {
+                return;
+            }
+            tp.silent.store(true, Ordering::SeqCst);
+            drop(gate);
+            tp.end();
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// Keeps the tool calls of Claude Code's that started and have no result yet, by id (a long build may send nothing for
 /// a while; a line in between, such as another call's result or a usage line, does not close it).
 fn claude_open_tools(e: &Value, open: &mut std::collections::HashSet<String>) {
@@ -873,6 +991,23 @@ struct TurnEnd {
     /// that failure was already shown in the chat (a result with only an error kind is left to `after_turn`, which
     /// has the AI's error output too)
     result_said: bool,
+    /// the AI's own words or a tool call were shown: the turn got somewhere
+    began: bool,
+    /// a kept process's output ended before the turn's `result` came (it died, or was ended)
+    ended: bool,
+    /// a kept process's turn ended with a task of its own still running in the background: Claude Code starts a turn
+    /// by itself when such a task finishes (measured), so the process is not kept
+    background_left: bool,
+}
+
+/// A turn read from a chat's kept Claude Code process (`consume_lines`): its process, the id its message was sent
+/// with, and whether what was read before that id came back can be left over from an earlier turn.
+struct LiveTurn<'a> {
+    tp: &'a TurnProc,
+    message: &'a str,
+    first: bool,
+    /// the process has sent a `command_lifecycle` line (`Live::marks_turns`)
+    marks: &'a AtomicBool,
 }
 
 /// The line for a failed sign-in when a provider key is set in the app's environment but kept from the AI (the Setup
@@ -1034,6 +1169,166 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
     )
 }
 
+/// How often keeping a Claude Code process may fail in one chat (it could not start, or died) before the chat stays
+/// on a process per turn for the rest of this run of the app.
+const LIVE_FAILS: u32 = 2;
+
+/// What a Claude Code turn is started with: everything but the conversation to resume and whether the process is kept
+/// open. Built afresh for every message, exactly as a process per turn is given it, so a kept process started with
+/// anything else (`key`) is replaced and no rule goes stale inside one.
+#[derive(Clone)]
+struct ClaudeLaunch {
+    exe: std::path::PathBuf,
+    /// arguments before all others: none for Claude Code (the tests' stand-in is a shell script given to `sh`)
+    first: Vec<std::ffi::OsString>,
+    args: Vec<std::ffi::OsString>,
+    cwd: std::path::PathBuf,
+    /// the tool servers written to the `--mcp-config` file (its path is the same for every turn of a chat)
+    servers: String,
+    /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
+    keys_on: bool,
+}
+
+/// Everything a Claude Code turn's start depends on, as `send` has it for a message.
+struct ClaudeSettings<'a> {
+    exe: &'a std::path::Path,
+    mcp_config: &'a std::path::Path,
+    servers: &'a Value,
+    /// the programs the user allowed from a "blocked" card or Setup
+    allowed: &'a [String],
+    /// the app's own files, never written by an agent (`claude_denied`)
+    denied: &'a [String],
+    full: bool,
+    /// the standing instructions: the mode's texts, the role, the team, the user's house rules
+    prompt: &'a str,
+    kit: &'a std::path::Path,
+    project: Option<&'a str>,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+    /// where a chat without a game folder works
+    work: &'a std::path::Path,
+    keys_on: bool,
+}
+
+impl ClaudeLaunch {
+    fn new(s: &ClaudeSettings) -> ClaudeLaunch {
+        let mut args: Vec<std::ffi::OsString> = Vec::new();
+        let mut add = |a: &[&str]| args.extend(a.iter().map(std::ffi::OsString::from));
+        add(&["--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config"]);
+        args.push(s.mcp_config.into());
+        let mut add = |a: &[&str]| args.extend(a.iter().map(std::ffi::OsString::from));
+        add(&["--allowedTools", "mcp__rbxkit", "mcp__Roblox_Studio", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"]);
+        // the programs the user allowed, through either shell
+        args.extend(s.allowed.iter().flat_map(|p| [format!("Bash({p}:*)"), format!("PowerShell({p}:*)")]).map(Into::into));
+        // the app's settings (allowed programs, keys) are never written by an agent, in any mode: deny rules
+        // hold in bypass mode too. `//` makes the path absolute in Claude Code's rules.
+        args.push("--disallowedTools".into());
+        args.extend(s.denied.iter().map(Into::into));
+        let mut add = |a: &[&str]| args.extend(a.iter().map(std::ffi::OsString::from));
+        // full auto skips every other permission check
+        add(&["--permission-mode", if s.full { "bypassPermissions" } else { "acceptEdits" }, "--append-system-prompt", s.prompt, "--add-dir"]);
+        args.push(s.kit.into());
+        if let Some(p) = s.project {
+            args.extend(["--add-dir".into(), p.into()]);
+        }
+        if let Some(m) = s.model {
+            args.extend(["--model".into(), m.into()]);
+        }
+        if let Some(e) = s.effort {
+            args.extend(["--effort".into(), e.into()]);
+        }
+        // the conversation lives in the project folder when there is one, so the agent works among the game's files
+        let cwd = s.project.map(std::path::PathBuf::from).unwrap_or_else(|| s.work.to_path_buf());
+        ClaudeLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), args, cwd, servers: s.servers.to_string(), keys_on: s.keys_on }
+    }
+
+    /// The command: `live` for a process kept open and sent messages as JSON lines (each played back, so a turn's
+    /// lines can be told from an earlier turn's), else one that reads its one message from stdin and exits.
+    fn command(&self, live: bool, session: Option<&str>) -> Command {
+        let mut cmd = Command::new(&self.exe);
+        cmd.args(&self.first).arg("-p");
+        if live {
+            cmd.args(["--input-format", "stream-json", "--replay-user-messages"]);
+        }
+        cmd.args(&self.args);
+        if let Some(s) = session {
+            cmd.args(["--resume", s]);
+        }
+        cmd.current_dir(&self.cwd);
+        // a texture request may wait minutes for the user
+        cmd.env("MCP_TOOL_TIMEOUT", "900000");
+        paths::quiet(&mut cmd);
+        paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
+        paths::child_env(&mut cmd, "claude");
+        if let Some(h) = claude_home() {
+            cmd.env("HOME", h);
+        }
+        cmd
+    }
+
+    /// Everything a kept process was started with that a later message could need otherwise.
+    fn key(&self) -> String {
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, self.keys_on]).to_string()
+    }
+}
+
+/// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
+/// Claude Code alone, which finds its sign-in through the home folder's keychain (as FRIDAE_CURSOR_HOME does for
+/// Cursor). The app's tool server gets the app's HOME back in its entry.
+#[cfg(debug_assertions)]
+fn claude_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("FRIDAE_CLAUDE_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+fn claude_home() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// Starts, once, the thread that closes kept Claude Code processes nobody is using: one whose chat has been idle for
+/// `claude_live::IDLE`, one that has died, and the longest idle beyond `claude_live::KEEP`.
+fn keep_lives() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    if cfg!(test) {
+        return; // the tests call `close_idle_lives` themselves
+    }
+    ONCE.call_once(|| {
+        thread::spawn(|| {
+            loop {
+                thread::sleep(Duration::from_secs(15));
+                if shutting() {
+                    return;
+                }
+                close_idle_lives(agents(), claude_live::IDLE, claude_live::KEEP);
+            }
+        });
+    });
+}
+
+/// One round of `keep_lives`. Returns how many were closed.
+fn close_idle_lives(chats: Vec<Arc<Agent>>, idle: Duration, keep: usize) -> usize {
+    let mut open: Vec<(Duration, bool, Arc<Agent>)> = chats
+        .into_iter()
+        .filter_map(|a| {
+            let live = {
+                let st = a.st.lock().unwrap();
+                st.live.clone().filter(|_| !st.running && !st.sending)
+            }?;
+            Some((live.idle_for(), live.exited(), a))
+        })
+        .collect();
+    open.sort_by(|a, b| b.0.cmp(&a.0)); // longest idle first
+    let over = open.len().saturating_sub(keep);
+    let mut closed = 0;
+    for (n, (quiet, dead, a)) in open.into_iter().enumerate() {
+        if dead || quiet >= idle || n < over {
+            a.close_live();
+            closed += 1;
+        }
+    }
+    closed
+}
+
 impl Agent {
     fn new(id: String, name: &str) -> Arc<Agent> {
         Arc::new(Agent { id, st: Mutex::new(State { name: name.to_string(), ..Default::default() }), save_lock: Mutex::new(()) })
@@ -1081,6 +1376,10 @@ impl Agent {
             st.autopilot_left = 0;
             if !working(&st) {
                 st.halted = true;
+                // an ended run's Lead keeps no Claude Code process (one still in a turn goes with the idle rule)
+                if let Some(l) = st.live.take() {
+                    thread::spawn(move || l.close());
+                }
             }
             (std::mem::take(&mut st.studio_waiting), requeued)
         };
@@ -1311,6 +1610,10 @@ impl Agent {
         };
         self.put("ai", json!({"ai": kind, "from": from}));
         self.save();
+        // the AI it leaves keeps no process
+        if let Some(l) = self.st.lock().unwrap().live.take() {
+            thread::spawn(move || l.close());
+        }
         Ok(true)
     }
 
@@ -1876,7 +2179,7 @@ impl Agent {
             thread::spawn(move || me.read_opencode(spec));
             return;
         }
-        let mut cmd = match kind.as_str() {
+        let cmd = match kind.as_str() {
             "gemini" => {
                 text = antigravity::message_line(&text);
                 antigravity::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full)
@@ -1885,41 +2188,48 @@ impl Agent {
             // its models carry their own effort in the id, so the effort setting is not passed
             "cursor" => cursor::command(&exe, &workspace, &servers, session.as_deref(), model, ask.full, project.as_deref(), &PATHS.kit),
             _ => {
-                let mut cmd = Command::new(&exe);
-                cmd.args(["-p", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config"])
-                    .arg(write_mcp_config(&self.id, &servers))
-                    .args(["--allowedTools", "mcp__rbxkit", "mcp__Roblox_Studio", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"])
-                    // the programs the user allowed from a "blocked" card or Setup, through either shell
-                    .args(paths::allowed_commands().iter().flat_map(|p| [format!("Bash({p}:*)"), format!("PowerShell({p}:*)")]))
-                    // the app's settings (allowed programs, keys) are never written by an agent, in any mode: deny rules
-                    // hold in bypass mode too. `//` makes the path absolute in Claude Code's rules.
-                    .arg("--disallowedTools")
-                    .args(claude_denied())
-                    // full auto skips every other permission check
-                    .args(["--permission-mode", if ask.full { "bypassPermissions" } else { "acceptEdits" }, "--append-system-prompt", &prompt, "--add-dir"])
-                    .arg(&PATHS.kit);
-                if let Some(p) = &project {
-                    cmd.arg("--add-dir").arg(p);
+                let mut servers = servers.clone();
+                if claude_home().is_some() {
+                    servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
                 }
-                if let Some(m) = model {
-                    cmd.args(["--model", m]);
-                }
-                if let Some(e) = effort {
-                    cmd.args(["--effort", e]);
-                }
-                if let Some(s) = &session {
-                    cmd.args(["--resume", s]);
-                }
-                // the conversation lives in the project folder when there is one, so the agent works among the game's files
-                cmd.current_dir(project.as_ref().map(std::path::PathBuf::from).unwrap_or_else(|| PATHS.work.clone()));
-                cmd
+                let launch = ClaudeLaunch::new(&ClaudeSettings {
+                    exe: &exe,
+                    mcp_config: &write_mcp_config(&self.id, &servers),
+                    servers: &servers,
+                    allowed: &paths::allowed_commands(),
+                    denied: &claude_denied(),
+                    full: ask.full,
+                    prompt: &prompt,
+                    kit: &PATHS.kit,
+                    project: project.as_deref(),
+                    model,
+                    effort,
+                    work: &PATHS.work,
+                    keys_on: paths::env_keys_on(),
+                });
+                return self.claude_turn(&launch, &text);
             }
         };
+        self.spawn_turn(cmd, &kind, &text);
+    }
+
+    /// A Claude Code turn: on the chat's kept process when that works here, on a process of its own otherwise.
+    fn claude_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) {
+        if self.live_allowed() && self.live_turn(launch, text) {
+            return;
+        }
+        let session = self.st.lock().unwrap().session.clone();
+        self.spawn_turn(launch.command(false, session.as_deref()), "claude", text);
+    }
+
+    /// Starts a command-line AI's process for one turn, hands it the message and reads it to its end on a thread of
+    /// its own. False when it could not be started (said in the chat, and the turn is over).
+    fn spawn_turn(self: &Arc<Self>, mut cmd: Command, kind: &str, text: &str) -> bool {
         // a texture request may wait minutes for the user
         cmd.env("MCP_TOOL_TIMEOUT", "900000").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
-        paths::child_env(&mut cmd, &kind);
+        paths::child_env(&mut cmd, kind);
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
@@ -1927,10 +2237,10 @@ impl Agent {
                 self.put("error", json!({"text": format!("Could not start the agent: {e}")}));
                 self.put("done", json!({}));
                 team::release(self);
-                return;
+                return false;
             }
         };
-        crate::procs::record(&kind, child.id()); // ended at the next start if the app crashes meanwhile
+        crate::procs::record(kind, child.id()); // ended at the next start if the app crashes meanwhile
         let tp = TurnProc::new(child.id());
         {
             let mut st = self.st.lock().unwrap();
@@ -1942,8 +2252,217 @@ impl Agent {
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(text.as_bytes());
         }
-        let me = self.clone();
+        let (me, kind) = (self.clone(), kind.to_string());
         thread::spawn(move || me.read(child, &kind, tp));
+        true
+    }
+
+    /// Whether this chat's Claude turns go to one kept process (`claude_live`): where Claude Code's interrupt was
+    /// measured (not Windows), unless `FRIDAE_CLAUDE_PER_TURN=1` says a process per turn, and until keeping one has
+    /// failed twice in this chat.
+    fn live_allowed(&self) -> bool {
+        crate::caps::of(&self.ai()).live && !cfg!(windows) && std::env::var("FRIDAE_CLAUDE_PER_TURN").map_or(true, |v| v != "1") && self.st.lock().unwrap().live_fails < LIVE_FAILS
+    }
+
+    /// Sends a turn's message to the chat's kept Claude Code process, starting one when the chat has none, when the
+    /// one it has was started with other arguments (another mode, model, effort, allowed program, house rule, folder:
+    /// it is closed, and the new one resumes the conversation), or when it has died meanwhile. False when that did
+    /// not work: the turn then goes to a process of its own.
+    fn live_turn(self: &Arc<Self>, launch: &ClaudeLaunch, text: &str) -> bool {
+        let key = launch.key();
+        let held = self.st.lock().unwrap().live.take();
+        let live = match held {
+            Some(l) if l.key == key && l.drain() && !l.exited() => Some(l),
+            Some(l) => {
+                if l.key == key && !l.strayed() {
+                    self.st.lock().unwrap().live_fails += 1; // it died between two turns
+                }
+                // closed beside the new one, which resumes the conversation: Stop is never kept waiting for it
+                thread::spawn(move || l.close());
+                None
+            }
+            None => None,
+        };
+        if !self.live_allowed() {
+            return false;
+        }
+        let live = match live {
+            Some(l) => l,
+            None => {
+                let session = self.st.lock().unwrap().session.clone();
+                match Live::start(launch.command(true, session.as_deref()), key) {
+                    Ok(l) => l,
+                    Err(_) => {
+                        self.st.lock().unwrap().live_fails += 1;
+                        return false;
+                    }
+                }
+            }
+        };
+        let tp = TurnProc::on(&live);
+        {
+            let mut st = self.st.lock().unwrap();
+            // Stop, or the chat closed, since this message began to be sent (`stop_turn` finds no turn then and
+            // notes it): the message is not written, and the turn ends here
+            if st.halted || st.closed {
+                st.turned = true;
+                if st.closed {
+                    thread::spawn(move || live.close());
+                } else {
+                    st.live = Some(live); // nothing was written to it: it stays for the next message
+                }
+                drop(st);
+                self.put("error", json!({"text": "Stopped."}));
+                self.put("done", json!({}));
+                team::release(self);
+                return true;
+            }
+            // from here Stop finds the turn; the message is written by the turn's own thread
+            st.running = true;
+            st.stopped = false;
+            st.pid = Some(live.pid);
+            st.proc_ = Some(tp.clone());
+            st.live = Some(live.clone());
+        }
+        keep_lives();
+        let (me, launch, text) = (self.clone(), launch.clone(), text.to_string());
+        thread::spawn(move || me.read_live(live, tp, launch, &text));
+        true
+    }
+
+    /// A turn on the chat's kept Claude Code process: its message written, its output read to the `result`.
+    ///
+    /// The process then stays for the next message, unless something says it must not be used again: the turn failed
+    /// (a Claude Code that is signed out, or cannot resume, is not asked twice), Stop landed in a tool call, the turn
+    /// left a task running in the background, the chat is an expert's or helper's (it holds nothing between jobs) or
+    /// was closed. Then it is closed, and the next message starts one that resumes.
+    ///
+    /// When its output ends before the `result` it has died or been ended: it is reaped as a per-turn process is. A
+    /// turn that had shown nothing yet and was not stopped is sent again to a process of its own, so the user gets
+    /// the answer and not the failure; one that showed nothing at all within START_WAIT also keeps the chat on a
+    /// process per turn from then on.
+    fn read_live(self: &Arc<Self>, live: Arc<Live>, tp: Arc<TurnProc>, launch: ClaudeLaunch, text: &str) {
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, false)));
+        {
+            let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
+            thread::spawn(move || watch_stall(me, tp, last));
+        }
+        {
+            let tp = tp.clone();
+            thread::spawn(move || watch_start(tp));
+        }
+        let first = live.turns.fetch_add(1, Ordering::SeqCst) == 0;
+        let message = claude_live::message_id();
+        live.set_in_turn(true);
+        if live.say(&message, text).is_err() {
+            tp.end(); // its output then ends, and the turn with it (below: nothing shown, so it is sent again)
+        }
+        let mut t = {
+            let rx = live.lines();
+            let mut lines = std::iter::from_fn(|| rx.recv().ok());
+            // noted in the ledger again at a new process's first line, as a per-turn process is: the command line
+            // the ledger matches on is the one it has by then
+            let on_first = || {
+                if first {
+                    crate::procs::record("claude", live.pid);
+                }
+            };
+            self.consume_lines(&mut lines, "claude", &last, on_first, Some(LiveTurn { tp: &tp, message: &message, first, marks: &live.marks_turns }))
+        };
+        live.set_in_turn(false);
+        {
+            // under the gate the stall guard decides under, so a turn that ends now is never called stalled
+            let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            tp.done.store(true, Ordering::SeqCst);
+        }
+        let asked_to_stop = self.st.lock().unwrap().stopped;
+        // a turn that failed without Stop: the process is given up. Its stdin is closed and its output read to the
+        // end first, so what it says on its error output as it goes ("No conversation found") is the turn's reason
+        if !t.ended && t.result_error && !asked_to_stop {
+            live.shut(claude_live::CLOSE_WAIT);
+            t.ended = true;
+        }
+        let mine = |st: &State| st.live.as_ref().is_some_and(|l| Arc::ptr_eq(l, &live));
+        if !t.ended {
+            live.touch();
+            self.check_settings();
+            let killed = tp.killed.load(Ordering::SeqCst);
+            let drop_it = {
+                let mut st = self.st.lock().unwrap();
+                let drop_it = is_helper(&st) || shutting() || st.closed || killed || t.background_left || tp.discard.load(Ordering::SeqCst);
+                if drop_it && mine(&st) {
+                    st.live = None;
+                }
+                drop_it
+            };
+            let stopped = self.turn_over();
+            if killed {
+                self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+            }
+            self.after_turn("claude", t, "", Some((true, 0)), stopped);
+            if drop_it {
+                live.close(); // after the turn is over for the chat: an expert reports without waiting for the exit
+            }
+            return;
+        }
+        {
+            let mut st = self.st.lock().unwrap();
+            if mine(&st) {
+                st.live = None;
+            }
+        }
+        // as `finish_turn` ends a per-turn process: what is left in its group, its error output, the leader reaped
+        let groups = crate::procs::tree_groups(live.pid);
+        if paths::leader_exited(live.pid, LEADER_GRACE) {
+            paths::end_group_soon(live.pid);
+        } else {
+            paths::end_trees(&groups); // it would not go by itself
+        }
+        let err = live.err_text(paths::STOP_GRACE + Duration::from_secs(2));
+        tp.reaping();
+        let status = live.reap();
+        self.check_settings();
+        let (killed, stalled, silent) = (tp.killed.load(Ordering::SeqCst), tp.stalled.load(Ordering::SeqCst), tp.silent.load(Ordering::SeqCst));
+        if silent {
+            // it takes no messages: no further turn of this chat is tried on a kept process
+            self.st.lock().unwrap().live_fails = LIVE_FAILS;
+        }
+        // lost: it went without a result, and not by Stop, the stall guard, quitting, a turn it began by itself, or
+        // to say the conversation is gone
+        let stopped_now = asked_to_stop || self.st.lock().unwrap().stopped;
+        let lost = !t.got_result && !stopped_now && !killed && !stalled && !shutting() && !live.strayed() && !err.contains("No conversation found");
+        if lost {
+            if !silent {
+                self.st.lock().unwrap().live_fails += 1;
+            }
+            if !t.began {
+                let session = self.st.lock().unwrap().session.clone();
+                if !self.spawn_turn(launch.command(false, session.as_deref()), "claude", text) {
+                    self.turn_over();
+                }
+                return;
+            }
+        }
+        let stopped = self.turn_over();
+        if killed {
+            self.put("error", json!({"text": paths::killed_message(ai_label("claude"))}));
+        }
+        let err = if stalled { STALLED.to_string() } else { err };
+        // a failed result is the turn's end even though the process was then closed by the app (its exit says nothing)
+        let exit = if t.got_result { Some((true, 0)) } else { status };
+        self.after_turn("claude", t, &err, exit, stopped);
+    }
+
+    /// Closes the chat's kept Claude Code process, when it has one and no turn is running on it. Blocks for as long
+    /// as the process takes to exit (about a second): call it off the page's thread.
+    fn close_live(&self) {
+        let live = {
+            let mut st = self.st.lock().unwrap();
+            if st.running || st.sending { None } else { st.live.take() }
+        };
+        if let Some(l) = live {
+            l.close();
+        }
     }
 
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
@@ -1991,8 +2510,20 @@ impl Agent {
 
     /// A command-line AI's output, line by line, through its parser and into the chat (the real transport is the
     /// child's stdout; the replay tests hand it recorded output instead).
-    fn consume(self: &Arc<Self>, out: impl std::io::Read, kind: &str, last: &Mutex<(std::time::Instant, bool, bool)>, mut on_first: impl FnMut()) -> TurnEnd {
+    fn consume(self: &Arc<Self>, out: impl std::io::Read, kind: &str, last: &Mutex<(std::time::Instant, bool, bool)>, on_first: impl FnMut()) -> TurnEnd {
+        self.consume_lines(&mut paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP), kind, last, on_first, None)
+    }
+
+    /// The same from lines already split. With `live` the lines are a kept Claude Code process's (`claude_live`): the
+    /// turn ends at its `result` line instead of at the end of the output, and what an earlier turn left behind is
+    /// passed over. Claude Code marks a turn with the id its message was sent with (`command_lifecycle` lines, the
+    /// `init` line's `user_message_uuids`, the message itself played back): until one of those comes, an answer or a
+    /// good result read from a process that has run a turn before belongs to that earlier turn. A failed result ends
+    /// the turn either way, so a process that fails before it marks anything never leaves the chat waiting.
+    fn consume_lines(self: &Arc<Self>, lines: &mut dyn Iterator<Item = claude_live::Line>, kind: &str, last: &Mutex<(std::time::Instant, bool, bool)>, mut on_first: impl FnMut(), live: Option<LiveTurn>) -> TurnEnd {
         let mut t = TurnEnd::default();
+        let mut mine = live.as_ref().is_none_or(|l| l.first || !l.marks.load(Ordering::SeqCst));
+        t.ended = live.is_some();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         let mut first = true;
         // the conversation this turn asked to go on with: an AI that reports another one started afresh
@@ -2000,7 +2531,7 @@ impl Agent {
         {
             let mut cut_said = false;
             let mut claude_open: std::collections::HashSet<String> = Default::default();
-            for raw in paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP) {
+            for raw in lines {
                 if std::mem::take(&mut first) {
                     on_first();
                 }
@@ -2024,7 +2555,50 @@ impl Agent {
                     }
                     continue;
                 }
+                if let Some(l) = &live {
+                    let kind = e["type"].as_str().unwrap_or("");
+                    if kind == "command_lifecycle" {
+                        l.marks.store(true, Ordering::SeqCst);
+                    }
+                    // Claude Code has read the message: any line with its id (a `queued` mark is only that: the
+                    // message waits behind whatever the process is doing, which is not this turn)
+                    let named = e["command_uuid"] == l.message
+                        || (e["isReplay"] == true && e["uuid"] == l.message)
+                        || e["user_message_uuids"].as_array().is_some_and(|ids| ids.iter().any(|id| id == l.message));
+                    if named {
+                        l.tp.heard.store(true, Ordering::SeqCst);
+                    }
+                    // it has started on it: the `started` mark, the turn's `init` line, the message played back
+                    if named && !(kind == "command_lifecycle" && e["state"] != "started") {
+                        mine = true;
+                        l.tp.taken();
+                    } else if mine && kind == "system" && e["subtype"] == "init" {
+                        l.tp.taken(); // a Claude Code that marks nothing: its `init` line is the turn's start
+                    }
+                    // the answer to Stop's interrupt: a message "still queued" was not stopped (`stop_live`)
+                    if kind == "control_response" && e["response"]["response"]["still_queued"].as_array().is_some_and(|q| !q.is_empty()) {
+                        l.tp.requeued.store(true, Ordering::SeqCst);
+                    }
+                    // the protocol's own lines, and the message played back, are not the conversation
+                    if matches!(kind, "command_lifecycle" | "control_response" | "control_request") || e["isReplay"] == true {
+                        *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), false, !claude_open.is_empty());
+                        continue;
+                    }
+                    // left over from the turn before: its answer, its tools, its good result
+                    if !mine && (matches!(kind, "assistant" | "user") || (kind == "result" && result_ok(&e))) {
+                        continue;
+                    }
+                    // tasks of the turn's own left running in the background
+                    if kind == "system" && e["subtype"] == "background_tasks_changed" {
+                        t.background_left = e["tasks"].as_array().is_some_and(|tasks| !tasks.is_empty());
+                    } else if kind == "system" && e["subtype"] == "task_started" && e["is_backgrounded"] == true {
+                        t.background_left = true;
+                    }
+                }
                 claude_open_tools(&e, &mut claude_open);
+                if let Some(l) = &live {
+                    l.tp.tool_open.store(!claude_open.is_empty(), Ordering::SeqCst);
+                }
                 *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e), !claude_open.is_empty());
                 if let Some(s) = e["session_id"].as_str().filter(|s| !s.is_empty()) {
                     got_session(&mut self.st.lock().unwrap(), s.to_string());
@@ -2046,6 +2620,7 @@ impl Agent {
                         }
                     }
                     "assistant" => {
+                        t.began = true;
                         for b in e["message"]["content"].as_array().into_iter().flatten() {
                             match b["type"].as_str().unwrap_or("") {
                                 "text" => {
@@ -2113,6 +2688,11 @@ impl Agent {
                                 }
                                 None => t.result_text = e["subtype"].as_str().unwrap_or("error").to_string(),
                             }
+                        }
+                        // a kept process: the turn is over, and the process waits for the next message
+                        if live.is_some() {
+                            t.ended = false;
+                            break;
                         }
                     }
                     _ => {}
@@ -2261,7 +2841,7 @@ impl Agent {
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
-        let TurnEnd { got_result, result_error, result_text, result_said } = t;
+        let TurnEnd { got_result, result_error, result_text, result_said, .. } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
@@ -2830,7 +3410,13 @@ pub fn remove_agent(agent_id: &str) {
         hit
     };
     if let Some(agent) = found {
+        agent.st.lock().unwrap().closed = true;
         agent.stop();
+        // its kept Claude Code process goes with it (one with a turn still ending is closed by that turn, `read_live`)
+        {
+            let a = agent.clone();
+            thread::spawn(move || a.close_live());
+        }
         team::release(&agent);
         agent.save();
         BUS.put("agent_removed", json!({"agent": agent.id}));
@@ -2843,6 +3429,16 @@ pub fn remove_agent(agent_id: &str) {
     }
     if AGENTS.lock().unwrap().is_empty() {
         new_agent(None);
+    }
+}
+
+/// Quitting: ends the Claude Code processes kept open between turns, with all they started. Those with a turn running
+/// (`turns`) have just been ended with it.
+fn end_kept(chats: &[Arc<Agent>], turns: &[Arc<TurnProc>]) {
+    let kept: Vec<Arc<Live>> = chats.iter().filter_map(|a| a.st.lock().unwrap().live.take()).collect();
+    let idle: Vec<thread::JoinHandle<()>> = kept.into_iter().filter(|l| !turns.iter().any(|t| t.pid == l.pid)).map(|l| thread::spawn(move || l.kill())).collect();
+    for t in idle {
+        let _ = t.join();
     }
 }
 
@@ -2862,6 +3458,7 @@ pub fn shut_down() {
         };
         paths::end_trees(&groups);
     }
+    end_kept(&agents(), &turns);
     opencode::shut_down(); // the app's OpenCode server, with every OpenCode turn
     // each ended turn settles its chat ("Stopped.", then done) before the chats are saved, for a moment at most
     let until = std::time::Instant::now() + Duration::from_secs(3);
@@ -3122,6 +3719,11 @@ pub fn connect_other_agents() -> String {
 #[cfg(test)]
 #[path = "replay_tests.rs"]
 mod replay_tests;
+
+/// The kept Claude Code process: its recorded output replayed, and turns run against a stand-in process.
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod live_tests;
 
 #[cfg(test)]
 mod tests {

@@ -42,6 +42,9 @@ pub struct Caps {
     pub effort: bool,
     /// Its model menu is grouped by provider ("OpenCode Go · glm-5.3").
     pub grouped_models: bool,
+    /// Keeps one process open per chat and takes messages and Stop over its own protocol (Claude Code's stream-json
+    /// input, `claude_live`); the others run a process per turn, or on the app's own server (OpenCode).
+    pub live: bool,
     pub modes: Modes,
 }
 
@@ -51,11 +54,11 @@ const ALL_MODES: Modes = Modes { ask: true, full: true, studio: true };
 /// Antigravity's settings and `--dangerously-skip-permissions`, Codex's sandbox and bypass, Cursor's allow list and
 /// sandbox, OpenCode's permission rules); a mode one cannot keep to is set false here and is then not offered.
 pub const TABLE: [Caps; 5] = [
-    Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, modes: ALL_MODES },
-    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, modes: ALL_MODES },
-    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, modes: ALL_MODES },
-    Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, modes: ALL_MODES },
-    Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, modes: ALL_MODES },
+    Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, modes: ALL_MODES },
+    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: false, modes: ALL_MODES },
+    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, modes: ALL_MODES },
+    Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, live: false, modes: ALL_MODES },
+    Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, live: false, modes: ALL_MODES },
 ];
 
 /// An AI's entry (Claude's for an unknown id: chats saved before there was a choice were all Claude's).
@@ -80,7 +83,7 @@ pub fn table() -> Value {
         out.insert(
             c.id.into(),
             json!({"experts": c.experts, "pickable": c.pickable, "resume": c.resume, "usage": c.usage, "limits": c.limits, "images": c.images,
-                   "sandbox": c.sandbox, "live_permissions": c.live_permissions, "effort": c.effort, "grouped_models": c.grouped_models,
+                   "sandbox": c.sandbox, "live_permissions": c.live_permissions, "effort": c.effort, "grouped_models": c.grouped_models, "live": c.live,
                    "modes": {"ask": c.modes.ask, "full": c.modes.full, "studio": c.modes.studio}, "available": available(c.id)}),
         );
     }
@@ -111,14 +114,14 @@ mod tests {
     fn the_table_is_pinned() {
         let row = |id: &str| {
             let c = of(id);
-            [c.experts, c.pickable, c.resume, c.usage, c.limits, c.images, c.sandbox, c.live_permissions, c.effort, c.grouped_models, c.modes.ask, c.modes.full, c.modes.studio]
+            [c.experts, c.pickable, c.resume, c.usage, c.limits, c.images, c.sandbox, c.live_permissions, c.effort, c.grouped_models, c.live, c.modes.ask, c.modes.full, c.modes.studio]
         };
-        //                       experts pick  resume usage limits images sandbox live   effort group  ask   full  studio
-        assert_eq!(row("claude"), [true, true, true, true, true, true, false, false, true, false, true, true, true]);
-        assert_eq!(row("gemini"), [true, true, true, true, false, true, false, false, true, false, true, true, true]);
-        assert_eq!(row("chatgpt"), [true, false, true, true, false, true, true, false, true, false, true, true, true]);
-        assert_eq!(row("cursor"), [true, true, true, true, false, true, true, false, false, false, true, true, true]);
-        assert_eq!(row("opencode"), [true, true, true, true, false, true, false, true, false, true, true, true, true]);
+        //                       experts pick  resume usage limits images sandbox asks   effort group  live   ask   full  studio
+        assert_eq!(row("claude"), [true, true, true, true, true, true, false, false, true, false, true, true, true, true]);
+        assert_eq!(row("gemini"), [true, true, true, true, false, true, false, false, true, false, false, true, true, true]);
+        assert_eq!(row("chatgpt"), [true, false, true, true, false, true, true, false, true, false, false, true, true, true]);
+        assert_eq!(row("cursor"), [true, true, true, true, false, true, true, false, false, false, false, true, true, true]);
+        assert_eq!(row("opencode"), [true, true, true, true, false, true, false, true, false, true, false, true, true, true]);
         assert_eq!(TABLE.len(), 5);
         assert_eq!(of("unknown").id, "claude");
     }
