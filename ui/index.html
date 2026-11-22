@@ -3728,7 +3728,7 @@ function refusedCard(p, commands) {
     };
     act.appendChild(yes);
   }
-  const no = el("button", "pill", runnable.length ? "Not now" : "OK"); no.onclick = () => finish(runnable.length ? "Not run" : "Not run: " + commands.map((c) => c.command).join(", "));
+  const no = el("button", "pill", runnable.length ? "Not now" : "OK"); no.onclick = () => finish(runnable.length ? "Not run" : "Not run: " + commands.map((c) => c.shown || c.command).join(", "));
   act.appendChild(no);
   return card;
 }
@@ -3749,7 +3749,9 @@ function paintSettingsNote() {
   const close = async (take) => { const r = await api("/api/settings-start", { take_file: take }); card.remove(); status.settings_put_back = null; if (take && r && r.ok) { say("Fridae now uses the settings file's settings."); refresh(); } };
   keep.onclick = () => close(false);
   file.onclick = () => close(true);
-  file.title = "Only if you changed the file yourself (by hand, or by restoring a backup).";
+  file.title = "Only if you changed the file yourself (by hand, or by restoring a backup). Settings changed in Fridae since it started are kept.";
+  /* a file that could not be read has nothing to take: only the first button */
+  if (n.unreadable) file.remove();
   document.body.appendChild(card);
 }
 function paintCommands() {

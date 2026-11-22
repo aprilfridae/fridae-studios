@@ -464,7 +464,7 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   list: ps, procs, htop, top, pargs, gdb, lldb, dtrace, dtruss, launchctl, procdump, procexp, handle, wmic, gcore,
   strace, ltrace, stringdups, vmmap, heap, leaks, sample, spindump; also anywhere in a part led by a program that
   runs what it is given, `time ps eww`, `git -c core.pager=ps log`; and any command naming the `/proc` folder: a
-  path that starts with `/proc`, reaches it through `.` and `..` only, or starts `proc/<number or self>`, so
+  path that starts with `/proc`, reaches it through `.` and at least two `..`, or starts `proc/<number or self>`, so
   `/proc/1/environ`, `proc/self` and `../../proc` are refused and the word `proc`, `proc/gen.lua` and
   `src/procgen.lua` are not); it is refused with a card that says why and offers nothing
   to allow (allowing would not change it). In **Full auto and Studio** every command runs
@@ -574,7 +574,12 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     `filter-branch`, `difftool -x/--extcmd`, `grep -O`, `clone -c/--config/-u/--upload-pack/--template`,
     `--upload-pack`/`--receive-pack`/`--exec` on fetch, pull, push, ls-remote and archive, and `config` setting a
     value; not `switch -c`, `cherry-pick -x`, `clean -x`, `log -c` or the word `run`) is never approved by the app,
-    even when the user allowed it. What such a runner runs is checked for environment readers: an Always runner's
+    even when the user allowed it. Git takes any unambiguous start of a long option, so a start of four characters or
+    more of those options counts too (`--exe`, `--conf`), and `--output`/`format-patch -o` (which write git's text
+    where they are told) are never approved; `git config` may set only keys that never make git run a program
+    (`user.*`, `color.*`, `core.autocrlf`, `pull.rebase`...). This list is hardening, not a boundary: an allowed `git`
+    stays in the class of programs that can run any other program (aliases and hooks in the repository, options this
+    list does not know), which the card says before it is allowed. What such a runner runs is checked for environment readers: an Always runner's
     program past its options, numbers and `NAME=value` (and a shell's `-c` script), in turn if it is a runner too; for
     git and find, any name in what they would run (`xargs grep sample` is not a reader; `timeout 5s ps` is). Interpreters (`python3`, `node`...) are
     not on that list: allowing one is allowing what it runs, and the card says so. Nor is git's repository config: an
@@ -809,9 +814,16 @@ is an example the user can paste into their own House rules.
   each other's changes. It is written 0600 and is one of the app's protected files. At start, when the file differs
   from the copy, the copy wins and the file is rewritten (an unreadable file is first kept as
   `config.json.bad-<time>`); the page shows a notice that stays until answered, naming each setting and what changed
-  (games and programs by name, never a key's value), with "Use the file's settings instead" (for a hand edit or a
-  restored backup), which applies the file's values as they were at start through the route. A first run with no
-  copy for this home takes the file as it is. The tool server gets the Gemini switch and the Blender path from the app (`FRIDAE_SETTINGS_FROM_APP`,
+  (games and programs by name with a game's folder when it differs, the Experts table row by row, never a key's
+  value; names from the file shown with hidden characters written out and cut at 80), with "Use the file's settings
+  instead" (for a hand edit or a restored backup; not offered when the file could not be read). Taking the file
+  applies only the settings the notice named, not those changed through Fridae since the start, and only as the
+  routes accept them (`checked`: the allowed programs as bare program names, games with a name and an absolute
+  folder, switches as true or false; anything else is dropped and named in the notice). A first run with no copy for
+  this home takes the file the same way, and `allowed_commands()` reads only bare program names. When a check takes a
+  newer copy from another running Fridae, the chat says "changed in another Fridae window", naming them. Updates and
+  checks also hold a lock file beside the copy (create-new, a stale one taken over after 10 s), so two running copies
+  never write the same counter. At start, copies whose home no longer exists are removed. The tool server gets the Gemini switch and the Blender path from the app (`FRIDAE_SETTINGS_FROM_APP`,
   `FRIDAE_GEMINI_USE_API`, `RBXKIT_BLENDER`), not from the file. The Blender path is not guarded (the user sets it
   with `rbx doctor` in a terminal); a path inside the work, kit, home-tools or a game folder is never run
   (`paths::blender_ok`). This, not the deny rules, is what protects these settings from an AI's file tools.
