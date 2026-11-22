@@ -142,7 +142,7 @@ fn denied() -> Vec<String> {
 }
 
 /// Add our servers to the workspace's list, leaving any the user put there.
-fn write_servers(workspace: &Path, servers: &Value) {
+pub(crate) fn write_servers(workspace: &Path, servers: &Value) {
     let dir = workspace.join(".agents");
     let path = dir.join("mcp_config.json");
     let mut cfg = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
@@ -186,8 +186,25 @@ pub fn rewrite_list(workspace: &Path, was: &[u8]) {
     replace_whole(&workspace.join(".agents").join("mcp_config.json"), was);
 }
 
-/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it.
+/// The file a path names: when it is a symbolic link, what the link points at (followed up to eight links, also to
+/// a file that is not there yet), else the path itself.
+fn through_links(path: &Path) -> std::path::PathBuf {
+    let mut p = path.to_path_buf();
+    for _ in 0..8 {
+        match fs::read_link(&p) {
+            Ok(to) if to.is_absolute() => p = to,
+            Ok(to) => p = p.parent().unwrap_or(Path::new(".")).join(to),
+            Err(_) => break,
+        }
+    }
+    p
+}
+
+/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it. A list that is a
+/// symbolic link stays one: the file it names is the one replaced (a rename over the link itself would leave a plain
+/// file in its place and the user's shared list untouched).
 fn replace_whole(path: &Path, bytes: &[u8]) -> bool {
+    let path = &through_links(path);
     let tmp = path.with_extension(format!("json.{}.tmp", paths::random_hex(1)));
     let done = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
     if !done {

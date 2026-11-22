@@ -436,7 +436,13 @@ fn finish(step: &str, end: Ending) {
 
 /// Run the install and pass its progress on; Retry runs this again and the install resumes.
 fn run_install() {
-    let mut child = match install_command().spawn() {
+    // an install runs for minutes: started one at a time with the AIs' processes (`paths::spawn_lock`), so it never
+    // inherits a kept process's pipes
+    let spawned = {
+        let _one_at_a_time = paths::spawn_lock();
+        install_command().spawn()
+    };
+    let mut child = match spawned {
         Ok(c) => c,
         Err(e) => return finish("", Ending::Failed(format!("Could not run the tools: {e}"))),
     };

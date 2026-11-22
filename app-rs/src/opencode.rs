@@ -780,7 +780,13 @@ fn start_server() -> Result<Server, String> {
     cmd.env("OPENCODE_PASSWORD", &pw).current_dir(store()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
     paths::own_group(&mut cmd);
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start OpenCode: {e}"))?;
+    // one process is started at a time (`paths::spawn_lock`): a server started while a chat's kept process was being
+    // started could otherwise hold that process's pipes for as long as it lives
+    let spawned = {
+        let _one_at_a_time = paths::spawn_lock();
+        cmd.spawn()
+    };
+    let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
     procs::record("opencode", child.id());
     let (tx, rx) = mpsc::channel::<u16>();
     let stdout = child.stdout.take();
@@ -1976,7 +1982,11 @@ pub fn login_start() -> Value {
         let mut cmd = opencode(&exe);
         cmd.args(["auth", "login", "opencode", "--method", "device"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::own_group(&mut cmd);
-        let child = match cmd.spawn() {
+        let spawned = {
+            let _one_at_a_time = paths::spawn_lock(); // it waits for the user: long-lived, as the server is
+            cmd.spawn()
+        };
+        let child = match spawned {
             Ok(c) => c,
             Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
         };
