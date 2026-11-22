@@ -519,11 +519,40 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     let mut out = vec![(config_file(), false), (w.join("processes.json"), false), (w.join("usage.jsonl"), false), (w.join("limits.json"), false)];
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
-    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo"] {
+    // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat)
+    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures"] {
         out.push((w.join(d), true));
     }
     out
 }
+
+/// One place no AI's file tools may write, for the gates the app itself keeps (OpenCode's permission rules, and
+/// its answers to Gemini's requests over ACP, `acp::decide`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum NoWrite {
+    /// this file, or this folder and all in it
+    Place(PathBuf),
+    /// every hidden file and folder directly in this folder (shell start-up files, other tools' settings)
+    HiddenIn(PathBuf),
+}
+
+/// What no AI's file tools may write in any mode, where the app is the one that says yes or no: the app's own files
+/// (`app_protected`), `more` (an AI's own store that the app keeps), and in the home folder every hidden name and
+/// `Library`. The one list both gates are made from, so neither can fall behind the other.
+pub fn never_written(home: &Path, more: &[PathBuf]) -> Vec<NoWrite> {
+    let mut out: Vec<NoWrite> = more.iter().cloned().map(NoWrite::Place).collect();
+    out.extend(app_protected().into_iter().map(|(p, _)| NoWrite::Place(p)));
+    if !home.as_os_str().is_empty() {
+        out.push(NoWrite::HiddenIn(home.to_path_buf()));
+        out.push(NoWrite::Place(home.join("Library")));
+    }
+    out
+}
+
+/// Folders no file tool writes under in Ask me, wherever they are and in any case of letters: a git folder (a hook
+/// or an alias written there would run when an allowed `git` runs, as Claude Code also keeps `.git` protected).
+/// For both gates, as `never_written`.
+pub const ASK_ME_NEVER_UNDER: &[&str] = &[".git"];
 
 /// One lock around every change to the settings file, so two changes never interleave (reads need none: the file is
 /// replaced whole, never written in place).

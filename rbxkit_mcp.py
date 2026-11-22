@@ -115,9 +115,24 @@ def images_in(text):
     return found[:MAX_IMAGES]
 
 
+def note_pictures(paths):
+    """Tell the app which image files this result names. An AI kept open over ACP (Gemini) hands the app no tool
+    results, so the app reads them here: one JSON line per result in the file it names (FRIDAE_TOOL_PICTURES).
+    Never in the way of the result itself."""
+    where = os.environ.get("FRIDAE_TOOL_PICTURES")
+    if not where or not paths:
+        return
+    try:
+        with open(where, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"images": list(paths)}) + "\n")
+    except OSError:
+        pass
+
+
 def result(text, ok=True, with_images=True):
     content = [{"type": "text", "text": text}]
     if with_images and ok:
+        note_pictures(images_in(text))
         for path in images_in(text):
             mime = "image/png" if path.lower().endswith(".png") else "image/jpeg"
             with open(path, "rb") as f:

@@ -80,6 +80,18 @@ pub fn dir_override() -> Option<std::path::PathBuf> {
     None
 }
 
+/// FRIDAE_AGY_SHELL (testing only, debug builds only): the SHELL a kept agy is told of instead of `/bin/sh`, to
+/// measure whether it goes by it.
+#[cfg(debug_assertions)]
+pub fn shell_override() -> Option<std::ffi::OsString> {
+    std::env::var_os("FRIDAE_AGY_SHELL").filter(|v| !v.is_empty())
+}
+
+#[cfg(not(debug_assertions))]
+pub fn shell_override() -> Option<std::ffi::OsString> {
+    None
+}
+
 /// The models Antigravity offers, as (id, name). Empty until the list has arrived.
 pub fn models() -> &'static [(String, String)] {
     MODELS.get().map(Vec::as_slice).unwrap_or(&[])
@@ -146,21 +158,42 @@ fn write_servers(workspace: &Path, servers: &Value) {
         cfg["mcpServers"][name] = server;
     }
     let _ = fs::create_dir_all(&dir);
-    let _ = fs::write(path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes());
 }
 
 /// Takes our servers out of the workspace's list again, leaving any the user put there. A kept process is handed
 /// them over its protocol (`acp::servers_param`), and agy also starts every server of this list when a prompt comes
 /// (measured), so one left here by an earlier process per message would run twice.
-pub fn unwrite_servers(workspace: &Path, servers: &Value) {
+///
+/// The file is replaced whole (a temporary file renamed over it), never written in place, and one that does not
+/// read as a list is left alone. Returns the file as it was when it was changed, for `rewrite_list` to put back
+/// once the turn is over.
+pub fn unwrite_servers(workspace: &Path, servers: &Value) -> Option<Vec<u8>> {
     let path = workspace.join(".agents").join("mcp_config.json");
-    let Some(mut cfg) = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()) else { return };
-    let Some(list) = cfg["mcpServers"].as_object_mut() else { return };
+    let was = fs::read(&path).ok()?;
+    let mut cfg = serde_json::from_slice::<Value>(&was).ok()?;
+    let list = cfg["mcpServers"].as_object_mut()?;
     let before = list.len();
     list.retain(|name, _| servers.get(name).is_none());
-    if list.len() != before {
-        let _ = fs::write(path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    if list.len() == before {
+        return None;
     }
+    replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes()).then_some(was)
+}
+
+/// Puts the workspace's list back as `unwrite_servers` found it.
+pub fn rewrite_list(workspace: &Path, was: &[u8]) {
+    replace_whole(&workspace.join(".agents").join("mcp_config.json"), was);
+}
+
+/// Replaces a file whole: written beside it, then renamed over it, so nobody reads half of it.
+fn replace_whole(path: &Path, bytes: &[u8]) -> bool {
+    let tmp = path.with_extension(format!("json.{}.tmp", paths::random_hex(1)));
+    let done = fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, path).is_ok();
+    if !done {
+        let _ = fs::remove_file(&tmp);
+    }
+    done
 }
 
 /// The line that carries a message in on stdin.

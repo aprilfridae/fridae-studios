@@ -577,6 +577,9 @@ struct State {
     /// twice, and the chat stays on a process per turn for the rest of this run of the app.
     live: Option<Arc<Live>>,
     live_fails: u32,
+    /// Kept processes of this chat that are being closed (`retire`): until each is gone it may still hold the
+    /// conversation, and an AI whose conversation takes one process at a time waits for them (`Kept::alone`).
+    retiring: Vec<Arc<Live>>,
     /// The chat was closed (`remove_agent`): a turn still ending on its kept process closes that process.
     closed: bool,
     log: Vec<Value>,
@@ -1177,6 +1180,16 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
     )
 }
 
+/// Notes a kept process the chat gives up, before it is closed: it counts as there until it has been reaped.
+fn retire(st: &mut State, live: &Arc<Live>) {
+    st.retiring.retain(|l| !l.reaped());
+    st.retiring.push(live.clone());
+}
+
+/// How long a turn waits for the chat's earlier kept processes to be gone (closing one takes under half a second
+/// for agy; at most `CLOSE_WAIT` and the kill's grace).
+const RETIRE_WAIT: Duration = Duration::from_secs(12);
+
 /// How often keeping a Claude Code process may fail in one chat (it could not start, or died) before the chat stays
 /// on a process per turn for the rest of this run of the app.
 const LIVE_FAILS: u32 = 2;
@@ -1295,6 +1308,12 @@ trait Kept: Clone + Send + 'static {
     /// One turn on the kept process: the message written and the output read to the turn's end. `first`: the
     /// process's first turn.
     fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd;
+    /// Whether a conversation of this AI's takes one process at a time: a turn then waits until the chat's earlier
+    /// kept processes are gone before it touches the conversation (agy keeps each in a database file of its own;
+    /// Claude Code's new process was measured beside its old one).
+    fn alone(&self) -> bool {
+        false
+    }
 }
 
 impl Kept for ClaudeLaunch {
@@ -1367,8 +1386,11 @@ struct GeminiSettings<'a> {
     full: bool,
     kit: &'a std::path::Path,
     work: &'a std::path::Path,
-    /// the app's own files (`paths::app_protected`)
+    /// what no AI's file tools may write (`paths::never_written`): places, and folders whose hidden names count
     protected: &'a [std::path::PathBuf],
+    hidden_in: &'a [std::path::PathBuf],
+    /// where the app's tool server notes its results' pictures for this chat
+    pictures: Option<&'a std::path::Path>,
     /// the programs the user allowed, and all the guarded settings, from the app's memory
     allowed: &'a [String],
     guarded: &'a Map<String, Value>,
@@ -1390,9 +1412,15 @@ impl GeminiLaunch {
             reads: vec![s.kit.to_path_buf(), s.work.join("attachments"), s.work.join("chat-images")],
             // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
             protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
+            hidden_in: s.hidden_in.to_vec(),
             agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
         };
-        let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers: s.servers.clone(), model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules };
+        // the app's tool server is told where to note its results' pictures (a tool's result does not come over ACP)
+        let mut servers = s.servers.clone();
+        if let (Some(file), true) = (s.pictures, servers["rbxkit"].is_object()) {
+            servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
+        }
+        let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         // a fingerprint, not the settings themselves: one of them is the user's Gemini key
         let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
         GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
@@ -1413,7 +1441,7 @@ impl GeminiLaunch {
         paths::child_env(&mut cmd, "gemini");
         // the app's check of a command is written for `/bin/sh` (`paths::command_allowed`): the shell agy is told
         // of, and none of the variables a shell acts on at start
-        cmd.env("SHELL", "/bin/sh");
+        cmd.env("SHELL", antigravity::shell_override().unwrap_or_else(|| "/bin/sh".into()));
         for (k, _) in std::env::vars_os() {
             if k.to_str().is_some_and(paths::shell_injected) {
                 cmd.env_remove(k);
@@ -1429,7 +1457,7 @@ impl GeminiLaunch {
     fn key(&self) -> String {
         let r = &self.spec.rules;
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
-               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.agent_dir, self.keys_on, self.allowed, self.guarded])
+               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
         .to_string()
     }
 }
@@ -1472,6 +1500,14 @@ impl crate::acp::Host for AcpHost<'_> {
     fn end(&mut self) {
         self.tp.end();
     }
+
+    fn stopped(&mut self) -> bool {
+        self.a.st.lock().unwrap().stopped
+    }
+
+    fn note(&mut self, text: &str) {
+        self.a.note(text);
+    }
 }
 
 impl Kept for GeminiLaunch {
@@ -1490,8 +1526,13 @@ impl Kept for GeminiLaunch {
 
     fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
         let s = &self.spec;
+        // (a process per message hands its tools' results over itself: its tool server notes no pictures)
+        let mut servers = s.servers.clone();
+        if let Some(env) = servers["rbxkit"]["env"].as_object_mut() {
+            env.remove("FRIDAE_TOOL_PICTURES");
+        }
         let mut cmd = Command::new(&self.exe);
-        cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &s.servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
+        cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
         if let Some(h) = agy_home() {
             cmd.env("HOME", h);
@@ -1501,15 +1542,31 @@ impl Kept for GeminiLaunch {
 
     fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
         let resume = a.st.lock().unwrap().session.clone();
-        // the servers a process per message left in the workspace's list would be started a second time
-        antigravity::unwrite_servers(&self.spec.cwd, &self.spec.servers);
+        // the servers a process per message left in the workspace's list would be started a second time: taken out
+        // for the turn, and the list put back as it was when the turn is over, however it ends
+        let list_was = antigravity::unwrite_servers(&self.spec.cwd, &self.spec.servers);
+        // this turn's pictures start from nothing
+        if let Some(file) = &self.spec.pictures {
+            let _ = file.parent().map(fs::create_dir_all);
+            let _ = fs::write(file, "");
+        }
         let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
         let mut t = host.t;
+        if let Some(was) = list_was {
+            antigravity::rewrite_list(&self.spec.cwd, &was);
+        }
+        if end.background && !a.st.lock().unwrap().stopped {
+            a.put("error", json!({"text": "Gemini left a command running when its turn ended. Fridae ended that command with the turn: nothing of a chat's runs on once the chat shows it has finished."}));
+        }
         t.ended = end.ended;
         t.unfit = end.unfit;
         t.background_left = end.background;
         t
+    }
+
+    fn alone(&self) -> bool {
+        true
     }
 }
 
@@ -1634,6 +1691,7 @@ impl Agent {
                 st.halted = true;
                 // an ended run's Lead keeps no Claude Code process (one still in a turn goes with the idle rule)
                 if let Some(l) = st.live.take() {
+                    retire(&mut st, &l);
                     thread::spawn(move || l.close());
                 }
             }
@@ -1867,7 +1925,9 @@ impl Agent {
         self.put("ai", json!({"ai": kind, "from": from}));
         self.save();
         // the AI it leaves keeps no process
-        if let Some(l) = self.st.lock().unwrap().live.take() {
+        let left = self.st.lock().unwrap().live.take();
+        if let Some(l) = left {
+            retire(&mut self.st.lock().unwrap(), &l);
             thread::spawn(move || l.close());
         }
         Ok(true)
@@ -2443,7 +2503,19 @@ impl Agent {
                 if agy_home().is_some() {
                     servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
                 }
-                let protected: Vec<std::path::PathBuf> = paths::app_protected().into_iter().map(|(p, _)| p).collect();
+                // the one list of what no file tool may write, as OpenCode's rules have it
+                let (mut protected, mut hidden_in) = (Vec::new(), Vec::new());
+                for place in paths::never_written(&paths::home_dir(), &[opencode::own_store()]) {
+                    match place {
+                        paths::NoWrite::Place(p) => protected.push(p),
+                        paths::NoWrite::HiddenIn(h) => hidden_in.push(h),
+                    }
+                }
+                if let Some(h) = agy_home() {
+                    hidden_in.push(h.clone());
+                    protected.push(h.join("Library"));
+                }
+                let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
                 let launch = GeminiLaunch::new(&GeminiSettings {
                     exe: &exe,
                     agent_id: &self.id,
@@ -2455,6 +2527,8 @@ impl Agent {
                     kit: &PATHS.kit,
                     work: &PATHS.work,
                     protected: &protected,
+                    hidden_in: &hidden_in,
+                    pictures: Some(&pictures),
                     allowed: &paths::allowed_commands(),
                     guarded: &paths::guarded_settings(),
                     keys_on: paths::env_keys_on(),
@@ -2503,9 +2577,31 @@ impl Agent {
         if self.live_allowed() && self.live_turn(launch, text) {
             return;
         }
+        if launch.alone() {
+            self.wait_retired();
+        }
         let session = self.st.lock().unwrap().session.clone();
         let (cmd, input) = launch.per_turn(session.as_deref(), text);
         self.spawn_turn(cmd, launch.ai(), &input);
+    }
+
+    /// Waits until the kept processes this chat gave up are gone (or Stop is pressed, or `RETIRE_WAIT` has passed):
+    /// never two processes on one conversation.
+    fn wait_retired(&self) {
+        let until = std::time::Instant::now() + RETIRE_WAIT;
+        loop {
+            {
+                let mut st = self.st.lock().unwrap();
+                st.retiring.retain(|l| !l.reaped());
+                if st.retiring.is_empty() || st.stopped || st.closed {
+                    return;
+                }
+            }
+            if std::time::Instant::now() >= until {
+                return;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     /// Starts a command-line AI's process for one turn, hands it the message and reads it to its end on a thread of
@@ -2564,7 +2660,9 @@ impl Agent {
                 if l.key == key && !l.strayed() {
                     self.st.lock().unwrap().live_fails += 1; // it died between two turns
                 }
-                // closed beside the new one, which resumes the conversation: Stop is never kept waiting for it
+                // closed beside the new one, so Stop is never kept waiting for it (the new one's turn waits for it
+                // to be gone before it resumes the conversation, where the AI needs that: `Kept::alone`)
+                retire(&mut self.st.lock().unwrap(), &l);
                 thread::spawn(move || l.close());
                 None
             }
@@ -2594,6 +2692,7 @@ impl Agent {
             if st.halted || st.closed {
                 st.turned = true;
                 if st.closed {
+                    retire(&mut st, &live);
                     thread::spawn(move || live.close());
                 } else {
                     st.live = Some(live); // nothing was written to it: it stays for the next message
@@ -2640,6 +2739,9 @@ impl Agent {
             thread::spawn(move || watch_start(tp));
         }
         let first = live.turns.fetch_add(1, Ordering::SeqCst) == 0;
+        if launch.alone() {
+            self.wait_retired();
+        }
         live.set_in_turn(true);
         let mut t = launch.turn(self, &live, &tp, text, &last, first);
         live.set_in_turn(false);
@@ -2665,6 +2767,9 @@ impl Agent {
                 let drop_it = is_helper(&st) || shutting() || st.closed || killed || t.background_left || tp.discard.load(Ordering::SeqCst);
                 if drop_it && mine(&st) {
                     st.live = None;
+                }
+                if drop_it {
+                    retire(&mut st, &live);
                 }
                 drop_it
             };
@@ -2733,7 +2838,11 @@ impl Agent {
     fn close_live(&self) {
         let live = {
             let mut st = self.st.lock().unwrap();
-            if st.running || st.sending { None } else { st.live.take() }
+            let live = if st.running || st.sending { None } else { st.live.take() };
+            if let Some(l) = &live {
+                retire(&mut st, l);
+            }
+            live
         };
         if let Some(l) = live {
             l.close();
@@ -3840,7 +3949,15 @@ fn no_studio() -> bool {
 }
 
 fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>) -> Value {
-    mcp_servers_with(agent_id, agent_name, project, role, no_studio())
+    #[allow(unused_mut)]
+    let mut servers = mcp_servers_with(agent_id, agent_name, project, role, no_studio());
+    // FRIDAE_STUDIO_STANDIN=<a Python script> (testing only, debug builds only): a stand-in tool server under the
+    // name Roblox Studio's has, for a copy of the app that must not reach the user's Studio (FRIDAE_NO_STUDIO)
+    #[cfg(debug_assertions)]
+    if let Some(script) = std::env::var_os("FRIDAE_STUDIO_STANDIN").filter(|v| !v.is_empty()) {
+        servers["Roblox_Studio"] = json!({"type": "stdio", "command": "/usr/bin/python3", "args": [script.to_string_lossy()]});
+    }
+    servers
 }
 
 fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool) -> Value {

@@ -22,17 +22,25 @@ const SCRIPT: &str = r#"
 echo "$*" >> "$0.args"
 n=$(grep -c '' "$0.args")
 case "$1" in acp) ;; *)
-  cat > "$0.stdin"
-  echo '{"event":"init","conversation_id":"S1","init":{"model":""}}'
-  echo '{"event":"step_update","step_update":{"conversation_id":"S1","step_index":1,"step_type":"agent_response","state":"DONE","text_delta":"per message"}}'
-  echo '{"event":"result","result":{"conversation_id":"S1","status":"SUCCESS","usage":{}}}'
+  cat > "$0.stdin"; conv=S1; prev=; for a in "$@"; do [ "$prev" = --conversation ] && conv=$a; prev=$a; done
+  echo '{"event":"init","conversation_id":"'"$conv"'","init":{"model":""}}'
+  echo '{"event":"step_update","step_update":{"conversation_id":"'"$conv"'","step_index":1,"step_type":"agent_response","state":"DONE","text_delta":"per message"}}'
+  echo '{"event":"result","result":{"conversation_id":"'"$conv"'","status":"SUCCESS","usage":{}}}'
   exit 0;;
 esac
 f="$0.$n.wire"; [ -f "$f" ] || f="$0.wire"
+sig() { printf '%s\n' "$1" | sed -n 's/^{\("id":[^,]*,\)\{0,1\}"jsonrpc":"2.0","method":"\([^"]*\)".*/\2/p'; }
 if [ -f "$f" ]; then
   while IFS= read -r l <&3; do
     case "$l" in
-      '> '*) IFS= read -r _ || exit 0;;
+      '> '*) IFS= read -r got || exit 0
+        # what the app sends now against what it sent when this was recorded: a request by its method, an answer
+        # to agy (the gate's yes or no) whole
+        if [ ! -f "$0.loose" ]; then
+          want="${l#> }"
+          case "$want" in *'"method":"'*) w=$(sig "$want"); g=$(sig "$got");; *) w="$want"; g="$got";; esac
+          [ "$w" = "$g" ] || printf 'recorded: %s\nsent now: %s\n' "$w" "$g" >> "$0.mismatch"
+        fi;;
       '< '*) printf '%s\n' "${l#< }";;
     esac
   done 3<"$f"
@@ -41,7 +49,8 @@ if [ -f "$f" ]; then
   exit 0
 fi
 ok() { echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":$1}"; }
-say() { echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"S1\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"$1\"}}}}"; }
+sid=S1
+say() { echo "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"$sid\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"$1\"}}}}"; }
 done_='{"stopReason":"end_turn","usage":{"inputTokens":7,"outputTokens":2,"thoughtTokens":1,"cachedReadTokens":3,"cachedWriteTokens":0,"totalTokens":13}}'
 modes='{"configOptions":[{"id":"mode","currentValue":"default"}]}'
 turns=0
@@ -51,8 +60,12 @@ while IFS= read -r line; do
     *'"method":"initialize"'*) [ -f "$0.old" ] && ok '{"protocolVersion":2}' || ok '{"protocolVersion":1}';;
     *'"method":"session/new"'*) [ -f "$0.signed-out" ] && echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32000,\"message\":\"Authentication required\"}}" || ok '{"sessionId":"S1"}';;
     *'"method":"session/resume"'*)
+      echo resume >> "$0.resumes"
       case "$line" in
         *'"sessionId":"GONE"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32603,\"message\":\"Failed to read session GONE; retry, or load it with session/load\"}}";;
+        *'"sessionId":"BROKEN"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32603,\"message\":\"database is locked\"}}";;
+        *'"sessionId":"BUSY"'*)
+          if [ "$(grep -c '' "$0.resumes")" = 1 ]; then echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32603,\"message\":\"database is locked\"}}"; else sid=BUSY; ok '{"sessionId":"BUSY"}'; fi;;
         *) ok '{"sessionId":"S1"}';;
       esac;;
     *'"method":"session/set_mode"'*) [ -f "$0.no-mode" ] && echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32602,\"message\":\"Unknown mode: default\"}}" || ok '{}';;
@@ -61,13 +74,22 @@ while IFS= read -r line; do
         *'"value":"max"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$id,\"error\":{\"code\":-32602,\"message\":\"Thinking level \\\"max\\\" is not offered\"}}";;
         *) [ -f "$0.other-mode" ] && ok '{"configOptions":[{"id":"mode","currentValue":"auto"}]}' || ok "$modes";;
       esac;;
-    *'"method":"session/cancel"'*) echo "{\"jsonrpc\":\"2.0\",\"id\":$prompt,\"result\":{\"stopReason\":\"cancelled\"}}";;
+    *'"method":"session/cancel"'*)
+      if [ -n "$asks" ]; then
+        # a request that comes after Stop: its answer is written down, then the prompt is answered
+        echo '{"jsonrpc":"2.0","id":"late","method":"session/request_permission","params":{"sessionId":"S1","toolCall":{"toolCallId":"c9","name":"mcp_rbxkit_rbx_board","kind":"other","rawInput":{}},"options":[{"optionId":"allow","kind":"allow_once"},{"optionId":"deny","kind":"reject_once"}]}}'
+        IFS= read -r reply; printf '%s\n' "$reply" > "$0.late"
+      fi
+      echo "{\"jsonrpc\":\"2.0\",\"id\":$prompt,\"result\":{\"stopReason\":\"cancelled\"}}";;
+    *'"id":"asked"'*) printf '%s\n' "$line" > "$0.asked"; say "after the tool";;
     *'"method":"session/prompt"'*)
       prompt=$id
       case "$line" in
         *die-early*) exit 3;;
         *die-late*) say "half"; echo "boom" >&2; exit 3;;
         *hang*) say "working";;
+        *asks*) asks=1; say "working"
+          echo '{"jsonrpc":"2.0","id":"asked","method":"session/request_permission","params":{"sessionId":"S1","toolCall":{"toolCallId":"c8","name":"mcp_rbxkit_rbx_board","kind":"other","rawInput":{}},"options":[{"optionId":"allow","kind":"allow_once"},{"optionId":"deny","kind":"reject_once"}]}}';;
         *think*) ;;
         *deaf*) say "working"; trap '' TERM; while IFS= read -r l; do :; done; sleep 300;;
         *limit*) ok '{"stopReason":"refusal"}';;
@@ -127,6 +149,8 @@ impl Chat {
             kit: Path::new("/kit"),
             work: Path::new("/work"),
             protected,
+            hidden_in: &[],
+            pictures: None,
             allowed: &[],
             guarded,
             keys_on: false,
@@ -140,7 +164,7 @@ impl Chat {
     }
 
     fn launch_with(&self, change: impl FnOnce(&mut GeminiSettings)) -> GeminiLaunch {
-        let (servers, guarded) = (json!({}), Map::new());
+        let (servers, guarded) = (json!({"rbxkit": {"command": "python3", "args": [], "env": {}}}), Map::new());
         let mut s = self.settings(&servers, &guarded, &[]);
         change(&mut s);
         let mut l = GeminiLaunch::new(&s);
@@ -258,6 +282,7 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
         with("plugin_token", json!("t")),
     );
     let more_protected = vec![PathBuf::from("/kit/config.json"), PathBuf::from("/work/chats")];
+    let home_dirs = vec![PathBuf::from("/home/u")];
     let changed: Vec<(&str, GeminiSettings)> = vec![
         ("the mode", GeminiSettings { full: true, ..base() }),
         ("an allowed program", GeminiSettings { allowed: &more_allowed, ..base() }),
@@ -275,6 +300,8 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
         ("the tool servers (a setting they are handed)", GeminiSettings { servers: &other_servers, ..base() }),
         ("the tool servers (one more)", GeminiSettings { servers: &two_servers, ..base() }),
         ("the app's own files", GeminiSettings { protected: &more_protected, ..base() }),
+        ("the home folder whose hidden files are kept from it", GeminiSettings { hidden_in: &home_dirs, ..base() }),
+        ("where its tool server notes pictures", GeminiSettings { pictures: Some(Path::new("/work/tool-pictures/c1.jsonl")), ..base() }),
         ("the provider-keys switch as the process gets it", GeminiSettings { keys_on: true, ..base() }),
         ("the program", GeminiSettings { exe: Path::new("/other/agy"), ..base() }),
         ("the kit folder", GeminiSettings { kit: Path::new("/kit2"), ..base() }),
@@ -295,6 +322,14 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
     assert!(l.spec.rules.full);
     assert_eq!(l.spec.rules.writes, [c.dir.clone()]);
     assert_eq!(l.spec.rules.protected, [protected[0].clone(), c.dir.join(".agents").join("mcp_config.json")], "and the workspace's list of tool servers");
+    // the app's tool server is told where to note its pictures, on the kept path only
+    let notes = Path::new("/work/tool-pictures/c1.jsonl");
+    let with_notes = GeminiLaunch::new(&GeminiSettings { pictures: Some(notes), ..base() });
+    assert_eq!(with_notes.spec.servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"], "/work/tool-pictures/c1.jsonl");
+    assert_eq!(with_notes.spec.pictures.as_deref(), Some(notes));
+    let (per, _) = Kept::per_turn(&with_notes, None, "hello");
+    assert!(!fs::read_to_string(c.dir.join(".agents").join("mcp_config.json")).unwrap().contains("FRIDAE_TOOL_PICTURES"), "a process per message hands its results over itself");
+    drop(per);
     assert_eq!(l.spec.rules.servers, ["rbxkit"]);
     assert_eq!(l.spec.rules.agent_dir, Path::new("/home/u/.gemini/antigravity-cli"));
     // the kept command, and the per-message one with the same settings, which resumes the same conversation
@@ -516,6 +551,123 @@ mod stand_in {
         let errors = c.said("error");
         assert!(errors.len() == 1 && errors[0].starts_with("Gemini could not find this chat's earlier conversation"), "{errors:?}");
         assert_eq!(c.session().as_deref(), Some("S1"), "the new conversation is the chat's from now on");
+    }
+
+    #[test]
+    fn a_resume_that_fails_once_is_tried_again_and_only_a_conversation_that_is_gone_starts_a_new_one() {
+        // the store let go of a moment later (another process of the chat's on its way out): the second try works,
+        // and the chat keeps its conversation without a word
+        let busy = Chat::new("resume-busy");
+        busy.a.st.lock().unwrap().session = Some("BUSY".into());
+        busy.send("hello");
+        assert_eq!(busy.said("text"), ["reply 1"]);
+        assert!(busy.said("error").is_empty(), "{:?}", busy.said("error"));
+        assert_eq!(busy.session().as_deref(), Some("BUSY"));
+        assert_eq!(fs::read_to_string(busy.script.with_extension("sh.resumes")).unwrap().lines().count(), 2);
+        // an error that is not "no such conversation", twice: the kept way is given up, the message goes per message,
+        // and the conversation is still the chat's
+        let broken = Chat::new("resume-broken");
+        broken.a.st.lock().unwrap().session = Some("BROKEN".into());
+        broken.send("hello");
+        assert_eq!(broken.said("text"), ["per message"]);
+        assert!(broken.said("error").is_empty(), "no word of a lost conversation: {:?}", broken.said("error"));
+        assert!(broken.starts()[1].contains("--conversation BROKEN"), "{:?}", broken.starts());
+        assert_eq!(broken.fails(), 1);
+        // gone (agy's own words for it), twice: a new conversation, said
+        let gone = Chat::new("resume-gone");
+        gone.a.st.lock().unwrap().session = Some("GONE".into());
+        gone.send("hello");
+        assert_eq!(fs::read_to_string(gone.script.with_extension("sh.resumes")).unwrap().lines().count(), 2, "asked twice before it is given up");
+        assert_eq!(gone.session().as_deref(), Some("S1"));
+    }
+
+    #[test]
+    fn a_request_is_answered_by_the_gate_and_one_that_comes_after_stop_is_answered_cancelled() {
+        let c = Chat::new("late-request");
+        c.start("asks");
+        c.taken();
+        // in the turn: one of the app's tools, let through
+        let asked = c.script.with_extension("sh.asked");
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while !asked.exists() && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(10));
+        }
+        let first: Value = serde_json::from_str(&fs::read_to_string(&asked).unwrap()).unwrap();
+        assert_eq!(first["result"], json!({"outcome": {"outcome": "selected", "optionId": "allow"}}));
+        // after Stop: nothing more is let through, whatever it is
+        c.a.stop();
+        c.wait();
+        let late: Value = serde_json::from_str(&fs::read_to_string(c.script.with_extension("sh.late")).unwrap()).unwrap();
+        assert_eq!(late["id"], "late");
+        assert_eq!(late["result"], json!({"outcome": {"outcome": "cancelled"}}));
+        assert_eq!(c.said("error"), ["Stopped."]);
+    }
+
+    #[test]
+    fn a_new_process_does_not_touch_the_conversation_while_the_chats_old_one_is_still_there() {
+        let c = Chat::new("one-at-a-time");
+        c.send("one");
+        let old = c.a.st.lock().unwrap().live.clone().unwrap();
+        // the old process is on its way out (as when the mode changes) and takes its time
+        retire(&mut c.a.st.lock().unwrap(), &old);
+        let sent = std::time::Instant::now();
+        let closer = {
+            let old = old.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(700));
+                old.close();
+            })
+        };
+        c.a.st.lock().unwrap().live = None;
+        c.a.kept_turn(&c.launch_with(|s| s.full = true), "two");
+        c.wait();
+        assert!(sent.elapsed() >= Duration::from_millis(700), "the new turn waited for the old process: {:?}", sent.elapsed());
+        assert!(old.reaped());
+        assert_eq!(c.said("text"), ["reply 1", "reply 1"]);
+        assert!(c.a.st.lock().unwrap().retiring.iter().all(|l| l.reaped()));
+        closer.join().unwrap();
+        // Claude Code's turns do not wait (its new process was measured beside its old one)
+        assert!(Kept::alone(&c.launch()));
+    }
+
+    #[test]
+    fn the_workspaces_list_of_tool_servers_is_changed_whole_and_put_back_after_the_turn() {
+        let c = Chat::new("server-list");
+        let list = c.dir.join(".agents").join("mcp_config.json");
+        fs::create_dir_all(list.parent().unwrap()).unwrap();
+        // as a process per message left it: the app's server, and one of the user's own
+        let before = r#"{"mcpServers": {"rbxkit": {"command": "python3"}, "mine": {"command": "my-server"}}}"#;
+        fs::write(&list, before).unwrap();
+        let servers = json!({"rbxkit": {"command": "python3", "args": [], "env": {}}});
+        // for the turn: without the app's entry (agy would start it a second time), the user's kept
+        let was = antigravity::unwrite_servers(&c.dir, &servers).expect("changed");
+        let during: Value = serde_json::from_str(&fs::read_to_string(&list).unwrap()).unwrap();
+        assert_eq!(during["mcpServers"], json!({"mine": {"command": "my-server"}}));
+        antigravity::rewrite_list(&c.dir, &was);
+        assert_eq!(fs::read_to_string(&list).unwrap(), before, "put back as it was, byte for byte");
+        // nothing of the app's in it, a file that does not read, no file: left alone
+        assert!(antigravity::unwrite_servers(&c.dir, &json!({"other": {}})).is_none());
+        fs::write(&list, "{ not json").unwrap();
+        assert!(antigravity::unwrite_servers(&c.dir, &servers).is_none());
+        assert_eq!(fs::read_to_string(&list).unwrap(), "{ not json");
+        fs::remove_file(&list).unwrap();
+        assert!(antigravity::unwrite_servers(&c.dir, &servers).is_none());
+        // no half-written file is ever left beside it
+        assert_eq!(fs::read_dir(list.parent().unwrap()).unwrap().count(), 0);
+        // and a whole turn, also one that ends badly, leaves the list as it found it
+        fs::write(&list, before).unwrap();
+        let with_server = |c: &Chat, text: &str| {
+            let guarded = Map::new();
+            let mut l = GeminiLaunch::new(&GeminiSettings { servers: &servers, ..c.settings(&json!({}), &guarded, &[]) });
+            l.first = vec![c.script.clone().into()];
+            c.a.kept_turn(&l, text);
+            c.wait();
+        };
+        with_server(&c, "hello");
+        assert_eq!(c.said("text"), ["reply 1"]);
+        assert_eq!(fs::read_to_string(&list).unwrap(), before);
+        with_server(&c, "die-late");
+        assert_eq!(fs::read_to_string(&list).unwrap(), before);
     }
 
     #[test]

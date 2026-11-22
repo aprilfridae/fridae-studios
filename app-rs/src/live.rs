@@ -259,6 +259,11 @@ impl Live {
         status.map(|s| (s.success(), s.code().unwrap_or(-1)))
     }
 
+    /// Whether it has been reaped: it is gone, and so is its hold on whatever it had open.
+    pub fn reaped(&self) -> bool {
+        self.child.lock().unwrap_or_else(|e| e.into_inner()).is_none()
+    }
+
     /// Closes it between turns: stdin is closed, it gets CLOSE_WAIT to exit by itself, and whatever it or its tools
     /// left running is ended. Blocks: call it off the page's thread.
     pub fn close(&self) {

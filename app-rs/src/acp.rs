@@ -45,45 +45,77 @@ pub const PROTOCOL: u64 = 1;
 /// the user allowed are read from the app's memory at each request.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rules {
-    /// Full auto or Studio: everything is let through except writes to the app's own files.
+    /// Full auto or Studio: everything is let through except writes to what no AI's file tools may write.
     pub full: bool,
-    /// The chat, for commands the user said may run once (`opencode::approve_once`).
+    /// The chat, for what the user said may run once (`opencode::approve_once`).
     pub agent_id: String,
     /// The app's tool servers by name: their tools are always let through.
     pub servers: Vec<String>,
-    /// Folders the file tools may write in (the chat's workspace: the game, or the chat's own folder).
+    /// Folders the file tools may write in (the chat's workspace: the game, or the chat's own folder). The first is
+    /// the workspace.
     pub writes: Vec<PathBuf>,
     /// Folders they may also read (the kit, the user's attachments, the chat's pictures).
     pub reads: Vec<PathBuf>,
-    /// The app's own files and folders, never written by an agent's file tools (`paths::app_protected`).
+    /// What no AI's file tools may write in any mode (`paths::never_written`, the list OpenCode's rules are made
+    /// from too): the app's own files and folders, and the workspace's list of tool servers.
     pub protected: Vec<PathBuf>,
-    /// The agent's own data folder (`~/.gemini/antigravity-cli`): it keeps a scratch folder per conversation there,
-    /// and reads its tool and skill descriptions from it.
+    /// Folders whose hidden files and folders are never written either (the home folder: shell start-up files,
+    /// other tools' settings).
+    pub hidden_in: Vec<PathBuf>,
+    /// The agent's own data folder (`~/.gemini/antigravity-cli`): it keeps a scratch folder per conversation there.
     pub agent_dir: PathBuf,
 }
 
-/// The app's answer to one permission request, and what the chat is shown when it is a refusal.
+/// The app's answer to one permission request, what the chat is shown when it is a refusal, and a word for the agent
+/// with the user's next message (agy takes no reason with a refusal and ends the turn).
 pub struct Verdict {
     pub allow: bool,
     pub outs: Vec<Out>,
+    pub note: Option<String>,
 }
 
-/// The agent's own tools that change files, and those that only read them, by the names agy gives them. A tool of
-/// neither list is told by its `kind` (ACP's own: `edit`, `delete`, `move`; `read`, `search`).
-const WRITERS: &[&str] = &["write_file", "write_to_file", "replace_file_content", "multi_replace_file_content", "edit_file", "delete_file"];
-const READERS: &[&str] = &["view_file", "read_file", "list_dir", "grep_search", "find_by_name", "view_file_outline", "code_search"];
-/// Tools that look something up on the web, as Claude Code's WebSearch and WebFetch do in Ask me.
-const FETCHERS: &[&str] = &["search_web", "read_url_content"];
+/// The agent's own tools that change files, and that only read them, by the names agy gives them: only names seen
+/// in a recording (`tests/fixtures/gemini/acp-*.wire`). A tool of neither list is told by its `kind` (ACP's own:
+/// `edit`, `delete`, `move`; `read`, `search`; `fetch`), and one the app cannot place is refused in Ask me.
+const WRITERS: &[&str] = &["write_file"];
+const READERS: &[&str] = &["read_file"];
 
-/// A path as the checks compare it: absolute, no `..`, symbolic links followed as far as the path exists (a Mac's
-/// /tmp is /private/tmp). None for anything else: such a path cannot be judged, so the request is refused.
-fn resolve(path: &str) -> Option<PathBuf> {
-    let p = match path.strip_prefix("~/") {
+/// Whether the app approves a command by itself in Ask me when every program in it is one the user allowed
+/// (`paths::command_allowed`). That check is written for `/bin/sh`, so it holds only where agy runs commands with
+/// that shell and no start-up file of the user's: see DEVELOPING.md for what was measured.
+pub const COMMANDS_BY_APP: bool = false;
+
+/// Whether agy asks before it reads a file outside the workspace (measured, DEVELOPING.md). Where it does not, the
+/// app cannot keep its reads to the chat's folders, so a web lookup is not let through without the user either:
+/// what was read anywhere could leave with it.
+pub const READS_ASKED: bool = true;
+
+/// A path as the checks compare it: absolute, symbolic links followed as far as the path exists (a Mac's /tmp is
+/// /private/tmp). Against `base` (Full auto: the workspace) a relative path is taken from there and `..` is worked
+/// out; without one, a relative path or one with `..` cannot be judged: None, and the request is refused.
+fn resolve(path: &str, base: Option<&Path>) -> Option<PathBuf> {
+    let mut p = match path.strip_prefix("~/") {
         Some(rest) => paths::home_dir().join(rest),
         None => PathBuf::from(path),
     };
-    if !p.is_absolute() || path.contains('\0') || p.components().any(|c| matches!(c, Component::ParentDir)) {
+    if path.contains('\0') || path.is_empty() {
         return None;
+    }
+    if !p.is_absolute() {
+        p = base?.join(p);
+    }
+    if p.components().any(|c| matches!(c, Component::ParentDir)) {
+        base?;
+        let mut flat = PathBuf::new();
+        for c in p.components() {
+            match c {
+                Component::ParentDir => {
+                    flat.pop();
+                }
+                other => flat.push(other),
+            }
+        }
+        p = flat;
     }
     Some(paths::real_as_far_as_exists(&p))
 }
@@ -93,14 +125,47 @@ fn inside(p: &Path, dir: &Path) -> bool {
     !dir.as_os_str().is_empty() && p.starts_with(&dir)
 }
 
-/// Whether a path is one of the app's own files, or in one of its folders, in any case of letters: on a disk that
-/// ignores case `CONFIG.JSON` is `config.json`, and where it does not, refusing the other spelling costs nothing.
-fn protected(p: &Path, list: &[PathBuf]) -> bool {
-    let low = |x: &Path| x.to_string_lossy().to_lowercase();
-    let p = low(p);
-    list.iter().any(|q| {
-        let q = low(&paths::real_as_far_as_exists(q));
-        !q.is_empty() && (p == q || p.starts_with(&(q.trim_end_matches('/').to_string() + "/")))
+fn low(p: &Path) -> String {
+    p.to_string_lossy().to_lowercase()
+}
+
+/// `p` is `q` or inside it, in any case of letters.
+fn under(p: &str, q: &str) -> bool {
+    !q.is_empty() && (p == q || p.starts_with(&(q.trim_end_matches('/').to_string() + "/")))
+}
+
+/// Why a path is one no file tool may write, if it is: one of the protected places or inside one, in any case of
+/// letters (on a disk that ignores case `CONFIG.JSON` is `config.json`, and where it does not, refusing the other
+/// spelling costs nothing); a hidden name directly in a folder of `hidden_in`, or that folder's `Library`; or a
+/// with `holding`, a place that *holds* one of these (a delete or a move of `work` takes `work/chats` with it).
+fn never_written(p: &Path, rules: &Rules, holding: bool) -> bool {
+    let lp = low(p);
+    let places: Vec<String> = rules.protected.iter().map(|q| low(&paths::real_as_far_as_exists(q))).collect();
+    if places.iter().any(|q| under(&lp, q) || (holding && under(q, &lp))) {
+        return true;
+    }
+    rules.hidden_in.iter().any(|h| {
+        let h = paths::real_as_far_as_exists(h);
+        let lh = low(&h);
+        if lh.is_empty() {
+            return false;
+        }
+        if holding && under(&lh, &lp) {
+            return true; // the folder itself, or one that holds it
+        }
+        match Path::new(&lp).strip_prefix(&lh).ok().and_then(|rest| rest.components().next()) {
+            Some(Component::Normal(first)) => first.to_string_lossy().starts_with('.') || first == "library",
+            _ => false,
+        }
+    })
+}
+
+/// A folder no file tool writes under in Ask me, anywhere in the path and in any case (`paths::ASK_ME_NEVER_UNDER`:
+/// `.git`, where a hook or an alias would run when an allowed `git` runs), if the path has one.
+fn ask_me_never(p: &Path) -> Option<&'static str> {
+    p.components().find_map(|c| {
+        let name = c.as_os_str().to_string_lossy().to_lowercase();
+        paths::ASK_ME_NEVER_UNDER.iter().copied().find(|n| *n == name)
     })
 }
 
@@ -116,16 +181,20 @@ fn content_key(key: &str) -> bool {
     ["content", "text", "chunk", "code", "summary", "description", "instruction", "query", "pattern", "commandline"].iter().any(|w| k.contains(w))
 }
 
-/// An argument that names a file or folder, by its name (`Path`, `TargetFile`, `DirectoryPath`, `SearchPath`...).
+/// An argument that names a file or folder, by its name as agy writes them (`Path`, `TargetFile`, `SearchPath`) or
+/// with an underscore (`file_path`); `profile` is not one.
 fn path_key(key: &str) -> bool {
     let k = key.to_lowercase();
-    ["path", "paths", "file", "files", "dir", "directory", "folder", "uri"].iter().any(|w| k.ends_with(w))
+    ["Path", "Paths", "File", "Files", "Dir", "Directory", "Folder", "Uri"].iter().any(|w| {
+        let l = w.to_lowercase();
+        key.ends_with(w) || k == l || k.ends_with(&format!("_{l}"))
+    })
 }
 
 /// Every file or folder a tool call names: its `locations`, the files of the changes it shows (`content` of type
 /// `diff`), each argument named as a path, and any other argument that reads as one. Err when one of them cannot be
-/// judged (not absolute, `..` in it, a path argument that is not text).
-fn named_paths(tool: &Value) -> Result<Vec<PathBuf>, ()> {
+/// judged (see `resolve`; a path argument that is not text).
+fn named_paths(tool: &Value, base: Option<&Path>) -> Result<Vec<PathBuf>, ()> {
     let mut texts: Vec<String> = Vec::new();
     for l in tool["locations"].as_array().into_iter().flatten() {
         texts.push(l["path"].as_str().ok_or(())?.to_string());
@@ -165,7 +234,7 @@ fn named_paths(tool: &Value) -> Result<Vec<PathBuf>, ()> {
         if t.starts_with("http://") || t.starts_with("https://") {
             continue;
         }
-        let p = resolve(&t).ok_or(())?;
+        let p = resolve(&t, base).ok_or(())?;
         if !out.contains(&p) {
             out.push(p);
         }
@@ -179,28 +248,56 @@ fn shown(tool: &Value) -> String {
     opencode::visible(&t.chars().take(120).collect::<String>())
 }
 
-/// One of the app's tool servers' tools: agy names them `mcp_<server>_<tool>`. Returns (server, tool).
+/// One of the app's tool servers' tools: agy names them `mcp_<server>_<tool>` (recorded for both of the app's
+/// servers). Returns (server, tool). The app's own server's tools all begin `rbx_`, so another server whose name
+/// only starts like it (`rbxkit_x`) is not taken for it.
 fn server_tool<'a>(name: &'a str, servers: &'a [String]) -> Option<(&'a str, &'a str)> {
     let rest = name.strip_prefix("mcp_")?;
     // the longest server name first, so `Roblox_Studio` is never read as a server `Roblox`
     let mut by_len: Vec<&String> = servers.iter().collect();
     by_len.sort_by_key(|s| std::cmp::Reverse(s.len()));
-    by_len.into_iter().find_map(|s| rest.strip_prefix(s.as_str()).and_then(|t| t.strip_prefix('_')).filter(|t| !t.is_empty()).map(|t| (s.as_str(), t)))
+    by_len
+        .into_iter()
+        .find_map(|s| rest.strip_prefix(s.as_str()).and_then(|t| t.strip_prefix('_')).filter(|t| !t.is_empty()).map(|t| (s.as_str(), t)))
+        .filter(|(server, tool)| *server != "rbxkit" || tool.starts_with("rbx_"))
 }
 
 const STOPPED_THERE: &str = "Gemini stopped there.";
 
+/// The card for something the app does not let through by itself but the user may, one time: {command, shown,
+/// reason, once, no_once}, as `opencode::decide` makes them for a command.
+fn once_card(agent_id: &str, text: &str, reason: &str) -> Out {
+    let no = opencode::not_offered(text);
+    let card = vec![json!({"command": text, "shown": opencode::visible(text), "reason": reason, "once": no.is_none(), "no_once": no})];
+    opencode::note_refused(agent_id, &card);
+    Out::Refused(card)
+}
+
+/// What a web lookup asks for, as its card shows it and its one-time approval is kept by.
+fn lookup_text(tool: &Value) -> String {
+    let raw = &tool["rawInput"];
+    let what = ["Url", "url", "query", "Query"].iter().find_map(|k| raw[*k].as_str()).map(str::to_string).unwrap_or_else(|| raw.to_string());
+    format!("web lookup: {}", what.chars().take(250).collect::<String>())
+}
+
 /// The app's answer to a permission request's `toolCall`, for a turn under `rules`, in the conversation `session`.
 /// `allowed`: the programs the user allowed, from the app's memory now.
 ///
-/// Full auto and Studio: everything is let through except a file tool's write to one of the app's own files (in any
-/// case of letters), or a write that does not say where. Ask me: the app's tool servers' tools; a command whose
-/// programs the user allowed, written plainly (`paths::command_allowed`), or one the user said may run once; a write
-/// inside the chat's workspace and not to the app's files; a read inside the chat's folders; a web lookup. Everything
-/// else is refused, and so is any request that cannot be read: no tool call, no id, a path that cannot be judged.
+/// Every mode: a request that cannot be read is refused (no tool call, no id, arguments that are no object); so is a
+/// change of the session's mode; the app's tool servers' tools pass.
+///
+/// Full auto and Studio: everything else passes except a file tool's write to what no file tool may write
+/// (`never_written`), a write that does not say where, and a tool that names a path the app cannot judge.
+///
+/// Ask me: a command passes when the user said that exact command may run once, or, where the app may approve
+/// commands by itself (`COMMANDS_BY_APP`), when every program in it is one the user allowed, written plainly
+/// (`paths::command_allowed`); a write passes inside the chat's workspace, or the agent's own scratch folder for
+/// this conversation, and never under `.git` or to what no file tool may write; a read, should the agent ask,
+/// inside the chat's folders; a web lookup only where the agent's reads are asked about (`READS_ASKED`), else when
+/// the user said that lookup may run once. Everything else is refused.
 pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) -> Verdict {
-    let allow = || Verdict { allow: true, outs: Vec::new() };
-    let refuse = |why: String| Verdict { allow: false, outs: vec![Out::Error(why)] };
+    let allow = || Verdict { allow: true, outs: Vec::new(), note: None };
+    let refuse = |why: String| Verdict { allow: false, note: Some(format!("[Fridae refused a step of your last turn and the turn ended there: {why}]")), outs: vec![Out::Error(why)] };
     if !tool.is_object() || tool["toolCallId"].as_str().is_none_or(str::is_empty) {
         return refuse(format!("Gemini asked to do something Fridae could not read, so it was refused. {STOPPED_THERE}"));
     }
@@ -211,6 +308,10 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
     if !(raw.is_object() || raw.is_null()) {
         return refuse(format!("Gemini asked to use \"{what}\" in a way Fridae could not read, so it was refused. {STOPPED_THERE}"));
     }
+    // the app answers requests only in the mode in which every step asks
+    if kind == "switch_mode" {
+        return refuse(format!("Gemini asked to change how it asks before its steps (\"{what}\"), which Fridae never lets it, so it was refused. {STOPPED_THERE}"));
+    }
     if server_tool(name, &rules.servers).is_some() {
         return allow();
     }
@@ -218,9 +319,13 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
     let is_command = command.is_some() || kind == "execute" || name == "run_command";
     let writes = matches!(kind, "edit" | "delete" | "move") || WRITERS.contains(&name);
     let reads = !writes && (matches!(kind, "read" | "search") || READERS.contains(&name));
-    let named = named_paths(tool);
-    let own = |p: &Path| protected(p, &rules.protected);
-    let own_file = "one of Fridae's own files, which no AI's file tools may change";
+    let workspace = rules.writes.first().map(PathBuf::as_path);
+    let named = named_paths(tool, if rules.full { workspace } else { None });
+    // its own scratch folder for this conversation
+    let scratch = rules.agent_dir.join("brain").join(session);
+    let own_scratch = |p: &Path| !session.is_empty() && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && inside(p, &scratch);
+    let own = |p: &Path| !own_scratch(p) && never_written(p, rules, true);
+    let own_file = "which no AI's file tools may change (Fridae's own files, hidden files in your home folder)";
     if rules.full {
         if is_command {
             return allow();
@@ -241,11 +346,18 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
             return refuse(format!("Gemini asked to run a command Fridae could not read (\"{what}\"), so it was refused. {STOPPED_THERE}"));
         };
         let request = [command.to_string()];
+        if opencode::take_once(&rules.agent_id, "shell", &request, if COMMANDS_BY_APP { allowed } else { &[] }) {
+            return allow();
+        }
         let d = opencode::decide("shell", &request, allowed);
-        if d.once || opencode::take_once(&rules.agent_id, "shell", &request, allowed) {
+        if d.once && COMMANDS_BY_APP {
             return allow();
         }
         let mut outs = Vec::new();
+        if d.once {
+            // its programs are allowed, but here the app does not approve a command by itself
+            outs.push(once_card(&rules.agent_id, command, "Fridae cannot check how Gemini's own shell would run it, so on Gemini every command is asked about, also for programs you have allowed."));
+        }
         if !d.blocked.is_empty() {
             outs.push(Out::Blocked(d.blocked));
         }
@@ -256,14 +368,11 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
         if outs.is_empty() {
             outs.push(Out::Error(format!("Gemini tried to run a command that is not allowed here (\"{what}\"). {STOPPED_THERE}")));
         }
-        return Verdict { allow: false, outs };
+        return Verdict { allow: false, outs, note: Some(format!("[Fridae did not run this command of your last turn, and the turn ended there: {}. The user was shown it and may allow it. Do not try it another way.]", command.chars().take(300).collect::<String>())) };
     }
     let Ok(paths) = named else {
         return refuse(format!("Gemini asked to use \"{what}\" on a path Fridae could not check, so it was refused. {STOPPED_THERE}"));
     };
-    // its own scratch folder for this conversation, and what it reads of its own tools and skills
-    let scratch = rules.agent_dir.join("brain").join(session);
-    let own_scratch = |p: &Path| !session.is_empty() && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && inside(p, &scratch);
     if writes {
         if paths.is_empty() {
             return refuse(format!("Gemini asked to change a file without saying which (\"{what}\"), so it was refused. {STOPPED_THERE}"));
@@ -271,14 +380,17 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
         if let Some(p) = paths.iter().find(|p| own(p)) {
             return refuse(format!("Gemini tried to write {}, {own_file}, so it was refused. {STOPPED_THERE}", p.display()));
         }
+        if let Some((p, n)) = paths.iter().filter(|p| !own_scratch(p)).find_map(|p| ask_me_never(p).map(|n| (p, n))) {
+            return refuse(format!("Gemini tried to write {}, inside a {n} folder, which no file tool may change in Ask me (what is written there can run when an allowed program does), so it was refused. {STOPPED_THERE}", p.display()));
+        }
         return match paths.iter().find(|p| !(rules.writes.iter().any(|d| inside(p, d)) || own_scratch(p))) {
             Some(p) => refuse(format!("Gemini tried to write {}, which is outside this chat's folder, so it was refused. {STOPPED_THERE} In Ask me it writes only in the chat's own folder or its game.", p.display())),
             None => allow(),
         };
     }
     if reads {
-        let own_reads = [rules.agent_dir.join("mcp"), rules.agent_dir.join("builtin")];
-        let may = |p: &Path| rules.writes.iter().chain(&rules.reads).chain(&own_reads).any(|d| inside(p, d)) || own_scratch(p);
+        // never the app's own settings, other chats or the copies' folder, wherever the chat's folders lie
+        let may = |p: &Path| (rules.writes.iter().chain(&rules.reads).any(|d| inside(p, d)) && !never_written(p, rules, false)) || own_scratch(p);
         if paths.is_empty() {
             return refuse(format!("Gemini asked to read something without saying where (\"{what}\"), so it was refused. {STOPPED_THERE}"));
         }
@@ -287,12 +399,16 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
             None => allow(),
         };
     }
-    if (kind == "fetch" || FETCHERS.contains(&name)) && paths.is_empty() {
-        return allow();
-    }
-    // the output of a command the app let run
-    if name == "command_status" && paths.is_empty() {
-        return allow();
+    if kind == "fetch" && paths.is_empty() {
+        if READS_ASKED {
+            return allow();
+        }
+        let text = lookup_text(tool);
+        if opencode::take_exact(&rules.agent_id, &text) {
+            return allow();
+        }
+        let card = once_card(&rules.agent_id, &text, "on this connection Gemini can read files anywhere on this computer without asking, so what it sends to the web is asked about each time.");
+        return Verdict { allow: false, outs: vec![card], note: Some("[Fridae did not let your last turn look something up on the web, and the turn ended there. The user was shown it and may allow it.]".into()) };
     }
     refuse(format!("Gemini asked to use \"{what}\", which Fridae does not let it do in Ask me, so it was refused. {STOPPED_THERE} Ask again, and tell it to use the building tools."))
 }
@@ -306,8 +422,13 @@ fn answer(options: &Value, allow: bool) -> Value {
     let chosen = if allow { pick("allow_once") } else { None }.or_else(|| pick("reject_once"));
     match chosen {
         Some(id) => json!({"outcome": {"outcome": "selected", "optionId": id}}),
-        None => json!({"outcome": {"outcome": "cancelled"}}),
+        None => cancelled(),
     }
+}
+
+/// The answer to a request that came after Stop, or that the agent gave no way to say no to.
+fn cancelled() -> Value {
+    json!({"outcome": {"outcome": "cancelled"}})
 }
 
 // ------------------------------------------------------------------ a turn's updates
@@ -335,6 +456,12 @@ pub struct Turn {
     text: String,
     seen: HashSet<String>,
     open: HashSet<String>,
+    /// open calls of the app's tools that wait long on purpose (`paths::waits_long`)
+    long: HashSet<String>,
+    /// where the app's tool server notes the pictures of each result (`Spec::pictures`), and how many of its lines
+    /// have been shown
+    pictures: Option<PathBuf>,
+    pictures_seen: usize,
     /// the agent said something or called a tool
     pub began: bool,
     said: bool,
@@ -345,12 +472,35 @@ pub struct Turn {
 }
 
 impl Turn {
-    pub fn new(servers: &[String]) -> Turn {
-        Turn { servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), began: false, said: false, refused: false, mode_lost: false }
+    pub fn new(servers: &[String], pictures: Option<&Path>) -> Turn {
+        Turn { servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, said: false, refused: false, mode_lost: false }
     }
 
     pub fn tool_open(&self) -> bool {
         !self.open.is_empty()
+    }
+
+    /// One of the app's tools that wait long on purpose is open (the stall guard then does not count the quiet).
+    pub fn long_open(&self) -> bool {
+        !self.long.is_empty()
+    }
+
+    /// The pictures the app's tool server noted since the last look: one line per tool result, `{"images": [..]}`.
+    /// A tool server's result does not come over ACP (measured), so `rbxkit_mcp.py` writes the image files of each
+    /// result here (FRIDAE_TOOL_PICTURES). Shown as the per-message path shows them (`pictures_in`: files that
+    /// exist, the ones for looking at first, two at most). A file that is missing or does not read shows nothing.
+    fn new_pictures(&mut self) -> Vec<String> {
+        let Some(text) = self.pictures.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) else { return Vec::new() };
+        let lines: Vec<&str> = text.lines().collect();
+        let fresh = lines.get(self.pictures_seen..).unwrap_or(&[]);
+        self.pictures_seen = lines.len();
+        let named: Vec<String> = fresh
+            .iter()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .flat_map(|v| v["images"].as_array().cloned().unwrap_or_default())
+            .filter_map(|p| p.as_str().map(str::to_string))
+            .collect();
+        antigravity::pictures_in(&named.join("\n"))
     }
 
     fn flush(&mut self, out: &mut Vec<Out>) {
@@ -391,23 +541,21 @@ impl Turn {
                 match u["status"].as_str().unwrap_or("") {
                     "completed" | "failed" => {
                         self.open.remove(id);
-                        // a tool's result arrives as text, when it arrives: the pictures the app's tools made are
-                        // found by the paths they report
-                        let shows = ours.is_some_and(|(_, t)| t.starts_with("rbx_") || t.starts_with("screen_capture"));
-                        if shows && u["status"] == "completed" {
-                            let mut text = u["rawOutput"]["output"].as_str().unwrap_or("").to_string();
-                            for c in u["content"].as_array().into_iter().flatten() {
-                                text.push('\n');
-                                text.push_str(c["content"]["text"].as_str().unwrap_or(""));
-                            }
-                            let pictures = antigravity::pictures_in(&text);
-                            if !pictures.is_empty() {
+                        self.long.remove(id);
+                        // the pictures the app's own tools made, from the tool server's notes (a failed call's are
+                        // passed over, so they are never taken for the next call's)
+                        if ours.is_some_and(|(_, t)| t.starts_with("rbx_")) {
+                            let pictures = self.new_pictures();
+                            if !pictures.is_empty() && u["status"] == "completed" {
                                 out.push(Out::Pictures(pictures));
                             }
                         }
                     }
                     _ => {
                         self.open.insert(id.to_string());
+                        if ours.is_some_and(|(_, t)| paths::waits_long(t)) {
+                            self.long.insert(id.to_string());
+                        }
                     }
                 }
             }
@@ -478,6 +626,8 @@ pub struct Spec {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub rules: Rules,
+    /// The file the app's tool server notes each result's pictures in for this chat (`Turn::new_pictures`).
+    pub pictures: Option<PathBuf>,
 }
 
 /// The tool servers as `session/new` takes them: {name, command, args, env: [{name, value}]}. A texture request may
@@ -511,6 +661,10 @@ pub trait Host {
     fn began(&mut self);
     /// End the process now, with all it started.
     fn end(&mut self);
+    /// Stop was pressed on this turn: nothing more is let through.
+    fn stopped(&mut self) -> bool;
+    /// A word for the agent, to go with the user's next message.
+    fn note(&mut self, text: &str);
 }
 
 /// How a turn on a kept ACP process ended.
@@ -561,13 +715,12 @@ impl Client<'_> {
             if m["method"].is_string() {
                 if !m["id"].is_null() {
                     self.refuse_request(&m);
-                } else if mode_in(&m["params"]["update"]["configOptions"]).is_some_and(|mode| mode != "default") && method != "session/set_mode" {
+                } else if mode_in(&m["params"]["update"]["configOptions"]).is_some_and(|mode| mode != "default") && method == "session/set_config_option" {
                     return Err(CallError::Closed);
                 }
                 continue;
             }
             if m["id"] == json!(id) {
-                self.host.heard();
                 return match m.get("error") {
                     Some(e) => Err(CallError::Rpc(e.clone())),
                     None => Ok(m["result"].clone()),
@@ -586,6 +739,15 @@ impl Client<'_> {
         };
         self.send(&reply);
     }
+}
+
+/// How long after a failed `session/resume` it is tried once more.
+const RESUME_AGAIN: std::time::Duration = std::time::Duration::from_millis(if cfg!(test) { 150 } else { 1000 });
+
+/// agy's answer to a resume of a conversation it does not have (measured): `Failed to read session <id>; retry, or
+/// load it with session/load`.
+fn lost_session(error: &Value) -> bool {
+    error["message"].as_str().is_some_and(|m| m.contains("Failed to read session"))
 }
 
 const LOST_CONVERSATION: &str = "Gemini could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.";
@@ -620,15 +782,26 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 p
             };
             let mut opened = match resume {
-                Some(id) => match c.call(&rx, "session/resume", place(json!({"sessionId": id}))) {
-                    // a conversation agy no longer has: a new one, and the chat is told (as a process per message
-                    // does, which starts one without a word)
-                    Err(CallError::Rpc(e)) if !signed_out(&e) => {
-                        c.host.out(Out::Error(LOST_CONVERSATION.into()));
-                        c.call(&rx, "session/new", place(json!({})))
+                Some(id) => {
+                    let mut tried = c.call(&rx, "session/resume", place(json!({"sessionId": id})));
+                    // any error but "sign in": once more after a moment (a store another process has just let go of)
+                    if matches!(&tried, Err(CallError::Rpc(e)) if !signed_out(e)) {
+                        std::thread::sleep(RESUME_AGAIN);
+                        tried = c.call(&rx, "session/resume", place(json!({"sessionId": id})));
                     }
-                    other => other,
-                },
+                    match tried {
+                        // a conversation agy no longer has (measured: `-32603 Failed to read session <id>`): a new
+                        // one, and the chat is told, as a process per message does (which starts one without a word)
+                        Err(CallError::Rpc(e)) if lost_session(&e) => {
+                            c.host.out(Out::Error(LOST_CONVERSATION.into()));
+                            c.call(&rx, "session/new", place(json!({})))
+                        }
+                        // anything else: this process is given up and the message goes per message, the chat's
+                        // conversation kept
+                        Err(CallError::Rpc(e)) if !signed_out(&e) => return gone(&mut c, false),
+                        other => other,
+                    }
+                }
                 None => c.call(&rx, "session/new", place(json!({}))),
             };
             // a resumed session's answer names no id of its own when the agent leaves it out: it is the one asked for
@@ -639,11 +812,15 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             }
             let id = match opened {
                 Ok(r) => match r["sessionId"].as_str().filter(|s| !s.is_empty()) {
-                    Some(id) => id.to_string(),
+                    Some(id) => {
+                        c.host.heard(); // it speaks the protocol and has a session: it takes messages
+                        id.to_string()
+                    }
                     None => return gone(&mut c, false),
                 },
                 // nobody is signed in: said as the per-message path says it, and no second process is tried
                 Err(CallError::Rpc(e)) if signed_out(&e) => {
+                    c.host.heard();
                     c.host.out(Out::Failed(antigravity::SIGNED_OUT.into()));
                     c.host.out(Out::Finished);
                     return End::default();
@@ -688,7 +865,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
     if !c.send(&json!({"jsonrpc": "2.0", "id": prompt, "method": "session/prompt", "params": {"sessionId": session.id, "prompt": [{"type": "text", "text": text}]}})) {
         return gone(&mut c, false);
     }
-    let mut t = Turn::new(&spec.rules.servers);
+    let mut t = Turn::new(&spec.rules.servers, spec.pictures.as_deref());
     loop {
         let Ok(line) = rx.recv() else {
             // it died, or was ended: what it had written so far is still shown
@@ -700,7 +877,6 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             return End { ended: true, ..End::default() };
         };
         let Some(m) = line.and_then(|l| serde_json::from_slice::<Value>(&l).ok()) else { continue };
-        let mut long_tool = false;
         if m["method"] == "session/request_permission" && !m["id"].is_null() {
             let p = &m["params"];
             if p["sessionId"] != session.id.as_str() {
@@ -709,12 +885,23 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             }
             c.host.taken();
             c.host.began();
+            // after Stop nothing more is let through, whatever it is
+            if c.host.stopped() {
+                t.refused = true;
+                if !c.send(&json!({"jsonrpc": "2.0", "id": m["id"], "result": cancelled()})) {
+                    return gone(&mut c, false);
+                }
+                continue;
+            }
             let v = decide(&p["toolCall"], &spec.rules, &session.id, &paths::allowed_commands());
             if !v.allow {
                 t.refused = true;
             }
             for o in v.outs {
                 c.host.out(o);
+            }
+            if let Some(note) = &v.note {
+                c.host.note(note);
             }
             if !c.send(&json!({"jsonrpc": "2.0", "id": m["id"], "result": answer(&p["options"], v.allow)})) {
                 return gone(&mut c, false);
@@ -735,7 +922,6 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             if t.began {
                 c.host.began();
             }
-            long_tool = outs.iter().any(|o| matches!(o, Out::Tool(n) | Out::ToolArgs(n, _) if paths::waits_long(n)));
             for o in outs {
                 c.host.out(o);
             }
@@ -751,7 +937,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
             c.host.activity(false, false);
             return End { background: t.tool_open(), ..End::default() };
         }
-        c.host.activity(long_tool, t.tool_open());
+        c.host.activity(t.long_open(), t.tool_open());
     }
 }
 
@@ -761,7 +947,7 @@ mod tests {
 
     fn rules(full: bool) -> (Rules, PathBuf) {
         let root = paths::test_dir("acp-gate");
-        for d in ["ws/sub", "kit", "work/chats", "gemini/antigravity-cli/brain/s-1", "gemini/antigravity-cli/mcp/rbxkit", "attachments"] {
+        for d in ["ws/sub", "ws/.git/hooks", "ws/nested/.git", "kit", "work/chats", "home/.ssh", "home/Library", "home/games", "gemini/antigravity-cli/brain/s-1", "attachments"] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         std::fs::write(root.join("kit/config.json"), "{}").unwrap();
@@ -771,7 +957,8 @@ mod tests {
             servers: vec!["rbxkit".into(), "Roblox_Studio".into()],
             writes: vec![root.join("ws")],
             reads: vec![root.join("kit"), root.join("attachments")],
-            protected: vec![root.join("kit/config.json"), root.join("work/chats"), root.join("work/usage.jsonl")],
+            protected: vec![root.join("kit/config.json"), root.join("work/chats"), root.join("work/usage.jsonl"), root.join("ws/.agents/mcp_config.json")],
+            hidden_in: vec![root.join("home")],
             agent_dir: root.join("gemini/antigravity-cli"),
         };
         (r, root)
@@ -782,12 +969,19 @@ mod tests {
                "locations": locations.iter().map(|p| json!({"path": p})).collect::<Vec<_>>()})
     }
 
+    /// agy's file write, as recorded.
     fn write(path: &Path) -> Value {
         call("write_file", "edit", json!({"Content": "/* not a path */ x", "Path": path}), &[path])
     }
 
+    /// agy's command, as recorded.
     fn command(line: &str) -> Value {
         call("run_command", "execute", json!({"CommandLine": line, "WaitMsBeforeAsync": 500}), &[])
+    }
+
+    /// agy's file read, as recorded.
+    fn read(path: &Path) -> Value {
+        call("read_file", "read", json!({"Path": path}), &[path])
     }
 
     fn said(v: &Verdict) -> String {
@@ -803,78 +997,157 @@ mod tests {
     fn ask_me_lets_through_the_apps_tools_and_writes_in_the_workspace_only() {
         let (r, root) = rules(false);
         let ok = |t: &Value| decide(t, &r, "s-1", &[]).allow;
-        // the app's own tool servers, by agy's names for their tools (as recorded: `mcp_probe_probe_echo`)
-        assert!(ok(&call("mcp_rbxkit_rbx_blender", "other", json!({"action": "build"}), &[])));
-        assert!(ok(&call("mcp_Roblox_Studio_run_code", "other", json!({}), &[])));
-        // another server's tool (one of the user's own in agy's settings) is not the app's to allow
-        let v = decide(&call("mcp_other_do", "other", json!({}), &[]), &r, "s-1", &[]);
-        assert!(!v.allow && said(&v).contains("does not let it do in Ask me"), "{}", said(&v));
+        // the app's own tool servers, by agy's names for their tools (both recorded)
+        assert!(ok(&call("mcp_rbxkit_rbx_board", "other", json!({"action": "list"}), &[])));
+        assert!(ok(&call("mcp_Roblox_Studio_get_studio_state", "other", json!({}), &[])));
+        // another server's tool (one of the user's own in agy's settings), and one whose name only starts like the app's
+        for other in ["mcp_other_do", "mcp_rbxkit_x_do", "mcp_rbxkit_extra_rbx_board", "mcp_Roblox_tool"] {
+            let v = decide(&call(other, "other", json!({}), &[]), &r, "s-1", &[]);
+            assert!(!v.allow && said(&v).contains("does not let it do in Ask me"), "{other}: {}", said(&v));
+        }
         // a write inside the workspace, a new file in a folder of it; content that starts like a path is no path
         assert!(ok(&write(&root.join("ws/note.txt"))));
         assert!(ok(&write(&root.join("ws/sub/deep/new.lua"))));
         // outside it: the kit, the home folder, another chat's folder
-        for p in ["kit/readme.md", "other/x.txt", "ws-other/x.txt"] {
+        for p in ["kit/readme.md", "other/x.txt", "ws-other/x.txt", "home/games/x.txt"] {
             let v = decide(&write(&root.join(p)), &r, "s-1", &[]);
             assert!(!v.allow && said(&v).contains("outside this chat's folder"), "{p}: {}", said(&v));
+            assert!(v.note.is_some_and(|n| n.contains("refused")), "the agent is told with the next message");
         }
         // its own scratch folder for this conversation, and no other conversation's
         assert!(ok(&write(&root.join("gemini/antigravity-cli/brain/s-1/task.md"))));
         assert!(!ok(&write(&root.join("gemini/antigravity-cli/brain/s-2/task.md"))));
         assert!(!ok(&write(&root.join("gemini/antigravity-cli/settings.json"))));
-        // reads: the workspace, the kit, attachments, its own tool descriptions; nothing else
-        let read = |p: &str| call("view_file", "read", json!({"AbsolutePath": root.join(p)}), &[&root.join(p)]);
-        for p in ["ws/a.lua", "kit/guide.md", "attachments/a.png", "gemini/antigravity-cli/mcp/rbxkit/x.json"] {
-            assert!(ok(&read(p)), "{p}");
-        }
-        assert!(!ok(&read("elsewhere/secret.txt")));
-        assert!(!ok(&call("view_file", "read", json!({}), &[])), "a read that does not say where");
-        // a web lookup, and the output of a command already let run
-        assert!(ok(&call("search_web", "fetch", json!({"query": "roblox /tmp"}), &[])));
-        assert!(ok(&call("command_status", "other", json!({"CommandId": "c1"}), &[])));
-        // anything else the app does not know
+        // anything else the app does not know, and a change of the mode in which every step asks
         assert!(!ok(&call("browser_subagent", "other", json!({"Task": "open a page"}), &[])));
         assert!(!ok(&call("generate_image", "other", json!({"Prompt": "a cat"}), &[])));
+        assert!(!ok(&call("command_status", "other", json!({"CommandId": "c1"}), &[])), "a name no recording has");
     }
 
     #[test]
-    fn a_path_that_cannot_be_judged_and_a_request_that_cannot_be_read_are_refused_in_every_mode() {
+    fn a_read_agy_asks_about_passes_only_in_the_chats_folders_and_never_for_the_apps_own_files() {
+        // measured: agy asks before reading a file outside its workspace (`acp-read-outside.wire`), not inside it
+        let (mut r, root) = rules(false);
+        let ok = |r: &Rules, p: &str| decide(&read(&root.join(p)), r, "s-1", &[]).allow;
+        for p in ["ws/a.lua", "kit/guide.md", "attachments/a.png", "gemini/antigravity-cli/brain/s-1/plan.md"] {
+            assert!(ok(&r, p), "{p}");
+        }
+        for p in ["elsewhere/secret.txt", "home/.ssh/id_rsa", "work/chats/c2.json", "gemini/antigravity-cli/brain/s-2/plan.md"] {
+            let v = decide(&read(&root.join(p)), &r, "s-1", &[]);
+            assert!(!v.allow && said(&v).contains("outside this chat's folders"), "{p}: {}", said(&v));
+        }
+        // the app's settings in a folder the chat may read (running from source the kit holds them), another chat's
+        // saved state were the work folder readable, in any case of letters
+        assert!(!ok(&r, "kit/config.json") && !ok(&r, "kit/CONFIG.JSON"));
+        r.reads.push(root.join("work"));
+        assert!(!ok(&r, "work/chats/c2.json") && !ok(&r, "work/CHATS/c2.json") && !ok(&r, "work/usage.jsonl"));
+        assert!(ok(&r, "work/notes.md"));
+        assert!(!decide(&call("read_file", "read", json!({}), &[]), &r, "s-1", &[]).allow, "a read that does not say where");
+        // a search of the web names no file and is not the app's to stop (measured: agy does not ask); were it to
+        // ask as a fetch, it passes where reads are kept to the chat's folders
+        assert_eq!(decide(&call("some_fetch", "fetch", json!({"Url": "https://example.com/a"}), &[]), &r, "s-1", &[]).allow, READS_ASKED);
+    }
+
+    #[test]
+    fn nothing_is_written_under_a_git_folder_in_ask_me() {
+        let (r, root) = rules(false);
+        // a hook, an alias or a pager written there would run when an allowed `git` runs
+        for p in ["ws/.git/config", "ws/.git/hooks/pre-commit", "ws/nested/.git/config", "ws/.GIT/config", "ws/sub/.Git/hooks/post-checkout", "ws/.git"] {
+            let v = decide(&write(&root.join(p)), &r, "s-1", &["git".to_string()]);
+            assert!(!v.allow && said(&v).contains(".git folder"), "{p}: {}", said(&v));
+        }
+        // by any tool that changes files: an edit, a delete, a move into it, a diff that names it
+        assert!(!decide(&call("some_editor", "edit", json!({"TargetFile": root.join("ws/.git/config")}), &[]), &r, "s-1", &[]).allow);
+        assert!(!decide(&call("remove", "delete", json!({}), &[&root.join("ws/.git/hooks")]), &r, "s-1", &[]).allow);
+        assert!(!decide(&call("rename", "move", json!({"Path": root.join("ws/a.txt"), "NewPath": root.join("ws/.git/hooks/pre-push")}), &[]), &r, "s-1", &[]).allow);
+        let mut by_diff = call("some_editor", "edit", json!({}), &[&root.join("ws/a.txt")]);
+        by_diff["content"] = json!([{"type": "diff", "path": root.join("ws/.git/config"), "newText": "[core]\n\tfsmonitor = x"}]);
+        assert!(!decide(&by_diff, &r, "s-1", &[]).allow);
+        // a file that only has git in its name is not a git folder
+        assert!(decide(&write(&root.join("ws/.gitignore")), &r, "s-1", &[]).allow);
+        assert!(decide(&write(&root.join("ws/git/notes.md")), &r, "s-1", &[]).allow);
+        // Full auto: as OpenCode's Full auto, and any command runs there anyway
+        let (full, _) = rules(true);
+        assert!(decide(&write(&root.join("ws/.git/config")), &full, "s-1", &[]).allow);
+    }
+
+    #[test]
+    fn a_path_that_cannot_be_judged_and_a_request_that_cannot_be_read_are_refused() {
         for full in [false, true] {
             let (r, root) = rules(full);
             let no = |t: &Value| !decide(t, &r, "s-1", &["git".to_string()]).allow;
             assert!(no(&Value::Null), "no tool call at all");
             assert!(no(&json!({"name": "write_file", "kind": "edit"})), "no id");
             assert!(no(&json!({"toolCallId": "c", "name": "write_file", "kind": "edit", "rawInput": "text"})), "arguments that are no object");
-            // a write that names no file, a relative path, `..`, a path that is a number
-            assert!(no(&call("write_file", "edit", json!({"Content": "x"}), &[])));
-            assert!(no(&call("write_file", "edit", json!({"Path": "note.txt"}), &[])));
-            assert!(no(&write(&root.join("ws/../kit/config.json"))));
+            assert!(no(&call("write_file", "edit", json!({"Content": "x"}), &[])), "a write that names no file");
             assert!(no(&call("write_file", "edit", json!({"Path": 7}), &[])));
-            // a location without a path
             assert!(no(&json!({"toolCallId": "c", "name": "write_file", "kind": "edit", "rawInput": {}, "locations": [{"line": 3}]})));
-            // a tool the app does not know that names one of the app's files under an argument of any name
+            // `..` that ends in one of the app's files, and a tool the app does not know that names one under an
+            // argument of any name
+            assert!(no(&write(&root.join("ws/../kit/config.json"))));
             assert!(no(&call("move_thing", "other", json!({"Destination": root.join("kit/config.json")}), &[])));
+            assert!(no(&call("set_mode", "switch_mode", json!({"mode": "auto"}), &[])), "the mode in which every step asks is never left");
+        }
+        // Ask me: a relative path and any `..` cannot be judged (the folder agy works in is its own to say)
+        let (ask, root) = rules(false);
+        assert!(!decide(&call("write_file", "edit", json!({"Path": "note.txt"}), &[]), &ask, "s-1", &[]).allow);
+        assert!(!decide(&write(&root.join("ws/sub/../note.txt")), &ask, "s-1", &[]).allow);
+        // Full auto: taken from the workspace and worked out, so a turn does not end on it; and an argument that only
+        // sounds like a path (`profile`) is not one
+        let (full, _) = rules(true);
+        assert!(decide(&call("write_file", "edit", json!({"Path": "note.txt"}), &[]), &full, "s-1", &[]).allow);
+        assert!(decide(&write(&root.join("ws/sub/../note.txt")), &full, "s-1", &[]).allow);
+        assert!(!decide(&call("write_file", "edit", json!({"Path": "../kit/config.json"}), &[]), &full, "s-1", &[]).allow);
+        assert!(decide(&call("tune", "other", json!({"profile": "fast", "Profile": "x/y"}), &[]), &full, "s-1", &[]).allow);
+    }
+
+    #[test]
+    fn what_no_file_tool_may_write_is_refused_in_any_case_of_letters_in_full_auto_too() {
+        for full in [false, true] {
+            let (mut r, root) = rules(full);
+            // even were these folders the chat may write in
+            for d in ["kit", "work", "home"] {
+                r.writes.push(root.join(d));
+            }
+            for p in ["kit/config.json", "kit/CONFIG.JSON", "kit/Config.Json", "work/chats/c1.json", "work/CHATS/c1.json", "work/usage.jsonl", "work/USAGE.JSONL", "ws/.agents/mcp_config.json",
+                      "home/.zshenv", "home/.ssh/authorized_keys", "home/.config/x/y.toml", "home/Library/LaunchAgents/a.plist", "home/LIBRARY/x"] {
+                let v = decide(&write(&root.join(p)), &r, "s-1", &[]);
+                assert!(!v.allow && said(&v).contains("no AI's file tools may change"), "{full} {p}: {}", said(&v));
+            }
+            // by any tool that changes files, and when only a `diff` names the file
+            assert!(!decide(&call("some_editor", "edit", json!({"TargetFile": root.join("kit/CONFIG.json")}), &[]), &r, "s-1", &[]).allow);
+            let mut by_diff = call("some_editor", "edit", json!({}), &[&root.join("ws/a.txt")]);
+            by_diff["content"] = json!([{"type": "diff", "path": root.join("work/chats/c2.json"), "newText": "x"}]);
+            assert!(!decide(&by_diff, &r, "s-1", &[]).allow);
+            // a place that holds one of them: a delete or a move takes what is inside with it
+            for p in ["work", "kit", "ws/.agents", "home"] {
+                assert!(!decide(&call("remove", "delete", json!({}), &[&root.join(p)]), &r, "s-1", &[]).allow, "{full} {p}");
+            }
+            assert!(!decide(&call("rename", "move", json!({"Path": root.join("ws/x"), "NewPath": root.join("ws/.agents")}), &[]), &r, "s-1", &[]).allow);
+            // a file beside them is not theirs; a folder in the home folder that is not hidden is not either
+            assert!(decide(&write(&root.join("kit/notes.md")), &r, "s-1", &[]).allow);
+            assert!(decide(&write(&root.join("home/games/a.lua")), &r, "s-1", &[]).allow);
+            // its own scratch folder for the conversation is its own, wherever its data folder lies
+            r.agent_dir = root.join("home/.gemini/antigravity-cli");
+            assert!(decide(&write(&root.join("home/.gemini/antigravity-cli/brain/s-1/task.md")), &r, "s-1", &[]).allow);
+            assert!(!decide(&write(&root.join("home/.gemini/antigravity-cli/settings.json")), &r, "s-1", &[]).allow);
         }
     }
 
     #[test]
-    fn the_apps_own_files_are_refused_in_any_case_of_letters_in_full_auto_too() {
-        for full in [false, true] {
-            let (mut r, root) = rules(full);
-            // even were the kit a folder the chat may write in
-            r.writes.push(root.join("kit"));
-            r.writes.push(root.join("work"));
-            for p in ["kit/config.json", "kit/CONFIG.JSON", "kit/Config.Json", "work/chats/c1.json", "work/CHATS/c1.json", "work/usage.jsonl", "work/USAGE.JSONL"] {
-                let v = decide(&write(&root.join(p)), &r, "s-1", &[]);
-                assert!(!v.allow && said(&v).contains("Fridae's own files"), "{full} {p}: {}", said(&v));
-            }
-            // by any tool that changes files, and when only a `diff` names the file
-            assert!(!decide(&call("replace_file_content", "edit", json!({"TargetFile": root.join("kit/CONFIG.json")}), &[]), &r, "s-1", &[]).allow);
-            let mut by_diff = call("some_editor", "edit", json!({}), &[&root.join("ws/a.txt")]);
-            by_diff["content"] = json!([{"type": "diff", "path": root.join("work/chats/c2.json"), "newText": "x"}]);
-            assert!(!decide(&by_diff, &r, "s-1", &[]).allow);
-            // a file beside them is not theirs
-            assert!(decide(&write(&root.join("kit/notes.md")), &r, "s-1", &[]).allow);
+    fn the_two_gates_are_made_from_one_list() {
+        // what OpenCode's rules protect (`opencode::protected`) and what this gate is given (`agents::send`) both come
+        // from `paths::never_written`: the app's own files, the home folder's hidden names and Library
+        let home = Path::new("/Users/someone");
+        let list = paths::never_written(home, &[PathBuf::from("/store")]);
+        assert!(list.contains(&paths::NoWrite::Place(PathBuf::from("/store"))));
+        assert!(list.contains(&paths::NoWrite::HiddenIn(home.to_path_buf())) && list.contains(&paths::NoWrite::Place(home.join("Library"))));
+        for (p, _) in paths::app_protected() {
+            assert!(list.contains(&paths::NoWrite::Place(p.clone())), "{}", p.display());
         }
+        assert!(paths::app_protected().iter().any(|(p, dir)| *dir && p.ends_with("tool-pictures")), "the pictures notes are the app's own");
+        assert_eq!(paths::ASK_ME_NEVER_UNDER, [".git"]);
+        assert!(!paths::never_written(Path::new(""), &[]).iter().any(|p| matches!(p, paths::NoWrite::HiddenIn(_))), "no home: no home rules");
     }
 
     #[test]
@@ -884,24 +1157,28 @@ mod tests {
         assert!(ok(&write(&root.join("elsewhere/x.txt"))), "outside the workspace");
         assert!(ok(&command("rm -rf build && ./tool $(date)")), "any command, as before");
         assert!(ok(&call("browser_subagent", "other", json!({"Task": "open a page"}), &[])));
-        assert!(ok(&call("view_file", "read", json!({"AbsolutePath": root.join("kit/config.json")}), &[])), "reading is not writing");
+        assert!(ok(&read(&root.join("kit/config.json"))), "reading is not writing");
         assert!(ok(&call("mcp_rbxkit_rbx_project", "other", json!({}), &[])));
     }
 
     #[test]
-    fn ask_me_runs_only_commands_the_strict_check_passes_and_shows_a_card_for_the_rest() {
+    fn ask_me_runs_no_command_by_itself_and_shows_a_card_for_each() {
+        // measured: agy runs a command through zsh, which reads the user's `.zshenv` first, whatever SHELL says; the
+        // app's check is written for `/bin/sh`, so it approves nothing here by itself
+        assert!(!COMMANDS_BY_APP);
         let (r, _) = rules(false);
         let git = vec!["git".to_string()];
-        assert!(decide(&command("git status"), &r, "s-1", &git).allow);
-        assert!(decide(&command("git log --oneline 2>&1 | git stripspace"), &r, "s-1", &git).allow);
+        // an allowed program, written plainly: asked about, with the offer to run that command once
+        let v = decide(&command("git status"), &r, "s-1", &git);
+        assert!(!v.allow && matches!(&v.outs[..], [Out::Refused(c)] if c[0]["command"] == "git status" && c[0]["once"] == true && c[0]["reason"].as_str().unwrap().contains("every command is asked about")), "{}", said(&v));
+        assert!(v.note.is_some_and(|n| n.contains("git status")));
         // a program the user has not allowed: the card that offers to allow it
         let v = decide(&command("touch denied.txt"), &r, "s-1", &git);
         assert!(!v.allow && matches!(&v.outs[..], [Out::Blocked(c)] if c[0]["name"] == "touch" && c[0]["command"] == "touch denied.txt"), "{}", said(&v));
-        // an allowed program in a form the strict check refuses: the card that says why and offers it once
+        // an allowed program in a form the strict check refuses: the card that says why
         for bad in ["./git status", "git status > out.txt", "git log $(whoami)", "FOO=1 git status", "git status; rm -rf x", "git -c core.pager=less log"] {
             let v = decide(&command(bad), &r, "s-1", &git);
-            assert!(!v.allow, "{bad}");
-            assert!(v.outs.iter().any(|o| matches!(o, Out::Refused(_) | Out::Blocked(_))), "{bad}: {}", said(&v));
+            assert!(!v.allow && v.outs.iter().any(|o| matches!(o, Out::Refused(_) | Out::Blocked(_))), "{bad}: {}", said(&v));
         }
         // a program that reads other programs' settings never runs, and is not offered
         let v = decide(&command("ps eww"), &r, "s-1", &["ps".to_string()]);
@@ -909,12 +1186,14 @@ mod tests {
         // a command that cannot be read
         assert!(!decide(&call("run_command", "execute", json!({}), &[]), &r, "s-1", &git).allow);
         assert!(!decide(&call("run_command", "execute", json!({"CommandLine": "  "}), &[]), &r, "s-1", &git).allow);
-        // "Run it once": the exact command a card of this chat showed, one time
-        let v = decide(&command("./git status"), &r, "s-1", &git);
-        assert!(!v.allow);
-        assert!(opencode::approve_once("gate-chat", "./git status"));
-        assert!(decide(&command("./git status"), &r, "s-1", &git).allow);
-        assert!(!decide(&command("./git status"), &r, "s-1", &git).allow, "used up");
+        // "Run it once": the exact command a card of this chat showed, one time, also for an allowed program
+        for cmd in ["./git status", "git log"] {
+            assert!(!decide(&command(cmd), &r, "s-1", &git).allow);
+            assert!(opencode::approve_once("gate-chat", cmd), "{cmd}");
+            assert!(decide(&command(cmd), &r, "s-1", &git).allow, "{cmd}");
+            assert!(!decide(&command(cmd), &r, "s-1", &git).allow, "{cmd}: used up");
+        }
+        assert!(!opencode::approve_once("gate-chat", "rm -rf x"), "never shown");
     }
 
     #[test]
@@ -930,7 +1209,7 @@ mod tests {
         // only an "always" on offer: no; nothing to say no with: cancelled
         let always = json!([{"optionId": "a", "kind": "allow_always"}, {"optionId": "r", "kind": "reject_once"}]);
         assert_eq!(answer(&always, true)["outcome"]["optionId"], "r");
-        assert_eq!(answer(&json!([{"optionId": "a", "kind": "allow_always"}]), true), json!({"outcome": {"outcome": "cancelled"}}));
+        assert_eq!(answer(&json!([{"optionId": "a", "kind": "allow_always"}]), true), cancelled());
         assert_eq!(answer(&Value::Null, false), json!({"outcome": {"outcome": "cancelled"}}));
     }
 
@@ -946,7 +1225,7 @@ mod tests {
     }
 
     #[test]
-    fn what_trails_a_turn_is_not_taken_for_work_begun_alone_but_a_tool_call_or_a_request_is() {
+    fn what_trails_a_turn_is_not_taken_for_work_begun_alone_but_an_answer_a_tool_call_or_a_request_is() {
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/request_permission","params":{},"id":"4"}"#));
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"c"}}}"#));
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"done"}}}}"#));
@@ -958,7 +1237,7 @@ mod tests {
 
     #[test]
     fn a_refusal_is_a_usage_limit_in_words_the_run_loop_knows_and_other_stops_are_said() {
-        let outs = |answer: Value| Turn::new(&[]).finish(&answer);
+        let outs = |answer: Value| Turn::new(&[], None).finish(&answer);
         let text = |o: &[Out]| o.iter().filter_map(|o| match o { Out::Failed(t) | Out::Error(t) => Some(t.clone()), _ => None }).collect::<Vec<_>>().join("|");
         let o = outs(json!({"result": {"stopReason": "refusal"}}));
         assert!(matches!(&o[..], [Out::Failed(t), Out::Finished] if t.contains("usage limit")), "{}", text(&o));
@@ -969,5 +1248,68 @@ mod tests {
         let o = outs(json!({"result": {"stopReason": "end_turn"}}));
         assert!(text(&o).contains("without saying anything"));
         assert!(matches!(&outs(json!({"result": {"stopReason": "cancelled"}}))[..], [Out::Finished]));
+    }
+
+    fn update(id: &str, name: &str, status: &str) -> Value {
+        json!({"sessionUpdate": if status == "start" { "tool_call" } else { "tool_call_update" }, "toolCallId": id, "name": name, "status": if status == "start" { "in_progress" } else { status }, "rawInput": {}})
+    }
+
+    #[test]
+    fn a_long_wait_stays_marked_until_its_own_call_ends() {
+        let servers = vec!["rbxkit".to_string()];
+        let mut t = Turn::new(&servers, None);
+        t.feed(&update("a", "mcp_rbxkit_rbx_team", "start"));
+        assert!(t.long_open() && t.tool_open());
+        // the lines that follow the first (agy sends `pending`, then `in_progress` again), and another call's
+        t.feed(&update("a", "mcp_rbxkit_rbx_team", "pending"));
+        t.feed(&update("a", "mcp_rbxkit_rbx_team", "in_progress"));
+        t.feed(&update("b", "mcp_rbxkit_rbx_board", "start"));
+        t.feed(&update("b", "mcp_rbxkit_rbx_board", "completed"));
+        assert!(t.long_open(), "still waiting on purpose");
+        t.feed(&update("a", "mcp_rbxkit_rbx_team", "completed"));
+        assert!(!t.long_open() && !t.tool_open());
+    }
+
+    #[test]
+    fn pictures_come_from_the_tool_servers_notes_when_its_call_completes() {
+        let dir = paths::test_dir("acp-pictures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b, c) = (dir.join("render.png"), dir.join("sheet_check.png"), dir.join("third.jpg"));
+        for p in [&a, &b, &c] {
+            std::fs::write(p, b"png").unwrap();
+        }
+        let notes = dir.join("c1.jsonl");
+        let servers = vec!["rbxkit".to_string(), "Roblox_Studio".to_string()];
+        let pictures = |outs: Vec<Out>| outs.into_iter().find_map(|o| if let Out::Pictures(p) = o { Some(p) } else { None });
+        let note = |images: Value| {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&notes).unwrap();
+            writeln!(f, "{}", json!({"images": images})).unwrap();
+        };
+        let mut t = Turn::new(&servers, Some(&notes));
+        // no file yet, a call with no pictures: nothing, and nothing breaks
+        t.feed(&update("a", "mcp_rbxkit_rbx_board", "start"));
+        assert!(pictures(t.feed(&update("a", "mcp_rbxkit_rbx_board", "completed"))).is_none());
+        // a result with pictures, as `rbxkit_mcp.py` notes it: shown once, the one for looking at first, two at most
+        t.feed(&update("b", "mcp_rbxkit_rbx_blender", "start"));
+        note(json!([a, b, c, dir.join("missing.png"), "relative.png", "/etc/hosts"]));
+        assert!(pictures(t.feed(&update("b", "mcp_rbxkit_rbx_blender", "pending"))).is_none(), "only when the call has finished");
+        let shown = pictures(t.feed(&update("b", "mcp_rbxkit_rbx_blender", "completed"))).unwrap();
+        assert_eq!(shown, [b.display().to_string(), a.display().to_string()]);
+        // the next call: only its own
+        t.feed(&update("c", "mcp_rbxkit_rbx_texture", "start"));
+        note(json!([c]));
+        assert_eq!(pictures(t.feed(&update("c", "mcp_rbxkit_rbx_texture", "completed"))).unwrap(), [c.display().to_string()]);
+        // a failed call, another server's tool, the agent's own tool: none
+        note(json!([a]));
+        t.feed(&update("d", "mcp_rbxkit_rbx_icon", "start"));
+        assert!(pictures(t.feed(&update("d", "mcp_rbxkit_rbx_icon", "failed"))).is_none());
+        t.feed(&update("e", "mcp_Roblox_Studio_screen_capture", "start"));
+        assert!(pictures(t.feed(&update("e", "mcp_Roblox_Studio_screen_capture", "completed"))).is_none());
+        // a file that does not read as notes shows nothing and breaks nothing
+        std::fs::write(&notes, "not json\n{\"images\": 7}\n[]\n").unwrap();
+        let mut t = Turn::new(&servers, Some(&notes));
+        t.feed(&update("f", "mcp_rbxkit_rbx_blender", "start"));
+        assert!(pictures(t.feed(&update("f", "mcp_rbxkit_rbx_blender", "completed"))).is_none());
     }
 }
