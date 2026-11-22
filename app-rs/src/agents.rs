@@ -1191,7 +1191,7 @@ impl Agent {
             attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(),
             studio: merged_studio(&held, ask.studio),
             wake: ask.wake && held.iter().all(|(_, _, a)| a.wake),
-            app: ask.app && held.iter().all(|(_, _, a)| a.app || a.wake),
+            app: (ask.app || ask.wake) && held.iter().all(|(_, _, a)| a.app || a.wake),
             typed,
             ..ask.clone()
         };
