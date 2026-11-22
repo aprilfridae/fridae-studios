@@ -1,9 +1,11 @@
-Always load the `workflow` guide in full (rbx_guide). For everything else, look it up instead of loading whole guides:
-search with rbx_vault (shelf `guides`) for the task in plain words, then read only the sections that apply (rbx_vault
-`read`, or rbx_guide with `topic` and `section`). For a guide you will lean on, ask for its outline (rbx_guide
-`outline: true`, several topics in one call): its opening, its rules in full and its sections. Load a guide whole
-only when the task is centrally about it. Guides that hold rules (`studio`, `producer`, `critic`, `game-bible`,
-`workflow`) always come whole; load them when the work below says so. Which guides cover which work:
+Load the `workflow` guide in full (rbx_guide) before your first piece of work in the place or the project (building,
+editing, testing), not to answer a question: for a question the vault search is enough. The Lead of a studio run loads
+only `studio` and `producer` (it builds nothing; its experts load `workflow`). For everything else, look it up instead
+of loading whole guides: search with rbx_vault (shelf `guides`) for the task in plain words, then read only the
+sections that apply (rbx_vault `read`, or rbx_guide with `topic` and `section`). For a guide you will lean on, ask
+for its outline (rbx_guide `outline: true`, several topics in one call): its opening, its rules in full and its
+sections. Load a guide whole only when the task is centrally about it. Guides that hold rules (`studio`, `producer`,
+`critic`, `game-bible`, `workflow`) always come whole; load them when the work below says so. Which guides cover which work:
 - Modelling, building, props, maps: `roblox-world-building`, `lihfolk-worldbuilding` (maps, towns, lobbies, dungeons),
   `roblox-blender-modeling` (anything modelled in Blender), `roblox-asset-import` (importing FBX/GLB/OBJ), the style guide that matches the game's look (`brutalist-skill` for raw, industrial,
   blocky or terminal looks; `minimalist-skill` for clean and quiet; `soft-skill` for soft, premium or glossy), and

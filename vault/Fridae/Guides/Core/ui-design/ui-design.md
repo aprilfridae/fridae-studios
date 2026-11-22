@@ -31,8 +31,8 @@ CSS maps to Roblox.
 
 ## Taste (read before styling anything)
 
-The user is a graphic designer. UI in their games must look designed by one: clean, tasteful and quiet, not the
-generic Roblox look. This is the default for every game unless the user asks for something else for that game.
+UI must look designed and restrained: clean, tasteful and quiet, not the generic Roblox look. This is the default
+for every game unless the user's house rules, their own designs or their request for this game say otherwise.
 
 - **Their designs win.** Illustrator or Photoshop exports, mockups, a style sheet, colour values or fonts from the user
   are the target, ahead of every guide and every genre habit. Build to them exactly; ask for exported slices (PNG or
@@ -46,7 +46,7 @@ generic Roblox look. This is the default for every game unless the user asks for
 - **Fewer things:** no stacked "NEW!" badges, bursts, sparkles or shine sweeps, no decoration that carries no meaning.
 - **The cartoon simulator look** (chunky outlined bubble buttons, rainbow gradients, stacked strokes, cartoon fonts)
   is used only when the user asks for it for this game; then read `roblox-sim-ui`.
-- Before calling UI done, ask: would a graphic designer sign this? If it looks like a template from the Toolbox, it
+- Before calling UI done, ask: would a careful designer sign this? If it looks like a template from the Toolbox, it
   is not done.
 
 ## Style target and scope

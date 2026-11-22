@@ -12,3 +12,5 @@ folder for that game. Each rule is one bullet. Paste any of these in and change 
   badges and bursts, unless I ask for that look for a game.
 - My own designs (Illustrator or Photoshop exports, mockups, colour values, fonts) are the target and beat every
   guide: build to them exactly, and ask me for exports rather than inventing art.
+- Before calling UI done, ask whether a graphic designer would sign it; if it looks like a Toolbox template, it is not
+  done.

@@ -95,6 +95,21 @@ def lookup_chars(task):
     return total
 
 
+def vault_check_chars(task):
+    """What system.txt's always-check-the-vault rule adds: one search on shelf all plus its top three reads."""
+    import rbxvault
+    text = rbxvault.run("search", {"query": task, "shelf": "all"})
+    total = len(text)
+    reads = [json.loads(line.split("read: ", 1)[1]) for line in text.splitlines() if line.strip().startswith("read: ")]
+    for args in reads[:3]:
+        total += len(rbxvault.run("read", args))
+    return total
+
+
+# plain questions: no work in the place, so (since round 3) no `workflow`; the old routing.txt loaded it always
+QUESTIONS = ["how many players can one Roblox server hold", "what is the difference between a RemoteEvent and a RemoteFunction"]
+
+
 def check_expert_files():
     """The bench's expert model must be what the files say: every guide it loads is named in the file."""
     import rbxroster
@@ -120,8 +135,8 @@ def main():
     check_expert_files()
     print("Index build (cold): guides+team sections %.2f s, vault notes %.2f s" % (t_sec, t_vault))
     print()
-    print("| Task | Chat old | Chat new | Chat % | Expert | Expert old | Expert new | Expert % |")
-    print("|---|---:|---:|---:|---|---:|---:|---:|")
+    print("| Task | Chat old | Chat new | Chat % | Expert | Expert old | Expert new | Expert % | Vault check (all) |")
+    print("|---|---:|---:|---:|---|---:|---:|---:|---:|")
     sums = [0, 0, 0, 0]
     for task, expert_old, _ in TASKS:
         look = lookup_chars(task)
@@ -131,12 +146,24 @@ def main():
         e_old = old_chars(expert_old)
         e_new = guide_call(topics=whole) + guide_call(topics=outline, outline=True) + look
         sums = [a + b for a, b in zip(sums, (c_old, c_new, e_old, e_new))]
-        print("| %s | %s | %s | %d%% | %s | %s | %s | %d%% |" % (
+        print("| %s | %s | %s | %d%% | %s | %s | %s | %d%% | %s |" % (
             task, format(c_old, ","), format(c_new, ","), round(100 * c_new / c_old), expert, format(e_old, ","),
-            format(e_new, ","), round(100 * e_new / e_old)))
-    print("| **Total** | %s | %s | %d%% | | %s | %s | %d%% |" % (
+            format(e_new, ","), round(100 * e_new / e_old), format(vault_check_chars(task), ",")))
+    print("| **Total** | %s | %s | %d%% | | %s | %s | %d%% | |" % (
         format(sums[0], ","), format(sums[1], ","), round(100 * sums[1] / sums[0]), format(sums[2], ","),
         format(sums[3], ","), round(100 * sums[3] / sums[2])))
+    print()
+    print("| Plain question (chat) | Old: workflow whole | New: vault check on shelf all + 3 reads | % |")
+    print("|---|---:|---:|---:|")
+    wf = old_chars(["workflow"])
+    for q in QUESTIONS:
+        new = vault_check_chars(q)
+        print("| %s | %s | %s | %d%% |" % (q, format(wf, ","), format(new, ","), round(100 * new / wf)))
+    lead_old = old_chars(["workflow", "studio", "producer"])
+    lead_new = guide_call(topics=["studio", "producer"])
+    print()
+    print("Studio Lead's guides: old workflow + studio + producer %s, new studio + producer %s (%d%%)." % (
+        format(lead_old, ","), format(lead_new, ","), round(100 * lead_new / lead_old)))
 
 
 if __name__ == "__main__":
