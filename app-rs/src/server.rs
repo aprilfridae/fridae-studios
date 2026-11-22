@@ -346,6 +346,10 @@ fn post(path: &str, body: Value) -> Reply {
             let names: Vec<String> = body["names"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
             send_json(json!({"ok": true, "commands": paths::set_allowed(&names, body["allow"].as_bool().unwrap_or(false))}))
         }
+        "/api/settings-start" => {
+            // the start-up line about settings put back: take the file's instead, or close it
+            send_json(json!({"ok": paths::answer_start_note(body["take_file"].as_bool().unwrap_or(false))}))
+        }
         "/api/run-once" => {
             // a command a chat's card showed as not approved, which the user said may run one time in that chat
             send_json(json!({"ok": opencode::approve_once(&text_of("agent"), &text_of("command"))}))

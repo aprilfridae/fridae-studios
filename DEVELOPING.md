@@ -464,8 +464,9 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   list: ps, procs, htop, top, pargs, gdb, lldb, dtrace, dtruss, launchctl, procdump, procexp, handle, wmic, gcore,
   strace, ltrace, stringdups, vmmap, heap, leaks, sample, spindump; also anywhere in a part led by a program that
   runs what it is given, `time ps eww`, `git -c core.pager=ps log`; and any command naming the `/proc` folder: a
-  path whose `proc` part is its first or follows `/`, `.` or `..`, so `/proc/1/environ`, `proc/self` and
-  `../../proc` are refused and `src/procgen.lua` is not); it is refused with a card that says why and offers nothing
+  path that starts with `/proc`, reaches it through `.` and `..` only, or starts `proc/<number or self>`, so
+  `/proc/1/environ`, `proc/self` and `../../proc` are refused and the word `proc`, `proc/gen.lua` and
+  `src/procgen.lua` are not); it is refused with a card that says why and offers nothing
   to allow (allowing would not change it). In **Full auto and Studio** every command runs
   without asking, so a model can read it there; with it, the server's API (other chats' sessions, its own rules). A
   model with an unrestricted shell can already write any file the user can and start its own OpenCode, so this adds
@@ -543,8 +544,9 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     letter outside ASCII (`José`) gets one pattern per length it can have, as written up to two more characters per
     such letter (`é` may also be `e` and an accent, the same file on a Mac disk); more than three such letters or nine
     patterns and the part is `*`. The `?` forms also hit folders of the same shape (`~/Desktop`, `~/Dropbox` look like
-    `~/Library`): after the denies, in Full auto each such folder that exists is allowed again by its exact name (and
-    its `../..` name), in Ask me the chat's own folders when they are hit; then the protected places inside what was
+    `~/Library`): after the denies, in Full auto each such folder beside the protected one that exists is allowed again
+    by its exact name (and its `../..` name; only the protected place's own folder is listed, nothing inside another
+    folder is read, so no "access your Desktop" prompt), in Ask me the chat's own folders when they are hit; then the protected places inside what was
     given back and the fixed denies (`.opencode`, `.git`) are written again. Lost: a case variant of such a folder's
     name (`~/DESKTOP/x`) stays refused, and a same-shaped folder made after the turn started is refused until the
     next turn.
@@ -566,9 +568,15 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     word as written in both, and `! false` is only a negated pipeline (`!` alone is a word no one allows); `~` is
     expanded only at a word's start or after `=` or `:`, which stay refused. A part led by a program that runs what it
     is given (`paths::ARG_RUNNERS`, one list: `time`, `nice`, `nohup`, `xargs`, `env`, `command`, `exec`, `timeout`,
-    `stdbuf`, `sudo`, `caffeinate`, `watch`, shells and more; `find` with `-exec`/`-ok`; `git` with `-c`,
-    `--config-env`, `--exec-path`, `--upload-pack`, `--exec`, `-x`, `--extcmd`, `-O`, `--ext-diff`, `foreach`,
-    `run`) is never approved by the app, even when the user allowed it. Interpreters (`python3`, `node`...) are
+    `stdbuf`, `sudo`, `caffeinate`, `watch`, shells, `xcrun`, `sandbox-exec`, `open`, `osascript`, `tmux`, `screen`,
+    `ssh`, `expect` and more; `find` with `-exec`/`-ok`; `git` only in its command-running forms, `paths::git_runs`:
+    `-c`, `--config-env`, `--exec-path=` before the subcommand, `rebase -x/--exec`, `bisect run`, `submodule foreach`,
+    `filter-branch`, `difftool -x/--extcmd`, `grep -O`, `clone -c/--config/-u/--upload-pack/--template`,
+    `--upload-pack`/`--receive-pack`/`--exec` on fetch, pull, push, ls-remote and archive, and `config` setting a
+    value; not `switch -c`, `cherry-pick -x`, `clean -x`, `log -c` or the word `run`) is never approved by the app,
+    even when the user allowed it. What such a runner runs is checked for environment readers: an Always runner's
+    program past its options, numbers and `NAME=value` (and a shell's `-c` script), in turn if it is a runner too; for
+    git and find, any name in what they would run (`xargs grep sample` is not a reader; `timeout 5s ps` is). Interpreters (`python3`, `node`...) are
     not on that list: allowing one is allowing what it runs, and the card says so. Nor is git's repository config: an
     allowed `git` runs aliases and hooks the repository holds (Ask me keeps OpenCode's file tools out of `.git`). A
     redirection only as
@@ -579,8 +587,15 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     a command not approved for its form (a path, a runner, `$`, a redirection, a glob...) or for reading other
     programs' settings gets an approval card naming the reason in plain words (`paths::refusal_reason`), never a
     silent refusal; for its form the card offers "Run it once": that exact command, in that chat, one time
-    (`opencode::approve_once`, in memory; only a command that chat's card showed, never an environment reader), and
-    the model is told it may run it now. The model's own refusal line names the reason and how to write the command
+    (`opencode::approve_once`, in memory; only a command that chat's card showed, never an environment reader; it
+    lasts until the end of the turn the button starts), and the model is told it may run it now. The card shows each
+    command whole, never in a scrolling box, with every character that would not show as itself written out
+    (`⟨U+202E⟩`, `⟨line break⟩`), and offers no button for a command of more than one line, longer than 300
+    characters (`CARD_WHOLE`), or holding control, direction, zero-width or other invisible characters, nor for any
+    command of a request that holds one (OpenCode lists the parts beside the whole command); the card says why. What
+    is approved is compared with the whole command, never a cut one. A request passes once when each of its commands
+    was approved once or is one the app approves anyway. Checked live in a scratch app (mock model): the card, the
+    button, the approved run, and the no-button cards for a multi-line command and a right-to-left override. The model's own refusal line names the reason and how to write the command
     so it passes. A program allowed from the card is answered `once` from then on. Any other ask is rejected. Never
     `always`.
   - Measured with real turns (opencode 2.3.2, game and outside folders under the home folder, not in temp):
@@ -760,7 +775,8 @@ is an example the user can paste into their own House rules.
 - **The app's settings file** (`config.json`: allowed programs, keys, the Experts table) is changed only through
   `paths::update_config`: read, change and write under one lock, the file replaced whole (a temporary file renamed
   over it), so a reader never sees half a file and two changes never undo each other. `rbx.py` (`rbx doctor`)
-  replaces it the same way, but takes no lock with the app (it writes only the Blender path, rarely). Every AI's
+  replaces it the same way, but takes no lock with the app (it writes only the Blender path, rarely, into the file as
+  read just before the replace, and leaves a file that does not read alone). Every AI's
   rules deny agents writing it: Claude Code `--disallowedTools Edit(//<path>)` (on Windows by its documented POSIX
   form, `C:\Users\a` as `//c/Users/a`, `agents::claude_edit_rule`), Antigravity `permissions.deny:
   write_file(<path>)`, Cursor's and OpenCode's deny rules. Measured for all four. Claude Code (haiku, bypass mode, a
@@ -783,12 +799,19 @@ is an example the user can paste into their own House rules.
   `guarded_settings`, `allowed_commands()`, `env_keys_on()`, `gemini_api_on()`). Before a chat's turn is sent, before
   `turn_over()` at every turn's end (every AI, OpenCode included) and before any expert starts, `check_settings`
   compares the file with memory and writes memory's values back for any guarded key that differs, saying so in the
-  affected chat. A value equal to the copy on disk is taken as a change another running copy of the app made through
-  its routes. The copy (`settings-guard.json`) lives outside every folder an AI is given: `~/Library/Application
-  Support/Fridae Studios` on macOS, `%APPDATA%\Fridae Studios` on Windows, `$XDG_CONFIG_HOME/fridae-studios` on Linux.
-  At start, when the file differs from the copy for a guarded key, the copy wins, the file is rewritten, and the page
-  says once that a setting was put back (`status.settings_put_back`); a first run with no copy takes the file as it
-  is. The tool server gets the Gemini switch and the Blender path from the app (`FRIDAE_SETTINGS_FROM_APP`,
+  affected chat by Setup's names. The copy lives outside every folder an AI is given (`~/Library/Application
+  Support/Fridae Studios` on macOS, `%APPDATA%\Fridae Studios` on Windows, `$XDG_CONFIG_HOME/fridae-studios` on
+  Linux), one per home folder: `settings-guard-<16 hex of sha256 of the real home path>.json`, holding that path, and
+  a copy whose path is another home's is never applied (a dev build's home is the kit, the installed app's
+  `~/Documents/Fridae Studios`: they never read or write each other's). It holds a counter that every change through
+  a route raises; before a route changes anything and before every check, a newer copy (another running app on the
+  same home) is taken into memory, and a route writes only the guarded keys it changes, so two running copies keep
+  each other's changes. It is written 0600 and is one of the app's protected files. At start, when the file differs
+  from the copy, the copy wins and the file is rewritten (an unreadable file is first kept as
+  `config.json.bad-<time>`); the page shows a notice that stays until answered, naming each setting and what changed
+  (games and programs by name, never a key's value), with "Use the file's settings instead" (for a hand edit or a
+  restored backup), which applies the file's values as they were at start through the route. A first run with no
+  copy for this home takes the file as it is. The tool server gets the Gemini switch and the Blender path from the app (`FRIDAE_SETTINGS_FROM_APP`,
   `FRIDAE_GEMINI_USE_API`, `RBXKIT_BLENDER`), not from the file. The Blender path is not guarded (the user sets it
   with `rbx doctor` in a terminal); a path inside the work, kit, home-tools or a game folder is never run
   (`paths::blender_ok`). This, not the deny rules, is what protects these settings from an AI's file tools.

@@ -25,9 +25,28 @@ from rbxpaths import KIT, WORK, CONFIG, FROZEN, KitError, no_window
 
 def load_config():
     try:
-        return json.load(open(CONFIG, encoding="utf-8"))
+        with open(CONFIG, encoding="utf-8") as f:
+            return json.load(f)
     except (OSError, ValueError):
         return {}
+
+
+def set_blender(path):
+    """Write only the Blender path, into the settings as they are on disk right now (read just before the file is
+    replaced, so a change the app made meanwhile is kept). A settings file that exists but does not read is left
+    alone: nothing in it is lost."""
+    try:
+        with open(CONFIG, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except OSError:
+        cfg = {}
+    except ValueError:
+        print("  config.json could not be read, so the Blender path was not saved in it: fix or remove it, then run rbx doctor again.")
+        return
+    if not isinstance(cfg, dict) or cfg.get("blender") == path:
+        return
+    cfg["blender"] = path
+    save_config(cfg)
 
 
 def save_config(cfg):
@@ -171,9 +190,7 @@ def cmd_doctor(a):
 
     if a.blender:
         if os.path.exists(a.blender):
-            cfg = load_config()
-            cfg["blender"] = os.path.abspath(a.blender)
-            save_config(cfg)
+            set_blender(os.path.abspath(a.blender))
         else:
             row(False, "Blender (given)", a.blender + " does not exist")
     exe = find_blender(required=False)
@@ -184,10 +201,7 @@ def cmd_doctor(a):
         except Exception as e:
             ver = "found but did not run: %s" % e
         row(True, "Blender", "%s  (%s)" % (ver, exe))
-        cfg = load_config()
-        if cfg.get("blender") != exe:
-            cfg["blender"] = exe
-            save_config(cfg)
+        set_blender(exe)
     else:
         row(False, "Blender", "not found", "install from blender.org, or: rbx doctor --blender <path to blender.exe>")
 

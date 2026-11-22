@@ -258,6 +258,10 @@ button.pname:hover { background: var(--hover); }
 .ask p { margin: 0 0 10px; color: var(--dim); font-size: 14px; line-height: 1.5; }
 .ask pre { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 132px; overflow-y: auto; }
 .ask .act { margin: 0; }
+.ask pre.whole { max-height: none; overflow: visible; word-break: break-all; }
+.ask pre.whole .inv { color: var(--accent, #c0392b); font-weight: 600; }
+.settings-note { position: fixed; top: 56px; right: 16px; z-index: 60; width: min(520px, calc(100vw - 32px)); box-shadow: 0 8px 28px rgba(0,0,0,.18); margin: 0; max-height: calc(100vh - 72px); overflow-y: auto; }
+.settings-note ul { margin: 0 0 12px; padding-left: 18px; color: var(--dim); font-size: 13px; line-height: 1.5; }
 .ask .wait { font-size: 12px; color: var(--dim); margin: 10px 0 0; }
 .ask .wait::after, .now::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4, end) infinite; }
 .ask.done { padding: 8px 16px; }
@@ -1054,6 +1058,8 @@ const CONTROLS = [
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
+  ["Settings changed mid-turn", "A change in Setup to the paid Gemini textures switch or the Blender path reaches the building tools from an agent's next turn; a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
+  ["Settings put back", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table) outside every folder an agent is given. If the settings file changes without Fridae, it puts them back and says which. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
   ["API keys on this computer", "Setup, The AIs, Use API keys from my environment. Off unless you turn it on: an AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Setup instead."],
   ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
   ["Text size", "Ctrl (Command on a Mac) and + or - makes everything bigger or smaller, and 0 resets it. It is also in Setup, under General."],
@@ -3703,8 +3709,10 @@ function refusedCard(p, commands) {
   const why = card.querySelector(".why"), act = card.querySelector(".act");
   const finish = (said) => { card.classList.add("done"); card.querySelector("h4").textContent = said; act.remove(); };
   commands.forEach((c) => {
-    const pre = el("pre"); pre.textContent = c.command; why.appendChild(pre);
+    /* shown whole, never in a scrolling box; characters that would not show as themselves are written out */
+    const pre = el("pre", "whole"); pre.textContent = c.shown || c.command; why.appendChild(pre);
     const r = el("p"); r.textContent = "Not run because " + c.reason; why.appendChild(r);
+    if (c.no_once) { const q = el("p"); q.textContent = "There is no button to run it from here, because " + c.no_once + "."; why.appendChild(q); }
   });
   const runnable = commands.filter((c) => c.once);
   if (runnable.length) {
@@ -3723,6 +3731,26 @@ function refusedCard(p, commands) {
   const no = el("button", "pill", runnable.length ? "Not now" : "OK"); no.onclick = () => finish(runnable.length ? "Not run" : "Not run: " + commands.map((c) => c.command).join(", "));
   act.appendChild(no);
   return card;
+}
+/* Settings put back at start (the copy Fridae keeps outside the AIs' folders won over a changed settings file): which
+   ones and what changed, in plain words, until the user answers; the file's own settings can be taken instead. */
+function paintSettingsNote() {
+  const n = status.settings_put_back; let card = $("settings-note");
+  if (!n || !(n.changes || []).length) { if (card) card.remove(); return; }
+  if (card) return;
+  card = el("div", "ask settings-note enter", "<h4></h4><p></p><ul></ul><div class=\"act\"><button class=\"pill main\">Keep these</button><button class=\"pill\">Use the file's settings instead</button></div>");
+  card.id = "settings-note"; card.setAttribute("role", "alert");
+  card.querySelector("h4").textContent = "Fridae put some settings back";
+  card.querySelector("p").textContent = n.unreadable
+    ? "The settings file could not be read (it is kept beside the new one as config.json.bad-<time>), so Fridae used the copy it keeps of these settings:"
+    : "These settings were changed in the settings file while Fridae was not running, not through Fridae itself, so it used the copy it keeps of them instead:";
+  n.changes.forEach((c) => { const li = el("li"); li.textContent = c; card.querySelector("ul").appendChild(li); });
+  const [keep, file] = card.querySelectorAll("button");
+  const close = async (take) => { const r = await api("/api/settings-start", { take_file: take }); card.remove(); status.settings_put_back = null; if (take && r && r.ok) { say("Fridae now uses the settings file's settings."); refresh(); } };
+  keep.onclick = () => close(false);
+  file.onclick = () => close(true);
+  file.title = "Only if you changed the file yourself (by hand, or by restoring a backup).";
+  document.body.appendChild(card);
 }
 function paintCommands() {
   const list = allowed();
@@ -3779,7 +3807,7 @@ async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintModel(); paintLimits();
   paintNeeds(); paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys;
-  if ((status.settings_put_back || []).length && !refresh.putBackSaid && (refresh.putBackSaid = true)) say("A setting was changed by something other than Fridae while it was closed (" + status.settings_put_back.join(", ") + "), so Fridae put it back as you had it. Change settings in Setup."); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
+  paintSettingsNote(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}

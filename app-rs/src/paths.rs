@@ -517,6 +517,8 @@ pub fn config_file() -> PathBuf {
 pub fn app_protected() -> Vec<(PathBuf, bool)> {
     let w = &PATHS.work;
     let mut out = vec![(config_file(), false), (w.join("processes.json"), false), (w.join("usage.jsonl"), false), (w.join("limits.json"), false)];
+    // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
+    out.push((guard_copy(), false));
     for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo"] {
         out.push((w.join(d), true));
     }
@@ -536,38 +538,14 @@ pub fn load_config() -> Map<String, Value> {
 }
 
 /// Change the settings: read, change and write back under the one lock, the file replaced whole (a temporary file
-/// renamed over it), so a reader never sees half a file and two changes never undo each other.
+/// renamed over it), so a reader never sees half a file and two changes never undo each other. The guarded settings
+/// (`GUARDED`) come from memory, after taking in what another running copy of the app changed (the copy's counter is
+/// newer than this app's); only the guarded keys the change itself sets are written over them.
 pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R {
     let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    keep_unreadable(&config_file());
-    let mut cfg = load_config();
-    // the guarded settings come from the app's memory, never from the file (which an AI's file tool may have changed)
-    let mut known = known();
-    for k in GUARDED {
-        match known.get(*k) {
-            Some(v) => cfg.insert(k.to_string(), v.clone()),
-            None => cfg.remove(*k),
-        };
-    }
-    let out = change(&mut cfg);
-    // what the change made of them is the app's own route: it becomes the known value, and the copy outside the folders
-    // AIs are given
-    let mut changed = false;
-    for k in GUARDED {
-        if known.get(*k) != cfg.get(*k) {
-            changed = true;
-            match cfg.get(*k) {
-                Some(v) => known.insert(k.to_string(), v.clone()),
-                None => known.remove(*k),
-            };
-        }
-    }
-    if changed {
-        *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
-        write_config(&guard_copy(), &known);
-    }
-    write_config(&config_file(), &cfg);
-    out
+    let st = store();
+    let mut g = guard_locked(&st);
+    update_in(g.as_mut().expect("started"), &st, change)
 }
 
 // --------------------------------------------------------- guarded settings
@@ -575,7 +553,8 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// them: they change only through the app's own routes (`update_config`), every decision reads them from memory
 /// (`setting`), and a different value in the file (an AI's file tool past its deny rule: Antigravity's compares case,
 /// measured) is put back (`check_settings`) before a turn starts, before an expert starts and before a turn's end.
-/// Across restarts a copy of them is kept outside every folder an AI is given (`guard_copy`).
+/// Across restarts, and between two copies of the app on one home, a copy of them is kept outside every folder an AI
+/// is given, one per home folder (`guard_copy`), with a counter raised by every change through a route.
 /// - `allowed_commands`: the programs agents run without asking
 /// - `use_env_keys`: API keys in the environment reach the AIs (billed to that account)
 /// - `gemini_use_api`, `gemini_key`: textures billed to the Google key
@@ -586,76 +565,271 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
 pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "projects", "plugin_token", "expert_ai", "lead_picks_ai"];
 
-static KNOWN: std::sync::Mutex<Option<Map<String, Value>>> = std::sync::Mutex::new(None);
+/// A guarded setting's name as people read it (Setup's words).
+pub fn setting_name(key: &str) -> &'static str {
+    match key {
+        "allowed_commands" => "programs agents may run",
+        "use_env_keys" => "Use API keys from my environment",
+        "gemini_use_api" => "paid Gemini textures",
+        "gemini_key" => "Gemini API key",
+        "projects" => "list of games",
+        "plugin_token" => "Studio plugin link",
+        "expert_ai" => "Experts table",
+        "lead_picks_ai" => "Lead may pick the AI",
+        _ => "a setting",
+    }
+}
 
-/// What was put back at start, for the page (once).
-static PUT_BACK_AT_START: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Where one home folder's settings live and where their copy is kept.
+pub struct Store {
+    pub home: PathBuf,
+    pub config: PathBuf,
+    pub copy: PathBuf,
+}
 
-/// Where the copy of the guarded settings lives: outside the work folder, the games and the kit (macOS
-/// `~/Library/Application Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux
-/// `$XDG_CONFIG_HOME/fridae-studios` or `~/.config/fridae-studios`).
-pub fn guard_copy() -> PathBuf {
+fn store() -> Store {
+    Store { home: PATHS.home.clone(), config: config_file(), copy: guard_copy() }
+}
+
+/// What one running app knows of the guarded settings.
+#[derive(Default)]
+pub struct Guard {
+    known: Map<String, Value>,
+    /// the copy's counter this memory is up to
+    version: u64,
+    /// what was put back at start, for the page, until the user answers it
+    at_start: Option<StartNote>,
+}
+
+#[derive(Clone)]
+struct StartNote {
+    /// each setting put back: (key, what changed, in plain words)
+    changes: Vec<(String, String)>,
+    /// the file's guarded values as they were, for "Use the file's settings instead"
+    file: Map<String, Value>,
+    /// the settings file could not be read (kept beside it as config.json.bad-<time>)
+    unreadable: bool,
+}
+
+static GUARD: std::sync::Mutex<Option<Guard>> = std::sync::Mutex::new(None);
+
+/// The real home's guard, started if need be. Call with the settings lock held.
+fn guard_locked(st: &Store) -> std::sync::MutexGuard<'static, Option<Guard>> {
+    let mut g = GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        *g = Some(start_in(st));
+    }
+    g
+}
+
+/// The folder copies are kept in: outside the work folder, the games and the kit (macOS `~/Library/Application
+/// Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux `$XDG_CONFIG_HOME/fridae-studios` or
+/// `~/.config/fridae-studios`).
+fn guard_dir() -> PathBuf {
     #[cfg(test)]
-    return test_dir("guard-copy").join("settings-guard.json");
+    return test_dir("guard-copy");
     #[allow(unreachable_code)]
     {
         let home = home_dir();
-        let dir = if cfg!(target_os = "macos") {
+        if cfg!(target_os = "macos") {
             home.join("Library").join("Application Support").join(APP)
         } else if cfg!(windows) {
             env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(APP)
         } else {
             env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("fridae-studios")
-        };
-        dir.join("settings-guard.json")
+        }
     }
+}
+
+fn real_home(home: &Path) -> String {
+    home.canonicalize().unwrap_or_else(|_| home.to_path_buf()).display().to_string()
+}
+
+/// The copy for one home folder: named by a hash of its real path, and holding that path, so a dev build (whose home
+/// is the kit) and the installed app (`~/Documents/Fridae Studios`) never read or write each other's.
+pub fn guard_copy_for(home: &Path) -> PathBuf {
+    use sha2::Digest;
+    let h = sha2::Sha256::digest(real_home(home).as_bytes());
+    guard_dir().join(format!("settings-guard-{}.json", hex(&h[..8])))
+}
+
+pub fn guard_copy() -> PathBuf {
+    guard_copy_for(&PATHS.home)
 }
 
 fn guarded_of(cfg: &Map<String, Value>) -> Map<String, Value> {
     GUARDED.iter().filter_map(|k| cfg.get(*k).map(|v| (k.to_string(), v.clone()))).collect()
 }
 
-/// The known guarded settings (loaded at first use: `start_settings`).
-fn known() -> Map<String, Value> {
-    let mut g = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_none() {
-        drop(g);
-        start_settings();
-        g = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
-    }
-    g.clone().unwrap_or_default()
+fn load_config_at(path: &Path) -> Map<String, Value> {
+    fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
-/// At start: the copy outside the AIs' folders wins over the settings file where they differ (the file is put back
-/// and the page says so); with no copy yet (a first run), the file is taken as it is and the copy written.
-pub fn start_settings() {
-    let _held = CONFIG_LOCK.try_lock(); // at start nothing else writes; inside update_config the lock is held already
-    let file = guarded_of(&load_config());
-    let copy = fs::read_to_string(guard_copy()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned());
-    if copy.is_none() {
-        write_config(&guard_copy(), &file);
+fn unreadable(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|t| !serde_json::from_str::<Value>(&t).ok().is_some_and(|v| v.is_object()))
+}
+
+/// The copy's counter and settings, or None when there is none, it does not read, or it was made for another home
+/// (never applied then).
+fn read_copy(st: &Store) -> Option<(u64, Map<String, Value>)> {
+    let v: Value = serde_json::from_str(&fs::read_to_string(&st.copy).ok()?).ok()?;
+    if v["home"].as_str() != Some(real_home(&st.home).as_str()) {
+        return None;
     }
-    let (known, differ) = reconcile(&file, copy.as_ref());
-    *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
-    if !differ.is_empty() {
-        let mut cfg = load_config();
-        for k in GUARDED {
-            match known.get(*k) {
-                Some(v) => cfg.insert(k.to_string(), v.clone()),
-                None => cfg.remove(*k),
+    Some((v["version"].as_u64().unwrap_or(0), guarded_of(v["settings"].as_object()?)))
+}
+
+fn write_copy(st: &Store, version: u64, settings: &Map<String, Value>) {
+    let mut v = Map::new();
+    v.insert("home".into(), Value::from(real_home(&st.home)));
+    v.insert("version".into(), Value::from(version));
+    v.insert("settings".into(), Value::Object(settings.clone()));
+    write_config(&st.copy, &v);
+    // it holds the Gemini key and the plugin's secret: the user's alone
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&st.copy, fs::Permissions::from_mode(0o600));
+    }
+}
+
+/// The file with the guarded keys set to `known` (others as they are).
+fn write_with(st: &Store, known: &Map<String, Value>) {
+    keep_unreadable(&st.config);
+    let mut cfg = load_config_at(&st.config);
+    for k in GUARDED {
+        match known.get(*k) {
+            Some(v) => cfg.insert(k.to_string(), v.clone()),
+            None => cfg.remove(*k),
+        };
+    }
+    write_config(&st.config, &cfg);
+}
+
+/// Takes in what another running copy of the app changed through its routes (its counter is newer).
+fn sync_from_copy(g: &mut Guard, st: &Store) {
+    if let Some((v, c)) = read_copy(st).filter(|(v, _)| *v > g.version) {
+        g.known = c;
+        g.version = v;
+    }
+}
+
+/// What changed in one setting, in plain words, never showing a secret.
+fn describe_change(key: &str, file: Option<&Value>, kept: Option<&Value>) -> String {
+    let name = setting_name(key);
+    let names = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array).into_iter().flatten().filter_map(|e| e.as_str().map(str::to_string).or_else(|| e["name"].as_str().map(str::to_string)).or_else(|| e["path"].as_str().map(str::to_string))).collect()
+    };
+    match key {
+        "allowed_commands" | "projects" => {
+            let (f, k) = (names(file), names(kept));
+            let added: Vec<&String> = k.iter().filter(|x| !f.contains(x)).collect();
+            let dropped: Vec<&String> = f.iter().filter(|x| !k.contains(x)).collect();
+            let mut parts = Vec::new();
+            if !dropped.is_empty() {
+                parts.push(format!("the file also had {}, which was taken out", dropped.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+            }
+            if !added.is_empty() {
+                parts.push(format!("the file was missing {}, which was put back", added.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+            }
+            if parts.is_empty() {
+                parts.push("the order or details differed".into());
+            }
+            format!("{name}: {}", parts.join("; "))
+        }
+        "gemini_key" | "plugin_token" => match (file.is_some(), kept.is_some()) {
+            (true, false) => format!("{name}: the file had one Fridae did not know; it was removed"),
+            (false, true) => format!("{name}: missing from the file; put back"),
+            _ => format!("{name}: different in the file; Fridae's was put back"),
+        },
+        _ => {
+            let show = |v: Option<&Value>| v.map(|v| if let Some(b) = v.as_bool() { if b { "on".to_string() } else { "off".to_string() } } else { "set".to_string() }).unwrap_or_else(|| "not set".into());
+            format!("{name}: the file said {}, put back to {}", show(file), show(kept))
+        }
+    }
+}
+
+/// At start: the copy for this home wins over the settings file where they differ (the file is put back and the page
+/// says which settings, in plain words, until the user answers, with a way to take the file's instead); with no copy
+/// for this home (a first run), the file is taken as it is and the copy written.
+fn start_in(st: &Store) -> Guard {
+    let broken = unreadable(&st.config);
+    if broken {
+        keep_unreadable(&st.config);
+    }
+    let file = guarded_of(&load_config_at(&st.config));
+    let Some((version, copy)) = read_copy(st) else {
+        write_copy(st, 1, &file);
+        return Guard { known: file, version: 1, at_start: None };
+    };
+    let changes: Vec<(String, String)> = GUARDED.iter().filter(|k| file.get(**k) != copy.get(**k)).map(|k| (k.to_string(), describe_change(k, file.get(*k), copy.get(*k)))).collect();
+    let mut at_start = None;
+    if !changes.is_empty() {
+        write_with(st, &copy);
+        at_start = Some(StartNote { changes, file, unreadable: broken });
+    }
+    Guard { known: copy, version, at_start }
+}
+
+fn update_in<R>(g: &mut Guard, st: &Store, change: impl FnOnce(&mut Map<String, Value>) -> R) -> R {
+    keep_unreadable(&st.config);
+    sync_from_copy(g, st);
+    let mut cfg = load_config_at(&st.config);
+    for k in GUARDED {
+        match g.known.get(*k) {
+            Some(v) => cfg.insert(k.to_string(), v.clone()),
+            None => cfg.remove(*k),
+        };
+    }
+    let before = guarded_of(&cfg);
+    let out = change(&mut cfg);
+    // only what the change itself set is the route's: it becomes the known value, with the counter raised
+    let mut changed = false;
+    for k in GUARDED {
+        if before.get(*k) != cfg.get(*k) {
+            changed = true;
+            match cfg.get(*k) {
+                Some(v) => g.known.insert(k.to_string(), v.clone()),
+                None => g.known.remove(*k),
             };
         }
-        write_config(&config_file(), &cfg);
-        *PUT_BACK_AT_START.lock().unwrap_or_else(|e| e.into_inner()) = differ;
     }
+    if changed {
+        g.version = g.version.max(read_copy(st).map(|(v, _)| v).unwrap_or(0)) + 1;
+        write_copy(st, g.version, &g.known);
+    }
+    write_config(&st.config, &cfg);
+    out
 }
 
-/// What the app starts with: the copy's guarded values when there is a copy (and the keys where the file differs, to
-/// be put back), else the file's.
-fn reconcile(file: &Map<String, Value>, copy: Option<&Map<String, Value>>) -> (Map<String, Value>, Vec<String>) {
-    let known = copy.map(guarded_of).unwrap_or_else(|| guarded_of(file));
-    let differ = GUARDED.iter().filter(|k| file.get(**k) != known.get(**k)).map(|k| k.to_string()).collect();
-    (known, differ)
+/// Puts back any guarded key in the file that differs from memory (after taking in another copy's newer changes).
+/// The keys put back; "unreadable" first when the file could not be read.
+fn check_in(g: &mut Guard, st: &Store) -> Vec<String> {
+    sync_from_copy(g, st);
+    let broken = unreadable(&st.config);
+    let file = guarded_of(&load_config_at(&st.config));
+    let mut back: Vec<String> = GUARDED.iter().filter(|k| file.get(**k) != g.known.get(**k)).map(|k| k.to_string()).collect();
+    if !back.is_empty() {
+        write_with(st, &g.known);
+        if broken {
+            back.insert(0, "unreadable".into());
+        }
+    }
+    back
+}
+
+/// The known guarded settings.
+fn known() -> Map<String, Value> {
+    if GUARD.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
+        start_settings();
+    }
+    GUARD.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|g| g.known.clone()).unwrap_or_default()
+}
+
+/// At start (see `start_in`).
+pub fn start_settings() {
+    let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    drop(guard_locked(&store()));
 }
 
 /// A guarded setting's value as the app knows it (Null when unset). Every decision reads them here, never the file.
@@ -669,56 +843,54 @@ pub fn guarded_settings() -> Map<String, Value> {
     known()
 }
 
-/// The settings put back at start, for the page's line (every page opened in this run says it once).
-pub fn put_back_at_start() -> Vec<String> {
-    PUT_BACK_AT_START.lock().unwrap_or_else(|e| e.into_inner()).clone()
+/// What was put back at start, for the page: each setting's plain-words change, until the user answers.
+pub fn put_back_at_start() -> Value {
+    let g = GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    match g.as_ref().and_then(|g| g.at_start.clone()) {
+        Some(n) => serde_json::json!({"changes": n.changes.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>(), "unreadable": n.unreadable}),
+        None => Value::Null,
+    }
 }
 
-/// Compares the settings file with the known values: any guarded setting that differs and did not come through the
-/// app (another running copy of the app writes the copy as well: a value equal to the copy on disk is taken as that
-/// copy's change) is put back. Returns the keys put back.
+/// The user's answer to the start-up line: "file" takes the settings file's values as they were at start (through
+/// the app's own route), anything else just closes the line.
+pub fn answer_start_note(take_file: bool) -> bool {
+    let note = GUARD.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|g| g.at_start.take());
+    let Some(note) = note else { return false };
+    if take_file {
+        update_config(|cfg| {
+            for k in GUARDED {
+                match note.file.get(*k) {
+                    Some(v) => cfg.insert(k.to_string(), v.clone()),
+                    None => cfg.remove(*k),
+                };
+            }
+        });
+    }
+    true
+}
+
+/// Compares the settings file with the known values (after taking in another running copy's newer changes): any
+/// guarded setting that differs is put back. Returns the keys put back ("unreadable" first if the file did not read).
 pub fn check_settings() -> Vec<String> {
     let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let file = guarded_of(&load_config());
-    let mut known = known();
-    let copy = fs::read_to_string(guard_copy()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).map(|c| guarded_of(&c));
-    let mut back = Vec::new();
-    for k in GUARDED {
-        if file.get(*k) == known.get(*k) {
-            continue;
-        }
-        if let Some(c) = &copy {
-            if c.get(*k) == file.get(*k) {
-                // another copy of the app changed it through its own route
-                match file.get(*k) {
-                    Some(v) => known.insert(k.to_string(), v.clone()),
-                    None => known.remove(*k),
-                };
-                continue;
-            }
-        }
-        back.push(k.to_string());
-    }
-    *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
-    if !back.is_empty() {
-        let mut cfg = load_config();
-        for k in GUARDED {
-            match known.get(*k) {
-                Some(v) => cfg.insert(k.to_string(), v.clone()),
-                None => cfg.remove(*k),
-            };
-        }
-        write_config(&config_file(), &cfg);
-    }
-    back
+    let st = store();
+    let mut g = guard_locked(&st);
+    check_in(g.as_mut().expect("started"), &st)
 }
 
 /// The chat's line when settings were put back.
 pub fn put_back_line(keys: &[String]) -> String {
-    format!(
-        "A setting was changed by something other than Fridae ({}), so Fridae put it back as you had it. Change settings in Setup.",
-        keys.join(", ")
-    )
+    let unread = keys.first().is_some_and(|k| k == "unreadable");
+    let names: Vec<&str> = keys.iter().filter(|k| *k != "unreadable").map(|k| setting_name(k)).collect();
+    if unread {
+        format!(
+            "The settings file could not be read (Fridae kept it beside the new one as config.json.bad-<time>), so Fridae wrote its own settings back: {}. Change settings in Setup.",
+            names.join(", ")
+        )
+    } else {
+        format!("A setting was changed by something other than Fridae ({}), so Fridae put it back as you had it. Change settings in Setup.", names.join(", "))
+    }
 }
 
 /// A settings file that exists but does not read as settings (a hand edit with a stray comma, an empty file after a
@@ -735,7 +907,10 @@ fn write_config(path: &Path, cfg: &Map<String, Value>) {
     let Some(dir) = path.parent() else { return };
     let _ = fs::create_dir_all(dir);
     if let Ok(text) = serde_json::to_string_pretty(cfg) {
-        let tmp = dir.join(format!(".config.json.{}-{}.tmp", std::process::id(), stamp()));
+        // a name no other write uses, even in the same second from another thread
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = dir.join(format!(".config.json.{}-{}-{n}.tmp", std::process::id(), stamp()));
         // on disk before it replaces the old file (a power cut just after leaves the old or the new, never an empty one)
         let written = fs::File::create(&tmp).and_then(|mut f| {
             use std::io::Write;
@@ -1080,29 +1255,183 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
 }
 
 /// Programs that run what they are given as a command: the app never approves a part they lead by itself, however
-/// the user's list reads, because what they would run is not what the list was asked about (`time ps eww`). An empty
-/// list of options: always; otherwise only when one of those options (or `--opt=...`, or a short one with its value
-/// joined) is in the part (`find -exec`, `git -c alias.x=...`). The one place they are listed: the check, the reason
-/// on the card (`refusal_reason`) and the environment-reader check behind them (`reads_other_env`) read it.
-pub const ARG_RUNNERS: &[(&str, &[&str])] = &[
-    ("time", &[]), ("nice", &[]), ("nohup", &[]), ("xargs", &[]), ("env", &[]), ("command", &[]), ("exec", &[]),
-    ("builtin", &[]), ("eval", &[]), ("timeout", &[]), ("gtimeout", &[]), ("stdbuf", &[]), ("sudo", &[]), ("doas", &[]),
-    ("su", &[]), ("caffeinate", &[]), ("watch", &[]), ("script", &[]), ("unbuffer", &[]), ("setsid", &[]), ("flock", &[]),
-    ("ionice", &[]), ("taskset", &[]), ("chrt", &[]), ("chroot", &[]), ("nsenter", &[]), ("unshare", &[]), ("strace", &[]),
-    ("ltrace", &[]), ("parallel", &[]), ("entr", &[]), ("arch", &[]), ("systemd-run", &[]), ("busybox", &[]), ("wsl", &[]),
-    ("runas", &[]), ("start", &[]), ("sh", &[]), ("bash", &[]), ("zsh", &[]), ("dash", &[]), ("ksh", &[]), ("fish", &[]),
-    ("find", &["-exec", "-execdir", "-ok", "-okdir"]),
-    ("git", &["-c", "--config-env", "--exec-path", "--upload-pack", "--receive-pack", "--exec", "-x", "--extcmd", "--open-files-in-pager", "-O", "--ext-diff", "foreach", "run"]),
-];
+/// the user's list reads, because what they would run is not what the list was asked about (`time ps eww`). `Always`:
+/// whatever follows; `Find`: with `-exec`, `-execdir`, `-ok`, `-okdir`; `Git`: only in git's command-running forms
+/// (`git_runs`). The one place they are listed: the check, the reason on the card (`refusal_reason`) and the
+/// environment-reader check of what they run (`reads_other_env`) read it.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Runs {
+    Always,
+    Find,
+    Git,
+}
 
-/// The runner leading a part (its words, quotes removed), when it runs something given to it here.
-fn runner_in(words: &[String]) -> Option<&'static str> {
-    let first = words.first().map(|w| program_name(w).unwrap_or_default())?;
-    let (name, opts) = ARG_RUNNERS.iter().find(|(n, _)| *n == first)?;
-    let hit = |w: &str| {
-        opts.iter().any(|o| w == *o || (o.starts_with("--") && w.starts_with(&format!("{o}="))) || (o.len() == 2 && o.starts_with('-') && w.starts_with(o)))
+pub const ARG_RUNNERS: &[(&str, Runs)] = {
+    use Runs::*;
+    &[
+        ("time", Always), ("nice", Always), ("nohup", Always), ("xargs", Always), ("env", Always), ("command", Always), ("exec", Always),
+        ("builtin", Always), ("eval", Always), ("timeout", Always), ("gtimeout", Always), ("stdbuf", Always), ("sudo", Always), ("doas", Always),
+        ("su", Always), ("caffeinate", Always), ("watch", Always), ("script", Always), ("unbuffer", Always), ("setsid", Always), ("flock", Always),
+        ("ionice", Always), ("taskset", Always), ("chrt", Always), ("chroot", Always), ("nsenter", Always), ("unshare", Always), ("strace", Always),
+        ("ltrace", Always), ("parallel", Always), ("entr", Always), ("arch", Always), ("systemd-run", Always), ("busybox", Always), ("wsl", Always),
+        ("runas", Always), ("start", Always), ("sh", Always), ("bash", Always), ("zsh", Always), ("dash", Always), ("ksh", Always), ("fish", Always),
+        ("xcrun", Always), ("sandbox-exec", Always), ("open", Always), ("osascript", Always), ("tmux", Always), ("screen", Always), ("ssh", Always),
+        ("expect", Always),
+        ("find", Find),
+        ("git", Git),
+    ]
+};
+
+/// Options of a runner that take the next word as their value (so it is not the program run).
+fn value_options(runner: &str) -> &'static [&'static str] {
+    match runner {
+        "nice" => &["-n"],
+        "xargs" => &["-I", "-L", "-n", "-P", "-s", "-E", "-d", "-a"],
+        "timeout" | "gtimeout" => &["-s", "-k"],
+        "env" => &["-u", "-C"],
+        "sudo" | "doas" => &["-u", "-g", "-C", "-D", "-h", "-p", "-U", "-r", "-t"],
+        "watch" => &["-n", "-d"],
+        "caffeinate" => &["-t", "-w"],
+        "ionice" => &["-c", "-n"],
+        "xcrun" => &["--sdk", "--toolchain"],
+        "sandbox-exec" => &["-f", "-n", "-p", "-D"],
+        _ => &[],
+    }
+}
+
+/// When a git part is in one of git's command-running forms: the words it would run (or set as something to run).
+/// Precisely: `-c`, `--config-env`, `--exec-path=` before the subcommand; `rebase -x/--exec`; `bisect run`;
+/// `submodule foreach`; `filter-branch`; `difftool -x/--extcmd`; `grep -O`; `clone -c/--config/-u/--upload-pack/
+/// --template`; `fetch/pull/push/ls-remote/archive --upload-pack/--receive-pack/--exec`; `config` setting a value
+/// (an alias that starts with `!` runs a command). Everyday forms (`switch -c`, `cherry-pick -x`, `clean -x`,
+/// `log -c`, the word `run` as an argument) are not.
+pub fn git_runs(words: &[String]) -> Option<Vec<String>> {
+    let w = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+    let mut payload: Vec<String> = Vec::new();
+    let mut runs = false;
+    let mut i = 1;
+    while i < words.len() && w(i).starts_with('-') {
+        let o = w(i);
+        if o == "-c" || o == "--config-env" {
+            runs = true;
+            payload.push(w(i + 1).to_string());
+            i += 2;
+            continue;
+        }
+        if (o.starts_with("-c") && o.len() > 2) || o.starts_with("--config-env=") || o.starts_with("--exec-path=") {
+            runs = true;
+            payload.push(o.splitn(2, ['=', 'c']).nth(1).unwrap_or("").to_string());
+        }
+        i += if ["-C", "--git-dir", "--work-tree", "--namespace", "--super-prefix"].contains(&o) { 2 } else { 1 };
+    }
+    let sub = w(i);
+    let rest: Vec<&str> = words.iter().skip(i + 1).map(String::as_str).collect();
+    // the word after an option, or its value after `=`
+    let mut takes = |names: &[&str], short_joined: bool| {
+        for (k, a) in rest.iter().enumerate() {
+            for n in names {
+                if a == n {
+                    runs = true;
+                    payload.push(rest.get(k + 1).copied().unwrap_or("").to_string());
+                } else if n.starts_with("--") && a.starts_with(&format!("{n}=")) {
+                    runs = true;
+                    payload.push(a[n.len() + 1..].to_string());
+                } else if short_joined && n.len() == 2 && !n.starts_with("--") && a.starts_with(n) && a.len() > 2 && !a.starts_with("--") {
+                    runs = true;
+                    payload.push(a[2..].to_string());
+                }
+            }
+        }
     };
-    (opts.is_empty() || words[1..].iter().any(|w| hit(w))).then_some(*name)
+    match sub {
+        "rebase" => takes(&["-x", "--exec"], true),
+        "difftool" => takes(&["-x", "--extcmd"], true),
+        "grep" => {
+            takes(&["--open-files-in-pager"], false);
+            if rest.iter().any(|a| a.starts_with("-O")) {
+                runs = true;
+                payload.extend(rest.iter().filter(|a| a.starts_with("-O")).map(|a| a[2..].to_string()));
+            }
+        }
+        "clone" => takes(&["-c", "--config", "-u", "--upload-pack", "--template"], true),
+        "fetch" | "pull" | "push" | "ls-remote" | "archive" | "remote" => takes(&["--upload-pack", "--receive-pack", "--exec"], false),
+        "bisect" if rest.first() == Some(&"run") => {
+            runs = true;
+            payload.extend(rest[1..].iter().map(|a| a.to_string()));
+        }
+        "submodule" => {
+            if let Some(k) = rest.iter().position(|a| *a == "foreach") {
+                runs = true;
+                payload.extend(rest[k + 1..].iter().map(|a| a.to_string()));
+            }
+        }
+        "filter-branch" => {
+            runs = true;
+            payload.extend(rest.iter().map(|a| a.to_string()));
+        }
+        "config" => {
+            let positional = rest.iter().filter(|a| !a.starts_with('-')).count();
+            let reads = rest.iter().any(|a| matches!(*a, "--get" | "--get-all" | "--get-regexp" | "-l" | "--list" | "--unset" | "--unset-all" | "--show-origin" | "--name-only"));
+            let edits = rest.iter().any(|a| matches!(*a, "--add" | "--replace-all" | "-e" | "--edit"));
+            if edits || (positional >= 2 && !reads) {
+                runs = true;
+                payload.extend(rest.iter().map(|a| a.to_string()));
+            }
+        }
+        _ => {}
+    }
+    runs.then_some(payload)
+}
+
+/// The runner leading a part (its words, quotes removed), when it runs something given to it here, and the words it
+/// would run.
+fn runner_in(words: &[String]) -> Option<(&'static str, Vec<String>)> {
+    let first = words.first().map(|w| program_name(w).unwrap_or_default())?;
+    let (name, runs) = ARG_RUNNERS.iter().find(|(n, _)| *n == first)?;
+    match runs {
+        Runs::Git => git_runs(words).map(|p| (*name, p)),
+        Runs::Find => {
+            let at: Vec<usize> = words.iter().enumerate().filter(|(_, w)| matches!(w.as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")).map(|(k, _)| k).collect();
+            (!at.is_empty()).then(|| (*name, at.iter().flat_map(|k| words[k + 1..].iter().take_while(|w| !matches!(w.as_str(), ";" | "+" | r"\;")).cloned()).collect()))
+        }
+        Runs::Always => {
+            // the program it runs: past its options (and their values), numbers and durations, and `NAME=value`; a
+            // shell's or su's `-c` script
+            let shell = matches!(*name, "sh" | "bash" | "zsh" | "dash" | "ksh" | "fish" | "su");
+            let mut k = 1;
+            while k < words.len() {
+                let a = words[k].as_str();
+                if shell && a.starts_with('-') && !a.starts_with("--") && a.ends_with('c') {
+                    return Some((*name, words.get(k + 1).map(|s| s.split_whitespace().map(str::to_string).collect()).unwrap_or_default()));
+                }
+                let number = !a.is_empty() && a.trim_end_matches(['s', 'm', 'h', 'd']).chars().all(|c| c.is_ascii_digit() || c == '.');
+                if a.starts_with('-') {
+                    k += if value_options(name).contains(&a) { 2 } else { 1 };
+                } else if number || (a.contains('=') && !a.starts_with('=')) {
+                    k += 1;
+                } else {
+                    break;
+                }
+            }
+            let mut inner: Vec<String> = words.get(k).map(|s| s.split_whitespace().map(str::to_string).collect()).unwrap_or_default();
+            inner.extend(words.iter().skip(k + 1).cloned());
+            Some((*name, inner))
+        }
+    }
+}
+
+/// Whether what a runner runs reads other programs' settings: an Always runner's program (and a runner it runs, in
+/// turn); for git and find, any name in what they would run.
+fn runs_env_reader(words: &[String], depth: usize) -> bool {
+    let Some((name, payload)) = runner_in(words) else { return false };
+    let reader = |t: &str| ENV_READERS.contains(&base_name(t).to_lowercase().as_str());
+    if matches!(ARG_RUNNERS.iter().find(|(n, _)| *n == name).map(|r| r.1), Some(Runs::Always)) {
+        let Some(first) = payload.first() else { return false };
+        reader(first) || (depth < 8 && runs_env_reader(&payload, depth + 1))
+    } else {
+        payload.iter().flat_map(|w| w.split(|c: char| !(c.is_ascii_alphanumeric() || "-_./".contains(c))).map(str::to_string).collect::<Vec<_>>()).any(|t| reader(&t))
+            || (depth < 8 && runs_env_reader(&payload.iter().flat_map(|w| w.split_whitespace().map(str::to_string).collect::<Vec<_>>()).collect::<Vec<_>>(), depth + 1))
+    }
 }
 
 /// The words of each part of a command as `/bin/sh` would mostly split them (quotes removed; for the checks that
@@ -1131,7 +1460,7 @@ pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
         return "it is more than one line.".into();
     }
     for words in rough_parts(command) {
-        if let Some(r) = runner_in(&words) {
+        if let Some((r, _)) = runner_in(&words) {
             return format!("{r} runs another program given to it{}, so it is asked about every time.", if words[0] == "git" || words[0] == "find" { " in this form" } else { "" });
         }
         let first = &words[0];
@@ -1169,22 +1498,25 @@ pub const ENV_READERS: &[&str] = &[
     "strace", "ltrace", "stringdups", "vmmap", "heap", "leaks", "sample", "spindump",
 ];
 
-/// Whether a command runs one of the ENV_READERS (as its program, or anywhere in a part a runner leads) or names the
-/// `/proc` folder: a path whose `proc` is its first part, comes right after `/`, `.` or `..` (`/proc/1/environ`,
-/// `proc/self` after `cd /`, `../../proc`), never a name that only holds the letters (`src/procgen.lua`).
+/// Whether a command runs one of the ENV_READERS (as its program, or as what a runner runs) or names the
+/// `/proc` folder: `/proc` at the start of a path, after only `.` and `..` parts (`../../proc`), or a leading `proc/`
+/// then a number or `self` (`cd /` first); never the bare word `proc`, `proc/gen.lua` or `src/procgen.lua`.
 pub fn reads_other_env(command: &str) -> bool {
     let names_proc = command
         .split(|c: char| c.is_whitespace() || "'\"=:,;|&<>(){}".contains(c))
         .any(|word| {
             let comps: Vec<&str> = word.split('/').collect();
-            comps.iter().enumerate().any(|(i, c)| *c == "proc" && (i == 0 || matches!(comps[i - 1], "" | "." | "..")))
+            comps.iter().enumerate().any(|(i, c)| {
+                *c == "proc"
+                    && if i == 0 {
+                        // `proc/self`, `proc/1` after `cd /`; the bare word, or `proc/gen.lua`, is not the folder
+                        comps.get(1).is_some_and(|n| n == &"self" || n == &"thread-self" || (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit())))
+                    } else {
+                        comps[..i].iter().all(|p| matches!(*p, "" | "." | ".."))
+                    }
+            })
         });
-    names_proc
-        || command_programs(command).iter().any(|p| ENV_READERS.contains(&p.as_str()))
-        || rough_parts(command).iter().any(|words| {
-            runner_in(words).is_some()
-                && words.iter().flat_map(|w| w.split(|c: char| !(c.is_ascii_alphanumeric() || "-_./".contains(c)))).any(|t| ENV_READERS.contains(&base_name(t).to_lowercase().as_str()))
-        })
+    names_proc || command_programs(command).iter().any(|p| ENV_READERS.contains(&p.as_str())) || rough_parts(command).iter().any(|words| runs_env_reader(words, 0))
 }
 
 /// The programs a command line starts, by name (each part after `;`, `&&`, `||`, `|`), for the blocked card.
@@ -1340,6 +1672,33 @@ mod tests {
             assert!(!reads_other_env(c), "{c}");
             assert!(command_allowed(c, &runners), "{c}");
         }
+        // the bare word proc is no environment reader; only the folder's path is
+        for c in ["git commit -m \"tune proc rate\"", "git checkout proc", "grep proc notes.md", "git add proc/gen.lua", "ls src/proc/x"] {
+            assert!(!reads_other_env(c), "{c}");
+        }
+        for c in ["cat /proc/1/environ", "cat //proc/self/environ", "cat proc/self/environ", "cat proc/42/environ", "cat ../../proc/1/environ", "cat ./proc/1"] {
+            assert!(reads_other_env(c), "{c}");
+        }
+        // git's command-running forms, precisely, both ways
+        let git = vec!["git".to_string()];
+        for c in ["git switch -c feature", "git checkout -b x", "git branch -c a b", "git cherry-pick -x abc", "git clean -xdf", "git grep -c x", "git log -c",
+                  "git checkout run", "git commit -m run", "git add foreach", "git config --get user.name", "git config user.name", "git --exec-path", "git -C sub status"] {
+            assert!(command_allowed(c, &git), "{c}");
+        }
+        for c in ["git -c core.pager=less log", "git -c alias.x=y x", "git --config-env=a=B log", "git --exec-path=/tmp/x log", "git rebase -x make", "git rebase --exec=make",
+                  "git rebase -i --exec make main", "git bisect run make", "git submodule foreach ls", "git submodule --quiet foreach ls", "git filter-branch --tree-filter x",
+                  "git difftool -x meld", "git grep -Ofoo x", "git clone --config core.sshCommand=x url", "git clone -u x url", "git fetch --upload-pack=x origin",
+                  "git push --receive-pack=x origin", "git config alias.x '!ls'", "git config --add core.pager less", "git -C sub -c a=b log"] {
+            assert!(!command_allowed(c, &git), "{c}");
+            assert!(refusal_reason(c, &git).contains("runs another program"), "{c}");
+        }
+        // a reader's name as an argument of what a runner runs is not running the reader
+        for c in ["xargs grep sample", "timeout 5 git checkout top", "time git log --grep=ps", "nice -n 5 make heap", "env A=1 make leaks"] {
+            assert!(!reads_other_env(c), "{c}");
+        }
+        for c in ["timeout 5s ps", "nice -n 5 ps", "env A=1 B=2 ps", "time nice ps", "sh -c 'ps eww'", "bash -lc 'top -l 1'", "xargs -I{} ps", "sudo -u root leaks 1", "git rebase -x 'ps eww'", "find . -exec ps ;"] {
+            assert!(reads_other_env(c), "{c}");
+        }
         // every refusal has a reason in plain words
         for (c, has) in [("./git status", "path"), ("git $(id)", "$"), ("ls > x", "file"), ("ls *.lua", "*"), ("ps", "password"), ("FOO=1 git", "setting")] {
             assert!(refusal_reason(c, &runners).contains(has), "{c}: {}", refusal_reason(c, &runners));
@@ -1355,6 +1714,118 @@ mod tests {
     }
 
     use super::*;
+
+    /// A home of its own for a settings test: its folder, settings file and copy (in the tests' guard folder).
+    fn home_store(name: &str) -> Store {
+        let home = test_dir(&format!("home-{name}"));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let copy = guard_copy_for(&home);
+        let _ = fs::remove_file(&copy);
+        Store { config: home.join("config.json"), copy, home }
+    }
+
+    fn file_of(st: &Store) -> Map<String, Value> {
+        load_config_at(&st.config)
+    }
+
+    fn put(st: &Store, v: Value) {
+        write_config(&st.config, v.as_object().unwrap());
+    }
+
+    #[test]
+    fn a_restart_puts_a_changed_file_back_and_says_what_changed_and_a_route_change_survives() {
+        let st = home_store("restart");
+        put(&st, serde_json::json!({"allowed_commands": ["git"], "projects": [{"name": "Obby", "path": "/g/obby"}], "chat_ai": "claude"}));
+        // a first run with no copy takes the file as it is
+        let mut g = start_in(&st);
+        assert!(g.at_start.is_none() && g.known.get("allowed_commands") == Some(&serde_json::json!(["git"])));
+        // a route change survives a restart
+        update_in(&mut g, &st, |c| c.insert("use_env_keys".into(), serde_json::json!(true)));
+        let g2 = start_in(&st);
+        assert!(g2.at_start.is_none() && g2.known.get("use_env_keys") == Some(&serde_json::json!(true)));
+        // changed while the app was closed: put back, and each setting named with what changed (a secret never shown)
+        let mut f = file_of(&st);
+        f.insert("allowed_commands".into(), serde_json::json!(["git", "sh"]));
+        f.insert("gemini_key".into(), serde_json::json!("SECRETVALUE"));
+        f.remove("projects");
+        write_config(&st.config, &f);
+        let g3 = start_in(&st);
+        let note = g3.at_start.clone().expect("a note");
+        let said = note.changes.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join("\n");
+        assert!(said.contains("programs agents may run") && said.contains("sh, which was taken out"), "{said}");
+        assert!(said.contains("list of games") && said.contains("Obby"), "{said}");
+        assert!(said.contains("Gemini API key") && !said.contains("SECRETVALUE"), "{said}");
+        let back = file_of(&st);
+        assert_eq!(back.get("allowed_commands"), Some(&serde_json::json!(["git"])));
+        assert!(back.get("gemini_key").is_none() && back.get("chat_ai") == Some(&serde_json::json!("claude")), "unguarded keys stay");
+        // an unreadable file is kept, said so, and the guarded settings written back
+        fs::write(&st.config, "{ \"chat_ai\": \"claude\",, }").unwrap();
+        let g4 = start_in(&st);
+        assert!(g4.at_start.as_ref().is_some_and(|n| n.unreadable));
+        assert!(fs::read_dir(&st.home).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("config.json.bad-")));
+        assert_eq!(file_of(&st).get("projects"), g4.known.get("projects"));
+        let mut g5 = start_in(&st);
+        fs::write(&st.config, "not json").unwrap();
+        assert_eq!(check_in(&mut g5, &st).first().map(String::as_str), Some("unreadable"));
+        assert!(put_back_line(&["unreadable".into(), "projects".into()]).contains("could not be read"));
+    }
+
+    #[test]
+    fn two_homes_never_see_each_others_copy() {
+        let real = home_store("real");
+        let dev = home_store("dev");
+        assert_ne!(real.copy, dev.copy, "one copy per home");
+        put(&real, serde_json::json!({"projects": [{"name": "Obby", "path": "/g/obby"}], "gemini_key": "REALKEY", "plugin_token": "REALTOKEN", "allowed_commands": ["git"]}));
+        put(&dev, serde_json::json!({"blender": "/Applications/Blender.app"}));
+        let _ = start_in(&real);
+        // a dev run on its own home: takes its own file, never the real home's values
+        let _ = start_in(&dev);
+        let d = fs::read_to_string(&dev.config).unwrap();
+        assert!(!d.contains("REALKEY") && !d.contains("REALTOKEN") && !d.contains("Obby"), "{d}");
+        // a copy written as {} for another home, lying where the real home's copy goes, is never applied
+        let mut v = Map::new();
+        v.insert("home".into(), Value::from(real_home(&dev.home)));
+        v.insert("version".into(), Value::from(99));
+        v.insert("settings".into(), Value::Object(Map::new()));
+        write_config(&real.copy, &v);
+        let g = start_in(&real);
+        assert!(g.at_start.is_none(), "taken as no copy");
+        let r = file_of(&real);
+        assert_eq!(r.get("gemini_key"), Some(&serde_json::json!("REALKEY")));
+        assert!(r.get("projects").is_some() && r.get("plugin_token").is_some() && r.get("allowed_commands").is_some());
+        // and its own copy is written again for its own home
+        assert_eq!(read_copy(&real).map(|(_, c)| c.get("gemini_key").cloned()), Some(Some(serde_json::json!("REALKEY"))));
+    }
+
+    #[test]
+    fn two_running_copies_on_one_home_keep_each_others_changes() {
+        let st = home_store("two-copies");
+        put(&st, serde_json::json!({"projects": [{"name": "A", "path": "/g/a"}], "chat_ai": "claude"}));
+        let mut a = start_in(&st);
+        let mut b = start_in(&st);
+        // A adds a game; B then changes an unrelated guarded setting and an unguarded one
+        update_in(&mut a, &st, |c| c.insert("projects".into(), serde_json::json!([{"name": "A", "path": "/g/a"}, {"name": "P", "path": "/g/p"}])));
+        update_in(&mut b, &st, |c| {
+            c.insert("use_env_keys".into(), serde_json::json!(true));
+            c.insert("chat_ai".into(), serde_json::json!("opencode"));
+        });
+        assert!(check_in(&mut a, &st).is_empty(), "no false alarm in A");
+        assert!(check_in(&mut b, &st).is_empty(), "nor in B");
+        for (who, g) in [("A", &a), ("B", &b)] {
+            assert_eq!(g.known.get("projects").and_then(Value::as_array).map(Vec::len), Some(2), "{who} has both games");
+            assert_eq!(g.known.get("use_env_keys"), Some(&serde_json::json!(true)), "{who} has the switch");
+        }
+        let f = file_of(&st);
+        assert_eq!(f.get("projects").and_then(Value::as_array).map(Vec::len), Some(2));
+        assert_eq!((f.get("use_env_keys"), f.get("chat_ai")), (Some(&serde_json::json!(true)), Some(&serde_json::json!("opencode"))));
+        // a tampered file is still put back in both
+        let mut t = file_of(&st);
+        t.insert("allowed_commands".into(), serde_json::json!(["sh"]));
+        write_config(&st.config, &t);
+        assert_eq!(check_in(&mut a, &st), ["allowed_commands"]);
+        assert!(check_in(&mut b, &st).is_empty() && b.known.get("allowed_commands").is_none());
+    }
 
     /// The settings file changed as an AI's file tool would change it: written straight, not through the app.
     fn tamper(key: &str, v: Value) {
@@ -1382,18 +1853,9 @@ mod tests {
         tamper("allowed_commands", serde_json::json!(["sh"]));
         let now = set_allowed(&["zzprobe".to_string()], true);
         assert!(!now.contains(&"sh".to_string()) && now.contains(&"zzprobe".to_string()));
-        let copy: Map<String, Value> = serde_json::from_str(&fs::read_to_string(guard_copy()).unwrap()).unwrap();
-        assert_eq!(copy.get("allowed_commands"), Some(&serde_json::json!(now)));
-        // across a restart: the copy wins over a file changed while the app was not running, and says which key
-        let mut file = load_config();
-        assert_eq!(reconcile(&file, Some(&copy)).1, Vec::<String>::new(), "the route's change survives a restart");
-        file.insert("allowed_commands".into(), serde_json::json!(["sh", "python3"]));
-        let (known, differ) = reconcile(&file, Some(&copy));
-        assert_eq!(differ, ["allowed_commands"]);
-        assert_eq!(known.get("allowed_commands"), Some(&serde_json::json!(now)));
-        // a first run with no copy takes the file as it is
-        let (known, differ) = reconcile(&file, None);
-        assert!(differ.is_empty() && known.get("allowed_commands") == Some(&serde_json::json!(["sh", "python3"])));
+        let copy: Value = serde_json::from_str(&fs::read_to_string(guard_copy()).unwrap()).unwrap();
+        assert_eq!(copy["settings"].get("allowed_commands"), Some(&serde_json::json!(now)));
+        assert_eq!(copy["home"].as_str(), Some(real_home(&PATHS.home).as_str()), "the copy names its home");
         let _ = set_allowed(&["zzprobe".to_string()], false);
     }
 
