@@ -1,22 +1,19 @@
 Always load the `workflow` guide in full (rbx_guide). For everything else, look it up instead of loading whole guides:
 search with rbx_vault (shelf `guides`) for the task in plain words, then read only the sections that apply (rbx_vault
-`read`, or rbx_guide with `topic` and `section`). Load a whole guide only when the task is centrally about it (a large
-guide then comes as its opening and a list of its sections: read the ones you need). Guides that hold rules (`studio`,
-`producer`, `critic`, `game-bible`, `workflow`) always come whole; load them when the work below says so. Which guides
-cover which work:
+`read`, or rbx_guide with `topic` and `section`). For a guide you will lean on, ask for its outline (rbx_guide
+`outline: true`, several topics in one call): its opening, its rules in full and its sections. Load a guide whole
+only when the task is centrally about it. Guides that hold rules (`studio`, `producer`, `critic`, `game-bible`,
+`workflow`) always come whole; load them when the work below says so. Which guides cover which work:
 - Modelling, building, props, maps: `roblox-world-building`, `lihfolk-worldbuilding` (maps, towns, lobbies, dungeons),
   `roblox-blender-modeling` (anything modelled in Blender), `roblox-asset-import` (importing FBX/GLB/OBJ), the style guide that matches the game's look (`brutalist-skill` for raw, industrial,
   blocky or terminal looks; `minimalist-skill` for clean and quiet; `soft-skill` for soft, premium or glossy), and
   `reference-design-contract` when the user gives a reference image or says "like this".
 - UI: `ui-design`, `roblox-ui`, `web-to-roblox`, the matching style guide, `emil-design-eng`; `redesign-skill` when
   improving UI that already exists; `sim-ui` ONLY when the user asks for the chunky cartoon simulator look for this game.
-- UI taste, for every UI task: the user is a graphic designer and their games' UI must look designed, clean and tasteful,
-  never generic Roblox "colour slop". Default to a restrained palette (neutrals plus one or two accents taken from the
-  game's art direction), typography and spacing doing the work, thin or no outlines, few effects. No rainbow or
-  per-button gradients, no thick black strokes, no bubbly cartoon fonts, no glossy bevels, no clutter of badges and
-  bursts, unless the user asks for that look for this game. Their own designs (Illustrator or Photoshop exports,
-  mockups, colour values, fonts) are the target and beat every guide: build to them exactly, and ask for exports
-  rather than inventing art.
+- UI taste, for every UI task: UI must look designed and restrained: a small palette taken from the game's art
+  direction, typography and spacing doing the work, few effects, no generic Roblox "colour slop", unless the user's
+  house rules or their own designs say otherwise. The user's own designs (exports, mockups, colour values, fonts)
+  beat every guide: build to them exactly.
 - The user says UI looks like slop, vibecoded, AI-made, generic or cheap, or asks to clean up or polish it: `unslop`
   (load it with `whole: true`; with `web-to-roblox` and `ui-design`), run in full on that screen.
 - Visual effects: `vfx`, `vfx-basics`, `lihfolk-vfx` (ability and combat effect recipes), `motion-design`, the matching style guide.

@@ -228,28 +228,84 @@ def _one_guide(topic):
     return text + _guide_extras(topic)
 
 
+# Claude Code skill names (the workflow guide's table uses them) -> rbx_guide names. install.py builds the skill
+# folders with the first six names; the last four are those skills' front-matter names.
+GUIDE_ALIASES = {"roblox-studio-workflow": "workflow", "roblox-playtest": "playtest", "roblox-ui-design": "ui-design",
+                 "roblox-sim-ui": "sim-ui", "roblox-vfx": "vfx", "roblox-promo": "promo",
+                 "industrial-brutalist-ui": "brutalist-skill", "minimalist-ui": "minimalist-skill",
+                 "redesign-existing-projects": "redesign-skill", "high-end-visual-design": "soft-skill"}
+
+
+def resolve_alias(topic):
+    """A guide name as rbx_guide knows it, also for 'alias/reference' topics."""
+    head, sep, rest = topic.partition("/")
+    return GUIDE_ALIASES.get(head, head) + sep + rest
+
+
 # Guides an agent always gets whole: they hold rules that must be followed, not looked up (see DEVELOPING.md,
 # "How agents find knowledge"). Any guide under OUTLINE_OVER bytes is also always whole.
 ALWAYS_WHOLE = ("workflow", "studio", "critic", "producer", "game-bible")
 OUTLINE_OVER = 12 * 1024
 
 
+# An outline always carries a guide's rules in full: sections whose heading reads like a rule, plus named ones.
+RULES_HEADING = re.compile(r"\b(rules?|do not|don'?t|never|must|always|checklist)\b", re.I)
+ALWAYS_SECTIONS = {  # rules-like sections the heading pattern misses
+    "roblox-blender-modeling": ["Pipeline (do every step)", "Known traps"],
+    "motion-design": ["Quality while composing"],
+}
+RULES_CAP = 8000     # bytes of rules sections an outline carries; past that they are listed by name
+OPENING_CAP = 1500   # bytes of a guide's opening an outline carries
+
+
+def _rules_sections(topic, p):
+    """The sections an outline must show in full (outermost only: a rules section inside another is already there)."""
+    named = [n.casefold() for n in ALWAYS_SECTIONS.get(topic, [])]
+    out = []
+    for s in p["sections"]:
+        if not s["level"]:
+            continue
+        h = s["heading"].casefold()
+        if RULES_HEADING.search(s["heading"]) or any(h.startswith(n) for n in named):
+            if not any(o["start"] <= s["start"] < o["end"] for o in out):
+                out.append(s)
+    return out
+
+
 def _guide_outline(topic, raw):
-    """A large guide's opening (its description and everything before the first section) and its sections with sizes."""
+    """A guide's description, its opening (cut at OPENING_CAP), its rules sections in full and its section table."""
     import rbxvault
     p, lines = rbxvault.sections_listing(raw, "guides", topic)
     first = next((s["start"] for s in p["sections"] if s["level"]), None)
     if first is None:
         return None  # no headings to choose from: the guide comes whole
-    opening = p["body"][:first]
+    opening = p["body"][:first].strip()
+    if len(opening.encode("utf-8")) > OPENING_CAP:
+        cut = opening.encode("utf-8")[:OPENING_CAP].decode("utf-8", "ignore")
+        opening = cut[:cut.rfind("\n")].rstrip() if "\n" in cut else cut
+        opening += "\n\n(Opening cut; read it whole with `section` \"opening\".)"
     head = ("> " + p["description"] + "\n\n") if p["description"] else ""
     if topic in WEB_GUIDES:
         head = WEB_NOTE + head
+    rules, listed, used = [], [], 0
+    for s in _rules_sections(topic, p):
+        text = p["body"][s["start"]:s["end"]].strip()
+        n = len(text.encode("utf-8"))
+        if used + n > RULES_CAP:
+            listed.append(s["heading"])
+            continue
+        rules.append(text)
+        used += n
+    body = head + opening
+    if rules or listed:
+        body += "\n\n## Rules from this guide (always shown)\n\n" + "\n\n".join(rules)
+        if listed:
+            body += "\n\nRules sections you must read (rbx_guide `section`): " + " · ".join(listed)
     size = len(raw.encode("utf-8"))
-    return (head + opening.strip() + "\n\n## Sections of this guide\n\n" + "\n".join("- " + l for l in lines) +
-            "\n\n(This guide is %s, so only its opening and its sections are shown. Read the sections the task "
-            "needs: rbx_guide topic `%s` with `section` set to heading words, one section per call, or search with "
-            "rbx_vault (shelf guides). `whole: true` returns all of it.)" % (rbxvault.size_text(size), topic))
+    return (body + "\n\n## Sections of this guide\n\n" + "\n".join("- " + l for l in lines) +
+            "\n\n(Outline of a %s guide: its opening, its rules and its sections. Read the sections the task needs: "
+            "rbx_guide topic `%s` with `section` set to heading words, or search with rbx_vault (shelf guides). "
+            "`whole: true` returns all of it.)" % (rbxvault.size_text(size), topic))
 
 
 def _guide_section(topic, heading):
@@ -272,10 +328,13 @@ def _guide_section(topic, heading):
                                         rbxvault.cap_text(body, sub, topic, "guides"))
 
 
-def guide_text(topic, whole=False):
-    """What rbx_guide returns for one topic: the whole guide, or for a large guide not on ALWAYS_WHOLE its outline."""
+def guide_text(topic, whole=False, outline=False):
+    """What rbx_guide returns for one topic: the whole guide, or its outline when asked for one or when it is large
+    and not on ALWAYS_WHOLE."""
     text = _one_guide(topic) if topic in GUIDES else _reference(topic)
-    if text is None or whole or topic in ALWAYS_WHOLE or len(text.encode("utf-8")) <= OUTLINE_OVER:
+    if text is None or whole:
+        return text
+    if not outline and (topic in ALWAYS_WHOLE or len(text.encode("utf-8")) <= OUTLINE_OVER):
         return text
     path = _guide_path(topic)
     if not path.endswith(".md"):
@@ -299,7 +358,7 @@ def t_guide(a):
     wanted = [str(t).strip().lower() for t in (a.get("topics") or [])]
     if a.get("topic"):
         wanted.insert(0, str(a["topic"]).strip().lower())
-    wanted = list(dict.fromkeys(t for t in wanted if t))
+    wanted = list(dict.fromkeys(resolve_alias(t) for t in wanted if t))
     if not wanted:
         lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
         return result("\n".join(lines), True, False)
@@ -315,10 +374,11 @@ def t_guide(a):
         note = ("\n\n(`section` reads one guide; not loaded: %s.)" % ", ".join(wanted[1:])) if len(wanted) > 1 else ""
         return result(PREFACE + "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text + note, True, False)
     whole = a.get("whole") is True or str(a.get("whole")).lower() == "true"
+    outline = a.get("outline") is True or str(a.get("outline")).lower() == "true"
     cap = _guide_cap()
     out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
     for topic in wanted:
-        text = guide_text(topic, whole)
+        text = guide_text(topic, whole, outline)
         if text is None:
             unknown.append(topic)
             continue
@@ -668,7 +728,9 @@ TOOLS = [
              "topic": {"type": "string", "description": "A single guide name (same as one entry in topics)"},
              "section": {"type": "string", "description": "Heading words: return only that section of the guide in `topic` "
                                                           "(or the first of `topics`)"},
-             "whole": {"type": "boolean", "description": "true returns large guides in full instead of their outline"}}), t_guide),
+             "whole": {"type": "boolean", "description": "true returns large guides in full instead of their outline"},
+             "outline": {"type": "boolean", "description": "true returns each guide's outline (opening, rules sections in "
+                                                          "full, section table) whatever its size"}}), t_guide),
     ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "
      "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
      "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "

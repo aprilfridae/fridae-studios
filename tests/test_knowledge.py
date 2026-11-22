@@ -339,11 +339,57 @@ class GuideToolTests(unittest.TestCase):
             if topic not in rbxkit_mcp.ALWAYS_WHOLE:
                 self.assertLess(len(text.encode("utf-8")), rbxkit_mcp.OUTLINE_OVER + 6000, topic)
 
+    def test_outline_carries_every_rules_section(self):
+        expected = {
+            "lihfolk-systems": ["Hard rules"],
+            "unslop": ["Do not"],
+            "lihfolk-vfx": ["Rules", "General rules"],
+            "lihfolk-sfx": ["Rules", "Roblox audio upload rules (2026)"],
+            "redesign-skill": ["Rules"],
+            "emil-design-eng": ["Never animate from scale(0)", "Buttons must feel responsive", "Performance Rules"],
+            "roblox-blender-modeling": ["Pipeline (do every step)", "Known traps"],
+            "motion-design": ["Quality while composing"],
+        }
+        import rbxvault
+        for topic, heads in expected.items():
+            text = rbxkit_mcp.guide_text(topic, outline=True)
+            self.assertIn("## Sections of this guide", text, topic)
+            with open(rbxkit_mcp._guide_path(topic), encoding="utf-8") as f:
+                raw = rbxkit_mcp.fill(f.read())
+            p = rbxvault.parse_sections(raw)
+            for h in heads:
+                s = next((s for s in p["sections"] if s["heading"].startswith(h)), None)
+                self.assertIsNotNone(s, (topic, h))
+                body = p["body"][s["start"]:s["end"]].strip()
+                listed = "Rules sections you must read" in text and s["heading"] in text.split("you must read")[1]
+                self.assertTrue(body in text or listed, (topic, h))
+            self.assertLess(len(text.encode("utf-8")), rbxkit_mcp.RULES_CAP + 6000, topic)
+
+    def test_outline_on_request_for_any_guide(self):
+        _, text = self.guide(topics=["roblox-luau", "critic"], outline=True)
+        self.assertEqual(text.count("## Sections of this guide"), 2)
+        self.assertLess(len(text), len(rbxkit_mcp._one_guide("roblox-luau")) + len(rbxkit_mcp._one_guide("critic")))
+        _, text = self.guide(topic="roblox-luau", outline="true")
+        self.assertIn("## Sections of this guide", text)
+
+    def test_claude_code_skill_names_are_accepted(self):
+        for alias, topic in rbxkit_mcp.GUIDE_ALIASES.items():
+            self.assertIn(topic, rbxkit_mcp.GUIDES, alias)
+            res, text = self.guide(topic=alias)
+            self.assertFalse(res["isError"], alias)
+            self.assertIn("GUIDE: " + topic + " ", text, alias)
+        _, text = self.guide(topic="roblox-ui-design", section="opening")
+        self.assertIn("GUIDE: ui-design", text)
+        import install
+        for topic, name in install.CLAUDE_SKILL_NAMES.items():
+            self.assertEqual(rbxkit_mcp.resolve_alias(name), topic, name)
+
     def test_tool_schema(self):
         tools = {t["name"]: t for t in rbxkit_mcp.handle({"method": "tools/list"})["tools"]}
         g = tools["rbx_guide"]["inputSchema"]["properties"]
         self.assertIn("section", g)
         self.assertIn("whole", g)
+        self.assertIn("outline", g)
         v = tools["rbx_vault"]["inputSchema"]["properties"]
         for k in ("action", "query", "shelf", "k", "count", "title", "heading", "folder", "names"):
             self.assertIn(k, v)
