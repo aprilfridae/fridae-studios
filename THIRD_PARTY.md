@@ -98,3 +98,8 @@ https://github.com/nexu-io/openmotion): a recipe file for each video (its Motion
 the engine renders; and from **Short Video Maker** by gyoridavid (MIT,
 https://github.com/gyoridavid/short-video-maker): scenes as the unit of a video, captions timed with Whisper,
 and a free local Kokoro voice.
+
+The OpenCode chats (`app-rs/src/opencode.rs`) follow the design of **t3code**'s OpenCode 2.x provider by T3 Tools Inc.
+(MIT, https://github.com/pingdotgg/t3code): one `opencode serve` per app run on 127.0.0.1 behind a random password,
+and the order of its calls (session, tool servers, prompt, event stream, interrupt). No code is copied; the Rust
+client was written against OpenCode's own API description.

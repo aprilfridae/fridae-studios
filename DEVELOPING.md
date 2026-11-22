@@ -150,7 +150,7 @@ runs on that AI's default, and the result's `note` says so (a list that has not 
 expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
 `agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
 the expert line and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
-`/api/experts` lists the kit's roster (not the Lead), the table, and for Claude, Gemini and Cursor whether each is
+`/api/experts` lists the kit's roster (not the Lead), the table, and for Claude, Gemini, Cursor and OpenCode whether each is
 installed, its models and its default; with `expert`, `ai`, `model` it saves one row ("" is Same as the Lead). Beside
 Cursor the table shows `cursor::EXPERT_GAP` (experts run with Ask me's rules: Cursor may also write into temp
 folders). The Lead's text (`vault/Fridae/Team/lead.md`) and the studio guide ("Experts on another AI") say the option
@@ -263,7 +263,8 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
 
 ## Cursor as a chat's AI
 
-A chat can run on Claude (Claude Code), Gemini (Antigravity's `agy`) or Cursor (`cursor-agent`, the Cursor Agent CLI);
+A chat can run on Claude (Claude Code), Gemini (Antigravity's `agy`), Cursor (`cursor-agent`, the Cursor Agent CLI) or
+OpenCode (`opencode serve`, see the next section);
 ChatGPT (`codex`) is still in the code but not offered in the window. `paths::AIS` lists them and everything that
 branches on the AI goes through it (`find_ai`, `switch_ai`, helpers and studio runs via `helpers_work`, research).
 Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its header says how a turn runs.
@@ -355,6 +356,97 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
   `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`; put `{"chat_ai": "cursor"}` in the kit's `config.json`. Each turn
   uses the user's Cursor plan.
 
+## OpenCode as a chat's AI
+
+OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the server's own API description
+(`GET /openapi.json` on a running `opencode serve`); its header says how a turn runs. The server's lifecycle and the
+order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see THIRD_PARTY.md).
+
+- **Found** by `paths::find_opencode`: `FRIDAE_OPENCODE`, then `opencode` on PATH, then `~/.opencode/bin/opencode`.
+- **One server per app run**: `opencode serve --hostname 127.0.0.1 --port 0`, started on a chat's first OpenCode turn
+  (`ensure`). It listens on 127.0.0.1 only, on the free port it prints, behind basic auth with a random password
+  (24 bytes from `/dev/urandom`) that is only in its environment (`OPENCODE_PASSWORD`) and in the app's memory. It runs
+  in a process group of its own, is noted in the process ledger (below), is stopped after 10 minutes without a turn
+  (`IDLE`) and when the app quits, and needs OpenCode 2 (`GET /api/info`; a 404 says so in the chat). The user's
+  own background service (`opencode serve --service`, `~/.config/opencode/service.json`) is never used.
+- **A turn** (`run_with`): the saved session gets its rules rewritten (`PATCH /api/session/<id>`; a 404 starts a new
+  session handed the chat so far, `agents::stale_chat`), or `POST /api/session` makes one titled "Fridae · <chat>"
+  with the model and the chat's folder; the chat's tool servers are added for that folder
+  (`PUT /api/experimental/mcp/<name>?location[directory]=...`, every turn: OpenCode drops a folder's servers when it
+  goes idle); the app's whole prompt is put on the session (`PUT /api/experimental/session/<id>/instructions/entries/fridae`,
+  every turn, so house rules added mid-chat reach it at once); then the event stream is opened (`GET /api/event`)
+  and `POST /api/session/<id>/prompt` sends the message. Events (`opencode::Turn`, tests use real captured lines):
+  `session.text.ended`, `session.tool.input.started` (the tool's name) and `session.tool.called` (its input),
+  `session.tool.success` (pictures), `session.step.ended` and `session.step.failed` (that step's tokens and cost, so
+  an interrupted step still counts), `permission.asked`, and the end: `session.execution.succeeded|failed|interrupted`.
+  Events of other sessions are skipped. 45 seconds without even a heartbeat ends the turn with an error (`SILENCE`).
+- **Models** come from `opencode models` run with the app's folders (so Fridae's sign-in decides them), cached, and
+  refreshed with the status. The menu groups them by provider ("OpenCode Go · glm-5.3") with the filter, and hides
+  effort (OpenCode's model ids carry their own). Default (`default_model`): the user's own `model` in
+  `~/.config/opencode/opencode.json(c)` (read only) when Fridae's copy offers it, else the first `opencode-go/` model,
+  else the first listed. Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
+  under `ai: "opencode"`; OpenCode reports no plan limits, and the usage popover says so.
+- **Isolation** (`environment`): the server and the one-off commands (`models`, `auth`, those with `--standalone`)
+  run with `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under
+  `~/Library/Application Support/Fridae Studios/opencode` on a Mac (`store()`; not Documents, which iCloud may sync,
+  since the database holds the sign-in), with `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_DISABLE_CLAUDE_CODE` and
+  `OPENCODE_DISABLE_AUTOUPDATE`, and ten variables of the user's dropped (`DROPPED`: `OPENCODE_CONFIG`, passwords, API
+  keys, `XDG_CONFIG_DIRS`). Checked with `opencode debug config`: with `OPENCODE_CONFIG_DIR` set, only that folder is
+  read, not `~/.config/opencode`. The tool servers get the user's XDG folders back in their entry (`users_xdg`). Its `opencode.json` is the app's (`settings()`, rewritten at every start): no updates, no
+  sharing, no snapshots, no LSP or formatters, and policies that refuse every MCP server not named `fr*` and every
+  skill. So Fridae's chats are not in the user's OpenCode (command line or desktop app), and nothing is written to
+  `~/.config/opencode`, `~/.local/share/opencode` or the game's folder.
+- **Sign-in**: the sign-in lives in OpenCode's database, so Fridae's copy signs in on its own: Setup's "OpenCode for
+  Fridae" row starts OpenCode's device sign-in (`opencode --standalone auth login opencode --method device`, the code
+  is shown, approved on opencode.ai; `/api/opencode` login/open/cancel/state). Free models work without it. Copying
+  the user's sign-in was ruled out: its refresh token is replaced on every refresh, so two copies would sign each
+  other out. Not tried live (it needs the user in a browser).
+- **Tool servers**: one server serves every chat, and OpenCode keeps tool servers per folder, so chats on the same
+  game would share them. Each chat's servers are named `fr<8 hex of sha256(chat id)>-<server>` (`chat_prefix`), and
+  the rules deny `fr????????-*` and then allow the chat's own prefix. Measured: another chat's tools are not even
+  offered to the model, in Ask me or Full auto. `text/opencode.txt` tells the model its tools carry that prefix.
+- **Permissions** (`opencode::permissions`, put on the session before every turn; the last matching rule wins). A
+  tool whose permission is denied for `*` is not offered at all, so every mode starts from `* * deny` with an
+  explicit allow list (a Full auto that started from allow-all showed OpenCode's browser, image, session-move and
+  worktree tools):
+  - Every mode: `read`, `glob`, `grep`, `list` allowed; webfetch and websearch allowed; this chat's tools allowed,
+    other chats' denied; `execute` (Code Mode), `subagent`, `task`, `skill`, `question` denied; edits denied to any
+    `.opencode` folder, `opencode.json(c)`, the app's OpenCode folder, the app's `config.json`, the home folder's
+    hidden files (`~/.*`) and `~/Library`.
+  - Ask me: `shell *` asks, `shell "<program> *"` allowed per program the user allowed; edits allowed in the chat's
+    folder, the game, the kit and the work folder (each spelling, `/private` included), and denied for `/*` and
+    `../*`; `external_directory` allowed only for those folders.
+  - Full auto and Studio: shell, edit, `external_directory` allowed for `*`; the denies above still hold.
+  - A `permission.asked` for a shell command (`decide`): an allowed program is answered `once`; anything else is
+    rejected with a message to the model and the blocked-command card is shown; a program allowed from the card is
+    answered `once` from then on (it is in `allowed_commands`). Any other ask is rejected. Never `always`.
+  - Measured with real turns (opencode 2.3.2, game and outside folders under the home folder, not in temp):
+    Ask me: writes in the game (absolute and relative) and the work folder go through; an outside folder (absolute
+    and `../outside`), the app's OpenCode settings, `~/.zshrc`, `game/.opencode/x.json` are refused; reads outside
+    the chat's folders are refused (stricter than Claude Code). `whoami` (not allowed) showed the card, ran after
+    being allowed mid-turn; `ls` ran. Full auto: an outside write and `id -un` go through; the app's OpenCode
+    settings, `~/.zshrc`, the kit's `config.json` and `game/opencode.json` are refused.
+- **Stop**: `POST /api/session/<id>/interrupt` (in its own thread), then up to 12 seconds (`STOP_WAIT`) for the turn's
+  end event (measured: about 0.1 s, the running shell command is ended). If none comes, the whole server is ended
+  and the chat says so: that also ends any other OpenCode chat that was working, which the message says.
+- **Processes** (`app-rs/src/procs.rs`, a general ledger at `work/processes.json`: pid, process group, start time and
+  command line, with the app's own). Ending the server (SIGTERM to its group, then SIGKILL) also ends its
+  `opencode-pty daemon`; any left with no parent under the app's OpenCode cache are swept (`sweep_helpers`). At
+  start, `procs::reap_orphans` ends entries that still match exactly (pid, start time and command line) and whose app
+  is gone, so a crash leaves nothing running after the next start (measured: server and rbxkit reaped, the chat
+  resumed on the same session).
+- **Safety gaps against Claude Code**: none known. `opencode::gaps()` is empty. Differences: Ask me's reads are
+  limited to the chat's folders; `opencode_worktree_remove` is offered (it is gated by the edit rules: refused outside
+  the allowed folders in Ask me, and only removes OpenCode worktrees in Full auto); a kill on Stop ends every running
+  OpenCode chat; the rules on publishing, spending and deleting are the app's prompts, as for every AI.
+- **Not on Windows yet**: `find_opencode` finds nothing and `paths::AIS` leaves it out. To turn it on, test there:
+  the permission patterns with `\` paths, ending the server's process tree (a Job Object), and the pty daemon.
+- **Trying it by hand** with the scratch copy above: put `{"chat_ai": "opencode"}` in the kit's `config.json` and
+  set `FRIDAE_OPENCODE` to the program. Without a sign-in only the free models work, and they have a daily limit.
+  To test the app's handling without a real model, debug builds read `FRIDAE_OPENCODE_TEST_CONFIG` (compiled out of
+  release builds) and pass it to the server as `OPENCODE_CONFIG`: a config naming an OpenAI-compatible provider
+  pointed at a local scripted model. OpenCode's own rules still decide what the model's tool calls may do.
+
 ## How agents find knowledge
 
 Agents look things up rather than load whole guides (a live run once pulled 62 KB of guides in one call).
@@ -441,7 +533,7 @@ files, read fresh every turn, to every agent's system prompt (the Lead and exper
 house rules (follow these)", the game's under "This game's house rules (from the game's folder)", each capped at
 2,000 characters, with `HOUSE_RULES_LIMIT` (they never override the rules on spending, publishing, uploading,
 deleting, access or shell permissions, nor skip asking) said before and after them. Claude Code gets the block every
-turn; Gemini, ChatGPT and Cursor get standing instructions only when a chat's session starts, so a rule added mid-chat reaches
+turn; Gemini, ChatGPT and Cursor get standing instructions only when a chat's session starts (OpenCode gets them every turn, as Claude Code does), so a rule added mid-chat reaches
 them from their next new chat. `system.txt` tells agents to search shelves `yours` and `game` before
 design or build work, and to save a note at once when the user corrects them, rejects their work or steers them;
 the Lead's texts say to save one for every Change in Review. Setup, General, Your notes shows the counts and opens the

@@ -19,7 +19,7 @@ Your tools:
 - `rbx_stage` `decisions`: the user's answers since the last call. Each answer is given once, so act on it when you read it.
 - `rbx_stage` `lesson` with `text` and `scope` `game` (this game) or `all` (every game).
 - `rbx_team` `spawn` with `expert` (a roster id), `name` and `task`; `wait` with `ids`; `status`.
-  `spawn` also takes optional `ai` (claude, gemini, cursor) and `model`; see "Experts on another AI".
+  `spawn` also takes optional `ai` (claude, gemini, cursor, opencode) and `model`; see "Experts on another AI".
 - `rbx_board` for the board, `rbx_project` `checkpoint` and `changes`, GAME.md for decisions.
 
 ## Starting and adopting a run
