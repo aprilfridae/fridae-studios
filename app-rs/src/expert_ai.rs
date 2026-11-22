@@ -68,7 +68,7 @@ pub const LEAD_PICKS_OFF: &str = "The user has switched off \"The Lead may pick 
 
 /// The AIs an expert may run on: every AI offered here but ChatGPT, which the window no longer offers.
 pub fn expert_ais() -> Vec<&'static str> {
-    paths::AIS.iter().copied().filter(|a| *a != "chatgpt").collect()
+    crate::caps::expert_ais()
 }
 
 pub fn ai_name(ai: &str) -> &'static str {

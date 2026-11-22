@@ -580,10 +580,11 @@ pub(crate) fn answer(r: Result<Value, String>) -> Value {
     r.unwrap_or_else(|e| json!({"ok": false, "error": e}))
 }
 
-/// Whether helper agents (and so a Studio team) work on this AI. Every AI the app runs gets the rbxkit tools with
-/// rbx_team, so all of them do.
+/// Whether helper agents (and so a Studio team) work on this AI here (`caps`: it runs experts and keeps to Studio's
+/// rules, and this computer offers it).
 fn helpers_work(ai: &str) -> bool {
-    paths::AIS.contains(&ai)
+    let c = crate::caps::of(ai);
+    crate::caps::available(ai) && c.experts && c.modes.studio
 }
 
 /// Roster ids to the names people read ("ui" is "UI builder"): the kit's roster, then the game's own entries over it.

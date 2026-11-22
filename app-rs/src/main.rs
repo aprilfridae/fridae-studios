@@ -11,6 +11,7 @@ mod agents;
 mod antigravity;
 mod attach;
 mod board;
+mod caps;
 mod codex;
 mod cursor;
 mod expert_ai;

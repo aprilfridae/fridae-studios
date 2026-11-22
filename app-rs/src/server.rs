@@ -157,6 +157,7 @@ fn status() -> Value {
         "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some(), "opencode": paths::find_opencode().is_some()},
                "offered": paths::AIS,
                "gaps": {"cursor": cursor::gaps(), "opencode": opencode::gaps()},
+               "caps": crate::caps::table(),
                "opencode": {"signed_in": opencode::signed_in(), "login": opencode::login_state()},
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),

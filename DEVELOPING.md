@@ -645,6 +645,16 @@ is an example the user can paste into their own House rules.
 
 ## Good to know
 
+- **What each AI can do** is one table, `app-rs/src/caps.rs`, pinned by its tests and sent to the page as
+  `status.ai.caps`. Columns: runs experts; offered in the menus (`pickable`: not Codex); resumes a session; reports
+  usage; reports plan limits (Claude only); returns images from tools; a sandbox of its own the app uses (Codex,
+  Cursor); answers permission requests live (OpenCode); takes the effort setting (not Cursor or OpenCode); grouped
+  model menu (OpenCode); which of Ask me, Full auto and Studio it keeps to by its own rules (all of them, for every
+  AI, today); and whether this computer offers it. A mode an AI cannot keep to is not offered in the page and a
+  message asking for it runs as Ask me with a note (`caps::mode_for`). The Experts table's AIs, Studio's "helpers
+  work here", the effort setting, the usage popover's limit rows, the model menu's grouping and the run-mode buttons
+  read it. What still names an AI is how each one is driven (its command, parser, error wording, Cursor's
+  worker-server, OpenCode's server), plus Claude's model list in the page.
 - Uploading models, images and animations to Roblox goes through Studio's own
   Open Cloud access. Studio only uploads from folders you approve in
   Assistant Settings > MCP Permissions: approve this folder's `work` folder.

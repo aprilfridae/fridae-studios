@@ -1713,7 +1713,7 @@ function paintLimits() {
   const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
   const keys = Object.keys(all).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
   /* the other AIs' tools do not report their limits: one line each, for the AIs this computer offers */
-  const others = AIS.filter(([id]) => id !== "claude" && id !== "chatgpt").map(([id, name]) => "<h5>Plan usage limits \u00b7 " + esc(name) + '</h5><div class="u-row"><small>' + esc(name) + "\u2019s tool does not report its limits, so they cannot be shown here.</small></div>").join("");
+  const others = AIS.filter(([id]) => !caps(id).limits).map(([id, name]) => "<h5>Plan usage limits \u00b7 " + esc(name) + '</h5><div class="u-row"><small>' + esc(name) + "\u2019s tool does not report its limits, so they cannot be shown here.</small></div>").join("");
   if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div>' + others; return; }
   const seen = Math.max(...keys.map((k) => all[k].seen || 0));
   const mins = Math.max(0, Math.round((Date.now() / 1000 - seen) / 60));
@@ -2139,6 +2139,8 @@ function paintSwitch() {
   RUN_MODES.forEach(([id, name, note]) => {
     const b = el("button", id === shown ? "on" : "", esc(name)); b.title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : note;
     if (id === "studio" && why) { b.disabled = true; b.title = why; }
+    const ai = chatAi(agents.get(current));
+    if (!modeKept(ai, id)) { b.disabled = true; b.title = aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages go as Ask me."; }
     b.onclick = () => {
       runMode = id; applyMode(); try { localStorage.setItem("runmode", id); } catch (e) {} paintSwitch(); paintModel(); paintComposer();
       say({ ask: "Ask me: it does what you ask, then waits for you.", full: "Full auto: from your next message nothing asks for permission, and it keeps going until the job is done.", night: "Overnight: from your next message it works in full auto for up to 24 hours without you. Leave Studio open. Pressing stop ends it.",
@@ -2292,7 +2294,7 @@ function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen);
   const modes = [runMode === "studio" || leadsRun(p) ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
-  const ownEffort = ai === "cursor" || ai === "opencode";
+  const ownEffort = caps(ai).effort === false;
   $("model-name").textContent = [cur ? cur[1] : aiName(ai), ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).concat(modes).join(" \u00b7 ");
   paintGap(ai, p);
   /* a long list (Cursor offers hundreds) scrolls in a box of its own, with a filter, so the modes below stay in view */
@@ -2314,7 +2316,7 @@ function paintModel() {
   /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): a heading per provider, the model under it */
   let group = "";
   shown.forEach(([id, name, note]) => {
-    if (ai === "opencode" && name.includes(" \u00b7 ")) {
+    if (caps(ai).grouped_models && name.includes(" \u00b7 ")) {
       const [g, rest] = [name.slice(0, name.indexOf(" \u00b7 ")), name.slice(name.indexOf(" \u00b7 ") + 3)];
       if (g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
       name = rest;
@@ -3588,6 +3590,10 @@ function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : 
 /* the AI new chats start on (Setup, General) */
 function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) => a[0] === d) ? d : "claude"; }
 function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
+/* what an AI can do, from the app's table (status.ai.caps, caps.rs): the page asks it instead of naming AIs */
+function caps(ai) { return (((status || {}).ai || {}).caps || {})[ai] || {}; }
+/* whether this AI keeps to a run mode by its own rules: one it cannot keep to is not offered (Ask me instead) */
+function modeKept(ai, id) { const m = caps(ai).modes; if (!m) return true; return id === "ask" ? m.ask !== false : id === "studio" ? m.studio !== false : m.full !== false; }
 /* Claude, Gemini, Cursor or OpenCode for the chat in front. A chat that has started carries on with the other AI, handed the chat so far. */
 function paintAiPick() {
   const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);

@@ -1553,7 +1553,13 @@ impl Agent {
         // a wake or carry-on for a run that was ended in Review goes nowhere
         let Some(ask) = lead else { return };
         let ask = &ask;
-        let (ask, fallback) = studio_fallback(ask, has_project);
+        let (mut ask, fallback) = studio_fallback(ask, has_project);
+        // a mode this chat's AI cannot keep to by its own rules is not run: the message goes as Ask me (`caps`)
+        let (full, studio, mode_note) = crate::caps::mode_for(&self.ai(), ask.full, ask.studio);
+        if mode_note.is_some() {
+            ask = Ask { full, studio, overnight: false, autopilot: false, ..ask };
+        }
+        let fallback = fallback.or(mode_note);
         let ask = &ask;
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
         // an expert keeps the model it was started on (the user's Setup > Experts row, the Lead's pick or the Lead's own),
@@ -1607,7 +1613,8 @@ impl Agent {
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
-        let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e));
+        // an AI whose model ids carry their own effort is not given the setting (`caps`)
+        let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort);
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
         self.put(
             "user",
@@ -1671,7 +1678,7 @@ impl Agent {
         let Some(exe) = found else {
             let missing = match kind.as_str() {
                 // a chat saved on Cursor or OpenCode, reopened where they are not offered (Windows, for now)
-                "cursor" | "opencode" if !paths::AIS.contains(&kind.as_str()) => {
+                k if !crate::caps::available(k) => {
                     "This chat was set to an AI that Fridae Studios does not offer on this computer yet. Pick Claude or Gemini under the message box and send your message again: the chat so far is handed over."
                 }
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
