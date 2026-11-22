@@ -95,6 +95,7 @@ input[type=checkbox]:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.5)
 .g-row .go { grid-row: 1 / span 2; grid-column: 2; color: var(--faint); transition: color 140ms ease, transform 160ms var(--ease); }
 button.g-row:hover .go { color: var(--text); transform: translate(1px, -1px); }
 div.g-row { cursor: default; }
+.oc-row .act { grid-column: 1 / -1; margin-top: 8px; }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: 248px minmax(0, 1fr); }
@@ -336,6 +337,7 @@ textarea::placeholder { color: var(--faint); }
 .ext { font-family: var(--mono); font-size: 11px; letter-spacing: 0.01em; text-transform: uppercase; color: var(--dim); }
 .fname { font-size: 13px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #model-menu .mlist { max-height: 216px; overflow-y: auto; overscroll-behavior: contain; }
+#model-menu .mgroup { margin: 6px 10px 2px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); }
 #model-menu .mfind { display: block; width: calc(100% - 8px); margin: 0 4px 6px; padding: 6px 9px; font: inherit; font-size: 13px; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; }
 .aigap { max-width: 800px; margin: 4px auto 0; padding: 0 8px; font-size: 12.5px; color: var(--faint); }
 .hint { max-width: 800px; margin: 8px auto 0; padding: 0 8px; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--faint); min-height: 28px; }
@@ -873,7 +875,7 @@ body.proj #pd, body.guide #gd { transform: none; }
       <p class="sub">Makes everything in the window bigger or smaller. Ctrl and + or - does the same from anywhere; Ctrl and 0 resets it.</p>
       <div class="scale-row"><button class="pill" id="sc-down" aria-label="Smaller">A&minus;</button><input type="range" id="sc-range" min="70" max="200" step="5"><button class="pill" id="sc-up" aria-label="Bigger">A+</button><output id="sc-val">100%</output><button class="linkish" id="sc-reset">Reset</button></div>
       <h3>New chats start on</h3>
-      <p class="sub">Any project's chats can use Claude, Gemini or Cursor. This is the one a new chat starts on; switch a chat's AI under its message box at any time.</p>
+      <p class="sub">Any project's chats can use Claude, Gemini, Cursor or OpenCode. This is the one a new chat starts on; switch a chat's AI under its message box at any time.</p>
       <div class="r-pills" id="ai-default"></div>
       <h3>Updates</h3>
       <p class="sub" id="upd-state"></p>
@@ -975,11 +977,12 @@ const scroller = $("scroll"), box = $("box"), sendBtn = $("send");
 let after = 0, status = {};
 
 /* The AIs a chat can run on: [id, name, the program behind it, how to get it]. Any project's chats can use any of them.
-   AIS is the ones this computer offers (status.ai.offered: Cursor is not offered on Windows yet). */
+   AIS is the ones this computer offers (status.ai.offered: Cursor and OpenCode are not offered on Windows yet). */
 const ALL_AIS = [
   ["claude", "Claude", "Claude Code", "Install Claude Code from claude.com/claude-code and sign in once."],
   ["gemini", "Gemini", "Google's Antigravity tool", "Install Antigravity's command-line tool (agy) from antigravity.google, then run agy once in a terminal to sign in."],
   ["cursor", "Cursor", "the Cursor Agent tool", "Install the Cursor Agent command-line tool from cursor.com/cli, then run cursor-agent login once in a terminal to sign in."],
+  ["opencode", "OpenCode", "OpenCode's command-line tool", "Install OpenCode from opencode.ai. Fridae signs in to it on its own, below."],
 ];
 let AIS = ALL_AIS.slice();
 /* Which project is in front ("" is the chats with no project), which tab, and the chat last used in each project. */
@@ -1030,8 +1033,8 @@ const GUIDE = [
     ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
     ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for your Claude plan limits (as of its last turn), today, and this week split by AI. Gemini and Cursor do not report their limits. A game's Review shows what that game has cost."],
-    ["Your notes", "When you correct an agent, turn down something it made or point it at a better way, it saves a short note of what you want instead, and later agents look there before they start. Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Notes for everything stay on this computer; a game's notes live in its folder and travel with it. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
+    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for your Claude plan limits (as of its last turn), today, and this week split by AI. Gemini, Cursor and OpenCode do not report their limits. A game's Review shows what that game has cost."],
+    ["Your notes", "When you correct an agent, turn down something it made or point it at a better way, it saves a short note of what you want instead, and later agents look there before they start. Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Notes for everything stay on this computer; a game's notes live in its folder and travel with it. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
 const CONTROLS = [
@@ -1040,11 +1043,11 @@ const CONTROLS = [
   ["Chat, Review, Promos", "A game's three tabs. Chat is where you talk to the game's agent. Review is what is happening and what needs you. Promos makes promo videos from your clips and keeps them."],
   ["The chat's name", "Press it for the game's other chats, New chat, Rename, and closing a chat. Closing never deletes it: it stays under Earlier there. Deleting is only in Setup, under Saved chats, and can be undone."],
   ["The game's name (top left of the tab)", "Press it for the game's folder, notes and git history."],
-  ["Claude / Gemini / Cursor (under the message box)", "Which AI this chat uses. You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message."],
+  ["Claude / Gemini / Cursor / OpenCode (under the message box)", "Which AI this chat uses. You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message."],
   ["Experts in a chat", "When the agent starts helpers or a studio run's experts, each shows as one line where it was started: its name, its job and whether it is working. Open it to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
-  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Each one runs on the Lead's AI and model until you do, and your choice always wins over the Lead's. The Lead may ask for another AI now and then too. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
+  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Each one runs on the Lead's AI and model until you do, and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
   ["The dots (bottom left)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
-  ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor model carries its own effort in its name), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
+  ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor or OpenCode model carries its own, so none is set for those), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
@@ -1707,7 +1710,9 @@ function paintLimits() {
   const all = (status && status.limits && status.limits.claude) || {};
   const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
   const keys = Object.keys(all).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
-  if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div><h5>Plan usage limits \u00b7 Gemini</h5><div class="u-row"><small>Gemini\u2019s tool does not report its limits, so they cannot be shown here.</small></div><h5>Plan usage limits \u00b7 Cursor</h5><div class="u-row"><small>Cursor\u2019s tool does not report its limits, so they cannot be shown here.</small></div>'; return; }
+  /* the other AIs' tools do not report their limits: one line each, for the AIs this computer offers */
+  const others = AIS.filter(([id]) => id !== "claude" && id !== "chatgpt").map(([id, name]) => "<h5>Plan usage limits \u00b7 " + esc(name) + '</h5><div class="u-row"><small>' + esc(name) + "\u2019s tool does not report its limits, so they cannot be shown here.</small></div>").join("");
+  if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div>' + others; return; }
   const seen = Math.max(...keys.map((k) => all[k].seen || 0));
   const mins = Math.max(0, Math.round((Date.now() / 1000 - seen) / 60));
   const when = mins < 2 ? "just now" : mins < 90 ? mins + " min ago" : Math.round(mins / 60) + " h ago";
@@ -1715,7 +1720,7 @@ function paintLimits() {
     const w = all[k], pct = Math.round((w.used || 0) * 100);
     const resets = w.resets ? "Resets " + new Date(w.resets * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
     return '<div class="u-lim' + (pct >= 100 ? " full" : pct >= 80 ? " high" : "") + '"><div class="lim-top"><b>' + esc(limitName(k)) + '</b><span class="n">' + pct + '%</span></div><div class="bar"><i style="width:' + Math.min(100, pct) + '%"></i></div><small>' + esc(resets) + "</small></div>";
-  }).join("") + '<p class="u-note" style="margin-top: 2px">As of Claude\u2019s last turn, ' + esc(when) + '.</p><h5>Plan usage limits \u00b7 Gemini</h5><div class="u-row"><small>Gemini\u2019s tool does not report its limits, so they cannot be shown here.</small></div><h5>Plan usage limits \u00b7 Cursor</h5><div class="u-row"><small>Cursor\u2019s tool does not report its limits, so they cannot be shown here.</small></div>';
+  }).join("") + '<p class="u-note" style="margin-top: 2px">As of Claude\u2019s last turn, ' + esc(when) + '.</p>' + others;
 }
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
@@ -2265,7 +2270,7 @@ const EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh
 const EFFORT_NAMES = { low: "low effort", medium: "medium effort", high: "high effort", xhigh: "extra-high effort", max: "max effort" };
 let chosenModel = {}, chosenEffort = {};
 try { chosenModel = JSON.parse(localStorage.getItem("models") || "{}"); chosenEffort = JSON.parse(localStorage.getItem("efforts") || "{}"); } catch (e) {}
-/* Each AI has its own models: Claude's are fixed, Gemini's, ChatGPT's and Cursor's are whatever their tools list on this computer. */
+/* Each AI has its own models: Claude's are fixed, Gemini's, ChatGPT's, Cursor's and OpenCode's are whatever their tools list on this computer. */
 function modelsFor(ai) {
   if (ai === "claude") return MODELS;
   const listed = (((status.ai || {}).models || {})[ai]) || [];
@@ -2285,7 +2290,8 @@ function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen);
   const modes = [runMode === "studio" || leadsRun(p) ? "Studio" : overNight ? "Overnight" : fullAuto ? "Full auto" : "", selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
-  $("model-name").textContent = [cur ? cur[1] : aiName(ai), ai === "cursor" ? "" : EFFORT_NAMES[effort]].filter(Boolean).concat(modes).join(" \u00b7 ");
+  const ownEffort = ai === "cursor" || ai === "opencode";
+  $("model-name").textContent = [cur ? cur[1] : aiName(ai), ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).concat(modes).join(" \u00b7 ");
   paintGap(ai, p);
   /* a long list (Cursor offers hundreds) scrolls in a box of its own, with a filter, so the modes below stay in view */
   const box0 = $("model-menu"), keep = box0.querySelector(".mlist"), top = keep ? keep.scrollTop : 0;
@@ -2303,7 +2309,14 @@ function paintModel() {
   const shown = list.filter(([id, name]) => words.every((w) => (id + " " + name).toLowerCase().includes(w)));
   const lst = box0.appendChild(el("div", "mlist"));
   if (list.length && !shown.length) lst.appendChild(el("p", "sub", "No model matches.")).style.margin = "0 8px 6px";
+  /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): a heading per provider, the model under it */
+  let group = "";
   shown.forEach(([id, name, note]) => {
+    if (ai === "opencode" && name.includes(" \u00b7 ")) {
+      const [g, rest] = [name.slice(0, name.indexOf(" \u00b7 ")), name.slice(name.indexOf(" \u00b7 ") + 3)];
+      if (g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
+      name = rest;
+    }
     const o = el("button", "opt", '<span class="tick">&bull;</span><span><b>' + esc(name) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
     o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
     o.onclick = () => { chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
@@ -2311,10 +2324,10 @@ function paintModel() {
   });
   lst.scrollTop = top;
   const seg = $("effort"); seg.innerHTML = "";
-  /* a Cursor model carries its effort in its id (Codex 5.3 High...), so there is nothing to set apart */
-  seg.style.display = ai === "cursor" ? "none" : "";
+  /* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */
+  seg.style.display = ownEffort ? "none" : "";
   if (seg.previousElementSibling) seg.previousElementSibling.style.display = seg.style.display;
-  if (ai === "cursor") return;
+  if (ownEffort) return;
   EFFORTS.forEach(([id, name]) => {
     const b = el("button", id === effort ? "on" : "", esc(name));
     b.title = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" }[id];
@@ -2323,8 +2336,8 @@ function paintModel() {
   });
 }
 let modelFilter = "", modelFilterAi = "";
-/* one plain line under the message box when Cursor runs in Full auto or Studio and can do something there that Claude
-   cannot (status.ai.gaps, from the app; none today: its Full auto is sandboxed, so this stays hidden) */
+/* one plain line under the message box when Cursor or OpenCode runs in Full auto or Studio and can do something there
+   that Claude cannot (status.ai.gaps, from the app; none today for either, so this stays hidden) */
 function paintGap(ai, p) {
   const gaps = (((status.ai || {}).gaps || {})[ai]) || {}, mode = runMode === "studio" || leadsRun(p) ? "studio" : fullAuto ? "full" : "";
   const text = (mode && gaps[mode]) || "", g = $("ai-gap");
@@ -3563,7 +3576,7 @@ function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : 
 /* the AI new chats start on (Setup, General) */
 function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) => a[0] === d) ? d : "claude"; }
 function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
-/* Claude, Gemini or Cursor for the chat in front. A chat that has started carries on with the other AI, handed the chat so far. */
+/* Claude, Gemini, Cursor or OpenCode for the chat in front. A chat that has started carries on with the other AI, handed the chat so far. */
 function paintAiPick() {
   const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);
   const wrap = $("ai-pick"); wrap.innerHTML = "";
@@ -3595,8 +3608,33 @@ function paintAi() {
     b.onclick = async () => { await api("/api/ai", { choice: id }); await refresh(); };
     $("ai-default").appendChild(b);
     $("ai-list").appendChild(guideRow([name + " · " + via, have[id] ? "Found on this computer." : "Not found. " + how]));
+    if (id === "opencode" && have[id]) $("ai-list").appendChild(openCodeRow());
   });
   paintAiPick();
+}
+/* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in
+   on its own, once, with OpenCode's device sign-in: a code here, approved on opencode.ai. Free models work without. */
+let ocPoll = 0;
+function openCodeRow() {
+  const oc = (status.ai || {}).opencode || {}, login = oc.login || {}, signed = oc.signed_in || [];
+  const row = el("div", "g-row oc-row");
+  const what = login.state === "waiting"
+    ? (login.code ? "On the page that opens, sign in to your OpenCode account and enter the code " + login.code + "." : "Starting the sign-in...")
+    : signed.length ? "Signed in: " + signed.join(", ") + ". Its models are in the menu under the message box."
+    : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message : ".") + " Try again."
+    : "Not signed in: only OpenCode's free models work. Sign in to use your OpenCode Go or Zen plan. Your own OpenCode setup is never changed.";
+  row.innerHTML = "<b>OpenCode for Fridae</b><small></small><div class=\"act\"></div>";
+  row.querySelector("small").textContent = what;
+  const act = row.querySelector(".act");
+  const button = (label, action) => { const b = el("button", "pill", esc(label)); b.onclick = async () => { await api("/api/opencode", { action }); await refresh(); watchOpenCode(); }; act.appendChild(b); };
+  if (login.state === "waiting") { if (login.url) button("Open the sign-in page", "open"); button("Cancel", "cancel"); }
+  else button(signed.length ? "Sign in again" : "Sign in to OpenCode for Fridae", "login");
+  return row;
+}
+/* while a sign-in waits, Setup follows it */
+function watchOpenCode() {
+  clearTimeout(ocPoll);
+  if ((((status.ai || {}).opencode || {}).login || {}).state === "waiting") ocPoll = setTimeout(async () => { await refresh(); watchOpenCode(); }, 2000);
 }
 /* Programs agents may run. Claude chats run without anyone watching, so a command the user has not allowed is
    refused; the chat then shows what was refused and one button to allow that program from now on. */
@@ -3610,7 +3648,7 @@ function blockedCard(p, commands) {
   const names = commands.map((c) => c.name);
   const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
   card.querySelector("h4").textContent = "The agent was not allowed to run " + names.join(", ");
-  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude and Cursor chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Setup). Gemini chats can only use the building tools.";
+  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude, Cursor and OpenCode chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Setup). Gemini chats can only use the building tools.";
   card.querySelector("pre").textContent = commands.map((c) => c.command).join("\n");
   const [yes, no] = card.querySelectorAll("button");
   yes.textContent = "Allow " + names.join(", ") + " and carry on";
