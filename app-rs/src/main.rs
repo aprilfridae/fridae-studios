@@ -20,6 +20,7 @@ mod media;
 mod notes;
 mod paths;
 mod plugin;
+mod procs;
 mod projects;
 mod promo;
 mod promo_tab;
@@ -140,6 +141,8 @@ fn main() {
         let _ = fs::write(paths::work("version.txt"), VERSION);
         return;
     }
+    // what a crash of the app left running ends now (see procs)
+    thread::spawn(procs::reap_orphans);
     let testing = env::var("RBXKIT_SELFTEST").ok().filter(|v| !v.is_empty());
     agents::new_agent(None);
     agents::keep_awake();
