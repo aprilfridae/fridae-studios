@@ -84,6 +84,35 @@ fn copy_with_retry(from: &Path, to: &Path) -> bool {
     false
 }
 
+/// Folders older versions shipped inside `_internal` that the new version no longer has (the knowledge now lives
+/// in `_internal/vault`). Path logic only: every path is inside `target/_internal`, and a folder the new version
+/// still ships is never listed.
+const STALE: [&str; 3] = ["skills", "guides", "team"];
+
+fn stale_folders(source: &Path, target: &Path, source_has: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    if source == target {
+        return Vec::new();
+    }
+    STALE
+        .iter()
+        .filter(|name| !source_has(&source.join("_internal").join(name)))
+        .map(|name| target.join("_internal").join(name))
+        .collect()
+}
+
+/// Remove the stale folders, only inside the app's own install folder (the one holding the app's program).
+fn remove_stale(source: &Path, target: &Path) {
+    if !target.join(EXE_NAME).is_file() {
+        return;
+    }
+    for dir in stale_folders(source, target, |p| p.is_dir()) {
+        let is_real_dir = fs::symlink_metadata(&dir).map(|m| m.is_dir()).unwrap_or(false);
+        if is_real_dir && dir.starts_with(target) {
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+}
+
 fn install(source: &Path, target: &Path, pid: u32, report: impl Fn(f64, &str)) -> bool {
     report(0.0, "Waiting for Fridae Studios to close");
     wait_for_exit(pid, 60);
@@ -98,6 +127,7 @@ fn install(source: &Path, target: &Path, pid: u32, report: impl Fn(f64, &str)) -
             report((i + 1) as f64 / total as f64, "Installing");
         }
     }
+    remove_stale(source, target);
     ok
 }
 
@@ -206,5 +236,42 @@ fn round_corners(hwnd: isize) {
     let round: u32 = 2;
     unsafe {
         DwmSetWindowAttribute(hwnd, 33, (&raw const round).cast(), 4);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_folders_are_inside_the_install_folder_only() {
+        let (source, target) = (Path::new("/dl/Fridae Studios"), Path::new("/apps/Fridae Studios"));
+        let dirs = stale_folders(source, target, |_| false);
+        assert_eq!(dirs.len(), 3);
+        for (d, name) in dirs.iter().zip(["skills", "guides", "team"]) {
+            assert_eq!(d, &target.join("_internal").join(name));
+            assert!(d.starts_with(target.join("_internal")));
+        }
+        // a folder the new version still ships is kept
+        let keep = stale_folders(source, target, |p| p.ends_with("guides"));
+        assert_eq!(keep, vec![target.join("_internal").join("skills"), target.join("_internal").join("team")]);
+        // never when the download folder is the install folder
+        assert!(stale_folders(target, target, |_| false).is_empty());
+    }
+
+    #[test]
+    fn remove_stale_needs_the_app_in_the_folder() {
+        let root = env::temp_dir().join(format!("fridae splash test é {}", std::process::id()));
+        let (source, target) = (root.join("new"), root.join("old"));
+        fs::create_dir_all(source.join("_internal").join("vault")).unwrap();
+        fs::create_dir_all(target.join("_internal").join("skills").join("a")).unwrap();
+        fs::create_dir_all(target.join("_internal").join("vault")).unwrap();
+        remove_stale(&source, &target);
+        assert!(target.join("_internal").join("skills").exists(), "no app program here: nothing removed");
+        fs::write(target.join(EXE_NAME), b"").unwrap();
+        remove_stale(&source, &target);
+        assert!(!target.join("_internal").join("skills").exists());
+        assert!(target.join("_internal").join("vault").exists());
+        let _ = fs::remove_dir_all(&root);
     }
 }
