@@ -839,7 +839,23 @@ struct TurnEnd {
     result_error: bool,
     /// what that failed result said
     result_text: String,
+    /// that failure was already shown in the chat (a result with only an error kind is left to `after_turn`, which
+    /// has the AI's error output too)
+    result_said: bool,
 }
+
+/// What a refused command becomes in the chat: the blocked card for the programs the user has not allowed, and a
+/// plain line when every program in it is allowed already (it was refused for its form, such as `./git`: allowing
+/// cannot help).
+fn blocked_or_note(commands: Vec<Value>, allowed: &[String]) -> (Vec<Value>, Option<&'static str>) {
+    let all = commands.len();
+    let card: Vec<Value> = commands.into_iter().filter(|c| !c["name"].as_str().is_some_and(|n| allowed.iter().any(|a| a == n))).collect();
+    let note = (card.len() < all).then_some(FORM_REFUSED);
+    (card, note)
+}
+
+/// The line for a command refused although its program is allowed.
+const FORM_REFUSED: &str = "A command was not run although its program is allowed: allowed programs run only when called by their plain name (\"git status\", not \"./git status\" or a path).";
 
 /// A Cursor or OpenCode chat whose saved conversation is gone: forget it, and hand over the chat so far (without the
 /// message being sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
@@ -1887,15 +1903,28 @@ impl Agent {
             let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
             thread::spawn(move || watch_stall(me, tp, last));
         }
+        let pid = child.id();
+        // noted again at the first line, as it is now: a launcher script (cursor-agent's) has replaced itself with the
+        // real program by then, so the command line the ledger matches on is that one
+        let t = match child.stdout.take() {
+            Some(out) => self.consume(out, kind, &last, || crate::procs::record(kind, pid)),
+            None => TurnEnd::default(),
+        };
+        self.finish_turn(child, kind, tp, t, err_reader);
+    }
+
+    /// A command-line AI's output, line by line, through its parser and into the chat (the real transport is the
+    /// child's stdout; the replay tests hand it recorded output instead).
+    fn consume(self: &Arc<Self>, out: impl std::io::Read, kind: &str, last: &Mutex<(std::time::Instant, bool)>, mut on_first: impl FnMut()) -> TurnEnd {
         let mut t = TurnEnd::default();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         let mut first = true;
-        if let Some(out) = child.stdout.take() {
+        // the conversation this turn asked to go on with: an AI that reports another one started afresh
+        let asked = self.st.lock().unwrap().session.clone();
+        {
             for raw in BufReader::new(out).split(b'\n').map_while(Result::ok) {
                 if std::mem::take(&mut first) {
-                    // noted again as it is now: a launcher script (cursor-agent's) has replaced itself with the real
-                    // program by its first line, so the command line the ledger matches on is that one
-                    crate::procs::record(kind, child.id());
+                    on_first();
                 }
                 let Ok(e) = serde_json::from_slice::<Value>(&raw) else { continue };
                 if kind != "claude" {
@@ -1985,20 +2014,43 @@ impl Agent {
                                 blocked.push(json!({"name": name, "command": cmd.chars().take(200).collect::<String>()}));
                             }
                         }
+                        let (blocked, note) = blocked_or_note(blocked, &paths::allowed_commands());
                         if !blocked.is_empty() {
                             self.put("blocked", json!({"commands": blocked}));
                         }
+                        if let Some(n) = note {
+                            self.put("error", json!({"text": n}));
+                        }
                         if !result_ok(&e) {
                             t.result_error = true;
-                            let msg = e["result"].as_str().or(e["subtype"].as_str()).filter(|s| !s.is_empty()).unwrap_or("The agent stopped with an error.");
-                            t.result_text = msg.to_string();
-                            self.put("error", json!({"text": msg}));
+                            // its own words when it has some; a bare error kind ("error_during_execution") waits for
+                            // after_turn, which also has what it wrote to its error output
+                            match e["result"].as_str().filter(|s| !s.trim().is_empty()) {
+                                Some(msg) => {
+                                    t.result_text = msg.to_string();
+                                    t.result_said = true;
+                                    self.put("error", json!({"text": msg}));
+                                }
+                                None => t.result_text = e["subtype"].as_str().unwrap_or("error").to_string(),
+                            }
                         }
                     }
                     _ => {}
                 }
             }
         }
+        let now = self.st.lock().unwrap().session.clone();
+        if let (Some(a), Some(n)) = (&asked, &now) {
+            if a != n {
+                self.put("error", json!({"text": format!("{} could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.", ai_label(kind))}));
+            }
+        }
+        t
+    }
+
+    /// The end of a command-line AI's turn, once its output has ended: its error output, Cursor's helpers, the leader
+    /// reaped and forgotten, then `after_turn`.
+    fn finish_turn(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>, t: TurnEnd, err_reader: thread::JoinHandle<String>) {
         tp.done.store(true, Ordering::SeqCst);
         let err = err_reader.join().unwrap_or_default();
         // Cursor leaves a helper of its own running after the turn (its "worker-server", with a language server), in the
@@ -2064,10 +2116,19 @@ impl Agent {
                     self.put("images", json!({"urls": urls}));
                 }
             }
-            Out::Blocked(commands) => self.put("blocked", json!({"commands": commands})),
+            Out::Blocked(commands) => {
+                let (card, note) = blocked_or_note(commands, &paths::allowed_commands());
+                if !card.is_empty() {
+                    self.put("blocked", json!({"commands": card}));
+                }
+                if let Some(n) = note {
+                    self.put("error", json!({"text": n}));
+                }
+            }
             Out::Error(text) => self.put("error", json!({"text": text})),
             Out::Failed(text) => {
                 t.result_error = true;
+                t.result_said = true;
                 t.result_text = text.clone();
                 self.put("error", json!({"text": text}));
             }
@@ -2091,11 +2152,11 @@ impl Agent {
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
-        let TurnEnd { got_result, result_error, result_text } = t;
+        let TurnEnd { got_result, result_error, result_text, result_said } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         if err == STALLED {
             self.put("error", json!({"text": paths::stall_message()}));
-        } else if !got_result && err.contains("No conversation found") {
+        } else if (!got_result || result_error) && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
             self.put("error", json!({"text": "The memory of this earlier chat is no longer on this computer, so the agent has lost its context. Send your message again and it will carry on from what you tell it."}));
         } else if stopped {
@@ -2108,10 +2169,11 @@ impl Agent {
             _ => None,
         } {
             self.put("error", json!({"text": why}));
-        } else if !got_result && !exit.map(|(ok, _)| ok).unwrap_or(true) {
+        } else if (!got_result && !exit.map(|(ok, _)| ok).unwrap_or(true)) || (result_error && !result_said) {
             let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
             let code = exit.map(|(_, c)| c).unwrap_or(-1);
-            self.put("error", json!({"text": if tail.is_empty() { format!("The agent exited unexpectedly (code {code}).") } else { tail }}));
+            let plain = if result_error { format!("The agent stopped with an error ({result_text}).") } else { format!("The agent exited unexpectedly (code {code}).") };
+            self.put("error", json!({"text": if tail.is_empty() { plain } else { tail }}));
         }
         team::finished(self, stopped);
         research::finished(self);
@@ -2905,6 +2967,11 @@ pub fn connect_other_agents() -> String {
         serde_json::to_string_pretty(&json!({"mcpServers": {"rbxkit": entry}})).unwrap_or_default()
     )
 }
+
+/// Recorded output of each command-line AI replayed through `consume` and `after_turn` (only the transport is faked).
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod replay_tests;
 
 #[cfg(test)]
 mod tests {

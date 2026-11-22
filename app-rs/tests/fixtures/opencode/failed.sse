@@ -1,0 +1,12 @@
+data: {"id":"evt_2038584f3001fDJ8LZHC75BKNh","created":1795355411699,"type":"session.created","location":{"directory":"/scratch/opencode/recws"},"data":{"sessionID":"ses_fixture0035","slug":"sunny-knight","version":"2.3.2","projectID":"106bae1135231618ced5e9b8a203336f7efa8a50","location":{"directory":"/scratch/opencode/recws"},"subpath":"","title":"fixture","permissions":[{"action":"*","resource":"*","effect":"deny"},{"action":"read","resource":"*","effect":"allow"},{"action":"glob","resource":"*","effect":"allow"},{"action":"grep","resource":"*","effect":"allow"},{"action":"list","resource":"*","effect":"allow"},{"action":"edit","resource":"*","effect":"allow"},{"action":"shell","resource":"*","effect":"allow"}],"model":{"id":"glm-5.3","providerID":"opencode-go"}},"durable":{"aggregateID":"ses_fixture0035","seq":0,"version":1}}
+
+data: {"id":"evt_2038584f9001zCUvIuRm2C6jP1","created":1795355411705,"type":"session.inbox.enqueued","location":{"directory":"/scratch/opencode/recws"},"data":{"inboxID":"msg_2038584f80013cH0UPawNKYnVD","sessionID":"ses_fixture0035","item":{"type":"user","payload":{"text":"hello"},"delivery":"steer"}},"durable":{"aggregateID":"ses_fixture0035","seq":1,"version":1}}
+
+data: {"id":"evt_2038584fa001dkhVO2P29CK3Hk","created":1795355411706,"type":"session.execution.started","data":{"sessionID":"ses_fixture0035"},"durable":{"aggregateID":"ses_fixture0035","seq":2,"version":1}}
+
+data: {"id":"evt_2038584ff001GINd0IlUak0Eey","created":1795355411711,"metadata":{"instructions":{"initial":true}},"type":"session.instructions.updated","location":{"directory":"/scratch/opencode/recws"},"data":{"sessionID":"ses_fixture0035","delta":{"core/date":"2aa19af1a815db353db35bcd12c2298a6c79f1aa6ef765da4ea26049dae88040","core/environment":"f10995420adf1db301c6d4dfd088b7a011e58420f888b826422599f3385fdb54"}},"durable":{"aggregateID":"ses_fixture0035","seq":3,"version":2}}
+
+data: {"id":"evt_203858500001pceKP2z0semS5V","created":1795355411712,"type":"session.inbox.delivered","location":{"directory":"/scratch/opencode/recws"},"data":{"sessionID":"ses_fixture0035","inboxID":"msg_2038584f80013cH0UPawNKYnVD"},"durable":{"aggregateID":"ses_fixture0035","seq":4,"version":1}}
+
+data: {"id":"evt_203858505001NFcSV290Y6yAuO","created":1795355411717,"type":"session.execution.failed","data":{"sessionID":"ses_fixture0035","error":{"type":"provider.no-route","message":"Model unavailable: opencode-go/glm-5.3"}},"durable":{"aggregateID":"ses_fixture0035","seq":5,"version":1}}
+

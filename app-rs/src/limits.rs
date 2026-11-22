@@ -48,6 +48,9 @@ pub fn record(event: &Value) {
     }
     let _guard = LOCK.lock().unwrap();
     let all = merged(read(), new, paths::now_secs());
+    if let Some(dir) = file().parent() {
+        let _ = fs::create_dir_all(dir);
+    }
     let _ = fs::write(file(), serde_json::to_vec(&Value::Object(all)).unwrap_or_default());
 }
 

@@ -275,6 +275,18 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     ran on the sign-in, and its process had none of them. On Windows the same variables are removed.
   - The tests check Stop with real shells that start a grandchild, one of them ignoring SIGTERM (killed after the
     wait, and said), and the tree, tail and environment rules.
+- Recorded output (`app-rs/tests/fixtures/<ai>/`): real output of each AI, scrubbed (session ids replaced by
+  `00000000-…`/`ses_fixtureNNNN`, the scratch folder by `/scratch`, the home folder and user name, Claude's thinking
+  signatures, and the user's own hooks, plugins and skills from Claude's `init` line). Replayed in
+  `src/replay_tests.rs` (Claude, Gemini, Cursor: through `Agent::consume`, the same code that reads the child's
+  stdout, then `after_turn` with the recorded stderr and exit code) and `src/opencode_replay.rs` (through `turn_on`
+  against a stand-in HTTP server that answers each call as OpenCode did and streams the recording as `/api/event`).
+  Cases: Claude plain reply with its `rate_limit_event`, a resumed session with two commands, a resume of a
+  conversation that is gone; Gemini plain reply, a resumed turn with a file written and a command refused, a resume
+  of a conversation agy no longer has; Cursor plain reply, a command, a refused `./git`, a resumed chat, signed out;
+  OpenCode plain reply, resumed session, a command, a refused command answered, a failed turn, the free-usage limit.
+  `every_fixture_is_scrubbed` fails if the user's folder, the scratch path or an email shows up. To add one, record
+  with the real tool into a scratch folder and scrub the same way; nothing in them may be typed by hand.
 - The app by hand, in a scratch folder so the real `Documents/Fridae Studios` is never touched. Make
   `<scratch>/kit` with symlinks to this repo's `ui`, `team`, `rbxkit_mcp.py` and `rbx.py` and its own `config.json`
   (`{"chat_ai": "claude", "projects": [{"name": "...", "path": "<scratch game folder>"}]}`; `git init` the game),

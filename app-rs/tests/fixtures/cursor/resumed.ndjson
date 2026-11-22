@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/scratch/c1cur/ws","session_id":"00000000-0000-4000-8000-000000000024","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with just: ok"}]},"session_id":"00000000-0000-4000-8000-000000000024"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"00000000-0000-4000-8000-000000000024","timestamp_ms":1795355338246}
+{"type":"thinking","subtype":"delta","text":" user","session_id":"00000000-0000-4000-8000-000000000024","timestamp_ms":1795355338287}
+{"type":"thinking","subtype":"delta","text":" wants me to reply with just \"ok\".","session_id":"00000000-0000-4000-8000-000000000024","timestamp_ms":1795355338377}
+{"type":"thinking","subtype":"completed","session_id":"00000000-0000-4000-8000-000000000024","timestamp_ms":1795355338377}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"00000000-0000-4000-8000-000000000024"}
+{"type":"result","subtype":"success","duration_ms":1488,"duration_api_ms":1488,"is_error":false,"result":"ok","session_id":"00000000-0000-4000-8000-000000000024","request_id":"00000000-0000-4000-8000-000000000031","usage":{"inputTokens":9489,"outputTokens":12,"cacheReadTokens":3968,"cacheWriteTokens":0,"reasoningTokens":11}}

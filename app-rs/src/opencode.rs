@@ -1039,10 +1039,15 @@ fn fail(err: impl Into<String>) -> Ended {
 }
 
 fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
-    let conn = match ensure() {
-        Ok(c) => c,
-        Err(e) => return fail(e),
-    };
+    match ensure() {
+        Ok(conn) => turn_on(&conn, spec, me, put),
+        Err(e) => fail(e),
+    }
+}
+
+/// One turn on a running server (the real one, or in the replay tests a stand-in that answers with recorded output).
+fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
+    let conn = conn.clone();
     let folders = Folders { location: &spec.location, project: spec.project.as_deref(), kit: &paths::PATHS.kit, reads: vec![paths::work("attachments"), paths::work("chat-images")] };
     let rules = permissions(spec.full, &spec.agent_id, &paths::allowed_commands(), &folders, &protected(&paths::home_dir()));
     let model = spec.model.as_deref().and_then(model_ref);
@@ -1691,6 +1696,11 @@ pub fn login_state() -> Value {
     let l = LOGIN.lock().unwrap();
     json!({"ok": true, "state": l.state, "url": l.url, "code": l.code, "message": l.message})
 }
+
+/// Recorded event streams of real OpenCode turns replayed through `turn_on` against a stand-in server.
+#[cfg(test)]
+#[path = "opencode_replay.rs"]
+mod replay;
 
 #[cfg(test)]
 mod tests {

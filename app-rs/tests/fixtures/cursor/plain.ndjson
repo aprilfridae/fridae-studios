@@ -1,0 +1,8 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/scratch/cur","session_id":"00000000-0000-4000-8000-000000000022","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"say ok"}]},"session_id":"00000000-0000-4000-8000-000000000022"}
+{"type":"thinking","subtype":"delta","text":"The","session_id":"00000000-0000-4000-8000-000000000022","timestamp_ms":1795343462531}
+{"type":"thinking","subtype":"delta","text":" user","session_id":"00000000-0000-4000-8000-000000000022","timestamp_ms":1795343462537}
+{"type":"thinking","subtype":"delta","text":" just wants me to say \"ok\".","session_id":"00000000-0000-4000-8000-000000000022","timestamp_ms":1795343462673}
+{"type":"thinking","subtype":"completed","session_id":"00000000-0000-4000-8000-000000000022","timestamp_ms":1795343462674}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"session_id":"00000000-0000-4000-8000-000000000022"}
+{"type":"result","subtype":"success","duration_ms":1746,"duration_api_ms":1746,"is_error":false,"result":"ok","session_id":"00000000-0000-4000-8000-000000000022","request_id":"00000000-0000-4000-8000-000000000023","usage":{"inputTokens":9172,"outputTokens":14,"cacheReadTokens":3968,"cacheWriteTokens":0,"reasoningTokens":13}}

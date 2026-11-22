@@ -46,6 +46,8 @@
  "WebFetch": "Reading a web page",
  "rbx_research": "Reading Roblox's charts",
  "run_command": "Running a command",
+ "Bash": "Running a command",
+ "PowerShell": "Running a command",
  "view_file": "Reading a file",
  "write_to_file": "Writing a file",
  "replace_file_content": "Editing a file",
