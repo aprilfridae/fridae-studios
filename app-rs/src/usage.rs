@@ -127,21 +127,31 @@ fn file() -> std::path::PathBuf {
     paths::work("usage.jsonl")
 }
 
-/// Add a turn to the log.
-/// With the Claude Code session it belongs to, when there is one.
-pub fn record(ai: &str, chat: &str, turn: &Turn, session: Option<&str>) {
-    if turn.is_empty() {
-        return;
-    }
-    let _guard = LOCK.lock().unwrap();
+/// One line of the log: the turn's counts, when, which AI and chat, the game the chat belongs to (Review adds up a
+/// game's cost from it), and the Claude Code session with its running total when there is one.
+fn line(ai: &str, chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>, t: f64) -> Value {
     let mut line = turn.json();
-    line["t"] = json!(paths::now_secs());
+    line["t"] = json!(t);
     line["ai"] = json!(ai);
     line["chat"] = json!(chat);
+    if let Some(p) = project.filter(|p| !p.is_empty()) {
+        line["project"] = json!(p);
+    }
     if let (Some(s), Some(total)) = (session, turn.session_cost) {
         line["session"] = json!(s);
         line["session_cost"] = json!(total);
     }
+    line
+}
+
+/// Add a turn to the log.
+/// With the Claude Code session it belongs to, when there is one.
+pub fn record(ai: &str, chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>) {
+    if turn.is_empty() {
+        return;
+    }
+    let _guard = LOCK.lock().unwrap();
+    let line = line(ai, chat, project, turn, session, paths::now_secs());
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(file()) {
         let _ = writeln!(f, "{line}");
     }
@@ -197,6 +207,19 @@ mod tests {
         assert!((session_cost_step(&b, 1.0) - 1.0).abs() < 1e-9);
         assert!((session_cost_step(&a, 0.9) - 0.5).abs() < 1e-9);
         assert!((session_cost_step(&b, 1.5) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_line_names_the_game_of_the_chat() {
+        let turn = Turn { input: 10, output: 5, cost: Some(0.25), ..Default::default() };
+        let l = line("claude", "c1-1", Some("/games/Odd One In é"), &turn, None, 100.0);
+        assert_eq!(l["project"], "/games/Odd One In é");
+        assert_eq!((l["chat"].as_str(), l["ai"].as_str(), l["t"].as_f64()), (Some("c1-1"), Some("claude"), Some(100.0)));
+        assert_eq!(l["cost"], 0.25);
+        assert!(l.get("session").is_none(), "no session without a running total");
+        // a chat with no game: no project key at all, so older and newer lines read the same way
+        assert!(line("gemini", "c2", None, &turn, None, 1.0).get("project").is_none());
+        assert!(line("gemini", "c2", Some(""), &turn, None, 1.0).get("project").is_none());
     }
 
     #[test]

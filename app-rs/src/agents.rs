@@ -583,6 +583,9 @@ struct State {
     /// Which AI this chat runs on ("claude", "gemini" or "chatgpt"). Open until the first message; a
     /// conversation then stays with the AI it began on, because its memory lives with that AI.
     ai: Option<String>,
+    /// The chat so far, as text, for the AI a started chat was switched to: it goes with that AI's first message
+    /// (see `switch_ai` and `handover_text`).
+    handover: Option<String>,
     /// Messages the user sent while this chat was working, with their own settings. They go together as the next turn.
     queue: Vec<(String, String, Ask)>,
     /// A helper whose result has been handed back: while it is not working it holds no agent slot (see `holds_slot`).
@@ -672,6 +675,60 @@ pub fn get(id: &str) -> Option<Arc<Agent>> {
 
 fn is_user(e: &Value) -> bool {
     e["kind"] == "user"
+}
+
+/// How much of a chat goes to the AI it is switched to: the newest part, about 6,000 words.
+const HANDOVER_CAP: usize = 24_000;
+
+/// An AI's name as people read it.
+fn ai_label(kind: &str) -> &'static str {
+    match kind {
+        "gemini" => "Gemini",
+        "chatgpt" => "ChatGPT",
+        _ => "Claude",
+    }
+}
+
+/// The chat so far as text, for the AI a started chat is switched to: the user's messages and the agent's replies,
+/// oldest first, without tool steps, pictures or the loop's own carry-on messages. When it is longer than `cap`
+/// characters the oldest messages are left out (and it says so); a single message longer than that keeps its end.
+fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
+    let lines: Vec<String> = log
+        .iter()
+        .filter_map(|e| {
+            let text = e["text"].as_str().map(str::trim).filter(|t| !t.is_empty())?;
+            match e["kind"].as_str() {
+                Some("user") if e["auto"] != true => Some(format!("User: {text}")),
+                Some("text") => Some(format!("Agent: {text}")),
+                _ => None,
+            }
+        })
+        .collect();
+    let mut kept: Vec<String> = Vec::new();
+    let mut size = 0;
+    let mut cut = false;
+    for line in lines.iter().rev() {
+        let n = line.chars().count() + 2;
+        if size + n > cap {
+            cut = true;
+            if kept.is_empty() {
+                // one very long message: its end, which is what was said last
+                let tail: String = line.chars().rev().take(cap).collect::<Vec<_>>().into_iter().rev().collect();
+                kept.push(tail);
+            }
+            break;
+        }
+        size += n;
+        kept.push(line.clone());
+    }
+    kept.reverse();
+    let body = if kept.is_empty() { "(nothing was said yet)".to_string() } else { kept.join("\n\n") };
+    format!(
+        "[This conversation began with {from}; the user switched it to you, so you carry it on. The chat so far, as text \
+         (the user's messages and the agent's replies, without tool steps{}):\n\n{body}\n\nEnd of the chat so far. The \
+         user's new message follows.]\n\n",
+        if cut { "; the oldest messages are left out" } else { "" }
+    )
 }
 
 impl Agent {
@@ -914,6 +971,36 @@ impl Agent {
         self.st.lock().unwrap().ai.clone().unwrap_or_else(paths::default_ai)
     }
 
+    /// Choose this chat's AI from the window. Before the conversation has started this only sets it (`Ok(false)`).
+    /// A started chat carries on with the other AI (`Ok(true)`): a fresh session, handed the chat so far as text with
+    /// its first message (`handover_text`). Refused while the chat works, or for an AI the app does not know.
+    pub fn switch_ai(&self, kind: &str) -> Result<bool, String> {
+        if !paths::AIS.contains(&kind) {
+            return Err("That AI is not one the app knows.".into());
+        }
+        if self.set_ai(kind) {
+            return Ok(false);
+        }
+        let from = {
+            let mut st = self.st.lock().unwrap();
+            if working(&st) || st.making {
+                return Err("Wait until it finishes (or stop it), then switch.".into());
+            }
+            let from = st.ai.clone().unwrap_or_else(paths::default_ai);
+            if from == kind {
+                return Ok(false);
+            }
+            // an earlier handover not yet sent is part of the log it is rebuilt from, so nothing is lost
+            st.handover = Some(handover_text(&st.log, ai_label(&from), HANDOVER_CAP));
+            st.session = None;
+            st.ai = Some(kind.to_string());
+            from
+        };
+        self.put("ai", json!({"ai": kind, "from": from}));
+        self.save();
+        Ok(true)
+    }
+
     /// Choose this chat's AI. Only possible before its conversation has started.
     pub fn set_ai(&self, kind: &str) -> bool {
         {
@@ -965,7 +1052,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -1118,7 +1205,7 @@ impl Agent {
         if turn.is_empty() {
             return;
         }
-        usage::record(&self.ai(), &self.id, turn, session);
+        usage::record(&self.ai(), &self.id, self.project().as_deref(), turn, session);
         self.put("usage", turn.json());
     }
 
@@ -1356,6 +1443,11 @@ impl Agent {
             self.st.lock().unwrap().ai = Some(kind.clone());
             self.put("ai", json!({"ai": kind}));
         }
+        // the AI was switched in a started chat: the new one gets the chat so far with its first message
+        let handed = self.st.lock().unwrap().handover.take();
+        if let Some(chat) = &handed {
+            text = chat.clone() + &text;
+        }
         // what the two switches under the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
         let mut prompt = SYSTEM_PROMPT.to_string() + &switches;
@@ -1436,6 +1528,7 @@ impl Agent {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
+                self.st.lock().unwrap().handover = handed; // the chat so far goes with the next try
                 self.put("error", json!({"text": format!("Could not start the agent: {e}")}));
                 self.put("done", json!({}));
                 team::release(self);
@@ -1892,11 +1985,16 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
         all.push(agent.clone());
         agent
     };
-    let mut event = json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent});
+    let mut event = json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent, "team": team_id});
     if let Some(x) = &expert {
         event["expert"] = json!(x.name);
+        event["expert_id"] = json!(x.id);
     }
     BUS.put("agent_new", event);
+    // the chat that started it notes where, so the window shows the expert at that point of its conversation
+    if let Some(lead) = parent.and_then(get) {
+        lead.put("helper_started", json!({"helper": agent.id, "name": agent.name(), "expert": expert.as_ref().map(|x| x.name.clone())}));
+    }
     if let Some(p) = agent.project() {
         agent.put("project", projects::describe(&p));
     }
@@ -1998,11 +2096,30 @@ fn saved_in(dir: &std::path::Path, open: &[String]) -> Vec<Value> {
             "updated": d["updated"].as_f64().unwrap_or(0.0),
             "messages": d["events"].as_array().map(|e| e.iter().filter(|e| is_user(e)).count()).unwrap_or(0),
             "ai": d["ai"].as_str().unwrap_or("claude"),
+            // the window lists a game's earlier chats under the game, and never an expert's
+            "project": d["project"], "role": d["role"], "parent": d["parent"],
         }));
     }
     out.sort_by(|a, b| b["updated"].as_f64().partial_cmp(&a["updated"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));
     out.truncate(200);
     out
+}
+
+/// The `agent_new` event for a reopened chat: its name and AI, and for a helper its role, the chat that started it,
+/// its request and its expert, so the window can fold it under that chat as it did before the restart.
+fn restored_event(id: &str, name: &str, d: &Value) -> Value {
+    let mut e = json!({"agent": id, "name": name, "restored": true, "ai": d["ai"].as_str().unwrap_or("claude")});
+    for key in ["role", "parent", "team"] {
+        if let Some(v) = d[key].as_str().filter(|v| !v.is_empty()) {
+            e[key] = json!(v);
+        }
+    }
+    if let Some(x) = d["expert"].as_str().filter(|v| !v.is_empty()) {
+        e["expert_id"] = json!(x);
+        // an expert's chat is titled "<expert>: <job>" (team.rs), so its name is the part before the colon
+        e["expert"] = json!(name.split(':').next().unwrap_or(name).trim());
+    }
+    e
 }
 
 /// Reopen a saved chat: its messages come back, and the agent picks up where it left off.
@@ -2026,7 +2143,8 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         }
         all.push(agent.clone());
     }
-    BUS.put("agent_new", json!({"agent": agent.id, "name": agent.name(), "restored": true, "ai": d["ai"].as_str().unwrap_or("claude")}));
+    // with who started it, so the window folds an expert's chat under its Lead's
+    BUS.put("agent_new", restored_event(&agent.id, &agent.name(), &d));
     let events = d["events"].as_array().cloned().unwrap_or_default();
     for e in &events {
         let Some(kind) = e["kind"].as_str() else { continue };
@@ -2048,6 +2166,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.parent = d["parent"].as_str().map(str::to_string);
         // chats saved before there was a choice were all Claude's
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
+        st.handover = d["handover"].as_str().map(str::to_string);
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
     }
     if !settled {
@@ -2339,6 +2458,87 @@ mod tests {
         fs::write(experts.join("lead.md"), "  This game's Lead: zebra rules.\n").unwrap();
         assert_eq!(studio_lead_text_in(kit, Some(project)), "\n\nThis game's Lead: zebra rules.");
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn handover_is_the_users_and_agents_words_only() {
+        let log = vec![
+            json!({"kind": "user", "text": "Make a café sign"}),
+            json!({"kind": "tool", "label": "Modelling in Blender"}),
+            json!({"kind": "images", "urls": ["/img/a.png"]}),
+            json!({"kind": "text", "text": "Done: the sign is by the spawn.\nSTATUS: DONE"}),
+            json!({"kind": "user", "text": "Carry on.", "auto": true}),
+            json!({"kind": "error", "text": "Stopped."}),
+            json!({"kind": "user", "text": "  "}),
+            json!({"kind": "user", "text": "Make it bigger"}),
+        ];
+        let h = handover_text(&log, "Claude", HANDOVER_CAP);
+        assert!(h.starts_with("[This conversation began with Claude;"));
+        assert!(h.contains("User: Make a café sign\n\nAgent: Done: the sign is by the spawn.\nSTATUS: DONE\n\nUser: Make it bigger"));
+        assert!(!h.contains("Blender") && !h.contains("Carry on") && !h.contains("Stopped") && !h.contains("/img/"));
+        assert!(!h.contains("left out"), "nothing was cut");
+        assert!(h.ends_with("follows.]\n\n"), "the user's new message goes right after it");
+        assert!(handover_text(&[], "Gemini", 100).contains("(nothing was said yet)"));
+    }
+
+    #[test]
+    fn handover_keeps_the_newest_messages_under_the_cap() {
+        let log: Vec<Value> = (0..50).map(|n| json!({"kind": if n % 2 == 0 { "user" } else { "text" }, "text": format!("message {n} {}", "x".repeat(80))})).collect();
+        let h = handover_text(&log, "Claude", 1_000);
+        assert!(h.contains("message 49") && !h.contains("message 0 "), "the newest stay, the oldest go");
+        assert!(h.contains("the oldest messages are left out"));
+        let body = h.split("\n\n").filter(|l| l.starts_with("User:") || l.starts_with("Agent:")).map(|l| l.chars().count() + 2).sum::<usize>();
+        assert!(body <= 1_000, "kept {body} characters");
+        // one message longer than the cap keeps its end, where it finished
+        let long = vec![json!({"kind": "user", "text": format!("start {} the end", "y".repeat(5_000))})];
+        let h = handover_text(&long, "Claude", 300);
+        assert!(h.contains("the end") && !h.contains("start "));
+    }
+
+    #[test]
+    fn switching_a_started_chat_hands_the_chat_over() {
+        let a = Agent::detached_for_test("switch-test", None);
+        // before anything is said: only the chat's AI is set, nothing is handed over
+        assert_eq!(a.switch_ai("gemini"), Ok(false));
+        assert_eq!(a.ai(), "gemini");
+        assert!(a.st.lock().unwrap().handover.is_none());
+        assert!(a.switch_ai("nobody").is_err());
+        {
+            let mut st = a.st.lock().unwrap();
+            st.log.push(json!({"kind": "user", "text": "Build an obby"}));
+            st.log.push(json!({"kind": "text", "text": "Three checkpoints are in."}));
+            st.session = Some("old-session".into());
+        }
+        // working: refused, and nothing changes
+        a.set_running_for_test(true);
+        assert!(a.switch_ai("claude").is_err());
+        assert_eq!(a.ai(), "gemini");
+        a.set_running_for_test(false);
+        assert_eq!(a.switch_ai("claude"), Ok(true));
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!(st.ai.as_deref(), Some("claude"));
+            assert!(st.session.is_none(), "the other AI starts a fresh session");
+            let h = st.handover.as_deref().unwrap();
+            assert!(h.contains("began with Gemini") && h.contains("User: Build an obby") && h.contains("Agent: Three checkpoints are in."));
+        }
+        // the switch is in the chat's log, so the window says so after a restart too
+        assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "ai" && e["from"] == "gemini" && e["ai"] == "claude"));
+        // switching to the AI it is already on changes nothing
+        assert_eq!(a.switch_ai("claude"), Ok(false));
+    }
+
+    #[test]
+    fn a_reopened_expert_says_who_started_it() {
+        let d = json!({"ai": "gemini", "role": "worker", "parent": "c1-lead", "team": "w123abc", "expert": "ui", "project": "/g"});
+        let e = restored_event("c9-1", "UI builder: Shop menu", &d);
+        assert_eq!((e["role"].as_str(), e["parent"].as_str(), e["team"].as_str()), (Some("worker"), Some("c1-lead"), Some("w123abc")));
+        assert_eq!((e["expert"].as_str(), e["expert_id"].as_str(), e["ai"].as_str()), (Some("UI builder"), Some("ui"), Some("gemini")));
+        assert_eq!(e["restored"], true);
+        // the user's own chat: no helper fields at all, and an old chat with no AI is Claude's
+        let own = restored_event("c1", "My chat", &json!({"role": null, "parent": null}));
+        assert!(own.get("role").is_none() && own.get("parent").is_none() && own.get("expert").is_none());
+        assert_eq!(own["ai"], "claude");
     }
 
     #[test]

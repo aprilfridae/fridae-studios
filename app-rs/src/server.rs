@@ -287,19 +287,23 @@ fn post(path: &str, body: Value) -> Reply {
             _ => send_json(json!({"ok": false})),
         },
         "/api/ai" => {
-            // with a chat named: that chat's AI (only before it has started); without: the one new chats start on
+            // with a chat named: that chat's AI (a started chat carries on with the other AI, handed the chat so far);
+            // without: the one new chats start on
             let choice = text_of("choice");
-            let ok = paths::AIS.contains(&choice.as_str())
-                && match &target {
-                    Some(agent) => agent.set_ai(&choice),
-                    None => {
-                        let mut cfg = paths::load_config();
-                        cfg.insert("chat_ai".into(), json!(choice));
-                        paths::save_config(&cfg);
-                        true
-                    }
-                };
-            send_json(json!({"ok": ok}))
+            match &target {
+                Some(agent) => match agent.switch_ai(&choice) {
+                    Ok(switched) => send_json(json!({"ok": true, "switched": switched})),
+                    Err(e) => send_json(json!({"ok": false, "error": e})),
+                },
+                None if !text_of("agent").is_empty() => send_json(json!({"ok": false, "error": "That chat is gone."})),
+                None if paths::AIS.contains(&choice.as_str()) => {
+                    let mut cfg = paths::load_config();
+                    cfg.insert("chat_ai".into(), json!(choice));
+                    paths::save_config(&cfg);
+                    send_json(json!({"ok": true}))
+                }
+                None => send_json(json!({"ok": false})),
+            }
         }
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
         "/api/unqueue" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.unqueue(&text_of("qid")))})),
