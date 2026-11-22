@@ -127,7 +127,9 @@ fn install(source: &Path, target: &Path, pid: u32, report: impl Fn(f64, &str)) -
             report((i + 1) as f64 / total as f64, "Installing");
         }
     }
-    remove_stale(source, target);
+    if ok {
+        remove_stale(source, target); // only once the new version is fully in place
+    }
     ok
 }
 
