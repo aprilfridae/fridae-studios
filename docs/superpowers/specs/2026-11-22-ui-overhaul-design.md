@@ -41,6 +41,7 @@ The window grew one tab per feature (Chats, Board, Review, Promos, Research, Ove
 └────────────────┴──────────────────────────────────────────────┘
 ```
 
+- **All projects** is the first row of the sidebar (added by the user on 2026-11-22): one page covering every game being worked on. Per game, one card: name, run state in words, the stage strip, who is working on what right now, how many things need the user (with the first one named), and cost so far. A card opens that game's Review. Games with nothing going sit below in a short quiet list. The page's main visual is the live graph from the old Overview tab (the user's Obsidian-style graph), kept as they made it: projects, their chats, and experts under their Lead.
 - A project row shows the game's name and one state mark: working, needs you (with a count), or idle.
 - Chats that have no project (older ones, or a new chat before its folder exists) sit under one "No project" row, shown only when such chats exist.
 - Settings, help, the update button and Studio's connection state keep a place in the sidebar's foot or the header.
