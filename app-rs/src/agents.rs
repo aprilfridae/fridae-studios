@@ -1742,6 +1742,7 @@ impl Agent {
                             }
                         }
                     }
+                    "rate_limit_event" => crate::limits::record(&e),
                     "result" => {
                         got_result = true;
                         self.used_in(&usage::Turn::from_claude_session(&e), e["session_id"].as_str());

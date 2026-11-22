@@ -13,6 +13,7 @@ mod attach;
 mod board;
 mod codex;
 mod fridae_lock;
+mod limits;
 mod media;
 mod notes;
 mod paths;

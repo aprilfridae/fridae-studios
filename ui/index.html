@@ -135,6 +135,15 @@ div.g-row { cursor: default; }
 .u-week i { display: block; width: 100%; max-width: 22px; border-radius: 2px; background: var(--dim); }
 .u-week span:last-child i { background: var(--text); }
 .u-week em { font: normal 11px/1 var(--mono); color: var(--faint); }
+.u-lim { padding: 8px; font-size: 14px; }
+.u-lim .top { display: flex; align-items: baseline; gap: 8px; }
+.u-lim .top b { font-weight: 500; flex: 1; min-width: 0; }
+.u-lim .top small { color: var(--dim); font-size: 12px; }
+.u-lim .top .n { font-family: var(--mono); font-size: 12px; min-width: 32px; text-align: right; }
+.u-lim .bar { height: 4px; margin-top: 6px; border-radius: 2px; background: var(--press); overflow: hidden; }
+.u-lim .bar i { display: block; height: 100%; border-radius: 2px; background: var(--text); }
+.u-lim.high .bar i { background: #e5a23c; }
+.u-lim.full .bar i { background: #e5604c; }
 .u-note { margin: 4px 8px 6px; color: var(--faint); font-size: 12px; line-height: 1.45; }
 .nightbtn { height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12px; color: var(--dim); white-space: nowrap; }
 .nightbtn:hover { color: var(--text); background: var(--hover); }
@@ -670,7 +679,7 @@ body.proj #pd, body.guide #gd { transform: none; }
         <button class="icon" id="b-setup" aria-label="Setup" title="Setup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
       </div>
     </div>
-    <div class="pop" id="use-pop"><h5>Used today</h5><div id="use-rows"></div><h5>This week, by AI</h5><div id="use-week"></div><p class="u-note">New tokens (read, written and cache-stored), counted from what each AI reports after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules, so this is a guide to how hard it is working, not a bill.</p></div>
+    <div class="pop" id="use-pop"><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><h5>This week, by AI</h5><div id="use-week"></div><p class="u-note">New tokens (read, written and cache-stored), counted from what each AI reports after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules, so this is a guide to how hard it is working, not a bill.</p></div>
     <div class="pop" id="conn-pop"><h5>Connections</h5><div id="needs"></div><div class="act"><button class="pill" id="conn-setup">Open Setup</button></div></div>
   </aside>
 
@@ -1002,7 +1011,7 @@ const GUIDE = [
     ["Undo a turn", "When a turn ends, the link under it takes back what was changed in Studio, scripts included. Needs the Studio plugin (Setup)."],
     ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for today and for this week, each split by AI (Claude and Gemini). A game's Review shows what that game has cost."],
+    ["Usage", "The count at the bottom left is today's tokens across every chat. Click it for your Claude plan limits (as of its last turn), today, and this week split by AI. Gemini does not report its limits. A game's Review shows what that game has cost."],
     ["Your notes", "When you correct an agent, turn down something it made or point it at a better way, it saves a short note of what you want instead, and later agents look there before they start. Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude chats from their next turn; Gemini chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Notes for everything stay on this computer; a game's notes live in its folder and travel with it. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
@@ -1647,6 +1656,7 @@ async function paintUsage() {
   $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
     '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(s.total - s.cached) + "</span><small>" + s.turns + (s.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " \u00b7 about $" + s.cost.toFixed(2) + " at API prices" : "") + "</small></div>").join("")
     : '<div class="u-row"><small>Nothing yet today.</small></div>';
+  paintLimits();
   /* the last seven days, one block per AI: the week's total, then a bar a day */
   const bars = (list) => {
     const days = [];
@@ -1660,6 +1670,29 @@ async function paintUsage() {
       ? w.turns + (w.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(w.input) + " in, " + fmtTokens(w.output) + " out" + (w.cost ? " \u00b7 about $" + w.cost.toFixed(2) + " at API prices" : "")
       : "Not used this week.") + "</small></div>"
     + (w.turns ? '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>" : "")).join("");
+}
+/* The plan's own limits, as Claude Code reported them after its last turn (the app asks no server for them). */
+function limitName(key) {
+  if (key === "five_hour") return "5-hour";
+  if (key === "seven_day") return "Weekly \u00b7 all models";
+  const m = key.match(/^seven_day_(.+)$/);
+  const words = (m ? m[1] : key).split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return m ? "Weekly \u00b7 " + words : words;
+}
+function paintLimits() {
+  const box = $("use-limits"); if (!box) return;
+  const all = (status && status.limits && status.limits.claude) || {};
+  const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
+  const keys = Object.keys(all).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+  if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div><h5>Plan usage limits \u00b7 Gemini</h5><div class="u-row"><small>Gemini\u2019s tool does not report its limits, so they cannot be shown here.</small></div>'; return; }
+  const seen = Math.max(...keys.map((k) => all[k].seen || 0));
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - seen) / 60));
+  const when = mins < 2 ? "just now" : mins < 90 ? mins + " min ago" : Math.round(mins / 60) + " h ago";
+  box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5>' + keys.map((k) => {
+    const w = all[k], pct = Math.round((w.used || 0) * 100);
+    const resets = w.resets ? "Resets " + new Date(w.resets * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
+    return '<div class="u-lim' + (pct >= 100 ? " full" : pct >= 80 ? " high" : "") + '"><div class="top"><b>' + esc(limitName(k)) + "</b><small>" + esc(resets) + '</small><span class="n">' + pct + '%</span></div><div class="bar"><i style="width:' + Math.min(100, pct) + '%"></i></div></div>';
+  }).join("") + '<p class="u-note" style="margin-top: 2px">As of Claude\u2019s last turn, ' + esc(when) + '.</p><h5>Plan usage limits \u00b7 Gemini</h5><div class="u-row"><small>Gemini\u2019s tool does not report its limits, so they cannot be shown here.</small></div>';
 }
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
@@ -3555,7 +3588,7 @@ function paintPlugin(note) {
 }
 $("plug-install").onclick = async () => { const r = await api("/api/plugin", { action: "install" }); await refresh(); if (!r.ok) paintPlugin(r.error || "Could not install the plugin."); };
 $("plug-remove").onclick = async () => { await api("/api/plugin", { action: "remove" }); await refresh(); paintPlugin("Removed. Studio stops using it the next time it starts."); };
-async function refresh() { try { status = await api("/api/status"); paintModel();
+async function refresh() { try { status = await api("/api/status"); paintModel(); paintLimits();
   paintNeeds(); paintSide(); paintGemini(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
