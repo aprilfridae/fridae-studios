@@ -4,6 +4,9 @@ Branch `feature/knowledge-lookup` (from `feature/studio-mode`). Not pushed.
 
 ## What was built
 
+(Paths in this section are as they were in the first round. The second round moved everything into `vault/`;
+see "One real vault" below.)
+
 - **`rbxvault.py`**: the LihFolk vault engine is unchanged (note-level BM25F, symptom lines, its own cache).
   Added around it: section-level search over three more shelves. `guides` covers every Markdown guide in
   `rbxkit_mcp.GUIDES` plus each guide folder's `references/*.md` (100 files). `team` covers `team/experts/*.md`,
@@ -106,26 +109,72 @@ fold (`price`/`prices` and `upgrade`/`upgrades`; the vault stemmer leaves those 
 
 ## The direction change: "one vault" and "trim the fat"
 
-**A. One real vault: not done, stopped as instructed.** `install.py` (`install_claude`) copies every `skills/<name>/`
-folder into `~/.claude/skills/<name>/`. DEVELOPING.md says "Claude Code users also get the guides as skills". So
-Claude Code consumes the guides in their current `skills/<name>/SKILL.md` shape. Moving them to
-`vault/Fridae/Guides/<Guide name>.md` would break that install path. The brief says to stop and report in that case,
-so nothing was moved.
+**A. One real vault: done (second round, option 1).** At first this stopped: `install.py` copied every `skills/<name>/`
+folder into `~/.claude/skills/<name>/`, so Claude Code depended on that layout. The coordinator chose option 1: move
+everything and have `install.py` build the skill folders from the vault.
 
-There are three ways forward, for the user to choose:
+The layout chosen is **one folder per guide**, with the guide itself named after the folder:
 
-1. Move everything to `vault/` and change `install.py` to build each `~/.claude/skills/<name>/SKILL.md` from the
-   vault file (plus a `references/` folder). This is the most seamless, but the installer then generates skills
-   rather than copying them.
-2. Move only what nothing outside the app reads: `guides/lihfolk-vault` to `vault/Roblox`, `guides/lihfolk` and
-   `guides/roblox-skills` to `vault/Fridae/Guides`, and `team/experts` to `vault/Fridae/Team`. `skills/` would stay
-   where it is.
-3. Leave the files where they are. The search already presents them as one vault with four shelves.
+```
+vault/
+  Start Here.md                      the front page for a person (what is where, licences)
+  Roblox/                            LihFolk Vault V2 notes (was guides/lihfolk-vault), numbered folders kept
+  Fridae/Guides/Core/<guide>/<guide>.md          was skills/<folder>/SKILL.md (+ that folder's other files)
+  Fridae/Guides/Roblox subjects/<g>/<g>.md       was guides/roblox-skills/<g>/SKILL.md
+  Fridae/Guides/LihFolk/<g>/<g>.md               was guides/lihfolk/<g>/SKILL.md (+ Luau modules, scripts, rubrics)
+  Fridae/Team/<id>.md, roster.json               was team/experts/*.md and team/roster.json
+```
 
-The search code already takes its roots from a few constants (`KB`, `GUIDES` paths, `kit_team_dir()`), so any of
-these is a contained change.
+Why this layout:
 
-**B. Trim the Roblox vault: done, conservatively.** Inventory from `tests/vault_inventory.py`, before the trim:
+- Each guide's own relative links (`references/x.md`, `src/...`) keep working unchanged, in Obsidian and in Claude
+  Code.
+- `_reference` stays "the guide's folder + `references/`".
+- `install.py` only has to rename `<guide>.md` back to `SKILL.md`.
+- The groups keep each source's licence boundary visible.
+
+The front page is `Start Here.md`, not `00 Start Here.md`, because LihFolk's own `Roblox/00 Start Here.md` would
+otherwise share its name, and Obsidian resolves `[[00 Start Here]]` by name. Guide names are unchanged. The `tester`
+guide stays in `agents/`, which `install.py` also copies to `~/.claude/agents`.
+
+All 1,602 files were moved with `git mv`. Every consumer was updated in the same commit:
+
+- Python: `rbxkit_mcp.GUIDES` paths, registration from the two subject groups, the LihFolk credit check.
+- `rbxvault.py`: `KB`, `TEAM`.
+- `rbxroster.kit_dir()`: experts are now `<kit team>/<id>.md`. Project overrides are unchanged.
+- Rust: the new `paths::kit_team()`, used for `lead.md` and the roster names.
+- `rbxkit.spec` datas: `vault` replaces `skills`, `guides` and `team`.
+- `tests/test_roster.py`, README, DEVELOPING, THIRD_PARTY and `rbxpaths`.
+
+**`install.py`**: `claude_skills()` maps each `vault/Fridae/Guides/Core/<guide>/` folder to a skill folder.
+`CLAUDE_SKILL_NAMES` holds the six whose skill name differs from the guide name, for example `workflow` becomes
+`roblox-studio-workflow`. `<guide>.md` becomes `SKILL.md`, every other file keeps its relative path, and
+`build_claude_skills()` writes them with the install placeholders filled, as before. `tests/claude_skills_baseline.json`
+was captured from `skills/` before the move: 24 folders, 50 files, each file's front matter and SHA-1.
+`tests/test_install_skills.py` builds into a temp folder and checks folder names, file lists, byte-identical sources
+and front matter. `install_claude` is tested with a temporary HOME. No other external consumer of `skills/<name>/` was
+found. The `rbx doctor` check looks at `~/.claude/skills/<name>/SKILL.md`, whose layout is unchanged.
+
+**Link check** (`tests/vault_links.py`, Obsidian-style resolution by file name, plus relative Markdown links):
+
+| | Markdown files | Wikilinks (broken) | Relative links (broken) |
+|---|---:|---:|---:|
+| Before the move (old folders checked as one vault) | 1,453 | 38,484 (40) | 54 (12) |
+| After the move | 1,454 | 38,485 (40) | 54 (11) |
+| After the second trim | 1,441 | 38,028 (30) | 44 (1) |
+
+None of the remaining broken links come from the move:
+
+- The 30 wikilinks are embeds of upstream images that were never bundled (rig sheets, renders).
+- The 1 relative link points at upstream's `AGENTS.md`.
+- One relative link was fixed: `LihFolk Systems Library` now points at the vault's `lihfolk-systems` guide.
+
+Ten note names now occur twice or three times in the vault (`ui`, `vfx`, `promo`, `world`, `effects`, `animation`,
+`model`, `system`, `checklist`, `LICENSE`). These are team notes, guides and quality-score rubrics sharing a name.
+Only three wikilinks touch them (`[[Animation]]`, `[[Model]]`, meant for the atlas notes), and Obsidian may pick the
+other file for those.
+
+**B. Trim the Roblox vault: done in two passes.** Inventory from `tests/vault_inventory.py`, before the trim:
 
 - 1,327 Markdown files (1,321 indexed), 21.6 MB.
 - Largest folders: `18 Rigs and Skeletons` 4.2 MB (9 rigs as .fbx, .glb and .blend), `08 Animation` 2.0 MB (130
@@ -147,6 +196,19 @@ Removed: 4 hand-made or generated index/router/home pages (`INDEX.md` 341 KB, `I
 are identical: the baseline test passes, and the indexed set did not change. The bench's top-5 hits are the same.
 Everything removed is in git history (commit "vault: trim ...").
 
+Second pass (the coordinator's call): removed the LihFolk plugin's 10 `Skill - …` notes and their hub `AI Skills Start
+Here`. The hub was not on the coordinator's list, but its whole content describes those plugin skills. Also removed
+`Open Questions - Whole Vault` and the Concept Sheets note. That is 13 notes. 102 wikilinks to them, in 81 notes,
+became plain text, and `00 Start Here` no longer lists them. Plain-text mentions in auto-generated atlas lines remain
+and are harmless.
+
+After both passes: 1,310 Markdown files (1,308 indexed), down from 1,327 (1,321), and 20.9 MB, down from 21.6 MB.
+The bench tasks' vault top fives are unchanged. One baseline query ("datastore session lock") changed its 5th result,
+from "AI Pitfalls - Data and Monetization" to "Data Loss Prevention and Recovery", because term statistics shifted;
+the fixture was updated. Kept as instructed: the rig files, the atlas notes, the animation notes, Core Concepts and
+the Resource Library. `api` reads `_tools/roblox_api.json` and `api_overrides.json`, not the atlas notes, but the
+atlas is kept anyway.
+
 Kept on purpose: `SYMPTOMS.md` (searched), `LICENSE.md`, `_tools/*.json` (used by `api`), `_data/` (cited by notes),
 the rigs and Blender scripts (the Skeleton Library and build notes use them), and `00 Start Here` (the doorway for a
 person opening the folder in Obsidian).
@@ -160,29 +222,35 @@ Candidates the user could cut (left in):
 | `08 Animation` notes never in a top 10 (92 of 130) | ~1.4 MB | Low reach, but real material |
 | `52 Core Concepts` (38 short notes, 36 never in a top 10) | 168 KB | Glossary-style, damped in ranking |
 | `46 Resource Library` (18 link-list notes, none in a top 10) | 80 KB | Link lists |
-| `Skill - …` notes (10) and `AI Skills Start Here` | ~38 KB | Instructions for the LihFolk Claude Code plugin |
-| `Open Questions - Whole Vault.md` | 27 KB | Upstream's open questions |
-| `19 Concept Sheets/Concept Sheets.md` | 1 KB | Its images were already left out, so most embeds are broken |
 | Folder "Start Here" hubs | ~5-9 KB each | Navigation; damped in ranking |
 
 ## Tests run
 
-- `.venv/bin/python -m unittest discover tests`: 269 tests OK after the lookup commits (220 s), and 269 OK again after
-  the trim (223 s).
+- `.venv/bin/python -m unittest discover tests`: 269 OK after the first round, and 275 OK at the end (222 s). The
+  final run includes `test_install_skills` (3), the interleave tests (2) and the frozen-app test (1).
 - `cargo test --manifest-path app-rs/Cargo.toml`: 124 passed.
 - `cargo build`: clean apart from the existing `is_gemini` unused warning, which is also on the base commit. No new
   warnings.
-- `tests/knowledge_bench.py`: the table above.
+- `tests/knowledge_bench.py`: the table above. The final run matches it (the "old" column is 39 characters larger,
+  from the longer LihFolk folder paths in guide footers). `tests/vault_links.py`: the link table above.
 
 ## Concerns and what was not verified
 
 - No live agent run was made, so whether agents follow the new routing (search, then read sections) instead of
   loading guides whole is untested. The bench measures what a compliant agent would take in.
-- Mixing shelves in `all` merges by query coverage times the score relative to each shelf's best. That is a
-  heuristic, and vault notes often take the top of an `all` search. The routing points agents at shelf `guides` for
-  guide material.
+- Mixing shelves in `all` merges by query coverage times the score relative to each shelf's best. Since the second
+  round, `interleave()` puts the best hit of each shelf scoring at least 0.2 first, then the rest by score. Team
+  expert notes now show up for task-like queries ("review remotes for exploits" brings up the security expert),
+  which is intended but new.
 - Snippets of code-heavy sections show code lines.
 - Weakest relevance: "price the first three upgrades" (`economy-design` is 5th).
-- The packaged app was not built (PyInstaller). Nothing new needs packaging, by inspection of `rbxkit.spec`.
+- The packaged app was built once (`build_mac.py`, not installed). `vault/` is inside it, at
+  `Contents/Resources/tools/_internal/vault`, with 1,441 Markdown files, and no `skills/`, `guides/` or `team/`
+  remain. The packaged CLI (`--mcp`, with HOME and the work folder in a temp dir) served `rbx_guide workflow`,
+  `rbx_guide unslop section color`, `rbx_vault search` (all shelves and shelf game), `rbx_vault read` on shelf team,
+  and `rbx_stage status` (roster names).
+- That first packaged run caught a real bug: the section index's cache key stat'ed `rbxvault.py`, which in the frozen
+  app is inside the archive, so search failed there. Fixed (commit 83aa033) and covered by a test. The desktop window
+  itself was not opened.
 - The `.lua` guides (`ui-helpers`, `ui-audit`) are not indexed for search. They are code to paste, fetched whole
   with `rbx_guide`.

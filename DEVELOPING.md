@@ -232,7 +232,8 @@ for the guides and team sections, about 2.6 s for the vault (the same as before)
 The tool:
 
 - `search` (`query`, `shelf`: all|vault|guides|team|game, default all; `k` or `count`, default 5, 3 for the vault
-  alone, at most 8). Results are labelled by shelf, with a 2-3 line snippet, the section's size, and the exact
+  alone, at most 8). On `all`, the best hit of each shelf that matches well comes first, then the rest by score.
+  Results are labelled by shelf, with a 2-3 line snippet, the section's size, and the exact
   `read` arguments. `shelf: vault` answers exactly as the vault always did (with symptom lines).
 - `read` (`title`, `heading` words, optional `shelf`) returns one section, at most 12 KB; a larger section returns
   its first part and lists its sub-headings. No heading lists the sections. `sections` (`title`) lists headings
