@@ -601,6 +601,9 @@ struct State {
     /// Which AI this chat runs on ("claude", "gemini", "chatgpt" or "cursor"). Open until the first message; a
     /// conversation then stays with the AI it began on, because its memory lives with that AI.
     ai: Option<String>,
+    /// The model this chat was started on (an expert placed by Setup > Experts or by its Lead's request): used when a
+    /// message names none. None: the AI's default.
+    model: Option<String>,
     /// The chat so far, as text, for the AI a started chat was switched to: it goes with that AI's first message
     /// (see `switch_ai` and `handover_text`).
     handover: Option<String>,
@@ -1058,6 +1061,13 @@ impl Agent {
         self.st.lock().unwrap().ai.clone().unwrap_or_else(paths::default_ai)
     }
 
+    /// The model this chat runs on: the one it was started on, else the one its last message asked for (None: the
+    /// AI's default).
+    pub fn model(&self) -> Option<String> {
+        let st = self.st.lock().unwrap();
+        st.model.clone().or_else(|| st.last_ask.model.clone())
+    }
+
     /// Choose this chat's AI from the window. Before the conversation has started this only sets it (`Ok(false)`).
     /// A started chat carries on with the other AI (`Ok(true)`): a fresh session, handed the chat so far as text with
     /// its first message (`handover_text`). Refused while the chat works, or for an AI the app does not know.
@@ -1139,7 +1149,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -1412,7 +1422,9 @@ impl Agent {
         let (ask, fallback) = studio_fallback(ask, has_project);
         let ask = &ask;
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
-        let (model, attachments, kickoff) = (ask.model.as_deref(), ask.attachments.as_slice(), ask.kickoff.as_deref());
+        // a message that names no model runs on the one this chat was started on (an expert's chosen model)
+        let pinned = self.st.lock().unwrap().model.clone();
+        let (model, attachments, kickoff) = (ask.model.as_deref().or(pinned.as_deref()), ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
         // a carry-on decided before the run was paused (or undone) does not run as it was: see paused_carry_on
         let text: &str = if auto && self.studio_lead() && self.paused_run() {
@@ -2085,7 +2097,13 @@ pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
 /// Start an agent with a role of its own: a worker or reviewer for another agent (`team_id` is that
 /// request), or the New project page's researcher.
 pub fn spawn_helper(team_id: Option<&str>, role: &str, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>) -> Option<Arc<Agent>> {
-    spawn_named(team_id, Some(role), name, project, ai, parent, None)
+    spawn_named(team_id, Some(role), name, project, ai, None, parent, None)
+}
+
+/// A helper or expert started by a chat's `rbx_team` spawn, on the AI and model `expert_ai::resolve` chose.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_on(team_id: &str, role: &str, title: &str, project: Option<String>, ai: String, model: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
+    spawn_named(Some(team_id), Some(role), title, project, Some(ai), model, parent, expert)
 }
 
 /// A named Studio expert: a helper whose chat also gets the expert's own instructions (`id`, display `name`, `text`).
@@ -2095,16 +2113,18 @@ pub struct Expert {
     pub text: String,
 }
 
+#[cfg(test)]
 pub fn spawn_expert(team_id: &str, role: &str, title: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>, expert: Expert) -> Option<Arc<Agent>> {
-    spawn_named(Some(team_id), Some(role), title, project, ai, parent, Some(expert))
+    spawn_named(Some(team_id), Some(role), title, project, ai, None, parent, Some(expert))
 }
 
 /// Start a chat of the user's own (no role) in the background, already named and in its project: the Promos tab's.
 pub fn new_background_chat(name: &str, project: Option<String>) -> Option<Arc<Agent>> {
-    spawn_named(None, None, name, project, None, None, None)
+    spawn_named(None, None, name, project, None, None, None, None)
 }
 
-fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
+#[allow(clippy::too_many_arguments)]
+fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, model: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
     let agent = {
         let mut all = AGENTS.lock().unwrap();
         if slots_taken(&all) >= MAX_AGENTS {
@@ -2123,21 +2143,25 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
                 st.expert_text = Some(x.text.clone());
             }
             st.ai = Some(ai.unwrap_or_else(paths::default_ai));
+            st.model = model;
             st.project = project;
             st.parent = parent.map(str::to_string);
         }
         all.push(agent.clone());
         agent
     };
-    let mut event = json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent, "team": team_id});
+    // what it runs on, for its line, when that is not what the chat that started it runs on
+    let lead = parent.and_then(get);
+    let runs_on = lead.as_ref().and_then(|l| crate::expert_ai::runs_on(&agent.ai(), agent.model().as_deref(), &l.ai(), l.model().as_deref()));
+    let mut event = json!({"agent": agent.id, "name": agent.name(), "role": role, "background": true, "ai": agent.ai(), "parent": parent, "team": team_id, "runs_on": runs_on});
     if let Some(x) = &expert {
         event["expert"] = json!(x.name);
         event["expert_id"] = json!(x.id);
     }
     BUS.put("agent_new", event);
     // the chat that started it notes where, so the window shows the expert at that point of its conversation
-    if let Some(lead) = parent.and_then(get) {
-        lead.put("helper_started", json!({"helper": agent.id, "name": agent.name(), "expert": expert.as_ref().map(|x| x.name.clone())}));
+    if let Some(lead) = lead {
+        lead.put("helper_started", json!({"helper": agent.id, "name": agent.name(), "expert": expert.as_ref().map(|x| x.name.clone()), "runs_on": runs_on}));
     }
     if let Some(p) = agent.project() {
         agent.put("project", projects::describe(&p));
@@ -2322,6 +2346,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.parent = d["parent"].as_str().map(str::to_string);
         // chats saved before there was a choice were all Claude's
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
+        st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
     }

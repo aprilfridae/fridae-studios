@@ -141,6 +141,10 @@ pub fn gaps() -> Value {
     json!({"full": null, "studio": null})
 }
 
+/// What the Experts table in Setup says beside Cursor: how an expert on Cursor differs from one on Claude. Experts
+/// run with Ask me's rules (the gap measured there).
+pub const EXPERT_GAP: &str = "On Cursor, an expert's file tools can also write into temp folders, which Claude's cannot. Everything else follows the same rules.";
+
 /// Where the app keeps Cursor's settings and saved chats (`config`) and its approvals per workspace (`data`): the
 /// per-user app data folder, not Documents (which iCloud or OneDrive may sync). Cursor's account details (email and
 /// name, no tokens) are cached there too.

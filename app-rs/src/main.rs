@@ -13,6 +13,7 @@ mod attach;
 mod board;
 mod codex;
 mod cursor;
+mod expert_ai;
 mod fridae_lock;
 mod limits;
 mod media;

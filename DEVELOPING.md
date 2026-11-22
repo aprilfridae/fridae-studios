@@ -140,6 +140,22 @@ job, stage, guides, tools, kind, writes`) with the project's overrides merged fi
 16,000 characters) and `writes` in the request; the Lead itself cannot be spawned, and helpers still cannot start
 helpers.
 
+**Experts on a chosen AI and model** (spec `docs/superpowers/specs/2026-11-22-expert-ai-choice-design.md`).
+`rbx_team spawn` also takes `ai` and `model` (`rbxteam.py` puts them in the request). `team.rs` asks
+`expert_ai::resolve`, one pure function with tests: the user's Setup > Experts row (config `expert_ai: {<expert id>:
+{"ai", "model"}}`) wins, then the request, then the Lead's own AI and model (`Agent::model`: the model it was started
+on, else its last message's). An AI the app cannot run experts on (ChatGPT, anything unknown) or one that is not
+installed is refused with a reason the Lead can act on, never moved to another AI; a model the chosen AI does not list
+runs on that AI's default, and the result's `note` says so (a list that has not arrived yet passes the model on). The
+expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
+`agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
+the expert line and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
+`/api/experts` lists the kit's roster (not the Lead), the table, and for Claude, Gemini and Cursor whether each is
+installed, its models and its default; with `expert`, `ai`, `model` it saves one row ("" is Same as the Lead). Beside
+Cursor the table shows `cursor::EXPERT_GAP` (experts run with Ask me's rules: Cursor may also write into temp
+folders). The Lead's text (`vault/Fridae/Team/lead.md`) and the studio guide ("Experts on another AI") say the option
+exists, that the user's table wins, and to use it sparingly.
+
 **The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `vault/Fridae/Team/lead.md` (the project's
 `.fridae/team/experts/lead.md` first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
 from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio/studio.md` (registered in `rbxkit_mcp.GUIDES`).

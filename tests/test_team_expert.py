@@ -106,6 +106,32 @@ class ExpertSpawnTests(unittest.TestCase):
         self.assertEqual(sp.call_args.kwargs.get("expert"), "coder")
         self.assertIn("Coder: Shop", text)
 
+    def test_spawn_passes_the_ai_and_model_asked_for(self):
+        import time
+        t = threading.Thread(target=lambda: rbxteam.spawn("worker", "Lava model", self.TASK, expert="world", ai=" Cursor ", model="auto"))
+        t.start()
+        req = None
+        for _ in range(40):
+            r = self.requests()
+            if r:
+                req = r[0]
+                break
+            time.sleep(0.01)
+        t.join(5)
+        self.assertEqual((req["ai"], req["model"]), ("cursor", "auto"))
+
+    def test_run_passes_ai_and_shows_where_it_runs(self):
+        res = {"status": "running", "role": "worker", "name": "World builder: Lava", "ai": "cursor", "model": "auto",
+               "note": "Cursor does not offer the model \"x\", so this expert runs on Cursor's default (auto)."}
+        with mock.patch.object(rbxteam, "spawn", return_value=("w1", res)) as sp:
+            text = rbxteam.run("spawn", {"role": "worker", "name": "Lava", "task": self.TASK, "expert": "world", "ai": "cursor", "model": "x"})
+        self.assertEqual((sp.call_args.kwargs.get("ai"), sp.call_args.kwargs.get("model")), ("cursor", "x"))
+        self.assertIn("runs on: cursor (model auto)", text)
+        self.assertIn("note: Cursor does not offer", text)
+        with mock.patch.object(rbxteam, "spawn", return_value=("w2", {"status": "refused", "reason": "Gemini is not installed; run this expert on Claude (leave ai out) or ask the user."})):
+            text = rbxteam.run("spawn", {"role": "worker", "name": "Lava", "task": self.TASK, "ai": "gemini"})
+        self.assertIn("REFUSED: Gemini is not installed", text)
+
 
 class LeadWaitTests(unittest.TestCase):
     """rbx_team wait hands a studio run's Lead back early (live run L4), and refuses experts on an ended run (L2)."""

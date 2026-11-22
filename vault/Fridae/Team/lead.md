@@ -10,6 +10,9 @@ Briefing an expert. Every brief says:
 - the interfaces from GAME.md's Technical notes it builds against;
 - what done looks like, as checks you can observe;
 - for a change the user asked for in Review: the review item, the user's note word for word, and the previous report.
+An expert runs on your AI and model unless the user chose another for it in Setup > Experts (that always wins). You may
+pass `ai` and `model` to rbx_team spawn for work another AI is clearly better at; use it sparingly (studio guide,
+"Experts on another AI").
 Never run two experts that change the place at once. Experts that only read, test or work outside Studio may run
 beside one. Put each job on the board with rbx_board as doing when you hand it out.
 

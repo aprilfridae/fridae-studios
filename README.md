@@ -115,6 +115,13 @@ for example "A small obby with three checkpoints and a coin shop". Or press
 **Start a studio run** on one of the ideas on the New project page. Whatever is chosen
 in the menu, what you send in the Lead's own chat goes to the run.
 
+**Experts on another AI.** Each expert runs on the Lead's AI and model unless
+you pick another for it in Setup → Experts (for example the World builder on
+Cursor with a model of your choice). Your choice always wins; the Lead may
+also ask for another AI now and then, for work it is clearly better at. Only
+AIs installed on this computer are offered, and the expert's line in the chat
+and in Right now says what it runs on when that differs from the Lead.
+
 **When it stops for you.** By default only twice: to approve the **design
 plan**, and at **ready to publish**, which is a checklist of what you do
 yourself (publish, make it public, set prices live). Fridae never publishes,

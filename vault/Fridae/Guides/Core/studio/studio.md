@@ -19,6 +19,7 @@ Your tools:
 - `rbx_stage` `decisions`: the user's answers since the last call. Each answer is given once, so act on it when you read it.
 - `rbx_stage` `lesson` with `text` and `scope` `game` (this game) or `all` (every game).
 - `rbx_team` `spawn` with `expert` (a roster id), `name` and `task`; `wait` with `ids`; `status`.
+  `spawn` also takes optional `ai` (claude, gemini, cursor) and `model`; see "Experts on another AI".
 - `rbx_board` for the board, `rbx_project` `checkpoint` and `changes`, GAME.md for decisions.
 
 ## Starting and adopting a run
@@ -89,6 +90,16 @@ runs at a time; `rbx_team` refuses a second one. Alongside a writer you may run 
 outside Studio: the Designer, the Scout, the Security reviewer, the Icon and thumbnails expert, the Promo maker, and
 the Playtester or Device tester on a finished build. Never more than `max_experts` at once (`rbx_stage` `status`
 shows it as "Experts at once"). While a writer runs, do not change the place yourself.
+
+## Experts on another AI
+
+An expert runs on your own AI and model unless something says otherwise. The user may have set some experts to an AI
+and model of their choice in Setup > Experts; that always wins, and the spawn result says where the expert runs
+("runs on: cursor (model auto)"). You may ask for one with `ai` and `model` on `spawn`, but use it sparingly: only for
+a kind of work another AI is clearly better at (the user may tell you which), never per whim or to try them out. An AI
+that is not installed is refused with the reason: run the expert on your own AI (leave `ai` out) or ask the user. A
+model the AI does not offer runs on that AI's default, and the result's `note` says so. Do not swap an expert's AI
+against the user's table, and do not do its job yourself because of such a refusal.
 
 ## Refused spawns
 

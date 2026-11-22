@@ -278,10 +278,11 @@ button.pname:hover { background: var(--hover); }
 /* an expert the chat started: one line that opens to its own log, read-only */
 .xp { margin: 8px 0 12px; border-radius: var(--r-m); border: 1px solid var(--line); background: var(--panel); max-width: 70ch; transition: border-color 140ms ease; }
 .xp.open { max-width: none; border-color: var(--line-strong); }
-.xp-row { display: grid; grid-template-columns: 12px auto minmax(0, 1fr) auto 12px; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; text-align: left; border-radius: var(--r-m); }
+.xp-row { display: grid; grid-template-columns: 12px auto minmax(0, 1fr) auto auto 12px; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; text-align: left; border-radius: var(--r-m); }
 .xp-row:hover { background: var(--hover); }
 .xp-row .xp-name { font-weight: 500; font-size: 14px; white-space: nowrap; }
 .xp-row .xp-job { font-size: 14px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xp-row .xp-on { font-size: 12.5px; color: var(--faint); white-space: nowrap; flex-shrink: 0; }
 .xp-row .xp-state { font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
 .xp.busy .xp-state { color: var(--text); }
 .xp-row svg { color: var(--faint); transition: transform 180ms var(--ease); }
@@ -387,6 +388,11 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-col h2 small { font-size: 12px; font-weight: 400; color: var(--faint); }
 .r-sel { height: 40px; padding: 0 10px; border-radius: var(--r-m); border: 1px solid var(--line-strong); background: var(--panel); font-size: 13px; outline: none; max-width: 200px; }
 .r-sel option { background: #18181a; color: #ececed; }
+.xp-tr { display: grid; grid-template-columns: 1fr 170px 170px; gap: 2px 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
+.xp-tr b { font-weight: 500; font-size: 14px; }
+.xp-tr small { grid-column: 1 / -1; color: var(--dim); font-size: 12.5px; line-height: 1.45; }
+.xp-tr .r-sel { height: 32px; max-width: 170px; }
+@media (max-width: 560px) { .xp-tr { grid-template-columns: 1fr 1fr; } .xp-tr b { grid-column: 1 / -1; } .xp-tr .r-sel { max-width: none; } }
 .r-note { font-size: 13px; color: var(--dim); margin: 12px 0 0; min-height: 1.4em; }
 .r-pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
@@ -854,6 +860,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <h2>Setup</h2>
     <button data-s="general" class="on">General</button>
     <button data-s="connections">Connections</button>
+    <button data-s="experts">Experts</button>
     <button data-s="permissions">Permissions</button>
     <button data-s="textures">Textures</button>
     <button data-s="chats">Saved chats</button>
@@ -891,6 +898,11 @@ body.proj #pd, body.guide #gd { transform: none; }
       <p class="sub">Looks for every program the tools use and says how to fix what is missing. Connect other apps adds these tools to Claude Code, Antigravity or Cursor, to use them outside this window.</p>
       <div class="act"><button class="pill" id="b-check">Run full check</button><button class="pill" id="b-agents">Connect other apps</button></div>
       <pre id="setup-out"></pre>
+    </section>
+    <section data-s="experts">
+      <h3>Experts</h3>
+      <p class="sub">In a studio run, the Lead hands each part of the game to an expert. Each one runs on the Lead's AI and model unless you pick another here; your choice always wins over the Lead's. Only AIs installed on this computer are offered.</p>
+      <div id="xp-table"></div>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -1030,6 +1042,7 @@ const CONTROLS = [
   ["The game's name (top left of the tab)", "Press it for the game's folder, notes and git history."],
   ["Claude / Gemini / Cursor (under the message box)", "Which AI this chat uses. You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message."],
   ["Experts in a chat", "When the agent starts helpers or a studio run's experts, each shows as one line where it was started: its name, its job and whether it is working. Open it to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
+  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Each one runs on the Lead's AI and model until you do, and your choice always wins over the Lead's. The Lead may ask for another AI now and then too. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
   ["The dots (bottom left)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
   ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor model carries its own effort in its name), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
@@ -1421,11 +1434,12 @@ document.addEventListener("click", (ev) => { if (!ev.target.closest(".conv")) cl
 /* ---------- experts: one line in the chat that started them, opening to their own log ---------- */
 const CHEVRON = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>';
 /* the line for helper `hid` in chat `p`, made where the chat's log says it was started (or at the end) */
-function xpLine(p, hid, name, expert) {
-  if (p.xps[hid]) return p.xps[hid];
-  const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state">starting</span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
+function xpLine(p, hid, name, expert, runsOn) {
+  if (p.xps[hid]) { if (runsOn) setRunsOn(p.xps[hid], runsOn); return p.xps[hid]; }
+  const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-on"></span><span class="xp-state">starting</span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
   const split = splitExpert(name, expert);
   line.querySelector(".xp-name").textContent = split[0]; line.querySelector(".xp-job").textContent = split[1];
+  setRunsOn(line, runsOn);
   const row = line.querySelector(".xp-row");
   row.onclick = async () => {
     const open = !line.classList.contains("open");
@@ -1442,6 +1456,8 @@ function xpLine(p, hid, name, expert) {
   if (p.turn) p.turn._steps = null;
   return line;
 }
+/* "on Cursor · Auto": shown only when the expert runs on another AI or model than the chat that started it */
+function setRunsOn(line, runsOn) { const o = line.querySelector(".xp-on"); if (o) { o.textContent = runsOn ? "on " + runsOn : ""; } }
 /* "UI builder: Shop menu" -> ["UI builder", "Shop menu"]; an expert's name comes first */
 function splitExpert(name, expert) {
   const n = String(name || ""), i = n.indexOf(":");
@@ -1453,7 +1469,7 @@ function attachHelper(h) {
   const parent = agents.get(h.parent);
   if (!parent) { orphans.set(h.id, h); parked.appendChild(h.col); return; }
   orphans.delete(h.id);
-  const line = xpLine(parent, h.id, h.name, h.expert);
+  const line = xpLine(parent, h.id, h.name, h.expert, h.runsOn);
   h.line = line; h.col.hidden = false;
   line.querySelector(".xp-body").appendChild(h.col);
   paintExpert(h);
@@ -1804,7 +1820,7 @@ function onEvent(e) {
   const p = pane(e.agent);
   if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
   if (e.kind === "agent_new") {
-    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert; if (e.team) p.team = e.team;
+    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert; if (e.team) p.team = e.team; if (e.runs_on) p.runsOn = e.runs_on;
     if (isHelper(p) || p.role === "research") {
       const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
       if (isHelper(p)) attachHelper(p); else { researchPane = p; parked.appendChild(p.col); paintResearch(); }
@@ -1813,7 +1829,7 @@ function onEvent(e) {
     loadHistory();
   } else if (e.kind === "helper_started") {
     /* this chat started an expert here: its line goes at this point of the conversation */
-    const line = xpLine(p, e.helper, e.name, e.expert);
+    const line = xpLine(p, e.helper, e.name, e.expert, e.runs_on);
     (p.turn || p.col).appendChild(line); if (p.turn) p.turn._steps = null;   /* where it was started, also after a restart */
     const h = agents.get(e.helper); if (h && isHelper(h) && !h.line) attachHelper(h);
   } else if (e.kind === "ai") {
@@ -2450,7 +2466,7 @@ function paintResearchJob() {
   const host = $("r-job"), h = researchPane;
   if (!h || !agents.has(h.id)) { host.replaceChildren(); return; }
   if (!h.line) {
-    const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state"></span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
+    const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-on"></span><span class="xp-state"></span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
     const row = line.querySelector(".xp-row");
     row.onclick = () => { const open = !line.classList.contains("open"); line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false"); };
     line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: h.id });
@@ -3153,7 +3169,7 @@ function nowRows(path, still) {
   for (const p of agents.values()) {
     if (shown.has(p.id) || !p.busy || projKey(p) !== path) continue;
     const [name, job] = isHelper(p) ? splitExpert(p.name, p.expert) : [p.name, ""];
-    rows.push(row(p, name, (job ? job + " · " : "") + (p.now || "Working"), since(p)));
+    rows.push(row(p, name, (job ? job + " · " : "") + (p.runsOn ? "on " + p.runsOn + " · " : "") + (p.now || "Working"), since(p)));
     shown.add(p.id);
   }
   return { rows, lead };
@@ -3468,6 +3484,40 @@ $("notes-open-game").onclick = () => api("/api/notes-open", { scope: "game", pat
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
   document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));
+  if (name === "experts") loadExperts();
+}
+/* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
+   app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
+let xpList = null;
+async function loadExperts(body) { const r = await api("/api/experts", body || {}); if (r && r.list) xpList = r.list; if (r && r.ok === false) alert(r.error || "Could not save that."); paintExperts(); }
+function paintExperts() {
+  const box0 = $("xp-table"); if (!xpList) { box0.textContent = "Loading..."; return; }
+  const ais = xpList.ais || [], table = xpList.table || {}, gaps = xpList.gaps || {};
+  box0.replaceChildren(...(xpList.experts || []).map((x) => {
+    const row = el("div", "xp-tr", "<b></b>"); row.querySelector("b").textContent = x.name;
+    const pick = table[x.id] || {}, ai = pick.ai || "";
+    const aiSel = el("select", "r-sel"); aiSel.setAttribute("aria-label", x.name + ": AI");
+    aiSel.appendChild(new Option("Same as the Lead", ""));
+    ais.forEach((a) => { if (a.installed || a.id === ai) aiSel.appendChild(new Option(a.name + (a.installed ? "" : " (not installed)"), a.id)); });
+    aiSel.value = ai;
+    const mSel = el("select", "r-sel"); mSel.setAttribute("aria-label", x.name + ": model");
+    const info = ais.find((a) => a.id === ai);
+    if (!ai) { mSel.appendChild(new Option("Same as the Lead", "")); mSel.disabled = true; }
+    else {
+      const models = (info && info.models) || [], dflt = info && info.default, dn = (models.find((m) => m[0] === dflt) || [])[1];
+      mSel.appendChild(new Option("Its default" + (dn || dflt ? " (" + (dn || dflt) + ")" : ""), ""));
+      models.forEach(([id, name]) => mSel.appendChild(new Option(name, id)));
+      if (pick.model && !models.some((m) => m[0] === pick.model)) mSel.appendChild(new Option(pick.model + " (not offered now)", pick.model));
+      mSel.value = pick.model || "";
+    }
+    aiSel.onchange = () => loadExperts({ expert: x.id, ai: aiSel.value, model: "" });
+    mSel.onchange = () => loadExperts({ expert: x.id, ai: aiSel.value, model: mSel.value });
+    row.append(aiSel, mSel);
+    const note = (ai && gaps[ai]) || "";
+    const job = (x.job || "").trim();
+    row.appendChild(el("small", "", esc(job + (job && !/[.!?]$/.test(job) ? "." : "") + (note ? " " + note : ""))));
+    return row;
+  }));
 }
 document.querySelectorAll("#su-nav [data-s]").forEach((b) => (b.onclick = () => setupSection(b.dataset.s)));
 const closeSetup = () => document.body.classList.remove("setup");

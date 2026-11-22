@@ -16,7 +16,7 @@ use tiny_http::{Header, Method, Request, Response, Server};
 use crate::{
     agents::{self, BUS, MAX_AGENTS, MODELS},
     antigravity,
-    attach, board, codex, cursor, media,
+    attach, board, codex, cursor, expert_ai, media,
     paths::{self, PATHS, VERSION},
     plugin, projects, promo, promo_tab, research, studio_run, studio_watch, team, textures, update, usage,
 };
@@ -315,6 +315,15 @@ fn post(path: &str, body: Value) -> Reply {
             // with an action, the user changes the board; without, it is read
             let project = text_of("path");
             if body["action"].is_string() { send_json(board::act(&project, &body)) } else { send_json(board::get(&project)) }
+        }
+        "/api/experts" => {
+            // Setup > Experts: with an expert, save its row (AI "" or "lead" for Same as the Lead); always the listing
+            if body["expert"].is_string() {
+                if let Err(e) = expert_ai::set_entry(&text_of("expert"), &text_of("ai"), &text_of("model")) {
+                    return send_json(json!({"ok": false, "error": e}));
+                }
+            }
+            send_json(json!({"ok": true, "list": expert_ai::listing()}))
         }
         "/api/commands" => {
             // programs agents may run without asking: allowed from a "blocked" card in a chat, or removed in Setup

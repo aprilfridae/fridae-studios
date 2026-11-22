@@ -60,7 +60,7 @@ def _ended(run):
         and not isinstance(run.get("ended"), bool)
 
 
-def spawn(role, name, task, expert=None):
+def spawn(role, name, task, expert=None, ai=None, model=None):
     mine = (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip().lower()
     if mine in ROLES:
         raise TeamError("You were started as a %s by another agent, and such agents may not start more. Do the task "
@@ -90,6 +90,13 @@ def spawn(role, name, task, expert=None):
     rid = "w%d%s" % (int(time.time() * 1000), "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(4)))
     req = {"id": rid, "from": os.environ.get("RBXKIT_AGENT_ID") or "", "role": role, "name": name[:34], "task": task,
            "created": time.time()}
+    # where it runs (optional): the app checks it, and the user's Setup > Experts table wins over it
+    ai = str(ai or "").strip().lower()
+    model = str(model or "").strip()
+    if ai:
+        req["ai"] = ai
+    if model:
+        req["model"] = model
     if entry:
         req.update({"expert": entry["id"], "expert_name": entry["name"], "expert_text": entry["text"],
                     "writes": bool(entry["writes"])})
@@ -204,15 +211,21 @@ def run(action, a=None):
     a = a or {}
     action = (action or "status").lower()
     if action == "spawn":
-        rid, res = spawn(a.get("role"), a.get("name"), a.get("task"), expert=a.get("expert"))
+        rid, res = spawn(a.get("role"), a.get("name"), a.get("task"), expert=a.get("expert"), ai=a.get("ai"),
+                         model=a.get("model"))
         if res is None:
             return ("NOT STARTED. The app did not pick up the request within %d seconds, so it was withdrawn. Extra agents "
                     "only work when this chat runs inside the Fridae Studios app with it open. Carry on by yourself." % PICKUP)
         status = res.get("status")
         if status == "refused":
             return "REFUSED: %s\nThe agent was not started. Carry on by yourself." % (res.get("reason") or "the app gave no reason")
-        return ("id: %s\nstatus: %s\n%s \"%s\" was started. Keep working on your own part, then collect its report with "
-                "rbx_team action 'wait' and ids [\"%s\"]." % (rid, status, (res.get("role") or a.get("role") or "agent").capitalize(),
+        where = ""
+        if res.get("ai"):
+            where = "\nruns on: %s%s" % (res["ai"], (" (model %s)" % res["model"]) if res.get("model") else " (its default model)")
+        if res.get("note"):
+            where += "\nnote: %s" % res["note"]
+        return ("id: %s\nstatus: %s%s\n%s \"%s\" was started. Keep working on your own part, then collect its report with "
+                "rbx_team action 'wait' and ids [\"%s\"]." % (rid, status, where, (res.get("role") or a.get("role") or "agent").capitalize(),
                                                             res.get("name") or a.get("name"), rid))
     if action == "status":
         ids = [_safe(i) for i in a.get("ids") or []]

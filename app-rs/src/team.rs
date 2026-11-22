@@ -7,6 +7,10 @@
 //! Studio mode adds a named expert: the request also has "expert", "expert_name", "expert_text" and "writes"
 //! (the tool read them from the roster; this never does), and the result "expert". Only one expert that changes the
 //! game ("writes") runs per project at a time.
+//!
+//! A request may also name "ai" and "model"; `expert_ai::resolve` decides where the helper runs (the user's Setup >
+//! Experts table first), and the result then carries "ai", "model" and, for a model swapped for the AI's default,
+//! "note". A choice that cannot be honoured is a refusal with its reason.
 
 use std::{
     collections::HashMap,
@@ -21,7 +25,7 @@ use serde_json::{Value, json};
 
 use crate::{
     agents::{self, Agent},
-    paths, studio_run,
+    expert_ai, paths, studio_run,
 };
 
 fn write_result(id: &str, value: Value) {
@@ -185,7 +189,25 @@ fn start(req: &Value) {
             return refuse(&why);
         }
     }
-    let ai = from.as_ref().map(|a| a.ai());
+    // where it runs: the user's Setup > Experts row, else what the Lead asked for, else the Lead's own AI and model
+    let lead_ai = from.as_ref().map(|a| a.ai()).unwrap_or_else(paths::default_ai);
+    let lead_model = from.as_ref().and_then(|a| a.model());
+    let table = expert.as_deref().map(|e| expert_ai::table_entry(&paths::load_config(), e)).unwrap_or_default();
+    let asked = (req["ai"].as_str(), req["model"].as_str());
+    let shown_name = req["expert_name"].as_str().or(expert.as_deref()).unwrap_or("helper").to_string();
+    let choice = expert_ai::resolve(
+        expert_ai::Want { ai: table.0.as_deref(), model: table.1.as_deref() },
+        expert_ai::Want { ai: asked.0, model: asked.1 },
+        &lead_ai,
+        lead_model.as_deref(),
+        &shown_name,
+        &expert_ai::world(),
+    );
+    let choice = match choice {
+        Ok(c) => c,
+        Err(why) => return refuse(&why),
+    };
+    let placed = json!({"ai": choice.ai, "model": choice.model, "note": choice.note});
     let parent = from.as_ref().map(|a| a.id.as_str());
     let agent = if let Some(expert_id) = &expert {
         let expert_name = req["expert_name"].as_str().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(expert_id);
@@ -199,7 +221,7 @@ fn start(req: &Value) {
             return refuse(&why); // a refused request never takes the place
         }
         let info = agents::Expert { id: expert_id.clone(), name: expert_name.to_string(), text: req["expert_text"].as_str().unwrap_or("").to_string() };
-        let Some(agent) = agents::spawn_expert(&id, role, &title, project.clone(), ai, parent, info) else {
+        let Some(agent) = agents::spawn_on(&id, role, &title, project.clone(), choice.ai.clone(), choice.model.clone(), parent, Some(info)) else {
             if writes {
                 with_writers(|w| w.remove(&key));
             }
@@ -217,12 +239,18 @@ fn start(req: &Value) {
         agent
     } else {
         let title = if role == "critic" && !name.to_lowercase().starts_with("review") { format!("Review: {name}") } else { name.clone() };
-        let Some(agent) = agents::spawn_helper(Some(&id), role, &title, project, ai, parent) else {
+        let Some(agent) = agents::spawn_on(&id, role, &title, project, choice.ai.clone(), choice.model.clone(), parent, None) else {
             return refuse(NO_SLOT);
         };
         agent
     };
-    write_result(&id, with_expert(json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "running"})));
+    let mut started = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "running"});
+    for k in ["ai", "model", "note"] {
+        if !placed[k].is_null() {
+            started[k] = placed[k].clone();
+        }
+    }
+    write_result(&id, with_expert(started));
     thread::spawn(move || agent.send(&task, &agents::Ask::default()));
 }
 
@@ -446,6 +474,20 @@ mod tests {
         assert_eq!(res["status"], "refused");
         assert_eq!(res["reason"], RUN_ENDED);
         assert_eq!(RUN_ENDED, "This game's studio run was ended.");
+        agents::remove_agent(&lead.id);
+    }
+
+    #[test]
+    fn an_ai_the_app_cannot_run_experts_on_is_refused_with_the_reason() {
+        let d = game("badai");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: bad ai", Some(p.clone())).unwrap();
+        let task = "Model the lava rocks: three sizes, low poly, dark basalt with glowing cracks, and report the asset ids.";
+        start(&json!({"id": "w-badai", "from": lead.id, "role": "worker", "name": "Rocks", "task": task, "ai": "llama"}));
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-badai.json")).unwrap()).unwrap();
+        assert_eq!(res["status"], "refused");
+        assert!(res["reason"].as_str().unwrap().starts_with("\"llama\" is not an AI this app runs experts on"));
+        assert!(agents::agents().iter().all(|a| a.parent().as_deref() != Some(lead.id.as_str())), "nothing was started");
         agents::remove_agent(&lead.id);
     }
 
