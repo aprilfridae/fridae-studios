@@ -847,6 +847,22 @@ def _vault_section_hint(d):
     return [h.strip() for h in re.split(r"\s*·\s*", more) if h.strip()] if more else []
 
 
+PROMOTE_AT = 0.2  # a shelf's best hit is moved up only when it matches at least this well
+
+
+def interleave(pool, k):
+    """The k results to show: first the best hit of each shelf that has a good one (best first), then the rest by
+    score. Without this one shelf (usually the vault, whose notes are long) can fill every place."""
+    pool = sorted(pool, key=lambda x: -x[0])
+    firsts, seen = [], set()
+    for item in pool:
+        if item[1] not in seen and item[0] >= PROMOTE_AT:
+            seen.add(item[1])
+            firsts.append(item)
+    rest = [item for item in pool if not any(item is f for f in firsts)]
+    return (firsts + rest)[:k]
+
+
 def combined_search(q, shelves, k):
     """Text for a search over several shelves: sections from guides/team/game and notes from the vault, merged by how
     much of the query each matches (scores from different shelves are not comparable, coverage is)."""
@@ -861,12 +877,15 @@ def combined_search(q, shelves, k):
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     sec_shelves = [s for s in shelves if s != "vault"]
     if sec_shelves:
-        hits = search_sections(q, sec_shelves, k)
-        top = hits[0][0] if hits else 1
-        for s, cov, d in hits:
-            pool.append((cov * s / top, d["shelf"], d))
-    pool.sort(key=lambda x: -x[0])
-    pool = pool[:k]
+        docs = section_corpus()
+        hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
+        top = hits[0][0] if hits else 1  # one corpus, so one top score for its shelves
+        taken = Counter()
+        for s, cov, d in hits:  # each shelf's own best k, by score
+            if taken[d["shelf"]] < k:
+                taken[d["shelf"]] += 1
+                pool.append((cov * s / top, d["shelf"], d))
+    pool = interleave(pool, k)
     if not pool:
         return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
     out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]

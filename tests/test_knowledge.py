@@ -378,6 +378,22 @@ class VaultUnchangedTests(unittest.TestCase):
         self.assertEqual(buf.getvalue(), "")
 
 
+class InterleaveTests(unittest.TestCase):
+    def test_best_of_each_shelf_comes_first(self):
+        pool = [(0.9, "vault", "v1"), (0.8, "vault", "v2"), (0.7, "vault", "v3"), (0.6, "vault", "v4"),
+                (0.5, "guides", "g1"), (0.4, "guides", "g2"), (0.3, "team", "t1"), (0.1, "game", "x1")]
+        got = [x[2] for x in rbxvault.interleave(pool, 5)]
+        self.assertEqual(got, ["v1", "g1", "t1", "v2", "v3"], "a weak game hit is not promoted")
+        self.assertEqual([x[2] for x in rbxvault.interleave(pool[:3], 5)], ["v1", "v2", "v3"])
+
+    def test_all_shows_a_guide_near_the_top(self):
+        with no_project():
+            for task, _, expected in TASKS:
+                text = rbxvault.run("search", {"query": task})
+                labels = re.findall(r"^\d+\. \[(\w+)\]", text, re.M)
+                self.assertIn("guides", labels[:3], "%s: %s" % (task, labels))
+
+
 class RelevanceTests(unittest.TestCase):
     def test_bench_tasks_find_an_expected_guide_in_the_top_five(self):
         with no_project():
