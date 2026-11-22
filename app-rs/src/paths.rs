@@ -1240,7 +1240,7 @@ pub fn blender_ok(p: &Path) -> bool {
 
 /// `p` with its longest existing start made real (links and `/var` → `/private/var` followed) and the rest kept, so a
 /// path that does not exist yet compares the same way as one that does.
-fn real_as_far_as_exists(p: &Path) -> PathBuf {
+pub fn real_as_far_as_exists(p: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut at = p.to_path_buf();
     loop {

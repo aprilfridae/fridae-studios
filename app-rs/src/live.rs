@@ -63,6 +63,32 @@ pub struct Live {
     strayed: Arc<AtomicBool>,
     stopper: Mutex<Option<Stopper>>,
     state: Mutex<Option<State>>,
+    tap: Tap,
+}
+
+/// FRIDAE_LIVE_RECORD=<folder> (testing only, debug builds only): everything a kept process is sent and writes is
+/// also written there, one file per process, a line each: `> ` before what the app sent, `< ` before what it wrote.
+/// This is how the recordings in `tests/fixtures/*/` of a kept process are made (DEVELOPING.md says how they are
+/// scrubbed).
+type Tap = Option<Arc<Mutex<std::fs::File>>>;
+
+#[cfg(debug_assertions)]
+fn tap_for(owner: &str, pid: u32) -> Tap {
+    let dir = std::path::PathBuf::from(std::env::var_os("FRIDAE_LIVE_RECORD").filter(|d| !d.is_empty())?);
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::File::create(dir.join(format!("{owner}-{pid}.wire"))).ok().map(|f| Arc::new(Mutex::new(f)))
+}
+
+#[cfg(not(debug_assertions))]
+fn tap_for(_owner: &str, _pid: u32) -> Tap {
+    None
+}
+
+fn tapped(tap: &Tap, mark: &str, line: &[u8]) {
+    if let Some(t) = tap {
+        let mut f = t.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = f.write_all(mark.as_bytes()).and_then(|_| f.write_all(line)).and_then(|_| f.write_all(b"\n"));
+    }
 }
 
 impl Live {
@@ -76,10 +102,14 @@ impl Live {
         procs::record(owner, pid); // ended at the next start if the app crashes meanwhile
         let (tx, rx) = mpsc::channel();
         let (in_turn, strayed) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let tap = tap_for(owner, pid);
         if let Some(out) = child.stdout.take() {
-            let (in_turn, strayed) = (in_turn.clone(), strayed.clone());
+            let (in_turn, strayed, tap) = (in_turn.clone(), strayed.clone(), tap.clone());
             thread::spawn(move || {
                 for line in paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP) {
+                    if let Some(l) = &line {
+                        tapped(&tap, "< ", l);
+                    }
                     // work nobody asked for: ended where it begins (the app holds the process unreaped, so the pid is
                     // still its own)
                     if !in_turn.load(Ordering::SeqCst) && !strayed.load(Ordering::SeqCst) && line.as_deref().is_some_and(stray) {
@@ -116,6 +146,7 @@ impl Live {
             strayed,
             stopper: Mutex::new(None),
             state: Mutex::new(None),
+            tap,
         }))
     }
 
@@ -123,6 +154,7 @@ impl Live {
     pub fn write(&self, line: &serde_json::Value) -> std::io::Result<()> {
         let mut stdin = self.stdin.lock().unwrap_or_else(|e| e.into_inner());
         let Some(pipe) = stdin.as_mut() else { return Err(std::io::ErrorKind::BrokenPipe.into()) };
+        tapped(&self.tap, "> ", line.to_string().as_bytes());
         pipe.write_all(format!("{line}\n").as_bytes())?;
         pipe.flush()
     }

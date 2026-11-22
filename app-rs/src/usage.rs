@@ -75,6 +75,12 @@ impl Turn {
         Turn { input: n("input_tokens"), output: n("output_tokens") + n("thinking_tokens"), cache_read: n("cache_read_tokens"), ..Default::default() }
     }
 
+    /// From the answer to an ACP prompt as agy gives it (`usage`: measured, `tests/fixtures/gemini/acp-*.wire`).
+    pub fn from_agy_acp(u: &Value) -> Turn {
+        let n = |k: &str| u[k].as_u64().unwrap_or(0);
+        Turn { input: n("inputTokens"), output: n("outputTokens") + n("thoughtTokens"), cache_read: n("cachedReadTokens"), cache_write: n("cachedWriteTokens"), ..Default::default() }
+    }
+
     /// From Codex's `turn.completed.usage`, whose input count includes the cached part.
     pub fn from_codex(u: &Value) -> Turn {
         let n = |k: &str| u[k].as_u64().unwrap_or(0);

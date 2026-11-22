@@ -1532,7 +1532,7 @@ pub struct Decision {
 static REFUSED: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
 static ONCE: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
 
-fn note_refused(agent_id: &str, refused: &[Value]) {
+pub fn note_refused(agent_id: &str, refused: &[Value]) {
     let mut g = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
     let set = g.get_or_insert_with(HashMap::new).entry(agent_id.to_string()).or_default();
     for r in refused.iter().filter(|r| r["once"] == true) {
@@ -1556,7 +1556,7 @@ pub fn approve_once(agent_id: &str, command: &str) -> bool {
 /// Whether every command of a request is one the user said may run once in this chat, or one the app approves anyway
 /// (an allowed program, plainly written: the parts OpenCode lists beside the whole command); if so the approvals are
 /// used up.
-fn take_once(agent_id: &str, action: &str, resources: &[String], allowed: &[String]) -> bool {
+pub fn take_once(agent_id: &str, action: &str, resources: &[String], allowed: &[String]) -> bool {
     if action != "shell" || resources.is_empty() || resources.iter().any(|c| paths::reads_other_env(c)) {
         return false;
     }

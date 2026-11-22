@@ -43,19 +43,22 @@ pub struct Caps {
     /// Its model menu is grouped by provider ("OpenCode Go · glm-5.3").
     pub grouped_models: bool,
     /// Keeps one process open per chat and takes messages and Stop over its own protocol (Claude Code's stream-json
-    /// input, `claude_live`); the others run a process per turn, or on the app's own server (OpenCode).
+    /// input, `claude_live`; Gemini over ACP, `agy acp`, `acp`), with a process per turn as the fallback; the others
+    /// run a process per turn, or on the app's own server (OpenCode).
     pub live: bool,
     pub modes: Modes,
 }
 
 const ALL_MODES: Modes = Modes { ask: true, full: true, studio: true };
 
-/// The table. Every AI keeps to every mode by its own rules today (Claude Code's permission modes and deny rules,
-/// Antigravity's settings and `--dangerously-skip-permissions`, Codex's sandbox and bypass, Cursor's allow list and
-/// sandbox, OpenCode's permission rules); a mode one cannot keep to is set false here and is then not offered.
+/// The table. Every AI keeps to every mode today: by its own rules (Claude Code's permission modes and deny rules,
+/// Antigravity's settings and `--dangerously-skip-permissions` on a process per message, Codex's sandbox and bypass,
+/// Cursor's allow list and sandbox, OpenCode's permission rules), or, for Gemini on its kept process, by the app
+/// answering each of its permission requests (`acp::decide`); a mode one cannot keep to is set false here and is
+/// then not offered.
 pub const TABLE: [Caps; 5] = [
     Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, modes: ALL_MODES },
-    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: false, modes: ALL_MODES },
+    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, modes: ALL_MODES },
     Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, modes: ALL_MODES },
     Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, live: false, modes: ALL_MODES },
     Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, live: false, modes: ALL_MODES },
@@ -118,7 +121,7 @@ mod tests {
         };
         //                       experts pick  resume usage limits images sandbox asks   effort group  live   ask   full  studio
         assert_eq!(row("claude"), [true, true, true, true, true, true, false, false, true, false, true, true, true, true]);
-        assert_eq!(row("gemini"), [true, true, true, true, false, true, false, false, true, false, false, true, true, true]);
+        assert_eq!(row("gemini"), [true, true, true, true, false, true, false, false, true, false, true, true, true, true]);
         assert_eq!(row("chatgpt"), [true, false, true, true, false, true, true, false, true, false, false, true, true, true]);
         assert_eq!(row("cursor"), [true, true, true, true, false, true, true, false, false, false, false, true, true, true]);
         assert_eq!(row("opencode"), [true, true, true, true, false, true, false, true, false, true, false, true, true, true]);

@@ -1330,6 +1330,185 @@ impl Kept for ClaudeLaunch {
     }
 }
 
+/// What a Gemini turn is started with on the kept path (`agy acp`, see `acp`), and what its permission requests are
+/// answered by. Built afresh for every message from the app's memory, as Claude's is; a kept process started with
+/// anything else (`key`) is closed and a new one resumes the conversation, so no mode, folder, tool server, model or
+/// allowed program can go stale inside one. The same settings give the per-message command (`per_turn`), which is
+/// today's `antigravity::command` and resumes the same conversation: agy keeps both kinds in one store.
+#[derive(Clone)]
+struct GeminiLaunch {
+    exe: std::path::PathBuf,
+    /// arguments before all others: none for agy (the tests' stand-in is a shell script given to `sh`)
+    first: Vec<std::ffi::OsString>,
+    /// agy's data folder when it is not `~/.gemini` (FRIDAE_AGY_DIR, testing only): given as `--gemini-dir`
+    data_dir: Option<std::path::PathBuf>,
+    /// the workspace, the tool servers, the model and effort, and the rules its requests are answered by
+    spec: crate::acp::Spec,
+    /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
+    keys_on: bool,
+    /// the programs the user allowed, and a fingerprint of every guarded setting (`paths::GUARDED`): a change to
+    /// any of them starts another process
+    allowed: Vec<String>,
+    guarded: String,
+}
+
+/// Everything a Gemini turn's start depends on, as `send` has it for a message.
+struct GeminiSettings<'a> {
+    exe: &'a std::path::Path,
+    agent_id: &'a str,
+    /// the chat's folder: its game, or the app's folder for the chat
+    workspace: &'a std::path::Path,
+    servers: &'a Value,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+    /// Full auto or Studio
+    full: bool,
+    kit: &'a std::path::Path,
+    work: &'a std::path::Path,
+    /// the app's own files (`paths::app_protected`)
+    protected: &'a [std::path::PathBuf],
+    /// the programs the user allowed, and all the guarded settings, from the app's memory
+    allowed: &'a [String],
+    guarded: &'a Map<String, Value>,
+    keys_on: bool,
+    /// the home folder agy runs with, and its data folder when not `<home>/.gemini`
+    home: &'a std::path::Path,
+    data_dir: Option<&'a std::path::Path>,
+}
+
+impl GeminiLaunch {
+    fn new(s: &GeminiSettings) -> GeminiLaunch {
+        use sha2::{Digest, Sha256};
+        let rules = crate::acp::Rules {
+            full: s.full,
+            agent_id: s.agent_id.to_string(),
+            servers: s.servers.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+            // as a process per message has it: Ask me writes in the workspace only
+            writes: vec![s.workspace.to_path_buf()],
+            reads: vec![s.kit.to_path_buf(), s.work.join("attachments"), s.work.join("chat-images")],
+            protected: s.protected.to_vec(),
+            agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
+        };
+        let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers: s.servers.clone(), model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules };
+        // a fingerprint, not the settings themselves: one of them is the user's Gemini key
+        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
+    }
+
+    /// The kept process: `agy acp`, in the chat's workspace.
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.exe);
+        cmd.args(&self.first).arg("acp");
+        if let Some(d) = &self.data_dir {
+            cmd.arg("--gemini-dir").arg(d);
+        }
+        cmd.current_dir(&self.spec.cwd);
+        // a texture request may wait minutes for the user
+        cmd.env("MCP_TOOL_TIMEOUT", "900000");
+        paths::quiet(&mut cmd);
+        paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
+        paths::child_env(&mut cmd, "gemini");
+        if let Some(h) = agy_home() {
+            cmd.env("HOME", h);
+        }
+        cmd
+    }
+
+    /// Everything a kept process was started with, or answers requests by, that a later message could need otherwise.
+    fn key(&self) -> String {
+        let r = &self.spec.rules;
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
+               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.agent_dir, self.keys_on, self.allowed, self.guarded])
+        .to_string()
+    }
+}
+
+/// What an ACP turn needs of the chat's turn (`acp::Host`).
+struct AcpHost<'a> {
+    a: &'a Arc<Agent>,
+    tp: &'a TurnProc,
+    last: &'a Mutex<(std::time::Instant, bool, bool)>,
+    t: TurnEnd,
+    /// the ledger's entry is still the one from the start: noted again at the process's first line
+    renote: Option<(&'static str, u32)>,
+}
+
+impl crate::acp::Host for AcpHost<'_> {
+    fn out(&mut self, out: Out) {
+        self.a.take(out, &mut self.t);
+    }
+
+    fn heard(&mut self) {
+        if let Some((owner, pid)) = self.renote.take() {
+            crate::procs::record(owner, pid);
+        }
+        self.tp.heard.store(true, Ordering::SeqCst);
+    }
+
+    fn taken(&mut self) {
+        self.tp.taken();
+    }
+
+    fn activity(&mut self, long_tool: bool, tool_open: bool) {
+        self.tp.tool_open.store(tool_open, Ordering::SeqCst);
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), long_tool, tool_open);
+    }
+
+    fn began(&mut self) {
+        self.t.began = true;
+    }
+
+    fn end(&mut self) {
+        self.tp.end();
+    }
+}
+
+impl Kept for GeminiLaunch {
+    fn ai(&self) -> &'static str {
+        "gemini"
+    }
+
+    fn key(&self) -> String {
+        GeminiLaunch::key(self)
+    }
+
+    fn start(&self, _session: Option<&str>, key: String) -> std::io::Result<Arc<Live>> {
+        // the conversation is resumed over the protocol, not by an argument (`acp::turn`)
+        Live::start_as(self.command(), key, "gemini", crate::acp::stray)
+    }
+
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
+        let s = &self.spec;
+        let mut cmd = Command::new(&self.exe);
+        cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &s.servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
+        cmd.current_dir(&s.cwd);
+        if let Some(h) = agy_home() {
+            cmd.env("HOME", h);
+        }
+        (cmd, antigravity::message_line(text))
+    }
+
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
+        let resume = a.st.lock().unwrap().session.clone();
+        let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some(("gemini", live.pid)) };
+        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
+        let mut t = host.t;
+        t.ended = end.ended;
+        t.unfit = end.unfit;
+        t
+    }
+}
+
+/// The home folder and data folder agy runs with when they are not the app's own (testing only, see
+/// `antigravity::home_override`).
+fn agy_home() -> Option<std::path::PathBuf> {
+    antigravity::home_override()
+}
+
+fn agy_dir() -> Option<std::path::PathBuf> {
+    antigravity::dir_override()
+}
+
 /// The switch that turns keeping a process off for an AI: `FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`.
 fn per_turn_forced(ai: &str) -> bool {
     std::env::var(format!("FRIDAE_{}_PER_TURN", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
@@ -2244,8 +2423,29 @@ impl Agent {
         }
         let cmd = match kind.as_str() {
             "gemini" => {
-                text = antigravity::message_line(&text);
-                antigravity::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full)
+                let mut servers = servers.clone();
+                if agy_home().is_some() {
+                    servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
+                }
+                let protected: Vec<std::path::PathBuf> = paths::app_protected().into_iter().map(|(p, _)| p).collect();
+                let launch = GeminiLaunch::new(&GeminiSettings {
+                    exe: &exe,
+                    agent_id: &self.id,
+                    workspace: &workspace,
+                    servers: &servers,
+                    model,
+                    effort,
+                    full: ask.full,
+                    kit: &PATHS.kit,
+                    work: &PATHS.work,
+                    protected: &protected,
+                    allowed: &paths::allowed_commands(),
+                    guarded: &paths::guarded_settings(),
+                    keys_on: paths::env_keys_on(),
+                    home: &agy_home().unwrap_or_else(paths::home_dir),
+                    data_dir: agy_dir().as_deref(),
+                });
+                return self.kept_turn(&launch, &text);
             }
             "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
             // its models carry their own effort in the id, so the effort setting is not passed
@@ -3783,6 +3983,10 @@ mod replay_tests;
 #[cfg(test)]
 #[path = "live_tests.rs"]
 mod live_tests;
+
+#[cfg(test)]
+#[path = "acp_tests.rs"]
+mod acp_tests;
 
 #[cfg(test)]
 mod tests {

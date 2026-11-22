@@ -7,6 +7,7 @@
 //! Python programs beside this one: `fridae-cli.exe --mcp` and `--rbx`.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod acp;
 mod agents;
 mod antigravity;
 mod attach;
