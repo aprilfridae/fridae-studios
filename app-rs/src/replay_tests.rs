@@ -113,6 +113,7 @@ fn cursor_plain_tool_resumed_and_signed_out() {
 
 #[test]
 fn cursor_refused_command_shows_the_card_or_a_plain_line() {
+    let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // `./git status` refused: git not allowed yet, the card offers it
     let _ = paths::set_allowed(&["git".to_string()], false);
     let (ev, _) = replay("cursor", "refused", None, (true, 0));

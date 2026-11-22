@@ -115,11 +115,12 @@ const DROPPED: [&str; 1] = ["XDG_CONFIG_DIRS"];
 const SECRETS: [&str; 4] = ["OPENCODE_PASSWORD", "OPENCODE_SERVER_PASSWORD", "OPENCODE_USERNAME", "OPENCODE_SERVER_USERNAME"];
 
 /// The shell OpenCode runs commands with (its `shell` setting): a small script of the app's that removes the password
-/// variables, then runs the user's shell. OpenCode passes its arguments on (`-c <command>`).
+/// variables, then runs `/bin/sh`, never the user's `$SHELL`: the app approves commands by a check written for sh's
+/// grammar (`paths::command_allowed`), and zsh or fish would run programs from forms sh does not have (glob
+/// qualifiers, `=( )`, bare parentheses). OpenCode passes its arguments on (`-c <command>`).
 fn shell_wrapper() -> PathBuf {
     let path = store().join("bin").join("fridae-shell");
-    let real = env::var("SHELL").ok().filter(|s| s.starts_with('/') && Path::new(s).is_file() && !s.contains(['\'', '\n'])).unwrap_or_else(|| "/bin/sh".to_string());
-    let text = format!("#!/bin/sh\n# Fridae Studios: OpenCode's shell, without the app's server password\nunset {}\nexec '{real}' \"$@\"\n", SECRETS.join(" "));
+    let text = format!("#!/bin/sh\n# Fridae Studios: OpenCode's shell, without the app's server password\nunset {}\nexec /bin/sh \"$@\"\n", SECRETS.join(" "));
     if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         let _ = fs::create_dir_all(path.parent().unwrap());
         let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
@@ -465,6 +466,13 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     for p in [".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"] {
         r.push(rule("edit", p, "deny"));
     }
+    // Ask me: never a git folder (a hook or an alias written there would run when an allowed `git` runs, as Claude Code
+    // also keeps `.git` protected)
+    if !full {
+        for p in [".git/*", "*/.git/*"] {
+            r.push(rule("edit", p, "deny"));
+        }
+    }
     // each protected place by its absolute path, and as OpenCode names it when it lies in the same git repository as
     // the working folder (relative to it: `../../.zshrc` for a game inside a repository that holds the home folder)
     let bases = spellings(folders.location);
@@ -476,11 +484,20 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
             }
         }
         for f in forms {
+            // on a disk that ignores case, `CONFIG.JSON` is `config.json`, and OpenCode compares patterns as written
+            // (measured, 2.3.2: `edit <kit>/config.json deny` let `<kit>/CONFIG.JSON` through): every letter becomes
+            // `?`, its one-character wildcard (it has no `[cC]`; measured), so a few same-shaped names are refused too
+            let f = if paths::case_blind() { any_case(&f) } else { f };
             r.push(rule("edit", &f, "deny"));
             r.push(rule("edit", &format!("{f}/*"), "deny"));
         }
     }
     r
+}
+
+/// A pattern that matches its path in any case: each ASCII letter becomes `?` (a `..` part stays as it is).
+fn any_case(pattern: &str) -> String {
+    pattern.split('/').map(|c| if c == ".." { c.to_string() } else { c.chars().map(|ch| if ch.is_ascii_alphabetic() { '?' } else { ch }).collect() }).collect::<Vec<_>>().join("/")
 }
 
 /// An absolute pattern written relative to an absolute folder (`/u/a/games/g` and `/u/a/.*` give `../../.*`), component
@@ -752,6 +769,18 @@ fn stop_server() {
     }
 }
 
+/// The same, only when the server running is the one with this password (a turn's own): one started since by
+/// another chat is left alone.
+fn stop_server_of(auth: &str) {
+    let taken = {
+        let mut g = SERVER.lock().unwrap();
+        if g.as_ref().is_some_and(|s| s.auth == auth) { g.take() } else { None }
+    };
+    if let Some(s) = taken {
+        end_server(s);
+    }
+}
+
 fn end_server(mut s: Server) {
     let pid = s.child.id();
     paths::end_trees(&[pid]);
@@ -998,6 +1027,9 @@ pub struct Ended {
 #[derive(Default)]
 struct Active {
     session: Mutex<Option<String>>,
+    /// the server the turn runs on (its password, which is new for every start), so Stop and a given-up turn end
+    /// only that server, never one another chat started since
+    server: Mutex<Option<String>>,
     cancelled: AtomicBool,
     done: AtomicBool,
     killed: AtomicBool,
@@ -1046,7 +1078,19 @@ fn run_with(spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
 }
 
 /// One turn on a running server (the real one, or in the replay tests a stand-in that answers with recorded output).
+/// A chat that shares its folder with others leaves no tool servers behind there (each runs as this chat), however
+/// the turn ended, early or not.
 fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> Ended {
+    *me.server.lock().unwrap() = Some(conn.auth.clone());
+    let mut mine = Vec::new();
+    let ended = turn_steps(conn, spec, me, put, &mut mine);
+    for name in &mine {
+        let _ = request(conn, "DELETE", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), None, Duration::from_secs(10));
+    }
+    ended
+}
+
+fn turn_steps(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out), added: &mut Vec<String>) -> Ended {
     let conn = conn.clone();
     let folders = Folders { location: &spec.location, project: spec.project.as_deref(), kit: &paths::PATHS.kit, reads: vec![paths::work("attachments"), paths::work("chat-images")] };
     let rules = permissions(spec.full, &spec.agent_id, &paths::allowed_commands(), &folders, &protected(&paths::home_dir()));
@@ -1112,6 +1156,7 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
     }
     let mine = servers_config(&spec.agent_id, &spec.servers, &extra);
     for (name, cfg) in &mine {
+        added.push(name.clone());
         match call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), Some(&json!({"config": cfg}))) {
             Ok((s, _)) if s < 300 => {}
             _ => bad.push(name.trim_start_matches(&chat_prefix(&spec.agent_id)).to_string()),
@@ -1143,8 +1188,19 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
     let mut turn = Turn::new(&spec.agent_id, &spec.servers, spec.model.clone());
     let mut asked: std::collections::HashSet<String> = Default::default();
     let mut progress = Instant::now();
+    let mut queued: std::collections::VecDeque<Value> = Default::default();
     let ended = loop {
-        let e = match events.next() {
+        // nothing at all for STALL (heartbeats aside, and STALL_WORKING while a tool call is open): ended, unless one of
+        // the app's tools that waits long is running. Checked before anything else, so a server that only ever goes
+        // silent and comes back is ended too.
+        if paths::stalled(progress.elapsed(), turn.waiting_long(), turn.working()) {
+            break give_up(&conn, &session, me, &paths::stall_message());
+        }
+        let next = match queued.pop_front() {
+            Some(e) => Ok(Some(e)),
+            None => events.next(),
+        };
+        let e = match next {
             Ok(Some(e)) => e,
             Ok(None) | Err(_) if me.killed.load(Ordering::SeqCst) => break Ended::default(),
             Ok(None) | Err(_) => {
@@ -1152,6 +1208,12 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
                 match reconnect(&conn, &session) {
                     Some((ev, true)) => {
                         events = ev;
+                        // a request asked while there was no stream would wait for ever: those pending are answered
+                        // now; when they cannot be listed, the turn is ended (closed)
+                        match pending_asks(&conn, &session) {
+                            Some(list) => queued.extend(list),
+                            None => break give_up(&conn, &session, me, "The connection to OpenCode dropped and Fridae could not see whether it was waiting for an answer, so it ended the turn."),
+                        }
                         continue;
                     }
                     Some((_, false)) => {
@@ -1174,6 +1236,14 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
             if !d.blocked.is_empty() {
                 put(Out::Blocked(d.blocked.clone()));
             }
+            // before anything is let run, the session's rules must still be the ones written; if not, the server is
+            // ended (closed)
+            if d.once && !rules_intact(&conn, &session, &rules) {
+                put(Out::Error(RULES_CHANGED.into()));
+                me.killed.store(true, Ordering::SeqCst);
+                stop_server_of(&conn.auth);
+                break Ended { err: String::new(), killed: true };
+            }
             let mut body = json!({"decision": if d.once { "once" } else { "reject" }});
             if !d.once {
                 body["message"] = json!(d.message);
@@ -1188,19 +1258,36 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
         if step.ended {
             break Ended::default();
         }
-        // nothing at all for STALL (heartbeats aside): ended, unless one of the app's tools that waits long is running
-        if progress.elapsed() >= paths::STALL && !turn.waiting_long() {
-            break give_up(&conn, &session, me, &paths::stall_message());
-        }
     };
     for o in turn.finish() {
         put(o);
     }
-    // a chat that shares its folder with others leaves no tool servers behind there (each runs as this chat)
-    for (name, _) in &mine {
-        let _ = request(&conn, "DELETE", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), None, Duration::from_secs(10));
+    // the rules once more at the end: a session whose rules were changed meanwhile (through the server's API) ends the
+    // server, so nothing runs under them later
+    if !me.killed.load(Ordering::SeqCst) && !rules_intact(&conn, &session, &rules) {
+        put(Out::Error(RULES_CHANGED.into()));
+        me.killed.store(true, Ordering::SeqCst);
+        stop_server_of(&conn.auth);
+        return Ended { killed: true, ..ended };
     }
     ended
+}
+
+/// The chat's line when a session's rules no longer read as written.
+const RULES_CHANGED: &str = "This chat's rules in OpenCode were no longer the ones Fridae set, so Fridae ended OpenCode. Send your message again to carry on.";
+
+/// Whether the session's rules still read back as written; false when they cannot be read (closed).
+fn rules_intact(conn: &Conn, session: &str, rules: &[Value]) -> bool {
+    matches!(call(conn, "GET", &format!("/api/session/{}", quote(session)), None), Ok((200, v)) if rules_match(&v["data"]["permissions"], rules))
+}
+
+/// The permission requests a session is waiting on (after the stream was reopened: those asked in the gap came on no
+/// stream), as `permission.asked` events; None when they cannot be listed.
+fn pending_asks(conn: &Conn, session: &str) -> Option<Vec<Value>> {
+    match call(conn, "GET", &format!("/api/session/{}/permission", quote(session)), None) {
+        Ok((200, v)) => Some(v["data"].as_array()?.iter().map(|r| json!({"type": "permission.asked", "data": r})).collect()),
+        _ => None,
+    }
 }
 
 /// The event stream again, a few times with growing waits; and whether the session is still running a turn.
@@ -1237,7 +1324,7 @@ fn give_up(conn: &Conn, session: &str, me: &Active, why: &str) -> Ended {
         }
     }
     me.killed.store(true, Ordering::SeqCst);
-    stop_server();
+    stop_server_of(&conn.auth);
     fail(why)
 }
 
@@ -1252,8 +1339,10 @@ fn rules_match(shown: &Value, written: &[Value]) -> bool {
 /// XDG folders (the server runs with the app's).
 fn shell_environment() -> Map<String, Value> {
     let mut out = Map::new();
-    for (k, v) in env::vars() {
-        if !k.starts_with("OPENCODE_") && !SECRETS.contains(&k.as_str()) {
+    // a variable that is not text is left out (never a panic); the ones the server itself goes without too
+    // (`paths::child_env`: a Claude session's, and provider keys unless the user lets the AIs use them)
+    for (k, v) in env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))) {
+        if !k.starts_with("OPENCODE_") && !SECRETS.contains(&k.as_str()) && !paths::env_dropped(&k, "opencode") {
             out.insert(k, json!(v));
         }
     }
@@ -1287,7 +1376,9 @@ pub fn stop(agent_id: &str, saved: Option<String>) {
     }
     if !me.done.load(Ordering::SeqCst) {
         me.killed.store(true, Ordering::SeqCst);
-        stop_server();
+        if let Some(auth) = me.server.lock().unwrap().clone() {
+            stop_server_of(&auth);
+        }
     }
 }
 
@@ -1303,9 +1394,16 @@ pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decisio
     if action == "shell" && !resources.is_empty() {
         let mut blocked: Vec<Value> = Vec::new();
         let mut form = false;
+        let mut env_reader = false;
         for command in resources {
             // approved only when every program in it is one the user allowed, named exactly (`paths::command_allowed`)
             if paths::command_allowed(command, allowed) {
+                continue;
+            }
+            // a program that can read another process's environment (the server's password is in its own) is never
+            // let run, nor offered: allowing it would not change that
+            if paths::reads_other_env(command) {
+                env_reader = true;
                 continue;
             }
             // the card offers the programs in it the user has not allowed; when there are none, it was the way it was
@@ -1319,6 +1417,9 @@ pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decisio
                     blocked.push(json!({"name": n, "command": command.chars().take(200).collect::<String>()}));
                 }
             }
+        }
+        if env_reader {
+            return Decision { once: false, message: "Not run: programs that read other programs' settings (such as ps) never run in a Fridae chat with OpenCode. Say in one line what you wanted to find out, and carry on with the rest.".into(), blocked: Vec::new() };
         }
         if blocked.is_empty() && !form {
             return Decision { once: true, message: String::new(), blocked };
@@ -1366,6 +1467,9 @@ pub struct Turn {
     answered: bool,
     /// Tool calls started and not yet ended, by id.
     open: std::collections::HashSet<String>,
+    /// The command each shell call was given (`session.tool.called`), by the call's id: a request to run it is
+    /// checked against this as well as against what the request lists.
+    commands: HashMap<String, String>,
 }
 
 impl Turn {
@@ -1373,12 +1477,17 @@ impl Turn {
     pub fn new(agent_id: &str, servers: &Value, model: Option<String>) -> Turn {
         let mut prefixes: Vec<(String, String)> = servers.as_object().map(|o| o.keys().map(|n| (server_name(agent_id, n) + "_", n.clone())).collect()).unwrap_or_default();
         prefixes.sort_by_key(|(p, _)| std::cmp::Reverse(p.len())); // the longest name first
-        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false, open: Default::default() }
+        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false, open: Default::default(), commands: HashMap::new() }
     }
 
     /// Whether one of the app's tools that waits long on purpose is running (no stall then).
     pub fn waiting_long(&self) -> bool {
         self.open.iter().any(|id| self.tools.get(id).is_some_and(|n| paths::waits_long(n)))
+    }
+
+    /// Whether any tool call is open (a long build may send nothing while it runs).
+    pub fn working(&self) -> bool {
+        !self.open.is_empty()
     }
 
     /// A tool's name as the chat knows it: a server's tool as `mcp__<server>__<tool>`, as Claude Code names it (so
@@ -1423,6 +1532,9 @@ impl Turn {
                 let Some(name) = self.tool_name(d["name"].as_str().unwrap_or_else(|| self.tools.get(d["id"].as_str().unwrap_or("")).map(String::as_str).unwrap_or(""))) else { return step };
                 if let Some(id) = d["id"].as_str() {
                     self.tools.insert(id.to_string(), name.clone());
+                    if let Some(c) = d["input"]["command"].as_str().filter(|_| name == "run_command") {
+                        self.commands.insert(id.to_string(), c.to_string());
+                    }
                 }
                 step.outs.push(if name.starts_with("mcp__") { Out::ToolArgs(name, d["input"].clone()) } else { Out::Tool(name) });
             }
@@ -1459,11 +1571,14 @@ impl Turn {
                 self.cost += d["cost"].as_f64().unwrap_or(0.0);
             }
             "permission.asked" => {
-                step.ask = Some(Ask {
-                    id: d["id"].as_str().unwrap_or("").to_string(),
-                    action: d["action"].as_str().unwrap_or("").to_string(),
-                    resources: d["resources"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect(),
-                });
+                let mut resources: Vec<String> = d["resources"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+                // the whole command the call was given is checked too, in case the request lists only parts of it
+                if d["action"] == "shell" {
+                    if let Some(c) = d["source"]["id"].as_str().and_then(|id| self.commands.get(id)).filter(|c| !resources.contains(c)) {
+                        resources.push(c.clone());
+                    }
+                }
+                step.ask = Some(Ask { id: d["id"].as_str().unwrap_or("").to_string(), action: d["action"].as_str().unwrap_or("").to_string(), resources });
                 step.ask = step.ask.filter(|a| !a.id.is_empty());
             }
             "session.execution.succeeded" => {
@@ -1706,6 +1821,31 @@ mod replay;
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn commands_run_in_sh_where_a_planted_script_never_runs() {
+        // the wrapper runs /bin/sh whatever $SHELL is, and in sh the zsh and fish forms do not run ./git
+        let w = shell_wrapper();
+        let text = fs::read_to_string(&w).unwrap();
+        assert!(text.contains("exec /bin/sh \"$@\"") && !text.contains("SHELL"), "{text}");
+        let dir = paths::test_dir("planted-git");
+        fs::create_dir_all(&dir).unwrap();
+        let mark = dir.join("ran");
+        let _ = fs::remove_file(&mark);
+        let git = dir.join("git");
+        fs::write(&git, format!("#!/bin/sh\ntouch '{}'\n", mark.display())).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(dir.join("a.txt"), "x").unwrap();
+        for c in ["echo status *(e:'./git':)", "echo diff =(./git)", "echo log (./git)", "echo x >/dev/null(e:'./git':)"] {
+            let _ = std::process::Command::new(&w).arg("-c").arg(c).current_dir(&dir).env("SHELL", "/bin/zsh")
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+            assert!(!mark.exists(), "{c} ran the planted script");
+        }
+    }
+
     // Real events from opencode v2.3.2's `GET /api/event` (the long `location` and `durable` fields left out, long
     // texts shortened). The tool server there was named "rbxkit"; a chat's own name goes in front in `named`.
     const SHELL_STARTED: &str = r#"{"id":"evt_203285ba1001njw86ONqWOXCZX","created":1795349306273,"type":"session.tool.input.started","data":{"sessionID":"ses_dfcd7c812ffejiqeRr1NEGO8XJ","assistantMessageID":"msg_203285149001muFwqKOC51YtKy","id":"8da3a68e-8cae-4848-94be-bcf90a2ed89f","name":"shell"}}"#;
@@ -1909,6 +2049,30 @@ mod tests {
         assert_eq!(parse_auth_list("abliteration.ai   abliteration.ai             stored\nOpenCode Console  Personal                    stored\n"), ["abliteration.ai", "OpenCode Console"]);
     }
 
+    /// A protected pattern as the rules write it on this disk.
+    fn cb(p: &str) -> String {
+        if case_blind() { any_case(p) } else { p.to_string() }
+    }
+
+    use crate::paths::case_blind;
+
+    /// What OpenCode 2.3.2 decides for a tool and a path under these rules: the last rule whose action and resource
+    /// match wins; in a pattern `*` is any text and `?` any one character, everything else literal and case as written
+    /// (measured: `[cC]` is literal, `?onfig.json` matched `Config.json`).
+    fn decides(rules: &[Value], action: &str, path: &str) -> String {
+        let m = |pat: &str, text: &str| {
+            let re = format!("^{}$", pat.chars().map(|c| match c { '*' => ".*".to_string(), '?' => ".".to_string(), c => regex::escape(&c.to_string()) }).collect::<String>());
+            regex::Regex::new(&re).unwrap().is_match(text)
+        };
+        rules.iter().rev().find(|r| m(r["action"].as_str().unwrap(), action) && m(r["resource"].as_str().unwrap(), path)).map(|r| r["effect"].as_str().unwrap().to_string()).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_pattern_in_any_case() {
+        assert_eq!(any_case("../../kit/config.json"), "../../???/??????.????");
+        assert_eq!(any_case("/Users/a b/.*"), "/?????/? ?/.*");
+    }
+
     #[test]
     fn ask_me_allows_ours_and_the_chats_folders_and_denies_the_rest() {
         let f = Folders { location: Path::new("/games/Odd One In é"), project: Some(Path::new("/games/Odd One In é")), kit: Path::new("/kit"), reads: vec![PathBuf::from("/work/attachments")] };
@@ -1928,8 +2092,16 @@ mod tests {
         let odd = Folders { location: Path::new("/games/a*"), project: Some(Path::new("/games/a*")), kit: Path::new("/kit"), reads: vec![] };
         let r2 = permissions(false, "c1", &[], &odd, &[]);
         assert!(!r2.iter().any(|x| x["effect"] == "allow" && x["resource"].as_str().unwrap().starts_with("/games")));
-        assert!(last("edit", "/kit/config.json") > last("edit", "/kit/*"), "the app's settings stay protected inside the kit");
-        assert!(has("edit", "/h/.*/*", "deny") && has("edit", "*/.opencode/*", "deny"));
+        assert!(last("edit", &cb("/kit/config.json")) > last("edit", "/kit/*"), "the app's settings stay protected inside the kit");
+        assert!(has("edit", &cb("/h/.*/*"), "deny") && has("edit", "*/.opencode/*", "deny"));
+        // as OpenCode decides (last match wins, `*` any text, `?` one character, case as written): every spelling of
+        // the settings file is refused on a disk that ignores case
+        assert_eq!(decides(&r, "edit", "/kit/vault/x.md"), "allow");
+        for name in ["config.json", "CONFIG.JSON", "Config.json"] {
+            let want = if name == "config.json" || case_blind() { "deny" } else { "allow" };
+            assert_eq!(decides(&r, "edit", &format!("/kit/{name}")), want, "{name}");
+        }
+        assert_eq!(decides(&r, "edit", ".git/hooks/pre-commit"), "deny", "Ask me: never a git folder");
         for a in ["execute", "subagent", "skill", "question"] {
             assert!(has(a, "*", "deny"), "{a}");
         }
@@ -1946,14 +2118,16 @@ mod tests {
         let f = Folders { location: Path::new("/Users/a/games/g"), project: Some(Path::new("/Users/a/games/g")), kit: Path::new("/kit"), reads: vec![] };
         let r = permissions(true, "c1", &[], &f, &["/Users/a/.*".into(), "/Users/a/Library".into()]);
         let at = |a: &str, res: &str, eff: &str| r.iter().position(|x| x == &rule(a, res, eff));
-        assert!(at("edit", "../../.*", "deny") > at("edit", "*", "allow"), "Full auto: ~/.zshrc named relative to a game inside a home-wide repository is refused");
-        assert!(at("edit", "../../Library/*", "deny").is_some());
+        assert!(at("edit", &cb("../../.*"), "deny") > at("edit", "*", "allow"), "Full auto: ~/.zshrc named relative to a game inside a home-wide repository is refused");
+        assert!(at("edit", &cb("../../Library/*"), "deny").is_some());
+        assert_eq!(decides(&r, "edit", "../../library/LaunchAgents/x.plist"), if case_blind() { "deny" } else { "allow" });
+        assert_eq!(decides(&r, "edit", "/Users/a/LIBRARY/x"), if case_blind() { "deny" } else { "allow" });
         // Ask me: the kit beside a chat folder in the same repository is allowed by its relative name too
         let dev = Folders { location: Path::new("/src/work/opencode/c1"), project: None, kit: Path::new("/src"), reads: vec![] };
         let r = permissions(false, "c1", &[], &dev, &["/src/config.json".into()]);
         let at = |a: &str, res: &str, eff: &str| r.iter().position(|x| x == &rule(a, res, eff));
         assert!(at("edit", "../../../*", "allow") > at("edit", "../*", "deny"));
-        assert!(at("edit", "../../../config.json", "deny") > at("edit", "../../../*", "allow"), "its settings file stays refused");
+        assert!(at("edit", &cb("../../../config.json"), "deny") > at("edit", "../../../*", "allow"), "its settings file stays refused");
     }
 
     #[test]
@@ -1965,7 +2139,7 @@ mod tests {
         for a in ["shell", "edit", "external_directory", "webfetch", "websearch", "read"] {
             assert!(at(&rule(a, "*", "allow")) > 0, "{a}");
         }
-        assert!(at(&rule("edit", "/store/*", "deny")) > at(&rule("edit", "*", "allow")) && at(&rule("execute", "*", "deny")) > 0, "denies come after the allows, so they win");
+        assert!(at(&rule("edit", &cb("/store/*"), "deny")) > at(&rule("edit", "*", "allow")) && at(&rule("execute", "*", "deny")) > 0, "denies come after the allows, so they win");
         assert!(at(&rule("fr????????-*", "*", "deny")) > 0, "another chat's tools stay refused");
         assert!(!r.iter().any(|x| x["effect"] == "ask"), "nothing asks: nobody is there to answer");
     }

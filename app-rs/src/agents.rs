@@ -813,7 +813,7 @@ fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::In
             (l.0.elapsed(), l.1)
         };
         let waiting = long_tool || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
-        if paths::stalled(quiet, waiting) && !tp.done.load(Ordering::SeqCst) {
+        if paths::stalled(quiet, waiting, false) && !tp.done.load(Ordering::SeqCst) {
             tp.stalled.store(true, Ordering::SeqCst);
             tp.end();
             return;
@@ -2143,7 +2143,13 @@ impl Agent {
         let ended = opencode::run(&spec, |out| self.take(out, &mut t));
         let stopped = self.turn_over();
         if ended.killed {
-            self.put("error", json!({"text": "OpenCode did not stop when asked within a few seconds, so Fridae ended it (and any other OpenCode chat that was working)."}));
+            // after Stop: it did not stop in time; otherwise the turn already said why OpenCode was ended
+            let text = if stopped {
+                "OpenCode did not stop when asked within a few seconds, so Fridae ended it (and any other OpenCode chat that was working)."
+            } else {
+                "Any other OpenCode chat that was working was ended with it."
+            };
+            self.put("error", json!({"text": text}));
         }
         let exit = (!ended.err.is_empty()).then_some((false, -1));
         self.after_turn("opencode", t, &ended.err, exit, stopped);

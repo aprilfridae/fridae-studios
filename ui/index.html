@@ -3662,11 +3662,16 @@ async function allowCommands(names, allow) {
   if (r && r.commands) status.commands = r.commands;
   paintCommands(); return r && r.ok;
 }
+/* Programs that can start any other program (git aliases and hooks, env, xargs, find -exec, shells, interpreters...):
+   the blocked card says so before the user allows one. */
+const RUNS_ANY = ["git", "env", "xargs", "find", "sh", "bash", "zsh", "fish", "dash", "python", "python3", "node", "ruby", "perl", "php", "lua", "make", "npm", "npx", "pnpm", "yarn", "bun", "deno", "cargo", "ssh", "sudo", "nice", "time", "nohup", "timeout", "watch", "awk", "osascript", "open", "pwsh", "powershell", "cmd"];
 function blockedCard(p, commands) {
   const names = commands.map((c) => c.name);
   const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
   card.querySelector("h4").textContent = "The agent was not allowed to run " + names.join(", ");
   card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude, Cursor and OpenCode chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Setup). Gemini chats can only use the building tools.";
+  const any = names.filter((n) => RUNS_ANY.includes(n));
+  if (any.length) card.querySelector("p").textContent += " Note: " + any.join(", ") + (any.length === 1 ? " can" : " can each") + " run any other program, so allowing " + (any.length === 1 ? "it" : "them") + " is close to allowing everything.";
   card.querySelector("pre").textContent = commands.map((c) => c.command).join("\n");
   const [yes, no] = card.querySelectorAll("button");
   yes.textContent = "Allow " + names.join(", ") + " and carry on";

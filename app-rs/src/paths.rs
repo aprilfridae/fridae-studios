@@ -250,9 +250,14 @@ pub fn waits_long(tool: &str) -> bool {
     ["rbx_team", "rbx_texture", "rbx_generate_texture"].iter().any(|w| t == *w || t.ends_with(&format!("_{w}")))
 }
 
-/// Whether a turn that has sent nothing for `quiet` is stalled: STALL or more, and not waiting on purpose.
-pub fn stalled(quiet: std::time::Duration, waiting_long: bool) -> bool {
-    quiet >= STALL && !waiting_long
+/// How long a turn may send nothing while one of its tool calls is open (a long build, a test run): a tool that
+/// hangs is ended with the turn after this.
+pub const STALL_WORKING: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Whether a turn that has sent nothing for `quiet` is stalled: not waiting on purpose, and STALL or more (with a tool
+/// call open, STALL_WORKING or more).
+pub fn stalled(quiet: std::time::Duration, waiting_long: bool, tool_open: bool) -> bool {
+    !waiting_long && quiet >= if tool_open { STALL_WORKING } else { STALL }
 }
 
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
@@ -334,10 +339,28 @@ pub fn plan_keys(ai: &str) -> &'static [&'static str] {
     }
 }
 
-/// The environment hygiene every AI's process gets (see CLAUDE_SESSION_VARS, plan_keys); Antigravity is also told not
-/// to update itself mid-turn.
+/// The Setup switch "Use API keys from my environment": off unless the user turned it on, since a key in the
+/// environment would bill that API account instead of the plan the user signed in with.
+pub fn env_keys_on() -> bool {
+    load_config().get("use_env_keys").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// Whether a variable is kept from an AI's process: a Claude session's always; a provider key (plan_keys) unless the
+/// user turned that switch on.
+pub fn env_dropped(key: &str, ai: &str) -> bool {
+    CLAUDE_SESSION_VARS.contains(&key) || (plan_keys(ai).contains(&key) && !env_keys_on())
+}
+
+/// The provider keys of an AI that are in the app's environment now (names only), for the sign-in message.
+pub fn env_keys_present(ai: &str) -> Vec<&'static str> {
+    plan_keys(ai).iter().copied().filter(|k| env::var_os(k).is_some_and(|v| !v.is_empty())).collect()
+}
+
+/// The environment hygiene every AI's process gets (see CLAUDE_SESSION_VARS, plan_keys, env_keys_on); Antigravity is
+/// also told not to update itself mid-turn.
 pub fn child_env(cmd: &mut Command, ai: &str) {
-    for k in CLAUDE_SESSION_VARS.iter().chain(plan_keys(ai)) {
+    let keys_on = env_keys_on();
+    for k in CLAUDE_SESSION_VARS.iter().chain(plan_keys(ai).iter().filter(|_| !keys_on)) {
         cmd.env_remove(k);
     }
     if ai == "gemini" {
@@ -378,6 +401,18 @@ pub fn end_trees(pids: &[u32]) {
             signal("-KILL", g);
         }
     }
+}
+
+/// Whether the disk the user's files are on ignores case (a Mac's and Windows' usually do): the home folder is found
+/// under its name with every letter's case swapped. Rules that keep the AIs' file tools away from a file must then
+/// match it in any case.
+pub fn case_blind() -> bool {
+    static BLIND: LazyLock<bool> = LazyLock::new(|| {
+        let home = home_dir().display().to_string();
+        let swapped: String = home.chars().map(|c| if c.is_ascii_lowercase() { c.to_ascii_uppercase() } else { c.to_ascii_lowercase() }).collect();
+        swapped != home && Path::new(&swapped).exists()
+    });
+    *BLIND
 }
 
 // ----------------------------------------------------------------- settings
@@ -590,6 +625,10 @@ pub fn allowed_commands() -> Vec<String> {
     load_config().get("allowed_commands").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
 }
 
+/// Held by the tests that change the allowed list, so they never run into each other (they share one settings file).
+#[cfg(test)]
+pub static ALLOWED_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Adds or removes programs from that list. Names are single words: a program, never a whole command line.
 pub fn set_allowed(names: &[String], allow: bool) -> Vec<String> {
     update_config(|cfg| {
@@ -614,69 +653,121 @@ pub fn program_name(command: &str) -> Option<String> {
     (!name.is_empty() && name.len() <= 40 && name.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))).then_some(name)
 }
 
-/// Whether the app itself may approve this shell command because the user allowed its program(s): only when every
-/// part of it starts with a program the user allowed, named exactly (no folder part like `./git` or `/tmp/x/python`,
-/// no quotes, no variable set in front, same spelling), and it holds nothing the allow list was not written for:
-/// command substitution (backticks, `$(`), variables, a redirection other than `2>&1` or `>/dev/null`, a background `&`
-/// or a line break. Parts joined by `;`, `&&`, `||` or `|` must each pass. When unsure, no: the blocked card shows.
-/// The native allow lists of Claude Code (`Bash(<p>:*)`) and Cursor (`Shell(<p>)`) decide for those AIs; this is for
-/// the AIs whose requests the app answers (OpenCode).
+/// Whether the app itself may approve this shell command because the user allowed its program(s). A whitelist, written
+/// for the grammar of `/bin/sh` (the only shell such a command is run with: OpenCode's `fridae-shell`), never for zsh,
+/// bash or fish: every part must start with a program the user allowed, named exactly (no folder part like `./git`, no
+/// quotes, no variable set in front, same spelling), and outside quotes a word may hold only `A-Z a-z 0-9 _ @ % + = :
+/// , . / -` (so no `( ) { } ! # ~ * ? [ ]`, no glob, no zsh qualifier or `=( )`, no fish substitution) and may not start
+/// with `=`. Inside single quotes anything but a line break; inside double quotes no `!`. Nowhere `$`, a backtick, a
+/// backslash or a line break. A redirection only as a whole word: `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>`
+/// then the word `/dev/null`); any other `<` or `>` refuses. Parts joined by `;`, `&&`, `||` or `|` must each pass; a
+/// lone `&`, `|&` or an empty part refuses. Nor does anything that reads another process's environment pass
+/// (`reads_other_env`). When unsure, no: the blocked card shows. The native allow lists of Claude Code (`Bash(<p>:*)`)
+/// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AIs whose requests the app answers (OpenCode).
+#[allow(unused_assignments)] // the last word's end leaves its flags unread
 pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
-    let c = command.trim();
-    if c.is_empty() || c.contains(['`', '\n', '\r', '$', '\\']) {
+    let c = command.trim_matches([' ', '\t']);
+    if c.is_empty() || c.contains(['`', '\n', '\r', '$', '\\']) || reads_other_env(c) {
         return false;
     }
-    // the two harmless redirections are taken out; any other `<` or `>` is a write or read the list was not written for
-    let c = c.replace("2>&1", " ").replace(">/dev/null", " ").replace("> /dev/null", " ");
-    if c.contains(['<', '>']) {
-        return false;
-    }
-    // split into parts at ; && || | (a lone & sends a part to the background: refused)
-    let mut parts = Vec::new();
-    let mut cur = String::new();
-    let mut quote: Option<char> = None;
+    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_@%+=:,./-".contains(ch);
     let chars: Vec<char> = c.chars().collect();
+    let at = |i: usize| chars.get(i).copied();
+    // where a word ends: a blank, a separator, or the end
+    let ends = |i: usize| at(i).is_none_or(|ch| " \t;|&".contains(ch));
+    let starts = |i: usize, s: &str| s.chars().enumerate().all(|(k, ch)| at(i + k) == Some(ch));
+    // the parts, each a list of words (a word as written, quotes kept; whether any of it was quoted)
+    let mut parts: Vec<Vec<(String, bool)>> = vec![Vec::new()];
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut in_word = false;
     let mut i = 0;
+    macro_rules! end_word {
+        () => {
+            if in_word {
+                parts.last_mut().unwrap().push((std::mem::take(&mut word), quoted));
+                in_word = false;
+                quoted = false;
+            }
+        };
+    }
     while i < chars.len() {
         let ch = chars[i];
-        match quote {
-            Some(q) if ch == q => quote = None,
-            Some(_) => {}
-            None if ch == '"' || ch == '\'' => quote = Some(ch),
-            None if ch == ';' || ch == '|' => {
-                parts.push(std::mem::take(&mut cur));
-                if chars.get(i + 1) == Some(&'|') {
-                    i += 1;
-                }
+        match ch {
+            ' ' | '\t' => {
+                end_word!();
                 i += 1;
-                continue;
             }
-            None if ch == '&' => {
-                if chars.get(i + 1) != Some(&'&') {
+            ';' | '|' | '&' => {
+                end_word!();
+                i += match (ch, at(i + 1)) {
+                    ('&', Some('&')) | ('|', Some('|')) => 2,
+                    ('&', _) | ('|', Some('&')) => return false,
+                    _ => 1,
+                };
+                parts.push(Vec::new());
+            }
+            '<' | '>' | '2' if !in_word && (ch != '2' || at(i + 1) == Some('>')) => {
+                // a redirection: only the harmless ones, each a whole word
+                if let Some(r) = ["2>&1", "2>/dev/null", ">/dev/null"].into_iter().find(|r| starts(i, r) && ends(i + r.chars().count())) {
+                    i += r.chars().count();
+                    continue;
+                }
+                let op = if starts(i, "2>") { 2 } else if starts(i, ">") { 1 } else { return false };
+                let mut j = i + op;
+                if !matches!(at(j), Some(' ' | '\t')) {
                     return false;
                 }
-                parts.push(std::mem::take(&mut cur));
-                i += 2;
-                continue;
+                while matches!(at(j), Some(' ' | '\t')) {
+                    j += 1;
+                }
+                if !(starts(j, "/dev/null") && ends(j + 9)) {
+                    return false;
+                }
+                i = j + 9;
             }
-            None => {}
+            '\'' | '"' => {
+                let Some(len) = chars[i + 1..].iter().position(|&x| x == ch) else { return false };
+                if ch == '"' && chars[i + 1..i + 1 + len].contains(&'!') {
+                    return false;
+                }
+                word.extend(&chars[i..i + len + 2]);
+                quoted = true;
+                in_word = true;
+                i += len + 2;
+            }
+            _ => {
+                if !plain(ch) || (!in_word && ch == '=') {
+                    return false;
+                }
+                word.push(ch);
+                in_word = true;
+                i += 1;
+            }
         }
-        cur.push(ch);
-        i += 1;
     }
-    if quote.is_some() {
-        return false;
-    }
-    parts.push(cur);
-    parts.iter().all(|part| {
-        let Some(first) = part.split_whitespace().next() else { return false };
-        first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !first.starts_with('.') && allowed.iter().any(|a| a == first)
+    end_word!();
+    parts.iter().all(|words| {
+        let Some((first, quoted)) = words.first() else { return false };
+        !quoted && first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !first.starts_with('.') && allowed.iter().any(|a| a == first)
     })
+}
+
+/// Programs that can read another process's environment (the OpenCode server's password travels in its own), on macOS,
+/// Linux or Windows: the app never approves a command that runs one of these, however the user's list reads, nor one
+/// that names Linux's `/proc` (where any file reader can read `/proc/<pid>/environ`). The one place they are listed.
+pub const ENV_READERS: &[&str] = &["ps", "procs", "htop", "pargs", "gdb", "lldb", "dtrace", "dtruss", "launchctl", "procdump", "procexp", "procexp64", "handle", "wmic"];
+
+/// Whether a command runs one of the ENV_READERS or names `/proc`.
+pub fn reads_other_env(command: &str) -> bool {
+    command.contains("/proc") || command_programs(command).iter().any(|p| ENV_READERS.contains(&p.as_str()))
 }
 
 /// The programs a command line starts, by name (each part after `;`, `&&`, `||`, `|`), for the blocked card.
 pub fn command_programs(command: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
+    // `2>&1` is a redirection, not a separator: its `&` must not start a part (`git log 2>&1/x` names no program `x`)
+    let command = command.replace("2>&1", " ");
     for part in command.split([';', '|', '&', '\n']) {
         if let Some(n) = program_name(part.trim()).filter(|n| !out.contains(n)) {
             out.push(n);
@@ -789,10 +880,29 @@ mod tests {
             "./git status", "bin/git", "/tmp/x/python3 -c 1", "/usr/bin/git", "GIT status", "gitk", "git; curl x", "git && ./x",
             "FOO=1 git", "\"git\" status", "'git'", "g\\it", "git $(curl x)", "git `id`", "git > /etc/x", "ls < /etc/passwd",
             "git status &", "git\nrm -rf x", "git status | sh", "ls ${HOME}", "", "git 'unclosed", ".git",
+            // zsh glob qualifiers and =( ), fish's ( ): the shell is /bin/sh, and none of these pass the whitelist
+            "git status *(e:'./git':)", "git status *(e:./git:)", "git status >/dev/null(e:'./git':)", "git diff =(./git)", "git log (./git)",
+            "git log {a,b}", "git log ~/x", "git log =x", "git log !x", "git log \"!x\"", "ls *.lua", "ls x?", "ls [ab]", "git log # x",
+            // redirections only as whole words
+            "git log 2>&1/../../outside.txt", "python3 2>&1/x", "git log 2>&1x", "git x>/dev/null", "ls >/dev/nullx", "ls >>/dev/null",
+            "ls 1>/dev/null", "ls > /etc/x", "ls 2> x", "ls >", "git status |& ls", "git status;", "; git", "git status || ",
+            // never a program that reads another process's environment, nor /proc
+            "ps eww -ax", "git log | ps -E", "ls /proc/1/environ", "launchctl procinfo 1",
+            // look-alikes
+            "git\u{a0}status", "\u{ff47}it status",
         ] {
             assert!(!command_allowed(bad, &allowed), "{bad}");
         }
+        // python2 is not python
+        assert!(!command_allowed("python2>&1 x.py", &["python".to_string()]));
         assert!(!command_allowed("git status", &["gitk".to_string()]));
+        // ps is refused even when the user allowed it
+        assert!(!command_allowed("ps -ax", &["ps".to_string()]));
+        assert_eq!(command_programs("git log 2>&1/../../x.txt"), ["git"]);
+        assert_eq!(command_programs("git status && ./rm x; ls | wc"), ["git", "rm", "ls", "wc"]);
+        for ok in ["ls 2>/dev/null", "ls > /dev/null", "ls 2> /dev/null && git status", "git commit -m \"a (b) {c} ~d *\"", "git log --format=%H:%an,x@y+z", "git log -- 'a ~ * ( ) ! \"'", "ls 2"] {
+            assert!(command_allowed(ok, &allowed), "{ok}");
+        }
     }
 
     use super::*;
@@ -828,9 +938,11 @@ mod tests {
 
     #[test]
     fn a_turn_is_stalled_only_after_the_whole_wait_and_never_while_waiting_on_purpose() {
-        assert!(!stalled(STALL - std::time::Duration::from_secs(1), false));
-        assert!(stalled(STALL, false));
-        assert!(!stalled(STALL * 4, true), "a Lead waiting on experts or a texture is not stalled");
+        assert!(!stalled(STALL - std::time::Duration::from_secs(1), false, false));
+        assert!(stalled(STALL, false, false));
+        assert!(!stalled(STALL * 4, true, false), "a Lead waiting on experts or a texture is not stalled");
+        assert!(!stalled(STALL * 2, false, true), "a tool call that is open gets STALL_WORKING");
+        assert!(stalled(STALL_WORKING, false, true));
         assert!(waits_long("mcp__rbxkit__rbx_team") && waits_long("rbx_texture") && !waits_long("rbx_teamwork") && !waits_long("Bash"));
     }
 

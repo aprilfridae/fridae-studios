@@ -435,11 +435,23 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   (`opencode serve --service`, `~/.config/opencode/service.json`) is never used.
 - **The password stays with the server** (measured with real turns): shell commands run through the app's own shell,
   `fridae-shell` in the app's OpenCode folder (OpenCode's `shell` setting), which unsets `OPENCODE_PASSWORD`,
-  `OPENCODE_SERVER_PASSWORD` and the two username variables before running the user's shell; each turn also puts the
-  session's command environment (`PUT /api/session/<id>/environment`) without any `OPENCODE_*` variable; the tool
-  servers get those variables blank in their entry. `printenv` in a turn printed nothing, and `ps eww` showed them
-  blank for rbxkit and absent for a running command. Left: an allowed `ps eww` (Full auto, or a user who allowed `ps`)
-  can read the server's own environment, as any program of the same user can.
+  `OPENCODE_SERVER_PASSWORD` and the two username variables before running `/bin/sh` (never the user's `$SHELL`: the
+  app's command check is written for sh's grammar, and zsh runs programs from glob qualifiers `*(e:...)` and `=( )`,
+  fish from bare parentheses; measured in zsh, a planted `./git` ran from `git status *(e:'./git':)`, and through
+  OpenCode in Full auto the command ran in `/bin/sh` and the same forms did not run it); each turn also puts the
+  session's command environment (`PUT /api/session/<id>/environment`) without any `OPENCODE_*` variable, a Claude
+  session's variables or the provider keys the server goes without (`paths::env_dropped`; a variable that is not text
+  is left out); the tool servers get those variables blank in their entry. `printenv` in a turn printed nothing, and
+  `ps eww` showed them blank for rbxkit and absent for a running command.
+- **What is left of the password, plainly**: it is in the server's own start-up environment, which any program of
+  the same user can read (`ps eww -ax`, `ps -E`, `/proc/<pid>/environ` on Linux). In Ask me the app never approves a
+  program that can read another process's environment, whatever the allowed list says (`paths::ENV_READERS`, one
+  list: ps, procs, htop, pargs, gdb, lldb, dtrace, dtruss, launchctl, procdump, procexp, handle, wmic; and any command
+  naming `/proc`); it is refused with a plain line and no card. In **Full auto and Studio** every command runs
+  without asking, so a model can read it there; with it, the server's API (other chats' sessions, its own rules). A
+  model with an unrestricted shell can already write any file the user can and start its own OpenCode, so this adds
+  little, and OpenCode stays offered there (the user's ruling). As a second guard, the session's rules are read back
+  before every `once` answer and at the end of each turn: rules changed through the API end the server (closed).
 - **A turn** (`run_with`): the saved session gets its rules rewritten (`PATCH /api/session/<id>`; a 404 starts a new
   session handed the chat so far, `agents::stale_chat`), or `POST /api/session` makes one titled "Fridae · <chat>"
   with the model and the chat's folder; the chat's tool servers are added for that folder
@@ -501,6 +513,16 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     goes up (`../*` is denied), the chat's folders by absolute path and, when they share the repository with the
     working folder (the kit in the dev layout), by their relative name too; each protected place is denied by its
     absolute path and by its name relative to each spelling of the working folder.
+  - Case: OpenCode compares patterns as written, and a Mac's disk ignores case (measured, 2.3.2, Ask me, through the
+    app: `edit <kit>/config.json deny` let `<kit>/CONFIG.JSON` and `<kit>/Config.json` be written). Where the disk
+    ignores case (`paths::case_blind`: the home folder is found with its letters' case swapped), every protected
+    pattern is written with each letter as `?` (OpenCode's one-character wildcard; it has no `[cC]`, measured), so a
+    few names of the same shape next to a protected one are refused too. Measured after: `CONFIG.JSON`,
+    `Config.json`, `config.json` refused in Ask me and Full auto, `~/library/x.txt` refused in Full auto, another
+    file in the kit still written. Left: in Full auto, a file named relative to a game in a repository through an
+    ancestor folder spelled in another case could get a relative name with a different number of `..`.
+  - Ask me also denies edits to `.git/*` and `*/.git/*` (a hook or alias written there would run under an allowed
+    `git`; Claude Code keeps `.git` protected too).
   - Ask me: `shell *` asks, with no allow rule (an allowed program with a redirection to any file would otherwise
     run without asking: measured, `git --version > /tmp/x`); edits allowed in the chat's folder, the game and the kit,
     the same set as Claude Code (each spelling, `/private` included), never the whole work folder; `external_directory`
@@ -508,8 +530,14 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   - Full auto and Studio: shell, edit, `external_directory` allowed for `*`; the denies above still hold.
   - A `permission.asked` for a shell command (`decide`, `paths::command_allowed`): answered `once` only when every
     part (split on `;`, `&&`, `||`, `|`, as OpenCode itself asks per part) starts with a program the user allowed,
-    named exactly (not `./git`, `bin/git`, `/tmp/x/python`, `FOO=1 git`, quoted), with no backticks, `$`, backslash,
-    line break, background `&` or redirection other than `2>&1` and `>/dev/null`. A missing program shows the card;
+    named exactly (not `./git`, `bin/git`, `/tmp/x/python`, `FOO=1 git`, quoted). The check is a whitelist for sh:
+    outside quotes a word holds only letters, digits and `_ @ % + = : , . / -` and does not start with `=` (so no
+    `( ) { } ! # ~`, no glob `* ? [ ]`: a file named `--checkpoint-action=exec=sh` would turn `tar cf x *` into any
+    program); inside double quotes no `!`; nowhere backticks, `$`, a backslash or a line break; a redirection only as
+    a whole word, `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>` then `/dev/null`), so `git log 2>&1/../../x` and
+    `python2>&1 x.py` are refused. The whole command the shell call was given (`session.tool.called`) is checked as
+    well as what the request lists. A missing program shows the card (and says when it is one that can run any other
+    program: git, env, xargs, find, shells, interpreters...);
     a command refused only for its form gets a plain line to the model and no card (allowing would not help). A
     program allowed from the card is answered `once` from then on. Any other ask is rejected. Never `always`.
   - Measured with real turns (opencode 2.3.2, game and outside folders under the home folder, not in temp):
@@ -530,7 +558,15 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
 - **Stop**: `POST /api/session/<id>/interrupt` (in its own thread), then up to 15 seconds (`STOP_WAIT`, the same as every AI's) for the turn's
   end event (measured: about 0.1 s, the running shell command is ended). If none comes, the whole server is ended
   and the chat says so: that also ends any other OpenCode chat that was working, which the message says. A Stop on a
-  chat whose turn the app no longer follows still interrupts its saved session.
+  chat whose turn the app no longer follows still interrupts its saved session. Stop and a given-up turn end only the
+  server their turn ran on (`stop_server_of`, by its password), never one another chat started since.
+- **Ends of a turn**: the chat's tool servers are removed from the folder however the turn ended, early ones too
+  (refused instructions, Stop before the message, a refused prompt). A turn that sends nothing for 15 minutes is
+  ended (`paths::STALL`), 60 while a tool call is open (`STALL_WORKING`: a long build may send no event; not
+  measured whether OpenCode sends any while a command runs), never while one of the app's tools waits on purpose; the
+  check runs before a reconnect, so a server that only goes silent and comes back is ended too. After the stream is
+  reopened, the requests the session is waiting on are listed (`GET /api/session/<id>/permission`) and answered (one
+  asked while no stream was open would otherwise wait for ever); when they cannot be listed the turn is ended.
 - **Processes** (`app-rs/src/procs.rs`, a general ledger: one file per app run, `work/processes/<app pid>.json`, with
   the app's own pid, start time and command line and, per process, pid, process group, start time and command line;
   the file goes when its last process ends). Ending the server (SIGTERM to its group, then SIGKILL) also ends its
@@ -690,7 +726,8 @@ is an example the user can paste into their own House rules.
   stage and texture request and result folders, the tool-server configs in `work/agent-tools`, the undo copies),
   for every AI and in every mode.
 - **Allowed programs are matched by each tool's own rules** for Claude Code (`Bash(<p>:*)`) and Cursor
-  (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode, whose requests the app answers. Measured for Cursor
+  (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode, whose requests the app answers (the app's check never
+  approves a command for Claude, Cursor or Antigravity, so the shells those run commands in are their own matter). Measured for Cursor
   (2026.11.22, Ask me, `git` allowed): `./git status`, `bin/git status` and `FOO=1 ./git status` were refused, but
   `git --version > <any file>` ran, also outside the workspace: Cursor's allow rule does not look at redirections.
   Not changed (Cursor offers no rule for it); noted as a gap.
