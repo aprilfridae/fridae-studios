@@ -19,8 +19,9 @@ Two things do the work:
 
 ## Which guides to read
 
-Read every guide that is relevant to the request before starting, not just
-this one. Be generous: a guide that might apply is worth reading.
+Find what the other guides say about the request before starting, not just
+this one: search them (from rbxkit, `rbx_vault` with shelf `guides`) and read
+the sections that apply. Read a whole guide when the task is centrally about it.
 
 | Request | Also read |
 |---|---|

@@ -1,5 +1,9 @@
-Load every guide that is relevant to the request before starting, in one rbx_guide call (pass several names in
-`topics`). Be generous: a guide that might apply is worth reading. `workflow` always, plus:
+Always load the `workflow` guide in full (rbx_guide). For everything else, look it up instead of loading whole guides:
+search with rbx_vault (shelf `guides`) for the task in plain words, then read only the sections that apply (rbx_vault
+`read`, or rbx_guide with `topic` and `section`). Load a whole guide only when the task is centrally about it (a large
+guide then comes as its opening and a list of its sections: read the ones you need). Guides that hold rules (`studio`,
+`producer`, `critic`, `game-bible`, `workflow`) always come whole; load them when the work below says so. Which guides
+cover which work:
 - Modelling, building, props, maps: `roblox-world-building`, `lihfolk-worldbuilding` (maps, towns, lobbies, dungeons),
   `roblox-blender-modeling` (anything modelled in Blender), `roblox-asset-import` (importing FBX/GLB/OBJ), the style guide that matches the game's look (`brutalist-skill` for raw, industrial,
   blocky or terminal looks; `minimalist-skill` for clean and quiet; `soft-skill` for soft, premium or glossy), and
@@ -14,7 +18,7 @@ Load every guide that is relevant to the request before starting, in one rbx_gui
   mockups, colour values, fonts) are the target and beat every guide: build to them exactly, and ask for exports
   rather than inventing art.
 - The user says UI looks like slop, vibecoded, AI-made, generic or cheap, or asks to clean up or polish it: `unslop`
-  (with `web-to-roblox` and `ui-design`), run in full on that screen.
+  (load it with `whole: true`; with `web-to-roblox` and `ui-design`), run in full on that screen.
 - Visual effects: `vfx`, `vfx-basics`, `lihfolk-vfx` (ability and combat effect recipes), `motion-design`, the matching style guide.
 - Animations and cutscenes: `roblox-characters-animation`, `motion-design`.
 - Playtesting and tests: `playtest`, `roblox-testing`.
@@ -32,13 +36,14 @@ Load every guide that is relevant to the request before starting, in one rbx_gui
 - Reviewing code: `roblox-code-review`.
 - Reviewing or polishing finished UI or motion: `unslop`, `emil-design-eng`, `redesign-skill`.
 - A new game or a new idea: `game-brainstorm`, `game-bible`, `game-design`, `market-research`.
-- Starting work on an existing game for the first time: `game-bible`.
+- Starting work on an existing game for the first time: load `game-bible` in full.
 - Any design decision, new feature or system: `game-design`; add `economy-design` when prices, rewards, drop rates or
   progression numbers are involved.
 - Sounds and music: `sound-design`.
 - A promo, trailer, TikTok, Short or Reel for a game, editing gameplay clips into a vertical video: `promo` (then use `rbx_promo`).
 - Judging whether something is fun, clear or ready: `player-testing`, with `playtest`.
-- Studio mode is on (you are the Lead of a Studio run): `studio` and `producer`.
-- Big requests that can be split into parallel work: `producer`. When you were spawned as a reviewer: `critic`.
+- Studio mode is on (you are the Lead of a Studio run): load `studio` and `producer` in full.
+- Big requests that can be split into parallel work: `producer`. When you were spawned as a reviewer: load `critic` in full.
 Facts that change (limits, quotas, defaults, prices, policy, anything changed in 2025-2026), a bug whose cause is unclear,
-or a topic no guide covers: search LihFolk Vault V2 with `rbx_vault` (one search, then read one section of the best note).
+or a topic no guide covers: search the whole lookup with `rbx_vault` (shelf `all` or `vault`; one search, then read one
+section of the best result). This game's GAME.md sections, decision log and lessons are on shelf `game`.
