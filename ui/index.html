@@ -136,10 +136,10 @@ div.g-row { cursor: default; }
 .u-week span:last-child i { background: var(--text); }
 .u-week em { font: normal 11px/1 var(--mono); color: var(--faint); }
 .u-lim { padding: 8px; font-size: 14px; }
-.u-lim .top { display: flex; align-items: baseline; gap: 8px; }
-.u-lim .top b { font-weight: 500; flex: 1; min-width: 0; white-space: nowrap; text-align: left; }
+.u-lim .lim-top { display: flex; align-items: baseline; gap: 8px; }
+.u-lim .lim-top b { font-weight: 500; flex: 1; min-width: 0; white-space: nowrap; text-align: left; }
 .u-lim > small { display: block; margin-top: 6px; color: var(--dim); font-size: 12px; }
-.u-lim .top .n { font-family: var(--mono); font-size: 12px; min-width: 32px; text-align: right; }
+.u-lim .lim-top .n { font-family: var(--mono); font-size: 12px; min-width: 32px; text-align: right; }
 .u-lim .bar { height: 4px; margin-top: 6px; border-radius: 2px; background: var(--press); overflow: hidden; }
 .u-lim .bar i { display: block; height: 100%; border-radius: 2px; background: var(--text); }
 .u-lim.high .bar i { background: #e5a23c; }
@@ -1691,7 +1691,7 @@ function paintLimits() {
   box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5>' + keys.map((k) => {
     const w = all[k], pct = Math.round((w.used || 0) * 100);
     const resets = w.resets ? "Resets " + new Date(w.resets * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
-    return '<div class="u-lim' + (pct >= 100 ? " full" : pct >= 80 ? " high" : "") + '"><div class="top"><b>' + esc(limitName(k)) + '</b><span class="n">' + pct + '%</span></div><div class="bar"><i style="width:' + Math.min(100, pct) + '%"></i></div><small>' + esc(resets) + "</small></div>";
+    return '<div class="u-lim' + (pct >= 100 ? " full" : pct >= 80 ? " high" : "") + '"><div class="lim-top"><b>' + esc(limitName(k)) + '</b><span class="n">' + pct + '%</span></div><div class="bar"><i style="width:' + Math.min(100, pct) + '%"></i></div><small>' + esc(resets) + "</small></div>";
   }).join("") + '<p class="u-note" style="margin-top: 2px">As of Claude\u2019s last turn, ' + esc(when) + '.</p><h5>Plan usage limits \u00b7 Gemini</h5><div class="u-row"><small>Gemini\u2019s tool does not report its limits, so they cannot be shown here.</small></div>';
 }
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
