@@ -197,7 +197,8 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
 - `POST /api/ai {agent, choice}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
   otherwise the session is dropped and `handover` holds the chat so far as text (only what the user typed, as
   "User:", and each AI's replies under its name; carry-ons and the app's own messages, logged with `app: true`, are
-  left out; newest kept under 24,000 characters). It goes ahead of every message until the new AI reports a
+  left out, except the note of an "Ask for changes" in Review, which is the user's; a turn that merges typed and app
+  messages logs the typed part as `typed`; newest kept under 24,000 characters). It goes ahead of every message until the new AI reports a
   session (`got_session`), so a first turn that fails or is stopped hands it over again; it is saved with the chat.
   The chat logs `{"kind": "ai", "ai", "from"}`; the page shows one line for it. `POST /api/send` takes `app: true`
   for a message the page sends for the user (the blocked-command card's).

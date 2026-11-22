@@ -178,7 +178,7 @@ button.pname:hover { background: var(--hover); }
 .cv-row small { display: block; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cv-row .x { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: var(--faint); }
 .cv-row .x:hover { background: var(--press); color: var(--text); }
-.cv-row .x[data-sure] { width: auto; padding: 0 8px; border-radius: 999px; background: var(--press); color: var(--text); font-size: 11px; white-space: nowrap; }
+.cv-row .x[data-sure] { width: auto; height: auto; min-height: 24px; max-width: 190px; padding: 3px 10px; border-radius: 12px; background: var(--press); color: var(--text); font-size: 12px; line-height: 1.3; text-align: center; }
 .cv-row.past { grid-template-columns: minmax(0, 1fr) auto; }
 .cv-row.past .x, .cv-gone .x { width: auto; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 13px; color: var(--faint); visibility: hidden; }
 .cv-row.past:hover .x, .cv-row.past:focus-within .x, .cv-row.past .x[data-sure], .cv-gone .x { visibility: visible; }
@@ -956,6 +956,7 @@ const AIS = [
 ];
 /* Which project is in front ("" is the chats with no project), which tab, and the chat last used in each project. */
 let curProj = null, view = "chat";
+let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
 const lastChat = {}, lastTab = {};
 try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (saved0 && typeof saved0.proj === "string") { curProj = saved0.proj; view = saved0.view || "chat"; } } catch (e) {}
 
@@ -1182,17 +1183,13 @@ function showDraft(key) {
   current = null;
   if (!draftCol.parentNode) scroller.appendChild(draftCol);
   const pr = (projects.projects || []).find((x) => x.path === key);
-  const wrap = el("div", "hello", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede"></p>');
-  wrap.querySelector(".lede").textContent = pr ? "A new chat for " + pr.name + ". Say what you want to work on." : "Say it in plain words. I work in your open Studio place and in Blender, and I show you what I made before calling it done.";
-  if (pr && !pr.bible) {
-    const card = el("div", "ask start", '<h4>Is this a new game, or one you are already working on?</h4><p class="sub">New game: I ask about the idea, one question at a time, and write it up before anything is built. Already working on it: I read through the place and the folder first.</p><div class="act"><button class="pill main">New game</button><button class="pill">Already working on it</button></div>');
-    const [kn, ke] = card.querySelectorAll(".pill");
-    const go = async (kind) => { kn.disabled = ke.disabled = true; const id = await ensureChat(key); if (!id) { kn.disabled = ke.disabled = false; return; } kickoffChat(agents.get(id), kind); };
-    kn.onclick = () => go("new"); ke.onclick = () => go("existing");
-    wrap.appendChild(card);
-  }
+  /* the same welcome an empty chat shows (what is not set up yet, and the folder or new-or-existing card); its
+     buttons make the chat first (`draft` in startCard) */
+  const proxy = { draft: true, key, id: null, project: pr || null, seed: null };
+  const wrap = helloEl(proxy);
+  if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + ". Say what you want to work on."; proxy.start.step = pr.bible ? "ready" : "kind"; proxy.start.paint(); }
   draftCol.replaceChildren(wrap); draftCol.hidden = false;
-  paintHead(); paintComposer(); paintSide();
+  paintNeeds(); paintHead(); paintComposer(); paintModel(); paintSide();
 }
 /* the first message of a game's chat: a new game is talked through first, an existing one is read */
 function kickoffChat(p, kind) {
@@ -1348,7 +1345,14 @@ function paintConv() {
       const x = ev.target.closest(".x");
       if (!x) { closeConv(); select(p.id); return; }
       ev.stopPropagation();
-      if (p.busy && !x.dataset.sure) { x.dataset.sure = "1"; x.textContent = "stop it?"; setTimeout(() => { delete x.dataset.sure; x.innerHTML = closeIcon; }, 3000); return; }
+      /* closing a chat stops it and closes the experts it started: say so first when any of them is working */
+      const xs = [...agents.values()].filter((h) => h.parent === p.id && h.busy);
+      if ((p.busy || xs.length) && !x.dataset.sure) {
+        x.dataset.sure = "1";
+        x.textContent = p.busy && !xs.length ? "stop it?" : "This also stops " + xs.length + (xs.length === 1 ? " expert" : " experts") + " at work. Close?";
+        x.title = xs.length ? "At work: " + xs.map((h) => splitExpert(h.name, h.expert).join(", ")).join("; ") : "";
+        setTimeout(() => { delete x.dataset.sure; x.innerHTML = closeIcon; x.title = ""; }, 4000); return;
+      }
       api("/api/remove", { agent: p.id });
     };
     m.appendChild(row);
@@ -1360,6 +1364,7 @@ function paintConv() {
     row.querySelector("b").textContent = c.name; row.title = c.name;
     row.querySelector("small").textContent = ago(c.updated) + " · " + c.messages + (c.messages === 1 ? " message" : " messages");
     const x = el("span", "x", "Delete"); x.setAttribute("role", "button"); x.tabIndex = 0; x.title = "Delete this chat. It can be put back from Deleted, at the bottom of this list.";
+    x.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); x.click(); } };
     row.appendChild(x);
     row.onclick = async (ev) => {
       if (ev.target.closest(".x")) {
@@ -1368,7 +1373,7 @@ function paintConv() {
         if (!x.dataset.sure) { x.dataset.sure = "1"; x.textContent = "Delete it?"; setTimeout(() => { delete x.dataset.sure; x.textContent = "Delete"; }, 3000); return; }
         await api("/api/delete-chat", { id: c.id, confirm: "delete" }); loadHistory(); return;
       }
-      closeConv(); const r = await api("/api/open-chat", { id: c.id }); if (r.ok) { select(r.agent); loadHistory(); }
+      closeConv(); openSaved(c.id);
     };
     m.appendChild(row);
   });
@@ -1471,12 +1476,12 @@ function addCopy(node, text) {
 }
 
 /* ---------- rendering ---------- */
-function hello(p) {
+function helloEl(p) {
   const wrap = el("div", "hello enter", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede">Say it in plain words. I work in your open Studio place and in Blender, and I show you what I made before calling it done.</p><div class="hello-needs"></div>');
   wrap.appendChild(startCard(p));
-  p.col.appendChild(wrap);
-  paintNeeds();
+  return wrap;
 }
+function hello(p) { p.col.appendChild(helloEl(p)); paintNeeds(); }
 /* ---------- new chat setup: folder and repository, then new game or existing ---------- */
 let projects = { projects: [], default_parent: "", git: false };
 async function loadProjects() {
@@ -1489,13 +1494,17 @@ function startCard(p) {
   const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, msg: "", paint };
   p.start = st;
   const go = (step, msg) => { st.step = step; st.msg = msg || ""; paint(); };
+  /* on an empty page (`p.draft`) the chat is made first; its own card then carries on */
+  async function realize() { if (!p.draft) return p; const id = await ensureChat(p.key); return id ? agents.get(id) : null; }
   async function use(body) {
-    const r = await api("/api/project", Object.assign({ agent: p.id }, body));
-    if (!r.ok) return go(st.step, r.error || "That did not work.");
-    p.project = r.project; paintProject(); loadProjects();
+    const q = await realize(); if (!q) return;
+    const r = await api("/api/project", Object.assign({ agent: q.id }, body));
+    if (!r.ok) { if (q.start) { q.start.msg = r.error || "That did not work."; q.start.paint(); } return go(st.step, r.error || "That did not work."); }
+    q.project = r.project; paintProject(); loadProjects();
+    if (q !== p) { if (q.start) { q.start.step = r.project.bible ? "ready" : "kind"; q.start.msg = r.project.note || ""; q.start.paint(); } return; }
     go(r.project.bible ? "ready" : "kind", r.project.note || "");
   }
-  const kickoff = (kind) => kickoffChat(p, kind);
+  const kickoff = async (kind) => { const q = await realize(); if (q) kickoffChat(q, kind); };
   function paint() {
     const pr = p.project; let h = "";
     if (st.step === "folder") {
@@ -1521,7 +1530,7 @@ function startCard(p) {
     if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
     card.innerHTML = h;
     card.querySelectorAll("[data-f]").forEach((i) => { i.oninput = () => (st[i.dataset.f] = i.value); i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); card.querySelector('[data-a="create"]').click(); } }; });
-    card.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => use({ action: "use", path: projects.projects[+b.dataset.p].path })));
+    card.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => p.draft ? showProject(projects.projects[+b.dataset.p].path, "chat") : use({ action: "use", path: projects.projects[+b.dataset.p].path })));
     const acts = {
       new: () => { go("new"); const i = card.querySelector("input"); if (i) i.focus(); },
       back: () => go("folder"),
@@ -1751,6 +1760,7 @@ function onEvent(e) {
       const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
       if (isHelper(p)) attachHelper(p); else { researchPane = p; parked.appendChild(p.col); paintResearch(); }
     }   /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
+    if (pendingSelect && pendingSelect.id === p.id) { const t = pendingSelect.tab; pendingSelect = null; select(p.id); if (t) setView(t); }
     loadHistory();
   } else if (e.kind === "helper_started") {
     /* this chat started an expert here: its line goes at this point of the conversation */
@@ -2365,6 +2375,7 @@ function paintResearchJob() {
     row.onclick = () => { const open = !line.classList.contains("open"); line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false"); };
     line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: h.id });
     line.querySelector(".xp-remove").onclick = () => api("/api/remove", { agent: h.id });
+    line.querySelector(".xp-remove").title = "Close the researcher. Its ideas stay on this page.";
     h.line = line; h.col.hidden = false; line.querySelector(".xp-body").appendChild(h.col);
   }
   if (h.line.parentNode !== host) host.replaceChildren(h.line);
@@ -2593,7 +2604,16 @@ $("pr-make").onclick = async () => {
 };
 function openChatById(id) {
   if (agents.has(id)) { select(id); setView("chat"); return; }
-  api("/api/open-chat", { id }).then((r) => { if (r.ok) { select(r.agent); setView("chat"); loadHistory(); } });
+  openSaved(id, "chat");
+}
+/* a saved chat opened again: shown as soon as its pane exists, whether the reply or its first event comes first */
+let pendingSelect = null;
+async function openSaved(id, tab) {
+  let r; try { r = await api("/api/open-chat", { id }); } catch (e) { r = { ok: false }; }
+  if (!r.ok) { note("That chat could not be opened."); return; }
+  loadHistory();
+  if (agents.has(r.agent)) { select(r.agent); if (tab) setView(tab); }
+  else pendingSelect = { id: r.agent, tab };
 }
 const chatKnown = (id) => !!id && (agents.has(id) || ((saved && saved.chats) || []).some((c) => c.id === id));
 /* a promo chat's state, from the same events the chat list shows */
@@ -3412,10 +3432,10 @@ $("gem-clear").onclick = async () => { await api("/api/gemini", { key: "" }); re
 function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; }
 /* the AI new chats start on (Setup, General) */
 function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) => a[0] === d) ? d : "claude"; }
-function chatAi(p) { return (p && p.ai) || defaultAi(); }
+function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
 /* Claude or Gemini for the chat in front. A chat that has started carries on with the other AI, handed the chat so far. */
 function paintAiPick() {
-  const have = (status.ai || {}).installed || {}, p = agents.get(current), on = p ? chatAi(p) : draftAi || defaultAi();
+  const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);
   const wrap = $("ai-pick"); wrap.innerHTML = "";
   AIS.forEach(([id, name]) => {
     const b = el("button", (id === on ? "on" : "") + (have[id] === false ? " missing" : ""), esc(name));
@@ -3427,10 +3447,9 @@ function paintAiPick() {
   });
   if (typeof menu !== "undefined" && !menu.classList.contains("on")) paintModel();
 }
-let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
 async function switchAi(id) {
   const p = agents.get(current);
-  if (!p) { draftAi = id; paintAiPick(); return; }
+  if (!p) { draftAi = id; paintAiPick(); paintModel(); paintNeeds(); return; }
   if (chatAi(p) === id) return;
   if (p.busy) { note("Wait until it finishes, or stop it, then switch."); return; }
   let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
