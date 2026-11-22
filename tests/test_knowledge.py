@@ -281,6 +281,16 @@ class CacheTests(unittest.TestCase):
             self.assertIn("Gamma", [d["heading"] for d in rbxvault.load_sections()])
 
 
+    def test_works_when_its_own_source_file_is_absent(self):
+        """In the packaged app rbxvault.py is inside the program's archive, not a file on disk."""
+        tmp = tempfile.mkdtemp(prefix="frozen é ")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        with mock.patch.object(rbxpaths, "WORK", tmp), \
+                mock.patch.object(rbxvault, "__file__", os.path.join(tmp, "nowhere", "rbxvault.py")):
+            self.assertTrue(rbxvault.load_sections())
+            self.assertTrue(rbxvault.load_sections(), "and again from the cache")
+
+
 class GuideToolTests(unittest.TestCase):
     def guide(self, **a):
         with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ROLE": ""}):

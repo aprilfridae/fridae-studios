@@ -143,7 +143,7 @@ def parse_symptoms():
 
 
 def signature(files):
-    h = hashlib.sha1()
+    h = hashlib.sha1(rbxpaths.VERSION.encode())  # the packaged app has no rbxvault.py on disk to stat
     for p in files + [os.path.join(KB, "SYMPTOMS.md"), os.path.abspath(__file__)]:
         if os.path.exists(p):
             st = os.stat(p)
@@ -448,6 +448,7 @@ SHELVES = ("vault", "guides", "team", "game")
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
 GUIDES_CACHE_NAME = "knowledge-sections-index.json"
+INDEX_FORMAT = 1  # bump when the section index's shape changes
 OPENING, WHOLE = "(opening)", "(whole file)"
 _FENCE = re.compile(r"^[ \t]{0,3}(```+|~~~+)")
 _NAV = re.compile(r"^(related|see also|connected notes|files|sources|references|further reading)\b", re.I)
@@ -631,10 +632,12 @@ def _kit_files():
 def load_sections():
     """The cached part of the section index (guides and the kit's team files), rebuilt when any file changes."""
     files = _kit_files()
-    h = hashlib.sha1()
+    h = hashlib.sha1(("%s|%s" % (INDEX_FORMAT, rbxpaths.VERSION)).encode())
+    # this file is stat'ed only when it exists: in the packaged app it lives inside the program's archive
     for _, t, p in files + [("", "", os.path.abspath(__file__))]:
-        st = os.stat(p)
-        h.update(f"{t}|{p}|{st.st_mtime_ns}|{st.st_size}".encode())
+        if os.path.exists(p):
+            st = os.stat(p)
+            h.update(f"{t}|{p}|{st.st_mtime_ns}|{st.st_size}".encode())
     sig, path = h.hexdigest(), cache_path(GUIDES_CACHE_NAME)
     try:
         idx = json.loads(read(path))
