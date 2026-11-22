@@ -1908,15 +1908,16 @@ fn per_turn_forced(ai: &str) -> bool {
 ///
 /// Gemini: over ACP agy cuts off every call to a tool server after three minutes, whatever time limit the server's
 /// entry asks for (measured twice with a stand-in server; a process per message gives 15 minutes). A Lead waiting
-/// for its experts, a texture waiting for the user and a Blender build all take longer, so by default they would
-/// fail where they work today.
+/// for its experts, a texture waiting for the user and a Blender build all take longer. The app's tool server now
+/// answers inside that limit and keeps longer work going as a job (`jobs`; a four-minute job was waited for on a
+/// kept process, measured), so this reason no longer stands: whether Gemini stays on the list is a decision of its
+/// own.
 ///
-/// Cursor: over ACP it cuts a tool server's call off after 60 seconds (measured three times, whatever the server's
-/// entry or the environment asks for), which is under the 15 minutes the app asks every AI for. A process per
-/// message was measured with the same 60-second limit, so nothing is lost against today; it is on request all the
-/// same, by the rule this list was made by, until that limit is dealt with for both. When asked for, only Ask me
-/// messages on the model Auto run on it (`CursorLaunch::fits`): Cursor's sandbox is not applied over ACP (measured),
-/// so Full auto and Studio always run a process per message.
+/// Cursor: it cuts a tool server's call off after 60 seconds, over ACP and on a process per message alike (measured),
+/// which jobs now deal with on both paths. It stays on request for another reason: Cursor's sandbox is not applied
+/// over ACP (measured), so only Ask me messages on the model Auto can run on the kept process at all
+/// (`CursorLaunch::fits`), a chat moves off it for good with its first Full auto message, and its turns report no
+/// usage there.
 const KEPT_ON_REQUEST: &[&str] = &["gemini", "cursor"];
 
 /// Whether an AI the table says can be kept open is kept open on this run of the app.
