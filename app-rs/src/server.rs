@@ -304,9 +304,7 @@ fn post(path: &str, body: Value) -> Reply {
                 },
                 None if !text_of("agent").is_empty() => send_json(json!({"ok": false, "error": "That chat is gone."})),
                 None if paths::AIS.contains(&choice.as_str()) => {
-                    let mut cfg = paths::load_config();
-                    cfg.insert("chat_ai".into(), json!(choice));
-                    paths::save_config(&cfg);
+                    paths::update_config(|cfg| cfg.insert("chat_ai".into(), json!(choice)));
                     send_json(json!({"ok": true}))
                 }
                 None => send_json(json!({"ok": false})),
@@ -335,6 +333,10 @@ fn post(path: &str, body: Value) -> Reply {
                 if let Err(e) = expert_ai::set_entry(&text_of("expert"), &text_of("ai"), &text_of("model")) {
                     return send_json(json!({"ok": false, "error": e}));
                 }
+            }
+            // Setup's "The Lead may pick an AI for a job"
+            if let Some(on) = body["lead_may_pick"].as_bool() {
+                paths::update_config(|cfg| cfg.insert(expert_ai::LEAD_PICKS.into(), json!(on)));
             }
             send_json(json!({"ok": true, "list": expert_ai::listing()}))
         }
@@ -408,17 +410,17 @@ fn post(path: &str, body: Value) -> Reply {
             None => send_json(json!({"ok": false, "url": null})),
         },
         "/api/gemini" => {
-            let mut cfg = paths::load_config();
-            if !body["use_api"].is_null() {
-                cfg.insert("gemini_use_api".into(), json!(body["use_api"].as_bool().unwrap_or(false)));
-            }
-            if let Some(key) = body.get("key") {
-                match key.as_str().map(str::trim).filter(|k| !k.is_empty()) {
-                    Some(k) => cfg.insert("gemini_key".into(), json!(k)),
-                    None => cfg.remove("gemini_key"),
-                };
-            }
-            paths::save_config(&cfg);
+            paths::update_config(|cfg| {
+                if !body["use_api"].is_null() {
+                    cfg.insert("gemini_use_api".into(), json!(body["use_api"].as_bool().unwrap_or(false)));
+                }
+                if let Some(key) = body.get("key") {
+                    match key.as_str().map(str::trim).filter(|k| !k.is_empty()) {
+                        Some(k) => cfg.insert("gemini_key".into(), json!(k)),
+                        None => cfg.remove("gemini_key"),
+                    };
+                }
+            });
             send_json(json!({"ok": true, "gemini": !paths::gemini_key().is_empty()}))
         }
         "/api/remove" => {

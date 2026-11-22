@@ -115,9 +115,7 @@ pub fn install() -> Result<String, String> {
     let mut secret = token();
     if secret.len() < 32 {
         secret = paths::random_hex(3);
-        let mut cfg = paths::load_config();
-        cfg.insert("plugin_token".into(), json!(secret));
-        paths::save_config(&cfg);
+        paths::update_config(|cfg| cfg.insert("plugin_token".into(), json!(secret)));
     }
     let source = source.replace("{{TOKEN}}", &secret).replace("{{PORT}}", &PORT.to_string()).replace("{{VERSION}}", PLUGIN_VERSION);
     if source.contains("]]>") {

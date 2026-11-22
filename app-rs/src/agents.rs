@@ -26,6 +26,8 @@ use crate::{
 
 pub const MAX_AGENTS: usize = 8;
 pub const MAX_ATTACH: usize = 10;
+/// How long a turn's leader gets to exit by itself once its output has closed, before its group is ended (Cursor).
+const LEADER_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// Aliases the agent CLI resolves to the latest model of each family.
 pub const MODELS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 /// The effort levels a message can ask for. Every AI here takes these five.
@@ -1433,9 +1435,15 @@ impl Agent {
         let (ask, fallback) = studio_fallback(ask, has_project);
         let ask = &ask;
         let (selftest, gemini, autopilot) = (ask.selftest, ask.gemini, ask.autopilot || ask.full);
-        // a message that names no model runs on the one this chat was started on (an expert's chosen model)
-        let pinned = self.st.lock().unwrap().model.clone();
-        let (model, attachments, kickoff) = (ask.model.as_deref().or(pinned.as_deref()), ask.attachments.as_slice(), ask.kickoff.as_deref());
+        // an expert keeps the model it was started on (the user's Setup > Experts row, the Lead's pick or the Lead's own),
+        // even when the user writes in its chat (the page sends the menu's model for every chat); another chat with a
+        // pinned model uses it when a message names none
+        let (pinned, helper) = {
+            let st = self.st.lock().unwrap();
+            (st.model.clone(), st.parent.is_some())
+        };
+        let model = if helper { pinned.as_deref().or(ask.model.as_deref()) } else { ask.model.as_deref().or(pinned.as_deref()) };
+        let (attachments, kickoff) = (ask.attachments.as_slice(), ask.kickoff.as_deref());
         let auto = kickoff == Some("auto");
         // a carry-on decided before the run was paused (or undone) does not run as it was: see paused_carry_on
         let text: &str = if auto && self.studio_lead() && self.paused_run() {
@@ -1541,6 +1549,10 @@ impl Agent {
         let found = if cfg!(test) { None } else { paths::find_ai(&kind) };
         let Some(exe) = found else {
             let missing = match kind.as_str() {
+                // a chat saved on Cursor or OpenCode, reopened where they are not offered (Windows, for now)
+                "cursor" | "opencode" if !paths::AIS.contains(&kind.as_str()) => {
+                    "This chat was set to an AI that Fridae Studios does not offer on this computer yet. Pick Claude or Gemini under the message box and send your message again: the chat so far is handed over."
+                }
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
                 "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae Studios.",
                 "opencode" => "This chat is set to OpenCode, but OpenCode's command-line tool (opencode) was not found. Install it from https://opencode.ai, then reopen Fridae Studios. Fridae signs in to it on its own (Setup, Connections).",
@@ -1667,7 +1679,11 @@ impl Agent {
                     .args(["--allowedTools", "mcp__rbxkit", "mcp__Roblox_Studio", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"])
                     // the programs the user allowed from a "blocked" card or Setup, through either shell
                     .args(paths::allowed_commands().iter().flat_map(|p| [format!("Bash({p}:*)"), format!("PowerShell({p}:*)")]))
-                    // full auto skips every permission check, so nothing is ever refused
+                    // the app's settings (allowed programs, keys) are never written by an agent, in any mode: deny rules
+                    // hold in bypass mode too. `//` makes the path absolute in Claude Code's rules.
+                    .arg("--disallowedTools")
+                    .arg(format!("Edit(/{})", paths::config_file().display()))
+                    // full auto skips every other permission check
                     .args(["--permission-mode", if ask.full { "bypassPermissions" } else { "acceptEdits" }, "--append-system-prompt", &prompt, "--add-dir"])
                     .arg(&PATHS.kit);
                 if let Some(p) = &project {
@@ -1848,6 +1864,8 @@ impl Agent {
         // turn's process group: it is ended now, before the leader is reaped (so the group's ID cannot have been reused),
         // and without waiting for it, so nothing outlives the turn or the app and the turn is not held up
         if kind == "cursor" {
+            // the leader may still be saving the chat after its output closed: it gets a few seconds to exit first
+            paths::leader_exited(child.id(), LEADER_GRACE);
             paths::end_group_soon(child.id());
         }
         let status = child.wait().ok();

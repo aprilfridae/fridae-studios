@@ -274,7 +274,8 @@ pub fn pick_model(chosen: Option<&str>) -> Option<String> {
 }
 
 fn pick_from(list: &[(String, String)], chosen: Option<&str>, users: Option<&str>) -> Option<String> {
-    match chosen.filter(|m| !m.is_empty()) {
+    // a model id that could not be one (an agent's, say) is never put on a command line
+    match chosen.filter(|m| !m.is_empty() && crate::expert_ai::model_id_ok(m)) {
         Some(m) if list.is_empty() || list.iter().any(|(id, _)| id == m) => Some(m.to_string()),
         _ => default_of(list, users),
     }

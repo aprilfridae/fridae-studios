@@ -44,7 +44,27 @@ pub struct World<'a> {
     pub models: &'a dyn Fn(&str) -> Vec<String>,
     /// An AI's default model.
     pub default_model: &'a dyn Fn(&str) -> Option<String>,
+    /// Setup's "The Lead may pick an AI for a job" (on unless the user switched it off).
+    pub lead_may_pick: bool,
 }
+
+/// The settings key behind Setup's "The Lead may pick an AI for a job".
+pub const LEAD_PICKS: &str = "lead_picks_ai";
+
+pub fn lead_may_pick(cfg: &serde_json::Map<String, Value>) -> bool {
+    cfg.get(LEAD_PICKS).and_then(Value::as_bool).unwrap_or(true)
+}
+
+/// A model id as an AI's tool takes it on its command line: letters, digits and `. _ : [ ] = , - /` (OpenCode's
+/// `provider/model`), not starting with a dash, at most 120 characters. One from an agent is checked before use.
+pub fn model_id_ok(id: &str) -> bool {
+    id.len() <= 120
+        && id.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || "._:[]=,-/".contains(c))
+}
+
+/// Why a Lead's own pick is refused while the user has switched that off.
+pub const LEAD_PICKS_OFF: &str = "The user has switched off \"The Lead may pick an AI for a job\" in Setup, so leave ai and model out: the expert then runs as the user set it in Setup > Experts, or like you.";
 
 /// The AIs an expert may run on: every AI offered here but ChatGPT, which the window no longer offers.
 pub fn expert_ais() -> Vec<&'static str> {
@@ -66,6 +86,12 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
     let (ai, model, from_table) = if let Some(ai) = table.ai() {
         (ai, table.model(), true)
     } else if request.ai().is_some() || request.model().is_some() {
+        if !world.lead_may_pick {
+            return Err(LEAD_PICKS_OFF.to_string());
+        }
+        if request.model().is_some_and(|m| !model_id_ok(m)) {
+            return Err("That model id is not one an AI could take; leave model out to use the AI's default.".to_string());
+        }
         (request.ai().unwrap_or(lead_ai), request.model(), false)
     } else {
         return Ok(Choice { ai: lead_ai.to_string(), model: lead_model.map(str::to_string), note: None });
@@ -110,7 +136,12 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
 
 /// The real computer: what is installed, and each AI's own models.
 pub fn world() -> World<'static> {
-    World { installed: &|ai| expert_ais().contains(&ai) && paths::find_ai(ai).is_some(), models: &models_of, default_model: &default_of }
+    World {
+        installed: &|ai| expert_ais().contains(&ai) && paths::find_ai(ai).is_some(),
+        models: &models_of,
+        default_model: &default_of,
+        lead_may_pick: lead_may_pick(&paths::load_config()),
+    }
 }
 
 pub fn models_of(ai: &str) -> Vec<String> {
@@ -174,24 +205,27 @@ pub fn set_entry(expert: &str, ai: &str, model: &str) -> Result<Value, String> {
         return Err("Not an expert id.".into());
     }
     let ai = ai.trim().to_ascii_lowercase();
-    let mut cfg = paths::load_config();
-    let mut table = cfg.get("expert_ai").and_then(Value::as_object).cloned().unwrap_or_default();
-    if ai.is_empty() || ai == "lead" {
-        table.remove(expert);
-    } else {
-        if !expert_ais().contains(&ai.as_str()) {
-            return Err(format!("{} cannot run experts here.", ai_name(&ai)));
-        }
-        let model = model.trim();
-        let mut row = json!({"ai": ai});
-        if !model.is_empty() {
-            row["model"] = json!(model);
-        }
-        table.insert(expert.to_string(), row);
+    if !(ai.is_empty() || ai == "lead") && !expert_ais().contains(&ai.as_str()) {
+        return Err(format!("{} cannot run experts here.", ai_name(&ai)));
     }
-    cfg.insert("expert_ai".into(), Value::Object(table.clone()));
-    paths::save_config(&cfg);
-    Ok(Value::Object(table))
+    let model = model.trim();
+    if !model.is_empty() && !model_id_ok(model) {
+        return Err("Not a model id.".into());
+    }
+    Ok(paths::update_config(|cfg| {
+        let mut table = cfg.get("expert_ai").and_then(Value::as_object).cloned().unwrap_or_default();
+        if ai.is_empty() || ai == "lead" {
+            table.remove(expert);
+        } else {
+            let mut row = json!({"ai": ai});
+            if !model.is_empty() {
+                row["model"] = json!(model);
+            }
+            table.insert(expert.to_string(), row);
+        }
+        cfg.insert("expert_ai".into(), Value::Object(table.clone()));
+        Value::Object(table)
+    }))
 }
 
 /// GET /api/experts: the kit's roster (every expert but the Lead), the user's table, and for each AI experts may run
@@ -220,7 +254,7 @@ pub fn listing() -> Value {
             json!({"id": ai, "name": ai_name(ai), "installed": (w.installed)(ai), "models": models, "default": default_of(ai)})
         })
         .collect();
-    json!({"experts": experts, "table": cfg.get("expert_ai").cloned().unwrap_or(json!({})), "ais": ais, "gaps": {"cursor": cursor::EXPERT_GAP}})
+    json!({"experts": experts, "table": cfg.get("expert_ai").cloned().unwrap_or(json!({})), "ais": ais, "gaps": {"cursor": cursor::EXPERT_GAP}, "lead_may_pick": lead_may_pick(&cfg)})
 }
 
 #[cfg(test)]
@@ -240,6 +274,7 @@ mod tests {
                 "claude" => Some("opus".into()),
                 _ => None,
             },
+            lead_may_pick: true,
         }
     }
 
@@ -302,6 +337,31 @@ mod tests {
         let w = world_with(&["claude", "gemini"]);
         let c = resolve(NONE, Want { ai: Some("gemini"), model: Some("g-4") }, "claude", None, "Coder", &w).unwrap();
         assert_eq!((c.model.as_deref(), c.note), (Some("g-4"), None));
+    }
+
+    #[test]
+    fn with_the_switch_off_the_leads_pick_is_refused_but_the_table_still_applies() {
+        let mut w = world_with(&["claude", "cursor"]);
+        w.lead_may_pick = false;
+        let asked = Want { ai: Some("cursor"), model: Some("auto") };
+        assert_eq!(resolve(NONE, asked, "claude", Some("opus"), "Coder", &w).unwrap_err(), LEAD_PICKS_OFF);
+        assert_eq!(resolve(NONE, Want { ai: None, model: Some("haiku") }, "claude", None, "Coder", &w).unwrap_err(), LEAD_PICKS_OFF);
+        let table = Want { ai: Some("cursor"), model: None };
+        assert_eq!(resolve(table, asked, "claude", Some("opus"), "World builder", &w).unwrap().ai, "cursor", "the user's own table");
+        assert_eq!(resolve(NONE, NONE, "claude", Some("opus"), "Coder", &w).unwrap().model.as_deref(), Some("opus"));
+        assert!(lead_may_pick(&serde_json::Map::new()), "on unless switched off");
+    }
+
+    #[test]
+    fn a_model_id_from_an_agent_is_checked() {
+        for ok in ["auto", "gpt-5.3-codex", "opencode-go/glm-5.3", "claude-4.5-sonnet[1m]", "gemini-3.1-pro:high"] {
+            assert!(model_id_ok(ok), "{ok}");
+        }
+        for bad in ["--yolo", "", "a b", "x;rm", "-m", &"a".repeat(121)] {
+            assert!(!model_id_ok(bad), "{bad}");
+        }
+        let w = world_with(&["claude", "gemini"]);
+        assert!(resolve(NONE, Want { ai: Some("gemini"), model: Some("--force") }, "claude", None, "Coder", &w).is_err());
     }
 
     #[test]

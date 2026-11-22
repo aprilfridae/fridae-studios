@@ -217,6 +217,31 @@ pub fn end_group_soon(group: u32) {
     let _ = group;
 }
 
+/// Waits, up to `limit`, until the leader of a turn's group has exited by itself, without reaping it (it shows as a
+/// zombie until `wait`), so a leader still finishing its own work after its output closed (saving the chat) is not
+/// signalled, and its unreaped pid keeps the group's ID reserved for `end_group_soon`. Returns whether it exited.
+pub fn leader_exited(pid: u32, limit: std::time::Duration) -> bool {
+    #[cfg(unix)]
+    {
+        let until = std::time::Instant::now() + limit;
+        loop {
+            let state = Command::new("ps").args(["-o", "stat=", "-p", &pid.to_string()]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            if state.is_empty() || state.starts_with('Z') {
+                return true;
+            }
+            if std::time::Instant::now() >= until {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (pid, limit);
+        true
+    }
+}
+
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
 
@@ -263,18 +288,41 @@ pub fn end_trees(pids: &[u32]) {
 }
 
 // ----------------------------------------------------------------- settings
+/// The app's settings file. Every AI's rules deny writing it.
+pub fn config_file() -> PathBuf {
+    PATHS.home.join("config.json")
+}
+
+/// One lock around every change to the settings file, so two changes never interleave (reads need none: the file is
+/// replaced whole, never written in place).
+static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn load_config() -> Map<String, Value> {
-    fs::read_to_string(PATHS.home.join("config.json"))
+    fs::read_to_string(config_file())
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default()
 }
 
-pub fn save_config(cfg: &Map<String, Value>) {
-    let _ = fs::create_dir_all(&PATHS.home);
+/// Change the settings: read, change and write back under the one lock, the file replaced whole (a temporary file
+/// renamed over it), so a reader never sees half a file and two changes never undo each other.
+pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R {
+    let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cfg = load_config();
+    let out = change(&mut cfg);
+    write_config(&config_file(), &cfg);
+    out
+}
+
+fn write_config(path: &Path, cfg: &Map<String, Value>) {
+    let Some(dir) = path.parent() else { return };
+    let _ = fs::create_dir_all(dir);
     if let Ok(text) = serde_json::to_string_pretty(cfg) {
-        let _ = fs::write(PATHS.home.join("config.json"), text);
+        let tmp = dir.join(format!(".config.json.{}-{}.tmp", std::process::id(), stamp()));
+        if fs::write(&tmp, text).is_ok() && fs::rename(&tmp, path).is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
     }
 }
 
@@ -438,18 +486,18 @@ pub fn allowed_commands() -> Vec<String> {
 
 /// Adds or removes programs from that list. Names are single words: a program, never a whole command line.
 pub fn set_allowed(names: &[String], allow: bool) -> Vec<String> {
-    let mut list = allowed_commands();
-    for name in names.iter().filter_map(|n| program_name(n)) {
-        list.retain(|n| *n != name);
-        if allow {
-            list.push(name);
+    update_config(|cfg| {
+        let mut list: Vec<String> = cfg.get("allowed_commands").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+        for name in names.iter().filter_map(|n| program_name(n)) {
+            list.retain(|n| *n != name);
+            if allow {
+                list.push(name);
+            }
         }
-    }
-    list.sort();
-    let mut cfg = load_config();
-    cfg.insert("allowed_commands".into(), serde_json::json!(list));
-    save_config(&cfg);
-    list
+        list.sort();
+        cfg.insert("allowed_commands".into(), serde_json::json!(list));
+        list
+    })
 }
 
 /// The program a command line starts with ("git" for `git merge main`), when it is a plain name.

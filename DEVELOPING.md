@@ -333,12 +333,24 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
     allow list with Cursor's sandbox on (`--sandbox enabled`). Checked in a real turn: our tools, an allowed program
     (`git --version`) and a write in the game folder work; another program runs, sandboxed (`ls /` worked;
     `curl` got no network; `mkdir` in the home folder: "Operation not permitted"); a write outside the workspace
-    folders is still refused.
+    folders is still refused. Tool servers are not in the sandbox: a test server's tool wrote a file in a folder
+    under the home folder outside the workspace, in Full auto with the sandbox on (so `rbx_texture`'s writes to
+    `work/vfx` work there; a Studio tool was not tried, since nothing here talks to Roblox Studio).
+  - The user's own tool servers (`~/.cursor/mcp.json`) are not even started: `--approve-mcps` approves every server
+    Cursor finds, so the app lists theirs in the chat project's `mcp-disabled.json` (`cursor::write_disabled`, under
+    `CURSOR_DATA_DIR/projects/<slug of the chat folder>`), which Cursor reads before starting any. Measured: a server
+    named there was not started, the other was. Servers from Cursor plugins are not listed (their names are not known
+    here): they may start, and their tools are refused by the allow list.
 - **Safety gaps against Claude Code** (what Cursor can do that Claude Code cannot, in the same mode):
   - Ask me: Cursor's file tools may write into temp folders (`/tmp`, `/private/var/folders`), which Claude Code's
     `acceptEdits` would refuse. Writes elsewhere outside the workspace folders are refused, as for Claude Code.
   - Full auto and Studio: none known. Claude Code runs those with every check off; Cursor keeps its allow list, deny
-    rules and sandbox, so it can do less. `cursor::gaps()` holds the one line the page would show under the message
+    rules and sandbox, so it can do less. The sandbox is not a hard boundary, though: programs the user allowed run
+    outside it (Cursor's `allowlistEscalated`), and a sandboxed command may write inside the workspace folders,
+    which include the game's `.git` folder and, when running from source, the kit and its `config.json` (the deny
+    rules bind Cursor's file tools, not the shell). The app's own git checkpoints run with hooks and fsmonitor off
+    (`projects::GIT_SAFE`, and the same in `rbxproject.py`), so a written hook is never run by the app; a written
+    `config.json` (from source only) still takes effect. Claude Code's bypass mode allows all of this too. `cursor::gaps()` holds the one line the page would show under the message
     box when Cursor is picked for Full auto or Studio; it is empty, so nothing shows. A gap found later goes there.
   - A game's own `.cursor/rules` or `AGENTS.md` may be read by Cursor (added folder); a game's `.cursor/cli.json`
     permissions are not loaded (the game is not the project's top), but this was not tested.
@@ -565,6 +577,19 @@ is an example the user can paste into their own House rules.
 - Texture previews and local module loading copy small files into your
   Studio install's `content/rbxkit` folder. Studio updates wipe that folder;
   nothing depends on it lasting.
+- **The app's settings file** (`config.json`: allowed programs, keys, the Experts table) is changed only through
+  `paths::update_config`: read, change and write under one lock, the file replaced whole (a temporary file renamed
+  over it), so a reader never sees half a file and two changes never undo each other. `rbx.py` (`rbx doctor`)
+  replaces it the same way, but takes no lock with the app (it writes only the Blender path, rarely). Every AI's
+  rules deny agents writing it: Claude Code `--disallowedTools Edit(//<path>)` (held in bypass mode too), Antigravity
+  `permissions.deny: write_file(<path>)`, Cursor's and OpenCode's deny rules. Measured for Cursor and OpenCode; the
+  Claude and Antigravity rules were not tried in a real turn. A shell command in Full auto can still write it on
+  every AI but Cursor's sandbox (and there too when running from source).
+- **The app's git checkpoints** run with `-c core.hooksPath=/dev/null -c core.fsmonitor=false`
+  (`projects::GIT_SAFE`, `rbxproject.py`), so hooks or an fsmonitor program an agent wrote into the game's `.git` are
+  never run by the app (measured: a pre-commit hook ran without these settings, not with them). Not closed: a game's
+  `.gitattributes` filter driver needs a `filter.<name>.clean` command in git config, which an agent could also
+  write into `.git/config`; the app's checkpoints would run it.
 
 ## Credits
 

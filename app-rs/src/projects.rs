@@ -11,14 +11,18 @@ use serde_json::{Value, json};
 
 use crate::paths::{self, PATHS};
 
+/// Settings every git the app runs starts with: no hooks, no fsmonitor program.
+pub const GIT_SAFE: [&str; 4] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
+
 pub fn git_installed() -> bool {
     paths::which("git").is_some()
 }
 
-/// Run git in a folder. Returns whether it succeeded and what it printed.
+/// Run git in a folder. Returns whether it succeeded and what it printed. The game's own hooks and fsmonitor program
+/// are never run: an agent can write the game's `.git` folder, and these checkpoints run outside any agent's rules.
 fn run_git(dir: &Path, args: &[&str]) -> (bool, String) {
     let mut cmd = Command::new("git");
-    cmd.args(args).current_dir(dir).stdin(Stdio::null()).env("GIT_TERMINAL_PROMPT", "0");
+    cmd.args(GIT_SAFE).args(args).current_dir(dir).stdin(Stdio::null()).env("GIT_TERMINAL_PROMPT", "0");
     paths::quiet(&mut cmd);
     match cmd.output() {
         Ok(o) => {
@@ -48,9 +52,7 @@ fn saved() -> Vec<Value> {
 }
 
 fn save(list: Vec<Value>) {
-    let mut cfg = paths::load_config();
-    cfg.insert("projects".into(), json!(list));
-    paths::save_config(&cfg);
+    paths::update_config(|cfg| cfg.insert("projects".into(), json!(list)));
 }
 
 pub fn known(path: &str) -> bool {

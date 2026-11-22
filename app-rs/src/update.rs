@@ -222,9 +222,7 @@ fn set(key: &str, value: Value) {
 
 pub fn set_auto(on: bool) {
     set("auto", json!(on));
-    let mut cfg = paths::load_config();
-    cfg.insert("auto_update".into(), json!(on));
-    paths::save_config(&cfg);
+    paths::update_config(|cfg| cfg.insert("auto_update".into(), json!(on)));
 }
 
 fn auto() -> bool {

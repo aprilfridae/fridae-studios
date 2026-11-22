@@ -31,9 +31,12 @@ def load_config():
 
 
 def save_config(cfg):
+    """Replace config.json whole (a temporary file renamed over it), so the app never reads half a file."""
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
-    with open(CONFIG, "w", encoding="utf-8") as f:
+    tmp = "%s.%d.tmp" % (CONFIG, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=1)
+    os.replace(tmp, CONFIG)
 
 
 def _registry_blender():

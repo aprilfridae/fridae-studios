@@ -392,6 +392,7 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-sel option { background: #18181a; color: #ececed; }
 .xp-tr { display: grid; grid-template-columns: 1fr 170px 170px; gap: 2px 8px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); }
 .xp-tr b { font-weight: 500; font-size: 14px; }
+.xp-tr .xp-filter { grid-column: 3; }
 .xp-tr small { grid-column: 1 / -1; color: var(--dim); font-size: 12.5px; line-height: 1.45; }
 .xp-tr .r-sel { height: 32px; max-width: 170px; }
 @media (max-width: 560px) { .xp-tr { grid-template-columns: 1fr 1fr; } .xp-tr b { grid-column: 1 / -1; } .xp-tr .r-sel { max-width: none; } }
@@ -903,7 +904,8 @@ body.proj #pd, body.guide #gd { transform: none; }
     </section>
     <section data-s="experts">
       <h3>Experts</h3>
-      <p class="sub">In a studio run, the Lead hands each part of the game to an expert. Each one runs on the Lead's AI and model unless you pick another here; your choice always wins over the Lead's. Only AIs installed on this computer are offered.</p>
+      <p class="sub">In a studio run, the Lead hands each part of the game to an expert. An expert left on Same as the Lead runs on the Lead's AI and the same model as the Lead, so a Lead on a big model uses up that plan faster. Pick an AI here and your choice always wins over the Lead's; once an AI is picked, the expert uses that AI's default model unless you pick one, even when it is the Lead's own AI. Only AIs installed on this computer are offered.</p>
+      <label class="sub check-row"><input type="checkbox" id="xp-lead-picks"> The Lead may pick an AI for a job (another AI or model for an expert it starts, now and then; your rows here always win)</label>
       <div id="xp-table"></div>
     </section>
     <section data-s="permissions">
@@ -1045,7 +1047,7 @@ const CONTROLS = [
   ["The game's name (top left of the tab)", "Press it for the game's folder, notes and git history."],
   ["Claude / Gemini / Cursor / OpenCode (under the message box)", "Which AI this chat uses. You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message."],
   ["Experts in a chat", "When the agent starts helpers or a studio run's experts, each shows as one line where it was started: its name, its job and whether it is working. Open it to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
-  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Each one runs on the Lead's AI and model until you do, and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
+  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
   ["The dots (bottom left)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
   ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor or OpenCode model carries its own, so none is set for those), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
@@ -3503,8 +3505,10 @@ function setupSection(name) {
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
 let xpList = null;
 async function loadExperts(body) { const r = await api("/api/experts", body || {}); if (r && r.list) xpList = r.list; if (r && r.ok === false) alert(r.error || "Could not save that."); paintExperts(); }
+$("xp-lead-picks").onchange = (e) => loadExperts({ lead_may_pick: e.target.checked });
 function paintExperts() {
   const box0 = $("xp-table"); if (!xpList) { box0.textContent = "Loading..."; return; }
+  $("xp-lead-picks").checked = xpList.lead_may_pick !== false;
   const ais = xpList.ais || [], table = xpList.table || {}, gaps = xpList.gaps || {};
   box0.replaceChildren(...(xpList.experts || []).map((x) => {
     const row = el("div", "xp-tr", "<b></b>"); row.querySelector("b").textContent = x.name;
@@ -3522,6 +3526,14 @@ function paintExperts() {
       models.forEach(([id, name]) => mSel.appendChild(new Option(name, id)));
       if (pick.model && !models.some((m) => m[0] === pick.model)) mSel.appendChild(new Option(pick.model + " (not offered now)", pick.model));
       mSel.value = pick.model || "";
+      /* a long list (Cursor offers hundreds) gets a filter that hides the options it does not match */
+      if (models.length > 12) {
+        const f = el("input", "r-sel xp-filter"); f.type = "search"; f.placeholder = "Filter models"; f.setAttribute("aria-label", x.name + ": filter models");
+        /* options are taken out and put back rather than hidden: WebKit's native menu ignores hidden options */
+        const all = [...mSel.options];
+        f.oninput = () => { const q = f.value.trim().toLowerCase(), keep = mSel.value; mSel.replaceChildren(...all.filter((o, i) => i === 0 || !q || o.value === keep || (o.text + " " + o.value).toLowerCase().includes(q))); mSel.value = keep; };
+        row.appendChild(f);
+      }
     }
     aiSel.onchange = () => loadExperts({ expert: x.id, ai: aiSel.value, model: "" });
     mSel.onchange = () => loadExperts({ expert: x.id, ai: aiSel.value, model: mSel.value });

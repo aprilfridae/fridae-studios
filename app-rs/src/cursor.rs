@@ -124,7 +124,8 @@ pub fn pick_model(chosen: Option<&str>) -> Option<String> {
 }
 
 fn pick_from(list: &[(String, String)], chosen: Option<&str>) -> Option<String> {
-    match chosen.filter(|m| !m.is_empty()) {
+    // a model id that could not be one (an agent's, say) is never put on a command line
+    match chosen.filter(|m| !m.is_empty() && crate::expert_ai::model_id_ok(m)) {
         Some(m) if list.is_empty() || list.iter().any(|(id, _)| id == m) => Some(m.to_string()),
         _ => default_of(list),
     }
@@ -399,6 +400,33 @@ fn write_workspace(workspace: &Path, servers: &Value) {
     let _ = fs::write(dir.join("mcp.json"), serde_json::to_string_pretty(&servers_file(servers, &passed_env())).unwrap_or_default());
 }
 
+/// Cursor's name for a project's folder under its data folder (`projects/<this>`): the project's real path with
+/// every run of other characters than letters and digits made one `-` (as cursor-agent 2026.11.22 does).
+fn project_slug(path: &Path) -> String {
+    let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut out = String::new();
+    for c in real.display().to_string().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// `--approve-mcps` approves every tool server Cursor finds, so the user's own servers (from `~/.cursor/mcp.json`) are
+/// put on the chat project's disabled list, which Cursor reads before it starts any: they are not even started (their
+/// tools are refused by the allow list anyway). Measured with cursor-agent 2026.11.22: a server named there is not
+/// started, the others are. Servers from Cursor plugins are not listed (their names are not known here): they may
+/// start, and their tools are refused.
+fn write_disabled(workspace: &Path, users: &[String], ours: &Value) {
+    let names: Vec<&String> = users.iter().filter(|n| ours.get(n.as_str()).is_none()).collect();
+    let dir = data_dir().join("projects").join(project_slug(workspace));
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(dir.join("mcp-disabled.json"), serde_json::to_string_pretty(&names).unwrap_or_default());
+}
+
 /// The arguments of one turn (the message goes in on stdin).
 pub fn args(workspace: &Path, kit: &Path, project: Option<&str>, session: Option<&str>, model: Option<&str>, full: bool) -> Vec<String> {
     let mut a: Vec<String> = ["-p", "--output-format", "stream-json", "--trust", "--approve-mcps", "--workspace"].map(str::to_string).to_vec();
@@ -425,6 +453,7 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, session: Option<&s
     let home = cursor_home();
     write_config(&config_dir(), &permissions(servers, &paths::allowed_commands(), &user_servers(&home), &protected(&home)));
     let _ = fs::create_dir_all(data_dir());
+    write_disabled(workspace, &user_servers(&home), servers);
     let mut cmd = Command::new(exe);
     cmd.args(args(workspace, kit, project, session, model, full));
     environment(&mut cmd);
@@ -505,7 +534,9 @@ impl Turn {
                 };
                 // a step is announced once, whether we first hear of it starting or finishing; a server's tool comes
                 // with its arguments, so a Lead's rbx_team wait or rbx_stage status is not taken for progress
-                if let Some(name) = name.filter(|_| id.is_empty() || self.shown.insert(id)) {
+                // (a step with no id at all is announced when it starts, so it is not announced twice)
+                let first = if id.is_empty() { e["subtype"] != "completed" } else { self.shown.insert(id) };
+                if let Some(name) = name.filter(|_| first) {
                     if kind == "mcpToolCall" {
                         out.push(Out::ToolArgs(name, args["args"].clone()));
                     } else {
@@ -561,10 +592,11 @@ impl Turn {
                 }
                 out.push(Out::Finished);
             }
-            // an error in the middle of a turn, if Cursor sends one: a failed turn
+            // an error in the middle of a turn, if Cursor sends one: shown, but the turn fails only if Cursor's result
+            // says so (or no result comes), since it may recover and finish
             "error" => {
                 let why = e["message"].as_str().or(e["error"]["message"].as_str()).or(e["error"].as_str()).filter(|s| !s.trim().is_empty());
-                out.push(Out::Failed(why.map(str::to_string).unwrap_or_else(|| "Cursor stopped with an error.".to_string())));
+                out.push(Out::Error(why.map(str::to_string).unwrap_or_else(|| "Cursor reported an error.".to_string())));
             }
             _ => {}
         }
@@ -709,7 +741,21 @@ mod tests {
         assert_eq!(feed(&mut t, inner).len(), 1);
         assert!(feed(&mut t, &inner.replace("started", "completed")).is_empty());
         let err = feed(&mut t, r#"{"type":"error","message":"Connection lost"}"#);
-        assert!(matches!(&err[..], [Out::Failed(m)] if m == "Connection lost"));
+        assert!(matches!(&err[..], [Out::Error(m)] if m == "Connection lost"), "shown, not a failed turn by itself");
+        // a step with no id anywhere: announced when it starts, not again when it completes
+        let bare = r#"{"type":"tool_call","subtype":"started","tool_call":{"globToolCall":{"args":{}}}}"#;
+        assert_eq!(feed(&mut t, bare).len(), 1);
+        assert!(feed(&mut t, &bare.replace("started", "completed")).is_empty());
+    }
+
+    #[test]
+    fn the_users_own_servers_are_disabled_for_the_chat() {
+        assert_eq!(project_slug(Path::new("/no/such/Fridae Studios/work/cursor/chats/c1")), "no-such-Fridae-Studios-work-cursor-chats-c1");
+        let ws = paths::test_dir("cursor-disabled");
+        write_disabled(&ws, &["github".into(), "rbxkit".into()], &json!({"rbxkit": {}}));
+        let file = data_dir().join("projects").join(project_slug(&ws)).join("mcp-disabled.json");
+        let names: Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
+        assert_eq!(names, json!(["github"]), "ours stay on");
     }
 
     #[test]
@@ -719,6 +765,7 @@ mod tests {
         assert_eq!(pick_from(&list, Some("gone-model")).as_deref(), Some("auto"));
         assert_eq!(pick_from(&list, None).as_deref(), Some("auto"));
         assert_eq!(pick_from(&[], Some("gpt-5.3")).as_deref(), Some("gpt-5.3"), "before the list arrives, Cursor itself checks");
+        assert_ne!(pick_from(&[], Some("--yolo")).as_deref(), Some("--yolo"), "never an option on the command line");
     }
 
     #[test]

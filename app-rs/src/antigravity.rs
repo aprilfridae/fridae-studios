@@ -78,7 +78,8 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, conversation: Opti
     let allowed: Vec<String> = servers.as_object().map(|s| s.keys().map(|name| format!("mcp({name}/*)")).collect()).unwrap_or_default();
     let mut cmd = Command::new(exe);
     cmd.args(["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"])
-        .arg(json!({"permissions": {"allow": allowed}}).to_string());
+        // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
+        .arg(json!({"permissions": {"allow": allowed, "deny": [format!("write_file({})", crate::paths::config_file().display())]}}).to_string());
     if full {
         cmd.arg("--dangerously-skip-permissions"); // full auto: nothing is refused
     }

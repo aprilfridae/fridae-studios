@@ -45,7 +45,8 @@ def project(required=True):
 def git(args, cwd, text=True):
     """Run git. Returns (exit code, output)."""
     try:
-        p = subprocess.run(["git"] + list(args), cwd=cwd, capture_output=True, creationflags=no_window(), timeout=120)
+        # the game's own hooks and fsmonitor program never run: agents can write the game's .git folder
+        p = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"] + list(args), cwd=cwd, capture_output=True, creationflags=no_window(), timeout=120)
     except FileNotFoundError:
         raise ProjectError("git is not installed (or not on PATH), so there are no checkpoints. Install it from git-scm.com.")
     except subprocess.TimeoutExpired:
