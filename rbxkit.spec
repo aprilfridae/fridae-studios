@@ -4,7 +4,7 @@
 import os
 
 HERE = os.path.abspath(os.getcwd())
-datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "skills", "agents", "rigs", "ui", "licenses", "guides", "team")]
+datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "vault", "agents", "rigs", "ui", "licenses")]
 datas.append((os.path.join(HERE, "README.md"), "."))
 datas.append((os.path.join(HERE, "routing.txt"), "."))
 datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))

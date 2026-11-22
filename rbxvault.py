@@ -1,8 +1,8 @@
-"""Search and read the LihFolk vault bundled in guides/lihfolk-vault, and Fridae's other knowledge shelves.
+"""Search and read Fridae's vault (vault/): the LihFolk notes in vault/Roblox and the other knowledge shelves.
 
 The search engine below is LihFolk's `_tools/vault.py` from LihFolk Vault V2
 (https://github.com/lihfolk-cy/v2-vault), CC BY 4.0, (c) 2026 LihFolk, used with these changes: it reads the
-vault from rbxkit's guides folder (a trimmed copy), keeps its index cache in the work folder, and a read is capped.
+notes from vault/Roblox (a trimmed copy), keeps its index cache in the work folder, and a read is capped.
 Everything from "shelves (rbxkit)" on is rbxkit's.
 """
 import hashlib
@@ -16,7 +16,7 @@ from collections import Counter, defaultdict
 import rbxpaths
 from rbxpaths import KIT, KitError
 
-KB = os.path.join(KIT, "guides", "lihfolk-vault")
+KB = os.path.join(KIT, "vault", "Roblox")  # LihFolk Vault V2 notes, inside Fridae's one vault
 
 
 def cache_path(name="lihfolk-vault-index.json"):
@@ -440,9 +440,9 @@ def _list(folder):
 # ======================================================================= shelves (rbxkit)
 # Everything below is rbxkit's: one lookup over several "shelves". The vault keeps the note-level engine above; the
 # other shelves are ranked by SECTION (each heading with its own text) so an agent reads one section, not a whole file.
-#   vault   the LihFolk vault notes
+#   vault   the LihFolk vault notes (vault/Roblox)
 #   guides  every guide rbx_guide serves (rbxkit_mcp.GUIDES) and their references/ files
-#   team    the Studio team's expert files (team/experts/*.md, a game's .fridae/team/experts/ overrides them)
+#   team    the Studio team's expert files (vault/Fridae/Team/*.md, a game's .fridae/team/experts/ overrides them)
 #   game    this game's GAME.md and lessons (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
 SHELVES = ("vault", "guides", "team", "game")
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
@@ -589,8 +589,11 @@ def guide_files():
     return out
 
 
+TEAM = os.path.join(KIT, "vault", "Fridae", "Team")  # the roster and one <id>.md per expert
+
+
 def kit_team_dir():
-    return os.path.join(KIT, "team", "experts")
+    return TEAM
 
 
 def team_files(folder):
@@ -601,7 +604,7 @@ def team_files(folder):
 
 def _team_label(expert_id):
     try:
-        with open(os.path.join(KIT, "team", "roster.json"), encoding="utf-8") as f:
+        with open(os.path.join(TEAM, "roster.json"), encoding="utf-8") as f:
             names = {e.get("id"): e.get("name") for e in json.load(f) if isinstance(e, dict)}
     except (OSError, ValueError):
         names = {}

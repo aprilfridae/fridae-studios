@@ -60,15 +60,58 @@ def copy_filled(src, dst):
                 shutil.copyfile(s, d)
 
 
+# Claude Code gets Fridae's core guides as skills. They live in the vault (vault/Fridae/Guides/Core/<guide>/, the guide
+# itself as <guide>.md); Claude Code wants ~/.claude/skills/<skill>/SKILL.md, so the skill folders are built from the
+# vault at install time, with the same folder names, files and front matter they had when they were skills/<skill>/.
+CORE_GUIDES = os.path.join(KIT, "vault", "Fridae", "Guides", "Core")
+CLAUDE_SKILL_NAMES = {"workflow": "roblox-studio-workflow", "playtest": "roblox-playtest", "ui-design": "roblox-ui-design",
+                      "sim-ui": "roblox-sim-ui", "vfx": "roblox-vfx", "promo": "roblox-promo"}  # else the guide's name
+
+
+def claude_skills(core=CORE_GUIDES):
+    """{skill folder name: {relative path in the skill folder: source file}} for every core guide."""
+    out = {}
+    for guide in sorted(os.listdir(core)):
+        folder = os.path.join(core, guide)
+        main = os.path.join(folder, guide + ".md")
+        if not os.path.isfile(main):
+            continue
+        files = {}
+        for root, dirs, names in os.walk(folder):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for name in names:
+                if name == ".DS_Store":
+                    continue
+                src = os.path.join(root, name)
+                rel = "SKILL.md" if src == main else os.path.relpath(src, folder).replace(os.sep, "/")
+                files[rel] = src
+        out[CLAUDE_SKILL_NAMES.get(guide, guide)] = files
+    return out
+
+
+def build_claude_skills(dest, core=CORE_GUIDES):
+    """Write each core guide as a Claude Code skill folder under dest; returns how many."""
+    skills = claude_skills(core)
+    for name, files in skills.items():
+        for rel, src in files.items():
+            out = os.path.join(dest, name, *rel.split("/"))
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            if src.lower().endswith((".md", ".lua", ".txt")):
+                with open(src, encoding="utf-8") as f:
+                    text = fill(f.read())
+                with open(out, "w", encoding="utf-8") as f:
+                    f.write(text)
+            else:
+                shutil.copyfile(src, out)
+    return len(skills)
+
+
 def install_claude():
     """Claude Code reads skills and agents from ~/.claude."""
     base = os.path.join(HOME, ".claude")
     if not os.path.isdir(base):
         return False
-    n = 0
-    for name in sorted(os.listdir(os.path.join(KIT, "skills"))):
-        copy_filled(os.path.join(KIT, "skills", name), os.path.join(base, "skills", name))
-        n += 1
+    n = build_claude_skills(os.path.join(base, "skills"))
     copy_filled(os.path.join(KIT, "agents"), os.path.join(base, "agents"))
     say("  Claude Code: %d skills and the roblox-tester agent installed in %s" % (n, base))
     return True

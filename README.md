@@ -142,8 +142,8 @@ one runs a shell program you have not allowed, it asks, and the question waits
 in its chat (allow the program there, or in Setup).
 
 **Make the team your own.** The team list and each expert's instructions are
-plain files in the app's `team` folder: `team/roster.json` and
-`team/experts/<name>.md`. To change them for one game, put a file with the
+plain files in the app's vault: `vault/Fridae/Team/roster.json` and
+`vault/Fridae/Team/<name>.md`. To change them for one game, put a file with the
 same name in that game's `.fridae/team/` folder (for example
 `.fridae/team/experts/designer.md`).
 

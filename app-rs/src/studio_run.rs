@@ -584,7 +584,7 @@ fn helpers_work(ai: &str) -> bool {
 /// Roster ids to the names people read ("ui" is "UI builder"): the kit's roster, then the game's own entries over it.
 fn expert_names(kit: &Path, project: &Path) -> serde_json::Map<String, Value> {
     let mut names = serde_json::Map::new();
-    for f in [kit.join("team").join("roster.json"), project.join(".fridae").join("team").join("roster.json")] {
+    for f in [paths::kit_team(kit).join("roster.json"), project.join(".fridae").join("team").join("roster.json")] {
         let list: Value = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
         for e in list.as_array().into_iter().flatten() {
             if let (Some(id), Some(name)) = (e["id"].as_str(), e["name"].as_str()) {
@@ -746,9 +746,9 @@ mod tests {
     fn expert_names_take_the_games_own_roster_over_the_kits() {
         let d = game("names");
         let kit = d.join("kit");
-        fs::create_dir_all(kit.join("team")).unwrap();
+        fs::create_dir_all(paths::kit_team(&kit)).unwrap();
         fs::create_dir_all(d.join(".fridae").join("team")).unwrap();
-        fs::write(kit.join("team").join("roster.json"), r#"[{"id": "ui", "name": "UI builder"}, {"id": "coder", "name": "Coder"}]"#).unwrap();
+        fs::write(paths::kit_team(&kit).join("roster.json"), r#"[{"id": "ui", "name": "UI builder"}, {"id": "coder", "name": "Coder"}]"#).unwrap();
         fs::write(d.join(".fridae").join("team").join("roster.json"), r#"[{"id": "coder", "name": "Scripter"}, {"id": "x"}]"#).unwrap();
         let names = expert_names(&kit, &d);
         assert_eq!(names["ui"], "UI builder");

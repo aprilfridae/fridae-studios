@@ -1,7 +1,7 @@
 """Studio mode's team: the roster of experts and each expert's instruction file.
 
-The kit ships team/roster.json (a list of entries with id, name, job, stage, guides, tools, kind, writes) and
-team/experts/<id>.md. A game may override either under <project>/.fridae/team/: a project roster.json entry replaces
+The kit ships vault/Fridae/Team/roster.json (a list of entries with id, name, job, stage, guides, tools, kind,
+writes) and vault/Fridae/Team/<id>.md. A game may override either under <project>/.fridae/team/: a project roster.json entry replaces
 only the fields it gives for its id (or adds a new expert), and a project experts/<id>.md replaces that expert's text.
 This module only loads and merges; it knows nothing about runs.
 """
@@ -19,7 +19,8 @@ _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def kit_dir():
-    return os.path.join(rbxpaths.KIT, "team")
+    """The kit's team folder: roster.json and one <id>.md per expert."""
+    return os.path.join(rbxpaths.KIT, "vault", "Fridae", "Team")
 
 
 def project_dir(project):
@@ -120,7 +121,7 @@ def expert(expert_id, project=None):
     if not found:
         raise KitError("No expert %r. The team is: %s." % (expert_id, ", ".join(e["id"] for e in roster)))
     entry = dict(found[0])
-    paths = [os.path.join(kit_dir(), "experts", entry["id"] + ".md")]
+    paths = [os.path.join(kit_dir(), entry["id"] + ".md")]
     if project:
         paths.insert(0, os.path.join(project_dir(project), "experts", entry["id"] + ".md"))
     for p in paths:

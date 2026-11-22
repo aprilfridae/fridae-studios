@@ -1,6 +1,6 @@
 """Where rbxkit keeps things, whether it runs from source or as a packaged .exe.
 
-KIT   read-only program files (blender/, studio/, skills/, rigs/)
+KIT   read-only program files (blender/, studio/, vault/, rigs/)
 WORK  everything the tools produce; always user-writable
 """
 import json, os, sys

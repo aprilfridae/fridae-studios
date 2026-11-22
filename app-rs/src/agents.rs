@@ -2081,13 +2081,13 @@ pub fn shut_down() {
 }
 
 /// The Lead's instructions for a Studio run: the game's own `.fridae/team/experts/lead.md` when it has one, else the
-/// kit's `team/experts/lead.md`. Empty when neither can be read (the studio prompt still applies).
+/// kit's `vault/Fridae/Team/lead.md`. Empty when neither can be read (the studio prompt still applies).
 fn studio_lead_text(project: Option<&str>) -> String {
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     if let Some(p) = project {
         files.push(std::path::Path::new(p).join(".fridae").join("team").join("experts").join("lead.md"));
     }
-    files.push(PATHS.kit.join("team").join("experts").join("lead.md"));
+    files.push(paths::kit_team(&PATHS.kit).join("lead.md"));
     files.iter().find_map(|f| fs::read_to_string(f).ok()).filter(|t| !t.trim().is_empty()).map(|t| format!("\n\n{}", t.trim())).unwrap_or_default()
 }
 

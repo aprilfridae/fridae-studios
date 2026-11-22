@@ -1,6 +1,6 @@
 //! Where things live, whether the app runs packaged or from the source folder.
 //!
-//! KIT   read-only program files (ui/, studio/, skills/, guides/ ...)
+//! KIT   read-only program files (ui/, studio/, vault/ ...)
 //! HOME  settings and the update staging folder
 //! WORK  everything the tools and chats produce
 
@@ -114,6 +114,11 @@ fn sweep_test_dirs(base: &Path, temp: &Path) {
             }
         }
     }
+}
+
+/// The kit's Studio team folder inside the vault: roster.json and one <id>.md per expert.
+pub fn kit_team(kit: &Path) -> PathBuf {
+    kit.join("vault").join("Fridae").join("Team")
 }
 
 pub fn home_dir() -> PathBuf {

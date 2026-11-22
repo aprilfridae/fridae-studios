@@ -2,8 +2,8 @@
 
 ## Design guides from open-design
 
-These folders under `skills/` are copied unchanged from
-https://github.com/nexu-io/open-design (`skills/`), which is licensed
+These folders under `vault/Fridae/Guides/Core/` are copied unchanged (each `SKILL.md` renamed to
+`<folder>.md`) from https://github.com/nexu-io/open-design (`skills/`), which is licensed
 Apache-2.0 (`licenses/open-design-LICENSE.txt`). Folders that carry their own
 `LICENSE` file are under that licence instead (MIT); each folder's
 `SOURCES.md` or front matter names its upstream author.
@@ -18,7 +18,7 @@ Apache-2.0 (`licenses/open-design-LICENSE.txt`). Folders that carry their own
 
 ## Roblox subject guides from roblox-skills
 
-`guides/roblox-skills/` is copied unchanged from
+`vault/Fridae/Guides/Roblox subjects/` is copied unchanged (each `SKILL.md` renamed to `<folder>.md`) from
 https://github.com/EL4CTEO/roblox-skills (version 1.1.2), MIT licensed
 (`licenses/roblox-skills-LICENSE.txt`). 22 guides (its `roblox-studio-mcp`
 guide is left out because rbxkit's own workflow guide covers the same ground): Luau, architecture,
@@ -27,17 +27,17 @@ NPC AI, monetization, testing, performance and more.
 
 ## Check-UI
 
-The simulator UI look described in `skills/roblox-sim-ui` follows Check-UI
+The simulator UI look described in `vault/Fridae/Guides/Core/sim-ui` follows Check-UI
 Clean Roblox by diggofun / TemporaryLooker22 (MIT). See
-`skills/roblox-sim-ui/LICENSE.md`.
+`vault/Fridae/Guides/Core/sim-ui/LICENSE.md`.
 
 ## LihFolk Vault V2
 
-`guides/lihfolk-vault/` (a trimmed copy: 1,321 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
-`45 Procedural Blender Assets/scripts`, the dated API snapshot) and `guides/lihfolk/` (11 guides with their Luau
+`vault/Roblox/` (a trimmed copy: 1,321 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
+`45 Procedural Blender Assets/scripts`, the dated API snapshot) and `vault/Fridae/Guides/LihFolk/` (12 guides with their Luau
 modules, examples, scripts and rubrics) are from LihFolk Vault V2 by LihFolk,
 https://github.com/lihfolk-cy/v2-vault, licensed CC BY 4.0 (`licenses/lihfolk-vault-LICENSE.md`).
-Changes: guide text that pointed at the Claude Code plugin's folders now points at the `rbx_vault` tool;
+Changes: each guide's `SKILL.md` is now `<folder>.md` inside Fridae's one vault; guide text that pointed at the Claude Code plugin's folders now points at the `rbx_vault` tool;
 mentions of LihFolk guides left out (because rbxkit already had one on the subject) point at rbxkit's.
 `rbxvault.py` is LihFolk's `_tools/vault.py` search, reading from rbxkit's folders, with rbxkit's section search
 added around it. Trimmed from the copy (2026-11): the generated index and router pages `INDEX.md`, `INDEX_SLIM.md`,
@@ -49,7 +49,7 @@ DataStore safety, performance audit, monetization compliance, UI builder). The L
 
 ## unslop
 
-`skills/unslop/` (its SKILL.md and references) is from unslop by Damir Sokolovsky (@heydamir),
+`vault/Fridae/Guides/Core/unslop/` (its guide, `unslop.md`, and references) is from unslop by Damir Sokolovsky (@heydamir),
 https://github.com/heydamir/unslop, licensed CC BY 4.0 (`licenses/unslop-LICENSE.txt`). Changes: an
 "In Roblox" section was added near the top; its Node snapshot and story-video scripts and its HTML examples are
 not included.

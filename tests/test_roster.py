@@ -215,7 +215,7 @@ class GuideLoadTests(unittest.TestCase):
         self.assertNotIn("Left out", text)
 
     def test_expert_files_load_two_topics_at_a_time_and_use_no_shell_on_output(self):
-        folder = os.path.join(os.path.dirname(rbxroster.__file__), "team", "experts")
+        folder = rbxroster.kit_dir()
         for name in IDS:
             if name == "lead":
                 continue

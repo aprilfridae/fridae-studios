@@ -57,35 +57,35 @@ WEB_NOTE = ("> This guide was written for websites. For Roblox, take its judgeme
             "`web-to-roblox` guide (rbx_guide topic web-to-roblox)." + chr(10) + chr(10))
 
 GUIDES = {
-    "workflow": ("skills/roblox-studio-workflow/SKILL.md", "Start here: tools, ground rules, 3D models, animations, icons, uploads"),
-    "playtest": ("skills/roblox-playtest/SKILL.md", "Running a playtest and acting like a player"),
-    "ui-design": ("skills/roblox-ui-design/SKILL.md", "Building and checking Roblox UI"),
-    "ui-helpers": ("skills/roblox-ui-design/helpers.lua", "Luau UI builder functions to paste into a builder"),
-    "ui-audit": ("skills/roblox-ui-design/audit.lua", "Luau UI defect check to run in Studio"),
-    "sim-ui": ("skills/roblox-sim-ui/SKILL.md", "The chunky simulator / tycoon UI look"),
-    "vfx": ("skills/roblox-vfx/SKILL.md", "Visual effects: modules, capture, textures, meshes"),
-    "vfx-basics": ("skills/roblox-vfx/references/vfx-basics.md", "VFX craft notes: layers, timing, brightness, budgets"),
+    "workflow": ("vault/Fridae/Guides/Core/workflow/workflow.md", "Start here: tools, ground rules, 3D models, animations, icons, uploads"),
+    "playtest": ("vault/Fridae/Guides/Core/playtest/playtest.md", "Running a playtest and acting like a player"),
+    "ui-design": ("vault/Fridae/Guides/Core/ui-design/ui-design.md", "Building and checking Roblox UI"),
+    "ui-helpers": ("vault/Fridae/Guides/Core/ui-design/helpers.lua", "Luau UI builder functions to paste into a builder"),
+    "ui-audit": ("vault/Fridae/Guides/Core/ui-design/audit.lua", "Luau UI defect check to run in Studio"),
+    "sim-ui": ("vault/Fridae/Guides/Core/sim-ui/sim-ui.md", "The chunky simulator / tycoon UI look"),
+    "vfx": ("vault/Fridae/Guides/Core/vfx/vfx.md", "Visual effects: modules, capture, textures, meshes"),
+    "vfx-basics": ("vault/Fridae/Guides/Core/vfx/references/vfx-basics.md", "VFX craft notes: layers, timing, brightness, budgets"),
     "tester": ("agents/roblox-tester.md", "Instructions for a sub-agent that only runs playtests"),
-    "web-to-roblox": ("skills/roblox-ui-design/web-to-roblox.md", "How to apply the design guides below in Roblox (CSS to Roblox table)"),
-    "emil-design-eng": ("skills/emil-design-eng/SKILL.md", "Design: UI polish and when and how to animate"),
-    "motion-design": ("skills/motion-design/SKILL.md", "Design: motion craft, beat maps, pacing"),
-    "redesign-skill": ("skills/redesign-skill/SKILL.md", "Design: audit and upgrade existing UI"),
-    "reference-design-contract": ("skills/reference-design-contract/SKILL.md", "Design: turn references into a design contract"),
-    "unslop": ("skills/unslop/SKILL.md", "Design: turn sloppy, AI-looking or vibecoded UI into designed UI (audit, direction, nine passes)"),
-    "soft-skill": ("skills/soft-skill/SKILL.md", "Style: soft premium look"),
-    "minimalist-skill": ("skills/minimalist-skill/SKILL.md", "Style: clean minimal look"),
-    "brutalist-skill": ("skills/brutalist-skill/SKILL.md", "Style: raw industrial look"),
-    "game-brainstorm": ("skills/game-brainstorm/SKILL.md", "Game: interview the user about a new idea and write GAME.md"),
-    "game-bible": ("skills/game-bible/SKILL.md", "Game: the GAME.md format and rules; writing one for an existing game"),
-    "game-design": ("skills/game-design/SKILL.md", "Game: core loop, first five minutes, feedback, pacing, fair retention, failure modes"),
-    "economy-design": ("skills/economy-design/SKILL.md", "Game: prices, rewards, cost curves, drop odds, checking numbers with rbx_economy"),
-    "player-testing": ("skills/player-testing/SKILL.md", "Game: testing like a new player; feel, performance budgets, devices, multi-player"),
-    "sound-design": ("skills/sound-design/SKILL.md", "Game: sounds and music by measurement; timing, levels, SoundGroups, rolloff"),
-    "market-research": ("skills/market-research/SKILL.md", "Game: comparable live experiences with rbx_market and what to learn from them"),
-    "critic": ("skills/critic/SKILL.md", "Instructions for an agent spawned as a reviewer of finished work"),
-    "producer": ("skills/producer/SKILL.md", "Splitting a large request between parallel agents with rbx_team"),
-    "studio": ("skills/studio/SKILL.md", "Studio mode, for the Lead: stages, gates, briefing experts, review items, decisions, waiting"),
-    "promo": ("skills/roblox-promo/SKILL.md", "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo"),
+    "web-to-roblox": ("vault/Fridae/Guides/Core/ui-design/web-to-roblox.md", "How to apply the design guides below in Roblox (CSS to Roblox table)"),
+    "emil-design-eng": ("vault/Fridae/Guides/Core/emil-design-eng/emil-design-eng.md", "Design: UI polish and when and how to animate"),
+    "motion-design": ("vault/Fridae/Guides/Core/motion-design/motion-design.md", "Design: motion craft, beat maps, pacing"),
+    "redesign-skill": ("vault/Fridae/Guides/Core/redesign-skill/redesign-skill.md", "Design: audit and upgrade existing UI"),
+    "reference-design-contract": ("vault/Fridae/Guides/Core/reference-design-contract/reference-design-contract.md", "Design: turn references into a design contract"),
+    "unslop": ("vault/Fridae/Guides/Core/unslop/unslop.md", "Design: turn sloppy, AI-looking or vibecoded UI into designed UI (audit, direction, nine passes)"),
+    "soft-skill": ("vault/Fridae/Guides/Core/soft-skill/soft-skill.md", "Style: soft premium look"),
+    "minimalist-skill": ("vault/Fridae/Guides/Core/minimalist-skill/minimalist-skill.md", "Style: clean minimal look"),
+    "brutalist-skill": ("vault/Fridae/Guides/Core/brutalist-skill/brutalist-skill.md", "Style: raw industrial look"),
+    "game-brainstorm": ("vault/Fridae/Guides/Core/game-brainstorm/game-brainstorm.md", "Game: interview the user about a new idea and write GAME.md"),
+    "game-bible": ("vault/Fridae/Guides/Core/game-bible/game-bible.md", "Game: the GAME.md format and rules; writing one for an existing game"),
+    "game-design": ("vault/Fridae/Guides/Core/game-design/game-design.md", "Game: core loop, first five minutes, feedback, pacing, fair retention, failure modes"),
+    "economy-design": ("vault/Fridae/Guides/Core/economy-design/economy-design.md", "Game: prices, rewards, cost curves, drop odds, checking numbers with rbx_economy"),
+    "player-testing": ("vault/Fridae/Guides/Core/player-testing/player-testing.md", "Game: testing like a new player; feel, performance budgets, devices, multi-player"),
+    "sound-design": ("vault/Fridae/Guides/Core/sound-design/sound-design.md", "Game: sounds and music by measurement; timing, levels, SoundGroups, rolloff"),
+    "market-research": ("vault/Fridae/Guides/Core/market-research/market-research.md", "Game: comparable live experiences with rbx_market and what to learn from them"),
+    "critic": ("vault/Fridae/Guides/Core/critic/critic.md", "Instructions for an agent spawned as a reviewer of finished work"),
+    "producer": ("vault/Fridae/Guides/Core/producer/producer.md", "Splitting a large request between parallel agents with rbx_team"),
+    "studio": ("vault/Fridae/Guides/Core/studio/studio.md", "Studio mode, for the Lead: stages, gates, briefing experts, review items, decisions, waiting"),
+    "promo": ("vault/Fridae/Guides/Core/promo/promo.md", "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo"),
 }
 
 
@@ -142,20 +142,19 @@ def _describe(path):
     return (text[:110] + "...") if len(text) > 110 else text
 
 
+GUIDE_GROUPS = (("vault/Fridae/Guides/Roblox subjects", "Roblox: "), ("vault/Fridae/Guides/LihFolk", "LihFolk: "))
+LIHFOLK_GUIDES = "vault/Fridae/Guides/LihFolk/"
+
+
 def _register_roblox_skills():
-    base = os.path.join(KIT, "guides", "roblox-skills")
-    if not os.path.isdir(base):
-        return
-    for name in sorted(os.listdir(base)):
-        path = os.path.join(base, name, "SKILL.md")
-        if os.path.exists(path) and name not in GUIDES:
-            GUIDES[name] = ("guides/roblox-skills/%s/SKILL.md" % name, "Roblox: " + _describe(path))
+    """The vault's subject guides: each folder <name>/ holding <name>.md registers itself as a guide."""
     # LihFolk's guides (CC BY 4.0): ones whose subject rbxkit already covered were left out when they were copied in
-    base = os.path.join(KIT, "guides", "lihfolk")
-    for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-        path = os.path.join(base, name, "SKILL.md")
-        if os.path.exists(path) and name not in GUIDES:
-            GUIDES[name] = ("guides/lihfolk/%s/SKILL.md" % name, "LihFolk: " + _describe(path))
+    for rel, prefix in GUIDE_GROUPS:
+        base = os.path.join(KIT, rel)
+        for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            path = os.path.join(base, name, name + ".md")
+            if os.path.exists(path) and name not in GUIDES:
+                GUIDES[name] = ("%s/%s/%s.md" % (rel, name, name), prefix + _describe(path))
 
 
 _register_roblox_skills()
@@ -203,11 +202,11 @@ def _guide_extras(topic):
             text += "\n\nReference files for this guide (load with rbx_guide topic `%s/<name>`): %s" % (topic, ", ".join(files))
     if topic == "vfx" and os.path.isdir(refs):
         text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
-    if GUIDES[topic][0].startswith("guides/lihfolk/"):
+    if GUIDES[topic][0].startswith(LIHFOLK_GUIDES):
         # its code (Luau modules, examples, Blender scripts, rubrics) is read straight from the folder
         folder = os.path.dirname(path)
         files = sorted(os.path.relpath(os.path.join(r, f), folder).replace("\\", "/")
-                       for r, _, fs in os.walk(folder) for f in fs if f != "SKILL.md")
+                       for r, _, fs in os.walk(folder) for f in fs if os.path.join(r, f) != path)
         text += "\n\nThis guide's folder is %s" % folder.replace("\\", "/")
         if files:
             text += "; read its files from there: " + ", ".join(files)

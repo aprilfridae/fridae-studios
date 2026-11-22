@@ -133,15 +133,15 @@ without `replaces`), and a refusal names any item still marked `changes` with th
 `decisions` hands each answer over once (`read_decisions` holds `id:status`); `status` keeps printing the note of
 every open `changes` item, saying which were already handed over, and an undo that reopens an item drops its
 `id:changes` mark so it is handed over again. Finishing a stage writes
-`WORK/stage-requests/<id>.json` for the app's checkpoint. `rbxroster.py` loads `team/roster.json` (fields `id, name,
+`WORK/stage-requests/<id>.json` for the app's checkpoint. `rbxroster.py` loads `vault/Fridae/Team/roster.json` (fields `id, name,
 job, stage, guides, tools, kind, writes`) with the project's overrides merged field by field, and checks every field.
 `rbx_team spawn` takes `expert`: `rbxteam.py` resolves it and puts `expert`, `expert_name`, `expert_text` (at most
 16,000 characters) and `writes` in the request; the Lead itself cannot be spawned, and helpers still cannot start
 helpers.
 
-**The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `team/experts/lead.md` (project copy
-first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
-from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (registered in `rbxkit_mcp.GUIDES`).
+**The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `vault/Fridae/Team/lead.md` (the project's
+`.fridae/team/experts/lead.md` first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
+from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio/studio.md` (registered in `rbxkit_mcp.GUIDES`).
 
 **The app side** (`app-rs/src`):
 - `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step` / `ended_step` /
@@ -215,13 +215,13 @@ from the kit at run time. The `studio` guide is `skills/studio/SKILL.md` (regist
 
 Agents look things up rather than load whole guides (a live run once pulled 62 KB of guides in one call).
 `rbx_vault` is the one lookup; its engine is `rbxvault.py`. It searches four **shelves**, and nothing is copied:
-the files stay where they are, plain Markdown that Obsidian can open.
+everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start Here.md` explains its layout).
 
 | Shelf | What | Ranked by | Cache |
 |---|---|---|---|
-| `vault` | the LihFolk vault notes (`guides/lihfolk-vault`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
+| `vault` | the LihFolk vault notes (`vault/Roblox`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
 | `guides` | every Markdown guide in `rbxkit_mcp.GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
-| `team` | `team/experts/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
+| `team` | `vault/Fridae/Team/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
 | `game` | the game's `GAME.md`, `.fridae/lessons.md`, and `work/studio-lessons.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
 
 A section is a `##` or `###` heading with its own text (`#` lines inside code fences do not count); the text before
@@ -252,8 +252,9 @@ and everything before the first `##`) plus its sections with sizes, unless it is
 Everything else in the guides is craft knowledge that is fine to find by search. When you add a rule that must
 always apply, put it in one of those places, never only in a large guide or a vault note.
 
-**Adding a guide so it is found.** Register it in `GUIDES` in `rbxkit_mcp.py` (or drop a `SKILL.md` folder into
-`guides/roblox-skills/` or `guides/lihfolk/`, which register themselves). Give it front matter with a `description`
+**Adding a guide so it is found.** Register it in `GUIDES` in `rbxkit_mcp.py` (or add a folder `<name>/` holding
+`<name>.md` to `vault/Fridae/Guides/Roblox subjects/` or `vault/Fridae/Guides/LihFolk/`, which register themselves;
+a guide in `vault/Fridae/Guides/Core/` is also installed as a Claude Code skill by `install.py`). Give it front matter with a `description`
 (it is searched with every section of that guide), a `#` title, and `##`/`###` headings that say what each part is
 for in plain words ("Saving player data", not "Notes"): headings weigh most in the ranking. Put long material in
 `references/*.md` beside it; those are indexed too. Name it in `routing.txt` and in the expert files that need it.
@@ -267,7 +268,9 @@ sections. `tests/test_knowledge.py` checks that each task finds an expected guid
 - `rbx.py`, `rbx*.py`, `blender/` - the tools.
 - `rbxkit_mcp.py` - the MCP server agents connect to.
 - `studio/` - Luau that runs in Roblox Studio.
-- `skills/`, `agents/` - the guides.
+- `vault/` - the one knowledge vault (Obsidian-readable): `Roblox/` (LihFolk notes), `Fridae/Guides/` (the guides,
+  one folder per guide: `Core/`, `Roblox subjects/`, `LihFolk/`), `Fridae/Team/` (the Studio roster and expert notes).
+- `agents/` - the Claude Code tester agent (also the `tester` guide).
 - `rbxpromo/`, `promo/` - the promo maker: the Python side, and the Remotion project the engine renders with.
 - `engine/` - the promo engine when running from source (not in git).
 - `work/` - everything the tools produce (models, textures, icons).
@@ -289,4 +292,4 @@ sections. `tests/test_knowledge.py` checks that each task finds an expected guid
 ## Credits
 
 The simulator UI look follows Check-UI Clean Roblox by diggofun /
-TemporaryLooker22 (MIT, see `skills/roblox-sim-ui/LICENSE.md`).
+TemporaryLooker22 (MIT, see `vault/Fridae/Guides/Core/sim-ui/LICENSE.md`).
