@@ -41,7 +41,10 @@ On a Mac:
 ## You need
 
 1. **Claude Code**, signed in with your own account. Fridae Studios has no AI
-   of its own; it drives Claude Code for you.
+   of its own; it drives Claude Code for you. It can drive Gemini (Google's
+   Antigravity tool, `agy`) or **Cursor** instead, chat by chat: for Cursor,
+   install the Cursor Agent command-line tool from [cursor.com/cli](https://cursor.com/cli)
+   and run `cursor-agent login` once in a terminal.
 2. **Blender** (any recent version).
 3. **Roblox Studio** with its MCP server turned on (Assistant settings).
 
@@ -55,8 +58,9 @@ with its run, who is working on what, what needs you and what it has cost, besid
 chats and the experts each Lead started. Pick a game and it has three tabs:
 
 - **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. Under the message
-  box, switch between **Claude** and **Gemini** at any time: in a chat that has started, the other AI is handed the
-  chat so far and carries on. Experts a Lead starts show as one line each inside its chat; open the line to read
+  box, switch between **Claude**, **Gemini** and **Cursor** at any time: in a chat that has started, the other AI is
+  handed the chat so far and carries on. Cursor chats use the model picked under the message box (Auto unless you
+  pick another of the models your Cursor plan offers). Experts a Lead starts show as one line each inside its chat; open the line to read
   that expert's work, or stop it.
 - **Review**: what is happening on the game and what needs you (see Studio mode below).
 - **Promos**: promo videos from your clips.
