@@ -577,6 +577,9 @@ struct State {
     /// twice, and the chat stays on a process per turn for the rest of this run of the app.
     live: Option<Arc<Live>>,
     live_fails: u32,
+    /// Tests only: this chat asked for its AI's kept process as `FRIDAE_<AI>_KEPT=1` does (`live_allowed`).
+    #[cfg(test)]
+    kept_asked: bool,
     /// Kept processes of this chat that are being closed (`retire`): until each is gone it may still hold the
     /// conversation, and an AI whose conversation takes one process at a time waits for them (`Kept::alone`).
     retiring: Vec<Arc<Live>>,
@@ -775,6 +778,21 @@ impl TurnProc {
     /// A turn on a chat's kept Claude Code process.
     fn on(live: &Arc<Live>) -> Arc<TurnProc> {
         Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+    }
+
+    /// Whether the kept process's tree has a process group now that it did not have when it took the turn's message:
+    /// something the turn started is still running (Cursor runs each command in a group of its own, as a direct
+    /// child: measured). Looked at twice, so a command just ending is not taken for one left behind.
+    fn left_running(&self) -> bool {
+        if !self.acked.load(Ordering::SeqCst) {
+            return false;
+        }
+        let standing = self.standing.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let more = || crate::procs::tree_groups(self.pid).iter().any(|g| !standing.contains(g));
+        more() && {
+            thread::sleep(Duration::from_millis(200));
+            more()
+        }
     }
 
     /// Claude Code has started on the turn's message (a kept process): noted once, with the groups its tree has now.
@@ -1314,6 +1332,19 @@ trait Kept: Clone + Send + 'static {
     fn alone(&self) -> bool {
         false
     }
+    /// Whether this message, in this chat, can run on a kept process at all (Cursor: only Ask me, only Auto, and
+    /// only a chat whose conversation a kept process made or that has none yet). When not, the chat's kept process,
+    /// if it has one, is closed and the message goes to a process of its own (`fall_back`).
+    fn fits(&self, _a: &Arc<Agent>) -> bool {
+        true
+    }
+    /// The same message for a process of its own, when the kept way is not taken or has failed before anything was
+    /// shown: the chat's conversation resumed (`per_turn`). An AI whose kept process keeps conversations a process
+    /// per message cannot open (Cursor) hands the chat over as text here instead.
+    fn fall_back(&self, a: &Arc<Agent>, text: &str) -> (Command, String) {
+        let session = a.st.lock().unwrap().session.clone();
+        self.per_turn(session.as_deref(), text)
+    }
 }
 
 impl Kept for ClaudeLaunch {
@@ -1420,7 +1451,7 @@ impl GeminiLaunch {
         if let (Some(file), true) = (s.pictures, servers["rbxkit"].is_object()) {
             servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
         }
-        let spec = crate::acp::Spec { cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
+        let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         // a fingerprint, not the settings themselves: one of them is the user's Gemini key
         let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
         GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
@@ -1570,6 +1601,222 @@ impl Kept for GeminiLaunch {
     }
 }
 
+/// What a Cursor turn is started with on the kept path (`cursor-agent acp`, see `acp::Agent`). Built afresh for every
+/// message, as Claude's and Gemini's are; a kept process started with anything else (`key`) is closed and a new one
+/// loads the conversation.
+///
+/// Only some messages run this way (`fits`), by what was measured (DEVELOPING.md): Ask me only, because Cursor's
+/// sandbox, which Full auto and Studio rely on, is not applied over ACP; the model Auto only, the one model whose id
+/// is known on both paths; and only in a chat whose Cursor conversation a kept process made, or that has none yet:
+/// the two kinds of process keep their conversations in separate stores and neither opens the other's, so **a chat
+/// keeps the path it started on**. When a message of a kept chat cannot run this way (another mode or model, the
+/// switch, a kept process that failed), it goes to a process per message as a new Cursor conversation that is handed
+/// the chat so far as text, the way a switch of AI hands it over, and the chat says so in one line (`fall_back`).
+/// From then on the chat is a per-message one.
+///
+/// Cursor's own allow list and deny rules decide what runs, exactly as on a process per message: the same settings
+/// file, written by the same code (`cursor::prepare`), before the process starts and again before each turn.
+#[derive(Clone)]
+struct CursorLaunch {
+    exe: std::path::PathBuf,
+    /// arguments before all others: none for cursor-agent (the tests' stand-in is a shell script given to `sh`)
+    first: Vec<std::ffi::OsString>,
+    /// the chat's own folder (`cursor::workspace`), the kit, and the game when the chat has one
+    workspace: std::path::PathBuf,
+    kit: std::path::PathBuf,
+    project: Option<String>,
+    /// the app's tool servers as the app keeps them: what a process per message and the settings files are given
+    servers: Value,
+    /// the model as a process per message names it, and Full auto or Studio
+    model: Option<String>,
+    full: bool,
+    /// what the kept process is given: the workspace, the servers with their environment, the model by its id there
+    spec: crate::acp::Spec,
+    /// whether the model has an id on the kept path (`cursor::kept_model`)
+    kept_model: bool,
+    keys_on: bool,
+    /// Cursor's allow list and deny rules as its settings file is written with them (the programs the user allowed
+    /// are in it), where its settings, data and home folders are, and a fingerprint of every guarded setting
+    rules: String,
+    folders: (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf),
+    guarded: String,
+    /// this message as a new conversation's first one gets it, for a fallback that has to start one: the standing
+    /// instructions, and the message without them. Not part of what a process is started with.
+    prompt: String,
+    body: String,
+}
+
+/// Everything a Cursor turn's start depends on, as `send` has it for a message.
+struct CursorSettings<'a> {
+    exe: &'a std::path::Path,
+    agent_id: &'a str,
+    workspace: &'a std::path::Path,
+    kit: &'a std::path::Path,
+    project: Option<&'a str>,
+    servers: &'a Value,
+    model: Option<&'a str>,
+    full: bool,
+    /// where the app's tool server notes its results' pictures for this chat
+    pictures: Option<&'a std::path::Path>,
+    /// Cursor's rules as written now (`cursor::rules_now`), and its folders (`cursor::folders`)
+    rules: &'a Value,
+    folders: (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf),
+    guarded: &'a Map<String, Value>,
+    keys_on: bool,
+    prompt: &'a str,
+    body: &'a str,
+}
+
+/// The one line a chat is told when its Cursor conversation moves from a kept process to processes per message.
+const CURSOR_HANDED_OVER: &str = "This chat's Cursor conversation was on a kept connection, which this message cannot use. It carries on in a new Cursor conversation that was handed the chat so far as text (the user's messages and Cursor's replies, without tool steps).";
+
+impl CursorLaunch {
+    fn new(s: &CursorSettings) -> CursorLaunch {
+        use sha2::{Digest, Sha256};
+        // the servers as a session is handed them: with the app's settings in their environment, and the app's own
+        // told where to note its results' pictures (a tool's result does not come over ACP: measured)
+        let mut handed = cursor::kept_servers(s.servers);
+        if let (Some(file), true) = (s.pictures, handed["rbxkit"].is_object()) {
+            handed["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
+        }
+        let kept_model = cursor::kept_model(s.model);
+        let rules = crate::acp::Rules {
+            full: s.full,
+            agent_id: s.agent_id.to_string(),
+            servers: s.servers.as_object().map(|m| m.keys().cloned().collect()).unwrap_or_default(),
+            // Cursor's own rules are the gate: the app's lists are not asked
+            writes: Vec::new(),
+            reads: Vec::new(),
+            protected: Vec::new(),
+            hidden_in: Vec::new(),
+            agent_dir: std::path::PathBuf::new(),
+        };
+        let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
+        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        CursorLaunch {
+            exe: s.exe.to_path_buf(),
+            first: Vec::new(),
+            workspace: s.workspace.to_path_buf(),
+            kit: s.kit.to_path_buf(),
+            project: s.project.filter(|p| !p.is_empty()).map(str::to_string),
+            servers: s.servers.clone(),
+            model: s.model.map(str::to_string),
+            full: s.full,
+            spec,
+            kept_model: kept_model.is_some(),
+            keys_on: s.keys_on,
+            rules: s.rules.to_string(),
+            folders: s.folders.clone(),
+            guarded,
+            prompt: s.prompt.to_string(),
+            body: s.body.to_string(),
+        }
+    }
+
+    /// The kept process: `cursor-agent ... acp` in the chat's own folder, with Cursor's settings and data folders
+    /// the app's, as for a process per message.
+    fn command(&self) -> Command {
+        let mut cmd = cursor::kept_command(&self.exe, &self.first, &self.workspace, &self.servers, self.project.as_deref(), &self.kit);
+        cmd.env("CURSOR_CONFIG_DIR", &self.folders.0).env("CURSOR_DATA_DIR", &self.folders.1);
+        // (asked for as on a process per message; Cursor cuts a tool server's call off after 60 seconds either way:
+        // measured)
+        cmd.env("MCP_TOOL_TIMEOUT", "900000");
+        paths::quiet(&mut cmd);
+        paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
+        cmd
+    }
+
+    /// Everything a kept process was started with that a later message could need otherwise.
+    fn key(&self) -> String {
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.workspace, self.kit, self.project, self.servers.to_string(), self.spec.servers.to_string(),
+               self.model, self.spec.model, self.full, self.spec.rules.agent_id, self.spec.pictures, self.keys_on, self.rules, self.folders, self.guarded])
+        .to_string()
+    }
+
+    /// Whether a conversation is one a kept process made (`<settings folder>/acp-sessions/<id>`).
+    fn kept_session(&self, session: &str) -> bool {
+        cursor::kept_chat_in(&self.folders.0, session)
+    }
+}
+
+impl Kept for CursorLaunch {
+    fn ai(&self) -> &'static str {
+        "cursor"
+    }
+
+    fn key(&self) -> String {
+        CursorLaunch::key(self)
+    }
+
+    fn start(&self, _session: Option<&str>, key: String) -> std::io::Result<Arc<Live>> {
+        // the conversation is loaded over the protocol, not by an argument (`acp::turn`)
+        let live = Live::start_as(self.command(), key, "cursor", crate::acp::stray)?;
+        live.ends_by_signal(); // it does not exit when its stdin is closed (measured)
+        Ok(live)
+    }
+
+    fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
+        let cmd = cursor::command_with(&self.exe, &self.first, &self.workspace, &self.servers, session, self.model.as_deref(), self.full, self.project.as_deref(), &self.kit);
+        (cmd, text.to_string())
+    }
+
+    fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
+        let resume = a.st.lock().unwrap().session.clone().filter(|s| self.kept_session(s));
+        // as before every turn of a process per message: the settings file rebuilt, so nothing a turn wrote there lasts
+        cursor::prepare(&self.workspace, &self.servers);
+        // this turn's pictures start from nothing
+        if let Some(file) = &self.spec.pictures {
+            let _ = file.parent().map(fs::create_dir_all);
+            let _ = fs::write(file, "");
+        }
+        let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
+        let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, &mut host);
+        let mut t = host.t;
+        // a command the turn started and left running: nothing of a chat's runs on once the chat shows it has finished
+        let left = end.background || (!end.ended && tp.left_running());
+        if left && !a.st.lock().unwrap().stopped {
+            a.put("error", json!({"text": "Cursor left a command running when its turn ended. Fridae ended that command with the turn: nothing of a chat's runs on once the chat shows it has finished."}));
+        }
+        t.ended = end.ended;
+        t.unfit = end.unfit;
+        t.background_left = left;
+        t
+    }
+
+    /// Whether two processes may have one session open was not measured: a turn waits for the chat's earlier one.
+    fn alone(&self) -> bool {
+        true
+    }
+
+    fn fits(&self, a: &Arc<Agent>) -> bool {
+        let session = a.st.lock().unwrap().session.clone();
+        !self.full && self.kept_model && session.as_deref().is_none_or(|s| self.kept_session(s))
+    }
+
+    fn fall_back(&self, a: &Arc<Agent>, text: &str) -> (Command, String) {
+        let mut st = a.st.lock().unwrap();
+        let session = st.session.clone();
+        if !session.as_deref().is_some_and(|s| self.kept_session(s)) {
+            drop(st);
+            return self.per_turn(session.as_deref(), text);
+        }
+        // the conversation is a kept process's, which a process per message cannot open (asked to, it would start an
+        // empty one under that id without a word): a new conversation, handed the chat so far as text
+        st.session = None;
+        let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
+        let had = st.log[..upto].iter().any(|e| matches!(e["kind"].as_str(), Some("user") | Some("text")));
+        if had && st.handover.is_none() {
+            st.handover = Some(handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP));
+        }
+        let text = antigravity::with_instructions(&self.prompt, &with_handover(&st, &self.body));
+        drop(st);
+        if had {
+            a.put("error", json!({"text": CURSOR_HANDED_OVER}));
+        }
+        self.per_turn(None, &text)
+    }
+}
+
 /// The home folder and data folder agy runs with when they are not the app's own (testing only, see
 /// `antigravity::home_override`).
 fn agy_home() -> Option<std::path::PathBuf> {
@@ -1580,7 +1827,8 @@ fn agy_dir() -> Option<std::path::PathBuf> {
     antigravity::dir_override()
 }
 
-/// The switch that turns keeping a process off for an AI: `FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`.
+/// The switch that turns keeping a process off for an AI: `FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`,
+/// `FRIDAE_CURSOR_PER_TURN=1`.
 fn per_turn_forced(ai: &str) -> bool {
     std::env::var(format!("FRIDAE_{}_PER_TURN", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
 }
@@ -1592,11 +1840,23 @@ fn per_turn_forced(ai: &str) -> bool {
 /// entry asks for (measured twice with a stand-in server; a process per message gives 15 minutes). A Lead waiting
 /// for its experts, a texture waiting for the user and a Blender build all take longer, so by default they would
 /// fail where they work today.
-const KEPT_ON_REQUEST: &[&str] = &["gemini"];
+///
+/// Cursor: over ACP it cuts a tool server's call off after 60 seconds (measured three times, whatever the server's
+/// entry or the environment asks for), which is under the 15 minutes the app asks every AI for. A process per
+/// message was measured with the same 60-second limit, so nothing is lost against today; it is on request all the
+/// same, by the rule this list was made by, until that limit is dealt with for both. When asked for, only Ask me
+/// messages on the model Auto run on it (`CursorLaunch::fits`): Cursor's sandbox is not applied over ACP (measured),
+/// so Full auto and Studio always run a process per message.
+const KEPT_ON_REQUEST: &[&str] = &["gemini", "cursor"];
 
 /// Whether an AI the table says can be kept open is kept open on this run of the app.
 fn kept_wanted(ai: &str) -> bool {
-    !KEPT_ON_REQUEST.contains(&ai) || std::env::var(format!("FRIDAE_{}_KEPT", ai.to_ascii_uppercase())).is_ok_and(|v| v == "1")
+    kept_wanted_with(ai, std::env::var(format!("FRIDAE_{}_KEPT", ai.to_ascii_uppercase())).ok().as_deref())
+}
+
+/// The rule itself: an AI not on the list is kept open by default; one on it only when its switch is exactly "1".
+fn kept_wanted_with(ai: &str, switch: Option<&str>) -> bool {
+    !KEPT_ON_REQUEST.contains(&ai) || switch == Some("1")
 }
 
 /// FRIDAE_CLAUDE_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
@@ -2154,6 +2414,7 @@ impl Agent {
         if turn.is_empty() {
             return;
         }
+        // (a turn whose usage the AI did not report is logged too, as such: the usage page says so instead of zero)
         usage::record(&self.ai(), &self.id, self.project().as_deref(), turn, session);
         self.put("usage", turn.json());
     }
@@ -2430,6 +2691,9 @@ impl Agent {
             let saved = session.as_deref().is_none_or(opencode::chat_saved);
             stale_chat(&mut self.st.lock().unwrap(), "OpenCode", |_| saved);
         }
+        // the message without the chat so far or the standing instructions, for an AI whose fallback starts a new
+        // conversation and hands the chat over itself (`CursorLaunch::fall_back`)
+        let body = text.clone();
         text = with_handover(&self.st.lock().unwrap(), &text);
         // what the two switches under the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
@@ -2553,7 +2817,27 @@ impl Agent {
             }
             "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
             // its models carry their own effort in the id, so the effort setting is not passed
-            "cursor" => cursor::command(&exe, &workspace, &servers, session.as_deref(), model, ask.full, project.as_deref(), &PATHS.kit),
+            "cursor" => {
+                let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let launch = CursorLaunch::new(&CursorSettings {
+                    exe: &exe,
+                    agent_id: &self.id,
+                    workspace: &workspace,
+                    kit: &PATHS.kit,
+                    project: project.as_deref(),
+                    servers: &servers,
+                    model,
+                    full: ask.full,
+                    pictures: Some(&pictures),
+                    rules: &cursor::rules_now(&servers),
+                    folders: cursor::folders(),
+                    guarded: &paths::guarded_settings(),
+                    keys_on: paths::env_keys_on(),
+                    prompt: &prompt,
+                    body: &body,
+                });
+                return self.kept_turn(&launch, &text);
+            }
             _ => {
                 let mut servers = servers.clone();
                 if claude_home().is_some() {
@@ -2588,14 +2872,25 @@ impl Agent {
     /// A turn of an AI that can be kept open (`caps.live`): on the chat's kept process when that works here, on a
     /// process of its own otherwise.
     fn kept_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) {
-        if self.live_allowed() && self.live_turn(launch, text) {
+        if self.live_allowed() && launch.fits(self) && self.live_turn(launch, text) {
             return;
+        }
+        // a kept process the chat still holds is not left open beside a process per message
+        let held = {
+            let mut st = self.st.lock().unwrap();
+            let held = if st.running { None } else { st.live.take() };
+            if let Some(l) = &held {
+                retire(&mut st, l);
+            }
+            held
+        };
+        if let Some(l) = held {
+            thread::spawn(move || l.close());
         }
         if launch.alone() {
             self.wait_retired();
         }
-        let session = self.st.lock().unwrap().session.clone();
-        let (cmd, input) = launch.per_turn(session.as_deref(), text);
+        let (cmd, input) = launch.fall_back(self, text);
         self.spawn_turn(cmd, launch.ai(), &input);
     }
 
@@ -2663,7 +2958,12 @@ impl Agent {
     /// (`FRIDAE_CLAUDE_PER_TURN=1`, `FRIDAE_GEMINI_PER_TURN=1`), and until keeping one has failed twice in this chat.
     fn live_allowed(&self) -> bool {
         let ai = self.ai();
-        crate::caps::of(&ai).live && !cfg!(windows) && kept_wanted(&ai) && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
+        let wanted = kept_wanted(&ai);
+        // (a test asks for an on-request AI's kept process on its own chat, never through the environment, which
+        // every test shares: so one of them can show that a chat nobody asked it for runs a process per message)
+        #[cfg(test)]
+        let wanted = wanted || self.st.lock().unwrap().kept_asked;
+        crate::caps::of(&ai).live && !cfg!(windows) && wanted && !per_turn_forced(&ai) && self.st.lock().unwrap().live_fails < LIVE_FAILS
     }
 
     /// Sends a turn's message to the chat's kept Claude Code process, starting one when the chat has none, when the
@@ -2834,8 +3134,7 @@ impl Agent {
                 self.st.lock().unwrap().live_fails += 1;
             }
             if !t.began {
-                let session = self.st.lock().unwrap().session.clone();
-                let (cmd, input) = launch.per_turn(session.as_deref(), text);
+                let (cmd, input) = launch.fall_back(self, text);
                 if !self.spawn_turn(cmd, kind, &input) {
                     self.turn_over();
                 }
@@ -4139,6 +4438,10 @@ mod live_tests;
 #[cfg(test)]
 #[path = "acp_tests.rs"]
 mod acp_tests;
+
+#[cfg(test)]
+#[path = "cursor_live_tests.rs"]
+mod cursor_live_tests;
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,6 @@
 //! One process of an AI's kept open for a chat between turns: the process and its pipes only, whatever it speaks.
-//! Claude Code's line protocol (`claude_live`) and the Agent Client Protocol (`acp`: Gemini through `agy acp`) are thin
-//! layers over it; what a turn's lines mean is theirs. Which AI works this way is `caps.live`; the rules for keeping
+//! Claude Code's line protocol (`claude_live`) and the Agent Client Protocol (`acp`: Gemini through `agy acp`, Cursor
+//! through `cursor-agent acp`) are thin layers over it; what a turn's lines mean is theirs. Which AI works this way is `caps.live`; the rules for keeping
 //! one (the launch key, idle closing, the fallback to a process per turn) are in `agents.rs`, the same for all.
 //!
 //! A thread reads the output for as long as the process lives and hands the lines over a channel, so nothing the tool
@@ -63,6 +63,8 @@ pub struct Live {
     strayed: Arc<AtomicBool>,
     stopper: Mutex<Option<Stopper>>,
     state: Mutex<Option<State>>,
+    /// It does not exit when its stdin is closed (`cursor-agent acp`: measured), so closing it ends its tree at once.
+    stays: AtomicBool,
     tap: Tap,
 }
 
@@ -149,6 +151,7 @@ impl Live {
             strayed,
             stopper: Mutex::new(None),
             state: Mutex::new(None),
+            stays: AtomicBool::new(false),
             tap,
         }))
     }
@@ -186,6 +189,12 @@ impl Live {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    /// This program does not exit when its stdin is closed: `close` and `shut` end it with a signal (SIGTERM to
+    /// each group of its tree, SIGKILL to what is left after the grace) instead of waiting for it to go by itself.
+    pub fn ends_by_signal(&self) {
+        self.stays.store(true, Ordering::SeqCst);
+    }
+
     /// The app's turn on it begins (before its message is written) or has ended (the turn's end was read).
     pub fn set_in_turn(&self, on: bool) {
         self.in_turn.store(on, Ordering::SeqCst);
@@ -200,6 +209,11 @@ impl Live {
     /// agy) and waits up to `wait` for its output to end, dropping what it still writes. True when the output ended.
     pub fn shut(&self, wait: Duration) -> bool {
         drop(self.stdin.lock().unwrap_or_else(|e| e.into_inner()).take());
+        if self.stays.load(Ordering::SeqCst) {
+            // it would not go by itself: ended beside the wait for its output's end
+            let groups = procs::tree_groups(self.pid);
+            thread::spawn(move || paths::end_trees(&groups));
+        }
         let rx = self.lines.lock().unwrap_or_else(|e| e.into_inner());
         let until = Instant::now() + wait;
         loop {
@@ -276,7 +290,9 @@ impl Live {
         // the groups of its tree are read while it is alive: its tools' shells have new parents once it is gone
         let groups = procs::tree_groups(self.pid);
         drop(self.stdin.lock().unwrap_or_else(|e| e.into_inner()).take());
-        if paths::leader_exited(self.pid, CLOSE_WAIT) {
+        if self.stays.load(Ordering::SeqCst) {
+            paths::end_trees(&groups);
+        } else if paths::leader_exited(self.pid, CLOSE_WAIT) {
             // unreaped, so its own group's ID is still reserved: what is left in it is ended, then the other groups
             paths::end_group_soon(self.pid);
             let others: Vec<u32> = groups.into_iter().filter(|&g| g != self.pid).collect();

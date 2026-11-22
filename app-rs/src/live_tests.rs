@@ -700,7 +700,7 @@ done
     fn forcing_a_process_per_turn_is_one_capability_and_one_switch() {
         let c = Chat::new("caps");
         assert!(c.a.live_allowed());
-        c.a.st.lock().unwrap().ai = Some("cursor".into());
+        c.a.st.lock().unwrap().ai = Some("opencode".into());
         assert!(!c.a.live_allowed(), "only an AI the table says keeps a process");
     }
 }

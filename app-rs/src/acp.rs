@@ -23,7 +23,7 @@
 //! Ids are kept as they come (agy numbers its requests with strings).
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Component, Path, PathBuf},
     sync::{Arc, Weak},
 };
@@ -38,6 +38,29 @@ use crate::{
 
 /// The protocol version the app speaks; an agent that answers another is not used this way.
 pub const PROTOCOL: u64 = 1;
+
+/// Which agent a kept ACP process is. The protocol is the same; the places that ask this are what differs: how a
+/// session is opened again, the model's id, who the gate is, what a tool call looks like, usage, how it is ended.
+///
+/// Cursor (`cursor-agent acp`, checked against 2026.11.22; DEVELOPING.md has what was measured, the recordings are
+/// `tests/fixtures/cursor/acp-*.wire`):
+/// - a chat's session is opened again with `session/load` (there is no `session/resume`), which plays the history
+///   back before it answers; an unknown one is `-32602 Invalid params`, `data.message: Session "<id>" not found`;
+/// - there is no mode to set (`agent` is the one a session starts in), and the model takes only the ids the session
+///   lists (`default[]` is Auto);
+/// - **Cursor's own allow list and deny rules are the gate**, as on a process per message: what they let through
+///   runs unasked, and `session/request_permission` comes only for what they do not (a program not on the list, a
+///   write outside the workspace folders, another server's tool). The app answers every one of those no: a program
+///   becomes the blocked card. A refusal does not end the turn (the model is told and carries on);
+/// - a server's tool is named by `rawInput.providerIdentifier` and `toolName`, in the update after the `tool_call`;
+/// - the prompt's answer has no usage (measured: none anywhere), so each turn is noted as not reported;
+/// - Cursor's sandbox is **not** applied over ACP (measured), so only Ask me runs this way (`agents::CursorLaunch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Agent {
+    #[default]
+    Agy,
+    Cursor,
+}
 
 // ------------------------------------------------------------------ the gate
 
@@ -453,6 +476,16 @@ fn mode_in(options: &Value) -> Option<&str> {
 /// Reads one turn's `session/update`s into what the chat shows. Text arrives in pieces and is shown whole: before the
 /// next tool call, and at the turn's end.
 pub struct Turn {
+    agent: Agent,
+    /// Full auto or Studio (Cursor: a refused program gets no card there)
+    full: bool,
+    /// Cursor: each tool call's kind and command as its updates gave them, the calls already shown in the chat, the
+    /// app's tools by call, and the programs refused in this turn (the card, shown at the turn's end)
+    kinds: HashMap<String, String>,
+    commands: HashMap<String, String>,
+    named: HashSet<String>,
+    tools: HashMap<String, String>,
+    blocked: Vec<Value>,
     servers: Vec<String>,
     text: String,
     seen: HashSet<String>,
@@ -473,8 +506,13 @@ pub struct Turn {
 }
 
 impl Turn {
+    #[cfg(test)]
     pub fn new(servers: &[String], pictures: Option<&Path>) -> Turn {
-        Turn { servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, said: false, refused: false, mode_lost: false }
+        Turn::of(Agent::Agy, false, servers, pictures)
+    }
+
+    pub fn of(agent: Agent, full: bool, servers: &[String], pictures: Option<&Path>) -> Turn {
+        Turn { agent, full, kinds: HashMap::new(), commands: HashMap::new(), named: HashSet::new(), tools: HashMap::new(), blocked: Vec::new(), servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, said: false, refused: false, mode_lost: false }
     }
 
     pub fn tool_open(&self) -> bool {
@@ -522,6 +560,12 @@ impl Turn {
                     self.text.push_str(piece);
                 }
             }
+            // Cursor thinks before each of its messages, also between two with no tool call the client is told of
+            // (recorded: a step of its own it does not show): what it wrote before is a message of its own, shown as
+            // one, as a process per message shows each
+            "agent_thought_chunk" if self.agent == Agent::Cursor => self.flush(&mut out),
+            "tool_call" | "tool_call_update" if self.agent == Agent::Cursor => self.cursor_tool(u, &mut out),
+            "config_option_update" | "current_mode_update" if self.agent == Agent::Cursor => {}
             "tool_call" | "tool_call_update" => {
                 let Some(id) = u["toolCallId"].as_str().filter(|s| !s.is_empty()) else { return out };
                 self.began = true;
@@ -575,10 +619,127 @@ impl Turn {
         out
     }
 
+    /// Cursor's tool call or its update (recorded shapes, `tests/fixtures/cursor/acp-*.wire`). A call is told by its
+    /// `kind` when it comes (`execute` with `rawInput.command`, `edit`, `read`, `search`...); a tool server's comes as
+    /// `kind: other`, `title: "MCP: tool"` and is named only by the update after it (`rawInput: {providerIdentifier,
+    /// toolName, args}`), so each is shown once, as soon as it can be named, by the names a process per message
+    /// gives (`cursor::Turn`). Its own bookkeeping (reading a tool's description, to-dos) is not sent at all.
+    fn cursor_tool(&mut self, u: &Value, out: &mut Vec<Out>) {
+        let Some(id) = u["toolCallId"].as_str().filter(|s| !s.is_empty()) else { return };
+        self.began = true;
+        if self.seen.insert(id.to_string()) {
+            self.flush(out);
+        }
+        if let Some(k) = u["kind"].as_str().filter(|k| !k.is_empty()) {
+            self.kinds.insert(id.to_string(), k.to_string());
+        }
+        let raw = &u["rawInput"];
+        if let Some(c) = raw["command"].as_str().filter(|c| !c.trim().is_empty()) {
+            self.commands.insert(id.to_string(), c.to_string());
+        }
+        if let Some(tool) = raw["toolName"].as_str().filter(|t| !t.is_empty()) {
+            let server = raw["providerIdentifier"].as_str().or(raw["serverIdentifier"].as_str()).unwrap_or("");
+            self.tools.insert(id.to_string(), if server.is_empty() { tool.to_string() } else { format!("mcp__{server}__{tool}") });
+        }
+        let ours = self.tools.get(id).and_then(|n| n.strip_prefix("mcp__")).and_then(|n| n.split_once("__")).filter(|(server, _)| self.servers.iter().any(|s| s == server)).map(|(_, tool)| tool.to_string());
+        if !self.named.contains(id) {
+            let shown = match (self.tools.get(id), self.kinds.get(id).map(String::as_str).unwrap_or("")) {
+                (Some(name), _) => Some(Out::ToolArgs(name.clone(), raw["args"].clone())),
+                (None, "execute") => Some(Out::Tool("run_command".into())),
+                (None, "edit") => Some(Out::Tool("Edit".into())),
+                (None, "delete") => Some(Out::Tool("Delete".into())),
+                (None, "move") => Some(Out::Tool("Move".into())),
+                (None, "read") => Some(Out::Tool("Read".into())),
+                (None, "search") => Some(Out::Tool("Grep".into())),
+                (None, "fetch") => Some(Out::Tool("WebFetch".into())),
+                // `other` before its name has come, or its thinking: nothing yet
+                _ => None,
+            };
+            if let Some(o) = shown {
+                self.named.insert(id.to_string());
+                out.push(o);
+            }
+        }
+        match u["status"].as_str().unwrap_or("") {
+            "completed" | "failed" => {
+                self.open.remove(id);
+                self.long.remove(id);
+                if ours.as_deref().is_some_and(|t| t.starts_with("rbx_")) {
+                    let pictures = self.new_pictures();
+                    if !pictures.is_empty() && u["status"] == "completed" {
+                        out.push(Out::Pictures(pictures));
+                    }
+                }
+            }
+            _ => {
+                self.open.insert(id.to_string());
+                if ours.as_deref().is_some_and(paths::waits_long) {
+                    self.long.insert(id.to_string());
+                }
+            }
+        }
+    }
+
+    /// Cursor's permission request, which comes only for what its own allow list and rules did not let through
+    /// (measured: a program not on the list, with the text `Not in allowlist: <program>`; a file-tool write outside
+    /// the workspace folders, with the file in a `diff`). The answer is always no, as a process per message refuses
+    /// the same things; a program is kept for the card that offers to allow it (Ask me), shown at the turn's end. The
+    /// request has no `rawInput`: the command is the one the call's `tool_call` gave, else its title, which is the
+    /// command between backquotes.
+    fn cursor_request(&mut self, tool: &Value) -> Verdict {
+        let id = tool["toolCallId"].as_str().unwrap_or("");
+        let kind = tool["kind"].as_str().or(self.kinds.get(id).map(String::as_str)).unwrap_or("");
+        if kind == "execute" && !self.full {
+            let titled = tool["title"].as_str().map(|t| t.trim()).map(|t| t.strip_prefix('`').and_then(|t| t.strip_suffix('`')).unwrap_or(t).to_string());
+            let command = self.commands.get(id).cloned().or(titled).unwrap_or_default();
+            if let Some(name) = paths::program_name(&command).filter(|n| !self.blocked.iter().any(|b| b["name"] == *n)) {
+                self.blocked.push(json!({"name": name, "command": command.chars().take(200).collect::<String>()}));
+            }
+        }
+        self.refused = true;
+        Verdict { allow: false, outs: Vec::new(), note: None }
+    }
+
+    /// Whether a Cursor request is let through (never), for tests outside this file.
+    #[cfg(test)]
+    pub fn cursor_request_for_test(&mut self, tool: &Value) -> bool {
+        self.cursor_request(tool).allow
+    }
+
+    /// The end of a Cursor turn: the card for the programs it was refused, and the turn noted as one whose usage
+    /// Cursor did not report (the prompt's answer is `{stopReason}` alone).
+    fn cursor_finish(&mut self, answer: &Value, out: &mut Vec<Out>) {
+        if !self.blocked.is_empty() {
+            out.push(Out::Blocked(std::mem::take(&mut self.blocked)));
+        }
+        if let Some(e) = answer.get("error") {
+            let said = said_in(e);
+            out.push(Out::Failed(if signed_out(e) { crate::cursor::SIGNED_OUT.to_string() } else if said.is_empty() { "Cursor could not run this message.".to_string() } else { format!("Cursor could not run this message: {said}") }));
+            out.push(Out::Finished);
+            return;
+        }
+        out.push(Out::Usage(usage::Turn::not_reported()));
+        match answer["result"]["stopReason"].as_str().unwrap_or("") {
+            "end_turn" => {
+                if !self.said && self.seen.is_empty() {
+                    out.push(Out::Error("Cursor ended this turn without saying anything.".into()));
+                }
+            }
+            "cancelled" => {}
+            "refusal" => out.push(Out::Failed("Cursor refused this message: its usage limit was reached, or it would not answer. Try again once the limit resets.".into())),
+            other => out.push(Out::Error(format!("Cursor stopped: {}.", if other.is_empty() { "no reason given" } else { other }))),
+        }
+        out.push(Out::Finished);
+    }
+
     /// The answer to the turn's `session/prompt`: its end.
     pub fn finish(&mut self, answer: &Value) -> Vec<Out> {
         let mut out = Vec::new();
         self.flush(&mut out);
+        if self.agent == Agent::Cursor {
+            self.cursor_finish(answer, &mut out);
+            return out;
+        }
         if let Some(e) = answer.get("error") {
             let said = e["message"].as_str().unwrap_or("").trim();
             out.push(Out::Failed(if signed_out(e) { antigravity::SIGNED_OUT.to_string() } else if said.is_empty() { "Gemini could not run this message.".to_string() } else { format!("Gemini could not run this message: {said}") }));
@@ -610,8 +771,13 @@ impl Turn {
 
 /// agy's answer when nobody is signed in: `{code: -32000, message: "Authentication required"}` (measured).
 fn signed_out(error: &Value) -> bool {
-    let m = error["message"].as_str().unwrap_or("").to_lowercase();
-    m.contains("authentication required") || m.contains("not authenticated") || m.contains("please sign in") || m.contains("login required")
+    let m = format!("{} {}", error["message"].as_str().unwrap_or(""), error["data"]["message"].as_str().unwrap_or("")).to_lowercase();
+    m.contains("authentication required") || m.contains("not authenticated") || m.contains("please sign in") || m.contains("login required") || m.contains("not logged in") || m.contains("agent login")
+}
+
+/// What an error says: Cursor puts the words in `data.message` (`message` is only "Invalid params").
+fn said_in(error: &Value) -> String {
+    error["data"]["message"].as_str().filter(|m| !m.trim().is_empty()).or(error["message"].as_str()).unwrap_or("").trim().to_string()
 }
 
 // ------------------------------------------------------------------ the client
@@ -619,11 +785,14 @@ fn signed_out(error: &Value) -> bool {
 /// What a kept ACP process is given for a message.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spec {
+    /// Which agent the process is.
+    pub agent: Agent,
     /// The chat's workspace: where the agent works, and its tool servers are started.
     pub cwd: PathBuf,
     /// The app's tool servers, as the app keeps them: {name: {command, args, env: {..}}}.
     pub servers: Value,
-    /// The model as the per-message path names it (agy's own id, effort and all), and the effort setting.
+    /// The model as the per-message path names it (agy's own id, effort and all), and the effort setting. Cursor: the
+    /// id its sessions list (`cursor::kept_model`), and no effort.
     pub model: Option<String>,
     pub effort: Option<String>,
     pub rules: Rules,
@@ -697,6 +866,7 @@ enum CallError {
 struct Client<'a> {
     live: &'a Arc<Live>,
     host: &'a mut dyn Host,
+    agent: Agent,
 }
 
 impl Client<'_> {
@@ -718,7 +888,7 @@ impl Client<'_> {
             if m["method"].is_string() {
                 if !m["id"].is_null() {
                     self.refuse_request(&m);
-                } else if mode_in(&m["params"]["update"]["configOptions"]).is_some_and(|mode| mode != "default") && method == "session/set_config_option" {
+                } else if self.agent == Agent::Agy && mode_in(&m["params"]["update"]["configOptions"]).is_some_and(|mode| mode != "default") && method == "session/set_config_option" {
                     return Err(CallError::Closed);
                 }
                 continue;
@@ -755,11 +925,21 @@ fn lost_session(error: &Value) -> bool {
 
 const LOST_CONVERSATION: &str = "Gemini could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.";
 
+/// Cursor's answer to `session/load` of a session it does not have (measured): `-32602 Invalid params`, with
+/// `data.message: Session "<id>" not found`. A session that was made but never given a message is not kept either.
+fn cursor_lost(error: &Value) -> bool {
+    let said = said_in(error).to_lowercase();
+    said.contains("session") && said.contains("not found")
+}
+
+const CURSOR_LOST: &str = "Cursor could not find this chat's earlier conversation, so it started a new one and does not remember the chat so far. Tell it again what matters.";
+
 /// One turn on a kept ACP process: on its first, the handshake and the session (`resume`: the chat's conversation, if
 /// it has one); then the message, and the agent's updates and requests until the prompt is answered.
 pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, host: &mut dyn Host) -> End {
     let rx = live.lines();
-    let mut c = Client { live, host };
+    let cursor = spec.agent == Agent::Cursor;
+    let mut c = Client { live, host, agent: spec.agent };
     let gone = |c: &mut Client, unfit: bool| {
         c.host.end();
         End { ended: true, unfit, background: false }
@@ -785,6 +965,16 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 p
             };
             let mut opened = match resume {
+                // Cursor: `session/load`, which plays the chat's history back (passed over: it comes before the
+                // answer) and has no `session/resume`. A session Cursor no longer has is said, and a new one made
+                Some(id) if cursor => match c.call(&rx, "session/load", place(json!({"sessionId": id}))) {
+                    Err(CallError::Rpc(e)) if cursor_lost(&e) => {
+                        c.host.out(Out::Error(CURSOR_LOST.into()));
+                        c.call(&rx, "session/new", place(json!({})))
+                    }
+                    Err(CallError::Rpc(e)) if !signed_out(&e) => return gone(&mut c, false),
+                    other => other,
+                },
                 Some(id) => {
                     let mut tried = c.call(&rx, "session/resume", place(json!({"sessionId": id})));
                     // any error but "sign in": once more after a moment (a store another process has just let go of)
@@ -824,14 +1014,15 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 // nobody is signed in: said as the per-message path says it, and no second process is tried
                 Err(CallError::Rpc(e)) if signed_out(&e) => {
                     c.host.heard();
-                    c.host.out(Out::Failed(antigravity::SIGNED_OUT.into()));
+                    c.host.out(Out::Failed(if cursor { crate::cursor::SIGNED_OUT } else { antigravity::SIGNED_OUT }.into()));
                     c.host.out(Out::Finished);
                     return End::default();
                 }
                 Err(_) => return gone(&mut c, false),
             };
-            // the app is the gate only in `default`: any other mode approves some steps by itself
-            let mut settled = match c.call(&rx, "session/set_mode", json!({"sessionId": id, "modeId": "default"})) {
+            // agy: the app is the gate only in `default`: any other mode approves some steps by itself. Cursor has no
+            // such mode: a session starts in `agent`, where its own allow list decides
+            let mut settled = match if cursor { Ok(Value::Null) } else { c.call(&rx, "session/set_mode", json!({"sessionId": id, "modeId": "default"})) } {
                 Ok(_) => Value::Null,
                 Err(_) => return gone(&mut c, false),
             };
@@ -849,7 +1040,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                     Err(CallError::Closed) => return gone(&mut c, false),
                 }
             }
-            if mode_in(&settled["configOptions"]).is_some_and(|m| m != "default") {
+            if !cursor && mode_in(&settled["configOptions"]).is_some_and(|m| m != "default") {
                 return gone(&mut c, false);
             }
             let s = Arc::new(Session { id });
@@ -862,13 +1053,13 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
     };
     c.host.out(Out::Conversation(session.id.clone()));
     if let Some(m) = &spec.model {
-        c.host.out(Out::Model(antigravity::model_name(m)));
+        c.host.out(Out::Model(if cursor { crate::cursor::kept_model_name(m) } else { antigravity::model_name(m) }));
     }
     let prompt = live.next_request();
     if !c.send(&json!({"jsonrpc": "2.0", "id": prompt, "method": "session/prompt", "params": {"sessionId": session.id, "prompt": [{"type": "text", "text": text}]}})) {
         return gone(&mut c, false);
     }
-    let mut t = Turn::new(&spec.rules.servers, spec.pictures.as_deref());
+    let mut t = Turn::of(spec.agent, spec.rules.full, &spec.rules.servers, spec.pictures.as_deref());
     loop {
         let Ok(line) = rx.recv() else {
             // it died, or was ended: what it had written so far is still shown
@@ -896,7 +1087,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, hos
                 }
                 continue;
             }
-            let v = decide(&p["toolCall"], &spec.rules, &session.id, &paths::allowed_commands());
+            let v = if cursor { t.cursor_request(&p["toolCall"]) } else { decide(&p["toolCall"], &spec.rules, &session.id, &paths::allowed_commands()) };
             if !v.allow {
                 t.refused = true;
             }
@@ -1314,5 +1505,111 @@ mod tests {
         let mut t = Turn::new(&servers, Some(&notes));
         t.feed(&update("f", "mcp_rbxkit_rbx_blender", "start"));
         assert!(pictures(t.feed(&update("f", "mcp_rbxkit_rbx_blender", "completed"))).is_none());
+    }
+
+    // ------------------------------------------------------------ Cursor (real lines of cursor-agent 2026.11.22)
+
+    /// A tool server's call as Cursor sends it: named only by the second line. The third is its end, with nothing of
+    /// the tool's result (here a picture: the model saw it, the client is told `success`).
+    const CURSOR_MCP: [&str; 4] = [
+        r#"{"sessionUpdate": "tool_call", "toolCallId": "call-63602c4f-2\nfc_6418c086_0", "title": "MCP: tool", "kind": "other", "status": "pending", "rawInput": {}}"#,
+        r#"{"sessionUpdate": "tool_call_update", "toolCallId": "call-63602c4f-2\nfc_6418c086_0", "title": "rbxkit: rbx_texture", "rawInput": {"providerIdentifier": "rbxkit", "toolName": "rbx_texture", "args": {"folder": "exp2"}}}"#,
+        r#"{"sessionUpdate": "tool_call_update", "toolCallId": "call-63602c4f-2\nfc_6418c086_0", "status": "in_progress"}"#,
+        r#"{"sessionUpdate": "tool_call_update", "toolCallId": "call-63602c4f-2\nfc_6418c086_0", "status": "completed", "rawOutput": {"success": true}}"#,
+    ];
+    const CURSOR_COMMAND: &str = r#"{"sessionUpdate": "tool_call", "toolCallId": "call-b2f33267-1\nfc_93834950_0", "title": "`touch /fridae-probe-am.txt`", "kind": "execute", "status": "pending", "rawInput": {"command": "touch /fridae-probe-am.txt"}}"#;
+    /// The request for that command: no `rawInput`, the command in the title, why in `content`.
+    const CURSOR_ASKS_COMMAND: &str = r#"{"toolCallId": "call-b2f33267-1\nfc_93834950_0", "title": "`touch /fridae-probe-am.txt`", "kind": "execute", "status": "pending", "content": [{"type": "content", "content": {"type": "text", "text": "Not in allowlist: touch"}}]}"#;
+    const CURSOR_EDIT: [&str; 2] = [
+        r#"{"sessionUpdate": "tool_call", "toolCallId": "call-fb152736-3\nfc_ec35938f_0", "title": "Edit File", "kind": "edit", "status": "pending", "rawInput": {}}"#,
+        r#"{"sessionUpdate": "tool_call_update", "toolCallId": "call-fb152736-3\nfc_ec35938f_0", "title": "Edit `/fridae-probe-am2/x.txt`", "rawInput": {"path": "/fridae-probe-am2/x.txt"}, "locations": [{"path": "/fridae-probe-am2/x.txt"}]}"#,
+    ];
+    /// The request for a write outside the workspace folders.
+    const CURSOR_ASKS_WRITE: &str = r#"{"toolCallId": "call-fb152736-3\nfc_ec35938f_0", "title": "Write /fridae-probe-am2/x.txt", "kind": "edit", "status": "pending", "content": [{"type": "diff", "path": "/fridae-probe-am2/x.txt", "oldText": null, "newText": "x"}]}"#;
+    const CURSOR_OPTIONS: &str = r#"[{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"}, {"optionId": "allow-always", "name": "Allow always", "kind": "allow_always"}, {"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}]"#;
+
+    fn v(line: &str) -> Value {
+        serde_json::from_str(line).unwrap()
+    }
+
+    #[test]
+    fn cursors_tool_calls_are_named_once_they_can_be_and_its_tools_pictures_come_from_the_notes() {
+        let dir = paths::test_dir("acp-cursor-pictures");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (png, notes) = (dir.join("_check.png"), dir.join("c1.jsonl"));
+        std::fs::write(&png, b"png").unwrap();
+        let servers = vec!["rbxkit".to_string(), "Roblox_Studio".to_string()];
+        let mut t = Turn::of(Agent::Cursor, false, &servers, Some(&notes));
+        assert!(t.feed(&v(CURSOR_MCP[0])).is_empty(), "\"MCP: tool\" says nothing yet");
+        assert!(t.tool_open() && !t.long_open());
+        let named = t.feed(&v(CURSOR_MCP[1]));
+        assert!(matches!(&named[..], [Out::ToolArgs(n, a)] if n == "mcp__rbxkit__rbx_texture" && a["folder"] == "exp2"), "as a process per message names it, with what it was asked");
+        assert!(t.long_open(), "a texture may wait for the user: the stall guard does not count the quiet");
+        assert!(t.feed(&v(CURSOR_MCP[2])).is_empty(), "shown once");
+        std::fs::write(&notes, format!("{}\n", json!({"images": [png]}))).unwrap();
+        let done = t.feed(&v(CURSOR_MCP[3]));
+        assert!(matches!(&done[..], [Out::Pictures(p)] if p == &[png.display().to_string()]), "the result is not in the stream: the tool server's notes are");
+        assert!(!t.tool_open() && !t.long_open());
+        // a command and a file edit, by Claude Code's names for them
+        assert!(matches!(&t.feed(&v(CURSOR_COMMAND))[..], [Out::Tool(n)] if n == "run_command"));
+        assert!(matches!(&t.feed(&v(CURSOR_EDIT[0]))[..], [Out::Tool(n)] if n == "Edit"));
+        assert!(t.feed(&v(CURSOR_EDIT[1])).is_empty());
+        // another server's tool is shown under its own name and its pictures are not ours to show
+        let other = CURSOR_MCP[1].replace("rbxkit", "notion").replace("rbx_texture", "draw");
+        let mut t = Turn::of(Agent::Cursor, false, &servers, Some(&notes));
+        t.feed(&v(CURSOR_MCP[0]));
+        assert!(matches!(&t.feed(&v(&other))[..], [Out::ToolArgs(n, _)] if n == "mcp__notion__draw"));
+        std::fs::write(&notes, format!("{}\n", json!({"images": [png]}))).unwrap();
+        assert!(t.feed(&v(CURSOR_MCP[3])).is_empty());
+        // a change of mode is nothing to Cursor's turn (agy's is ended for it)
+        t.feed(&json!({"sessionUpdate": "current_mode_update", "currentModeId": "ask"}));
+        assert!(!t.mode_lost);
+    }
+
+    #[test]
+    fn cursors_requests_are_all_refused_and_a_program_gets_its_card_at_the_turns_end() {
+        let mut t = Turn::of(Agent::Cursor, false, &["rbxkit".to_string()], None);
+        t.feed(&v(CURSOR_COMMAND));
+        let verdict = t.cursor_request(&v(CURSOR_ASKS_COMMAND));
+        assert!(!verdict.allow && verdict.outs.is_empty() && verdict.note.is_none(), "refused; the model is told by Cursor and carries on");
+        assert_eq!(answer(&v(CURSOR_OPTIONS), false), json!({"outcome": {"outcome": "selected", "optionId": "reject-once"}}));
+        assert_eq!(answer(&v(CURSOR_OPTIONS), true)["outcome"]["optionId"], "allow-once", "never \"always\", were the app ever to say yes");
+        // the same program again, and a write outside the workspace: one card entry, none for the write
+        t.cursor_request(&v(CURSOR_ASKS_COMMAND));
+        t.feed(&v(CURSOR_EDIT[0]));
+        t.feed(&v(CURSOR_EDIT[1]));
+        assert!(!t.cursor_request(&v(CURSOR_ASKS_WRITE)).allow);
+        // a request the app cannot read is refused like any other
+        assert!(!t.cursor_request(&json!({})).allow && !t.cursor_request(&json!("x")).allow);
+        let end = t.finish(&json!({"jsonrpc": "2.0", "id": 4, "result": {"stopReason": "end_turn"}}));
+        let Some(Out::Blocked(card)) = end.iter().find(|o| matches!(o, Out::Blocked(_))) else { panic!("the card") };
+        assert_eq!(card, &[json!({"name": "touch", "command": "touch /fridae-probe-am.txt"})]);
+        // the prompt's answer is `{stopReason}` alone: the turn is noted as one whose usage was not reported
+        assert!(end.iter().any(|o| matches!(o, Out::Usage(u) if u.unreported && u.total() == 0)));
+        assert!(matches!(end.last(), Some(Out::Finished)));
+        assert!(!end.iter().any(|o| matches!(o, Out::Error(_) | Out::Failed(_))));
+        // without the earlier `tool_call`, the command is read from the request's title
+        let mut t = Turn::of(Agent::Cursor, false, &[], None);
+        t.cursor_request(&v(CURSOR_ASKS_COMMAND));
+        assert!(matches!(&t.finish(&json!({"result": {"stopReason": "cancelled"}}))[..], [Out::Blocked(c), Out::Usage(_), Out::Finished] if c[0]["command"] == "touch /fridae-probe-am.txt"));
+    }
+
+    #[test]
+    fn cursors_turn_endings_and_errors_are_said_in_its_name() {
+        let end = |answer: Value| Turn::of(Agent::Cursor, false, &[], None).finish(&answer);
+        assert!(matches!(&end(json!({"result": {"stopReason": "end_turn"}}))[..], [Out::Usage(_), Out::Error(e), Out::Finished] if e == "Cursor ended this turn without saying anything."));
+        assert!(matches!(&end(json!({"result": {"stopReason": "max_turn_requests"}}))[..], [Out::Usage(_), Out::Error(e), Out::Finished] if e == "Cursor stopped: max_turn_requests."));
+        // an error's words are in `data.message` (measured: `message` is only "Invalid params")
+        let failed = end(json!({"error": {"code": -32602, "message": "Invalid params", "data": {"message": "Invalid model value: auto"}}}));
+        assert!(matches!(&failed[..], [Out::Failed(e), Out::Finished] if e == "Cursor could not run this message: Invalid model value: auto"));
+        let out = end(json!({"error": {"code": -32000, "message": "Authentication required. Please run 'agent login' first."}}));
+        assert!(matches!(&out[..], [Out::Failed(e), Out::Finished] if e == crate::cursor::SIGNED_OUT));
+        // the answer to a load of a session Cursor does not have (recorded)
+        let lost = v(r#"{"code": -32602, "message": "Invalid params", "data": {"message": "Session \"11111111-2222-3333-4444-555555555555\" not found"}}"#);
+        assert!(cursor_lost(&lost) && !signed_out(&lost));
+        assert!(!cursor_lost(&json!({"code": -32602, "message": "Invalid params", "data": {"message": "Invalid model value: auto"}})));
+        // a line of the history played back by a load, with no turn on the process, would be work nobody asked for
+        assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"replay-0-3","title":"Find","kind":"search","status":"pending"}}}"#));
+        assert!(!stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update","title":"Permissions Test Steps"}}}"#));
     }
 }

@@ -112,10 +112,11 @@ impl Chat {
         fs::create_dir_all(dir.join("ws")).unwrap();
         let script = dir.join("agy.sh");
         fs::write(&script, SCRIPT).unwrap();
-        // Gemini's kept process is asked for (it is not the default yet: `KEPT_ON_REQUEST`); every test here wants it
-        unsafe { std::env::set_var("FRIDAE_GEMINI_KEPT", "1") };
+        // Gemini's kept process is asked for (it is not the default yet: `KEPT_ON_REQUEST`); every test here wants
+        // it, and asks on its own chat, so the switch itself stays as the tests' environment has it
         let a = Agent::detached_for_test(&format!("acp-{name}"), None);
         a.st.lock().unwrap().ai = Some("gemini".into());
+        a.st.lock().unwrap().kept_asked = true;
         Chat { a, script, dir }
     }
 
@@ -357,16 +358,44 @@ fn the_switch_that_forces_a_process_per_message_is_per_ai() {
     unsafe { std::env::set_var("FRIDAE_TESTAI_PER_TURN", "0") };
     assert!(!per_turn_forced("testai"));
     // an AI whose kept process is not the default yet is kept only when asked for
-    assert!(KEPT_ON_REQUEST.contains(&"gemini") && !KEPT_ON_REQUEST.contains(&"claude"));
+    assert!(KEPT_ON_REQUEST.contains(&"gemini") && KEPT_ON_REQUEST.contains(&"cursor") && !KEPT_ON_REQUEST.contains(&"claude"));
     assert!(kept_wanted("claude"));
     unsafe { std::env::remove_var("FRIDAE_TESTAI_KEPT") };
     assert!(kept_wanted("testai"), "not on the list: the default");
     // and the table says which AIs keep a process at all
     let c = Chat::new("caps");
-    assert!(kept_wanted("gemini"), "asked for by these tests");
-    assert!(c.a.live_allowed());
-    c.a.st.lock().unwrap().ai = Some("cursor".into());
+    assert!(c.a.live_allowed(), "asked for by this chat");
+    c.a.st.lock().unwrap().ai = Some("opencode".into());
     assert!(!c.a.live_allowed(), "only an AI the table says keeps a process");
+}
+
+/// Gemini's kept process is on request (`KEPT_ON_REQUEST`): with its switch unset, or set to anything but "1", a
+/// Gemini chat runs a process per message, exactly as before the kept path existed.
+#[test]
+fn gemini_is_not_kept_unless_its_switch_asks_for_it() {
+    for ai in ["gemini", "cursor"] {
+        assert!(!kept_wanted_with(ai, None), "{ai}: unset");
+        assert!(!kept_wanted_with(ai, Some("0")) && !kept_wanted_with(ai, Some("")) && !kept_wanted_with(ai, Some("true")), "{ai}: only \"1\" asks");
+        assert!(kept_wanted_with(ai, Some("1")), "{ai}");
+    }
+    assert!(kept_wanted_with("claude", None), "Claude's is the default");
+    // a whole turn, where the tests' own environment leaves the switch alone (no test sets it: each asks on its own
+    // chat): no `agy acp` is started, the message goes to a process per message and is answered
+    if std::env::var_os("FRIDAE_GEMINI_KEPT").is_some() || cfg!(windows) {
+        return;
+    }
+    let c = Chat::new("not-asked");
+    c.a.st.lock().unwrap().kept_asked = false;
+    assert!(!kept_wanted("gemini") && !c.a.live_allowed());
+    c.send("hello");
+    assert_eq!(c.said("text"), ["per message"]);
+    assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
+    let starts = c.starts();
+    assert!(starts.len() == 1 && starts[0].starts_with("--input-format stream-json"), "one process, the per-message one: {starts:?}");
+    assert_eq!((c.pid(), c.fails()), (None, 0), "nothing kept, and nothing counted as a failure of keeping");
+    c.send("again");
+    assert!(c.starts().iter().all(|s| !s.starts_with("acp")), "{:?}", c.starts());
+    assert!(c.starts()[1].contains("--conversation S1"), "the same conversation, resumed per message: {:?}", c.starts());
 }
 
 // ------------------------------------------------------------ stand-in process
@@ -676,6 +705,42 @@ mod stand_in {
         assert_eq!(fs::read_to_string(&list).unwrap(), before);
         with_server(&c, "die-late");
         assert_eq!(fs::read_to_string(&list).unwrap(), before);
+    }
+
+    #[test]
+    fn a_list_of_tool_servers_that_is_a_symbolic_link_stays_one() {
+        // the user keeps one list for several games and links it into each (as the list was written before it was
+        // replaced whole): the link is followed and the file it names is replaced, never the link
+        let c = Chat::new("linked-list");
+        let (shared, list) = (c.dir.join("shared").join("my-servers.json"), c.dir.join(".agents").join("mcp_config.json"));
+        fs::create_dir_all(shared.parent().unwrap()).unwrap();
+        fs::create_dir_all(list.parent().unwrap()).unwrap();
+        fs::write(&shared, r#"{"mcpServers": {"mine": {"command": "my-server"}}}"#).unwrap();
+        std::os::unix::fs::symlink(&shared, &list).unwrap();
+        let is_link = || list.symlink_metadata().unwrap().file_type().is_symlink();
+        let read = || serde_json::from_str::<Value>(&fs::read_to_string(&shared).unwrap()).unwrap();
+        let servers = json!({"rbxkit": {"command": "python3", "args": [], "env": {}}});
+        // a process per message adds the app's entry
+        antigravity::write_servers(&c.dir, &servers);
+        assert!(is_link(), "still a link");
+        assert_eq!(read()["mcpServers"]["mine"]["command"], "my-server");
+        assert_eq!(read()["mcpServers"]["rbxkit"]["command"], "python3", "written to the file the link names");
+        // a kept turn takes it out and puts the list back
+        let was = antigravity::unwrite_servers(&c.dir, &servers).expect("changed");
+        assert!(is_link());
+        assert!(read()["mcpServers"].get("rbxkit").is_none());
+        antigravity::rewrite_list(&c.dir, &was);
+        assert!(is_link());
+        assert_eq!(read()["mcpServers"]["rbxkit"]["command"], "python3");
+        for dir in [list.parent().unwrap(), shared.parent().unwrap()] {
+            assert_eq!(fs::read_dir(dir).unwrap().count(), 1, "no half-written file left in {}", dir.display());
+        }
+        // a link to a file that is not there yet (by a relative name): the file is made where the link points
+        fs::remove_file(&list).unwrap();
+        std::os::unix::fs::symlink("../shared/later.json", &list).unwrap();
+        antigravity::write_servers(&c.dir, &servers);
+        assert!(is_link());
+        assert!(fs::read_to_string(c.dir.join("shared").join("later.json")).unwrap().contains("rbxkit"));
     }
 
     #[test]

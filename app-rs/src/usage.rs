@@ -35,6 +35,9 @@ pub struct Turn {
     pub cost: Option<f64>,
     /// Claude Code only: the session's running total that `cost` was worked out from.
     pub session_cost: Option<f64>,
+    /// The AI ran the turn and reported nothing about it (Cursor on its kept connection: measured, no token counts
+    /// anywhere over ACP). Logged as a turn with no numbers, so the page says "not reported" instead of zero.
+    pub unreported: bool,
 }
 
 impl Turn {
@@ -42,8 +45,14 @@ impl Turn {
         self.input + self.output + self.cache_read + self.cache_write
     }
 
+    /// Nothing to log: no counts, no cost, and not a turn whose usage went unreported.
     pub fn is_empty(&self) -> bool {
-        self.total() == 0 && self.cost.unwrap_or(0.0) == 0.0
+        self.total() == 0 && self.cost.unwrap_or(0.0) == 0.0 && !self.unreported
+    }
+
+    /// A turn that ran and whose usage the AI did not report.
+    pub fn not_reported() -> Turn {
+        Turn { unreported: true, ..Default::default() }
     }
 
     /// From Claude Code's `result` event.
@@ -57,6 +66,7 @@ impl Turn {
             cache_write: n("cache_creation_input_tokens"),
             cost: e["total_cost_usd"].as_f64(),
             session_cost: e["total_cost_usd"].as_f64(),
+            unreported: false,
         }
     }
 
@@ -96,8 +106,12 @@ impl Turn {
     }
 
     pub fn json(&self) -> Value {
-        json!({"input": self.input, "output": self.output, "cache_read": self.cache_read, "cache_write": self.cache_write,
-               "total": self.total(), "cost": self.cost})
+        let mut v = json!({"input": self.input, "output": self.output, "cache_read": self.cache_read, "cache_write": self.cache_write,
+                           "total": self.total(), "cost": self.cost});
+        if self.unreported {
+            v["unreported"] = json!(true);
+        }
+        v
     }
 }
 
@@ -245,6 +259,18 @@ mod tests {
         assert_eq!((l["ai"].as_str(), l["total"].as_u64()), (Some("cursor"), Some(13200 + 428 + 51840)));
         assert!(l.get("session").is_none(), "Cursor reports no cost, so no running total");
         assert!(Turn::from_cursor(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn a_turn_whose_usage_was_not_reported_is_logged_as_such_and_not_as_zero() {
+        // Cursor over ACP: the prompt's answer is `{"stopReason": "end_turn"}` and nothing else (recorded)
+        let t = Turn::not_reported();
+        assert!(!t.is_empty(), "it is logged: the turn did run");
+        let l = line("cursor", "c4", None, &t, None, 7.0);
+        assert_eq!((l["unreported"].as_bool(), l["total"].as_u64(), l["ai"].as_str()), (Some(true), Some(0), Some("cursor")));
+        // a turn with numbers says nothing of the kind, and one with nothing at all is still not logged
+        assert!(Turn::from_cursor(&json!({"inputTokens": 5})).json().get("unreported").is_none());
+        assert!(Turn::default().is_empty());
     }
 
     #[test]

@@ -9,6 +9,10 @@
 //! with the turn's token counts. Checked against cursor-agent 2026.11.22. A failure before the turn starts (signed
 //! out, an unknown model) prints one line on stderr and no events. Not offered on Windows yet (see DEVELOPING.md).
 //!
+//! A chat can also keep one `cursor-agent acp` process open across its turns (on request, Ask me and the model Auto
+//! only: `agents::CursorLaunch`, `acp::Agent::Cursor`; DEVELOPING.md has what was measured). The settings files, the
+//! allow list and the deny rules below are the same on both paths, written by the same code (`prepare`).
+//!
 //! How this differs from Claude Code, and why:
 //! - There is no flag for standing instructions, so they are placed at the top of a conversation's first message,
 //!   as for the other AIs that are not Claude, with Cursor's own text (`text/cursor.txt`).
@@ -177,8 +181,10 @@ pub fn workspace(agent_id: &str) -> PathBuf {
     paths::work("cursor").join("chats").join(agent_id)
 }
 
-/// Whether Cursor still has a saved chat (`config/chats/<workspace hash>/<chat id>/`). Asked to resume one it does not
-/// have, Cursor quietly starts an empty chat under that id, so the app checks first.
+/// Whether Cursor still has a saved chat: one a process per message made (`config/chats/<workspace hash>/<chat
+/// id>/`), or one a kept process made (`config/acp-sessions/<id>/store.db`; the two are separate stores, and neither
+/// kind of process can open the other's: measured). Asked to resume one it does not have, a process per message
+/// quietly starts an empty chat under that id, so the app checks first.
 pub fn chat_saved(session: &str) -> bool {
     chat_saved_in(&config_dir(), session)
 }
@@ -186,8 +192,41 @@ pub fn chat_saved(session: &str) -> bool {
 fn chat_saved_in(config: &Path, session: &str) -> bool {
     !session.is_empty()
         && !session.contains(['/', '\\'])
-        && fs::read_dir(config.join("chats")).into_iter().flatten().flatten().any(|d| d.path().join(session).is_dir())
+        && (fs::read_dir(config.join("chats")).into_iter().flatten().flatten().any(|d| d.path().join(session).is_dir())
+            // a kept process's session that was never given a message has only its `meta.json`, and cannot be loaded
+            || config.join("acp-sessions").join(session).join("store.db").is_file())
 }
+
+/// Whether a chat's Cursor conversation is one a kept process made (`cursor-agent acp`, which keeps each in
+/// `<settings folder>/acp-sessions/<id>/`): only such a process can carry it on. A chat keeps the path its
+/// conversation began on.
+pub fn kept_chat_in(config: &Path, session: &str) -> bool {
+    !session.is_empty() && !session.contains(['/', '\\', '.']) && config.join("acp-sessions").join(session).is_dir()
+}
+
+/// The model's id as a kept process's sessions list it, for a model as the per-message path names it, when the two
+/// are known to be the same model. Only Auto is: `auto` there is `default[]` here (measured). The others are not
+/// offered alike: a process per message lists 284 ids (`gpt-5.3-codex-low-fast`), a session 49, each one fixed
+/// variant (`gpt-5.3-codex[reasoning=medium,fast=false]`) and no other spelling is taken (measured: `Invalid model
+/// value`); the plain names do not match either (`composer-2.5` there is `composer-2.5[fast=true]` here, which is
+/// `composer-2.5-fast` there). So a chat on another model than Auto runs a process per message.
+pub fn kept_model(per_message: Option<&str>) -> Option<&'static str> {
+    match per_message.filter(|m| !m.is_empty()) {
+        None => Some(KEPT_AUTO),
+        Some(m) if m == DEFAULT_MODEL => Some(KEPT_AUTO),
+        Some(_) => None,
+    }
+}
+
+const KEPT_AUTO: &str = "default[]";
+
+/// A kept process's model, as the chat names it (as `Turn::feed` names a process per message's).
+pub fn kept_model_name(id: &str) -> String {
+    if id == KEPT_AUTO { "Cursor (Auto)".to_string() } else { id.to_string() }
+}
+
+/// What the chat is told when Cursor is not signed in.
+pub const SIGNED_OUT: &str = "Cursor is not signed in. Open a terminal, run `cursor-agent login`, sign in with your Cursor account, then send your message again.";
 
 /// FRIDAE_CURSOR_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
 /// Cursor alone, because Cursor finds its sign-in through the home folder's keychain.
@@ -451,18 +490,71 @@ pub fn args(workspace: &Path, kit: &Path, project: Option<&str>, session: Option
     a
 }
 
-/// The command for one turn, with the workspace and the app's Cursor settings written first.
-pub fn command(exe: &Path, workspace: &Path, servers: &Value, session: Option<&str>, model: Option<&str>, full: bool, project: Option<&str>, kit: &Path) -> Command {
+/// What Cursor may do without asking, as the app's settings file says it now (`permissions`): our servers, the
+/// programs the user allowed, the user's own servers and the app's files denied.
+pub fn rules_now(servers: &Value) -> Value {
+    let home = cursor_home();
+    permissions(servers, &paths::allowed_commands(), &user_servers(&home), &protected(&home))
+}
+
+/// Everything a Cursor process reads at its start is written: the chat's workspace, the app's Cursor settings (the
+/// allow list and deny rules, rebuilt), and the list of the user's own servers it must not start.
+pub fn prepare(workspace: &Path, servers: &Value) {
     write_workspace(workspace, servers);
     let home = cursor_home();
-    write_config(&config_dir(), &permissions(servers, &paths::allowed_commands(), &user_servers(&home), &protected(&home)));
+    write_config(&config_dir(), &rules_now(servers));
     let _ = fs::create_dir_all(data_dir());
     write_disabled(workspace, &user_servers(&home), servers);
+}
+
+/// The command for one turn, with the workspace and the app's Cursor settings written first. `first`: arguments
+/// before all others (none for cursor-agent; the tests' stand-in is a script given to `sh`).
+#[allow(clippy::too_many_arguments)]
+pub fn command_with(exe: &Path, first: &[std::ffi::OsString], workspace: &Path, servers: &Value, session: Option<&str>, model: Option<&str>, full: bool, project: Option<&str>, kit: &Path) -> Command {
+    prepare(workspace, servers);
     let mut cmd = Command::new(exe);
-    cmd.args(args(workspace, kit, project, session, model, full));
+    cmd.args(first).args(args(workspace, kit, project, session, model, full));
     environment(&mut cmd);
     cmd.current_dir(workspace);
     cmd
+}
+
+/// The arguments of a process kept open for a chat: `cursor-agent --trust --approve-mcps --add-dir <kit> [--add-dir
+/// <game>] --sandbox disabled acp`, the per-message ones without the message's own (`-p`, the output format, the
+/// model, `--resume`, `--workspace`: the session is given its folder over the protocol). Always `--sandbox
+/// disabled`: the sandbox is not applied over ACP whatever this says (measured), which is why only Ask me, where a
+/// process per message runs without it too, is kept open.
+pub fn kept_args(kit: &Path, project: Option<&str>) -> Vec<String> {
+    let mut a: Vec<String> = ["--trust", "--approve-mcps", "--add-dir"].map(str::to_string).to_vec();
+    a.push(kit.display().to_string());
+    if let Some(p) = project.filter(|p| !p.is_empty()) {
+        a.extend(["--add-dir".to_string(), p.to_string()]);
+    }
+    a.extend(["--sandbox", "disabled", "acp"].map(str::to_string));
+    a
+}
+
+/// The command of a process kept open for a chat, in the chat's workspace, with the same environment and the same
+/// settings files as a process per message (`prepare`: Cursor's allow list and deny rules decide here as there).
+pub fn kept_command(exe: &Path, first: &[std::ffi::OsString], workspace: &Path, servers: &Value, project: Option<&str>, kit: &Path) -> Command {
+    prepare(workspace, servers);
+    let mut cmd = Command::new(exe);
+    cmd.args(first).args(kept_args(kit, project));
+    environment(&mut cmd);
+    cmd.current_dir(workspace);
+    cmd
+}
+
+/// Our tool servers as a kept process is handed them (`session/new`), with the app's settings in each one's
+/// environment as the workspace's file has them: over ACP Cursor does not read that file (measured), and gives a
+/// server only HOME, PATH and what its entry lists, as on a process per message.
+pub fn kept_servers(servers: &Value) -> Value {
+    servers_file(servers, &passed_env())["mcpServers"].clone()
+}
+
+/// The folders Cursor's settings and saved chats are in, for what a kept process's launch depends on.
+pub fn folders() -> (PathBuf, PathBuf, PathBuf) {
+    (config_dir(), data_dir(), cursor_home())
 }
 
 /// How Cursor runs here, in its own words (instead of the text the other AIs get): its folders, the allowed programs
@@ -615,7 +707,7 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
     }
     let low = stderr.to_lowercase();
     if low.contains("authentication required") || low.contains("not logged in") || low.contains("agent login") || low.contains("unauthorized") {
-        return Some("Cursor is not signed in. Open a terminal, run `cursor-agent login`, sign in with your Cursor account, then send your message again.".to_string());
+        return Some(SIGNED_OUT.to_string());
     }
     if low.contains("cannot use this model") {
         return Some("Cursor does not offer the chosen model to this account. Pick another model under the message box (Auto always works), then send your message again.".to_string());

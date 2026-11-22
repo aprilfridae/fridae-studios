@@ -261,7 +261,9 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     at once (`open_chat`). Quitting ends every turn's tree, then waits up to 3 s for the chats to settle before they
     are saved.
   - Stall guard: a turn with no output line for 20 minutes (`paths::STALL`, longer than a tool server call may take,
-    `MCP_TOOL_TIMEOUT` 15 minutes, so a hung tool returns a time-out the AI can act on) is ended with a plain message
+    `MCP_TOOL_TIMEOUT` 15 minutes, so a hung tool returns a time-out the AI can act on; Cursor does not keep to that
+    variable and cuts a tool server's call off after 60 seconds, measured, see "Cursor: one `cursor-agent acp`
+    process") is ended with a plain message
     (`stall_message`); 60 minutes while a tool call is open (`STALL_WORKING`: a long build; for Claude Code counted by
     call id until its own result, for Cursor and Codex when its last line started a tool); never while its
     last line started one of the app's tools that wait on purpose (`rbx_team`, `rbx_texture`,
@@ -414,7 +416,7 @@ the app's answers to agy's permission requests; `GeminiLaunch` in `agents.rs` is
 holder of the process (`live.rs`) and every rule for keeping one (`Agent::live_turn`, `read_live`, the `Kept` trait)
 are the same code that keeps Claude Code's: an AI can be kept open when `caps.rs` says `live`. Checked against agy
 1.5.14. The design is `docs/superpowers/specs/2026-11-22-live-gemini-cursor-design.md`; Cursor speaks the same
-protocol and is not built yet.
+protocol through the same client (the section after this one).
 
 **It is not the default.** By default every Gemini message still starts a process of its own (`antigravity.rs`),
 because of one measured loss: over ACP agy cuts off every call to a tool server after three minutes ("MCP tool call
@@ -543,6 +545,122 @@ default); `FRIDAE_GEMINI_PER_TURN=1` turns it off whatever else is set; Windows 
   Python tool server>` puts a stand-in under Roblox Studio's server name; `FRIDAE_AGY_SHELL` sets the SHELL agy is
   told of (all debug builds only). `agy models` runs with the real HOME at start and writes its own housekeeping
   under `~/.gemini/antigravity-cli`. `work/processes/<app pid>.json` shows one `gemini` entry across messages.
+
+## Cursor: one `cursor-agent acp` process kept open per chat (built, on request, Ask me only)
+
+A Cursor chat can keep one process, `cursor-agent acp`, open across turns. It is the same client as Gemini's
+(`acp.rs`, as `acp::Agent::Cursor`), the same holder (`live.rs`) and the same rules for keeping a process
+(`Agent::live_turn`, `read_live`, the `Kept` trait); `CursorLaunch` in `agents.rs` is what a process is started with.
+Checked against cursor-agent 2026.11.22 on the model Auto. How Cursor runs per message is the next section; this one
+is what differs when it is kept.
+
+**It is not the default, and it is for Ask me only.** `FRIDAE_CURSOR_KEPT=1` turns it on (`agents::KEPT_ON_REQUEST`);
+`FRIDAE_CURSOR_PER_TURN=1` turns it off whatever else is set; Windows does not offer Cursor at all. Three measurements
+decide what runs on it (`CursorLaunch::fits`):
+
+- **Cursor's sandbox is not applied over ACP**, so Full auto and Studio always run a process per message. Measured:
+  started with `--sandbox enabled` (and with `sandbox.mode: enabled` in its settings file too), a command not on the
+  allow list is asked about instead of run sandboxed, and when the request is answered "allow once" it runs with no
+  sandbox: `touch /x` failed with the disk's own "Read-only file system" and `curl` reached the network. The same
+  commands on a process per message with the same flag ran unasked inside the sandbox ("Operation not permitted",
+  no network).
+- **A tool server's call is cut off after 60 seconds** ("MCP error -32001: Request timed out"), whatever the server's
+  entry asks for (`timeout`, `timeoutMs`, `timeout_ms`, `requestTimeout`, `timeoutSeconds`, `timeout_seconds`,
+  `toolTimeout`, `tool_timeout`, together) and whatever `MCP_TOOL_TIMEOUT` or `MCP_TIMEOUT` say; Cursor sends a server
+  no progress token, so the server cannot keep a call alive either. That is under the 15 minutes the app asks every
+  AI for, which is why the kept process is on request. **A process per message was measured with the same
+  60-second limit** (a 90-second call, `MCP_TOOL_TIMEOUT=900000` set as `spawn_turn` sets it), so nothing is lost
+  against today; but it means a Lead's `rbx_team wait`, a texture waiting for the user or a long Blender call fails
+  on Cursor on either path, which the per-message section below did not know.
+- **Only Auto has a known id on both paths** (`cursor::kept_model`): `auto` per message is `default[]` here. A
+  process per message lists 284 model ids (`gpt-5.3-codex-low-fast`), a session 49, each one fixed variant
+  (`gpt-5.3-codex[reasoning=medium,fast=false]`); no other spelling is taken (`Invalid model value`), and the plain
+  names do not match (`composer-2.5` per message is not `composer-2.5[fast=true]`). A chat on another model runs a
+  process per message.
+
+What else was measured, and what the build does with it:
+
+- **A chat keeps the path it started on.** The two kinds of process keep conversations in separate stores
+  (`<settings folder>/chats/<hash>/<id>` per message, `<settings folder>/acp-sessions/<id>/` kept) and neither opens
+  the other's (`session/load` of a per-message chat: `Session "<id>" not found`). So a chat whose conversation a
+  process per message made never starts a kept one; a new chat (or one whose AI was just switched to Cursor) starts
+  kept when the message fits. `cursor::chat_saved` looks in both stores; a kept session is saved once it has had a
+  message (`store.db`: a session made and never prompted has only `meta.json` and cannot be loaded).
+- **The hand-over.** When a message of a kept chat cannot run on a kept process (Full auto or Studio, another model,
+  the switch, two failures, a kept process that failed before it showed anything), it goes to a process per message
+  as a *new* Cursor conversation: the standing instructions, then the chat so far as text (`handover_text`, the same
+  text a switch of AI hands over: the user's messages and the replies, without tool steps), then the message, once;
+  the chat says so in one line (`CURSOR_HANDED_OVER`), the kept process is closed, and the chat is a per-message
+  one from then on (`CursorLaunch::fall_back`). A process per message is never asked to `--resume` a kept session
+  (it would start an empty one under that id without a word).
+- **Cursor's own allow list and deny rules are the gate**, exactly as per message: the same `cli-config.json`,
+  written by the same code (`cursor::prepare`) before the process starts and again before each turn. Measured over
+  ACP: an allowed program and the app's tools run with no request; a write a deny rule covers is refused by Cursor
+  itself ("Blocked by permissions configuration"; the stream shows the call as plain `completed`); a program not on
+  the list, and a file-tool write outside the workspace folders, arrive as `session/request_permission` (`Not in
+  allowlist: <program>`; the file in a `diff`; options `allow-once`, `allow-always`, `reject-once`). **The app
+  answers every request no** (`Turn::cursor_request`), never yes and never "always": a program becomes the blocked
+  card at the turn's end, as per message; in Full auto's rules (not run this way today) it would get no card. A
+  refusal does not end Cursor's turn: the model is told "Rejected" and carries on. After Stop every request is
+  answered `cancelled`. `cursor/ask_question` and the like are answered "not offered", so nothing waits on them
+  (not seen in a turn).
+- **The shell**: `/bin/zsh -c`, each command in a process group of its own as a direct child. On its first command a
+  process runs a login, interactive zsh once to copy the user's shell state, which reads `.zshenv`, `.zprofile`,
+  `.zshrc` and `.zlogin`; then `.zshenv` again for every command. The same on a process per message. The app
+  approves no command by itself on Cursor, so its own command check (`paths::command_allowed`, written for
+  `/bin/sh`) is not involved.
+- **Tool servers** go in `session/new` (`mcpServers`, with the app's settings in each one's environment as the
+  workspace's file has them, `cursor::kept_servers`). Over ACP Cursor does not read the workspace's
+  `.cursor/mcp.json` at all (its servers were started neither at `session/new` nor after a prompt, also one of the
+  same name), so nothing starts twice; the file is still written, for the fallback. The servers run in the agent's
+  own process group. `CURSOR_CONFIG_DIR` is honoured; `CURSOR_DATA_DIR` stays empty. No `worker-server` is started
+  (a process per message leaves one, which the app ends).
+- **Pictures**: a tool server's result is not in the stream (`rawOutput: {"success": true}`; the model did see the
+  picture), so the `tool-pictures` side file is used as for Gemini (`FRIDAE_TOOL_PICTURES` in the app's server's
+  entry on the kept path only). Pictures the Studio server returns as image data are lost on the kept path (per
+  message they are shown).
+- **Usage**: none is reported over ACP (the prompt's answer is `{stopReason}` alone). Each kept turn is logged as
+  `{"unreported": true}` with no counts (`usage::Turn::not_reported`), and the usage panel says "N turns not
+  reported by Cursor over this connection" beside the counted ones, never zero.
+- **What goes over the wire**: `initialize`; `session/new`, or `session/load` with the chat's conversation id (it
+  plays the history back before it answers, which is passed over; there is no `session/resume` and no mode to
+  set); `session/set_config_option model default[]`; `session/prompt` per message. A tool server's call comes as
+  `tool_call` (`title: "MCP: tool"`, `kind: other`) and is named by the update after it (`rawInput:
+  {providerIdentifier, toolName, args}`); the chat shows each step once, by the names a process per message gives.
+  Cursor thinks before each of its messages, so a thought after text ends that message (two answers with a step
+  between that the client is not told of are shown as two: recorded). Signed out: `session/new` answers `-32000
+  Authentication required`. A session Cursor does not have: said in one line and a new one made.
+- **Ending it**: `cursor-agent acp` does not exit when its stdin closes, so the holder ends it with a signal
+  (`Live::ends_by_signal`: SIGTERM to each group of its tree, SIGKILL to what is left after the grace) instead of
+  waiting `CLOSE_WAIT`. Stop is `session/cancel` (measured: the turn over 0.05 s after Stop through the app, the
+  running `sleep` gone); before Cursor has shown work on the message the process is ended instead, as for Gemini.
+- **A command left running**: after a turn, a process group in the kept process's tree that was not there when it
+  took the message means a command outlived the turn (`TurnProc::left_running`); the process is closed with all it
+  started and the chat is told, as when a turn ends with a tool call open. Cursor putting a command in the
+  background was not provoked (an allowed `sleep 47` ran in the foreground to its end).
+- **The launch key** (`CursorLaunch::key`): the program, the chat's folder, the kit, the game, the tool servers as
+  the app keeps them and as the session is handed them, the model, the mode, the chat, the pictures file, the
+  provider-keys switch, Cursor's rules as its settings file is written with them (so the allowed programs and the
+  user's own servers), its settings, data and home folders, and a fingerprint of every guarded setting. The
+  message and the standing instructions are not in it. A turn waits for the chat's earlier kept process to be gone
+  (`Kept::alone`: two processes on one session were not measured).
+- **Known and left**: the 60-second limit, on both paths. A command still running when the process is killed from
+  outside lives on until it ends (seen: `sleep 50` after a SIGKILL). The user's own `~/.cursor/mcp.json` servers
+  over ACP were not measured (this computer has none): their tools are denied by name as per message, but whether
+  `mcp-disabled.json` keeps them from starting here is not known. Not measured either: a usage limit, a cancel
+  before Cursor's first output, `cursor/*` requests in a real turn.
+- **Tests**: `acp.rs` (Cursor's tool calls, requests, endings, from real lines), `usage.rs`, and
+  `src/cursor_live_tests.rs`: the launch key for every setting, which messages fit, turns against a stand-in (one
+  process across messages, the hand-over, a chat that stays per message, load, Stop early, confirmed and ignored,
+  every way of failing, a request after Stop, a command left running, closing by signal), and six recordings
+  (`tests/fixtures/cursor/acp-*.wire`: a tool, an allowed program, a refused one with its card, a refused write and
+  a second message on the same process; Stop mid-command; a process killed mid-turn; a session Cursor does not
+  have; two messages with no tool between; signed out), made through the app and scrubbed as Gemini's.
+- **Trying it by hand** with the scratch copy above: `FRIDAE_CURSOR_KEPT=1`, `FRIDAE_CURSOR_HOME=$HOME` (a scratch
+  HOME hides the sign-in; without it you get the signed-out line), `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`,
+  `{"chat_ai": "cursor"}`. Cursor's settings and sessions are then under the scratch home's `Library/Application
+  Support/Fridae Studios/cursor`. `FRIDAE_LIVE_RECORD=<folder>` records each kept process.
+  `work/processes/<app pid>.json` shows one `cursor` entry across messages.
 
 ## Cursor as a chat's AI
 

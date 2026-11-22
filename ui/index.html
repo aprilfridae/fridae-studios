@@ -1683,14 +1683,21 @@ async function paintUsage() {
   const today = day.getTime() / 1000, week = today - 6 * 86400;
   let r; try { r = await api("/api/usage", { since: week }); } catch (e) { return; }
   const recs = (r && r.records) || [];
-  const sum = (list) => list.reduce((a, x) => ({ total: a.total + (x.total || 0), input: a.input + (x.input || 0), output: a.output + (x.output || 0), cached: a.cached + (x.cache_read || 0), cost: a.cost + (x.cost || 0), turns: a.turns + 1 }), { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0 });
+  /* `quiet`: turns the AI ran without reporting what they used (Cursor on its kept connection). They are said as such, never counted as zero. */
+  const sum = (list) => list.reduce((a, x) => ({ total: a.total + (x.total || 0), input: a.input + (x.input || 0), output: a.output + (x.output || 0), cached: a.cached + (x.cache_read || 0), cost: a.cost + (x.cost || 0), turns: a.turns + 1, quiet: a.quiet + (x.unreported ? 1 : 0) }), { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0, quiet: 0 });
+  const turnsText = (n) => n + (n === 1 ? " turn" : " turns");
+  const shown = (id, s) => (s.quiet === s.turns ? "–" : fmtTokens(s.total - s.cached));
+  const said = (id, s, cache) => [
+    s.turns > s.quiet ? turnsText(s.turns - s.quiet) + " · " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (cache && s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " · about $" + s.cost.toFixed(2) + " at API prices" : "") : "",
+    s.quiet ? turnsText(s.quiet) + " not reported by " + aiName(id) + " over this connection" : "",
+  ].filter(Boolean).join(" · ");
   const now = recs.filter((x) => x.t >= today), all = sum(now);
   /* nothing counted yet while the day's first turn runs: "…", not a "0" that looks like nothing is happening */
   const first = !now.length && [...agents.values()].some((x) => x.busy);
   $("b-use").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " today";
   const rows = AIS.map(([id]) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
   $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
-    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(s.total - s.cached) + "</span><small>" + s.turns + (s.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(s.input) + " in, " + fmtTokens(s.output) + " out" + (s.cached ? ", " + fmtTokens(s.cached) + " read from cache" : "") + (s.cost ? " \u00b7 about $" + s.cost.toFixed(2) + " at API prices" : "") + "</small></div>").join("")
+    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + shown(id, s) + "</span><small>" + esc(said(id, s, true)) + "</small></div>").join("")
     : '<div class="u-row"><small>Nothing yet today.</small></div>';
   paintLimits();
   /* the last seven days, one block per AI: the week's total, then a bar a day */
@@ -1702,8 +1709,8 @@ async function paintUsage() {
   const perAi = AIS.map(([id]) => { const list = recs.filter((x) => x.ai === id); return [id, sum(list), bars(list)]; });
   const top = Math.max(1, ...perAi.flatMap(([, , days]) => days.map((d) => d[1])));
   $("use-week").innerHTML = perAi.map(([id, w, days]) =>
-    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + fmtTokens(w.total - w.cached) + "</span><small>" + (w.turns
-      ? w.turns + (w.turns === 1 ? " turn" : " turns") + " \u00b7 " + fmtTokens(w.input) + " in, " + fmtTokens(w.output) + " out" + (w.cost ? " \u00b7 about $" + w.cost.toFixed(2) + " at API prices" : "")
+    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + (w.turns ? shown(id, w) : fmtTokens(0)) + "</span><small>" + (w.turns
+      ? esc(said(id, w, false))
       : "Not used this week.") + "</small></div>"
     + (w.turns ? '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>" : "")).join("");
 }
