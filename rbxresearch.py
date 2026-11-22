@@ -1,7 +1,7 @@
 """What is working on Roblox right now: the public charts, summarised for finding a game to build.
 
   rbx.py research snapshot              the summary: genres, openings, rising games, the top of each chart
-  rbx.py research snapshot --out f.json also save everything as JSON (the app's Research tab reads this)
+  rbx.py research snapshot --out f.json also save everything as JSON (the app's New project page reads this)
   rbx.py research chart top-earning     one chart in full
 
 It reads the charts the Roblox website shows a visitor who is not signed in (Top Playing Now, Top Trending,

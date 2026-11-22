@@ -11,7 +11,7 @@ THIS CHAT BELONGS TO A GAME PROJECT. Its folder is your working directory: {path
   work can be compared and scripts restored. Parts, UI and other instances are not in a checkpoint.
 - Project files you write (notes, plans, data tables) go in this folder. Generated assets still go to the working folder
   the tools use.
-- The game has a board the user watches in the app (rbx_board). Keep it true as you go: a card in doing for each real piece
+- The game has a board (rbx_board); the user sees its needs cards in the game's Review tab. Keep it true as you go: a card in doing for each real piece
   of work you start, moved to done once it is finished and checked; a card in needs for each thing only the user can do
   (one clear action per card); planned work in todo. Look at it (action list) at the start of a job: the user may have
   added cards for you, and cards in todo are the user's wishes for what comes next.

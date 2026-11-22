@@ -188,15 +188,26 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
 (`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
 front (`""` for No project, `null` on the All projects and New project pages) and `view` is `chat`, `review`,
 `promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start All projects opens when a
-game has a run going or something waiting for the user. Chats are grouped by `agent.project`, not by AI. A helper
+game has a run going or something waiting for the user (`needsOf`: blocking review items and needs cards, the one
+count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. A helper
 (an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
 log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
 `parent`, `team` and `expert` in `agent_new`. The All projects graph (`overviewWanted` / `overviewFrame`) draws games,
 their open and saved chats, and experts tied to their Lead; it runs only while that page is in front.
-- `POST /api/ai {agent, ai}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
-  otherwise the session is dropped and `handover` holds the chat so far as text (user and agent messages only,
-  newest kept under 24,000 characters), sent ahead of the next message and saved with the chat. The chat logs
-  `{"kind": "ai", "ai", "from"}`; the page shows one line for it.
+- `POST /api/ai {agent, choice}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
+  otherwise the session is dropped and `handover` holds the chat so far as text (only what the user typed, as
+  "User:", and each AI's replies under its name; carry-ons and the app's own messages, logged with `app: true`, are
+  left out; newest kept under 24,000 characters). It goes ahead of every message until the new AI reports a
+  session (`got_session`), so a first turn that fails or is stopped hands it over again; it is saved with the chat.
+  The chat logs `{"kind": "ai", "ai", "from"}`; the page shows one line for it. `POST /api/send` takes `app: true`
+  for a message the page sends for the user (the blocked-command card's).
+- Slots: an expert, helper or researcher (`parent`, `team` or role `research`) that is not working holds no slot
+  once its first turn has run (`holds_slot`). Closing a chat closes the experts it started (`remove_agent`), End this
+  run closes the run's experts, the researcher closes itself once its ideas are stored, and Find ideas closes an
+  earlier idle researcher. Helpers are not listed in `_open.txt`, so a restart does not reopen them; the page reopens
+  one (`/api/open-chat`) only to read its log when its line is opened.
+- The page makes no chat just for looking: a game with no chat shows an empty page (`showDraft`), and the chat is
+  made (`/api/new` with the chosen AI, then `/api/project use`) when its first message is sent.
 - Usage lines carry `project` (the chat's game) so Review and All projects can show what a game has cost.
 
 **Testing without an AI.**
