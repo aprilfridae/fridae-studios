@@ -1364,6 +1364,8 @@ impl Agent {
             prompt += &format!("\n\n{}", text.trim());
         }
         prompt += &team_prompt(self);
+        // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
+        prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);
         let servers = mcp_servers(&self.id, &self.name(), project.as_deref(), role.as_deref());
         let session = self.st.lock().unwrap().session.clone();
@@ -2083,12 +2085,57 @@ pub fn shut_down() {
 /// The Lead's instructions for a Studio run: the game's own `.fridae/team/experts/lead.md` when it has one, else the
 /// kit's `vault/Fridae/Team/lead.md`. Empty when neither can be read (the studio prompt still applies).
 fn studio_lead_text(project: Option<&str>) -> String {
+    studio_lead_text_in(&PATHS.kit, project)
+}
+
+/// The Lead's instructions: a game's own `.fridae/team/experts/lead.md` when it has one, else the vault's
+/// `vault/Fridae/Team/lead.md` in the kit folder.
+fn studio_lead_text_in(kit: &std::path::Path, project: Option<&str>) -> String {
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     if let Some(p) = project {
         files.push(std::path::Path::new(p).join(".fridae").join("team").join("experts").join("lead.md"));
     }
-    files.push(paths::kit_team(&PATHS.kit).join("lead.md"));
+    files.push(paths::kit_team(kit).join("lead.md"));
     files.iter().find_map(|f| fs::read_to_string(f).ok()).filter(|t| !t.trim().is_empty()).map(|t| format!("\n\n{}", t.trim())).unwrap_or_default()
+}
+
+/// Characters of house rules every agent gets at most (both files together).
+const HOUSE_RULES_CAP: usize = 4000;
+const HOUSE_RULES_FILE: &str = "House rules.md";
+
+/// The house rules block for the system prompt: the for-everything rules, then this game's, under one heading, cut
+/// at HOUSE_RULES_CAP characters. Empty when there are no rules. A pure function: callers read the files.
+fn house_rules_block(all: Option<&str>, game: Option<&str>) -> String {
+    // a file's own "# House rules" title line is dropped; the block has its own heading
+    let clean = |t: &str| t.lines().filter(|l| !l.trim_start().starts_with("# ")).collect::<Vec<_>>().join("\n").trim().to_string();
+    let mut parts = Vec::new();
+    if let Some(t) = all.map(clean).filter(|t| !t.is_empty()) {
+        parts.push(format!("For everything:\n{t}"));
+    }
+    if let Some(t) = game.map(clean).filter(|t| !t.is_empty()) {
+        parts.push(format!("For this game:\n{t}"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    let mut body = parts.join("\n\n");
+    if body.chars().count() > HOUSE_RULES_CAP {
+        let cut: String = body.chars().take(HOUSE_RULES_CAP).collect();
+        let cut = match cut.rfind('\n') {
+            Some(i) if i > HOUSE_RULES_CAP / 2 => cut[..i].to_string(),
+            _ => cut,
+        };
+        body = format!("{cut}\n(The rest of the house rules did not fit; they are in the notes folders' {HOUSE_RULES_FILE}.)");
+    }
+    format!("\n\nThe user's house rules (follow these). Standing preferences the user set; they beat the guides:\n{body}")
+}
+
+/// The house rules as they are on disk right now: `<home>/notes/House rules.md` and, with a project, the game's
+/// `.fridae/notes/House rules.md`. Read fresh every turn.
+fn house_rules(home: &std::path::Path, project: Option<&str>) -> String {
+    let all = fs::read_to_string(home.join("notes").join(HOUSE_RULES_FILE)).ok();
+    let game = project.and_then(|p| fs::read_to_string(std::path::Path::new(p).join(".fridae").join("notes").join(HOUSE_RULES_FILE)).ok());
+    house_rules_block(all.as_deref(), game.as_deref())
 }
 
 /// Extra instructions when several agents share one Studio place.
@@ -2228,6 +2275,56 @@ pub fn connect_other_agents() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lead_text_comes_from_the_vault_or_the_games_override() {
+        let kit = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let vault = fs::read_to_string(kit.join("vault").join("Fridae").join("Team").join("lead.md")).unwrap();
+        assert_eq!(studio_lead_text_in(kit, None), format!("\n\n{}", vault.trim()));
+        let tmp = std::env::temp_dir().join(format!("fridae lead é {}", std::process::id()));
+        let experts = tmp.join(".fridae").join("team").join("experts");
+        fs::create_dir_all(&experts).unwrap();
+        let project = tmp.to_str().unwrap();
+        assert_eq!(studio_lead_text_in(kit, Some(project)), format!("\n\n{}", vault.trim()), "no override yet");
+        fs::write(experts.join("lead.md"), "  This game's Lead: zebra rules.\n").unwrap();
+        assert_eq!(studio_lead_text_in(kit, Some(project)), "\n\nThis game's Lead: zebra rules.");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn house_rules_are_assembled_and_capped() {
+        assert_eq!(house_rules_block(None, None), "");
+        assert_eq!(house_rules_block(Some("# House rules\n\n"), Some("  ")), "");
+        let both = house_rules_block(Some("# House rules\n\n- Never use gradients.\n"), Some("# House rules\n- Lantern glow is amber.\n"));
+        assert!(both.starts_with("\n\nThe user's house rules (follow these)"));
+        assert!(both.contains("For everything:\n- Never use gradients."));
+        assert!(both.contains("For this game:\n- Lantern glow is amber."));
+        assert!(both.find("Never use").unwrap() < both.find("Lantern").unwrap());
+        assert!(!both.contains("# House rules"));
+        let only_game = house_rules_block(None, Some("- Phones first."));
+        assert!(only_game.contains("For this game:\n- Phones first.") && !only_game.contains("For everything"));
+        let long: String = (0..400).map(|n| format!("- Rule number {n} about the café menus.\n")).collect();
+        let capped = house_rules_block(Some(&long), Some("- Game rule."));
+        let body = capped.split_once("they beat the guides:\n").unwrap().1;
+        assert!(body.chars().count() <= HOUSE_RULES_CAP + 120, "{}", body.chars().count());
+        assert!(body.contains("did not fit"));
+        assert!(body.contains("- Rule number 0 about the café menus."));
+    }
+
+    #[test]
+    fn house_rules_are_read_from_home_and_the_game() {
+        let tmp = std::env::temp_dir().join(format!("fridae house rules é {}", std::process::id()));
+        let (home, game) = (tmp.join("home"), tmp.join("My Gäme"));
+        fs::create_dir_all(home.join("notes")).unwrap();
+        fs::create_dir_all(game.join(".fridae").join("notes")).unwrap();
+        assert_eq!(house_rules(&home, Some(game.to_str().unwrap())), "");
+        fs::write(home.join("notes").join(HOUSE_RULES_FILE), "# House rules\n\n- Restrained palettes.\n").unwrap();
+        fs::write(game.join(".fridae").join("notes").join(HOUSE_RULES_FILE), "- Amber glow.\n").unwrap();
+        let text = house_rules(&home, Some(game.to_str().unwrap()));
+        assert!(text.contains("Restrained palettes.") && text.contains("Amber glow."));
+        assert!(!house_rules(&home, None).contains("Amber glow."));
+        let _ = fs::remove_dir_all(&tmp);
+    }
 
     /// A shell in a group of its own (as `send` starts every agent) that has started a grandchild; returns both.
     #[cfg(unix)]

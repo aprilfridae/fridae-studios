@@ -24,8 +24,9 @@ Your tools:
 ## Starting and adopting a run
 
 1. Load this guide and `producer`. Call `rbx_stage` `status`.
-2. Read `<project>/.fridae/lessons.md` (this game) and `studio-lessons.md` in the work folder (every game) if they exist.
-   Apply them: a lesson is something a past run got wrong or found slow.
+2. Search `rbx_vault` shelves `game` (this game: GAME.md, lessons, the user's notes) and `yours` (the user's notes and
+   lessons for every game) for the run's subject. Apply them: a lesson is something a past run got wrong or found slow,
+   and a note is something the user steered an agent towards.
 3. Read GAME.md and the board (`rbx_board` `list`).
 4. If a stage is already under way, carry on from it. Otherwise begin as the kickoff message says.
 
@@ -132,6 +133,9 @@ Call `rbx_stage` `decisions` at the start of every turn and before choosing the 
 - Changes wanted: start a fresh expert of the same kind (`spawn` with the same `expert`; the old one is gone). Its task
   gives the review item's title and summary, the user's note word for word, and the previous report (`rbx_team`
   `wait` with the old task id returns it). Check the result and file it with `replaces` set to the old item's id.
+- Every Change is also a note: save one with `rbx_vault` action `note` (scope `game`, or `all` when the user's note is
+  about how they like things in general) that says what was filed, what the user wants instead and why, quoting the
+  user's note word for word. A standing preference ("always", "never", "from now on") gets `rule: true` instead.
 - A change to a gate's item means the gate waits again for the new item.
 - Before filing anything with `replaces`, call `decisions` once more: the user may have just approved the old item.
   Never replace an item that was just approved (`review` refuses it unless you give `force`).

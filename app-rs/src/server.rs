@@ -189,6 +189,8 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(status())
     } else if path == "/api/promos" {
         send_json(promo_tab::list())
+    } else if path == "/api/notes" {
+        send_json(crate::notes::info(&unescape(&query(url, "path").unwrap_or_default())))
     } else if path == "/api/review" {
         send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
     } else {
@@ -224,6 +226,7 @@ fn post(path: &str, body: Value) -> Reply {
             }
             send_json(json!({"ok": target.is_some()}))
         }
+        "/api/notes-open" => send_json(json!({"ok": crate::notes::open(&text_of("scope"), &text_of("path"))})),
         "/api/undo-night" => match target {
             Some(a) => send_json(a.undo_night(body["files_only"].as_bool().unwrap_or(false))),
             None => send_json(json!({"ok": false, "text": "That chat is gone."})),

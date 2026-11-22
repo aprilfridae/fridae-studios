@@ -14,6 +14,7 @@ mod board;
 mod codex;
 mod fridae_lock;
 mod media;
+mod notes;
 mod paths;
 mod plugin;
 mod projects;

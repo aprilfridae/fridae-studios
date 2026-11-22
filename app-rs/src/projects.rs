@@ -53,7 +53,7 @@ fn save(list: Vec<Value>) {
     paths::save_config(&cfg);
 }
 
-fn known(path: &str) -> bool {
+pub fn known(path: &str) -> bool {
     saved().iter().any(|p| same(p["path"].as_str().unwrap_or(""), path))
 }
 

@@ -809,6 +809,10 @@ body.proj #pd, body.guide #gd { transform: none; }
       <h3>Files</h3>
       <p class="sub">Models, textures, icons and renders the agents make are saved in one folder.</p>
       <div class="act"><button class="pill" id="b-out">Open the output folder</button></div>
+      <h3>Your notes</h3>
+      <p class="sub">When you correct an agent or ask for a change, it saves a short note so the next one gets there sooner. House rules are the standing preferences every agent follows. They stay on this computer.</p>
+      <p class="sub" id="notes-state"></p>
+      <div class="act"><button class="pill" id="notes-open">Open notes folder</button><button class="pill" id="notes-open-game" hidden>Open this game's notes</button></div>
     </section>
     <section data-s="connections">
       <h3>The AIs</h3>
@@ -949,6 +953,7 @@ const GUIDE = [
     ["Undo the night", "An overnight run starts with a checkpoint. Undo the night, at the top of the chat, puts Studio and the project's files back as they were. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "A studio run takes a checkpoint when it starts and after each finished stage. Undo this run, at the top of the Lead's chat or under Run settings in Review, goes back to the checkpoint you pick and leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
     ["Usage", "The count at the top is today's tokens across every chat. Click it for each AI and the last seven days."],
+    ["Your notes", "When you correct an agent, turn down something it made or point it at a better way, it saves a short note of what you want instead, and later agents look there before they start. Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows every turn. They stay on this computer. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
 const CONTROLS = [
@@ -2807,7 +2812,21 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); }
+function openSetup(section) { closeGuide(); closeConn(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); loadNotes(); }
+/* Setup, General, Your notes: counts for everything and for the game of the chat in front */
+function frontProject() { const p = agents.get(current); return (p && p.project && p.project.path) || ""; }
+function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
+async function loadNotes() {
+  const path = frontProject();
+  let r;
+  try { r = await api("/api/notes?path=" + encodeURIComponent(path)); } catch (e) { return; }
+  const lines = [notesLine(r.all, "For everything")];
+  if (r.game) lines.push(notesLine(r.game, "For this game"));
+  $("notes-state").textContent = lines.join(". ") + ".";
+  $("notes-open-game").hidden = !r.game;
+}
+$("notes-open").onclick = () => api("/api/notes-open", { scope: "all" });
+$("notes-open-game").onclick = () => api("/api/notes-open", { scope: "game", path: frontProject() });
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
   document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));

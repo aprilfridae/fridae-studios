@@ -21,3 +21,5 @@ Checking a report. A report is a claim. Before you move on:
   from its report; code-only work is filed with a short list of what changed;
 - move the board card to done only when you have checked it.
 When a result is wrong, start a fresh expert with the specific defect rather than fixing large things yourself.
+When the user asks for a Change on a review item, also save it as a note (rbx_vault action note, scope game, or all
+when it is how they like things in general) quoting the user's note word for word, so later agents reach it sooner.
