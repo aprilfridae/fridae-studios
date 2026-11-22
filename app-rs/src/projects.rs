@@ -203,9 +203,15 @@ fn commit_all(dir: &Path, message: &str) -> Option<String> {
     ok.then(|| id.trim().to_string()).filter(|id| !id.is_empty())
 }
 
-/// A checkpoint of the project's files before an overnight run. None when the folder has no git repository.
-pub fn night_checkpoint(path: &str) -> Option<String> {
-    checkpoint(path, "Before the overnight run (Fridae Studios checkpoint)")
+/// A checkpoint of the project's files before an overnight run, or before a studio run. None when the folder has no
+/// git repository.
+pub fn night_checkpoint(path: &str, studio: bool) -> Option<String> {
+    checkpoint(path, night_message(studio))
+}
+
+/// The start commit's message: a studio run says so; an ordinary Overnight keeps its wording.
+pub fn night_message(studio: bool) -> &'static str {
+    if studio { "Before the studio run (Fridae Studios checkpoint)" } else { "Before the overnight run (Fridae Studios checkpoint)" }
 }
 
 /// A checkpoint of the project's files with this commit message. None when the folder has no git repository.

@@ -70,6 +70,10 @@ fn installed_version() -> Option<String> {
 
 /// Studio's edit session has spoken to us in the last few seconds.
 pub fn connected() -> bool {
+    // FRIDAE_NO_STUDIO: this copy of the app leaves any open Studio alone, its plugin included
+    if std::env::var_os("FRIDAE_NO_STUDIO").is_some_and(|v| !v.is_empty()) {
+        return false;
+    }
     with(|l| l.seen.get("Edit").is_some_and(|t| paths::now_secs() - t < 6.0))
 }
 
