@@ -11,3 +11,7 @@ build-out/
 .superpowers/
 engine/
 promo/node_modules/
+vault/.obsidian/
+vault/.trash/
+# the user's notes when running from source (home is the repo folder then)
+/notes/

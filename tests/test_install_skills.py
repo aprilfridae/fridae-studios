@@ -1,5 +1,5 @@
-"""install.py builds Claude Code's skill folders from the vault exactly as the old skills/<name>/ folders were."""
-import hashlib
+"""install.py builds Claude Code's skill folders from the vault, with the same folders, files and front matter as the
+old skills/<name>/ folders (the baseline), and each built file the vault source as it is now."""
 import json
 import os
 import re
@@ -17,14 +17,23 @@ class ClaudeSkillsTests(unittest.TestCase):
         self.dest = tempfile.mkdtemp(prefix="claude skills é ")  # never the real ~/.claude
         self.addCleanup(shutil.rmtree, self.dest, True)
 
-    def test_same_folders_files_and_contents(self):
+    def test_same_folders_and_files(self):
         skills = install.claude_skills()
         self.assertEqual(sorted(skills), sorted(self.base))
         for name, files in skills.items():
             self.assertEqual(sorted(files), sorted(self.base[name]["files"]), name)
+
+    def test_built_output_is_the_vault_source(self):
+        """Each built file is its vault source (text files with placeholders filled), so guide edits flow through."""
+        install.build_claude_skills(self.dest)
+        for name, files in install.claude_skills().items():
             for rel, src in files.items():
                 with open(src, "rb") as f:
-                    self.assertEqual(hashlib.sha1(f.read()).hexdigest(), self.base[name]["files"][rel], name + "/" + rel)
+                    want = f.read()
+                if src.lower().endswith((".md", ".lua", ".txt")):
+                    want = install.fill(want.decode("utf-8")).encode("utf-8")
+                with open(os.path.join(self.dest, name, *rel.split("/")), "rb") as f:
+                    self.assertEqual(f.read(), want, name + "/" + rel)
 
     def test_built_folders_match_with_front_matter(self):
         n = install.build_claude_skills(self.dest)

@@ -4,7 +4,11 @@
 import os
 
 HERE = os.path.abspath(os.getcwd())
-datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "vault", "agents", "rigs", "ui", "licenses")]
+datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "agents", "rigs", "ui", "licenses")]
+# the vault file by file, leaving out dot-folders and dot-files (Obsidian's .obsidian/ and .trash/, .DS_Store)
+for folder, dirs, files in os.walk(os.path.join(HERE, "vault")):
+    dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+    datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if not f.startswith(".")]
 datas.append((os.path.join(HERE, "README.md"), "."))
 datas.append((os.path.join(HERE, "routing.txt"), "."))
 datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))
@@ -14,7 +18,7 @@ for folder, dirs, files in os.walk(os.path.join(HERE, "promo")):
     dirs[:] = [d for d in dirs if d != "node_modules"]
     datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if f != ".DS_Store"]
 hidden = ["rbx", "rbxtex", "rbximg", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
-          "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxstage", "rbxroster", "rbxvault",
+          "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxstage", "rbxroster", "rbxvault", "rbxnotes",
           "rbxpromo", "rbxpromo.cli", "rbxpromo.tool", "rbxpromo.engine", "rbxpromo.probe", "rbxpromo.reference",
           "rbxpromo.audio", "rbxpromo.render", "rbxpromo.check", "rbxpromo.recipe"]
 
