@@ -51,6 +51,8 @@ const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
 /// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
 const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
+/// For every agent (a chat, a Lead, an expert) on an AI and path that cuts tool calls off (`caps::call_budget`).
+const LONG_CALLS_PROMPT: &str = include_str!("text/long_calls.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
 const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
@@ -1416,6 +1418,8 @@ struct GeminiLaunch {
     /// any of them starts another process
     allowed: Vec<String>,
     guarded: String,
+    /// where the app's tool server notes its long calls' jobs for this chat (`jobs`)
+    jobs: Option<std::path::PathBuf>,
 }
 
 /// Everything a Gemini turn's start depends on, as `send` has it for a message.
@@ -1436,6 +1440,8 @@ struct GeminiSettings<'a> {
     hidden_in: &'a [std::path::PathBuf],
     /// where the app's tool server notes its results' pictures for this chat
     pictures: Option<&'a std::path::Path>,
+    /// where it notes its long calls' jobs (`jobs::file`)
+    jobs: Option<&'a std::path::Path>,
     /// the programs the user allowed, and all the guarded settings, from the app's memory
     allowed: &'a [String],
     guarded: &'a Map<String, Value>,
@@ -1465,10 +1471,13 @@ impl GeminiLaunch {
         if let (Some(file), true) = (s.pictures, servers["rbxkit"].is_object()) {
             servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
         }
+        // over ACP agy cuts a tool server's call off after three minutes (measured): the app's server is told to
+        // answer inside that, and keeps longer work going as a job (`jobs`)
+        crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         // a fingerprint, not the settings themselves: one of them is the user's Gemini key
         let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
-        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
     /// The kept process: `agy acp`, in the chat's workspace.
@@ -1571,11 +1580,13 @@ impl Kept for GeminiLaunch {
 
     fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
         let s = &self.spec;
-        // (a process per message hands its tools' results over itself: its tool server notes no pictures)
+        // (a process per message hands its tools' results over itself: its tool server notes no pictures; and it
+        // gives a tool call its 15 minutes, so the server is given no budget there)
         let mut servers = s.servers.clone();
         if let Some(env) = servers["rbxkit"]["env"].as_object_mut() {
             env.remove("FRIDAE_TOOL_PICTURES");
         }
+        crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", false), self.jobs.as_deref());
         let mut cmd = Command::new(&self.exe);
         cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
@@ -1598,6 +1609,8 @@ impl Kept for GeminiLaunch {
         let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, None, &mut host);
         let mut t = host.t;
+        // the tool server lives on with the process: its jobs do not (`jobs`)
+        a.drop_jobs(self.jobs.as_deref(), true);
         if let Some(was) = list_was {
             antigravity::rewrite_list(&self.spec.cwd, &was);
         }
@@ -1658,6 +1671,8 @@ struct CursorLaunch {
     spec: crate::acp::Spec,
     /// whether the model has an id on the kept path (`cursor::kept_model`)
     kept_model: bool,
+    /// where the app's tool server notes its long calls' jobs for this chat (`jobs`)
+    jobs: Option<std::path::PathBuf>,
     keys_on: bool,
     /// Cursor's allow list and deny rules as its settings file is written with them (the programs the user allowed
     /// are in it), where its settings, data and home folders are, and a fingerprint of every guarded setting
@@ -1682,6 +1697,8 @@ struct CursorSettings<'a> {
     full: bool,
     /// where the app's tool server notes its results' pictures for this chat
     pictures: Option<&'a std::path::Path>,
+    /// where it notes its long calls' jobs (`jobs::file`)
+    jobs: Option<&'a std::path::Path>,
     /// Cursor's rules as written now (`cursor::rules_now`), and its folders (`cursor::folders`)
     rules: &'a Value,
     folders: (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf),
@@ -1703,6 +1720,11 @@ impl CursorLaunch {
         if let (Some(file), true) = (s.pictures, handed["rbxkit"].is_object()) {
             handed["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
         }
+        // Cursor cuts a tool server's call off after 60 seconds on either path (measured): the app's server is told
+        // to answer inside that, and keeps longer work going as a job (`jobs`)
+        crate::jobs::set(&mut handed, crate::caps::call_budget("cursor", true), s.jobs);
+        let mut servers = s.servers.clone();
+        crate::jobs::set(&mut servers, crate::caps::call_budget("cursor", false), s.jobs);
         let kept_model = cursor::kept_model(s.model);
         let rules = crate::acp::Rules {
             full: s.full,
@@ -1723,7 +1745,8 @@ impl CursorLaunch {
             workspace: s.workspace.to_path_buf(),
             kit: s.kit.to_path_buf(),
             project: s.project.filter(|p| !p.is_empty()).map(str::to_string),
-            servers: s.servers.clone(),
+            servers,
+            jobs: s.jobs.map(std::path::Path::to_path_buf),
             model: s.model.map(str::to_string),
             full: s.full,
             spec,
@@ -1805,6 +1828,9 @@ impl Kept for CursorLaunch {
         });
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, fresh.as_deref(), &mut host);
         let mut t = host.t;
+        // the tool server lives on with the process: its jobs do not (`jobs`). Before the look below, which would
+        // take a job's process group for a command left running
+        a.drop_jobs(self.jobs.as_deref(), true);
         // a command the turn started and left running: nothing of a chat's runs on once the chat shows it has finished
         let left = end.background || (!end.ended && tp.left_running());
         if left && !a.st.lock().unwrap().stopped {
@@ -1853,6 +1879,12 @@ impl Kept for CursorLaunch {
         }
         self.per_turn(None, &text)
     }
+}
+
+/// Whether an agent on this AI is told what a "not finished yet" answer means (`text/long_calls.txt`): where a
+/// process per message cuts tool calls off, or the kept process does and this chat may run on one.
+fn long_calls_told(ai: &str, kept_allowed: bool) -> bool {
+    crate::caps::call_budget(ai, false).is_some() || (kept_allowed && crate::caps::call_budget(ai, true).is_some())
 }
 
 /// The home folder and data folder agy runs with when they are not the app's own (testing only, see
@@ -2784,6 +2816,11 @@ impl Agent {
         if kind != "claude" {
             let _ = fs::create_dir_all(&workspace);
             // Cursor has its own text: it may run the programs the user allowed, and a refused one becomes a card
+            // where the AI cuts tool calls off: what a "not finished yet" answer means (Cursor on both its paths,
+            // Gemini on its kept process)
+            if long_calls_told(&kind, self.live_allowed()) {
+                prompt += LONG_CALLS_PROMPT;
+            }
             if kind == "cursor" {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
@@ -2844,6 +2881,7 @@ impl Agent {
                     protected.push(h.join("Library"));
                 }
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let jobs = crate::jobs::file(&self.id);
                 let launch = GeminiLaunch::new(&GeminiSettings {
                     exe: &exe,
                     agent_id: &self.id,
@@ -2857,6 +2895,7 @@ impl Agent {
                     protected: &protected,
                     hidden_in: &hidden_in,
                     pictures: Some(&pictures),
+                    jobs: Some(&jobs),
                     allowed: &paths::allowed_commands(),
                     guarded: &paths::guarded_settings(),
                     keys_on: paths::env_keys_on(),
@@ -2869,6 +2908,7 @@ impl Agent {
             // its models carry their own effort in the id, so the effort setting is not passed
             "cursor" => {
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let jobs = crate::jobs::file(&self.id);
                 let launch = CursorLaunch::new(&CursorSettings {
                     exe: &exe,
                     agent_id: &self.id,
@@ -2879,6 +2919,7 @@ impl Agent {
                     model,
                     full: ask.full,
                     pictures: Some(&pictures),
+                    jobs: Some(&jobs),
                     rules: &cursor::rules_now(&servers),
                     folders: cursor::folders(),
                     guarded: &paths::guarded_settings(),
@@ -3589,11 +3630,24 @@ impl Agent {
         self.after_turn("opencode", t, &ended.err, exit, stopped);
     }
 
+    /// The turn is over, and no job of the app's tool server outlives it (`jobs::end_turn`). When work was still
+    /// going, or finished and never collected, the chat says so in one line: it was thrown away. `kept`: the turn
+    /// ran on a kept process, whose tool server is still there and is told to end its jobs now.
+    fn drop_jobs(&self, notes: Option<&std::path::Path>, kept: bool) {
+        let Some(notes) = notes else { return };
+        let tools = crate::jobs::end_turn(notes, kept.then_some(crate::jobs::DROP_WAIT));
+        if !tools.is_empty() {
+            self.put("error", json!({"text": crate::jobs::dropped_text(&tools)}));
+        }
+    }
+
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
         let TurnEnd { got_result, result_error, result_text, result_said, .. } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
+        // a process per message took its tool server, and so its jobs, with it (a kept turn has said so already)
+        self.drop_jobs(Some(&crate::jobs::file(&self.id)), false);
         if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
         } else if (!got_result || result_error) && err.contains("No conversation found") {
@@ -4324,6 +4378,12 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
     if let Some(script) = std::env::var_os("FRIDAE_STUDIO_STANDIN").filter(|v| !v.is_empty()) {
         servers["Roblox_Studio"] = json!({"type": "stdio", "command": "/usr/bin/python3", "args": [script.to_string_lossy()]});
     }
+    // FRIDAE_TEST_TOOLS=1 (testing only, debug builds only): the app's tool server also offers its stand-in for a
+    // slow tool (`rbx_test_slow`: it waits, then returns a line and a small picture), for trying long calls live
+    #[cfg(debug_assertions)]
+    if std::env::var("FRIDAE_TEST_TOOLS").is_ok_and(|v| v == "1") {
+        servers["rbxkit"]["env"]["RBXKIT_TEST_TOOLS"] = json!("1");
+    }
     servers
 }
 
@@ -4736,6 +4796,56 @@ mod tests {
         let own = restored_event("c1", "My chat", &json!({"role": null, "parent": null}));
         assert!(own.get("role").is_none() && own.get("parent").is_none() && own.get("expert").is_none());
         assert_eq!(own["ai"], "claude");
+    }
+
+    #[test]
+    fn claudes_and_opencodes_tool_server_gets_no_budget() {
+        // the entry every AI's is built from has none; Cursor's and Gemini's launches add theirs (their own tests)
+        for no_studio in [false, true] {
+            let env = test_servers(no_studio)["rbxkit"]["env"].clone();
+            assert!(env.get("RBXKIT_CALL_BUDGET").is_none() && env.get("FRIDAE_TOOL_JOBS").is_none() && env.get("RBXKIT_TEST_TOOLS").is_none(), "{env}");
+        }
+        // Claude's launch hands the entry on as it is, and OpenCode's server is given `send`'s own
+        let servers = test_servers(true);
+        let launch = ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false });
+        assert!(!launch.key().contains("RBXKIT_CALL_BUDGET") && !launch.key().contains("FRIDAE_TOOL_JOBS"));
+        assert_eq!((crate::caps::call_budget("claude", true), crate::caps::call_budget("opencode", false)), (None, None));
+        // and only agents on an AI that cuts calls off are told what "not finished yet" means
+        assert!(long_calls_told("cursor", false) && long_calls_told("cursor", true));
+        assert!(long_calls_told("gemini", true) && !long_calls_told("gemini", false), "Gemini: on its kept process only");
+        for ai in ["claude", "opencode", "chatgpt"] {
+            assert!(!long_calls_told(ai, true) && !long_calls_told(ai, false), "{ai}");
+        }
+        for word in ["NOT FINISHED YET", "rbx_job", "\"wait\"", "report"] {
+            assert!(LONG_CALLS_PROMPT.contains(word), "{word}");
+        }
+        assert!(!SYSTEM_PROMPT.contains("rbx_job") && !STUDIO_PROMPT.contains("rbx_job"), "Claude's standing text is unchanged");
+    }
+
+    #[test]
+    fn a_turn_that_ends_with_tool_work_still_going_says_so_once() {
+        let a = Agent::detached_for_test("c-jobs-dropped", None);
+        let notes = crate::jobs::file(&a.id);
+        fs::create_dir_all(notes.parent().unwrap()).unwrap();
+        fs::write(&notes, "{\"job\": \"job-a\", \"tool\": \"rbx_blender\", \"at\": \"started\"}\n").unwrap();
+        let said = |a: &Arc<Agent>| a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error").map(|e| e["text"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>();
+        // a process per message: its tool server went with it, so nothing is waited for
+        let began = std::time::Instant::now();
+        a.after_turn("cursor", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert!(began.elapsed() < Duration::from_secs(2));
+        assert_eq!(said(&a), ["The turn ended before the result of rbx_blender was collected, so that work was ended with the turn and thrown away."]);
+        assert_eq!(fs::read_to_string(&notes).unwrap(), "");
+        a.after_turn("cursor", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert_eq!(said(&a).len(), 1, "once");
+        // a turn whose jobs were all collected, and a chat with no notes at all, say nothing
+        let b = Agent::detached_for_test("c-jobs-none", None);
+        b.after_turn("claude", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert!(said(&b).is_empty());
+        // a kept process: its tool server is told, and the line is said by the turn itself
+        fs::write(&notes, "{\"job\": \"job-b\", \"tool\": \"rbx_generate_texture\", \"at\": \"started\"}\n").unwrap();
+        a.drop_jobs(Some(&notes), true);
+        assert!(said(&a)[1].contains("rbx_generate_texture"));
+        assert_eq!(fs::read_to_string(&notes).unwrap(), "{\"turn\": \"ended\"}\n", "left for the server, which did not answer here");
     }
 
     #[test]

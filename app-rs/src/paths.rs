@@ -582,8 +582,9 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     let mut out = vec![(config_file(), false), (w.join("processes.json"), false), (w.join("usage.jsonl"), false), (w.join("limits.json"), false)];
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
-    // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat)
-    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures"] {
+    // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;
+    // `tool-jobs`: where it notes its long calls' jobs, and where the app tells it a turn has ended, `jobs.rs`)
+    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs"] {
         out.push((w.join(d), true));
     }
     out

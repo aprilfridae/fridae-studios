@@ -49,6 +49,13 @@ pub struct Caps {
     /// DEVELOPING.md), and Cursor's is for Ask me only (`agents::CursorLaunch`). `usage` is what a process per
     /// message reports: a Cursor turn on its kept process reports none, and is logged as not reported.
     pub live: bool,
+    /// The longest a call to a tool server may run on this AI before the AI cuts it off, in seconds, on a process per
+    /// message; None where no such limit was measured under the 15 minutes the app asks for (`MCP_TOOL_TIMEOUT`).
+    /// Measured: Cursor 60 s. The app's tool server is told a budget under it (`call_budget`) and answers in time
+    /// (`rbxkit_mcp.py`, "long calls").
+    pub tool_call_limit: Option<u32>,
+    /// The same on the AI's kept process. Measured: Cursor 60 s, Gemini (`agy acp`) three minutes.
+    pub tool_call_limit_kept: Option<u32>,
     pub modes: Modes,
 }
 
@@ -60,16 +67,28 @@ const ALL_MODES: Modes = Modes { ask: true, full: true, studio: true };
 /// answering each of its permission requests (`acp::decide`); a mode one cannot keep to is set false here and is
 /// then not offered.
 pub const TABLE: [Caps; 5] = [
-    Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, modes: ALL_MODES },
-    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, modes: ALL_MODES },
-    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, modes: ALL_MODES },
-    Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, live: true, modes: ALL_MODES },
-    Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, live: false, modes: ALL_MODES },
+    Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
+    Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, tool_call_limit: None, tool_call_limit_kept: Some(180), modes: ALL_MODES },
+    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
+    Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, live: true, tool_call_limit: Some(60), tool_call_limit_kept: Some(60), modes: ALL_MODES },
+    Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, live: false, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
 ];
 
 /// An AI's entry (Claude's for an unknown id: chats saved before there was a choice were all Claude's).
 pub fn of(ai: &str) -> Caps {
     TABLE.iter().copied().find(|c| c.id == ai).unwrap_or(TABLE[0])
+}
+
+/// What the app's tool server is told a call may take on this AI and path (`RBXKIT_CALL_BUDGET`, seconds): the AI's
+/// limit with a safety margin taken off (a sixth, at least 15 s: Cursor 60 → 45, Gemini kept 180 → 150), so the
+/// answer is with the AI well before it gives up. None: no limit, and the tool server behaves as ever.
+pub fn call_budget(ai: &str, kept: bool) -> Option<u32> {
+    let c = of(ai);
+    budget_under(if kept { c.tool_call_limit_kept } else { c.tool_call_limit })
+}
+
+fn budget_under(limit: Option<u32>) -> Option<u32> {
+    limit.map(|l| l.saturating_sub((l / 6).max(15)).max(1))
 }
 
 /// Whether this computer offers the AI (Cursor and OpenCode are not offered on Windows yet).
@@ -90,6 +109,7 @@ pub fn table() -> Value {
             c.id.into(),
             json!({"experts": c.experts, "pickable": c.pickable, "resume": c.resume, "usage": c.usage, "limits": c.limits, "images": c.images,
                    "sandbox": c.sandbox, "live_permissions": c.live_permissions, "effort": c.effort, "grouped_models": c.grouped_models, "live": c.live,
+                   "tool_call_limit": c.tool_call_limit, "tool_call_limit_kept": c.tool_call_limit_kept,
                    "modes": {"ask": c.modes.ask, "full": c.modes.full, "studio": c.modes.studio}, "available": available(c.id)}),
         );
     }
@@ -130,6 +150,26 @@ mod tests {
         assert_eq!(row("opencode"), [true, true, true, true, false, true, false, true, false, true, false, true, true, true]);
         assert_eq!(TABLE.len(), 5);
         assert_eq!(of("unknown").id, "claude");
+        // the longest a tool call may run, per message and kept, as measured: only Cursor (both) and Gemini's kept process
+        let limits = |id: &str| (of(id).tool_call_limit, of(id).tool_call_limit_kept);
+        assert_eq!(limits("claude"), (None, None));
+        assert_eq!(limits("gemini"), (None, Some(180)));
+        assert_eq!(limits("chatgpt"), (None, None));
+        assert_eq!(limits("cursor"), (Some(60), Some(60)));
+        assert_eq!(limits("opencode"), (None, None));
+    }
+
+    #[test]
+    fn the_tool_servers_budget_is_the_limit_with_a_margin_off() {
+        assert_eq!((call_budget("cursor", false), call_budget("cursor", true)), (Some(45), Some(45)));
+        assert_eq!((call_budget("gemini", false), call_budget("gemini", true)), (None, Some(150)));
+        for ai in ["claude", "opencode", "chatgpt"] {
+            assert_eq!((call_budget(ai, false), call_budget(ai, true)), (None, None), "{ai}");
+        }
+        assert_eq!(budget_under(Some(10)), Some(1), "never zero: zero would mean no limit");
+        assert_eq!(table()["cursor"]["tool_call_limit"], 60);
+        assert_eq!(table()["gemini"]["tool_call_limit_kept"], 180);
+        assert!(table()["claude"]["tool_call_limit"].is_null());
     }
 
     #[test]

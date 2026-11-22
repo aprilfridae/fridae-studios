@@ -12,7 +12,7 @@ that say how to use it all.
 import base64, json, os, re, subprocess, sys, tempfile, threading, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rbxpaths import KIT, VERSION, KitError, cli, no_window
+from rbxpaths import KIT, VERSION, KitError, cli, mcp_command, no_window
 MAX_IMAGE = 1_500_000
 MAX_IMAGES = 4
 
@@ -115,10 +115,17 @@ def images_in(text):
     return found[:MAX_IMAGES]
 
 
+_CAPTURED = None
+
+
 def note_pictures(paths):
     """Tell the app which image files this result names. An AI kept open over ACP (Gemini) hands the app no tool
     results, so the app reads them here: one JSON line per result in the file it names (FRIDAE_TOOL_PICTURES).
     Never in the way of the result itself."""
+    if _CAPTURED is not None:     # inside a job (see "long calls"): kept with the result, noted when it is given
+        if paths:
+            _CAPTURED.append(list(paths))
+        return
     where = os.environ.get("FRIDAE_TOOL_PICTURES")
     if not where or not paths:
         return
@@ -627,6 +634,12 @@ _JOBS = {}
 _JOBS_LOCK = threading.Lock()
 
 
+def _promo_wait(seconds):
+    """How long a promo call waits for a render: as ever, or less where the AI cuts a call off sooner (see "long calls")."""
+    budget = _budget()
+    return seconds if budget is None else max(0.0, min(seconds, budget - BUDGET_SLACK))
+
+
 def _promo_text(data):
     return json.dumps(data, indent=1, ensure_ascii=False)
 
@@ -674,7 +687,7 @@ def _start_promo_job(fn, args):
 def _job_reply(job):
     if job["finished"] is None:
         return result(_promo_text({"job": job["id"], "state": "running", "progress": round(job["progress"], 3),
-                                   "next": "Still running. Call rbx_promo again with action 'job' and this id (each call waits up to %d s)." % PROMO_JOB_WAIT_SECONDS}), True, False)
+                                   "next": "Still running. Call rbx_promo again with action 'job' and this id (each call waits up to %d s)." % _promo_wait(PROMO_JOB_WAIT_SECONDS)}), True, False)
     job["read"] = time.time()
     if job["error"] is not None:
         return _promo_failure(job["error"])
@@ -693,7 +706,7 @@ def t_promo(a):
         if not job:
             return result("No promo job with id '%s'. A job is forgotten after its result was read, or an hour after it "
                           "finished, and when the app restarts. Start the render again." % a.get("id", ""), False)
-        job["thread"].join(PROMO_JOB_WAIT_SECONDS)      # well under the client's 600 s call timeout
+        job["thread"].join(_promo_wait(PROMO_JOB_WAIT_SECONDS))      # well under the client's 600 s call timeout
         return _job_reply(job)
     if action == "install":
         return result("The app installs the promo engine: ask the user to open Setup and press Install on the Promo engine row.", False)
@@ -709,7 +722,7 @@ def t_promo(a):
     try:
         if action == "render":
             job = _start_promo_job(fn, args)
-            job["thread"].join(PROMO_SYNC_SECONDS)
+            job["thread"].join(_promo_wait(PROMO_SYNC_SECONDS))
             if job["finished"] is None:
                 return result(_promo_text({"job": job["id"], "state": "running", "progress": round(job["progress"], 3),
                                            "next": "This render is still running. Call rbx_promo with action 'job' and this id "
@@ -725,6 +738,420 @@ def t_promo(a):
         return result(_promo_text(data))
     except _promo_expected_errors() as e:
         return _promo_failure(e)
+
+
+# -------------------------------------------------------------- long calls
+# Some AIs cut every call to a tool server off after a fixed time, whatever the server asks for (measured: Cursor
+# after 60 seconds, Gemini's kept process after three minutes). For those the app sets RBXKIT_CALL_BUDGET in this
+# server's entry: the seconds a call may take before it must answer. With no budget nothing in this section runs and
+# every tool behaves as ever.
+#
+# With a budget, a tool runs as a job: a child process of this server (this same program, started with JOB_ENV set)
+# that runs the one tool exactly as this server would have and hands its result back whole. A call that is not done
+# when the budget runs out answers "not finished yet" with the job's name, and `rbx_job` picks the result up later.
+# Calls are then answered each on a thread of its own, so a wait never holds another call up.
+#
+# A job child is the leader of a process group of its own, so ending a job ends everything it started, also what
+# ignores SIGTERM. Jobs never outlive this server: it ends them when its input closes or it is told to end, and a
+# small watcher process (REAPER_ENV) ends them should the server be killed outright. Jobs live in this process's
+# memory only, and each chat has its own server: one chat cannot see, wait on or cancel another's.
+BUDGET_SLACK = 2.0           # a call that waits on purpose (rbx_team wait, a promo render) stops this long before the budget
+JOB_ENV = "RBXKIT_JOB_CHILD"
+REAPER_ENV = "RBXKIT_JOB_REAPER"
+KILL_GRACE = 0.3             # seconds between SIGTERM and SIGKILL for a job's process group
+# answered by this process itself: instant, or tied to this process (the lock's owner, the promo renders it keeps)
+INLINE = ("rbx_guide", "rbx_studio_snippet", "rbx_studio_lock")
+PROMO_INLINE = (None, "", "job", "render", "install")
+# work that must not overlap runs one at a time, in the order it was asked for
+LANES = {"rbx_blender": "blender", "rbx_project": "studio"}
+LANE_WORDS = {"blender": "Blender work", "studio": "work in Roblox Studio"}
+STILL = "NOT FINISHED YET"
+
+_LONG = {}                   # job name -> _Job, in the order they were started
+_LONG_LOCK = threading.RLock()
+_LANE_TURN = threading.Condition(_LONG_LOCK)
+_INLINE_LOCK = threading.Lock()
+_NOTES_LOCK = threading.Lock()
+_REAPER = None
+_WATCHING = False
+
+
+def _budget():
+    """The seconds a call may take before it must answer (RBXKIT_CALL_BUDGET), or None: no limit, all as ever."""
+    try:
+        b = float(os.environ.get("RBXKIT_CALL_BUDGET") or 0)
+    except ValueError:
+        return None
+    return b if b > 0 else None
+
+
+class _Job:
+    def __init__(self, tool, args, lane):
+        import secrets
+        self.name = "job-" + secrets.token_hex(6)
+        self.tool, self.args, self.lane = tool, args, lane
+        self.began = time.monotonic()
+        self.state = "queued" if lane else "running"
+        self.proc = None
+        self.result = None
+        self.pictures = []
+        self.cancelled = False
+        self.done = threading.Event()
+
+
+def _note_job(line):
+    """One line for the app in the file it named (FRIDAE_TOOL_JOBS): which jobs were started and which were given
+    back, so it can say when a turn ended with work thrown away. Never in the way of the work itself."""
+    where = os.environ.get("FRIDAE_TOOL_JOBS")
+    if not where:
+        return
+    try:
+        with _NOTES_LOCK:
+            os.makedirs(os.path.dirname(where), exist_ok=True)
+            with open(where, "a", encoding="utf-8") as f:
+                f.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+
+
+def _watch_turns(path):
+    """The app's side of that file: a line {"turn": "ended"} means the turn is over, so every job goes, with its result
+    (answered with {"dropped": [names]}). Read from where the file ended when the first job began."""
+    try:
+        offset = os.path.getsize(path)
+    except OSError:
+        offset = 0
+    while True:
+        time.sleep(0.2)
+        try:
+            size = os.path.getsize(path)
+            if size < offset:
+                offset = 0      # the app emptied it
+            if size == offset:
+                continue
+            with open(path, "rb") as f:
+                f.seek(offset)
+                data = f.read()
+        except OSError:
+            continue
+        whole = data[:data.rfind(b"\n") + 1]
+        offset += len(whole)
+        for raw in whole.splitlines():
+            try:
+                line = json.loads(raw.decode("utf-8"))
+            except ValueError:
+                continue
+            if isinstance(line, dict) and line.get("turn") == "ended":
+                _note_job({"dropped": _drop_all()})
+
+
+def _reaper_tell(sign, pid):
+    """Tell the watcher process which process groups are jobs ('+') and which have ended by themselves ('-')."""
+    global _REAPER
+    if os.name != "posix":
+        return
+    with _LONG_LOCK:
+        try:
+            if _REAPER is None:
+                env = dict(os.environ)
+                env[REAPER_ENV] = "1"
+                # in this server's own process group (no new one: the app counts groups a turn leaves behind)
+                _REAPER = subprocess.Popen(mcp_command(), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, env=env)
+            _REAPER.stdin.write(("%s%d\n" % (sign, pid)).encode("ascii"))
+            _REAPER.stdin.flush()
+        except OSError:
+            pass
+
+
+def _reaper_main():
+    """The watcher: reads job process groups from the server; when the server is gone, however it went, kills them."""
+    import signal
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)
+    groups = set()
+    for raw in sys.stdin.buffer:
+        line = raw.decode("ascii", "replace").strip()
+        if line[:1] == "+" and line[1:].isdigit():
+            groups.add(int(line[1:]))
+        elif line[:1] == "-" and line[1:].isdigit():
+            groups.discard(int(line[1:]))
+    for g in groups:
+        try:
+            os.killpg(g, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _signal_jobs(procs, sig):
+    import signal
+    for p in procs:
+        try:
+            if os.name == "posix":
+                os.killpg(p.pid, getattr(signal, sig))
+            elif sig == "SIGKILL":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True, creationflags=no_window())
+        except OSError:
+            pass
+
+
+def _end_jobs(jobs):
+    """End these jobs with everything they started: SIGTERM to each one's process group, SIGKILL a moment later."""
+    with _LONG_LOCK:
+        for j in jobs:
+            j.cancelled = True
+            _LONG.pop(j.name, None)
+        _LANE_TURN.notify_all()
+        procs = [j.proc for j in jobs if j.proc is not None]
+    if procs:
+        _signal_jobs(procs, "SIGTERM")
+        time.sleep(KILL_GRACE)
+        _signal_jobs(procs, "SIGKILL")
+    return [j.name for j in jobs]
+
+
+def _drop_all():
+    """Every job goes, running or finished and not yet given back. Returns their names."""
+    with _LONG_LOCK:
+        jobs = list(_LONG.values())
+    return _end_jobs(jobs)
+
+
+def _lane_ahead(job):
+    """The job a queued one waits behind (call with the lock held)."""
+    before = None
+    for j in _LONG.values():
+        if j is job:
+            return before
+        if j.lane == job.lane and not j.done.is_set():
+            before = j
+    return before
+
+
+def _run_job(job):
+    try:
+        with _LONG_LOCK:
+            while job.lane and not job.cancelled and _lane_ahead(job) is not None:
+                _LANE_TURN.wait()
+            if job.cancelled:
+                return
+            env = {k: v for k, v in os.environ.items() if k not in ("RBXKIT_CALL_BUDGET", "FRIDAE_TOOL_PICTURES", "FRIDAE_TOOL_JOBS")}
+            env[JOB_ENV] = "1"
+            own = {"start_new_session": True} if os.name == "posix" else {"creationflags": no_window() | 0x00000200}
+            job.proc = subprocess.Popen(mcp_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, **own)
+            job.state = "running"
+        _reaper_tell("+", job.proc.pid)
+        out, _ = job.proc.communicate(json.dumps({"name": job.tool, "arguments": job.args}).encode("utf-8"))
+        try:
+            got = json.loads(out.decode("utf-8"))
+            job.result, job.pictures = got["result"], got.get("pictures") or []
+        except (ValueError, KeyError, TypeError):
+            job.result = result("%s ended without a result (exit code %s)." % (job.tool, job.proc.returncode), False)
+        if not job.cancelled:
+            _reaper_tell("-", job.proc.pid)     # it ended by itself: what it left running is the tool's own business, as ever
+    except Exception as e:  # the job could not be run at all: that is its result
+        job.result = result("%s: %s" % (type(e).__name__, e), False)
+    finally:
+        with _LONG_LOCK:
+            job.state = "finished"
+            job.done.set()
+            _LANE_TURN.notify_all()
+
+
+def _start_job(tool, args, lane=None):
+    global _WATCHING
+    job = _Job(tool, args, lane)
+    with _LONG_LOCK:
+        notes = os.environ.get("FRIDAE_TOOL_JOBS")
+        if notes and not _WATCHING:
+            _WATCHING = True
+            threading.Thread(target=_watch_turns, args=(notes,), daemon=True).start()
+        _LONG[job.name] = job
+    _note_job({"job": job.name, "tool": job.tool, "at": "started"})
+    threading.Thread(target=_run_job, args=(job,), daemon=True).start()
+    return job
+
+
+def _still_going(job):
+    """What a call answers when the job is not done in time. Worded so that no model takes it for the tool's result or
+    for a failure (checked with real turns on Cursor and Gemini: see DEVELOPING.md, "Long tool calls")."""
+    with _LONG_LOCK:
+        ahead = _lane_ahead(job) if job.state == "queued" else None
+    if ahead is not None:
+        what = ('%s, as job "%s", has not started. It is queued behind %s (%s), because %s runs one at a time, and it '
+                'starts by itself when that ends.' % (job.tool, job.name, ahead.name, ahead.tool, LANE_WORDS.get(job.lane, "this work")))
+    else:
+        what = ('%s is still working as job "%s" (%d seconds so far) and nothing has failed.'
+                % (job.tool, job.name, time.monotonic() - job.began))
+    return result('%s. This is not the tool\'s result: %s\n'
+                  'The result comes from one call only: rbx_job with action "wait" and job "%s". Call it now, and call it '
+                  'again every time it answers %s. Until it returns the result, do not report this work as done or as '
+                  'failed, and do not start it again.' % (STILL, what, job.name, STILL), True, False)
+
+
+def _wait_job(job, deadline):
+    """The job's result if it comes before `deadline`, given once and exactly as the tool returned it; else 'not
+    finished yet'."""
+    if not job.done.wait(max(0.0, deadline - time.monotonic())):
+        return _still_going(job)
+    with _LONG_LOCK:
+        if _LONG.pop(job.name, None) is None:
+            return _no_job(job.name)        # another call took it, or it was cancelled meanwhile
+    for paths in job.pictures:              # noted for the app now, with the call that hands them over
+        note_pictures(paths)
+    _note_job({"job": job.name, "at": "collected"})
+    return job.result
+
+
+def _no_job(name):
+    with _LONG_LOCK:
+        mine = ", ".join(_LONG) or "none"
+    return result('No job "%s" in this chat. A job\'s result is given once, and jobs end when the turn they were '
+                  'started in ends; start the work again if it is still needed. This chat\'s jobs now: %s.' % (name, mine), False)
+
+
+def t_job(a, deadline):
+    action = (a.get("action") or "wait").lower()
+    name = str(a.get("job") or a.get("id") or "").strip()
+    with _LONG_LOCK:
+        jobs = list(_LONG.values())
+        job = _LONG.get(name)
+        if job is None and not name and len(jobs) == 1 and action in ("wait", "cancel"):
+            job = jobs[0]
+        if action == "list":
+            if not jobs:
+                return result("No jobs are running in this chat.", True, False)
+            lines = []
+            for j in jobs:
+                ahead = _lane_ahead(j) if j.state == "queued" else None
+                state = ("queued behind %s" % ahead.name if ahead is not None else
+                         'finished: collect its result with action "wait"' if j.done.is_set() else
+                         "working, %d seconds so far" % (time.monotonic() - j.began))
+                lines.append("%s  %s  %s" % (j.name, j.tool, state))
+            return result("\n".join(lines), True, False)
+    if action not in ("wait", "cancel"):
+        return result("Give 'action': wait, list or cancel.", False)
+    if job is None:
+        return _no_job(name) if name else result("Give 'job': the job name from the %s answer. This chat's jobs now: %s."
+                                                 % (STILL, ", ".join(j.name for j in jobs) or "none"), False)
+    if action == "cancel":
+        _end_jobs([job])
+        _note_job({"job": job.name, "at": "collected"})
+        return result("Cancelled %s (%s). Everything it started was ended; it has no result." % (job.name, job.tool), True, False)
+    return _wait_job(job, deadline)
+
+
+def _run_tool(fn, args):
+    """One tool, with its failures reported as tool errors, not protocol errors."""
+    try:
+        return fn(args)
+    except subprocess.TimeoutExpired:
+        return result("The command timed out.", False)
+    except Exception as e:  # report tool failures as tool errors, not protocol errors
+        return result("%s: %s" % (type(e).__name__, e), False)
+
+
+def _budgeted(name, fn, args, deadline):
+    """A call under a budget: answered by `deadline`, with the tool's result or with 'not finished yet'."""
+    if name == "rbx_job":
+        return _run_tool(lambda a: t_job(a, deadline), args)
+    if name in INLINE:
+        with _INLINE_LOCK:
+            return _run_tool(fn, args)
+    if name == "rbx_team":
+        # already a wait: it returns inside the budget saying who is still working and to wait again; no job
+        if (args.get("action") or "").lower() == "wait":
+            left = int(deadline - time.monotonic() - BUDGET_SLACK)
+            args = dict(args, timeout=max(1, min(int(args.get("timeout") or 600), left)))
+        return _run_tool(fn, args)
+    if name == "rbx_promo" and args.get("action") in PROMO_INLINE:
+        return _run_tool(fn, args)      # its renders are this process's own and already answer in time (_promo_wait)
+    lane = LANES.get(name) or (str(args.get("lane") or "") if name == "rbx_test_slow" else "") or None
+    return _wait_job(_start_job(name, args, lane), deadline)
+
+
+def _job_main():
+    """A job child: one tool, run as the server runs it, its result written whole to the server."""
+    global _CAPTURED
+    out = os.fdopen(os.dup(1), "wb")
+    sys.stdout.flush()
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    req = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    _CAPTURED = []
+    res = _run_tool(_handler(req["name"]), req.get("arguments") or {})
+    out.write(json.dumps({"result": res, "pictures": _CAPTURED}).encode("utf-8"))
+    out.flush()
+
+
+def _tiny_png(rgb, size=16):
+    import struct, zlib
+    rows = b"".join(b"\x00" + bytes(rgb) * size for _ in range(size))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def t_test_slow(a):
+    """A stand-in for a slow tool, offered only under RBXKIT_TEST_TOOLS=1 (tests and live trials; never to users):
+    it works for `seconds`, then returns a line with a word in it and one small picture."""
+    import hashlib
+    from rbxpaths import WORK
+    word = re.sub(r"[^a-z0-9]", "", str(a.get("word") or "done").lower()) or "done"
+    seconds = float(a.get("seconds") or 0)
+
+    def log(what):
+        if a.get("log"):
+            with open(a["log"], "a", encoding="utf-8") as f:
+                f.write("%s:%s\n" % (what, word))
+    log("start")
+    if a.get("child_pidfile"):      # something the job starts that will not go when asked
+        p = subprocess.Popen([sys.executable, "-c", "import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\ntime.sleep(600)"],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(a["child_pidfile"] + ".tmp", "w") as f:
+            f.write(str(p.pid))
+        os.replace(a["child_pidfile"] + ".tmp", a["child_pidfile"])
+    time.sleep(seconds)
+    log("end")
+    if a.get("fail"):
+        return result("The stand-in tool failed on purpose (%s)." % word, False)
+    folder = os.path.join(WORK, "test-tool")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, word + "_check.png")
+    with open(path, "wb") as f:
+        f.write(_tiny_png(hashlib.sha256(word.encode()).digest()[:3]))
+    return result('The stand-in tool worked for %g seconds and finished. Its result word is %s. It made "%s"'
+                  % (seconds, word.upper(), path.replace("\\", "/")))
+
+
+JOB_TOOL = ("rbx_job", "Pick up work that one of the rbx tools is still doing. A tool that needs longer than one call may take "
+            "answers NOT FINISHED YET with a job name instead of its result. Action 'wait' (job) then returns that tool's "
+            "real result, text and pictures, or NOT FINISHED YET again: call it again until the result comes. 'list' shows "
+            "this chat's jobs; 'cancel' (job) ends one and everything it started. A result is given once, and jobs end "
+            "when the turn ends.",
+            {"type": "object", "properties": {"action": {"type": "string", "enum": ["wait", "list", "cancel"]},
+                                              "job": {"type": "string", "description": "wait, cancel: the job name from the NOT FINISHED YET answer"}},
+             "required": ["action"]}, None)
+TEST_TOOL = ("rbx_test_slow", "A stand-in for a slow tool, present in test runs only: it works for `seconds`, then returns one "
+             "line with a result word in it and one small picture.",
+             {"type": "object", "properties": {"seconds": {"type": "number"}, "word": {"type": "string"}}, "required": ["seconds"]},
+             t_test_slow)
+
+
+def _extra_tools():
+    """Tools beyond the fixed list: rbx_job where calls have a budget, the stand-in in test runs."""
+    extra = [JOB_TOOL] if _budget() is not None else []
+    if os.environ.get("RBXKIT_TEST_TOOLS") == "1":
+        extra.append(TEST_TOOL)
+    return extra
+
+
+def _handler(name):
+    fn = HANDLERS.get(name)
+    if fn is None:
+        fn = next((f or t_job for n, _, _, f in _extra_tools() if n == name), None)
+    return fn
 
 
 def schema(props, required=()):
@@ -938,7 +1365,7 @@ HANDLERS = {name: fn for name, _, _, fn in TOOLS}
 
 
 # --------------------------------------------------------------- protocol
-def handle(msg):
+def handle(msg, began=None):
     method = msg.get("method")
     mid = msg.get("id")
     params = msg.get("params") or {}
@@ -950,23 +1377,47 @@ def handle(msg):
     if method == "ping":
         return {}
     if method == "tools/list":
-        return {"tools": [{"name": n, "description": d, "inputSchema": s} for n, d, s, _ in TOOLS]}
+        return {"tools": [{"name": n, "description": d, "inputSchema": s} for n, d, s, _ in TOOLS + _extra_tools()]}
     if method == "tools/call":
-        fn = HANDLERS.get(params.get("name"))
+        fn = _handler(params.get("name"))
         if not fn:
             raise KeyError("unknown tool: %s" % params.get("name"))
-        try:
-            return fn(params.get("arguments") or {})
-        except subprocess.TimeoutExpired:
-            return result("The command timed out.", False)
-        except Exception as e:  # report tool failures as tool errors, not protocol errors
-            return result("%s: %s" % (type(e).__name__, e), False)
+        budget = _budget()
+        if budget is not None:      # an AI that cuts calls off: answered in time (see "long calls")
+            return _budgeted(params.get("name"), fn, params.get("arguments") or {}, (began or time.monotonic()) + budget)
+        return _run_tool(fn, params.get("arguments") or {})
     if mid is None:
         return None  # a notification we do not act on
     raise NotImplementedError(method)
 
 
+def _reply(msg, began=None):
+    """The line that answers one message, or None for a notification."""
+    mid = msg.get("id")
+    try:
+        res = handle(msg, began)
+        if mid is None:
+            return None
+        return {"jsonrpc": "2.0", "id": mid, "result": res}
+    except NotImplementedError as e:
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "method not found: %s" % e}}
+    except Exception as e:
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
+
+
+def _end_with_jobs(signum, frame):
+    """Told to end while jobs may run (only where calls have a budget): they go first, then the server as it would have."""
+    import signal
+    _drop_all()
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+
+
 def main():
+    if os.environ.get(REAPER_ENV):
+        return _reaper_main()
+    if os.environ.get(JOB_ENV):
+        return _job_main()
     stdin = sys.stdin.buffer
     # The protocol goes out on a private copy of fd 1. Fd 1 and sys.stdout then point at stderr before any thread
     # starts, so a stray print, a library or a child process writing to "stdout" can never corrupt the protocol,
@@ -975,6 +1426,20 @@ def main():
     sys.stdout.flush()
     os.dup2(2, 1)
     sys.stdout = sys.stderr
+    writing = threading.Lock()
+
+    def answer(msg, began=None):
+        reply = _reply(msg, began)
+        if reply is not None:
+            with writing:
+                out.write((json.dumps(reply) + "\n").encode("utf-8"))
+                out.flush()
+
+    budgeted = _budget() is not None
+    if budgeted and os.name == "posix":
+        import signal
+        for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+            signal.signal(s, _end_with_jobs)
     for raw in stdin:
         raw = raw.strip()
         if not raw:
@@ -983,18 +1448,13 @@ def main():
             msg = json.loads(raw.decode("utf-8"))
         except ValueError:
             continue
-        mid = msg.get("id")
-        try:
-            res = handle(msg)
-            if mid is None:
-                continue
-            reply = {"jsonrpc": "2.0", "id": mid, "result": res}
-        except NotImplementedError as e:
-            reply = {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "method not found: %s" % e}}
-        except Exception as e:
-            reply = {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": str(e)}}
-        out.write((json.dumps(reply) + "\n").encode("utf-8"))
-        out.flush()
+        if budgeted and msg.get("method") == "tools/call" and msg.get("id") is not None:
+            # each call on a thread of its own, timed from here: a wait never holds another call up
+            threading.Thread(target=answer, args=(msg, time.monotonic()), daemon=True).start()
+            continue
+        answer(msg)
+    if budgeted:
+        _drop_all()     # the client is gone: nothing of this server's runs on
 
 
 if __name__ == "__main__":

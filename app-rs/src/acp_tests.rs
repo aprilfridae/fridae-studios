@@ -154,6 +154,7 @@ impl Chat {
             protected,
             hidden_in: &[],
             pictures: None,
+        jobs: None,
             allowed: &[],
             guarded,
             keys_on: false,
@@ -305,6 +306,7 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
         ("the app's own files", GeminiSettings { protected: &more_protected, ..base() }),
         ("the home folder whose hidden files are kept from it", GeminiSettings { hidden_in: &home_dirs, ..base() }),
         ("where its tool server notes pictures", GeminiSettings { pictures: Some(Path::new("/work/tool-pictures/c1.jsonl")), ..base() }),
+        ("where its tool server notes its jobs", GeminiSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() }),
         ("the provider-keys switch as the process gets it", GeminiSettings { keys_on: true, ..base() }),
         ("the program", GeminiSettings { exe: Path::new("/other/agy"), ..base() }),
         ("the kit folder", GeminiSettings { kit: Path::new("/kit2"), ..base() }),
@@ -332,6 +334,16 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
     assert_eq!(with_notes.spec.pictures.as_deref(), Some(notes));
     let (per, _) = Kept::per_turn(&with_notes, None, "hello");
     assert!(!fs::read_to_string(c.dir.join(".agents").join("mcp_config.json")).unwrap().contains("FRIDAE_TOOL_PICTURES"), "a process per message hands its results over itself");
+    drop(per);
+    // agy cuts a tool call off after three minutes over ACP: the app's tool server is given 150 seconds to answer
+    // in and the file the turn's end is told through, on the kept path only (a process per message has 15 minutes)
+    let with_jobs = GeminiLaunch::new(&GeminiSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() });
+    assert_eq!(with_jobs.spec.servers["rbxkit"]["env"]["RBXKIT_CALL_BUDGET"], "150");
+    assert_eq!(with_jobs.spec.servers["rbxkit"]["env"]["FRIDAE_TOOL_JOBS"], "/work/tool-jobs/c1.jsonl");
+    assert!(l.spec.servers["rbxkit"]["env"].get("RBXKIT_CALL_BUDGET").is_none(), "never a budget without that file");
+    let (per, _) = Kept::per_turn(&with_jobs, None, "hello");
+    let list = fs::read_to_string(c.dir.join(".agents").join("mcp_config.json")).unwrap();
+    assert!(list.contains("rbxkit") && !list.contains("RBXKIT_CALL_BUDGET") && !list.contains("FRIDAE_TOOL_JOBS"), "a process per message: no budget, the tool server as ever");
     drop(per);
     assert_eq!(l.spec.rules.servers, ["rbxkit"]);
     assert_eq!(l.spec.rules.agent_dir, Path::new("/home/u/.gemini/antigravity-cli"));
