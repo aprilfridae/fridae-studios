@@ -413,7 +413,8 @@ def _lesson(project, a):
             if f.read(1) != b"\n":
                 line = "\n" + line
         f.write(line.encode("utf-8"))
-    return "Lesson saved for %s." % ("this game" if scope == "game" else "all games")
+    return ("Lesson saved for %s. Lessons are searchable: rbx_vault action 'search' with shelf 'game' finds them, with "
+            "GAME.md's sections and decision log." % ("this game" if scope == "game" else "all games"))
 
 
 def run(action, a):

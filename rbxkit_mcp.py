@@ -161,8 +161,10 @@ def _register_roblox_skills():
 _register_roblox_skills()
 
 
-def _reference(topic):
-    """A topic like 'roblox-luau/type-system' is a file in that guide's references folder."""
+def _guide_path(topic):
+    """The file behind a guide topic or a reference topic like 'roblox-luau/type-system', or None."""
+    if topic in GUIDES:
+        return os.path.join(KIT, GUIDES[topic][0])
     if "/" not in topic:
         return None
     skill, ref = topic.split("/", 1)
@@ -173,30 +175,34 @@ def _reference(topic):
     for cand in (ref, ref + ".md"):
         path = os.path.join(folder, cand)
         if os.path.isfile(path):
-            with open(path, encoding="utf-8") as f:
-                return fill(f.read())
+            return path
     return None
 
 
-def _one_guide(topic):
-    path = os.path.join(KIT, GUIDES[topic][0])
-    if not os.path.exists(path):
+def _reference(topic):
+    """A topic like 'roblox-luau/type-system' is a file in that guide's references folder."""
+    if "/" not in topic:
+        return None
+    path = _guide_path(topic)
+    if not path:
         return None
     with open(path, encoding="utf-8") as f:
-        text = fill(f.read())
+        return fill(f.read())
+
+
+def _guide_extras(topic):
+    """What follows a guide's own text: where its reference files and other files are, and its credit."""
+    if topic not in GUIDES:
+        return ""
+    path = os.path.join(KIT, GUIDES[topic][0])
+    text = ""
     refs = os.path.join(os.path.dirname(path), "references")
     if topic != "vfx" and os.path.isdir(refs):
         files = sorted(f[:-3] for f in os.listdir(refs) if f.endswith(".md"))
         if files:
             text += "\n\nReference files for this guide (load with rbx_guide topic `%s/<name>`): %s" % (topic, ", ".join(files))
-    if text.startswith("---"):
-        text = text.split("---", 2)[2].lstrip()  # drop the skill front matter
-    if topic in WEB_GUIDES:
-        text = WEB_NOTE + text
-    if topic == "vfx":
-        refs = os.path.join(os.path.dirname(path), "references")
-        if os.path.isdir(refs):
-            text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
+    if topic == "vfx" and os.path.isdir(refs):
+        text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
     if GUIDES[topic][0].startswith("guides/lihfolk/"):
         # its code (Luau modules, examples, Blender scripts, rubrics) is read straight from the folder
         folder = os.path.dirname(path)
@@ -208,6 +214,77 @@ def _one_guide(topic):
         text += ("\n\n(From LihFolk Vault V2 by LihFolk, CC BY 4.0. Search the full vault with rbx_vault. Where a step "
                  "names a slash command or agent from the LihFolk plugin, do that step yourself.)")
     return text
+
+
+def _one_guide(topic):
+    path = os.path.join(KIT, GUIDES[topic][0])
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        text = fill(f.read())
+    if text.startswith("---"):
+        text = text.split("---", 2)[2].lstrip()  # drop the skill front matter
+    if topic in WEB_GUIDES:
+        text = WEB_NOTE + text
+    return text + _guide_extras(topic)
+
+
+# Guides an agent always gets whole: they hold rules that must be followed, not looked up (see DEVELOPING.md,
+# "How agents find knowledge"). Any guide under OUTLINE_OVER bytes is also always whole.
+ALWAYS_WHOLE = ("workflow", "studio", "critic", "producer", "game-bible")
+OUTLINE_OVER = 12 * 1024
+
+
+def _guide_outline(topic, raw):
+    """A large guide's opening (its description and everything before the first section) and its sections with sizes."""
+    import rbxvault
+    p, lines = rbxvault.sections_listing(raw, "guides", topic)
+    first = next((s["start"] for s in p["sections"] if s["level"]), None)
+    if first is None:
+        return None  # no headings to choose from: the guide comes whole
+    opening = p["body"][:first]
+    head = ("> " + p["description"] + "\n\n") if p["description"] else ""
+    if topic in WEB_GUIDES:
+        head = WEB_NOTE + head
+    size = len(raw.encode("utf-8"))
+    return (head + opening.strip() + "\n\n## Sections of this guide\n\n" + "\n".join("- " + l for l in lines) +
+            "\n\n(This guide is %s, so only its opening and its sections are shown. Read the sections the task "
+            "needs: rbx_guide topic `%s` with `section` set to heading words, one section per call, or search with "
+            "rbx_vault (shelf guides). `whole: true` returns all of it.)" % (rbxvault.size_text(size), topic))
+
+
+def _guide_section(topic, heading):
+    """One section of one guide (or reference file)."""
+    import rbxvault
+    path = _guide_path(topic)
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        raw = fill(f.read())
+    p, lines = rbxvault.sections_listing(raw, "guides", topic)
+    s = rbxvault.find_section(p, heading)
+    if s is None:
+        raise KitError("No section like '%s' in the %s guide. Its sections:\n%s" % (heading, topic, "\n".join(lines)))
+    body = p["body"][s["start"]:s["end"]].rstrip()
+    if not s["level"] and p["description"]:
+        body = "> " + p["description"] + "\n\n" + body.lstrip()
+    sub = [(x["level"], x["heading"]) for x in p["sections"] if s["start"] < x["start"] < s["end"]]
+    return "Section '%s' (%s)\n\n%s" % (s["heading"], rbxvault.size_text(len(body.encode("utf-8"))),
+                                        rbxvault.cap_text(body, sub, topic, "guides"))
+
+
+def guide_text(topic, whole=False):
+    """What rbx_guide returns for one topic: the whole guide, or for a large guide not on ALWAYS_WHOLE its outline."""
+    text = _one_guide(topic) if topic in GUIDES else _reference(topic)
+    if text is None or whole or topic in ALWAYS_WHOLE or len(text.encode("utf-8")) <= OUTLINE_OVER:
+        return text
+    path = _guide_path(topic)
+    if not path.endswith(".md"):
+        return text
+    with open(path, encoding="utf-8") as f:
+        raw = fill(f.read())
+    outline = _guide_outline(topic, raw)
+    return text if outline is None else outline + _guide_extras(topic)
 
 
 GUIDE_CAP = 30000         # bytes one rbx_guide call returns at most to a helper agent (past the first guide)
@@ -227,10 +304,22 @@ def t_guide(a):
     if not wanted:
         lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
         return result("\n".join(lines), True, False)
+    section = str(a.get("section") or "").strip()
+    if section:
+        topic = wanted[0]
+        try:
+            text = _guide_section(topic, section)
+        except KitError as e:
+            return result(str(e), False)
+        if text is None:
+            return result("No such guide: %s. Call rbx_guide with no arguments to list the topics." % topic, False)
+        note = ("\n\n(`section` reads one guide; not loaded: %s.)" % ", ".join(wanted[1:])) if len(wanted) > 1 else ""
+        return result(PREFACE + "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text + note, True, False)
+    whole = a.get("whole") is True or str(a.get("whole")).lower() == "true"
     cap = _guide_cap()
     out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
     for topic in wanted:
-        text = _one_guide(topic) if topic in GUIDES else _reference(topic)
+        text = guide_text(topic, whole)
         if text is None:
             unknown.append(topic)
             continue
@@ -566,27 +655,37 @@ def schema(props, required=()):
 
 S = {"type": "string"}
 TOOLS = [
-    ("rbx_guide", "Read rbxkit guides. Before a Roblox task, load every relevant guide in one call by passing several names in "
-     "`topics` (always include 'workflow'; add the style guide for modelling, UI and effects). One answer holds about 30 KB at most for a helper agent "
-     "(120 KB for a chat): topics left out are named, so ask for them in another call. With no arguments, lists the topics.",
+    ("rbx_guide", "Read rbxkit guides that must be read in full (always 'workflow'), or one section of a guide. A guide over 12 KB "
+     "comes as its opening plus a list of its sections with sizes (except workflow, studio, critic, producer, game-bible, "
+     "which always come whole): then ask for the sections the task needs with `section`. For anything else, look it up "
+     "with rbx_vault (shelf guides) and read only the sections that apply. One answer holds about 30 KB at most for a "
+     "helper agent (120 KB for a chat): topics left out are named. With no arguments, lists the topics.",
      schema({"topics": {"type": "array", "items": {"type": "string"},
                         "description": "Guide names: workflow, playtest, ui-design, ui-helpers, ui-audit, sim-ui, vfx, vfx-basics, tester, web-to-roblox, "
                                        "emil-design-eng, motion-design, redesign-skill, reference-design-contract, "
                                        "soft-skill, minimalist-skill, brutalist-skill, and the Roblox subject "
                                        "guides (roblox-luau, roblox-architecture, roblox-security, roblox-networking, roblox-data-stores, roblox-ui, "
                                        "roblox-world-building, ...). Call with no arguments for the full list"},
-             "topic": {"type": "string", "description": "A single guide name (same as one entry in topics)"}}), t_guide),
-    ("rbx_vault", "Search LihFolk Vault V2: 1,300+ Roblox notes (Luau, remotes, data, UI, building, VFX, animation, rigs, game "
-     "design, monetization, performance, publishing, case studies), dated October 2026. Use it for limits, quotas, defaults, "
-     "prices, policy and anything changed in 2025-2026, and when a bug's cause is unclear. 'search' (query: the task or bug in "
-     "plain words) returns the best notes' summaries plus matching symptom lines; then 'read' (title, heading words) for ONE "
-     "section, never a whole note. 'sections' (title) lists a note's headings, 'list' (folder) browses, 'api' (names, e.g. "
-     "'BadgeService.AwardBadge') says whether an API is current or deprecated. Trust labels: 'Roblox docs' and 'Measured' beat "
-     "'Rule of thumb'. Cite note titles you used.",
+             "topic": {"type": "string", "description": "A single guide name (same as one entry in topics)"},
+             "section": {"type": "string", "description": "Heading words: return only that section of the guide in `topic` "
+                                                          "(or the first of `topics`)"},
+             "whole": {"type": "boolean", "description": "true returns large guides in full instead of their outline"}}), t_guide),
+    ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "
+     "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
+     "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "
+     "default 5) returns ranked sections labelled by shelf, each with a snippet, its size and the exact arguments to read "
+     "it; vault results add matching symptom lines. 'read' (title, heading words, optional shelf) returns one section in "
+     "full (about 12 KB at most). 'sections' (title) lists a file's headings with sizes, 'list' (folder) browses the vault, "
+     "'api' (names, e.g. 'BadgeService.AwardBadge') says whether an API is current or deprecated. Use the vault for limits, "
+     "quotas, prices, policy and anything changed in 2025-2026. Trust labels: 'Roblox docs' and 'Measured' beat 'Rule of "
+     "thumb'. Cite note titles you used.",
      schema({"action": {"type": "string", "enum": ["search", "read", "sections", "list", "api"]},
              "query": {"type": "string", "description": "search: the task or bug in plain words"},
-             "count": {"type": "integer", "description": "search: notes to return, default 3, at most 8"},
-             "title": {"type": "string", "description": "read/sections: the note title from a search"},
+             "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game"],
+                       "description": "search/read/sections: where to look; default all (game only when the chat has a game project)"},
+             "k": {"type": "integer", "description": "search: results to return, default 5 (3 for shelf vault), at most 8"},
+             "count": {"type": "integer", "description": "search: same as k (older name)"},
+             "title": {"type": "string", "description": "read/sections: the title from a search result"},
              "heading": {"type": "string", "description": "read: words from the heading of the one section to read"},
              "folder": {"type": "string", "description": "list: a folder like '24 Worked Builds'; empty for the top level"},
              "names": {"type": "string", "description": "api: API names separated by spaces"}}, ["action"]), t_vault),

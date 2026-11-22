@@ -1,0 +1,86 @@
+{
+ "save player coins between sessions": [
+  "Rebirth and Prestige System End to End",
+  "Session Locking and Profile Libraries",
+  "Saved Inventory End to End",
+  "AI Pitfalls - Data and Monetization",
+  "DataStore Fundamentals"
+ ],
+ "remote event exploit": [
+  "AI Pitfalls - Networking and Security",
+  "Exploits and Anti-Cheat",
+  "Cookbook - Remotes and Networking",
+  "How Exploits Work - The Client Boundary",
+  "RemoteEvents RemoteFunctions and Unreliable Remotes"
+ ],
+ "mobile ui scaling": [
+  "Mobile and Low-End Optimization",
+  "Case Study - Phone UI Overhaul",
+  "Responsive UI for Phone Tablet Console and PC",
+  "UI Asset Pipeline",
+  "Debugging UI Layout and Input"
+ ],
+ "sword slash vfx": [
+  "Slash VFX Recipes - Crescent and Ring",
+  "Beams and Trails",
+  "VFX Timing with Animation",
+  "VFX Previews in Blender for Roblox - Colour and Framing",
+  "Elemental VFX Kits - Fire, Ice, Earth, Water, Wind and Lightning"
+ ],
+ "datastore session lock": [
+  "Debugging DataStore Problems",
+  "Session Locking and Profile Libraries",
+  "DataStore Fundamentals",
+  "Resetting One Player's Data Safely",
+  "AI Pitfalls - Data and Monetization"
+ ],
+ "leaderboard": [
+  "OrderedDataStores and Leaderboards",
+  "Big Numbers Precision and Formatting",
+  "Economy Resets and Seasonal Wipes",
+  "Global Leaderboards End to End",
+  "Social Design and Multiplayer Play"
+ ],
+ "lag on phones": [
+  "Mobile and Low-End Optimization",
+  "Mesh Optimization for Mobile",
+  "VFX Performance Budgets and Culling",
+  "Performance Fundamentals",
+  "Juice on a Budget - Mobile and Low-End"
+ ],
+ "gamepass purchase receipt": [
+  "Game Passes",
+  "Exploits and Anti-Cheat",
+  "Purchase Receipts and Purchase History in UI",
+  "Purchase Data and Receipts",
+  "MarketplaceService - Engine Reference Card"
+ ],
+ "npc pathfinding": [
+  "Pathfinding",
+  "Pathfinding Edge Cases and Fallbacks",
+  "NPC AI and Behaviour",
+  "PathfindingService - Engine Reference Card",
+  "Ranged Enemy Tactics - Cover Points, Line of Sight and Peeking"
+ ],
+ "tween a door open": [
+  "Clickable and Interactive Parts - ClickDetector, ProximityPrompt and Touched",
+  "Tween and CFrame Animation of Objects",
+  "Horror Monster Chase AI End to End",
+  "Snippets - Procedural Motion",
+  "CollectionService Patterns"
+ ],
+ "teleport between places": [
+  "Teleporting and Multi-Place Games",
+  "Genre Playbook - Battle Royale",
+  "Places Universes and Experience Settings",
+  "Session State Across Places",
+  "Parties and Group Teleports"
+ ],
+ "lighting for a horror map": [
+  "Genre Playbook - Horror and Story",
+  "Teardown - Piggy",
+  "Case Study - 99 Nights in the Forest",
+  "Thumbnail Composition for High CTR - Focal Point, Contrast and Readability",
+  "Stylised vs Realistic Material Pipelines"
+ ]
+}
