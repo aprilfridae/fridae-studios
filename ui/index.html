@@ -179,7 +179,14 @@ button.pname:hover { background: var(--hover); }
 .cv-row .x { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: var(--faint); }
 .cv-row .x:hover { background: var(--press); color: var(--text); }
 .cv-row .x[data-sure] { width: auto; padding: 0 8px; border-radius: 999px; background: var(--press); color: var(--text); font-size: 11px; white-space: nowrap; }
-.cv-row.past { grid-template-columns: minmax(0, 1fr); }
+.cv-row.past { grid-template-columns: minmax(0, 1fr) auto; }
+.cv-row.past .x, .cv-gone .x { width: auto; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 13px; color: var(--faint); visibility: hidden; }
+.cv-row.past:hover .x, .cv-row.past:focus-within .x, .cv-row.past .x[data-sure], .cv-gone .x { visibility: visible; }
+.ask.promo.nogame h4::after { content: "no game"; margin-left: 8px; font: 400 12px/1 var(--mono); color: var(--faint); }
+.cv-gone { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+.cv-gone summary { cursor: pointer; padding: 6px 8px; font-size: 13px; color: var(--faint); list-style: none; }
+.cv-gone summary::-webkit-details-marker { display: none; }
+.cv-gone summary:hover { color: var(--text); }
 .cv-new { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: var(--r-s); font-size: 14px; }
 .cv-new:hover { background: var(--hover); }
 .cv-foot { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 8px 4px; margin-top: 6px; border-top: 1px solid var(--line); }
@@ -273,6 +280,7 @@ button.pname:hover { background: var(--hover); }
 .xp-body { padding: 0 16px 8px; border-top: 1px solid var(--line); }
 .xp-act { display: flex; align-items: center; gap: 12px; padding: 10px 0 0; font-size: 13px; color: var(--faint); }
 .xp-act .pill { height: 28px; padding: 0 12px; font-size: 12px; }
+.xp-act .xp-remove { margin-left: auto; font-size: 13px; color: var(--faint); }
 .xp-body .col { max-width: none; margin: 0; }
 .xp-body .you { margin-top: 12px; }
 .ai-tag { color: var(--dim); }
@@ -1094,9 +1102,9 @@ function pane(id) {
 /* where a chat belongs: its game's folder, or "" for no game */
 const projKey = (p) => (p && p.project && p.project.path) || "";
 /* an expert or helper another chat started: shown folded in that chat, never as a chat of its own */
-const isHelper = (p) => !!(p && p.parent);
+const isHelper = (p) => !!(p && (p.parent || p.team));
 /* the user's own chats (not helpers, not the researcher) */
-const isChat = (p) => !!p && !p.parent && p.role !== "research";
+const isChat = (p) => !!p && !isHelper(p) && p.role !== "research";
 /* the chats listed for a project: started ones, plus the one in front */
 function projectChats(key) {
   return [...agents.values()].filter((p) => isChat(p) && projKey(p) === key && (p.started || p.busy || p.id === current || (key && !p.started)));
@@ -1106,7 +1114,7 @@ function select(id) {
   if (isHelper(p)) { openHelper(p); return; }
   const old = agents.get(current);
   if (old && old !== p) { old.scroll = scroller.scrollTop; old.col.hidden = true; }
-  current = id; p.col.hidden = false;
+  current = id; p.col.hidden = false; draftCol.hidden = true;
   const key = p.project ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
   if (curProj !== key) curProj = key;
   lastChat[key] = id;
@@ -1126,7 +1134,7 @@ function showProject(key, tab) {
     const r = rvAll[key], lead = r && r.run && r.run.lead;
     const mine = projectChats(key), want = mine.find((x) => x.id === lastChat[key]) || mine.find((x) => x.id === lead) || mine.filter((x) => x.started).pop() || mine[mine.length - 1];
     if (want) { const keepView = view; select(want.id); view = keepView; }
-    else { if (p) { p.scroll = scroller.scrollTop; p.col.hidden = true; } current = null; ensureChat(key); }
+    else showDraft(key);
   }
   setView(view);
 }
@@ -1140,29 +1148,64 @@ function savePlace() {
   try { localStorage.setItem("place", JSON.stringify({ proj: homeProj === null ? "" : homeProj, view: view === "all" ? "all" : isPage(view) ? "chat" : view })); } catch (e) {}
 }
 /* A chat for a project: the idle empty chat the app keeps ready, else a new one, tied to the project. */
-const wantProj = {};   /* chat id -> the project it is being tied to, until its project event arrives */
+const wantProj = {};
+const draftSeed = {};  /* project path -> an idea's details, for the chat its first message makes */   /* chat id -> the project it is being tied to, until its project event arrives */
 let ensuring = false;
 async function ensureChat(key, fresh) {
-  if (ensuring) return; ensuring = true;
+  if (ensuring) return null; ensuring = true;
   try {
     let p = fresh ? null : [...agents.values()].find((x) => isChat(x) && !x.started && !x.busy && !x.project && !x.seed);
     let id = p && p.id;
     if (!id) {
-      const r = await api("/api/new", {});
+      const r = await api("/api/new", { ai: defaultAi() });
       if (!r.ok) { note("All eight agents are busy. Close a chat you are done with, then try again."); return; }
       id = r.agent;
     }
-    wantProj[id] = key;
+    if (key) wantProj[id] = key;
+    const wantAi = draftAi || defaultAi(); draftAi = null;
+    if (chatAi(pane(id)) !== wantAi) { await api("/api/ai", { agent: id, choice: wantAi }); pane(id).ai = wantAi; }
+    if (draftSeed[key]) { pane(id).seed = draftSeed[key]; delete draftSeed[key]; }
     if (key) {
       const r = await api("/api/project", { agent: id, action: "use", path: key });
       if (r && r.ok && r.project) { const q = pane(id); q.project = r.project; if (q.start) { q.start.step = r.project.bible ? "ready" : "kind"; q.start.paint(); } }
     }
     if (curProj === key) select(id);
+    return id;
   } finally { ensuring = false; }
+}
+/* A game with no chat yet (or New chat): an empty page and the message box, and no chat is made until the first
+   message is sent (or a start button is pressed), so looking around never takes an agent slot. */
+const draftCol = el("div", "col"); draftCol.hidden = true;
+function showDraft(key) {
+  const p = agents.get(current);
+  if (p) { p.scroll = scroller.scrollTop; p.col.hidden = true; }
+  current = null;
+  if (!draftCol.parentNode) scroller.appendChild(draftCol);
+  const pr = (projects.projects || []).find((x) => x.path === key);
+  const wrap = el("div", "hello", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede"></p>');
+  wrap.querySelector(".lede").textContent = pr ? "A new chat for " + pr.name + ". Say what you want to work on." : "Say it in plain words. I work in your open Studio place and in Blender, and I show you what I made before calling it done.";
+  if (pr && !pr.bible) {
+    const card = el("div", "ask start", '<h4>Is this a new game, or one you are already working on?</h4><p class="sub">New game: I ask about the idea, one question at a time, and write it up before anything is built. Already working on it: I read through the place and the folder first.</p><div class="act"><button class="pill main">New game</button><button class="pill">Already working on it</button></div>');
+    const [kn, ke] = card.querySelectorAll(".pill");
+    const go = async (kind) => { kn.disabled = ke.disabled = true; const id = await ensureChat(key); if (!id) { kn.disabled = ke.disabled = false; return; } kickoffChat(agents.get(id), kind); };
+    kn.onclick = () => go("new"); ke.onclick = () => go("existing");
+    wrap.appendChild(card);
+  }
+  draftCol.replaceChildren(wrap); draftCol.hidden = false;
+  paintHead(); paintComposer(); paintSide();
+}
+/* the first message of a game's chat: a new game is talked through first, an existing one is read */
+function kickoffChat(p, kind) {
+  if (!p) return;
+  const text = kind === "new" && p.seed ? "This is a new game, starting from this idea out of market research:\n\n" + p.seed + "\n\nInterview me to sharpen it before building anything."
+    : kind === "new" ? "This is a new game. Interview me about the idea before building anything."
+    : "This is a game I am already working on. Read through it and get up to speed.";
+  api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
+  p.seed = null;
 }
 /* the sidebar: each game with one state mark, No project when such chats exist, and New project */
 function projState(path) {
-  const r = rvAll[path], n = rvWaiting(r).length + rvNeeds(r).filter((c) => !rvDone.has(c.id)).length;
+  const r = rvAll[path], n = needsOf(r).length;
   const working = [...agents.values()].some((p) => p.busy && projKey(p) === path);
   return { n, working, strong: rvNeeds(r).some((c) => !rvDone.has(c.id)) || rvWaiting(r).some((i) => i.blocking) };
 }
@@ -1190,7 +1233,7 @@ function paintSide() {
     b.onclick = () => showProject(x.path);
     rows.push(b);
   }
-  const loose = [...agents.values()].filter((p) => isChat(p) && !p.project && wantProj[p.id] === undefined && (p.started || p.busy));
+  const loose = [...agents.values()].filter((p) => isChat(p) && !p.project && !wantProj[p.id] && (p.started || p.busy));
   if (loose.length || curProj === "") {
     const b = el("button", "proj none" + (curProj === "" && !isPage(view) ? " on" : ""), "<b>No project</b><span class=\"state\"></span>");
     b.querySelector(".state").appendChild(el("span", "dot" + (loose.some((p) => p.busy) ? " live" : "")));
@@ -1293,7 +1336,7 @@ function paintConv() {
   const add = el("button", "cv-new", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg>New chat');
   add.title = "Start another chat for " + (key ? "this game" : "no game") + ". Chats that are working keep going at the same time.";
   add.disabled = (typeof status.slots_used === "number" ? status.slots_used : agents.size) >= (status.max_agents || 8);
-  add.onclick = () => { closeConv(); ensureChat(key, true); };
+  add.onclick = () => { closeConv(); showDraft(key); };
   m.appendChild(add);
   const open = projectChats(key);
   if (open.length) m.appendChild(el("h5", "", "Open"));
@@ -1316,14 +1359,34 @@ function paintConv() {
     const row = el("button", "cv-row past", "<span><b></b><small></small></span>");
     row.querySelector("b").textContent = c.name; row.title = c.name;
     row.querySelector("small").textContent = ago(c.updated) + " · " + c.messages + (c.messages === 1 ? " message" : " messages");
-    row.onclick = async () => { closeConv(); const r = await api("/api/open-chat", { id: c.id }); if (r.ok) { select(r.agent); loadHistory(); } };
+    const x = el("span", "x", "Delete"); x.setAttribute("role", "button"); x.tabIndex = 0; x.title = "Delete this chat. It can be put back from Deleted, at the bottom of this list.";
+    row.appendChild(x);
+    row.onclick = async (ev) => {
+      if (ev.target.closest(".x")) {
+        ev.stopPropagation();
+        /* a second press means it: the chat moves to Deleted (it can be put back) */
+        if (!x.dataset.sure) { x.dataset.sure = "1"; x.textContent = "Delete it?"; setTimeout(() => { delete x.dataset.sure; x.textContent = "Delete"; }, 3000); return; }
+        await api("/api/delete-chat", { id: c.id, confirm: "delete" }); loadHistory(); return;
+      }
+      closeConv(); const r = await api("/api/open-chat", { id: c.id }); if (r.ok) { select(r.agent); loadHistory(); }
+    };
     m.appendChild(row);
   });
+  const gone = (saved.deleted || []).filter((c) => !c.parent && c.role !== "research" && (c.project || "") === key).slice(0, 30);
+  if (gone.length) {
+    const d = el("details", "cv-gone", "<summary>Deleted (" + gone.length + ")</summary>");
+    gone.forEach((c) => {
+      const row = el("div", "cv-row past", '<span><b></b><small></small></span><button class="x">Put back</button>');
+      row.querySelector("b").textContent = c.name; row.querySelector("small").textContent = ago(c.updated);
+      row.querySelector(".x").onclick = async (ev) => { ev.stopPropagation(); await api("/api/restore-chat", { id: c.id }); loadHistory(); };
+      d.appendChild(row);
+    });
+    d.addEventListener("click", (ev) => ev.stopPropagation());
+    m.appendChild(d);
+  }
   const foot = el("div", "cv-foot");
   if (agents.get(current)) { const rn = el("button", "linkish", "Rename this chat"); rn.onclick = renameChat; foot.appendChild(rn); }
-  const del = el("button", "linkish", "Delete or put back chats"); del.onclick = () => { closeConv(); openSetup("chats"); $("saved-panel").hidden = false; reloadSaved(); };
-  foot.appendChild(del);
-  m.appendChild(foot);
+  if (foot.children.length) m.appendChild(foot);
 }
 function closeConv() { $("conv-menu").classList.remove("on"); $("chat-title").setAttribute("aria-expanded", "false"); }
 $("chat-title").onclick = (ev) => {
@@ -1339,7 +1402,7 @@ const CHEVRON = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke=
 /* the line for helper `hid` in chat `p`, made where the chat's log says it was started (or at the end) */
 function xpLine(p, hid, name, expert) {
   if (p.xps[hid]) return p.xps[hid];
-  const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state">starting</span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span></div></div>');
+  const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state">starting</span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
   const split = splitExpert(name, expert);
   line.querySelector(".xp-name").textContent = split[0]; line.querySelector(".xp-job").textContent = split[1];
   const row = line.querySelector(".xp-row");
@@ -1350,6 +1413,9 @@ function xpLine(p, hid, name, expert) {
     line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false");
   };
   line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: hid });
+  line.querySelector(".xp-remove").onclick = () => api("/api/remove", { agent: hid });
+  /* a chat reopened later replays where its experts started: one that is not open says so */
+  if (bootMark !== Infinity && !agents.has(hid)) line.querySelector(".xp-state").textContent = "closed";
   p.xps[hid] = line;
   (p.turn || p.col).appendChild(line);
   if (p.turn) p.turn._steps = null;
@@ -1380,6 +1446,7 @@ function paintExpert(h) {
   line.querySelector(".dot").className = "dot" + (h.busy ? " live" : h.started && h.last !== "Stopped" && h.last !== "Needs attention" ? " ok" : "");
   line.classList.toggle("busy", !!h.busy);
   const stop = line.querySelector(".xp-act .pill"); stop.hidden = !h.busy;
+  line.querySelector(".xp-remove").hidden = !!h.busy || !agents.has(h.id);
   line.querySelector(".xp-act span").textContent = h.busy ? "Working now. Its own log, read only: the chat that started it talks to it." : "Its own log, read only.";
 }
 /* open an expert where it lives: the chat that started it, with its line open */
@@ -1428,13 +1495,7 @@ function startCard(p) {
     p.project = r.project; paintProject(); loadProjects();
     go(r.project.bible ? "ready" : "kind", r.project.note || "");
   }
-  function kickoff(kind) {
-    const text = kind === "new" && p.seed ? "This is a new game, starting from this idea out of market research:\n\n" + p.seed + "\n\nInterview me to sharpen it before building anything."
-      : kind === "new" ? "This is a new game. Interview me about the idea before building anything."
-      : "This is a game I am already working on. Read through it and get up to speed.";
-    api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
-    p.seed = null;
-  }
+  const kickoff = (kind) => kickoffChat(p, kind);
   function paint() {
     const pr = p.project; let h = "";
     if (st.step === "folder") {
@@ -1678,6 +1739,8 @@ function onEvent(e) {
     /* the experts of a closed chat wait, unseen, until it is opened again */
     for (const h of agents.values()) if (h.parent === e.agent) { h.line = null; orphans.set(h.id, h); parked.appendChild(h.col); }
     if (current === e.agent) { current = null; if (bootMark !== Infinity && view === "chat" && curProj !== null) showProject(curProj, "chat"); }
+    /* the researcher closes itself once its ideas are stored: the ideas show, its line goes */
+    if (p === researchPane) { researchPane = null; paintResearchJob(); loadResearch(); }
     paintSide(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
   }
   const p = pane(e.agent);
@@ -1687,8 +1750,7 @@ function onEvent(e) {
     if (isHelper(p) || p.role === "research") {
       const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
       if (isHelper(p)) attachHelper(p); else { researchPane = p; parked.appendChild(p.col); paintResearch(); }
-    } else if (bootMark !== Infinity && e.id > bootMark && !e.background) select(p.id);
-    if (pendingSeed && pendingSeed.id === p.id) { p.seed = pendingSeed.text; box.value = "Let's make this: " + pendingSeed.title; fit(); pendingSeed = null; }
+    }   /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
     loadHistory();
   } else if (e.kind === "helper_started") {
     /* this chat started an expert here: its line goes at this point of the conversation */
@@ -1889,7 +1951,8 @@ function promoCard(c) {
 /* ---------- actions ---------- */
 function fit() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 168) + "px"; paintComposer(); }
 function send() {
-  const p = agents.get(current); if (!p) return;
+  const p = agents.get(current);
+  if (!p) { sendFromDraft(); return; }
   const text = box.value.trim();
   if (p.busy && !text && !pending.some((a) => a.name)) { api("/api/stop", { agent: p.id }); return; }
   const ready = pending.filter((a) => a.name);
@@ -1899,6 +1962,15 @@ function send() {
   if (runMode === "studio" || leadsRun(p)) { studioSend(p, text, ready, runMode === "studio"); return; }
   box.value = ""; pending = []; paintAtts(); fit();
   plainSend(p, text, names);
+}
+/* the first message on an empty page makes the chat (tied to the game in front), then goes as usual */
+async function sendFromDraft() {
+  if (curProj === null || draftCol.hidden) return;
+  if (!box.value.trim() && !pending.some((a) => a.name)) return;
+  if (pending.some((a) => !a.name && !a.failed)) return;
+  const id = await ensureChat(curProj);
+  if (!id) return;
+  if (current === id && agents.get(id)) send();
 }
 /* a message in the chosen ordinary mode (Ask me, Full auto, Overnight) */
 function plainSend(p, text, names) {
@@ -1959,7 +2031,7 @@ function noteReview(text, path) {
 const RUN_MODES = [
   ["ask", "Ask me", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you: questions go on the board, it picks its own next job, and the computer stays awake. Leave Studio open."],
+  ["night", "Overnight", "Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you, it picks its own next job, and the computer stays awake. Leave Studio open."],
   ["studio", "Studio", "A Lead takes this game through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 let runMode = "ask";
@@ -2170,7 +2242,7 @@ function closeGuide() { document.body.classList.remove("guide"); }
 $("b-guide").onclick = openGuide; $("gd-close").onclick = closeGuide;
 
 /* ---------- tabs: Chat, Review and Promos for the project in front, or the New project page ---------- */
-let research = {}, pendingSeed = null, researchPane = null;
+let research = {}, researchPane = null;
 function setView(v) {
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
   if (v === "review" && !curProj) v = "chat";
@@ -2263,9 +2335,9 @@ function ideaCard(i) {
     const project = await makeFolder(start); if (!project) return;
     start.disabled = false;
     /* the idea goes with the chat's first message: New game in its Chat starts the interview from it */
+    draftSeed[project.path] = ideaText(i);
     showProject(project.path, "chat");
-    const seed = () => { const p = agents.get(current); if (p && projKey(p) === project.path) { p.seed = ideaText(i); box.value = "Let's make this: " + (i.title || "this idea"); fit(); return true; } return false; };
-    if (!seed()) { let n = 0; const t = setInterval(() => { if (seed() || ++n > 20) clearInterval(t); }, 150); }
+    box.value = "Let's make this: " + (i.title || "this idea"); fit();
   };
   copy.onclick = async () => { copy.textContent = (await copyText(ideaText(i))) ? "Copied" : "Could not copy"; setTimeout(() => (copy.textContent = "Copy"), 1500); };
   return card;
@@ -2288,10 +2360,11 @@ function paintResearchJob() {
   const host = $("r-job"), h = researchPane;
   if (!h || !agents.has(h.id)) { host.replaceChildren(); return; }
   if (!h.line) {
-    const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state"></span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span></div></div>');
+    const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-state"></span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
     const row = line.querySelector(".xp-row");
     row.onclick = () => { const open = !line.classList.contains("open"); line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false"); };
     line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: h.id });
+    line.querySelector(".xp-remove").onclick = () => api("/api/remove", { agent: h.id });
     h.line = line; h.col.hidden = false; line.querySelector(".xp-body").appendChild(h.col);
   }
   if (h.line.parentNode !== host) host.replaceChildren(h.line);
@@ -2539,13 +2612,14 @@ function paintPromoProgress() {
   prChats = prChats.filter((x) => !madeBy.has(x.agent));
   if (prChats.length !== before) savePrChats();
   const box = $("pr-progress"); box.innerHTML = "";
-  $("pr-progress-wrap").hidden = !prChats.length;
-  prChats.slice().reverse().forEach((x) => {
+  const here = prChats.filter((x) => promoHere(x.agent).show);
+  $("pr-progress-wrap").hidden = !here.length;
+  here.slice().reverse().forEach((x) => {
     const p = agents.get(x.agent);
     const row = el("div", "pr-row", '<span class="dot"></span><span class="grow"><b></b><small></small></span><button class="pill">Open chat</button><button class="icon" aria-label="Remove from this list" title="Remove from this list"><svg width="10" height="10" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></button>');
     row.querySelector(".dot").className = "dot" + (p && p.busy ? " live" : p ? " ok" : "");
     row.querySelector("b").textContent = (p && p.name) || x.title;
-    row.querySelector("small").textContent = promoChatState(p);
+    row.querySelector("small").textContent = promoChatState(p) + (promoHere(x.agent).nogame ? " · no game" : "");
     const [open, drop] = row.querySelectorAll("button");
     open.hidden = !chatKnown(x.agent);
     open.onclick = () => openChatById(x.agent);
@@ -2561,8 +2635,21 @@ function upsertPromo(card) {
   promoLib.set(card.id, { card, el: promoCard(card) });
   return true;
 }
+/* the game a promo (or a promo chat) belongs to: its chat's project, "" for none, null when its chat is not known */
+function promoProj(agentId) {
+  const p = agentId && agents.get(agentId);
+  if (p) return projKey(p);
+  const c = agentId && ((saved && saved.chats) || []).find((x) => x.id === agentId);
+  return c ? c.project || "" : null;
+}
+/* shown for the game in front: its own, and those of no game (marked so) */
+function promoHere(agentId) {
+  const k = promoProj(agentId);
+  return { show: k === null || k === "" || k === (curProj || ""), nogame: (k === null || k === "") && !!curProj };
+}
 function paintLibrary() {
-  const lib = $("pr-library"), items = [...promoLib.values()];
+  const lib = $("pr-library"), items = [...promoLib.values()].filter((x) => promoHere(x.card.agent).show);
+  for (const x of items) x.el.classList.toggle("nogame", promoHere(x.card.agent).nogame);
   items.sort((a, b) => promoWhen(b.card) - promoWhen(a.card) || (b.card.mtime || 0) - (a.card.mtime || 0));
   $("pr-count").textContent = items.length ? items.length + (items.length === 1 ? " promo" : " promos") : "";
   $("pr-empty").hidden = items.length > 0;
@@ -2577,7 +2664,7 @@ function paintLibrary() {
     it.el._chat.hidden = !chatKnown(it.card.agent);
   }
   /* rebuilt only when the order changes, so a playing video or a caption being typed is left alone */
-  const sig = groups.map(([l, xs]) => l + ":" + xs.map((x) => x.card.id + "@" + (x.card.mtime || 0)).join(",")).join("|");
+  const sig = (curProj || "") + "#" + groups.map(([l, xs]) => l + ":" + xs.map((x) => x.card.id + "@" + (x.card.mtime || 0)).join(",")).join("|");
   if (sig === paintLibrary.sig) return;
   paintLibrary.sig = sig;
   lib.innerHTML = "";
@@ -2609,8 +2696,7 @@ function onPromo(e) {
 }
 function openInPromos(id) {
   const p = [...agents.values()].find((x) => x.promoSeen && x.promoSeen[id]);
-  if (p && p.project && projKey(p) !== curProj) { curProj = projKey(p); }
-  setView("promos");
+  if (p && p.project && projKey(p) !== curProj) showProject(projKey(p), "promos"); else setView("promos");
   const it = promoLib.get(id); if (!it) return;
   it.el.scrollIntoView({ block: "center" });   /* the view is showing now: scrolling lays it out */
   it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
@@ -2692,6 +2778,7 @@ function undoRunCard(path, onDone) {
   const files = el("button", "pill", "Undo the files only"); files.hidden = true; act.insertBefore(files, keep);
   keep.onclick = () => card.remove();
   const run1 = async (filesOnly) => {
+    if (path !== rvPathNow()) { card.remove(); return; }   /* made for a game no longer in front */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
     let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick, files_only: filesOnly }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
     if (res && res.ok) {
@@ -2718,6 +2805,7 @@ $("rv-end").onclick = () => {
   const [go, keep] = card.querySelectorAll(".pill");
   keep.onclick = () => card.remove();
   go.onclick = async () => {
+    if (path !== rvPathNow()) { card.remove(); return; }   /* made for a game no longer in front */
     go.disabled = keep.disabled = true; go.textContent = "Ending...";
     let r; try { r = await api("/api/studio-run", { path, action: "end" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
     if (r && r.ok) { card.remove(); if (rvAll[path] && rvAll[path].run) rvAll[path].run.on = false; paintSwitch(); paintComposer(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
@@ -2872,6 +2960,12 @@ function paintRvList(box, els) {
 function paintReview() {
   rvDeferred = false;
   const path = rvPathNow(), r = rvAll[path], run = r && r.run && r.run.on ? r.run : null;
+  /* another game in front: what was open or typed for the last one goes (an End or Undo card would act on it) */
+  if (paintReview.path !== path) {
+    paintReview.path = path;
+    $("rv-undo-box").replaceChildren(); $("rv-end-box").replaceChildren(); $("rv-set").open = false;
+    $("rv-err").textContent = ""; $("rv-said").textContent = ""; $("rv-say").value = ""; $("rv-say").style.height = "";
+  }
   paintRun(r);
   const items = ((r && r.items) || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
   const needs = rvNeeds(r).filter((c) => rvShown(c.id));
@@ -2882,7 +2976,7 @@ function paintReview() {
   paintRvList($("rv-needs"), blocking.map(itemEl).concat(needs.map(needEl)));
   paintRvList($("rv-look"), look.map(itemEl));
   for (const k of [...rvCards.keys()]) if (!keep.has(k)) rvCards.delete(k);
-  const nNeeds = blocking.filter((i) => !rvDone.has(i.id)).length + needs.filter((c) => !rvDone.has(c.id)).length, open = look.filter((i) => !rvDone.has(i.id));
+  const nNeeds = needsOf(r).length, open = look.filter((i) => !rvDone.has(i.id));
   $("rv-needs-n").textContent = nNeeds || ""; $("rv-look-n").textContent = open.length || "";
   $("rv-needs-none").hidden = blocking.length + needs.length > 0; $("rv-look-none").hidden = look.length > 0;
   $("rv-all").hidden = open.length < 2;
@@ -2917,22 +3011,26 @@ async function loadRvUsage(force) {
   if (view === "all") paintAll();
   if (view === "review") paintGlance(rvAll[rvPathNow()], (rvAll[rvPathNow()] || {}).run && rvAll[rvPathNow()].run.on ? rvAll[rvPathNow()].run : null, +$("rv-needs-n").textContent || 0, +$("rv-look-n").textContent || 0);
 }
+/* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
+const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
 function rvCost(path) {
   const chatProj = {};
   for (const c of saved.chats || []) if (c.project) chatProj[c.id] = c.project;
   for (const p of agents.values()) if (p.project) chatProj[p.id] = projKey(p);
   const r = rvAll[path], since = r && r.run && r.run.on ? r.run.started || 0 : 0;
   const day = new Date(); day.setHours(0, 0, 0, 0); const today = day.getTime() / 1000;
-  const out = { usd: 0, tokens: 0, turns: 0, run: 0, days: [0, 0, 0, 0, 0, 0, 0] };
+  const out = { usd: 0, tokens: 0, turns: 0, run: 0, days: [0, 0, 0, 0, 0, 0, 0] }, tok = [0, 0, 0, 0, 0, 0, 0];
   for (const x of rvUsage) {
-    if ((x.project || chatProj[x.chat]) !== path) continue;
+    if (!path || !samePath(x.project || chatProj[x.chat], path)) continue;
     const usd = x.cost || 0;
     out.usd += usd; out.tokens += (x.total || 0) - (x.cache_read || 0); out.turns++;
     if (since && x.t >= since) out.run += usd;
     const ago0 = Math.floor((today - x.t) / 86400) + 1;
     const slot = x.t >= today ? 6 : 6 - ago0;
-    if (slot >= 0 && slot <= 6) out.days[slot] += usd || ((x.total || 0) - (x.cache_read || 0)) / 1e6;
+    if (slot >= 0 && slot <= 6) { out.days[slot] += usd; tok[slot] += (x.total || 0) - (x.cache_read || 0); }
   }
+  /* the spark is dollars when turns carry a cost, else tokens: never the two added together */
+  if (!out.usd) out.days = tok;
   return out;
 }
 /* who is working on the game right now: the Lead, each expert at work, and any other chat of the game at work */
@@ -3022,10 +3120,10 @@ function openAll() {
   clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); loadRvUsage(); } else clearInterval(apTimer); }, 5000);
   og.last = 0; if (!og.raf) og.raf = requestAnimationFrame(overviewFrame);
 }
-/* what needs the user on a game, most pressing first: items the run waits for, to-dos only they can do, then the rest */
+/* what needs the user on a game: items the run waits for, then to-dos only they can do. The one count of it: the
+   sidebar, the Review tab, Review's Needs you and the All projects cards all use this. */
 function needsOf(r) {
-  const wait = rvWaiting(r), cards = rvNeeds(r).filter((c) => !rvDone.has(c.id));
-  return wait.filter((i) => i.blocking).concat(cards, wait.filter((i) => !i.blocking));
+  return rvWaiting(r).filter((i) => i.blocking).concat(rvNeeds(r).filter((c) => !rvDone.has(c.id)));
 }
 const costText = (c) => !c.turns ? "" : c.usd >= 0.01 ? "$" + c.usd.toFixed(2) + " so far" : fmtTokens(c.tokens) + " tokens so far";
 function apCard(x) {
@@ -3237,8 +3335,7 @@ function onStudioRun(e) {
   reloadReview();
 }
 function openInReview(path, id) {
-  if (path && path !== curProj) curProj = path;
-  setView("review");
+  if (path && path !== curProj) showProject(path, "review"); else setView("review");
   const c = id && rvCards.get(id); if (!c) return;
   c.el.scrollIntoView({ block: "center" });
   c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
@@ -3318,7 +3415,7 @@ function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) 
 function chatAi(p) { return (p && p.ai) || defaultAi(); }
 /* Claude or Gemini for the chat in front. A chat that has started carries on with the other AI, handed the chat so far. */
 function paintAiPick() {
-  const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);
+  const have = (status.ai || {}).installed || {}, p = agents.get(current), on = p ? chatAi(p) : draftAi || defaultAi();
   const wrap = $("ai-pick"); wrap.innerHTML = "";
   AIS.forEach(([id, name]) => {
     const b = el("button", (id === on ? "on" : "") + (have[id] === false ? " missing" : ""), esc(name));
@@ -3330,8 +3427,11 @@ function paintAiPick() {
   });
   if (typeof menu !== "undefined" && !menu.classList.contains("on")) paintModel();
 }
+let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
 async function switchAi(id) {
-  const p = agents.get(current); if (!p || chatAi(p) === id) return;
+  const p = agents.get(current);
+  if (!p) { draftAi = id; paintAiPick(); return; }
+  if (chatAi(p) === id) return;
   if (p.busy) { note("Wait until it finishes, or stop it, then switch."); return; }
   let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   if (!r.ok) { note(r.error || "Could not switch."); return; }
@@ -3371,7 +3471,7 @@ function blockedCard(p, commands) {
     if (p.busy) { say("Wait for the agent to finish, then allow it."); return; }
     if (!(await allowCommands(names, true))) return;
     finish("Allowed: " + names.join(", "));
-    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
+    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", app: true, studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
   };
   no.onclick = () => finish("Not allowed: " + names.join(", "));
   return card;
