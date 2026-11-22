@@ -78,6 +78,21 @@ pub struct Ask {
     /// A message the page sends for the user without their words (the blocked-command card's "You may now run ...").
     /// Like a wake, it is left out of the chat handed to another AI (`handover_text`).
     pub app: bool,
+    /// When typed messages and app messages go out as one turn: the typed part only, for the chat handed to another AI.
+    pub typed: Option<String>,
+}
+
+/// Messages that go out as one turn: when typed ones and the app's own are mixed, the typed part (see `Ask::typed`).
+fn merged_typed(parts: &[(&str, &Ask)]) -> Option<String> {
+    let app = |a: &Ask| a.wake || a.app;
+    let mixed = parts.iter().any(|(_, a)| app(a)) && parts.iter().any(|(_, a)| !app(a));
+    mixed.then(|| parts.iter().filter(|(_, a)| !app(a)).map(|(t, a)| a.typed.clone().unwrap_or_else(|| t.to_string())).collect::<Vec<_>>().join("\n\n"))
+}
+
+/// The user's own words inside an app message: the note of "Ask for changes" in Review ("Review: <title> — change: <note>").
+fn change_note(line: &str) -> Option<(&str, &str)> {
+    let (title, note) = line.trim().strip_prefix("Review: ")?.split_once(" \u{2014} change: ")?;
+    Some((title.trim(), note.trim())).filter(|(_, n)| !n.is_empty())
 }
 
 /// What kind of turn just ended, for deciding what happens next.
@@ -740,8 +755,20 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
         }
         let Some(text) = e["text"].as_str().map(str::trim).filter(|t| !t.is_empty()) else { continue };
         match e["kind"].as_str() {
-            // only what the user typed: the loop's carry-ons and the app's own wakes and messages are left out
-            Some("user") if e["auto"] != true && e["app"] != true => lines.push(("User".to_string(), text.to_string())),
+            // only what the user typed: the loop's carry-ons and the app's own wakes and messages are left out, except
+            // the user's own note when they asked for changes in Review
+            Some("user") if e["auto"] != true => {
+                let app = e["app"] == true;
+                let typed = e["typed"].as_str().map(str::trim).filter(|t| !t.is_empty());
+                if !app {
+                    lines.push(("User".to_string(), typed.unwrap_or(text).to_string()));
+                }
+                if app || typed.is_some() {
+                    for (title, note) in text.lines().filter_map(change_note) {
+                        lines.push(("User".to_string(), format!("(asked for changes in Review, on \"{title}\") {note}")));
+                    }
+                }
+            }
             Some("text") => lines.push((ai.clone(), text.to_string())),
             _ => {}
         }
@@ -1158,11 +1185,14 @@ impl Agent {
             return self.send(text, ask);
         }
         self.show_queue();
+        let typed = merged_typed(&held.iter().map(|(_, t, a)| (t.as_str(), a)).chain([(text, ask)]).collect::<Vec<_>>());
         let text = held.iter().map(|(_, t, _)| t.as_str()).chain([text]).collect::<Vec<_>>().join("\n\n");
         let ask = Ask {
             attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).chain(ask.attachments.clone()).collect(),
             studio: merged_studio(&held, ask.studio),
             wake: ask.wake && held.iter().all(|(_, _, a)| a.wake),
+            app: ask.app && held.iter().all(|(_, _, a)| a.app || a.wake),
+            typed,
             ..ask.clone()
         };
         self.send(&text, &ask);
@@ -1413,7 +1443,7 @@ impl Agent {
         self.put(
             "user",
             json!({
-                "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto, "app": ask.wake || ask.app,
+                "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto, "app": ask.wake || ask.app, "typed": ask.typed,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
                 "studio": ask.studio, "studio_waiting": false, "fallback": fallback,
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
@@ -1869,6 +1899,7 @@ impl Agent {
         if !held.is_empty() {
             // what the user sent while it worked goes next, in one message, with the newest settings
             self.show_queue();
+            let typed = merged_typed(&held.iter().map(|(_, t, a)| (t.as_str(), a)).collect::<Vec<_>>());
             let text = held.iter().map(|(_, t, _)| t.as_str()).collect::<Vec<_>>().join("\n\n");
             let newest = held.last().unwrap().2.clone();
             let ask = Ask {
@@ -1876,6 +1907,8 @@ impl Agent {
                 attachments: held.iter().flat_map(|(_, _, a)| a.attachments.clone()).collect(),
                 studio: merged_studio(&held, newest.studio),
                 wake: held.iter().all(|(_, _, a)| a.wake), // one typed message among them makes it the user's
+                app: held.iter().all(|(_, _, a)| a.app || a.wake),
+                typed,
                 ..newest
             };
             let me = self.clone();
@@ -2571,6 +2604,23 @@ mod tests {
         let h = handover_text(&log, "Gemini", HANDOVER_CAP);
         assert!(h.contains("User: Build the shop\n\nClaude: The shop is in.\n\nUser: Make it blue\n\nGemini: It is blue now."), "{h}");
         assert!(!h.contains("approved") && !h.contains("may now run"), "the app's own messages are not the user's");
+    }
+
+    #[test]
+    fn a_mixed_turn_hands_over_only_the_typed_part_and_review_notes() {
+        let typed = Ask::default();
+        let wake = Ask { wake: true, ..Default::default() };
+        assert_eq!(merged_typed(&[("Review: Shop \u{2014} approved", &wake), ("Make it blue", &typed)]).as_deref(), Some("Make it blue"));
+        assert_eq!(merged_typed(&[("a", &typed), ("b", &typed)]), None, "all typed: the whole text is the user's");
+        assert_eq!(merged_typed(&[("a", &wake)]), None);
+        let log = vec![
+            json!({"kind": "user", "text": "Review: Shop \u{2014} approved\n\nMake it blue", "typed": "Make it blue"}),
+            json!({"kind": "user", "text": "Review: Map \u{2014} change: more trees near spawn", "app": true}),
+            json!({"kind": "user", "text": "Resume the studio run.", "app": true}),
+        ];
+        let h = handover_text(&log, "Claude", HANDOVER_CAP);
+        assert!(h.contains("User: Make it blue") && !h.contains("approved") && !h.contains("Resume"), "{h}");
+        assert!(h.contains("User: (asked for changes in Review, on \"Map\") more trees near spawn"), "{h}");
     }
 
     #[test]
