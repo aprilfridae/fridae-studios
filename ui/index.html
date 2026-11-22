@@ -892,7 +892,7 @@ body.proj #pd, body.guide #gd { transform: none; }
     <section data-s="connections">
       <h3>The AIs</h3>
       <div id="ai-list"></div>
-      <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment (off: an AI signed in with your plan is never billed to an API key set on this computer, such as ANTHROPIC_API_KEY; turn on if you sign in with a key or a company gateway)</label>
+      <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment (off: an AI signed in with your plan is never billed to an API key set on this computer, such as ANTHROPIC_API_KEY; turn on if you sign in with a key or a company gateway. Claude, Cursor and ChatGPT only: OpenCode never gets them, since each one would add a provider billed to it)</label>
       <h3>Roblox Studio plugin</h3>
       <p class="sub" id="plug-state"></p>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove</button></div>
@@ -1054,7 +1054,7 @@ const CONTROLS = [
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
-  ["API keys on this computer", "Setup, The AIs, Use API keys from my environment. Off unless you turn it on: an AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set."],
+  ["API keys on this computer", "Setup, The AIs, Use API keys from my environment. Off unless you turn it on: an AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Setup instead."],
   ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
   ["Text size", "Ctrl (Command on a Mac) and + or - makes everything bigger or smaller, and 0 resets it. It is also in Setup, under General."],
   ["Selected in Studio", "With the Studio plugin connected, the line under the message box shows what you have selected. The agent is told, so \"this\" means that."],
@@ -1944,6 +1944,10 @@ function onEvent(e) {
   } else if (e.kind === "blocked") {
     if (!p.turn) newTurn(p);
     p.turn.appendChild(blockedCard(p, e.commands || [])); p.turn._steps = null;
+    p.last = "Needs you";
+  } else if (e.kind === "refused") {
+    if (!p.turn) newTurn(p);
+    p.turn.appendChild(refusedCard(p, e.commands || [])); p.turn._steps = null;
     p.last = "Needs you";
   } else if (e.kind === "error") {
     if (!p.turn) newTurn(p);
@@ -3669,7 +3673,7 @@ async function allowCommands(names, allow) {
 }
 /* Programs that can start any other program (git aliases and hooks, env, xargs, find -exec, shells, interpreters...):
    the blocked card says so before the user allows one. */
-const RUNS_ANY = ["git", "env", "xargs", "find", "sh", "bash", "zsh", "fish", "dash", "python", "python3", "node", "ruby", "perl", "php", "lua", "make", "npm", "npx", "pnpm", "yarn", "bun", "deno", "cargo", "ssh", "sudo", "nice", "time", "nohup", "timeout", "watch", "awk", "osascript", "open", "pwsh", "powershell", "cmd"];
+const RUNS_ANY = ["git", "env", "xargs", "find", "sh", "bash", "zsh", "fish", "dash", "python", "python3", "node", "ruby", "perl", "php", "lua", "make", "npm", "npx", "pnpm", "yarn", "bun", "deno", "cargo", "ssh", "sudo", "nice", "time", "nohup", "timeout", "watch", "awk", "osascript", "open", "pwsh", "powershell", "cmd", "command", "exec", "stdbuf", "caffeinate", "doas", "parallel"];
 function blockedCard(p, commands) {
   const names = commands.map((c) => c.name);
   const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
@@ -3689,6 +3693,35 @@ function blockedCard(p, commands) {
     api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", app: true, studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
   };
   no.onclick = () => finish("Not allowed: " + names.join(", "));
+  return card;
+}
+/* A command the app did not approve by itself for how it is written (not for its program): the card says why in plain
+   words and, unless it could read other programs' settings, offers to run that exact command once in this chat. */
+function refusedCard(p, commands) {
+  const card = el("div", "ask enter", "<h4></h4><div class=\"why\"></div><div class=\"act\"></div>");
+  card.querySelector("h4").textContent = commands.length === 1 ? "A command was not run" : "Some commands were not run";
+  const why = card.querySelector(".why"), act = card.querySelector(".act");
+  const finish = (said) => { card.classList.add("done"); card.querySelector("h4").textContent = said; act.remove(); };
+  commands.forEach((c) => {
+    const pre = el("pre"); pre.textContent = c.command; why.appendChild(pre);
+    const r = el("p"); r.textContent = "Not run because " + c.reason; why.appendChild(r);
+  });
+  const runnable = commands.filter((c) => c.once);
+  if (runnable.length) {
+    const yes = el("button", "pill main", runnable.length === 1 ? "Run it once" : "Run these once");
+    yes.title = "Only this exact command, only in this chat, only one time.";
+    yes.onclick = async () => {
+      if (p.busy) { say("Wait for the agent to finish, then answer."); return; }
+      let ok = true;
+      for (const c of runnable) { const r = await api("/api/run-once", { agent: p.id, command: c.command }); ok = ok && r && r.ok; }
+      if (!ok) { say("That command can no longer be run from here."); return; }
+      finish("Allowed once");
+      api("/api/send", { agent: p.id, text: "You may run this exactly as written, one time: " + runnable.map((c) => c.command).join("\n") + "\nRun it now, then carry on.", app: true, studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
+    };
+    act.appendChild(yes);
+  }
+  const no = el("button", "pill", runnable.length ? "Not now" : "OK"); no.onclick = () => finish(runnable.length ? "Not run" : "Not run: " + commands.map((c) => c.command).join(", "));
+  act.appendChild(no);
   return card;
 }
 function paintCommands() {
@@ -3745,7 +3778,8 @@ $("plug-remove").onclick = async () => { await api("/api/plugin", { action: "rem
 async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintModel(); paintLimits();
-  paintNeeds(); paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys; paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
+  paintNeeds(); paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys;
+  if ((status.settings_put_back || []).length && !refresh.putBackSaid && (refresh.putBackSaid = true)) say("A setting was changed by something other than Fridae while it was closed (" + status.settings_put_back.join(", ") + "), so Fridae put it back as you had it. Change settings in Setup."); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}

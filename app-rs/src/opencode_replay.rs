@@ -130,6 +130,7 @@ fn replay_with(case: &str, resume: bool, twist: impl FnOnce(&str) -> Twist) -> (
             Out::Pictures(p) => format!("pictures {}", p.len()),
             Out::Encoded(p) => format!("encoded {}", p.len()),
             Out::Blocked(b) => format!("blocked {}", b.iter().filter_map(|c| c["name"].as_str()).collect::<Vec<_>>().join(",")),
+            Out::Refused(b) => format!("refused {}", b.iter().filter_map(|c| c["command"].as_str()).collect::<Vec<_>>().join(",")),
             Out::Error(e) => format!("error {e}"),
             Out::Failed(e) => format!("failed {e}"),
             Out::Usage(u) => format!("usage {}", u.output),

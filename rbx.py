@@ -72,7 +72,9 @@ def find_blender(required=True):
     env = os.environ.get("RBXKIT_BLENDER")
     if env and os.path.exists(env):
         return env
-    cfg = load_config().get("blender")
+    # run by the app: the Blender it checked is the one (above), never one named in the settings file
+    from_app = os.environ.get("FRIDAE_SETTINGS_FROM_APP") == "1"
+    cfg = None if from_app else load_config().get("blender")
     if cfg and os.path.exists(cfg):
         return cfg
     found = shutil.which("blender")

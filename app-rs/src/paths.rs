@@ -189,8 +189,9 @@ pub fn own_group(c: &mut Command) {
 /// Ends what a finished turn left running in its process group (Cursor's worker-server), without holding up the turn.
 /// Called once the turn's output has ended but before its leader is reaped: an unreaped leader keeps the group's ID
 /// reserved, so SIGTERM can only reach that group. Any member still there after `STOP_GRACE` gets SIGKILL from a
-/// background thread (members keep the ID reserved too; an empty group is not signalled). Not on Windows, where Cursor
-/// is not offered.
+/// background thread, but only when the group then has a member besides its leader, and only to a group that still
+/// has one (members keep the ID reserved; the leader, reaped meanwhile, does not, so a group of the leader alone is
+/// never signalled again, and its ID can be given out again without harm). Not on Windows, where Cursor is not offered.
 pub fn end_group_soon(group: u32) {
     #[cfg(unix)]
     {
@@ -199,15 +200,28 @@ pub fn end_group_soon(group: u32) {
         }
         let signal = move |sig: &str| signal_group(group, sig);
         signal("-TERM");
+        if !group_has_members(group) {
+            return;
+        }
         std::thread::spawn(move || {
             std::thread::sleep(STOP_GRACE);
-            if signal("-0") {
+            if group_has_members(group) {
                 signal("-KILL");
             }
         });
     }
     #[cfg(not(unix))]
     let _ = group;
+}
+
+/// Whether a process group has a member other than its leader (`ps`; no when it cannot be read).
+#[cfg(unix)]
+fn group_has_members(group: u32) -> bool {
+    let out = Command::new("ps").args(["-A", "-o", "pid=,pgid="]).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    out.lines().any(|l| {
+        let mut w = l.split_whitespace().filter_map(|x| x.parse::<u32>().ok());
+        matches!((w.next(), w.next()), (Some(pid), Some(g)) if g == group && pid != group)
+    })
 }
 
 /// Waits, up to `limit`, until the leader of a turn's group has exited by itself, without reaping it (it shows as a
@@ -299,22 +313,36 @@ pub fn signal_group(group: u32, sig: &str) -> bool {
 pub const TAIL: usize = 64 * 1024;
 
 /// Reads `r` to its end and returns the last `cap` bytes of it, as text.
-pub fn drain_tail(mut r: impl std::io::Read, cap: usize) -> String {
-    let mut kept: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+#[cfg(test)]
+pub fn drain_tail(r: impl std::io::Read, cap: usize) -> String {
+    let kept = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    drain_tail_into(r, cap, &kept);
+    tail_text(&kept)
+}
+
+/// The same, keeping the tail in `kept` as it reads, so what was read so far can be taken while the reading still
+/// waits (`tail_text`).
+pub fn drain_tail_into(mut r: impl std::io::Read, cap: usize, kept: &std::sync::Mutex<std::collections::VecDeque<u8>>) {
     let mut buf = [0u8; 8192];
     loop {
         match r.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                kept.extend(&buf[..n]);
-                let over = kept.len().saturating_sub(cap);
-                kept.drain(..over);
+                let mut k = kept.lock().unwrap_or_else(|e| e.into_inner());
+                k.extend(&buf[..n]);
+                let over = k.len().saturating_sub(cap);
+                k.drain(..over);
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    String::from_utf8_lossy(&kept.into_iter().collect::<Vec<u8>>()).trim().to_string()
+}
+
+/// What a `drain_tail_into` has kept so far, as text.
+pub fn tail_text(kept: &std::sync::Mutex<std::collections::VecDeque<u8>>) -> String {
+    let k = kept.lock().unwrap_or_else(|e| e.into_inner());
+    String::from_utf8_lossy(&k.iter().copied().collect::<Vec<u8>>()).trim().to_string()
 }
 
 /// The longest line of an AI's output that is kept (a tool result carrying a big picture can be one line).
@@ -395,13 +423,21 @@ pub fn plan_keys(ai: &str) -> &'static [&'static str] {
 /// The Setup switch "Use API keys from my environment": off unless the user turned it on, since a key in the
 /// environment would bill that API account instead of the plan the user signed in with.
 pub fn env_keys_on() -> bool {
-    load_config().get("use_env_keys").and_then(Value::as_bool).unwrap_or(false)
+    setting("use_env_keys").as_bool().unwrap_or(false)
 }
 
 /// Whether a variable is kept from an AI's process: a Claude session's always; a provider key (plan_keys) unless the
-/// user turned that switch on.
+/// user turned that switch on; OpenCode's always (each key there adds a provider billed to it, so the switch, meant
+/// for a Claude gateway token, does not hand them over; the label says so). For OpenCode the switch is not read.
 pub fn env_dropped(key: &str, ai: &str) -> bool {
-    CLAUDE_SESSION_VARS.contains(&key) || (plan_keys(ai).contains(&key) && !env_keys_on())
+    CLAUDE_SESSION_VARS.contains(&key) || (plan_keys(ai).contains(&key) && (ai == "opencode" || !env_keys_on()))
+}
+
+/// Variables `/bin/sh` (bash as sh, dash) acts on at start: functions brought in from the environment (`BASH_FUNC_x%%`
+/// replaces the program `x`), start-up files, `cd`'s search folders, options and the trace prompt. Never handed to a
+/// shell the app's checks approve commands for (OpenCode's), so an allowed plain name is the program on PATH.
+pub fn shell_injected(key: &str) -> bool {
+    key.starts_with("BASH_FUNC_") || ["BASH_ENV", "ENV", "CDPATH", "SHELLOPTS", "BASHOPTS", "PS4", "IFS", "GLOBIGNORE"].contains(&key)
 }
 
 /// The provider keys of an AI that are in the app's environment now (names only), for the sign-in message.
@@ -412,7 +448,7 @@ pub fn env_keys_present(ai: &str) -> Vec<&'static str> {
 /// The environment hygiene every AI's process gets (see CLAUDE_SESSION_VARS, plan_keys, env_keys_on); Antigravity is
 /// also told not to update itself mid-turn.
 pub fn child_env(cmd: &mut Command, ai: &str) {
-    let keys_on = env_keys_on();
+    let keys_on = env_keys_on() && ai != "opencode";
     for k in CLAUDE_SESSION_VARS.iter().chain(plan_keys(ai).iter().filter(|_| !keys_on)) {
         cmd.env_remove(k);
     }
@@ -505,9 +541,184 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
     let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     keep_unreadable(&config_file());
     let mut cfg = load_config();
+    // the guarded settings come from the app's memory, never from the file (which an AI's file tool may have changed)
+    let mut known = known();
+    for k in GUARDED {
+        match known.get(*k) {
+            Some(v) => cfg.insert(k.to_string(), v.clone()),
+            None => cfg.remove(*k),
+        };
+    }
     let out = change(&mut cfg);
+    // what the change made of them is the app's own route: it becomes the known value, and the copy outside the folders
+    // AIs are given
+    let mut changed = false;
+    for k in GUARDED {
+        if known.get(*k) != cfg.get(*k) {
+            changed = true;
+            match cfg.get(*k) {
+                Some(v) => known.insert(k.to_string(), v.clone()),
+                None => known.remove(*k),
+            };
+        }
+    }
+    if changed {
+        *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
+        write_config(&guard_copy(), &known);
+    }
     write_config(&config_file(), &cfg);
     out
+}
+
+// --------------------------------------------------------- guarded settings
+/// The settings that widen what an AI may do or can cost money. While the app runs its memory is the authority for
+/// them: they change only through the app's own routes (`update_config`), every decision reads them from memory
+/// (`setting`), and a different value in the file (an AI's file tool past its deny rule: Antigravity's compares case,
+/// measured) is put back (`check_settings`) before a turn starts, before an expert starts and before a turn's end.
+/// Across restarts a copy of them is kept outside every folder an AI is given (`guard_copy`).
+/// - `allowed_commands`: the programs agents run without asking
+/// - `use_env_keys`: API keys in the environment reach the AIs (billed to that account)
+/// - `gemini_use_api`, `gemini_key`: textures billed to the Google key
+/// - `projects`: the games, whose folders the AIs are given
+/// - `plugin_token`: the Studio plugin's secret
+/// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
+/// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
+/// inside a folder an AI is given is never used instead, `blender_ok`.)
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "projects", "plugin_token", "expert_ai", "lead_picks_ai"];
+
+static KNOWN: std::sync::Mutex<Option<Map<String, Value>>> = std::sync::Mutex::new(None);
+
+/// What was put back at start, for the page (once).
+static PUT_BACK_AT_START: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Where the copy of the guarded settings lives: outside the work folder, the games and the kit (macOS
+/// `~/Library/Application Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux
+/// `$XDG_CONFIG_HOME/fridae-studios` or `~/.config/fridae-studios`).
+pub fn guard_copy() -> PathBuf {
+    #[cfg(test)]
+    return test_dir("guard-copy").join("settings-guard.json");
+    #[allow(unreachable_code)]
+    {
+        let home = home_dir();
+        let dir = if cfg!(target_os = "macos") {
+            home.join("Library").join("Application Support").join(APP)
+        } else if cfg!(windows) {
+            env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(APP)
+        } else {
+            env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("fridae-studios")
+        };
+        dir.join("settings-guard.json")
+    }
+}
+
+fn guarded_of(cfg: &Map<String, Value>) -> Map<String, Value> {
+    GUARDED.iter().filter_map(|k| cfg.get(*k).map(|v| (k.to_string(), v.clone()))).collect()
+}
+
+/// The known guarded settings (loaded at first use: `start_settings`).
+fn known() -> Map<String, Value> {
+    let mut g = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        drop(g);
+        start_settings();
+        g = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    }
+    g.clone().unwrap_or_default()
+}
+
+/// At start: the copy outside the AIs' folders wins over the settings file where they differ (the file is put back
+/// and the page says so); with no copy yet (a first run), the file is taken as it is and the copy written.
+pub fn start_settings() {
+    let _held = CONFIG_LOCK.try_lock(); // at start nothing else writes; inside update_config the lock is held already
+    let file = guarded_of(&load_config());
+    let copy = fs::read_to_string(guard_copy()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned());
+    if copy.is_none() {
+        write_config(&guard_copy(), &file);
+    }
+    let (known, differ) = reconcile(&file, copy.as_ref());
+    *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
+    if !differ.is_empty() {
+        let mut cfg = load_config();
+        for k in GUARDED {
+            match known.get(*k) {
+                Some(v) => cfg.insert(k.to_string(), v.clone()),
+                None => cfg.remove(*k),
+            };
+        }
+        write_config(&config_file(), &cfg);
+        *PUT_BACK_AT_START.lock().unwrap_or_else(|e| e.into_inner()) = differ;
+    }
+}
+
+/// What the app starts with: the copy's guarded values when there is a copy (and the keys where the file differs, to
+/// be put back), else the file's.
+fn reconcile(file: &Map<String, Value>, copy: Option<&Map<String, Value>>) -> (Map<String, Value>, Vec<String>) {
+    let known = copy.map(guarded_of).unwrap_or_else(|| guarded_of(file));
+    let differ = GUARDED.iter().filter(|k| file.get(**k) != known.get(**k)).map(|k| k.to_string()).collect();
+    (known, differ)
+}
+
+/// A guarded setting's value as the app knows it (Null when unset). Every decision reads them here, never the file.
+pub fn setting(key: &str) -> Value {
+    debug_assert!(GUARDED.contains(&key));
+    known().get(key).cloned().unwrap_or(Value::Null)
+}
+
+/// All guarded settings as the app knows them, as a settings map (for code that takes one).
+pub fn guarded_settings() -> Map<String, Value> {
+    known()
+}
+
+/// The settings put back at start, for the page's line (every page opened in this run says it once).
+pub fn put_back_at_start() -> Vec<String> {
+    PUT_BACK_AT_START.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Compares the settings file with the known values: any guarded setting that differs and did not come through the
+/// app (another running copy of the app writes the copy as well: a value equal to the copy on disk is taken as that
+/// copy's change) is put back. Returns the keys put back.
+pub fn check_settings() -> Vec<String> {
+    let _held = CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let file = guarded_of(&load_config());
+    let mut known = known();
+    let copy = fs::read_to_string(guard_copy()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).map(|c| guarded_of(&c));
+    let mut back = Vec::new();
+    for k in GUARDED {
+        if file.get(*k) == known.get(*k) {
+            continue;
+        }
+        if let Some(c) = &copy {
+            if c.get(*k) == file.get(*k) {
+                // another copy of the app changed it through its own route
+                match file.get(*k) {
+                    Some(v) => known.insert(k.to_string(), v.clone()),
+                    None => known.remove(*k),
+                };
+                continue;
+            }
+        }
+        back.push(k.to_string());
+    }
+    *KNOWN.lock().unwrap_or_else(|e| e.into_inner()) = Some(known.clone());
+    if !back.is_empty() {
+        let mut cfg = load_config();
+        for k in GUARDED {
+            match known.get(*k) {
+                Some(v) => cfg.insert(k.to_string(), v.clone()),
+                None => cfg.remove(*k),
+            };
+        }
+        write_config(&config_file(), &cfg);
+    }
+    back
+}
+
+/// The chat's line when settings were put back.
+pub fn put_back_line(keys: &[String]) -> String {
+    format!(
+        "A setting was changed by something other than Fridae ({}), so Fridae put it back as you had it. Change settings in Setup.",
+        keys.join(", ")
+    )
 }
 
 /// A settings file that exists but does not read as settings (a hand edit with a stray comma, an empty file after a
@@ -652,11 +863,39 @@ pub fn studio_mcp() -> Option<PathBuf> {
     Some(PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("Roblox").join("mcp.bat")).filter(|p| p.exists())
 }
 
+/// Whether a Blender path from the settings file may be run: never one inside a folder an AI's file tools are given
+/// (the work folder, the kit, the app's home with its games, a game), where a model could have put a script of its own.
+pub fn blender_ok(p: &Path) -> bool {
+    let p = real_as_far_as_exists(p);
+    let mut roots = vec![PATHS.work.clone(), PATHS.kit.clone(), PATHS.home.clone()];
+    roots.extend(setting("projects").as_array().into_iter().flatten().filter_map(|e| e["path"].as_str()).map(PathBuf::from));
+    !roots.iter().any(|r| p.starts_with(real_as_far_as_exists(r)))
+}
+
+/// `p` with its longest existing start made real (links and `/var` → `/private/var` followed) and the rest kept, so a
+/// path that does not exist yet compares the same way as one that does.
+fn real_as_far_as_exists(p: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = p.to_path_buf();
+    loop {
+        if let Ok(real) = at.canonicalize() {
+            return rest.iter().rev().fold(real, |acc: PathBuf, c| acc.join(c));
+        }
+        match (at.file_name().map(|c| c.to_os_string()), at.parent()) {
+            (Some(c), Some(up)) => {
+                rest.push(c);
+                at = up.to_path_buf();
+            }
+            _ => return p.to_path_buf(),
+        }
+    }
+}
+
 pub fn find_blender() -> Option<PathBuf> {
     if let Some(p) = env::var("RBXKIT_BLENDER").ok().map(PathBuf::from).filter(|p| p.exists()) {
         return Some(p);
     }
-    if let Some(p) = load_config().get("blender").and_then(Value::as_str).map(PathBuf::from).filter(|p| p.exists()) {
+    if let Some(p) = load_config().get("blender").and_then(Value::as_str).map(PathBuf::from).filter(|p| p.exists() && blender_ok(p)) {
         return Some(p);
     }
     if let Some(p) = which("blender") {
@@ -698,38 +937,13 @@ pub fn gemini_key() -> String {
             }
         }
     }
-    load_config().get("gemini_key").and_then(Value::as_str).unwrap_or("").to_string()
+    setting("gemini_key").as_str().unwrap_or("").to_string()
 }
 
 /// The programs the user lets agents run on their own (git, python, ...), chosen in the app.
 pub fn allowed_commands() -> Vec<String> {
-    load_config().get("allowed_commands").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+    setting("allowed_commands").as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
 }
-
-/// The allowed list as the app last saw or wrote it (Setup, the blocked card): a change to the file made otherwise
-/// while the app runs (an AI's file tool past its rules: Antigravity's deny rule compares case, so `CONFIG.JSON` gets
-/// past `write_file(.../config.json)`; measured) is put back after the turn (`guard_allowed`).
-static KNOWN_ALLOWED: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
-
-/// Notes the allowed list as it is now (at start).
-pub fn note_allowed() {
-    *KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()) = Some(allowed_commands());
-}
-
-/// After a turn: when the allowed list in the settings file is not the one the app knows, the known one is written
-/// back. True when it was.
-pub fn guard_allowed() -> bool {
-    let known = KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let Some(known) = known else { return false };
-    if allowed_commands() == known {
-        return false;
-    }
-    update_config(|cfg| cfg.insert("allowed_commands".into(), serde_json::json!(known)));
-    true
-}
-
-/// The chat's line when that happened.
-pub const ALLOWED_PUT_BACK: &str = "The list of programs agents may run was changed during this turn by something other than Setup, so Fridae put it back as it was.";
 
 /// Held by the tests that change the allowed list, so they never run into each other (they share one settings file).
 #[cfg(test)]
@@ -747,7 +961,6 @@ pub fn set_allowed(names: &[String], allow: bool) -> Vec<String> {
         }
         list.sort();
         cfg.insert("allowed_commands".into(), serde_json::json!(list));
-        *KNOWN_ALLOWED.lock().unwrap_or_else(|e| e.into_inner()) = Some(list.clone());
         list
     })
 }
@@ -764,12 +977,15 @@ pub fn program_name(command: &str) -> Option<String> {
 /// for the grammar of `/bin/sh` (the only shell such a command is run with: OpenCode's `fridae-shell`), never for zsh,
 /// bash or fish: every part must start with a program the user allowed, named exactly (no folder part like `./git`, no
 /// quotes, no variable set in front, same spelling), and outside quotes a word may hold only `A-Z a-z 0-9 _ @ % + = :
-/// , . / -` (so no `( ) { } ! # ~ * ? [ ]`, no glob, no zsh qualifier or `=( )`, no fish substitution) and may not start
-/// with `=`. Inside single quotes anything but a line break; inside double quotes no `!`. Nowhere `$`, a backtick, a
-/// backslash or a line break. A redirection only as a whole word: `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>`
+/// , . / - !`, and `~` or `^` right after a letter or digit (`HEAD~1`, `HEAD^`: `/bin/sh` and dash expand `~` only at
+/// a word's start or after `=` or `:`, `^` never, and `!` only negates a pipeline as a word of its own, which is no
+/// program anyone allows; shown in real `/bin/sh` and dash, see DEVELOPING) (so no `( ) { } # * ? [ ]`, no glob, no zsh
+/// qualifier or `=( )`, no fish substitution) and may not start with `=`. Inside quotes anything but a line break.
+/// Nowhere `$`, a backtick, a backslash or a line break. A redirection only as a whole word: `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>`
 /// then the word `/dev/null`); any other `<` or `>` refuses. Parts joined by `;`, `&&`, `||` or `|` must each pass; a
 /// lone `&`, `|&` or an empty part refuses. Nor does anything that reads another process's environment pass
-/// (`reads_other_env`). When unsure, no: the blocked card shows. The native allow lists of Claude Code (`Bash(<p>:*)`)
+/// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`). When unsure, no: the card
+/// shows, with the reason (`refusal_reason`). The native allow lists of Claude Code (`Bash(<p>:*)`)
 /// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AIs whose requests the app answers (OpenCode).
 #[allow(unused_assignments)] // the last word's end leaves its flags unread
 pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
@@ -777,7 +993,7 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
     if c.is_empty() || c.contains(['`', '\n', '\r', '$', '\\']) || reads_other_env(c) {
         return false;
     }
-    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_@%+=:,./-".contains(ch);
+    let plain = |ch: char| ch.is_ascii_alphanumeric() || "_@%+=:,./-!".contains(ch);
     let chars: Vec<char> = c.chars().collect();
     let at = |i: usize| chars.get(i).copied();
     // where a word ends: a blank, a separator, or the end
@@ -835,16 +1051,14 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
             }
             '\'' | '"' => {
                 let Some(len) = chars[i + 1..].iter().position(|&x| x == ch) else { return false };
-                if ch == '"' && chars[i + 1..i + 1 + len].contains(&'!') {
-                    return false;
-                }
                 word.extend(&chars[i..i + len + 2]);
                 quoted = true;
                 in_word = true;
                 i += len + 2;
             }
             _ => {
-                if !plain(ch) || (!in_word && ch == '=') {
+                let after_letter = i > 0 && in_word && chars[i - 1].is_ascii_alphanumeric();
+                if !(plain(ch) || (matches!(ch, '~' | '^') && after_letter)) || (!in_word && ch == '=') {
                     return false;
                 }
                 word.push(ch);
@@ -856,18 +1070,121 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
     end_word!();
     parts.iter().all(|words| {
         let Some((first, quoted)) = words.first() else { return false };
-        !quoted && first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) && !first.starts_with('.') && allowed.iter().any(|a| a == first)
+        let plain_words: Vec<String> = words.iter().map(|(w, _)| w.replace(['\'', '"'], "")).collect();
+        !quoted
+            && first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+            && !first.starts_with('.')
+            && allowed.iter().any(|a| a == first)
+            && runner_in(&plain_words).is_none()
     })
 }
 
-/// Programs that can read another process's environment (the OpenCode server's password travels in its own), on macOS,
-/// Linux or Windows: the app never approves a command that runs one of these, however the user's list reads, nor one
-/// that names Linux's `/proc` (where any file reader can read `/proc/<pid>/environ`). The one place they are listed.
-pub const ENV_READERS: &[&str] = &["ps", "procs", "htop", "pargs", "gdb", "lldb", "dtrace", "dtruss", "launchctl", "procdump", "procexp", "procexp64", "handle", "wmic"];
+/// Programs that run what they are given as a command: the app never approves a part they lead by itself, however
+/// the user's list reads, because what they would run is not what the list was asked about (`time ps eww`). An empty
+/// list of options: always; otherwise only when one of those options (or `--opt=...`, or a short one with its value
+/// joined) is in the part (`find -exec`, `git -c alias.x=...`). The one place they are listed: the check, the reason
+/// on the card (`refusal_reason`) and the environment-reader check behind them (`reads_other_env`) read it.
+pub const ARG_RUNNERS: &[(&str, &[&str])] = &[
+    ("time", &[]), ("nice", &[]), ("nohup", &[]), ("xargs", &[]), ("env", &[]), ("command", &[]), ("exec", &[]),
+    ("builtin", &[]), ("eval", &[]), ("timeout", &[]), ("gtimeout", &[]), ("stdbuf", &[]), ("sudo", &[]), ("doas", &[]),
+    ("su", &[]), ("caffeinate", &[]), ("watch", &[]), ("script", &[]), ("unbuffer", &[]), ("setsid", &[]), ("flock", &[]),
+    ("ionice", &[]), ("taskset", &[]), ("chrt", &[]), ("chroot", &[]), ("nsenter", &[]), ("unshare", &[]), ("strace", &[]),
+    ("ltrace", &[]), ("parallel", &[]), ("entr", &[]), ("arch", &[]), ("systemd-run", &[]), ("busybox", &[]), ("wsl", &[]),
+    ("runas", &[]), ("start", &[]), ("sh", &[]), ("bash", &[]), ("zsh", &[]), ("dash", &[]), ("ksh", &[]), ("fish", &[]),
+    ("find", &["-exec", "-execdir", "-ok", "-okdir"]),
+    ("git", &["-c", "--config-env", "--exec-path", "--upload-pack", "--receive-pack", "--exec", "-x", "--extcmd", "--open-files-in-pager", "-O", "--ext-diff", "foreach", "run"]),
+];
 
-/// Whether a command runs one of the ENV_READERS or names `/proc`.
+/// The runner leading a part (its words, quotes removed), when it runs something given to it here.
+fn runner_in(words: &[String]) -> Option<&'static str> {
+    let first = words.first().map(|w| program_name(w).unwrap_or_default())?;
+    let (name, opts) = ARG_RUNNERS.iter().find(|(n, _)| *n == first)?;
+    let hit = |w: &str| {
+        opts.iter().any(|o| w == *o || (o.starts_with("--") && w.starts_with(&format!("{o}="))) || (o.len() == 2 && o.starts_with('-') && w.starts_with(o)))
+    };
+    (opts.is_empty() || words[1..].iter().any(|w| hit(w))).then_some(*name)
+}
+
+/// The words of each part of a command as `/bin/sh` would mostly split them (quotes removed; for the checks that
+/// look for something, not for approving).
+fn rough_parts(command: &str) -> Vec<Vec<String>> {
+    command
+        .replace("2>&1", " ")
+        .split([';', '|', '&', '\n'])
+        .map(|p| p.split_whitespace().map(|w| w.replace(['\'', '"'], "")).collect::<Vec<String>>())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Why the app did not approve a command by itself, in plain words for the card.
+pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
+    if reads_other_env(command) {
+        return "it would run a program that can read other programs' settings (such as ps), where the password of OpenCode's server is kept. That never runs in a Fridae chat.".into();
+    }
+    if command.contains(['$', '`']) {
+        return "it uses $ or backquotes (a variable, or a command inside the command), so what it runs cannot be known before it runs.".into();
+    }
+    if command.contains('\\') {
+        return "it has a backslash, which can change what the shell runs.".into();
+    }
+    if command.contains(['\n', '\r']) {
+        return "it is more than one line.".into();
+    }
+    for words in rough_parts(command) {
+        if let Some(r) = runner_in(&words) {
+            return format!("{r} runs another program given to it{}, so it is asked about every time.", if words[0] == "git" || words[0] == "find" { " in this form" } else { "" });
+        }
+        let first = &words[0];
+        if first.contains(['/', '\\']) || first.starts_with('.') {
+            return format!("it calls a program by a path ({first}) instead of its plain name, so it may not be the program that was allowed.");
+        }
+        if first.contains('=') {
+            return "it sets a setting in front of the program, which can change what the program does.".into();
+        }
+    }
+    if command.contains(['<', '>']) {
+        return "it reads or writes a file with < or >.".into();
+    }
+    let odd: String = command.chars().filter(|c| "*?[](){}#~^".contains(*c)).fold(String::new(), |mut a, c| {
+        if !a.contains(c) {
+            a.push(c);
+        }
+        a
+    });
+    if !odd.is_empty() {
+        return format!("it uses characters the shell gives a meaning of its own ({odd}).");
+    }
+    if command_programs(command).iter().all(|p| allowed.contains(p)) {
+        return "Fridae could not check how it is written.".into();
+    }
+    "it runs a program you have not allowed.".into()
+}
+
+/// Programs that can read another process's environment or memory (the OpenCode server's password travels in its
+/// own), on macOS, Linux or Windows: the app never approves a command that runs one of these, however the user's list
+/// reads, also behind a runner (`time ps eww`, `git -c core.pager=ps`), nor one that names Linux's `/proc` folder
+/// (where any file reader can read `/proc/<pid>/environ`). The one place they are listed.
+pub const ENV_READERS: &[&str] = &[
+    "ps", "procs", "htop", "top", "pargs", "gdb", "lldb", "dtrace", "dtruss", "launchctl", "procdump", "procexp", "procexp64", "handle", "wmic", "gcore",
+    "strace", "ltrace", "stringdups", "vmmap", "heap", "leaks", "sample", "spindump",
+];
+
+/// Whether a command runs one of the ENV_READERS (as its program, or anywhere in a part a runner leads) or names the
+/// `/proc` folder: a path whose `proc` is its first part, comes right after `/`, `.` or `..` (`/proc/1/environ`,
+/// `proc/self` after `cd /`, `../../proc`), never a name that only holds the letters (`src/procgen.lua`).
 pub fn reads_other_env(command: &str) -> bool {
-    command.contains("/proc") || command_programs(command).iter().any(|p| ENV_READERS.contains(&p.as_str()))
+    let names_proc = command
+        .split(|c: char| c.is_whitespace() || "'\"=:,;|&<>(){}".contains(c))
+        .any(|word| {
+            let comps: Vec<&str> = word.split('/').collect();
+            comps.iter().enumerate().any(|(i, c)| *c == "proc" && (i == 0 || matches!(comps[i - 1], "" | "." | "..")))
+        });
+    names_proc
+        || command_programs(command).iter().any(|p| ENV_READERS.contains(&p.as_str()))
+        || rough_parts(command).iter().any(|words| {
+            runner_in(words).is_some()
+                && words.iter().flat_map(|w| w.split(|c: char| !(c.is_ascii_alphanumeric() || "-_./".contains(c)))).any(|t| ENV_READERS.contains(&base_name(t).to_lowercase().as_str()))
+        })
 }
 
 /// The programs a command line starts, by name (each part after `;`, `&&`, `||`, `|`), for the blocked card.
@@ -885,7 +1202,7 @@ pub fn command_programs(command: &str) -> Vec<String> {
 
 /// The paid API is only used when a key exists AND the user switched it on.
 pub fn gemini_api_on() -> bool {
-    !gemini_key().is_empty() && load_config().get("gemini_use_api").and_then(Value::as_bool).unwrap_or(false)
+    !gemini_key().is_empty() && setting("gemini_use_api").as_bool().unwrap_or(false)
 }
 
 /// A file name with any folder part removed, so requests cannot reach outside a folder.
@@ -989,12 +1306,16 @@ mod tests {
             "git status &", "git\nrm -rf x", "git status | sh", "ls ${HOME}", "", "git 'unclosed", ".git",
             // zsh glob qualifiers and =( ), fish's ( ): the shell is /bin/sh, and none of these pass the whitelist
             "git status *(e:'./git':)", "git status *(e:./git:)", "git status >/dev/null(e:'./git':)", "git diff =(./git)", "git log (./git)",
-            "git log {a,b}", "git log ~/x", "git log =x", "git log !x", "git log \"!x\"", "ls *.lua", "ls x?", "ls [ab]", "git log # x",
+            "git log {a,b}", "git log ~/x", "git log =x", "git log x=~", "git log a:~/x", "git log ~", "git log /~", "git log ^x", "ls *.lua", "ls x?", "ls [ab]", "git log # x",
             // redirections only as whole words
             "git log 2>&1/../../outside.txt", "python3 2>&1/x", "git log 2>&1x", "git x>/dev/null", "ls >/dev/nullx", "ls >>/dev/null",
             "ls 1>/dev/null", "ls > /etc/x", "ls 2> x", "ls >", "git status |& ls", "git status;", "; git", "git status || ",
             // never a program that reads another process's environment, nor /proc
-            "ps eww -ax", "git log | ps -E", "ls /proc/1/environ", "launchctl procinfo 1",
+            "ps eww -ax", "git log | ps -E", "ls /proc/1/environ", "launchctl procinfo 1", "ls /proc", "ls proc/self/environ",
+            "ls ../../proc/1/environ", "ls ./proc/1", "ls x=/proc/1", "ls 'a b' /proc/",
+            // runners: what they run is not what the list was asked about, even when they are on it
+            "time ps eww", "time git status", "nice git status", "nohup git status", "xargs git", "env git status", "command git", "exec git",
+            "git -c alias.x='!ps eww' x", "git -c core.pager=ps log", "find . -exec rm {} ;", "git status && time ls",
             // look-alikes
             "git\u{a0}status", "\u{ff47}it status",
         ] {
@@ -1003,25 +1324,85 @@ mod tests {
         // python2 is not python
         assert!(!command_allowed("python2>&1 x.py", &["python".to_string()]));
         assert!(!command_allowed("git status", &["gitk".to_string()]));
-        // ps is refused even when the user allowed it
+        // ps is refused even when the user allowed it, and so is a runner the user allowed, and an env reader behind one
         assert!(!command_allowed("ps -ax", &["ps".to_string()]));
-        assert_eq!(command_programs("git log 2>&1/../../x.txt"), ["git"]);
-        // a list changed in the file behind the app's back is put back after the turn
-        {
-            let _held = ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let before = set_allowed(&["zzprobe".to_string()], false);
-            update_config(|c| c.insert("allowed_commands".into(), serde_json::json!(["sh"])));
-            assert!(guard_allowed());
-            assert_eq!(allowed_commands(), before);
-            assert!(!guard_allowed());
+        let runners: Vec<String> = ["time", "nice", "nohup", "xargs", "env", "command", "exec", "ps", "git", "find"].map(String::from).to_vec();
+        for c in ["time ps eww", "nice ps", "nohup ps", "xargs ps", "env ps", "command ps", "exec ps", "time /bin/ps eww", "git -c core.pager=ps log", "git -c alias.x='!ps eww' x", "find . -exec ps ;"] {
+            assert!(reads_other_env(c), "{c}");
+            assert!(!command_allowed(c, &runners), "{c}");
         }
+        for c in ["time git status", "env FOO=1 git", "xargs git add", "find . -execdir rm {} ;", "git -c x=y log"] {
+            assert!(!command_allowed(c, &runners), "{c}");
+            assert!(refusal_reason(c, &runners).contains("runs another program"), "{c}: {}", refusal_reason(c, &runners));
+        }
+        // a name holding the letters is not /proc, and git's own use of words is not an env reader
+        for c in ["git add src/procgen.lua", "git add proceed.txt procs.md/x", "git commit -m \"fix ps output\"", "find . -name x", "git log --grep=top"] {
+            assert!(!reads_other_env(c), "{c}");
+            assert!(command_allowed(c, &runners), "{c}");
+        }
+        // every refusal has a reason in plain words
+        for (c, has) in [("./git status", "path"), ("git $(id)", "$"), ("ls > x", "file"), ("ls *.lua", "*"), ("ps", "password"), ("FOO=1 git", "setting")] {
+            assert!(refusal_reason(c, &runners).contains(has), "{c}: {}", refusal_reason(c, &runners));
+        }
+        assert_eq!(command_programs("git log 2>&1/../../x.txt"), ["git"]);
+
         assert_eq!(command_programs("git status && ./rm x; ls | wc"), ["git", "rm", "ls", "wc"]);
-        for ok in ["ls 2>/dev/null", "ls > /dev/null", "ls 2> /dev/null && git status", "git commit -m \"a (b) {c} ~d *\"", "git log --format=%H:%an,x@y+z", "git log -- 'a ~ * ( ) ! \"'", "ls 2"] {
+        for ok in ["ls 2>/dev/null", "ls > /dev/null", "ls 2> /dev/null && git status", "git commit -m \"a (b) {c} ~d *\"", "git log --format=%H:%an,x@y+z", "git log -- 'a ~ * ( ) ! \"'", "ls 2",
+            // ~ and ^ after a letter or digit, and !, are taken literally by /bin/sh and dash
+            "git diff HEAD~1", "git show HEAD^", "git commit -m \"Fixed it!\"", "git log HEAD~2^..HEAD", "git log !x", "git log \"!x\"", "git commit -m Done!"] {
             assert!(command_allowed(ok, &allowed), "{ok}");
         }
     }
 
     use super::*;
+
+    /// The settings file changed as an AI's file tool would change it: written straight, not through the app.
+    fn tamper(key: &str, v: Value) {
+        let mut cfg = load_config();
+        cfg.insert(key.into(), v);
+        write_config(&config_file(), &cfg);
+    }
+
+    #[test]
+    fn guarded_settings_come_from_memory_and_a_tampered_file_is_put_back() {
+        let _held = ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let before = set_allowed(&["zzprobe".to_string()], false);
+        let keys_before = env_keys_on();
+        // mid-turn: the file says sh and the key switch on; nothing that decides reads it
+        tamper("allowed_commands", serde_json::json!(["sh"]));
+        tamper("use_env_keys", serde_json::json!(true));
+        assert_eq!(allowed_commands(), before, "a second turn's spawn and an OpenCode ask read the known list");
+        assert!(!command_allowed("sh -c x", &allowed_commands()));
+        assert_eq!(env_keys_on(), keys_before);
+        // the check puts the file back (another test's turn may have done so first: either way it is back)
+        let _ = check_settings();
+        assert_eq!(load_config().get("allowed_commands"), Some(&serde_json::json!(before)));
+        // a change through the app's own route is written over a tampered file, never merged with it, and is what
+        // the copy outside the AIs' folders holds
+        tamper("allowed_commands", serde_json::json!(["sh"]));
+        let now = set_allowed(&["zzprobe".to_string()], true);
+        assert!(!now.contains(&"sh".to_string()) && now.contains(&"zzprobe".to_string()));
+        let copy: Map<String, Value> = serde_json::from_str(&fs::read_to_string(guard_copy()).unwrap()).unwrap();
+        assert_eq!(copy.get("allowed_commands"), Some(&serde_json::json!(now)));
+        // across a restart: the copy wins over a file changed while the app was not running, and says which key
+        let mut file = load_config();
+        assert_eq!(reconcile(&file, Some(&copy)).1, Vec::<String>::new(), "the route's change survives a restart");
+        file.insert("allowed_commands".into(), serde_json::json!(["sh", "python3"]));
+        let (known, differ) = reconcile(&file, Some(&copy));
+        assert_eq!(differ, ["allowed_commands"]);
+        assert_eq!(known.get("allowed_commands"), Some(&serde_json::json!(now)));
+        // a first run with no copy takes the file as it is
+        let (known, differ) = reconcile(&file, None);
+        assert!(differ.is_empty() && known.get("allowed_commands") == Some(&serde_json::json!(["sh", "python3"])));
+        let _ = set_allowed(&["zzprobe".to_string()], false);
+    }
+
+    #[test]
+    fn a_blender_inside_a_folder_ais_are_given_is_never_run() {
+        assert!(!blender_ok(&PATHS.work.join("games").join("g").join("blender")));
+        assert!(!blender_ok(&PATHS.kit.join("blender")));
+        assert!(blender_ok(Path::new("/Applications/Blender.app/Contents/MacOS/Blender")));
+    }
 
     #[test]
     fn an_over_long_output_line_is_dropped_not_held() {
@@ -1094,6 +1475,33 @@ mod tests {
         assert_eq!(tail.len(), 1000);
         assert!(tail.ends_with("THE END"));
         assert_eq!(drain_tail("  short \n".as_bytes(), TAIL), "short");
+        // what was read before the wait ran out is kept, while the reader still waits for more (a holder outside the
+        // group keeps the pipe open)
+        struct Then(Vec<u8>, std::sync::mpsc::Receiver<()>);
+        impl std::io::Read for Then {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.0.is_empty() {
+                    let _ = self.1.recv();
+                    return Ok(0);
+                }
+                let n = self.0.len().min(buf.len());
+                buf[..n].copy_from_slice(&self.0[..n]);
+                self.0.drain(..n);
+                Ok(n)
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let kept = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        let k = kept.clone();
+        let reader = std::thread::spawn(move || drain_tail_into(Then(b"Error: rate limited\n".to_vec(), rx), TAIL, &k));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tail_text(&kept).is_empty() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!reader.is_finished());
+        assert_eq!(tail_text(&kept), "Error: rate limited");
+        tx.send(()).unwrap();
+        reader.join().unwrap();
     }
 
     #[test]

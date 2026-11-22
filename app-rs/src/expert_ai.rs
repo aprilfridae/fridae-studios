@@ -140,7 +140,7 @@ pub fn world() -> World<'static> {
         installed: &|ai| expert_ais().contains(&ai) && paths::find_ai(ai).is_some(),
         models: &models_of,
         default_model: &default_of,
-        lead_may_pick: lead_may_pick(&paths::load_config()),
+        lead_may_pick: lead_may_pick(&paths::guarded_settings()),
     }
 }
 
@@ -239,7 +239,7 @@ pub fn listing() -> Value {
         .filter(|e| e["kind"] != "lead" && e["id"].is_string())
         .map(|e| json!({"id": e["id"], "name": e["name"].as_str().or(e["id"].as_str()), "job": e["job"]}))
         .collect();
-    let cfg = paths::load_config();
+    let cfg = paths::guarded_settings();
     let w = world();
     let ais: Vec<Value> = expert_ais()
         .into_iter()

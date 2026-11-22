@@ -166,7 +166,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "env_keys": paths::env_keys_on(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -345,6 +345,10 @@ fn post(path: &str, body: Value) -> Reply {
             // programs agents may run without asking: allowed from a "blocked" card in a chat, or removed in Setup
             let names: Vec<String> = body["names"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
             send_json(json!({"ok": true, "commands": paths::set_allowed(&names, body["allow"].as_bool().unwrap_or(false))}))
+        }
+        "/api/run-once" => {
+            // a command a chat's card showed as not approved, which the user said may run one time in that chat
+            send_json(json!({"ok": opencode::approve_once(&text_of("agent"), &text_of("command"))}))
         }
         "/api/git" => send_json(projects::git(&text_of("path"), &text_of("action"), &body)),
         "/api/pick-files" => send_json(json!({"paths": promo::pick_files(&text_of("kind"))})),

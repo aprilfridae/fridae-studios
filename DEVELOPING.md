@@ -250,8 +250,9 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     output to end, then SIGKILL, and the chat gets one line saying it had to be ended (`paths::killed_message`)
     before "Stopped.". What is left after it ended in time, in its own group or in groups its tools were put in,
     gets 2 s more, then SIGKILL. At every end (Stop or not), once the output has ended, whatever is left in the
-    turn's own group is ended for every AI (SIGTERM, SIGKILL after 2 s), and the error output is waited for only 4 s
-    more, so a child that ignores SIGTERM and holds it can neither outlive the turn nor keep the chat busy (tested). A gate (`TurnProc::reaped`) keeps the leader from being reaped while its group is signalled, so a group
+    turn's own group is ended for every AI (SIGTERM; SIGKILL after 2 s only when the group then still has a member
+    besides its leader, so a group ID given out again is never signalled), and the error output is waited for only 4 s
+    more (what was read of it by then is kept, even when a holder outside the group keeps the pipe open), so a child that ignores SIGTERM and holds it can neither outlive the turn nor keep the chat busy (tested). A gate (`TurnProc::reaped`) keeps the leader from being reaped while its group is signalled, so a group
     ID never names someone else's. Measured with a real Cursor turn in `sleep 90`: Stop ended it and the `sleep` in
     0.2 s (before this, signalling the turn's group alone left Cursor's shell running until the command ended).
     OpenCode's Stop interrupts the session, waits the same 15 s, then ends the server.
@@ -261,7 +262,8 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     are saved.
   - Stall guard: a turn with no output line for 20 minutes (`paths::STALL`, longer than a tool server call may take,
     `MCP_TOOL_TIMEOUT` 15 minutes, so a hung tool returns a time-out the AI can act on) is ended with a plain message
-    (`stall_message`); 60 minutes when its last line started a tool (`STALL_WORKING`: a long build); never while its
+    (`stall_message`); 60 minutes while a tool call is open (`STALL_WORKING`: a long build; for Claude Code counted by
+    call id until its own result, for Cursor and Codex when its last line started a tool); never while its
     last line started one of the app's tools that wait on purpose (`rbx_team`, `rbx_texture`,
     `rbx_generate_texture`), while a texture is being made, or while it is a Lead with experts working, and the quiet
     clock starts again when such a wait ends (`watch_stall`, checked every 5 s; it decides under the same gate the
@@ -272,13 +274,17 @@ their open and saved chats, and experts tied to their Lead; it runs only while t
     `CLAUDE_PID` and `CLAUDE_AGENT_SDK_VERSION`, and without the provider keys that would bill an API account instead
     of the plan the user signed in with (`plan_keys`), unless the user turned on the Setup switch "Use API keys from
     my environment" (`use_env_keys`, off by default so Fridae never spends money the user did not agree to; on, the
-    keys are left alone; a failed sign-in while such a key is set names the switch, `agents::key_note`; the six Claude
-    session variables go either way): Claude Code `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
+    keys are left alone, except OpenCode's, which it never gets since each would add a provider billed to it, and the
+    label says so; a failed sign-in in the AI's own words while such a key is set names the switch,
+    `agents::key_note`; the six Claude session variables go either way): Claude Code `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
     (`CLAUDE_CODE_OAUTH_TOKEN`, a plan's own token, stays); Cursor `CURSOR_API_KEY`; Codex `OPENAI_API_KEY`,
     `CODEX_API_KEY`; OpenCode's server `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`,
     `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GEMINI_API_KEY`,
     `GOOGLE_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `AZURE_OPENAI_API_KEY`,
-    `CURSOR_API_KEY` (its tool servers get the two Gemini keys back). Antigravity keeps the Gemini keys (the app's
+    `CURSOR_API_KEY` (its tool servers get the two Gemini keys back). OpenCode's server and the shell its commands run
+    in also go without the variables `/bin/sh` acts on at start (`paths::shell_injected`: `BASH_FUNC_*`, `BASH_ENV`,
+    `ENV`, `CDPATH`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `IFS`, `GLOBIGNORE`), so an allowed plain name is the program on
+    PATH. Antigravity keeps the Gemini keys (the app's
     textures read them, and agy signs in by its own settings) and gets `AGY_CLI_DISABLE_AUTO_UPDATE=1`. Measured: a
     Cursor turn started from an app with `CLAUDECODE`, a fake `CLAUDE_CODE_SESSION_ID` and a fake `CURSOR_API_KEY`
     ran on the sign-in, and its process had none of them. On Windows the same variables are removed.
@@ -455,8 +461,12 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
 - **What is left of the password, plainly**: it is in the server's own start-up environment, which any program of
   the same user can read (`ps eww -ax`, `ps -E`, `/proc/<pid>/environ` on Linux). In Ask me the app never approves a
   program that can read another process's environment, whatever the allowed list says (`paths::ENV_READERS`, one
-  list: ps, procs, htop, pargs, gdb, lldb, dtrace, dtruss, launchctl, procdump, procexp, handle, wmic; and any command
-  naming `/proc`); it is refused with a plain line and no card. In **Full auto and Studio** every command runs
+  list: ps, procs, htop, top, pargs, gdb, lldb, dtrace, dtruss, launchctl, procdump, procexp, handle, wmic, gcore,
+  strace, ltrace, stringdups, vmmap, heap, leaks, sample, spindump; also anywhere in a part led by a program that
+  runs what it is given, `time ps eww`, `git -c core.pager=ps log`; and any command naming the `/proc` folder: a
+  path whose `proc` part is its first or follows `/`, `.` or `..`, so `/proc/1/environ`, `proc/self` and
+  `../../proc` are refused and `src/procgen.lua` is not); it is refused with a card that says why and offers nothing
+  to allow (allowing would not change it). In **Full auto and Studio** every command runs
   without asking, so a model can read it there; with it, the server's API (other chats' sessions, its own rules). A
   model with an unrestricted shell can already write any file the user can and start its own OpenCode, so this adds
   little, and OpenCode stays offered there (the user's ruling). As a second guard, the session's rules are read back
@@ -529,7 +539,15 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     few names of the same shape next to a protected one are refused too. Measured after: `CONFIG.JSON`,
     `Config.json`, `config.json` refused in Ask me and Full auto, `~/library/x.txt` refused in Full auto, another
     file in the kit still written. Left: in Full auto, a file named relative to a game in a repository through an
-    ancestor folder spelled in another case could get a relative name with a different number of `..`.
+    ancestor folder spelled in another case could get a relative name with a different number of `..`. A part with a
+    letter outside ASCII (`José`) gets one pattern per length it can have, as written up to two more characters per
+    such letter (`é` may also be `e` and an accent, the same file on a Mac disk); more than three such letters or nine
+    patterns and the part is `*`. The `?` forms also hit folders of the same shape (`~/Desktop`, `~/Dropbox` look like
+    `~/Library`): after the denies, in Full auto each such folder that exists is allowed again by its exact name (and
+    its `../..` name), in Ask me the chat's own folders when they are hit; then the protected places inside what was
+    given back and the fixed denies (`.opencode`, `.git`) are written again. Lost: a case variant of such a folder's
+    name (`~/DESKTOP/x`) stays refused, and a same-shaped folder made after the turn started is refused until the
+    next turn.
   - Ask me also denies edits to `.git/*` and `*/.git/*` (a hook or alias written there would run under an allowed
     `git`; Claude Code keeps `.git` protected too).
   - Ask me: `shell *` asks, with no allow rule (an allowed program with a redirection to any file would otherwise
@@ -540,15 +558,31 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   - A `permission.asked` for a shell command (`decide`, `paths::command_allowed`): answered `once` only when every
     part (split on `;`, `&&`, `||`, `|`, as OpenCode itself asks per part) starts with a program the user allowed,
     named exactly (not `./git`, `bin/git`, `/tmp/x/python`, `FOO=1 git`, quoted). The check is a whitelist for sh:
-    outside quotes a word holds only letters, digits and `_ @ % + = : , . / -` and does not start with `=` (so no
-    `( ) { } ! # ~`, no glob `* ? [ ]`: a file named `--checkpoint-action=exec=sh` would turn `tar cf x *` into any
-    program); inside double quotes no `!`; nowhere backticks, `$`, a backslash or a line break; a redirection only as
+    outside quotes a word holds only letters, digits and `_ @ % + = : , . / - !`, and `~` or `^` right after a letter
+    or digit, and does not start with `=` (so no `( ) { } #`, no leading `~`, no glob `* ? [ ]`: a file named
+    `--checkpoint-action=exec=sh` would turn `tar cf x *` into any program); inside quotes anything but a line break;
+    nowhere backticks, `$`, a backslash or a line break. Shown in real `/bin/sh` (bash as sh on a Mac) and `/bin/dash`
+    (fix round 3): `printf '[%s]' HEAD~1 HEAD^ "Fixed it!" a!b x~y !x HEAD^^ HEAD~2^ a=b~c a:b~c --x=y~z` prints every
+    word as written in both, and `! false` is only a negated pipeline (`!` alone is a word no one allows); `~` is
+    expanded only at a word's start or after `=` or `:`, which stay refused. A part led by a program that runs what it
+    is given (`paths::ARG_RUNNERS`, one list: `time`, `nice`, `nohup`, `xargs`, `env`, `command`, `exec`, `timeout`,
+    `stdbuf`, `sudo`, `caffeinate`, `watch`, shells and more; `find` with `-exec`/`-ok`; `git` with `-c`,
+    `--config-env`, `--exec-path`, `--upload-pack`, `--exec`, `-x`, `--extcmd`, `-O`, `--ext-diff`, `foreach`,
+    `run`) is never approved by the app, even when the user allowed it. Interpreters (`python3`, `node`...) are
+    not on that list: allowing one is allowing what it runs, and the card says so. Nor is git's repository config: an
+    allowed `git` runs aliases and hooks the repository holds (Ask me keeps OpenCode's file tools out of `.git`). A
+    redirection only as
     a whole word, `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>` then `/dev/null`), so `git log 2>&1/../../x` and
     `python2>&1 x.py` are refused. The whole command the shell call was given (`session.tool.called`) is checked as
     well as what the request lists. A missing program shows the card (and says when it is one that can run any other
     program: git, env, xargs, find, shells, interpreters...);
-    a command refused only for its form gets a plain line to the model and no card (allowing would not help). A
-    program allowed from the card is answered `once` from then on. Any other ask is rejected. Never `always`.
+    a command not approved for its form (a path, a runner, `$`, a redirection, a glob...) or for reading other
+    programs' settings gets an approval card naming the reason in plain words (`paths::refusal_reason`), never a
+    silent refusal; for its form the card offers "Run it once": that exact command, in that chat, one time
+    (`opencode::approve_once`, in memory; only a command that chat's card showed, never an environment reader), and
+    the model is told it may run it now. The model's own refusal line names the reason and how to write the command
+    so it passes. A program allowed from the card is answered `once` from then on. Any other ask is rejected. Never
+    `always`.
   - Measured with real turns (opencode 2.3.2, game and outside folders under the home folder, not in temp):
     Ask me: writes in the game (absolute and relative) go through (the work folder did too then; fix round 1 took it
     out); an outside folder (absolute
@@ -734,15 +768,38 @@ is an example the user can paste into their own House rules.
   `CONFIG.JSON` refused under a rule for `config.json` (its matching ignores case), a `[cC]...` rule held, another
   file was written. Antigravity (gemini-3.8-flash-low, `--dangerously-skip-permissions`, recorded as
   `tests/fixtures/gemini/full-auto-deny-rules.ndjson`): `config.json` and a file inside a denied folder refused, but
-  `CONFIG.JSON` was written: its rule compares case and has no documented any-case form. So after every turn of any
-  AI the app compares the allowed-programs list in the file with the one it knows (Setup, the card) and puts its own
-  back, saying so in the chat (`paths::guard_allowed`); the rest of a case-variant write to the settings by
-  Antigravity is not caught. Settings writes are synced before the rename, retried on Windows, and a file that does not
+  `CONFIG.JSON` was written: its rule compares case and has no documented any-case form. In Ask me
+  (`--mode accept-edits`, no skip flag; measured in fix round 3, gemini-3.8-flash-low, from a workspace inside a
+  stand-in work folder as the app makes them, `work/gemini/<chat>`): agy wrote a file in its workspace, and every
+  write outside it was refused before any deny rule mattered (headless agy cannot ask, so it auto-denies): an
+  unprotected `<work>/other.txt`, `<work>/CONFIG.JSON` and `<work>/CHATS/x.json` alike, and the turn ended there.
+  So for agy the deny holds by exact case only, and what keeps it from the app's files is that Ask me never writes
+  outside the chat's workspace or game, none of which holds them; in Full auto a case variant gets through (and
+  a command can write anything there anyway).
+- **Settings that widen what an AI may do or can cost money** (`paths::GUARDED`, the one list: `allowed_commands`,
+  `use_env_keys`, `gemini_use_api`, `gemini_key`, `projects`, `plugin_token`, `expert_ai`, `lead_picks_ai`): while
+  the app runs, its memory is the authority, not the file. They change only through the app's routes
+  (`update_config`, which writes memory, the file and a copy); every decision reads memory (`paths::setting`,
+  `guarded_settings`, `allowed_commands()`, `env_keys_on()`, `gemini_api_on()`). Before a chat's turn is sent, before
+  `turn_over()` at every turn's end (every AI, OpenCode included) and before any expert starts, `check_settings`
+  compares the file with memory and writes memory's values back for any guarded key that differs, saying so in the
+  affected chat. A value equal to the copy on disk is taken as a change another running copy of the app made through
+  its routes. The copy (`settings-guard.json`) lives outside every folder an AI is given: `~/Library/Application
+  Support/Fridae Studios` on macOS, `%APPDATA%\Fridae Studios` on Windows, `$XDG_CONFIG_HOME/fridae-studios` on Linux.
+  At start, when the file differs from the copy for a guarded key, the copy wins, the file is rewritten, and the page
+  says once that a setting was put back (`status.settings_put_back`); a first run with no copy takes the file as it
+  is. The tool server gets the Gemini switch and the Blender path from the app (`FRIDAE_SETTINGS_FROM_APP`,
+  `FRIDAE_GEMINI_USE_API`, `RBXKIT_BLENDER`), not from the file. The Blender path is not guarded (the user sets it
+  with `rbx doctor` in a terminal); a path inside the work, kit, home-tools or a game folder is never run
+  (`paths::blender_ok`). This, not the deny rules, is what protects these settings from an AI's file tools.
+  Settings writes are synced before the rename, retried on Windows, and a file that does not
   read as settings is kept as `config.json.bad-<time>` before a change replaces it. A shell command in Full auto can still write it on
   every AI but Cursor's sandbox (and there too when running from source). The same deny now covers all of the app's
   own files (`paths::app_protected`: `config.json`, the process ledger, usage and limits, saved chats, the expert,
-  stage and texture request and result folders, the tool-server configs in `work/agent-tools`, the undo copies),
-  for every AI and in every mode.
+  stage and texture request and result folders, the tool-server configs in `work/agent-tools`, the undo copies): for
+  Claude Code in any case (measured); for OpenCode in any case where the disk ignores case (the `?` forms); for
+  Cursor by its rules; for agy by exact case only (see above: Ask me does not write outside the workspace, Full auto
+  lets a case variant through). The guarded settings above do not depend on it.
 - **Allowed programs are matched by each tool's own rules** for Claude Code (`Bash(<p>:*)`) and Cursor
   (`Shell(<p>)`), and by `paths::command_allowed` for OpenCode, whose requests the app answers (the app's check never
   approves a command for Claude, Cursor or Antigravity, so the shells those run commands in are their own matter). Measured for Cursor

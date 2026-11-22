@@ -48,7 +48,7 @@ pub fn same(a: &str, b: &str) -> bool {
 }
 
 fn saved() -> Vec<Value> {
-    paths::load_config().get("projects").and_then(Value::as_array).cloned().unwrap_or_default()
+    paths::setting("projects").as_array().cloned().unwrap_or_default()
 }
 
 fn save(list: Vec<Value>) {

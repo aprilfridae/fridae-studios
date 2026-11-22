@@ -835,10 +835,22 @@ fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::In
     }
 }
 
-/// Whether a line of Claude Code's output starts any tool (a long build may then send nothing for a while).
-fn claude_starts_tool(e: &Value) -> bool {
-    e["type"] == "assistant" && e["message"]["content"].as_array().into_iter().flatten().any(|b| b["type"] == "tool_use")
+/// Keeps the tool calls of Claude Code's that started and have no result yet, by id (a long build may send nothing for
+/// a while; a line in between, such as another call's result or a usage line, does not close it).
+fn claude_open_tools(e: &Value, open: &mut std::collections::HashSet<String>) {
+    for b in e["message"]["content"].as_array().into_iter().flatten() {
+        match (e["type"].as_str(), b["type"].as_str()) {
+            (Some("assistant"), Some("tool_use")) => {
+                open.insert(b["id"].as_str().unwrap_or_default().to_string());
+            }
+            (Some("user"), Some("tool_result")) => {
+                open.remove(b["tool_use_id"].as_str().unwrap_or_default());
+            }
+            _ => {}
+        }
+    }
 }
+
 
 /// Whether a line of Claude Code's output starts one of the app's tools that wait long on purpose.
 fn claude_starts_long_tool(e: &Value) -> bool {
@@ -867,8 +879,10 @@ struct TurnEnd {
 /// switch "Use API keys from my environment" is off). None when the failure is not about signing in, or no such key.
 fn key_note(kind: &str, said: &str, present: &[&str], keys_on: bool) -> Option<String> {
     let s = said.to_lowercase();
-    let sign_in = ["not signed in", "not logged in", "/login", "log in", "login", "api key", "unauthorized", "authentication", "401", "invalid x-api-key"].iter().any(|w| s.contains(w));
-    (!keys_on && sign_in && !present.is_empty()).then(|| {
+    // the AIs' own sign-in wording, not words a tool's error may quote ("401", "login" anywhere)
+    let sign_in = ["not signed in", "not logged in", "please run /login", "invalid api key", "api key not found", "missing api key", "unauthorized", "authentication failed", "authentication_error", "invalid x-api-key"].iter().any(|w| s.contains(w));
+    // OpenCode's keys stay kept from it whatever the switch says (paths::env_dropped): nothing to turn on
+    (!keys_on && kind != "opencode" && sign_in && !present.is_empty()).then(|| {
         format!(
             "{} is set on this computer, but Fridae keeps it from {} so you are never billed to it by surprise. If you sign in with that key or a company gateway, turn on Setup, The AIs, \"Use API keys from my environment\".",
             present.join(", "),
@@ -1608,6 +1622,8 @@ impl Agent {
         if self.busy() || shutting() {
             return;
         }
+        // before anything of the turn reads a setting: one changed behind the app's back is put back first
+        self.check_settings();
         let has_project = self.project().is_some_and(|p| std::path::Path::new(&p).is_dir());
         // the Lead of a running studio run: what reaches it is a Studio message, and the run's start checkpoint is kept
         let run = match self.project().filter(|_| has_project && self.role().is_none()) {
@@ -1949,7 +1965,15 @@ impl Agent {
     fn read(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>) {
         // the error output is always read to its end (a full pipe would block the AI), and only its tail is kept
         let stderr = child.stderr.take();
-        let err_reader = thread::spawn(move || stderr.map(|e| paths::drain_tail(e, paths::TAIL)).unwrap_or_default());
+        let err_tail = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        let err_reader = {
+            let kept = err_tail.clone();
+            thread::spawn(move || {
+                if let Some(e) = stderr {
+                    paths::drain_tail_into(e, paths::TAIL, &kept);
+                }
+            })
+        };
         let last = Arc::new(Mutex::new((std::time::Instant::now(), false, false)));
         {
             let (me, tp, last) = (self.clone(), tp.clone(), last.clone());
@@ -1962,7 +1986,7 @@ impl Agent {
             Some(out) => self.consume(out, kind, &last, || crate::procs::record(kind, pid)),
             None => TurnEnd::default(),
         };
-        self.finish_turn(child, kind, tp, t, err_reader);
+        self.finish_turn(child, kind, tp, t, err_reader, err_tail);
     }
 
     /// A command-line AI's output, line by line, through its parser and into the chat (the real transport is the
@@ -1975,6 +1999,7 @@ impl Agent {
         let asked = self.st.lock().unwrap().session.clone();
         {
             let mut cut_said = false;
+            let mut claude_open: std::collections::HashSet<String> = Default::default();
             for raw in paths::CappedLines::new(BufReader::new(out), paths::LINE_CAP) {
                 if std::mem::take(&mut first) {
                     on_first();
@@ -1999,7 +2024,8 @@ impl Agent {
                     }
                     continue;
                 }
-                *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e), claude_starts_tool(&e));
+                claude_open_tools(&e, &mut claude_open);
+                *last.lock().unwrap_or_else(|e| e.into_inner()) = (std::time::Instant::now(), claude_starts_long_tool(&e), !claude_open.is_empty());
                 if let Some(s) = e["session_id"].as_str().filter(|s| !s.is_empty()) {
                     got_session(&mut self.st.lock().unwrap(), s.to_string());
                 }
@@ -2106,7 +2132,7 @@ impl Agent {
 
     /// The end of a command-line AI's turn, once its output has ended: its error output, Cursor's helpers, the leader
     /// reaped and forgotten, then `after_turn`.
-    fn finish_turn(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>, t: TurnEnd, err_reader: thread::JoinHandle<String>) {
+    fn finish_turn(self: &Arc<Self>, mut child: std::process::Child, kind: &str, tp: Arc<TurnProc>, t: TurnEnd, err_reader: thread::JoinHandle<()>, err_tail: Arc<Mutex<std::collections::VecDeque<u8>>>) {
         {
             // under the gate the stall guard decides under, so a turn that ends now is never called stalled
             let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
@@ -2125,19 +2151,26 @@ impl Agent {
         while !err_reader.is_finished() && std::time::Instant::now() < until {
             thread::sleep(Duration::from_millis(50));
         }
-        let err = if err_reader.is_finished() { err_reader.join().unwrap_or_default() } else { String::new() };
+        // what was read so far is kept even when the reader still waits (a holder outside the group)
+        let err = paths::tail_text(&err_tail);
         tp.reaping();
         let status = child.wait().ok();
         crate::procs::forget(child.id());
+        self.check_settings();
         let stopped = self.turn_over();
-        if paths::guard_allowed() {
-            self.put("error", json!({"text": paths::ALLOWED_PUT_BACK}));
-        }
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
         let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else { err };
         self.after_turn(kind, t, &err, status.map(|s| (s.success(), s.code().unwrap_or(-1))), stopped);
+    }
+
+    /// Puts back any guarded setting changed behind the app's back (`paths::check_settings`), saying so in this chat.
+    fn check_settings(&self) {
+        let back = paths::check_settings();
+        if !back.is_empty() {
+            self.put("error", json!({"text": paths::put_back_line(&back)}));
+        }
     }
 
     /// The chat's turn has ended: it is no longer running. Returns whether Stop ended it.
@@ -2193,6 +2226,7 @@ impl Agent {
                     self.put("error", json!({"text": n}));
                 }
             }
+            Out::Refused(commands) => self.put("refused", json!({"commands": commands})),
             Out::Error(text) => self.put("error", json!({"text": text})),
             Out::Failed(text) => {
                 t.result_error = true;
@@ -2209,10 +2243,8 @@ impl Agent {
     fn read_opencode(self: &Arc<Self>, spec: opencode::Spec) {
         let mut t = TurnEnd::default();
         let ended = opencode::run(&spec, |out| self.take(out, &mut t));
+        self.check_settings();
         let stopped = self.turn_over();
-        if paths::guard_allowed() {
-            self.put("error", json!({"text": paths::ALLOWED_PUT_BACK}));
-        }
         if ended.killed {
             // after Stop: it did not stop in time; otherwise the turn already said why OpenCode was ended
             let text = if stopped {
@@ -2519,6 +2551,14 @@ pub fn new_background_chat(name: &str, project: Option<String>) -> Option<Arc<Ag
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: Option<String>, ai: Option<String>, model: Option<String>, parent: Option<&str>, expert: Option<Expert>) -> Option<Arc<Agent>> {
+    // before an expert or helper starts: a setting changed behind the app's back is put back, and the chat that
+    // started it is told
+    let back = paths::check_settings();
+    if !back.is_empty() {
+        if let Some(p) = parent.and_then(get) {
+            p.put("error", json!({"text": paths::put_back_line(&back)}));
+        }
+    }
     let agent = {
         let mut all = AGENTS.lock().unwrap();
         if slots_taken(&all) >= MAX_AGENTS {
@@ -2937,6 +2977,10 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
         "rbxkit": {"type": "stdio", "command": cmd[0], "args": cmd[1..], "env": {
             "RBXKIT_AGENT_ID": agent_id, "RBXKIT_AGENT_NAME": agent_name,
             "RBXKIT_PROJECT": project.unwrap_or(""), "RBXKIT_AGENT_ROLE": role.unwrap_or(""),
+            // the guarded settings the tools act on, from the app's memory (`paths::GUARDED`): the tools never take
+            // them from the settings file while the app runs them
+            "FRIDAE_SETTINGS_FROM_APP": "1", "FRIDAE_GEMINI_USE_API": if paths::gemini_api_on() { "1" } else { "0" },
+            "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
     });
     // FRIDAE_NO_STUDIO (testing only): a copy of the app that cannot reach the user's open Studio place: no Studio
@@ -3488,6 +3532,24 @@ mod tests {
         assert!(key_note("claude", "Not logged in", &["ANTHROPIC_API_KEY"], true).is_none(), "switch on: the key was passed");
         assert!(key_note("claude", "Not logged in", &[], false).is_none(), "no key set");
         assert!(key_note("claude", "The model is overloaded", &["ANTHROPIC_API_KEY"], false).is_none(), "not about signing in");
+        // a tool's error quoting such words is not a sign-in failure; OpenCode gets no note (no switch hands it keys)
+        for unrelated in ["curl: (22) The requested URL returned error: 401", "rbx: the login page of the game showed", "Open the place, then log in to Studio"] {
+            assert!(key_note("claude", unrelated, &["ANTHROPIC_API_KEY"], false).is_none(), "{unrelated}");
+        }
+        assert!(key_note("opencode", "Unauthorized", &["OPENAI_API_KEY"], false).is_none());
+        // a Claude tool call stays open until its own result, whatever lines come between
+        let mut open = Default::default();
+        claude_open_tools(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a"}, {"type": "tool_use", "id": "b"}]}}), &mut open);
+        claude_open_tools(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b"}]}}), &mut open);
+        claude_open_tools(&json!({"type": "rate_limit_event"}), &mut open);
+        assert_eq!(open.len(), 1, "a is still running");
+        claude_open_tools(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "a"}]}}), &mut open);
+        assert!(open.is_empty());
+        assert!(crate::paths::env_dropped("OPENAI_API_KEY", "opencode") && crate::paths::env_dropped("ANTHROPIC_API_KEY", "opencode"), "whatever the switch says");
+        for k in ["BASH_FUNC_echo%%", "BASH_ENV", "ENV", "CDPATH", "PS4"] {
+            assert!(crate::paths::shell_injected(k), "{k}");
+        }
+        assert!(!crate::paths::shell_injected("PATH") && !crate::paths::shell_injected("HOME"));
     }
 
     #[test]

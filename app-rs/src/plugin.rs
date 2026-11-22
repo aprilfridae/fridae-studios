@@ -52,7 +52,7 @@ fn with<T>(f: impl FnOnce(&mut Live) -> T) -> T {
 }
 
 fn token() -> String {
-    paths::load_config().get("plugin_token").and_then(Value::as_str).unwrap_or("").to_string()
+    paths::setting("plugin_token").as_str().unwrap_or("").to_string()
 }
 
 fn plugin_file() -> PathBuf {

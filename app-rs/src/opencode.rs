@@ -159,7 +159,7 @@ fn environment(cmd: &mut Command) {
         let _ = fs::set_permissions(&s, fs::Permissions::from_mode(0o700));
     }
     for (k, _) in env::vars_os() {
-        if k.to_string_lossy().starts_with("OPENCODE_") {
+        if k.to_string_lossy().starts_with("OPENCODE_") || paths::shell_injected(&k.to_string_lossy()) {
             cmd.env_remove(&k);
         }
     }
@@ -462,21 +462,20 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     for a in ["execute", "subagent", "task", "skill", "question"] {
         r.push(rule(a, "*", "deny"));
     }
-    // never OpenCode's own settings, wherever they are
-    for p in [".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"] {
-        r.push(rule("edit", p, "deny"));
-    }
-    // Ask me: never a git folder (a hook or an alias written there would run when an allowed `git` runs, as Claude Code
-    // also keeps `.git` protected)
+    // never OpenCode's own settings, wherever they are; Ask me: never a git folder (a hook or an alias written there
+    // would run when an allowed `git` runs, as Claude Code also keeps `.git` protected). Written again after the
+    // same-shaped folders are given back below, so those never reopen them.
+    let mut fixed: Vec<&str> = vec![".opencode/*", "*/.opencode/*", "*opencode.json", "*opencode.jsonc"];
     if !full {
-        for p in [".git/*", "*/.git/*"] {
-            r.push(rule("edit", p, "deny"));
-        }
+        fixed.extend([".git/*", "*/.git/*"]);
+    }
+    for p in &fixed {
+        r.push(rule("edit", p, "deny"));
     }
     // each protected place by its absolute path, and as OpenCode names it when it lies in the same git repository as
     // the working folder (relative to it: `../../.zshrc` for a game inside a repository that holds the home folder)
     let bases = spellings(folders.location);
-    for p in protect {
+    let deny_protected = |r: &mut Vec<Value>, p: &String| {
         let mut forms = vec![p.clone()];
         for b in &bases {
             if let Some(rel) = relative_pattern(b, p).filter(|r| !forms.contains(r)) {
@@ -487,17 +486,153 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
             // on a disk that ignores case, `CONFIG.JSON` is `config.json`, and OpenCode compares patterns as written
             // (measured, 2.3.2: `edit <kit>/config.json deny` let `<kit>/CONFIG.JSON` through): every letter becomes
             // `?`, its one-character wildcard (it has no `[cC]`; measured), so a few same-shaped names are refused too
-            let f = if paths::case_blind() { any_case(&f) } else { f };
-            r.push(rule("edit", &f, "deny"));
-            r.push(rule("edit", &format!("{f}/*"), "deny"));
+            // (given back below)
+            for f in if paths::case_blind() { any_case_all(&f) } else { vec![f] } {
+                r.push(rule("edit", &f, "deny"));
+                r.push(rule("edit", &format!("{f}/*"), "deny"));
+            }
+        }
+    };
+    for p in protect {
+        deny_protected(&mut r, p);
+    }
+    if paths::case_blind() {
+        // the `?` forms also refuse folders of the same shape (`~/Desktop` and `~/Dropbox` look like `~/Library`): give
+        // back, by their exact names, in Full auto each such folder that exists, and in Ask me the chat's own folders
+        // when they are hit. Then the protected places inside what was given back, and the fixed denies, again.
+        let lower = |s: &str| s.to_lowercase();
+        let inside = |p: &str, of: &str| lower(p) == lower(of) || lower(p).starts_with(&(lower(of.trim_end_matches('/')) + "/"));
+        let is_protected = |p: &str| protect.iter().any(|x| !x.contains(['*', '?']) && inside(p, x));
+        let denies: Vec<String> = r.iter().filter(|x| x["action"] == "edit" && x["effect"] == "deny").filter_map(|x| x["resource"].as_str()).filter(|x| x.contains('?')).map(str::to_string).collect();
+        let mut back: Vec<String> = Vec::new();
+        if full {
+            for p in protect.iter().filter(|p| p.starts_with('/')) {
+                for v in any_case_all(p) {
+                    for sib in same_shaped(&v, p) {
+                        if !is_protected(&sib) && !back.contains(&sib) {
+                            back.push(sib);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut dirs: Vec<&Path> = vec![folders.location, folders.kit];
+            dirs.extend(folders.project);
+            for d in dirs {
+                for p in allowable(d) {
+                    let hit = denies.iter().any(|x| wild_match(x, &format!("{p}/x")) || wild_match(x, &p));
+                    if hit && !is_protected(&p) && !back.contains(&p) {
+                        back.push(p);
+                    }
+                }
+            }
+        }
+        for p in &back {
+            let mut forms = vec![p.clone()];
+            for b in &bases {
+                // not a folder around the working folder (`..`, `../*` would reach every path above it)
+                if let Some(rel) = relative_pattern(b, p).filter(|r| !forms.contains(r) && r.starts_with("..") && r.split('/').any(|c| c != "..")) {
+                    forms.push(rel);
+                }
+            }
+            for f in forms {
+                r.push(rule("edit", &f, "allow"));
+                r.push(rule("edit", &format!("{f}/*"), "allow"));
+            }
+        }
+        if !back.is_empty() {
+            for p in protect.iter().filter(|x| x.contains(['*', '?']) || back.iter().any(|b| inside(x, b))) {
+                deny_protected(&mut r, p);
+            }
+            for p in &fixed {
+                r.push(rule("edit", p, "deny"));
+            }
         }
     }
     r
 }
 
+/// Whether OpenCode's pattern matches a text: `*` any text (also across `/`), `?` any one character, the rest literal.
+fn wild_match(pat: &str, text: &str) -> bool {
+    let (p, t): (Vec<char>, Vec<char>) = (pat.chars().collect(), text.chars().collect());
+    // the usual two-pointer match with one star to go back to
+    let (mut i, mut j, mut star, mut mark) = (0, 0, None, 0);
+    while j < t.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == t[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some(i);
+            mark = j;
+            i += 1;
+        } else if let Some(s) = star {
+            i = s + 1;
+            mark += 1;
+            j = mark;
+        } else {
+            return false;
+        }
+    }
+    p[i..].iter().all(|&c| c == '*')
+}
+
+/// The paths on disk an absolute `?` pattern (made from `original`) matches (one name per part; a part that is `*` is
+/// any one name; a part with `*` in it otherwise, such as `.*`, is not looked through). At most 200 per level, the
+/// original's own folders first, so the folders beside it are always among them.
+fn same_shaped(pattern: &str, original: &str) -> Vec<String> {
+    if !pattern.starts_with('/') || !pattern.contains('?') {
+        return Vec::new();
+    }
+    let own: Vec<String> = original.split('/').filter(|c| !c.is_empty()).map(str::to_lowercase).collect();
+    let mut at = vec![PathBuf::from("/")];
+    for (level, comp) in pattern.split('/').filter(|c| !c.is_empty()).enumerate() {
+        let mut next: Vec<PathBuf> = Vec::new();
+        for d in &at {
+            if !comp.contains(['?', '*']) {
+                let p = d.join(comp);
+                if p.symlink_metadata().is_ok() {
+                    next.push(p);
+                }
+            } else if comp == "*" || !comp.contains('*') {
+                for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+                    let n = e.file_name().to_string_lossy().to_string();
+                    if wild_match(comp, &n) {
+                        next.push(d.join(n));
+                    }
+                }
+            }
+        }
+        let mine = |p: &PathBuf| p.components().skip(1).take(level + 1).map(|c| c.as_os_str().to_string_lossy().to_lowercase()).eq(own.iter().take(level + 1).cloned());
+        next.sort_by_key(|p| !mine(p));
+        next.truncate(200);
+        at = next;
+    }
+    at.into_iter().map(|p| p.display().to_string()).collect()
+}
+
 /// A pattern that matches its path in any case: each ASCII letter becomes `?` (a `..` part stays as it is).
 fn any_case(pattern: &str) -> String {
-    pattern.split('/').map(|c| if c == ".." { c.to_string() } else { c.chars().map(|ch| if ch.is_ascii_alphabetic() { '?' } else { ch }).collect() }).collect::<Vec<_>>().join("/")
+    any_case_all(pattern).swap_remove(0)
+}
+
+/// The patterns that together match a path in any case and either Unicode spelling: each ASCII letter becomes `?`; a
+/// part holding another letter (`José`: `É` is `é`, and `é` may also be written `e` and an accent, the same file on a
+/// Mac disk) becomes one character wildcard per character, for every length from as written to two more per such
+/// letter (one pattern each); more than three such letters in a part, or more than nine patterns, and the part is `*`.
+fn any_case_all(pattern: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    for (k, c) in pattern.split('/').enumerate() {
+        let lens: Vec<String> = if c == ".." || c.is_ascii() {
+            vec![if c == ".." { c.to_string() } else { c.chars().map(|ch| if ch.is_ascii_alphabetic() { '?' } else { ch }).collect() }]
+        } else {
+            let n = c.chars().count();
+            let wide = c.chars().filter(|ch| !ch.is_ascii()).count();
+            if wide > 3 { vec!["*".to_string()] } else { (n..=n + 2 * wide).map(|l| "?".repeat(l)).collect() }
+        };
+        let lens = if out.len() * lens.len() > 9 { vec!["*".to_string()] } else { lens };
+        out = out.iter().flat_map(|o| lens.iter().map(move |l| if k == 0 { l.clone() } else { format!("{o}/{l}") })).collect();
+    }
+    out
 }
 
 /// An absolute pattern written relative to an absolute folder (`/u/a/games/g` and `/u/a/.*` give `../../.*`), component
@@ -1232,9 +1367,17 @@ fn turn_steps(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out), 
             put(o);
         }
         if let Some(ask) = step.ask.filter(|a| asked.insert(a.id.clone())) {
-            let d = decide(&ask.action, &ask.resources, &paths::allowed_commands());
+            let mut d = decide(&ask.action, &ask.resources, &paths::allowed_commands());
+            // a command the user said on its card may run one time, asked for again exactly as it was
+            if !d.once && take_once(&spec.agent_id, &ask.action, &ask.resources) {
+                d = Decision { once: true, message: String::new(), blocked: Vec::new(), refused: Vec::new() };
+            }
             if !d.blocked.is_empty() {
                 put(Out::Blocked(d.blocked.clone()));
+            }
+            if !d.refused.is_empty() {
+                note_refused(&spec.agent_id, &d.refused);
+                put(Out::Refused(d.refused.clone()));
             }
             // before anything is let run, the session's rules must still be the ones written; if not, the server is
             // ended (closed)
@@ -1342,7 +1485,7 @@ fn shell_environment() -> Map<String, Value> {
     // a variable that is not text is left out (never a panic); the ones the server itself goes without too
     // (`paths::child_env`: a Claude session's, and provider keys unless the user lets the AIs use them)
     for (k, v) in env::vars_os().filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?))) {
-        if !k.starts_with("OPENCODE_") && !SECRETS.contains(&k.as_str()) && !paths::env_dropped(&k, "opencode") {
+        if !k.starts_with("OPENCODE_") && !SECRETS.contains(&k.as_str()) && !paths::env_dropped(&k, "opencode") && !paths::shell_injected(&k) {
             out.insert(k, json!(v));
         }
     }
@@ -1388,13 +1531,60 @@ pub struct Decision {
     pub once: bool,
     pub message: String,
     pub blocked: Vec<Value>,
+    /// Commands refused for how they are written (or for reading other programs' settings), each with its reason in
+    /// plain words for the card: nothing the app does not approve is refused without the user seeing why.
+    pub refused: Vec<Value>,
+}
+
+/// Commands a chat's card showed as refused (offerable), and those the user then said may run one time, by chat. In
+/// memory only: a "Run this once" is for this run of the app and that exact command.
+static REFUSED: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
+static ONCE: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
+
+fn note_refused(agent_id: &str, refused: &[Value]) {
+    let mut g = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
+    let set = g.get_or_insert_with(HashMap::new).entry(agent_id.to_string()).or_default();
+    for r in refused.iter().filter(|r| r["once"] == true) {
+        if let Some(c) = r["command"].as_str() {
+            set.insert(c.to_string());
+        }
+    }
+}
+
+/// The user said a command a card showed may run one time in that chat. Only a command that chat was refused, and
+/// never one that reads other programs' settings.
+pub fn approve_once(agent_id: &str, command: &str) -> bool {
+    let shown = REFUSED.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.get_mut(agent_id)).is_some_and(|s| s.remove(command));
+    if !shown || paths::reads_other_env(command) {
+        return false;
+    }
+    ONCE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).entry(agent_id.to_string()).or_default().insert(command.to_string());
+    true
+}
+
+/// Whether every command of a request is one the user said may run once in this chat; if so they are used up.
+fn take_once(agent_id: &str, action: &str, resources: &[String]) -> bool {
+    if action != "shell" || resources.is_empty() || resources.iter().any(|c| paths::reads_other_env(c)) {
+        return false;
+    }
+    let mut g = ONCE.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(set) = g.as_mut().and_then(|m| m.get_mut(agent_id)) else { return false };
+    if !resources.iter().all(|c| set.contains(c)) {
+        return false;
+    }
+    for c in resources {
+        set.remove(c);
+    }
+    true
 }
 
 pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decision {
     if action == "shell" && !resources.is_empty() {
         let mut blocked: Vec<Value> = Vec::new();
+        let mut refused: Vec<Value> = Vec::new();
         let mut form = false;
         let mut env_reader = false;
+        let card = |command: &str, once: bool| json!({"command": command.chars().take(400).collect::<String>(), "reason": paths::refusal_reason(command, allowed), "once": once});
         for command in resources {
             // approved only when every program in it is one the user allowed, named exactly (`paths::command_allowed`)
             if paths::command_allowed(command, allowed) {
@@ -1404,6 +1594,7 @@ pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decisio
             // let run, nor offered: allowing it would not change that
             if paths::reads_other_env(command) {
                 env_reader = true;
+                refused.push(card(command, false));
                 continue;
             }
             // the card offers the programs in it the user has not allowed; when there are none, it was the way it was
@@ -1411,6 +1602,7 @@ pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decisio
             let missing: Vec<String> = paths::command_programs(command).into_iter().filter(|n| !allowed.contains(n)).collect();
             if missing.is_empty() {
                 form = true;
+                refused.push(card(command, true));
             }
             for n in missing {
                 if !blocked.iter().any(|b| b["name"] == n) {
@@ -1419,27 +1611,30 @@ pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decisio
             }
         }
         if env_reader {
-            return Decision { once: false, message: "Not run: programs that read other programs' settings (such as ps) never run in a Fridae chat with OpenCode. Say in one line what you wanted to find out, and carry on with the rest.".into(), blocked: Vec::new() };
+            return Decision { once: false, message: "Not run: programs that read other programs' settings (such as ps) never run in a Fridae chat with OpenCode. Say in one line what you wanted to find out, and carry on with the rest.".into(), blocked: Vec::new(), refused };
         }
         if blocked.is_empty() && !form {
-            return Decision { once: true, message: String::new(), blocked };
+            return Decision { once: true, message: String::new(), blocked, refused };
         }
         let names: Vec<&str> = blocked.iter().filter_map(|b| b["name"].as_str()).collect();
         let message = if names.is_empty() {
-            "Not run: only the programs the user allowed run here, called by their plain name (\"git status\", not \"./git\" or a path), without command substitution, variables or redirection to files. Run it that way, or say in one line what you wanted to run and why, and carry on with the rest.".to_string()
+            format!(
+                "Not run, because {} The user was shown it and may let it run once. Allowed programs run here without asking when called by their plain name, with no $, backquotes, backslashes or redirection to files, and outside single quotes only letters, digits and _ @ % + = : , . / - ! (and ~ or ^ right after a letter, as in HEAD~1); put anything else (*, braces, a leading ~) in single quotes. Run it that way if you can; otherwise say in one line what you wanted to run and why, and carry on with the rest.",
+                refused.iter().filter_map(|r| r["reason"].as_str()).next().unwrap_or("of how it is written.")
+            )
         } else {
             format!(
                 "The user has not allowed {} here, so it was not run. Do not try another way to run it; say in one line what you wanted to run and why, and carry on with the rest.",
                 names.join(", ")
             )
         };
-        return Decision { once: false, message, blocked };
+        return Decision { once: false, message, blocked, refused };
     }
     let message = match action {
         "external_directory" => "That folder is outside this chat's folders, so it is not allowed here.",
         _ => "That is not allowed here.",
     };
-    Decision { once: false, message: message.to_string(), blocked: Vec::new() }
+    Decision { once: false, message: message.to_string(), blocked: Vec::new(), refused: Vec::new() }
 }
 
 /// A permission request of the turn's session.
@@ -1951,6 +2146,25 @@ mod tests {
         }
         let d = decide("shell", &["./git status".into()], &["git".into()]);
         assert!(d.blocked.is_empty() && d.message.contains("plain name"), "allowing git again would not help: no card");
+        // ...but never silent: an approval card with the reason in plain words, offering to run it once
+        assert_eq!(d.refused.len(), 1);
+        assert!(d.refused[0]["reason"].as_str().unwrap().contains("path") && d.refused[0]["once"] == true);
+        // a runner the user allowed, and an env reader behind it: cards too, the reader never offered
+        let d = decide("shell", &["time git status".into()], &["git".into(), "time".into()]);
+        assert!(!d.once && d.refused[0]["reason"].as_str().unwrap().contains("runs another program") && d.refused[0]["once"] == true);
+        let d = decide("shell", &["time ps eww".into()], &["time".into(), "ps".into()]);
+        assert!(!d.once && d.refused[0]["reason"].as_str().unwrap().contains("password") && d.refused[0]["once"] == false);
+        // "Run this once": only a command that chat's card showed, only in that chat, only once, never an env reader
+        note_refused("once-a", &decide("shell", &["./git status".into()], &["git".into()]).refused);
+        note_refused("once-a", &decide("shell", &["time ps eww".into()], &["time".into()]).refused);
+        assert!(!approve_once("once-b", "./git status"), "another chat's card");
+        assert!(!approve_once("once-a", "rm -rf x"), "never shown");
+        assert!(!approve_once("once-a", "time ps eww"), "an env reader is never run");
+        assert!(approve_once("once-a", "./git status"));
+        assert!(!take_once("once-b", "shell", &["./git status".into()]));
+        assert!(!take_once("once-a", "shell", &["./git status".into(), "rm x".into()]), "every command of the request");
+        assert!(take_once("once-a", "shell", &["./git status".into()]));
+        assert!(!take_once("once-a", "shell", &["./git status".into()]), "used up");
         let d = decide("shell", &["git status; curl x".into()], &["git".into()]);
         assert_eq!(d.blocked, vec![json!({"name": "curl", "command": "git status; curl x"})], "the card offers the program not allowed");
         // anything else that asks is refused, with no card
@@ -2071,6 +2285,43 @@ mod tests {
     fn a_pattern_in_any_case() {
         assert_eq!(any_case("../../kit/config.json"), "../../???/??????.????");
         assert_eq!(any_case("/Users/a b/.*"), "/?????/? ?/.*");
+        // a name with a letter outside ASCII: every length it can have in either Unicode spelling
+        assert_eq!(any_case_all("/Users/José/.*"), ["/?????/????/.*", "/?????/?????/.*", "/?????/??????/.*"]);
+        for spelled in ["/Users/JOSÉ/.zshrc", "/Users/jose\u{301}/.zshrc", "/Users/José/.zshrc"] {
+            assert!(any_case_all("/Users/José/.*").iter().any(|p| wild_match(p, spelled)), "{spelled}");
+        }
+        assert_eq!(any_case_all("/a/éééé/x"), ["/?/*/?"], "too many: the part is any name");
+        assert!(wild_match("/?????/*/.*", "/Users/a/b/.x") && !wild_match("/??/x", "/abc/x") && wild_match("a*b*c", "aXbYbc"));
+    }
+
+    #[test]
+    fn same_shaped_folders_are_given_back_by_their_exact_names() {
+        if !case_blind() {
+            return;
+        }
+        let t = crate::paths::test_dir("same-shaped").canonicalize().unwrap_or_else(|_| crate::paths::test_dir("same-shaped"));
+        let _ = std::fs::remove_dir_all(&t);
+        let home = t.join("home");
+        for d in ["Library", "Desktop", "Dropbox/game", "Pictures"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let h = home.display().to_string();
+        let protect = vec![format!("{h}/.*"), format!("{h}/Library")];
+        let kit = t.join("kit");
+        let f = Folders { location: &home.join("Dropbox/game"), project: None, kit: &kit, reads: vec![] };
+        // Full auto: the folders beside Library that look like it may be written again; Library in any case may not
+        let r = permissions(true, "c1", &[], &f, &protect);
+        for (path, want) in [("Desktop/x.lua", "allow"), ("Dropbox/game/a.lua", "allow"), ("Pictures/x", "allow"), ("Library/x", "deny"), ("LIBRARY/x", "deny"), ("library", "deny"), (".zshrc", "deny"), ("Desktop/p/.opencode/x", "deny")] {
+            assert_eq!(decides(&r, "edit", &format!("{h}/{path}")), want, "Full auto {path}");
+        }
+        assert_eq!(decides(&r, "edit", "../../Desktop/x"), "allow");
+        assert_eq!(decides(&r, "edit", "../../LIBRARY/x"), "deny");
+        // Ask me: the chat's own folder (in Dropbox) is given back; Desktop is not the chat's, so stays refused
+        let r = permissions(false, "c1", &[], &f, &protect);
+        for (path, want) in [("Dropbox/game/a.lua", "allow"), ("Desktop/x", "deny"), ("Library/x", "deny"), ("LIBRARY/x", "deny"), ("Dropbox/game/.git/hooks/x", "deny")] {
+            assert_eq!(decides(&r, "edit", &format!("{h}/{path}")), want, "Ask me {path}");
+        }
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]

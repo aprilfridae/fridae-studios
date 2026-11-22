@@ -152,6 +152,9 @@ pub enum Out {
     Encoded(Vec<String>),
     /// Commands that were refused because the user has not allowed their program: {name, command}.
     Blocked(Vec<Value>),
+    /// Commands the app did not approve by itself for how they are written, not for their program: {command, reason,
+    /// once} (once: the card may offer to run that exact command one time).
+    Refused(Vec<Value>),
     Error(String),
     /// The AI answered, but its result says the turn failed: counted as a failed turn, like Claude Code's.
     Failed(String),

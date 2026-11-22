@@ -54,6 +54,9 @@ def have_key():
 def api_enabled():
     """The paid API is only used when a key exists AND the user switched it on.
     A saved key alone does nothing: the default is always the free hand-off."""
+    if os.environ.get("FRIDAE_SETTINGS_FROM_APP") == "1":
+        # run by the app: its own value, never the settings file (an AI's file tool may have changed that)
+        return have_key() and os.environ.get("FRIDAE_GEMINI_USE_API") == "1"
     return have_key() and bool(_config().get("gemini_use_api"))
 
 

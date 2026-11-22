@@ -192,7 +192,7 @@ fn start(req: &Value) {
     // where it runs: the user's Setup > Experts row, else what the Lead asked for, else the Lead's own AI and model
     let lead_ai = from.as_ref().map(|a| a.ai()).unwrap_or_else(paths::default_ai);
     let lead_model = from.as_ref().and_then(|a| a.model());
-    let table = expert.as_deref().map(|e| expert_ai::table_entry(&paths::load_config(), e)).unwrap_or_default();
+    let table = expert.as_deref().map(|e| expert_ai::table_entry(&paths::guarded_settings(), e)).unwrap_or_default();
     let asked = (req["ai"].as_str(), req["model"].as_str());
     let shown_name = req["expert_name"].as_str().or(expert.as_deref()).unwrap_or("helper").to_string();
     let choice = expert_ai::resolve(
