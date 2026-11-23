@@ -2814,7 +2814,9 @@ impl Agent {
             line
         };
         // an AI whose model ids carry their own effort is not given the setting (`caps`)
-        let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort);
+        // nor is a model that names its own level (agy's `gemini-4-neon-high`): agy refuses a turn whose `--effort`
+        // differs from it ("--model gemini-3.8-flash-low conflicts with --effort=high", agy 1.5.15)
+        let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort).filter(|_| !(self.ai() == "gemini" && model.is_some_and(antigravity::names_its_level)));
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
         self.put(
             "user",

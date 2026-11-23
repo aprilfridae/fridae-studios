@@ -2534,6 +2534,8 @@ async function moveOpenCodePick() {
   if (sent) refresh();
 }
 function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
+/* no effort to set: the AI's models carry their own, or this model names its level (Gemini's "gemini-4-neon-high") */
+function ownLevel(ai, model) { return caps(ai).effort === false || (ai === "gemini" && /-(low|medium|high|xhigh|max)$/.test(model || "")); }
 /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
 function modelParts(ai, name) {
   const at = caps(ai).grouped_models ? name.indexOf(" · ") : -1;
@@ -2561,7 +2563,7 @@ function paintNotice(slot, ai) {
 /* the button: "Claude · Opus". The picker behind it is only painted while it is open. */
 function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
-  const cur = list.find((m) => m[0] === chosen), ownEffort = caps(ai).effort === false;
+  const cur = list.find((m) => m[0] === chosen), ownEffort = ownLevel(ai, chosen);
   $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "");
   $("model").title = [aiName(ai), cur ? cur[1] : "", ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message.";
   paintGap(ai, p);
@@ -2606,7 +2608,7 @@ function paintPicker() {
     lst.scrollTop = top;
   }
   /* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */
-  const ownEffort = caps(ai).effort === false, seg = $("effort"), esig = ownEffort ? "" : ai + " " + effort;
+  const ownEffort = ownLevel(ai, chosen), seg = $("effort"), esig = ownEffort ? "" : ai + " " + effort;
   $("effort-wrap").hidden = ownEffort;
   if (seg.dataset.sig === esig) return;
   seg.dataset.sig = esig; seg.innerHTML = "";

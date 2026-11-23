@@ -115,6 +115,12 @@ pub fn default_model() -> Option<String> {
         .map(|(id, _)| id.clone())
 }
 
+/// Whether a model's id ends in its own thinking level (`gemini-4-neon-high`, `gemini-3.8-flash-low`). Such a model is
+/// never given `--effort`: agy refuses the turn when the two differ.
+pub fn names_its_level(id: &str) -> bool {
+    id.rsplit_once('-').is_some_and(|(_, last)| matches!(last, "low" | "medium" | "high" | "xhigh" | "max"))
+}
+
 /// A model's name for showing, from its id.
 pub fn model_name(id: &str) -> String {
     models().iter().find(|(known, _)| known == id).map(|(_, name)| name.clone()).unwrap_or_else(|| id.to_string())
@@ -532,6 +538,17 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_that_names_its_level_is_told_apart() {
+        // ids as `agy models` lists them (agy 1.5.15)
+        for id in ["gemini-4-neon-high", "gemini-4-hydrogen-xhigh", "gemini-4-carbon-medium", "gemini-3.8-flash-low", "claude-opus-5-5-high", "gpt-oss-120b-medium"] {
+            assert!(names_its_level(id), "{id}");
+        }
+        for id in ["gemini-pro-orchestrator", "gemini-pro-orchestrator-neon", "gemini-pro-orchestrator-argon", "high", ""] {
+            assert!(!names_its_level(id), "{id}");
+        }
+    }
 
     fn settings(args: &[String]) -> Value {
         let at = args.iter().position(|a| a == "--settings").unwrap();
