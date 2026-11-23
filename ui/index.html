@@ -986,13 +986,14 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="keyrow"><input type="text" id="cmd-name" placeholder="A program name, like git or python" autocomplete="off" spellcheck="false" aria-label="A program to allow"><button class="pill" id="cmd-add">Allow</button></div>
     </section>
     <section data-s="images">
-      <h3>Texture images</h3>
+      <h3>AI images</h3>
+      <label class="sub check-row"><input type="checkbox" id="gem-images"> Agents may generate images with Gemini</label>
+      <details class="moreinfo"><summary>More</summary><p>Icons, thumbnail art and UI art are made through Antigravity, and each picture uses some of your Gemini plan. One chat may start 12 an hour and one game's team 30, textures included. Off: agents ask you first.</p></details>
+      <h3>Textures</h3>
       <p class="sub" id="gem-state"></p>
       <details class="moreinfo"><summary>More</summary><p>Without Antigravity, you get the prompt, make the image in your own Gemini chat, and it is picked up when you copy it. A key is only used if you switch it on below; Google then charges about 3 cents an image. The /texture, /particle and /decal commands always use your own chat. Textures only: never UI, icons or lettering. Cursor chats use only a key saved here, not one set in your computer's environment.</p></details>
       <div class="keyrow"><input type="password" id="gem-key" placeholder="Gemini API key" autocomplete="off" spellcheck="false" aria-label="Gemini API key"><button class="pill" id="gem-save">Save</button></div>
       <div class="act"><button class="switch" id="gem-api" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span class="swl">Use my API key (Google charges per image)</span></button><button class="pill" id="gem-clear">Remove key</button></div>
-      <label class="sub check-row"><input type="checkbox" id="gem-images"> Agents may generate images with Gemini</label>
-      <details class="moreinfo"><summary>More</summary><p>Icons, thumbnail art and UI art are made through Antigravity, and each picture uses some of your Gemini plan. One chat may start 12 an hour and one game's team 30, textures included. Off: agents ask you first.</p></details>
     </section>
     <section data-s="chats">
       <h3>Saved chats</h3>
