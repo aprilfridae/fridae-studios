@@ -10,7 +10,7 @@
 
 /* One greyscale palette, one outline per surface, one radius scale.
    Spacing: 4 8 12 16 24 32 48 (2 only inside a control). Controls: 28 small, 32 regular, 40 for a page's main field.
-   Type: 12 13 14 15 16, and 28 for the one big line; headings are 16/600 (a page or section) and 14/600 (a part of one).
+   Type: 12 13 14 15 16; headings are 16/600 (a page or section) and 14/600 (a part of one).
    Every size is in px and the whole page is scaled with the text-size setting (Ctrl + and Ctrl -), so nothing needs
    its own size rules. */
 :root {
@@ -96,6 +96,8 @@ input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-of
 .dot.live { background: var(--text); box-shadow: none; animation: pulse 1.1s ease-in-out infinite; }
 .dot.miss { background: var(--warn); box-shadow: none; }
 .tag { display: block; text-align: right; font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); margin: 4px 4px 0 0; }
+.tag .linkish { font: inherit; letter-spacing: inherit; margin-left: 8px; color: var(--dim); border-radius: 4px; }
+.tag .linkish:hover { color: var(--text); }
 /* a longer explanation, folded behind one word */
 .moreinfo { margin: 4px 0 0; }
 .moreinfo summary { display: inline-block; font-size: 13px; color: var(--dim); cursor: pointer; list-style: none; text-decoration: underline; text-underline-offset: 3px; border-radius: 4px; }
@@ -328,10 +330,10 @@ button.pname:hover { background: var(--hover); }
 
 /* the first screen of a chat */
 .hello { max-width: 640px; padding-top: 4vh; }
-.hello h1 { font-size: 28px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 600; margin: 12px 0 8px; }
+.hello h1 { font-size: 16px; line-height: 1.4; letter-spacing: -0.01em; font-weight: 600; margin: 12px 0 4px; }
 .hello h1 span { color: var(--dim); }
-.hello .lede { color: var(--dim); max-width: 52ch; margin: 0 0 24px; }
-.sigil { display: block; width: 32px; height: 32px; }
+.hello .lede { color: var(--dim); max-width: 52ch; margin: 0 0 16px; }
+.sigil { display: block; width: 24px; height: 24px; }
 .hello-needs:empty { display: none; }
 .hello-needs { margin: 0 0 16px; }
 .hello-needs .c-row { border-top: 0; padding: 4px 0; }
@@ -426,11 +428,11 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .slash code { font-family: var(--mono); font-size: 12px; }
 .slash span { color: var(--dim); }
 .slash .how { padding: 8px 12px 4px; font-size: 12px; color: var(--faint); }
-/* a short word from the app, over the message box for a few seconds */
-.saytip { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 4; max-width: 62ch; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 13px; line-height: 1.45; opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 160ms ease, transform 200ms var(--ease), visibility 0s 200ms; }
+/* a short word from the app, over the message box for a few seconds, and over any menu that is open there */
+.saytip { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 25; max-width: 62ch; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 13px; line-height: 1.45; opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 160ms ease, transform 200ms var(--ease), visibility 0s 200ms; }
 .saytip.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 160ms ease, transform 200ms var(--ease); }
 .saytip .linkish { margin-left: 8px; }
-.saytip.free { left: 24px; bottom: 24px; z-index: 25; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
+.saytip.free { left: 24px; bottom: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
 
 /* ---------- the other pages take the whole space under the project's bar ---------- */
 #review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
@@ -609,9 +611,10 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-empty p { margin: 0; font-size: 14px; color: var(--dim); line-height: 1.5; flex: 1; min-width: 280px; }
 .rv-empty b { color: var(--text); font-weight: 600; }
 .rv-night { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; font-size: 14px; color: var(--dim); }
-.rv-night span { flex: 1; min-width: 200px; }
-#rv-night-box:empty { display: none; }
-#rv-night-box { margin-top: 12px; }
+.rv-night > span { flex: 1; min-width: 200px; }
+.rv-night-box { flex-basis: 100%; }
+.rv-night-box:empty { display: none; }
+.rv-night-box .ask { margin: 4px 0 0; }
 .rv-now { margin: 0; display: grid; gap: 2px; }
 .rv-who { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: var(--h-m); padding: 4px 8px; margin: 0 -8px; border-radius: var(--r-s); text-align: left; font-size: 14px; }
 button.rv-who:hover { background: var(--hover); }
@@ -845,8 +848,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
             <div id="rv-end-box"></div>
           </details>
         </div>
-        <div class="rv-night" id="rv-night" hidden><span id="rv-night-what"></span><button class="pill sm" id="rv-night-undo" title="Put Studio and the project back as they were before the overnight run began">Undo the night</button></div>
-        <div id="rv-night-box"></div>
+        <div id="rv-nights"></div>
         <p class="rv-err" id="rv-err"></p>
       </section>
       <div id="rv-now-wrap" hidden>
@@ -1103,7 +1105,7 @@ const GUIDE = [
   ["Safety net", [
     ["Checkpoint", "Saves every script into the project folder and its history.", "Take a checkpoint", "Changes can then be compared and restored."],
     ["Undo a turn", "The link under a finished turn takes back what it changed in Studio.", "", "Scripts included. It needs the Studio plugin (Setup, Connections)."],
-    ["Undo the night", "A game's Review puts Studio and the files back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
+    ["Undo the night", "A game's Review puts Studio and the files back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
     ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), today, and this week split by AI. Gemini, Cursor and OpenCode do not report their limits. A game's Review shows what that game has cost."],
     ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
@@ -1234,7 +1236,7 @@ function select(id) {
   const key = p.project ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
   if (curProj !== key) curProj = key;
   lastChat[key] = id;
-  if (isPage(view)) view = "chat";
+  if (isPage(view) || (view === "review" && !key)) view = "chat";   /* a chat with no game has no Review */
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
   following = atBottom();
@@ -1362,6 +1364,7 @@ function paintSide() {
 /* the bar over the tabs: the game's name and its three tabs */
 function paintView() {
   for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
+  if (view !== "review") $("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
   ["chat", "review", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
   const name = view === "newproj" ? "New project" : view === "all" ? "All projects" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
@@ -1679,8 +1682,22 @@ function startCard(p) {
 /* open, the body is marked "pd-open" (never "proj": that is the class of a project's row in the sidebar, and its
    padding and grid would land on the whole page) */
 function paintProject() {
-  if (!curProj) document.body.classList.remove("pd-open");
+  if (!curProj) closeProject();
   paintView(); paintSwitch();
+}
+/* While Setup or the project panel is open, the page behind it is inert: Tab stays in the panel, and when the panel
+   closes the keyboard goes back to where it was. */
+let panelFrom = null;
+function panelOpened(first) {
+  if (!panelFrom) panelFrom = document.activeElement;
+  document.querySelector(".app").inert = true;
+  if (first) first.focus({ preventScroll: true });
+}
+function panelClosed() {
+  if (document.body.classList.contains("setup") || document.body.classList.contains("pd-open")) return;
+  document.querySelector(".app").inert = false;
+  const back = panelFrom; panelFrom = null;
+  if (back && back !== document.body && document.contains(back) && back.getClientRects().length) back.focus({ preventScroll: true });
 }
 /* the project in front, as the app's list has it */
 const frontProj = () => (curProj && (projects.projects || []).find((x) => x.path === curProj)) || (curProj ? { path: curProj, name: prName(curProj) } : null);
@@ -1712,10 +1729,10 @@ function openProject() {
   closeSetup();
   $("pd-name").textContent = pr.name; $("pd-path").textContent = pr.path; $("pd-out").textContent = "";
   $("pd-bible").hidden = !pr.bible;
-  document.body.classList.add("pd-open"); git("status");
+  document.body.classList.add("pd-open"); panelOpened($("pd-close")); git("status");
   api("/api/projects").then((r) => { projects = r; const now = r.projects.find((x) => x.path === pr.path); if (now) $("pd-bible").hidden = !now.bible; });
 }
-const closeProject = () => document.body.classList.remove("pd-open");
+function closeProject() { if (!document.body.classList.contains("pd-open")) return; document.body.classList.remove("pd-open"); panelClosed(); }
 $("b-proj").onclick = openProject; $("pd-close").onclick = closeProject;
 $("pd-folder").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "folder" }); };
 $("pd-bible").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "bible" }); };
@@ -1824,44 +1841,88 @@ $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").cl
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
 setInterval(paintUsage, 60000); paintUsage();
 
-/* ---------- undo the night: an overnight run's checkpoint, taken back from the game's Review ---------- */
-/* the chat of this game whose overnight run can be undone (a studio run has its own undo, under Run settings) */
-function nightChat(path) {
-  return [...agents.values()].find((p) => isChat(p) && path && projKey(p) === path && p.night && !p.nightUndone && !p.busy && !p.studio && !p.night.run) || null;
-}
-function paintNight() {
-  const p = nightChat(rvPathNow());
-  $("rv-night").hidden = !p;
-  if (!p) { $("rv-night-box").replaceChildren(); return; }
-  $("rv-night-what").textContent = "The overnight run in “" + p.name + "” began with a checkpoint.";
-}
-$("rv-night-undo").onclick = () => {
-  const p = nightChat(rvPathNow()), host = $("rv-night-box"); if (!p) return;
+/* ---------- undo the night: an overnight run's checkpoint, taken back from the game's Review, or from the chat
+   itself when the chat belongs to no game (it has no Review) ---------- */
+/* this chat's overnight run can be undone now (a studio run has its own undo, under Run settings in Review) */
+function nightOpen(p) { return !!(p && p.night && !p.nightUndone && !p.busy && !p.studio && !p.night.run); }
+/* the chats of this game whose overnight run can be undone: each gets its own line in Review */
+function nightChats(path) { return path ? [...agents.values()].filter((p) => isChat(p) && projKey(p) === path && nightOpen(p)) : []; }
+/* The card that asks before undoing one chat's night. It is that chat's alone (data-chat), wherever it is shown, and it
+   checks once more that the night is still there to undo before it calls the app. */
+function nightCard(p, onUndone) {
   const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const what = [p.night.studio ? "the agents' changes in Studio since then, step by step, stopping at the first step that is yours; and the text of every script goes back to how it was then, your own and other chats' script edits included (first, the scripts as they are now are saved in the game's folder, in .fridae/before-undo/ under the time of the undo)" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
   const card = el("div", "ask night-ask enter", "<h4>Undo the night?</h4><p></p><div class=\"act\"><button class=\"pill main\">Undo the night</button><button class=\"pill\">Keep it</button></div>");
-  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " The task cards are kept. Studio must still be open on the same place.";
+  card.dataset.chat = p.id;
+  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run in “" + p.name + "” began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " The task cards are kept. Studio must still be open on the same place.";
   const [go, keep] = card.querySelectorAll("button");
   /* shown only after the app refused Studio's part: the files go back, Studio is left as it is */
   const files = el("button", "pill", "Undo the files only"); files.hidden = true; card.querySelector(".act").insertBefore(files, keep);
   keep.onclick = () => card.remove();
   const undo1 = async (filesOnly) => {
+    if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }   /* undone meanwhile, at work again, or closed */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
-    const r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly });
+    let r; try { r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly }); } catch (e) { r = null; }
     if (r && !r.ok && r.files_only) {
       card.querySelector("p").textContent = r.text || "";
-      go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.hidden = false;
+      go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.textContent = "Undo the files only"; files.hidden = false;
       return;
     }
-    if (r && r.ok) { card.remove(); p.nightUndone = true; paintNight(); return; }
+    if (r && r.ok) { card.remove(); p.nightUndone = true; paintNightTag(p); if (onUndone) onUndone(); return; }
     /* it stays open and says why */
     card.querySelector("p").textContent = (r && r.text) || "Could not undo the night.";
-    go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night";
+    go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.textContent = "Undo the files only";
   };
   go.onclick = () => undo1(false);
   files.onclick = () => undo1(true);
-  host.replaceChildren(card);
-};
+  return card;
+}
+/* Review: one line per chat of the game in front whose night can be undone, each with its own button and its own
+   card under it. A line goes with its chat, so nothing of another game's (or another chat's) is ever left open. */
+function paintNight() {
+  const host = $("rv-nights"), list = nightChats(rvPathNow()), keep = new Set(list.map((p) => p.id));
+  for (const row of [...host.children]) if (!keep.has(row.dataset.chat)) row.remove();
+  for (const p of list) {
+    let row = [...host.children].find((r) => r.dataset.chat === p.id);
+    if (!row) {
+      row = el("div", "rv-night", '<span></span><button class="pill sm" title="Put Studio and the project back as they were before the overnight run began">Undo the night</button><div class="rv-night-box"></div>');
+      row.dataset.chat = p.id;
+      row.querySelector("button").onclick = () => {
+        if (!nightOpen(p)) { paintNight(); return; }
+        row.querySelector(".rv-night-box").replaceChildren(nightCard(p, () => {
+          paintNight();
+          /* its line is gone; the chat holds what went back */
+          const b = el("button", "linkish", "Open the chat"); b.onclick = () => { sayTip.classList.remove("on"); openChatById(p.id); };
+          say("The night was undone. The chat says what went back.", b);
+        }));
+      };
+      host.appendChild(row);
+    }
+    row.querySelector("span").textContent = "The overnight run in “" + p.name + "” can be undone.";
+  }
+}
+/* The chat's own line where the night began. It says where the undo is: Review for a game's chat (Run settings for a
+   studio run); for a chat with no game, which has no Review, the undo is this line's own link. */
+function paintNightTag(p) {
+  const t = p.nightTag; if (!t) return;
+  const n = p.night || {}, saved = !!(n.commit || n.studio), run = !!(p.studio || n.run), game = !!p.project;
+  const none = "No checkpoint: no git in the project and Studio not connected";
+  t.querySelector("span").textContent = run ? (saved ? "Checkpoint saved · Undo this run is in Review, under Run settings" : none)
+    : game ? (saved ? "Checkpoint saved" : none) + " · Undo the night is in Review"
+    : saved ? "Checkpoint saved" : "No checkpoint: Studio not connected";
+  const b = t.querySelector("button"); if (b) b.hidden = run || game || !nightOpen(p);
+}
+function nightTag(p) {
+  /* an earlier night's line keeps its words and loses its link: only the newest night can be undone */
+  if (p.nightTag) { const old = p.nightTag.querySelector("button"); if (old) old.remove(); }
+  const t = el("span", "tag enter", '<span></span><button class="linkish" hidden title="Put Studio back as it was before the overnight run began">Undo the night</button>');
+  t.querySelector("button").onclick = () => {
+    if (!nightOpen(p)) { paintNightTag(p); return; }
+    p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
+    p.col.appendChild(nightCard(p)); if (p.id === current) stick(true);
+  };
+  p.nightTag = t; p.col.appendChild(t); paintNightTag(p);
+}
 
 function newTurn(p) {
   p.turn = el("div", "turn enter");
@@ -1959,8 +2020,7 @@ function onEvent(e) {
   } else if (e.kind === "usage") {
     if (e.id > bootMark) loadUsage();   /* the count at the bottom left, and its pop-up */
   } else if (e.kind === "night") {
-    p.night = e; p.nightUndone = false;
-    p.col.appendChild(el("span", "tag enter", e.commit || e.studio ? "Checkpoint saved \u00b7 it can be undone from Review" : "No checkpoint: no git in the project and Studio not connected"));
+    p.night = e; p.nightUndone = false; nightTag(p);
   } else if (e.kind === "night_undone") {
     p.nightUndone = true;
     const card = el("div", "ask enter", "<h4>The night was undone</h4><p></p>");
@@ -2009,25 +2069,32 @@ function onEvent(e) {
     s.appendChild(el("div", "step live enter", esc(e.label)));
     p.now = e.label;
   } else if (e.kind === "text") {
-    if (!p.turn) newTurn(p);
-    p.turn.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
-    /* the agent's last line "STATUS: <WORD>" is for the app, not the reader: it is never shown (the saved chat keeps
-       it). Three of the words are said in plain words instead; WAITING shows as the "Waiting for you" line. */
+    /* The agent's last line "STATUS: <WORD>" is for the app, not the reader: it is never shown as written (the saved
+       chat keeps it). CONTINUE, DONE and NEEDS YOU are said in plain words; WAITING alone shows as the "Waiting for
+       you" line; any other word, or a reason after one, is shown as it is, so nothing the agent said is lost. */
     const said = /\n?[ \t]*STATUS:[ \t]*(CONTINUE|DONE|NEEDS YOU[^\n]*)\s*$/i.exec(e.text) || /(?:^|\n)[ \t]*STATUS:[ \t]*([A-Z][A-Z _-]*(?::[^\n]*)?)\.?\s*$/.exec(e.text);
     const text = said ? e.text.slice(0, said.index).trimEnd() : e.text;
-    if (said) p.status = said[1].trim();
-    if (text) {
-      const block = el("div", "prose enter", md(text));
-      addCopy(block, text);
-      block.querySelectorAll("pre").forEach((pre) => addCopy(pre, pre.textContent));
-      p.turn.appendChild(block); p.turn._steps = null;
-    }
+    let plain = "";
     if (said) {
-      const st = said[1].trim(), up = st.toUpperCase();
-      const plain = up === "CONTINUE" ? "Autopilot \u00b7 more to do" : up === "DONE" ? "Finished and checked" : /^NEEDS YOU/.test(up) ? st.replace(/^needs you:?\s*/i, "Needs you: ") : "";
-      if (plain) p.turn.appendChild(el("span", "tag enter", esc(plain)));
-      p.last = up === "DONE" ? "Finished" : up === "CONTINUE" ? "Carrying on" : /^NEEDS YOU/.test(up) ? "Needs you" : up === "WAITING" ? "Waiting for you" : p.last;
+      const st = said[1].trim(), up = st.toUpperCase(), colon = st.indexOf(":");
+      const word = (colon < 0 ? st : st.slice(0, colon)).trim().toUpperCase(), why = colon < 0 ? "" : st.slice(colon + 1).trim();
+      const needs = /^NEEDS YOU/.test(up);
+      plain = needs ? st.replace(/^needs you:?\s*/i, "Needs you: ")
+        : (word === "CONTINUE" ? "Autopilot \u00b7 more to do" : word === "DONE" ? "Finished and checked" : word === "WAITING" ? (why ? "Waiting" : "") : cap(word.toLowerCase())) + (why ? ": " + why : "");
+      p.last = needs ? "Needs you" : word === "DONE" ? "Finished" : word === "CONTINUE" ? "Carrying on" : word === "WAITING" ? "Waiting for you" : p.last;
     }
+    /* a message that was only the STATUS line, with nothing to say in its place, starts no turn */
+    if (text || plain) {
+      if (!p.turn) newTurn(p);
+      if (text) {
+        const block = el("div", "prose enter", md(text));
+        addCopy(block, text);
+        block.querySelectorAll("pre").forEach((pre) => addCopy(pre, pre.textContent));
+        p.turn.appendChild(block); p.turn._steps = null;
+      }
+      if (plain) p.turn.appendChild(el("span", "tag enter", esc(plain)));
+    }
+    if (p.turn) p.turn.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
     p.now = "Writing";
   } else if (e.kind === "images") {
     if (!p.turn) newTurn(p);
@@ -2065,6 +2132,7 @@ function onEvent(e) {
   }
   if (p.qbox && p.qbox.childElementCount && p.col.lastElementChild !== p.qbox) p.col.appendChild(p.qbox);   /* waiting messages stay last */
   if (isHelper(p)) { paintExpert(p); if (p.parent === current) stick(); }
+  if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (p === researchPane) paintResearchJob();
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind)) paintSide();
   if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
@@ -2269,7 +2337,9 @@ function paintSwitch() {
   const p = agents.get(current), ai = chatAi(p);
   // a mode this chat's AI cannot keep to is never left selected (a saved choice, or the chat's AI switched): Ask me
   if (ai && runMode !== "ask" && !modeKept(ai, runMode)) { runMode = "ask"; applyMode(); }
-  const why = studioWhy(), lead = leadsRun(p), shown = lead ? "studio" : runMode;
+  const why = studioWhy(), lead = leadsRun(p), noGame = !gameInFront();
+  /* with no game folder a message goes as Ask me whatever is chosen, so that is what the button says */
+  const shown = lead ? "studio" : runMode === "studio" && noGame ? "ask" : runMode;
   $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
   $("gemini").setAttribute("aria-checked", geminiMode ? "true" : "false");
   /* the rows are left alone while one of them has the keyboard, unless what they say changed */
@@ -2288,7 +2358,7 @@ function paintSwitch() {
       b.setAttribute("role", "radio"); b.setAttribute("aria-checked", r.on ? "true" : "false");
       b.querySelector("b").textContent = r.name; b.querySelector("small").textContent = r.line;
       b.title = r.title; b.disabled = r.off;
-      b.onclick = () => { runMode = r.id; applyMode(); try { localStorage.setItem("runmode", r.id); } catch (e) {} closePops(); paintSwitch(); paintComposer(); };
+      b.onclick = () => { runMode = r.id; applyMode(); try { localStorage.setItem("runmode", r.id); } catch (e) {} closePops(); $("mode").focus(); paintSwitch(); paintComposer(); };
       list.appendChild(b);
     });
   }
@@ -2299,7 +2369,7 @@ function paintSwitch() {
   let n = $("mode").querySelector(".extra");
   if (extras.length && !n) { n = el("span", "extra"); $("mode-name").after(n); }
   if (n) { n.textContent = extras.length ? "+" + extras.length : ""; n.hidden = !extras.length; }
-  $("mode").title = cur.name + ": " + cur.line + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works.";
+  $("mode").title = cur.name + ": " + cur.line + (runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a game folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works.";
 }
 $("selftest").onclick = () => { selfTest = !selfTest; try { localStorage.setItem("selftest", selfTest ? "1" : "0"); } catch (e) {} paintSwitch(); };
 function setGeminiMode(v) { geminiMode = !!v; try { localStorage.setItem("gemini", geminiMode ? "1" : "0"); } catch (e) {} paintSwitch(); }
@@ -2368,7 +2438,8 @@ document.addEventListener("drop", (e) => {
   if (view === "promos") { prNote([...e.dataTransfer.files].some((f) => /^(video|audio)\//.test(f.type || "")) ? "Use Add clips to choose videos: a video dropped here can't be used where it is." : "Only video and music files can be used here."); return; }
   [...e.dataTransfer.files].forEach(addFile);
 });
-$("attach").onclick = () => { closePops(); $("file").click(); };
+/* a choice closes the menu and hands the keyboard back to its button */
+$("attach").onclick = () => { closePops(); $("add").focus(); $("file").click(); };
 /* Videos and music go in the message as [clip: <path>] lines: the agent uses them where they are, nothing is copied. */
 function addClips(paths) {
   composer.classList.remove("drop");
@@ -2377,7 +2448,7 @@ function addClips(paths) {
   box.value = box.value.replace(/\s+$/, "") + (box.value.trim() ? "\n" : "") + lines + "\n";
   fit(); box.focus();
 }
-$("add-clips").onclick = async () => { closePops(); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); };
+$("add-clips").onclick = async () => { closePops(); $("add").focus(); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); };
 /* A file the app attached itself: it was dropped together with videos, so the page never saw the drop. */
 async function attachedHere(e) {
   composer.classList.remove("drop");
@@ -2426,10 +2497,12 @@ function modelParts(ai, name) {
 }
 /* One line about an AI, for the two places it is picked or set up: the top of the picker's models (#model-notice) and
    its row in Setup, Connections (.notice in the row). Return a node (the words, and a button when there is something
-   to press) or null for nothing; an empty slot takes no room. Nothing is said about any AI today. */
+   to press) or null for nothing; an empty slot takes no room. A notice is painted again when its markup changes (its
+   words, a button's label or whether it is disabled): give the node a data- attribute for a change that does not
+   show. Nothing is said about any AI today. */
 function aiNotice(ai) { return null; }
 function paintNotice(slot, ai) {
-  const note = aiNotice(ai), sig = note ? note.textContent : "";
+  const note = aiNotice(ai), sig = note ? note.outerHTML : "";
   if (slot.dataset.sig === sig) return;
   slot.dataset.sig = sig; slot.replaceChildren(...(note ? [note] : []));
 }
@@ -3293,7 +3366,7 @@ function paintReview() {
   /* another game in front: what was open or typed for the last one goes (an End or Undo card would act on it) */
   if (paintReview.path !== path) {
     paintReview.path = path;
-    $("rv-undo-box").replaceChildren(); $("rv-end-box").replaceChildren(); $("rv-set").open = false;
+    $("rv-undo-box").replaceChildren(); $("rv-end-box").replaceChildren(); $("rv-nights").replaceChildren(); $("rv-set").open = false;
     $("rv-err").textContent = ""; $("rv-said").textContent = ""; $("rv-say").value = ""; $("rv-say").style.height = "";
   }
   paintRun(r);
@@ -3384,11 +3457,11 @@ function nowRows(path, still) {
     rows.push(row(p, name, (job ? job + " · " : "") + (p.runsOn ? "on " + p.runsOn + " · " : "") + (p.now || "Working"), since(p)));
     shown.add(p.id);
   }
-  return { rows, lead };
+  return rows;
 }
 /* Right now is there only while someone is working on the game */
 function paintNow() {
-  const { rows } = nowRows(rvPathNow());
+  const rows = nowRows(rvPathNow());
   $("rv-now-wrap").hidden = !rows.length;
   $("rv-now").replaceChildren(...rows);
   paintNight();
@@ -3467,7 +3540,7 @@ function apCard(x) {
   const [dot, words] = c.querySelectorAll(".ap-state span");
   dot.className = run ? runDot(state) : "dot" + (st.working ? " live" : ""); words.textContent = state;
   if (run) c.appendChild(stageStrip(run));
-  const { rows } = nowRows(x.path, true);
+  const rows = nowRows(x.path, true);
   if (rows.length) { const d = el("div", "rv-now"); d.append(...rows); c.appendChild(d); }
   const needs = needsOf(r);
   if (needs.length) {
@@ -3535,7 +3608,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); refresh(); loadEngine(); loadNotes(); }
+function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); }
 /* Setup, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
@@ -3600,7 +3673,7 @@ function paintExperts() {
   }));
 }
 document.querySelectorAll("#su-nav [data-s]").forEach((b) => (b.onclick = () => setupSection(b.dataset.s)));
-const closeSetup = () => document.body.classList.remove("setup");
+function closeSetup() { if (!document.body.classList.contains("setup")) return; document.body.classList.remove("setup"); panelClosed(); }
 $("b-setup").onclick = () => openSetup(); $("b-close").onclick = closeSetup; $("veil").onclick = () => { closeSetup(); closeProject(); };
 
 $("b-check").onclick = () => { $("setup-out").textContent = "Checking..."; api("/api/setup", {}); };
@@ -3677,16 +3750,18 @@ async function switchAi(id) {
   const p = agents.get(current);
   if (!p) { draftAi = id; paintComposer(); paintSwitch(); paintNeeds(); return; }
   if (chatAi(p) === id) return;
-  if (p.busy) { note("Wait until it finishes, or stop it, then switch."); return; }
+  /* a switch that is refused says why where it can be seen: the picker closes and the keyboard is back on its button */
+  const refuse = (why) => { closePops(); $("model").focus(); note(why); };
+  if (p.busy) { refuse("Wait until it finishes, or stop it, then switch."); return; }
   let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-  if (!r.ok) { note(r.error || "Could not switch."); return; }
+  if (!r.ok) { refuse(r.error || "Could not switch."); return; }
   p.ai = id; paintComposer(); paintSwitch(); paintNeeds();
 }
 /* Setup: the AI new chats start on (General), and each AI with whether it is found on this computer (Connections).
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
 function paintAi() {
   const ai = status.ai || {}, have = ai.installed || {};
-  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.textContent : ""; })]);
+  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.outerHTML : ""; })]);
   if (paintAi.sig === sig) return;
   paintAi.sig = sig;
   $("ai-default").innerHTML = ""; $("ai-list").innerHTML = "";
