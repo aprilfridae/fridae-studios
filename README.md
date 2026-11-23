@@ -50,18 +50,18 @@ On a Mac:
 2. **Blender** (any recent version).
 3. **Roblox Studio** with its MCP server turned on (Assistant settings).
 
-The dots at the bottom left of the window show whether each one is found, and Setup
-(the cog beside them) explains anything missing.
+An amber dot at the bottom left of the window shows while one of them is missing: press it and Setup
+(the cog beside it) says which, and how to fix it.
 
 ## Finding your way
 
-The left side lists your games. **All projects**, at the top, is one page for every game at work: a card per game
-with its run, who is working on what, what needs you and what it has cost, beside a live graph of the games, their
-chats and the experts each Lead started. Pick a game and it has three tabs:
+The left side lists your games. **All projects**, at the top, is one page for every game: a card per game
+with its run, who is working on what, what needs you and what it has cost. Pick a game and it has three tabs:
 
-- **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. Under the message
-  box, switch between **Claude**, **Gemini**, **Cursor** and **OpenCode** at any time: in a chat that has started, the other AI is
-  handed the chat so far and carries on. Cursor chats use the model picked under the message box (Auto unless you
+- **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. In the message
+  box, the button that names the AI and model ("Claude · Opus") switches between **Claude**, **Gemini**, **Cursor**
+  and **OpenCode** at any time: in a chat that has started, the other AI is
+  handed the chat so far and carries on. Cursor chats use the model picked there (Auto unless you
   pick another of the models your Cursor plan offers); OpenCode chats use the model picked there too, grouped by
   provider (your OpenCode default unless you pick another). Experts a Lead starts show as one line each inside its chat; open the line to read
   that expert's work, or stop it.
@@ -105,15 +105,15 @@ make now and then, and the run keeps going.
 - Sign in to the AI first: run `claude auth login` in a terminal once. Setup
   can show Claude Code as ready while it is signed out, and a signed-out run
   stops after three failed turns.
-- Keep Roblox Studio open on the game, with the Fridae plugin connected (the
-  Studio plugin dot at the bottom left), for as long as the run builds.
-- Update the plugin to 2.8.0: in Setup, press **Update** next to the Studio
-  plugin, then restart Studio. An older plugin now blocks the Studio part of undo, for Overnight's
+- Keep Roblox Studio open on the game, with the Fridae plugin connected (Setup,
+  Connections says whether it is), for as long as the run builds.
+- Update the plugin to 2.8.0: in Setup, Connections, press **Update plugin**,
+  then restart Studio. An older plugin now blocks the Studio part of undo, for Overnight's
   Undo the night as well as for Undo this run (the files can still go back).
 
 **Starting a run.** Open a chat for a game (a chat needs a game folder; in a
 chat without one a message sent with Studio chosen goes as Ask me), pick
-**Studio** in the menu under the message box, and send your idea in one line,
+**Studio** with the mode button in the message box, and send your idea in one line,
 for example "A small obby with three checkpoints and a coin shop". Or press
 **Start a studio run** on one of the ideas on the New project page. Whatever is chosen
 in the menu, what you send in the Lead's own chat goes to the run.

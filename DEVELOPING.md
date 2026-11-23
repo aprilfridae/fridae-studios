@@ -209,8 +209,11 @@ game has a run going or something waiting for the user (`needsOf`: blocking revi
 count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. A helper
 (an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
 log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
-`parent`, `team` and `expert` in `agent_new`. The All projects graph (`overviewWanted` / `overviewFrame`) draws games,
-their open and saved chats, and experts tied to their Lead; it runs only while that page is in front.
+`parent`, `team` and `expert` in `agent_new`. All projects is a grid of cards, one per game (`apCard`, `paintAll`),
+and a New project card; a card opens the game's Review when something needs the user, else its Chat. The message box
+holds three menus (`POPS`: what to add, the AI and model picker `paintPicker`, the mode menu `paintSwitch`);
+`aiNotice(ai)` is the one place to say something about an AI in the picker and in Setup, Connections. The clean-up's
+spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
 - `POST /api/ai {agent, choice}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
   otherwise the session is dropped and `handover` holds the chat so far as text (only what the user typed, as
   "User:", and each AI's replies under its name; carry-ons and the app's own messages, logged with `app: true`, are
@@ -500,7 +503,7 @@ for the session. Measured with agy 1.5.15, Gemini 3.8 Flash at low effort:
     the answer names counts only if it is one of those. Nothing the model or agy wrote is passed on in an error:
     the reasons are the tool's own words (not signed in; quota reached, with only the reset time read out of agy's
     error; "did not produce an image").
-- **What it may cost the user's plan.** `paths::GUARDED` has `gemini_images` (Setup, Textures: "Agents may generate
+- **What it may cost the user's plan.** `paths::GUARDED` has `gemini_images` (Setup, Images: "Agents may generate
   images with Gemini", on unless switched off), handed to the tool server from the app's memory as
   `FRIDAE_GEMINI_IMAGES`, as `FRIDAE_GEMINI_USE_API` is; off, `generate` says so and tells the agent to ask the user.
   `textures_from_antigravity: false` in config.json switches it off too. Starts are counted where the picture is
@@ -1408,8 +1411,8 @@ is an example the user can paste into their own House rules.
 - Other pictures (the game icon, thumbnail key art, UI art, concept art) can
   be AI-generated with `rbx_image`, on your own Gemini plan through Google's
   Antigravity (`agy`, signed in). Each picture uses some of that plan: Setup >
-  Textures has "Agents may generate images with Gemini" (on by default), and
-  one chat may start 12 in an hour. `rbx_image` itself uploads nothing.
+  Images has "Agents may generate images with Gemini" (on by default), and
+  one chat may start 12 in an hour (a game's whole team 30). `rbx_image` itself uploads nothing.
 - Texture previews and local module loading copy small files into your
   Studio install's `content/rbxkit` folder. Studio updates wipe that folder;
   nothing depends on it lasting.

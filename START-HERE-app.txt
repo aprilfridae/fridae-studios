@@ -3,13 +3,15 @@ Fridae Studios - an AI helper for building Roblox games
 
 Double-click  Fridae Studios.exe  and tell it what you want built or tested.
 
-It needs three things on your computer. The dots at the bottom left of the
-window are filled when each one is found; Setup (the cog beside them)
-explains anything missing.
+It needs three things on your computer. An amber dot at the bottom left of
+the window shows while one of them is missing: press it and Setup says
+which, and how to fix it.
 
 1. Claude Code, signed in with your own account
    https://claude.com/claude-code
-   (Fridae Studios has no AI of its own; it drives Claude Code for you.)
+   (Fridae Studios has no AI of its own; it drives Claude Code for you.
+   It can drive Gemini instead, chat by chat, through Google's Antigravity
+   tool: Setup, Connections says how to get it.)
 
 2. Blender (any recent version)
    https://www.blender.org/download/
@@ -24,12 +26,13 @@ include. If it is missing, it opens in Edge or Chrome instead.
 Windows may warn the first time you run it, because the program is not
 signed: choose "More info" then "Run anyway".
 
-Press the question mark at the bottom left of the window for the Guide:
-everything it can do and what each control is for.
+Open Setup (the cog at the bottom left) and pick Guide for everything it
+can do and how the app works.
 
-The left side lists your games. "All projects" shows every game at work at
-once; pick a game for its Chat, Review and Promos; "New project" makes a
-new game folder or finds ideas from Roblox's charts.
+The left side lists your games. "All projects" shows every game as a card;
+pick a game for its Chat (where you talk to its agent), Review (what is
+happening and what needs you) and Promos (promo videos from your clips);
+"New project" makes a new game folder or finds ideas from Roblox's charts.
 
 Things to try
 -------------
@@ -40,25 +43,33 @@ Things to try
 
 Buttons
 -------
-  Setup          what is installed and what is missing; also connects the
-                 same tools to Cursor, Codex, Gemini CLI and Windsurf
-  Output folder  everything it makes (Documents\Fridae Studios\work)
-  New chat       start another chat on a different task; up to six can be
-                 open and working at the same time. Hover a chat and press
-                 the x to close it
-  Earlier        every chat is saved. Click one under "Earlier" to reopen
-                 it with its messages and the agent's memory; hover it and
-                 press the x twice to delete it for good
-  Self-test      (switch under the message box) makes the agent check its
-                 own work with screenshots and playtests, fix what is
-                 wrong and check again, for up to 5 rounds
+  Setup          (the cog, bottom left) what is connected and what is
+                 missing, under Connections; "Connect other apps" there adds
+                 the same tools to Claude Code, Antigravity or Cursor
+  Output folder  everything it makes (Documents\Fridae Studios\work);
+                 Setup, General opens it
+  New chat       press the chat's name at the top of Chat for the game's
+                 other chats and New chat. Up to eight chats and helpers can
+                 be open at once. The x on an open chat closes it; closing
+                 never deletes it
+  Earlier        every chat is saved. In the same menu, click one under
+                 "Earlier" to reopen it with its messages and the agent's
+                 memory. Press Delete on it twice to delete it; "Deleted",
+                 at the bottom of the menu, puts it back
+  Mode           (in the message box: Ask me, Full auto, Overnight or
+                 Studio) is how it works. Self-test, under More there, makes
+                 the agent check its own work with screenshots and
+                 playtests, fix what is wrong and check again, for up to 5
+                 rounds
 
-  Model          (beside Self-test) picks which Claude model answers:
-                 Fable, Opus, Sonnet or Haiku. It applies from your next
-                 message. Which ones you can use depends on your Claude plan
+  AI and model   (in the message box; it names them, Claude and Opus to
+                 begin with) picks which AI
+                 and which of its models answers, and how much effort it
+                 puts in. It applies from your next message. Which models
+                 you can use depends on your plan
 
   Files          drop files anywhere on the window, paste them (Ctrl+V), or
-                 press the picture button. Images, Markdown and text,
+                 press + in the message box. Images, Markdown and text,
                  code, PDFs, and Word, PowerPoint and Excel files all
                  work; up to 10 per message, 30 MB each. The agent reads
                  each one before answering
@@ -67,20 +78,21 @@ Updates
 -------
 The program checks for a newer version by itself, downloads it in the
 background, and installs it the next time you start it. A "Restart to
-update" button appears at the top when one is ready. You can turn this off,
-or check by hand, in Setup.
+update" button appears at the bottom left when one is ready. You can turn
+this off, or check by hand, in Setup, General.
 
 Generated textures
 ------------------
-When the agent wants a generated texture it shows you a prompt. Press "Copy
-prompt and open Gemini", paste it into your own Gemini chat, then right-click
-the image it makes and choose Copy image. Fridae Studios notices the copied
+When the agent wants a generated texture it shows you a prompt. Press "Open
+Gemini and paste prompt", press Enter in your own Gemini chat, then
+right-click the image it makes and choose Copy image. Fridae Studios notices the copied
 image and carries on by itself. You can also paste or drop the image into
 the window, or press Skip.
 
 Three ways to start it yourself, without waiting for the agent to decide:
-  - Turn on the "Gemini textures" switch under the message box. The agent
-    then asks you for every texture it needs instead of drawing its own.
+  - Turn on "Gemini textures": press the mode button in the message box
+    and look under More. The agent then asks you for every texture it
+    needs instead of drawing its own.
   - Say it: a message like "I'm going to generate textures with Gemini"
     turns that switch on.
   - Type a command: /texture, /particle or /decal followed by what it
@@ -88,7 +100,8 @@ Three ways to start it yourself, without waiting for the agent to decide:
     to the Gemini prompt with no agent involved, and the finished texture
     is handed to the agent for whatever you ask next.
 
-If you would rather it be fully automatic, add a Gemini API key in Setup.
+If you would rather it be fully automatic, add a Gemini API key in Setup,
+Images.
 Google charges for that (about 3 cents an image).
 
 It is for textures only (materials, particle sprites, decals), not UI,
@@ -103,7 +116,7 @@ Using another agent instead of the chat window
 fridae-cli.exe is a standard MCP tool server (it shows up as "rbxkit"). Add it to any agent:
   command:  <this folder>\fridae-cli.exe
   args:     --mcp
-Setup > "Connect other agents" does this for you where it can.
+Setup, Connections, "Connect other apps" does this for you where it can.
 
 Uploading to Roblox
 -------------------

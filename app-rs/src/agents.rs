@@ -88,7 +88,7 @@ const OVERNIGHT_SECS: f64 = 24.0 * 3600.0;
 /// How many times in a row autopilot may tell an agent to carry on before the user is needed again.
 const AUTOPILOT_TURNS: u32 = 12;
 
-/// What goes with a message: the switches under the message box, the model, files, and how the turn began.
+/// What goes with a message: the switches in the message box, the model, files, and how the turn began.
 #[derive(Default, Clone)]
 pub struct Ask {
     pub selftest: bool,
@@ -2792,13 +2792,13 @@ impl Agent {
             let missing = match kind.as_str() {
                 // a chat saved on Cursor or OpenCode, reopened where they are not offered (Windows, for now)
                 k if !crate::caps::available(k) => {
-                    "This chat was set to an AI that Fridae Studios does not offer on this computer yet. Pick Claude or Gemini under the message box and send your message again: the chat so far is handed over."
+                    "This chat was set to an AI that Fridae Studios does not offer on this computer yet. Pick Claude or Gemini in the message box and send your message again: the chat so far is handed over."
                 }
                 "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
                 "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae Studios.",
                 "opencode" => "This chat is set to OpenCode, but OpenCode's command-line tool (opencode) was not found. Install it from https://opencode.ai, then reopen Fridae Studios. Fridae signs in to it on its own (Setup, Connections).",
                 "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae Studios.",
-                _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae Studios. Or pick another AI under the message box.",
+                _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae Studios. Or pick another AI in the message box.",
             };
             self.put("error", json!({"text": missing}));
             self.put("done", json!({}));
@@ -2830,7 +2830,7 @@ impl Agent {
         // conversation and hands the chat over itself (`CursorLaunch::fall_back`)
         let body = text.clone();
         text = with_handover(&self.st.lock().unwrap(), &text);
-        // what the two switches under the message box add
+        // what the two switches in the message box add
         let switches = [(selftest, SELF_TEST_PROMPT), (gemini, GEMINI_PROMPT), (autopilot || ask.overnight, AUTOPILOT_PROMPT), (ask.overnight, OVERNIGHT_PROMPT), (ask.full, FULL_PROMPT), (ask.studio, STUDIO_PROMPT)].iter().filter(|(on, _)| *on).map(|(_, text)| *text).collect::<String>().replace("{work}", &PATHS.work.display().to_string());
         let mut prompt = SYSTEM_PROMPT.to_string() + &switches;
         let (project, role, expert_text) = {
@@ -4476,7 +4476,7 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
             // the guarded settings the tools act on, from the app's memory (`paths::GUARDED`): the tools never take
             // them from the settings file while the app runs them
             "FRIDAE_SETTINGS_FROM_APP": "1", "FRIDAE_GEMINI_USE_API": if paths::gemini_api_on() { "1" } else { "0" },
-            // whether agents may generate images on the user's Gemini plan (`rbx_image generate`; Setup, Textures)
+            // whether agents may generate images on the user's Gemini plan (`rbx_image generate`; Setup, Images)
             "FRIDAE_GEMINI_IMAGES": if paths::gemini_images_on() { "1" } else { "0" },
             "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
@@ -4921,7 +4921,7 @@ mod tests {
             assert!(t.contains("Your own generate_image tool works here"), "{t}");
             // the user switched image generation off for agents: told so, and not to use its own tool
             let off = running_text("gemini", full, kept, false);
-            assert!(off.contains("The user has switched off image generation for agents") && off.contains("Do not use\nyour own generate_image tool"), "{off}");
+            assert!(off.contains("The user has switched off image generation for agents") && off.contains("Do not use your own generate_image tool"), "{off}");
             assert!(!off.contains("generate_image tool works here"), "{off}");
             assert!(off.starts_with(&t[..40]), "the rest of how it runs is the same");
         }

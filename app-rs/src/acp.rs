@@ -354,7 +354,7 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
     // Gemini is told in its standing text not to use the tool)
     let image_tool = OWN_FOLDER_ONLY.contains(&name) || (name == "invoke_subagent" && raw["TypeName"] == "image-generator");
     if image_tool && !rules.images {
-        return refuse(format!("Gemini asked to generate an image, which you have switched off for agents in Setup (\"Agents may generate images with Gemini\"), so it was refused. {STOPPED_THERE}"));
+        return refuse(format!("Gemini asked to generate an image, which you have switched off for agents in Setup, Images (\"Agents may generate images with Gemini\"), so it was refused. {STOPPED_THERE}"));
     }
     let command = raw["CommandLine"].as_str();
     let is_command = command.is_some() || kind == "execute" || name == "run_command";

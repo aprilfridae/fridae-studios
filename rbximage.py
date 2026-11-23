@@ -565,7 +565,7 @@ def generate(prompt, size=None, name=None, folder=None, transparent=False):
     prompt = str(prompt).strip()
     w, h = parse_size(size, default=(1024, 1024))
     if not images_allowed():
-        raise ImageError("The user has switched off image generation for agents (Setup: \"Agents may generate images "
+        raise ImageError("The user has switched off image generation for agents (Setup, Images: \"Agents may generate images "
                          "with Gemini\"), so no image was made. Ask the user first: they can switch it on there, or make the "
                          "picture themselves, and you bring it in with action keep.")
     exe = rbxgen.antigravity_exe()
