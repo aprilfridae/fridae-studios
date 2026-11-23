@@ -36,7 +36,7 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; font-feature-settings: "ss01", "cv11"; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased; overflow: hidden; overflow-wrap: break-word; font-feature-settings: "ss01", "cv11"; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: default; }
 input, select, textarea { font: inherit; color: inherit; }
@@ -119,13 +119,13 @@ button.g-row:hover .go { color: var(--text); transform: translate(1px, -1px); }
 div.g-row { cursor: default; }
 .g-row > .pill { grid-row: 1 / span 2; grid-column: 2; }
 /* one thing that is connected or not: a dot, its name, one line */
-.c-row { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.c-row { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); }
 .c-row .dot { margin-top: 8px; }
 .c-row b { display: block; font-weight: 500; font-size: 14px; }
 .c-row small { display: block; color: var(--dim); font-size: 13px; line-height: 1.45; }
 .c-row .act { margin: 8px 0 0; }
 .c-row .notice { margin: 8px 0 0; }
-.oc-row { padding-left: 20px; border-top: 0; }
+.oc-row { padding-left: 24px; border-top: 0; }
 .oc-row .act { grid-column: 1 / -1; margin: 8px 0 0; }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
@@ -224,7 +224,8 @@ button.pname:hover { background: var(--hover); }
 .chathead .meta { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--faint); white-space: nowrap; }
 .chathead .meta .linkish { color: var(--text); }
 .scroll { overflow-y: auto; padding: 24px 24px 12px; min-height: 0; }
-.col { max-width: 800px; margin: 0 auto; }
+/* a long word (a path, an address, a command) breaks rather than making the conversation scroll sideways */
+.col { max-width: 800px; margin: 0 auto; overflow-wrap: anywhere; }
 .col[hidden] { display: none; }
 
 /* conversation */
@@ -346,7 +347,7 @@ button.pname:hover { background: var(--hover); }
 .composer.drop { border-color: var(--focus); }
 textarea#box { display: block; width: 100%; resize: none; border: 0; outline: 0; background: none; line-height: 1.5; padding: 12px 16px 4px; max-height: 200px; min-height: 40px; }
 textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
-.c-row2 { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px; min-width: 0; }
+.c-bar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px; min-width: 0; }
 .c-add { flex: none; width: var(--h-s); height: var(--h-s); display: grid; place-items: center; color: var(--dim); border-radius: 50%; border: 1px solid var(--line); transition: background-color 140ms ease, color 140ms ease; }
 .c-add:hover, .c-add[aria-expanded="true"] { color: var(--text); background: var(--hover); }
 .chip { display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); max-width: 240px; padding: 0 8px 0 12px; border-radius: 999px; font-size: 13px; color: var(--dim); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease; }
@@ -356,7 +357,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .chip[aria-expanded="true"] svg { transform: rotate(180deg); }
 .chip .extra { font: 500 12px/1 var(--mono); color: var(--text); }
 #now { flex: 1; min-width: 0; padding: 0 8px; text-align: right; font-size: 13px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#now .now { color: var(--dim); }
+#now .now, #now .sel { color: var(--dim); }
 .send { flex: none; width: var(--h-m); height: var(--h-m); border-radius: 50%; display: grid; place-items: center; background: var(--text); color: var(--ink); transition: transform 140ms var(--ease), background-color 160ms ease; }
 .send:active { transform: scale(0.94); }
 .send[disabled] { background: var(--press); color: var(--faint); }
@@ -394,7 +395,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .menu .sub { margin: 4px 8px 8px; }
 .opt { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); }
 .opt:hover { background: var(--hover); }
-.opt:disabled { opacity: 0.5; }
+.opt:disabled b { opacity: 0.5; }
 .opt b { font-weight: 500; font-size: 14px; color: var(--text); }
 .opt small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
 .opt .tick { visibility: hidden; color: var(--text); }
@@ -773,7 +774,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
           <div class="atts" id="atts"></div>
           <input type="file" id="file" multiple hidden>
           <textarea id="box" rows="1" placeholder="What should we build or test?" autofocus></textarea>
-          <div class="c-row2">
+          <div class="c-bar">
             <span class="pick">
               <button class="c-add" id="add" aria-haspopup="menu" aria-expanded="false" aria-label="Add files" title="Add images, documents or video clips. You can also paste them or drop them on the window."><svg width="12" height="12" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg></button>
               <div class="menu" id="add-menu" role="menu">
@@ -797,7 +798,6 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
               <button class="chip" id="mode" aria-haspopup="menu" aria-expanded="false"><span id="mode-name">Ask me</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
               <div class="menu" id="mode-menu" role="menu" aria-label="How it works">
                 <div id="run-mode" role="radiogroup" aria-label="How it works"></div>
-                <p class="sub" id="run-why" hidden></p>
                 <h5 class="rule">More</h5>
                 <button class="switch" id="selftest" role="switch" aria-checked="false" title="It checks its work with screenshots and playtests and fixes what it finds, up to five rounds."><span class="track"><span class="knob"></span></span><span><span class="swl">Self-test</span><small>Checks its own work and fixes it.</small></span></button>
                 <button class="switch" id="gemini" role="switch" aria-checked="false" title="For each texture it shows you a prompt to run in Gemini and waits for the image, instead of drawing its own."><span class="track"><span class="knob"></span></span><span><span class="swl">Gemini textures</span><small>Asks you for each texture through Gemini.</small></span></button>
@@ -2067,7 +2067,7 @@ function onEvent(e) {
   if (isHelper(p)) { paintExpert(p); if (p.parent === current) stick(); }
   if (p === researchPane) paintResearchJob();
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind)) paintSide();
-  if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new"].includes(e.kind)) paintNowSoon();
+  if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
@@ -2215,7 +2215,8 @@ function togglePop(btn) {
   closePops(btn); m.classList.toggle("on", open); $(btn).setAttribute("aria-expanded", open ? "true" : "false");
   return open;
 }
-document.addEventListener("click", (ev) => { if (!ev.target.closest(".pick")) closePops(); });
+/* (the path of the press, not where its target is now: a press inside a menu may repaint the row it landed on) */
+document.addEventListener("click", (ev) => { if (!ev.composedPath().some((n) => n.classList && n.classList.contains("pick"))) closePops(); });
 $("add").onclick = (ev) => { ev.stopPropagation(); togglePop("add"); };
 $("mode").onclick = (ev) => { ev.stopPropagation(); if (togglePop("mode")) paintSwitch(); };
 // one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
@@ -2243,19 +2244,25 @@ function leadsRun(p) {
   const r = p && p.project && rvAll[p.project.path];
   return !!(r && runActive(r.run) && r.run.lead === p.id);
 }
+/* the game the next message belongs to: the chat's own, or on a game's empty page (a chat not made yet) that game */
+function gameInFront() {
+  const p = agents.get(current);
+  if (p) return p.project || null;
+  return curProj && !draftCol.hidden ? frontProj() : null;
+}
 /* Studio needs a game folder, and helper agents on the chat's AI; "" when it can be used */
 function studioWhy() {
-  const p = agents.get(current);
-  if (!p || !p.project) return "Studio needs a game folder. Start a folder for this game first.";
-  const r = rvAll[p.project.path];
-  return r && r.helpers === false ? "Studio needs helper agents, and they don't work on this chat's AI." : "";
+  const g = gameInFront();
+  if (!g) return "Needs a game folder: start one for this game first.";
+  const r = rvAll[g.path];
+  return r && r.helpers === false ? "Needs helper agents, and they don't work on this chat's AI." : "";
 }
 /* what Studio's row says for the chat in front: what its next message will do */
 function studioLine(p) {
-  if (!p || !p.project) return "";
-  const r = rvAll[p.project.path], run = r && r.run, name = p.project.name;
-  if (runActive(run)) return run.lead === p.id ? "This chat leads " + name + "'s run. Answer it in Review." : "Another chat leads " + name + "'s run.";
-  return runMode === "studio" ? "Your next message starts a studio run for " + name + "." : "";
+  const g = gameInFront(); if (!g) return "";
+  const r = rvAll[g.path], run = r && r.run;
+  if (runActive(run)) return p && run.lead === p.id ? "This chat leads " + g.name + "'s run. Answer it in Review." : "Another chat leads " + g.name + "'s run.";
+  return runMode === "studio" ? "Your next message starts a studio run for " + g.name + "." : "";
 }
 /* the mode button and its menu: the four ways it works, one line each, then the two extras */
 function paintSwitch() {
@@ -2267,10 +2274,11 @@ function paintSwitch() {
   $("gemini").setAttribute("aria-checked", geminiMode ? "true" : "false");
   /* the rows are left alone while one of them has the keyboard, unless what they say changed */
   const rows = RUN_MODES.map(([id, name, line, whole]) => {
-    let title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : whole, off = false;
-    if (id === "studio" && why) { off = true; title = why; }
-    if (!modeKept(ai, id)) { off = true; title = aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages go as Ask me."; }
-    return { id, name, line: (id === "studio" && !off && studioLine(p)) || line, title, off, on: id === shown };
+    let title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : whole, off = "";
+    /* a mode that cannot be used says why on its own row */
+    if (id === "studio" && why) { off = why; title = "Studio: " + why; }
+    if (!modeKept(ai, id)) { off = "Not offered: " + aiName(ai) + " cannot keep to it here."; title = aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages go as Ask me."; }
+    return { id, name, line: off || (id === "studio" && studioLine(p)) || line, title, off: !!off, on: id === shown };
   });
   const sig = JSON.stringify(rows), list = $("run-mode");
   if (list.dataset.sig !== sig) {
@@ -2284,7 +2292,6 @@ function paintSwitch() {
       list.appendChild(b);
     });
   }
-  $("run-why").textContent = why; $("run-why").hidden = !why;
   /* the button names the mode, and counts the extras that are on */
   const extras = [selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
   const cur = rows.find((r) => r.on) || rows[0];
@@ -2718,18 +2725,20 @@ function paintEngine() {
     short = engCheckError ? text : "Checking the promo engine...";
     error = engCheckError;
   } else if (engine.ready) {
-    text = "Ready. Promo videos are made on this computer" + (engine.folder ? ", with the engine in " + engine.folder : "") + ".";
+    text = "Ready. Promo videos are made on this computer.";
     short = "Promo engine ready"; ready = true;
   } else {
     const all = engine.missing.length === ENG_ORDER.length;
-    text = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + (engine.folder ? " into " + engine.folder : "") + ". The promo maker needs it. Nothing is installed system-wide.";
-    short = "Promo engine \u2014 " + (all ? "not installed" : "partly installed") + " (about " + engine.download_mb + " MB" + (all ? "" : " left") + ")";
+    text = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + ". Promos need it.";
+    short = "Promo engine " + (all ? "not installed" : "partly installed") + " (about " + engine.download_mb + " MB" + (all ? "" : " left") + ")";
     button = all ? "Install" : "Continue install";
   }
   /* the same row in Setup and, shorter, at the top of the Promos tab */
   document.querySelectorAll(".eng-row").forEach((row) => {
     const compact = row.classList.contains("compact"), btn = row.querySelector(".eng-install"), b = row.querySelector(".eng-bar");
     row.querySelector(".eng-state").textContent = compact ? short : text;
+    /* where it lives is a tooltip: a long path, and nothing to act on */
+    row.querySelector(".eng-state").title = engine && engine.folder ? "The engine's folder: " + engine.folder + ". Nothing is installed system-wide." : "";
     row.querySelector(".eng-error").textContent = error;
     row.classList.toggle("ready", ready);
     b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
@@ -3362,7 +3371,7 @@ function nowRows(path, still) {
   const rows = [];
   const row = (p, who, what, when) => {
     const b = el(still ? "div" : "button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
-    b.querySelector("b").textContent = who; b.querySelector("span").textContent = what; b.querySelector("em").textContent = when || "";
+    b.querySelector("b").textContent = who; b.querySelector("b + span").textContent = what; b.querySelector("em").textContent = when || "";
     if (!still) { b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert in its Lead's chat" : "Open this chat"; }
     return b;
   };
@@ -3917,6 +3926,7 @@ async function poll() {
       const r = await api("/api/events?after=" + after);
       const first = after === 0;
       for (const e of r.events) { after = e.id; onEvent(e); }
+      if (r.events.length > 40) calm(scroller);   /* a chat put back from its log is simply there: nothing fades in */
       if (first) { bootMark = after; boot(); stick(true); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
