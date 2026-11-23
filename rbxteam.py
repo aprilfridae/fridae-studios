@@ -212,21 +212,25 @@ def models(ai=None):
     if not isinstance(ais, list) or not ais:
         raise TeamError("The app has not listed its AIs' models. This only works when this chat runs inside the Fridae "
                         "Studios app with it open; if it is, try again in a few seconds.")
-    ais = [a for a in ais if isinstance(a, dict) and a.get("id")]
+    # only entries shaped as the app writes them (the file is the app's, but nothing here trusts its shape)
+    ais = [a for a in ais if isinstance(a, dict) and isinstance(a.get("id"), str) and a["id"]]
+    if not ais:
+        raise TeamError("The app's list of models could not be read. Try again in a few seconds.")
+    known = ", ".join(a["id"] for a in ais)
     want = str(ai or "").strip().lower()
     if want:
         ais = [a for a in ais if a["id"] == want]
         if not ais:
             raise TeamError("\"%s\" is not an AI this app runs agents on. Use one of %s, or leave ai out to list them all."
-                            % (want, ", ".join(a["id"] for a in data["ais"] if isinstance(a, dict) and a.get("id"))))
+                            % (want, known))
     out = ["Where an agent can run (rbx_team spawn's 'ai' and 'model'; leave both out and it runs like you). Model ids "
            "are given exactly as written here."]
     if data.get("lead_may_pick") is False:
         out.append("The user has switched off \"The Lead may pick an AI for a job\" in Setup, so leave ai and model out: "
                    "this list is for your information only.")
     for a in ais:
-        head = "%s (%s): " % (a["id"], a.get("name") or a["id"])
-        ids = [str(m) for m in a.get("models") or []]
+        head = "%s (%s): " % (a["id"], a["name"] if isinstance(a.get("name"), str) and a["name"] else a["id"])
+        ids = [m for m in a["models"] if isinstance(m, str)] if isinstance(a.get("models"), list) else []
         if not a.get("installed"):
             out.append(head + "not installed")
         elif not ids:
@@ -234,8 +238,9 @@ def models(ai=None):
         else:
             shown = ids if want or len(ids) <= MODELS_SHOWN else ids[:MODELS_SHOWN]
             more = "" if len(shown) == len(ids) else " ... and %d more (give ai \"%s\" to see them all)" % (len(ids) - len(shown), a["id"])
-            out.append("%sdefault model %s. Models: %s%s" % (head, a.get("default") or "its own choice", ", ".join(shown), more))
-        if a.get("note"):
+            default = a["default"] if isinstance(a.get("default"), str) and a["default"] else "its own choice"
+            out.append("%sdefault model %s. Models: %s%s" % (head, default, ", ".join(shown), more))
+        if isinstance(a.get("note"), str) and a["note"]:
             out.append("  note: %s" % a["note"])
     return "\n".join(out)
 

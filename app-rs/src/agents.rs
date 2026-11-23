@@ -488,26 +488,56 @@ fn studio_fallback(ask: &Ask, has_project: bool) -> (Ask, Option<&'static str>) 
     }
 }
 
-/// What a turn's model adds under the user's message. `swap`: the turn runs on another model than the one set for it
-/// (said once per such swap, and kept for a helper's Lead, who gets it with the result); `free`: an OpenCode turn on a
-/// free model because Fridae's OpenCode is not signed in (said once per chat, unless the swap's line just said so).
-fn model_lines(st: &mut State, swap: Option<crate::expert_ai::Swap>, free: bool) -> Vec<String> {
-    let mut out = Vec::new();
+/// The line a turn's model adds under the user's message, with what it settles: at most one line a message, and each
+/// thing said once in a chat.
+#[derive(Debug, PartialEq)]
+struct ModelLine {
+    text: String,
+    /// it says the turn ran on another model than the one set for it
+    swap: bool,
+    /// what the chat has now been told ("free": it is on a free model; "pick": the remembered pick was replaced)
+    told: Vec<&'static str>,
+}
+
+/// `swap`: the turn runs on another model than the one set for it (said once per such swap, and kept for a helper's
+/// Lead, who gets it with the result); `notes`: what else there is to say about the model, by kind (see
+/// `ModelLine::told`), the most pressing first: the first whose kind this chat has not been told is said, and only in
+/// a message that has no swap to say (it comes with a later message otherwise).
+fn model_line(st: &mut State, swap: Option<crate::expert_ai::Swap>, notes: Vec<(&'static str, String)>) -> Option<ModelLine> {
     // what the Lead is told is about the helper's latest turn
     if st.parent.is_some() {
         st.model_note = swap.as_ref().map(|s| s.lead.clone());
     }
-    if let Some(s) = swap {
-        if st.swap_told.as_deref() != Some(s.chat.as_str()) {
-            st.swap_told = Some(s.chat.clone());
-            st.free_told |= s.chat.contains("not signed in");
-            out.push(s.chat);
+    if let Some(s) = swap.filter(|s| st.swap_told.as_deref() != Some(s.chat.as_str())) {
+        let told: Vec<&'static str> = if s.free { vec!["free"] } else { Vec::new() };
+        st.swap_told = Some(s.chat.clone());
+        for k in &told {
+            if !st.told.iter().any(|t| t.as_str() == *k) {
+                st.told.push(k.to_string());
+            }
+        }
+        return Some(ModelLine { text: s.chat, swap: true, told });
+    }
+    let (kind, text) = notes.into_iter().find(|(kind, _)| !st.told.iter().any(|t| t.as_str() == *kind))?;
+    st.told.push(kind.to_string());
+    Some(ModelLine { text, swap: false, told: vec![kind] })
+}
+
+/// What a reopened chat was already told about its model, from its saved messages (`ModelLine`, as the "user" event
+/// keeps it): the last swap's line, and the kinds said. So "once in a chat" holds across restarts of the app.
+fn told_from_log(log: &[Value]) -> (Option<String>, Vec<String>) {
+    let (mut swap, mut told) = (None, Vec::new());
+    for e in log.iter().filter(|e| is_user(e) && e["model_note"].is_string()) {
+        if e["model_swap"] == true {
+            swap = e["model_note"].as_str().map(str::to_string);
+        }
+        for k in e["model_told"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            if !told.iter().any(|t| t == k) {
+                told.push(k.to_string());
+            }
         }
     }
-    if free && !std::mem::replace(&mut st.free_told, true) {
-        out.push(crate::expert_ai::FREE_MODEL_LINE.to_string());
-    }
-    out
+    (swap, told)
 }
 
 /// Whether a message starts a night checkpoint (a plugin pin and a "Before the overnight run" commit). Not for the
@@ -630,10 +660,10 @@ struct State {
     parent: Option<String>,
     /// A paused studio run's Lead has been told to wind down (see `pause_step`).
     pause_told: bool,
-    /// The line this chat was last shown for a turn that ran on another model than set (`model_lines`): said once.
+    /// The line this chat was last shown for a turn that ran on another model than set (`model_line`): said once.
     swap_told: Option<String>,
-    /// This chat was told that it runs on a free model because Fridae's OpenCode is not signed in: said once.
-    free_told: bool,
+    /// What else this chat has been told about its model, by kind (`ModelLine::told`): each said once.
+    told: Vec<String>,
     /// For the Lead waiting for this helper's result: the model it really ran on, when not the one set for it.
     model_note: Option<String>,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
@@ -2137,6 +2167,12 @@ impl Agent {
         tp
     }
 
+    /// The chat's latest "user" event (what was sent, with its tags), for tests.
+    #[cfg(test)]
+    pub fn last_user_event_for_test(&self) -> Option<Value> {
+        self.st.lock().unwrap().log.iter().rev().find(|e| is_user(e)).cloned()
+    }
+
     /// The text of the chat's latest "user" event (what was sent), for tests.
     #[cfg(test)]
     pub fn last_user_text_for_test(&self) -> Option<String> {
@@ -2723,20 +2759,33 @@ impl Agent {
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
             "cursor" => cursor::pick_model(model),
             // a model OpenCode does not list exactly runs on its nearest twin (`opencode::nearest`)
-            "opencode" => opencode::pick_model(model).0,
+            "opencode" => opencode::pick_model(model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
         // never in silence: a turn that runs on another model than the one set for it says so under the message (once),
-        // and a helper's Lead is told with its result; an OpenCode chat on a free model because Fridae's OpenCode is
-        // not signed in says that once too
-        let fallback: Option<String> = {
+        // and a helper's Lead is told with its result. OpenCode has more to say: a model billed per use, a free model
+        // for want of a sign-in or a plan, a remembered pick that was replaced (`opencode::Caveat`, `replaced_pick`)
+        let model_note: Option<ModelLine> = {
             let ai = self.ai();
-            let swap = crate::expert_ai::swap_line(&ai, asked, model, &crate::expert_ai::why_fewer);
-            let free = ai == "opencode" && opencode::free_only() && model.is_some_and(opencode::is_free);
-            let lines = model_lines(&mut self.st.lock().unwrap(), swap, free);
-            let all: Vec<String> = fallback.map(str::to_string).into_iter().chain(lines).collect();
-            (!all.is_empty()).then(|| all.join(" "))
+            // nothing is claimed about an AI whose list has not arrived: it takes the model as set, or falls back to
+            // its default without the app knowing that the model is not one of its own
+            let listed = match ai.as_str() {
+                "claude" => true,
+                "gemini" => !antigravity::models().is_empty(),
+                "cursor" => !cursor::models().is_empty(),
+                "opencode" => !opencode::models().is_empty(),
+                _ => !codex::models().is_empty(),
+            };
+            let caveat = (ai == "opencode").then(|| opencode::caveat(asked, model)).flatten();
+            let swap = listed.then(|| crate::expert_ai::swap_line(&ai, asked, model, caveat.map(Into::into))).flatten();
+            let replaced = (ai == "opencode" && !helper).then(|| opencode::replaced_pick(model)).flatten();
+            let notes: Vec<(&'static str, String)> = replaced.map(|l| ("pick", l)).into_iter().chain(caveat.and_then(|c| c.alone()).map(|l| ("free", l.to_string()))).collect();
+            let line = model_line(&mut self.st.lock().unwrap(), swap, notes);
+            if let Some(l) = line.as_ref().filter(|l| l.told.contains(&"pick")) {
+                opencode::replaced_said(&l.text);
+            }
+            line
         };
         // an AI whose model ids carry their own effort is not given the setting (`caps`)
         let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort);
@@ -2747,6 +2796,8 @@ impl Agent {
                 "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto, "app": ask.wake || ask.app, "typed": ask.typed,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
                 "studio": ask.studio, "studio_waiting": false, "fallback": fallback,
+                // the line about the model, and what it settles (`told_from_log` reads these back in a reopened chat)
+                "model_note": model_note.as_ref().map(|l| l.text.as_str()), "model_swap": model_note.as_ref().map(|l| l.swap), "model_told": model_note.as_ref().map(|l| l.told.clone()),
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
                 "files": infos.iter().filter(|i| i.kind != "image").map(|i| i.label.clone()).collect::<Vec<_>>(),
             }),
@@ -3717,7 +3768,7 @@ impl Agent {
         self.st.lock().unwrap().jobs_lost.take()
     }
 
-    /// The model this helper really ran on, when not the one set for it (`model_lines`): its Lead is told with its result.
+    /// The model this helper really ran on, when not the one set for it (`model_line`): its Lead is told with its result.
     pub fn model_note(&self) -> Option<String> {
         self.st.lock().unwrap().model_note.clone()
     }
@@ -4252,6 +4303,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
+        (st.swap_told, st.told) = told_from_log(&st.log);
     }
     if !settled {
         BUS.put("done", json!({"agent": agent.id})); // it was closed mid-reply: settle the view
@@ -5875,33 +5927,97 @@ mod tests {
     }
 
     #[test]
-    fn a_swapped_model_and_a_free_model_are_each_said_once() {
-        use crate::expert_ai::{FREE_MODEL_LINE, Swap};
-        let swap = |chat: &str| Some(Swap { chat: chat.to_string(), lead: "it ran on the model b, not \"a\" as set".to_string() });
+    fn what_is_said_about_a_turns_model_is_one_line_a_message_and_each_thing_once() {
+        use crate::expert_ai::Swap;
+        let swap = |chat: &str, free: bool| Some(Swap { chat: chat.to_string(), lead: "it ran on the model b, not \"a\" as set".to_string(), free });
+        let text = |l: Option<ModelLine>| l.map(|l| l.text);
         // the user's own chat: the swap once, however many turns; nothing kept for a Lead
         let mut st = State::default();
-        assert_eq!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on B."), false), ["Cursor does not offer the model \"a\", so this ran on B."]);
-        assert!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on B."), false).is_empty());
+        assert_eq!(text(model_line(&mut st, swap("A is not available, so this ran on B.", false), Vec::new())).as_deref(), Some("A is not available, so this ran on B."));
+        assert_eq!(model_line(&mut st, swap("A is not available, so this ran on B.", false), Vec::new()), None);
         assert_eq!(st.model_note, None);
-        assert_eq!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on C."), false).len(), 1, "another swap is news");
-        // an OpenCode chat on a free model, not signed in: one line, once
+        assert!(model_line(&mut st, swap("A is not available, so this ran on C.", false), Vec::new()).is_some(), "another swap is news");
+        // a note of one kind: once
+        let free = || vec![("free", "This chat is on a free model. Sign in under Setup, Connections to use a paid plan.".to_string())];
         let mut st = State::default();
-        assert_eq!(model_lines(&mut st, None, true), [FREE_MODEL_LINE]);
-        assert!(model_lines(&mut st, None, true).is_empty());
-        assert!(model_lines(&mut State::default(), None, false).is_empty());
-        // a swap that already says nobody is signed in: the free line is not added after it, then or later
+        assert_eq!(model_line(&mut st, None, free()), Some(ModelLine { text: free().remove(0).1, swap: false, told: vec!["free"] }));
+        assert_eq!(model_line(&mut st, None, free()), None);
+        assert_eq!(model_line(&mut State::default(), None, Vec::new()), None);
+        // one line a message: the swap first, the note with a later message
         let mut st = State::default();
-        let said = "OpenCode does not offer the model \"a\", so this ran on B. Fridae's OpenCode is not signed in to a plan, so only free models are available. Sign in under Setup, Connections.";
-        assert_eq!(model_lines(&mut st, swap(said), true), [said]);
-        assert!(model_lines(&mut st, swap(said), true).is_empty());
-        // an expert: its Lead gets the line with the result, every time
+        let pick = || vec![("pick", "Your earlier pick, A, was replaced: this ran on B. Pick a model under the message box to change it.".to_string())];
+        assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| l.swap && l.told.is_empty()));
+        assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| !l.swap && l.told == ["pick"]), "said with the next message");
+        assert_eq!(model_line(&mut st, swap("x", false), pick()), None);
+        // two things to say: one a message, the more pressing first, and neither twice
+        let both = || pick().into_iter().chain(free()).collect::<Vec<_>>();
+        let mut st = State::default();
+        assert!(model_line(&mut st, None, both()).is_some_and(|l| l.told == ["pick"]));
+        assert!(model_line(&mut st, None, both()).is_some_and(|l| l.told == ["free"]));
+        assert_eq!(model_line(&mut st, None, both()), None);
+        // a swap that already says the chat is on a free model: that is not said again
+        let mut st = State::default();
+        assert!(model_line(&mut st, swap("A is not available, so this ran on B. Sign in under Setup, Connections to use paid models.", true), free()).is_some_and(|l| l.told == ["free"]));
+        assert_eq!(model_line(&mut st, None, free()), None);
+        // an expert: its Lead gets the line with the result of that turn, every time, and not after a turn without one
         let mut st = State { parent: Some("c-lead".into()), ..Default::default() };
-        model_lines(&mut st, swap("x"), false);
+        model_line(&mut st, swap("x", false), Vec::new());
         assert_eq!(st.model_note.as_deref(), Some("it ran on the model b, not \"a\" as set"));
-        model_lines(&mut st, swap("x"), false);
+        model_line(&mut st, swap("x", false), Vec::new());
         assert!(st.model_note.is_some(), "said again with the next result, though the chat is not told twice");
-        model_lines(&mut st, None, false);
+        model_line(&mut st, None, Vec::new());
         assert_eq!(st.model_note, None, "a later turn on the model that was set has nothing to add");
+        // a reopened chat knows what it was told: from the tags its saved messages carry
+        let log = vec![
+            json!({"kind": "user", "text": "one", "model_note": "A is not available, so this ran on B.", "model_swap": true, "model_told": ["free"]}),
+            json!({"kind": "text", "text": "ok"}),
+            json!({"kind": "user", "text": "two", "model_note": "Your earlier pick ...", "model_swap": false, "model_told": ["pick"]}),
+            json!({"kind": "user", "text": "three"}),
+        ];
+        assert_eq!(told_from_log(&log), (Some("A is not available, so this ran on B.".to_string()), vec!["free".to_string(), "pick".to_string()]));
+        assert_eq!(told_from_log(&[]), (None, Vec::new()));
+    }
+
+    #[test]
+    fn an_opencode_turn_says_under_the_message_which_model_ran_and_why() {
+        // the wiring in `send`, without an AI (tests find none: the message is noted, then "not installed"): Fridae's
+        // OpenCode as it was on 23 November 2026, signed in to nothing, and a chat set to a model it does not list
+        let _state = opencode::TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        opencode::set_for_test("opencode/beam-free\nopencode/big-pickle\nopencode/deepseek-v4.1-flash-free\n", &[], true);
+        let a = new_agent(Some("opencode")).unwrap();
+        let asked = Ask { model: Some("opencode/deepseek-v4.1-flash".into()), ..Default::default() };
+        a.send("Build the shop", &asked);
+        let e = a.last_user_event_for_test().unwrap();
+        assert_eq!(e["model"], "opencode/deepseek-v4.1-flash-free", "its free twin runs");
+        assert_eq!(e["model_note"], "OpenCode Zen · deepseek-v4.1-flash is not available, so this ran on OpenCode Zen · deepseek-v4.1-flash-free. Sign in under Setup, Connections to use paid models.");
+        assert_eq!((e["model_swap"].as_bool(), e["model_told"].clone()), (Some(true), json!(["free"])));
+        // the next message: nothing is said twice
+        for _ in 0..100 {
+            if !a.busy() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        a.send("And the lobby", &asked);
+        let e = a.last_user_event_for_test().unwrap();
+        assert_eq!((e["text"].as_str(), e["model"].as_str(), e["model_note"].is_null()), (Some("And the lobby"), Some("opencode/deepseek-v4.1-flash-free"), true));
+        // a chat on the default (what the page sends): one line that it is a free model, once
+        let b = new_agent(Some("opencode")).unwrap();
+        b.send("Hello", &Ask { model: opencode::default_model(), ..Default::default() });
+        let e = b.last_user_event_for_test().unwrap();
+        assert_eq!((e["model"].as_str(), e["model_note"].as_str()), (Some("opencode/big-pickle"), Some("This chat is on a free model. Sign in under Setup, Connections to use a paid plan.")));
+        assert_eq!(e["model_told"], json!(["free"]));
+        // another AI is told nothing of this, and nothing is claimed about a model while its list has not arrived
+        let c = new_agent(Some("gemini")).unwrap();
+        c.send("Hello", &Ask { model: Some("gemini-9".into()), ..Default::default() });
+        assert!(c.last_user_event_for_test().unwrap()["model_note"].is_null());
+        let d = new_agent(Some("claude")).unwrap();
+        d.send("Hello", &Ask { model: Some("newest".into()), ..Default::default() });
+        assert_eq!(d.last_user_event_for_test().unwrap()["model_note"], "Newest is not available, so this ran on Opus.");
+        opencode::set_for_test("", &[], false);
+        for x in [&a, &b, &c, &d] {
+            remove_agent(&x.id);
+        }
     }
 
     #[test]

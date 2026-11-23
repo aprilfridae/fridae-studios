@@ -1056,7 +1056,7 @@ const CONTROLS = [
   ["Experts in a chat", "When the agent starts helpers or a studio run's experts, each shows as one line where it was started: its name, its job and whether it is working. Open it to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
   ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert (World builder on Cursor, say). Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
   ["The dots (bottom left)", "Filled when the AI, Roblox Studio and Blender are found. Press them to see what is connected and what is missing."],
-  ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor or OpenCode model carries its own, so none is set for those; an OpenCode chat says \"Free models only\" there, with a Sign in button, until Fridae's OpenCode is signed in to your plan), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message."],
+  ["The menu under the message box", "The model, how much effort it puts in (low to max; a Cursor or OpenCode model carries its own, so none is set for those), and the modes: Ask me, Full auto, Overnight, Studio, Self-test and Gemini textures. Applies from your next message. An OpenCode chat says \"Free models only\" there, with a Sign in button, until Fridae's OpenCode is signed in."],
   ["Sending while it works", "You can keep sending while an agent works. Your messages wait under the conversation and go to it together the moment it finishes; remove one before then if you change your mind. The square button stops it."],
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
@@ -1933,6 +1933,7 @@ function onEvent(e) {
     const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
     if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
     if (e.fallback) { const f = el("span", "tag enter"); f.textContent = e.fallback; p.col.appendChild(f); }
+    if (e.model_note) { const f = el("span", "tag enter"); f.textContent = e.model_note; p.col.appendChild(f); }
   } else if (e.kind === "tool") {
     const s = steps(p);
     s.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
@@ -2307,10 +2308,12 @@ function modelsFor(ai) {
    the newest GPT Astra, Cursor's Auto). There is no "whatever the program is set to". */
 function modelOf(p) {
   /* OpenCode's pick is kept by the app (status.ai.default_models.opencode is that pick, or the app's choice while
-     there is none: never a free model while your plan's models are listed), so experts follow it too */
+     there is none: a model of your plan, else a free one), so experts follow it too. With no such model the app
+     names none and OpenCode chooses: never the first one listed, which may be billed per use */
   const ai = chatAi(p), list = modelsFor(ai), pick = ai === "opencode" ? "" : chosenModel[ai];
   if (list.some((m) => m[0] === pick)) return pick;
   const dflt = ai === "claude" ? "opus" : (((status.ai || {}).default_models || {})[ai]) || "";
+  if (ai === "opencode") return list.some((m) => m[0] === dflt) ? dflt : "";
   return list.some((m) => m[0] === dflt) ? dflt : list.length ? list[0][0] : "";
 }
 function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
@@ -2378,17 +2381,22 @@ let modelFilter = "", modelFilterAi = "";
 async function pickOpenCodeModel(id) {
   if (status.ai && status.ai.default_models) status.ai.default_models.opencode = id;
   paintModel();
-  try { await api("/api/opencode", { action: "model", model: id }); } catch (e) {}
+  let r = null; try { r = await api("/api/opencode", { action: "model", model: id }); } catch (e) {}
+  if (!r || !r.ok) note((r && r.error) || "Could not save that pick. Try again.");
   refresh();
 }
-/* A pick this window kept for OpenCode before the app did is handed to the app once (if the app has none), then dropped. */
-let ocPickMoved = false;
-function moveOpenCodePick() {
-  const old = chosenModel.opencode, oc = (status.ai || {}).opencode;
-  if (ocPickMoved || !old || !oc || !modelsFor("opencode").length) return;
-  ocPickMoved = true;
-  delete chosenModel.opencode; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {}
-  if (!oc.pick && modelsFor("opencode").some((m) => m[0] === old)) pickOpenCodeModel(old);
+/* A pick this window kept for OpenCode before the app did is handed to the app once the app knows whether it is signed
+   in (a pick is filed by that), and dropped here only when the app has taken it, has one already, or no longer lists it. */
+let ocPickMoving = false;
+async function moveOpenCodePick() {
+  const old = chosenModel.opencode, oc = (status.ai || {}).opencode, list = modelsFor("opencode");
+  if (ocPickMoving || !old || !oc || !oc.known || !list.length) return;
+  ocPickMoving = true;
+  let settled = !!oc.pick || !list.some((m) => m[0] === old), sent = false;
+  if (!settled) { try { const r = await api("/api/opencode", { action: "model", model: old }); settled = !!(r && r.ok); sent = settled; } catch (e) {} }
+  if (settled) { delete chosenModel.opencode; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} }
+  ocPickMoving = false;
+  if (sent) refresh();
 }
 /* one plain line under the message box when Cursor or OpenCode runs in Full auto or Studio and can do something there
    that Claude cannot (status.ai.gaps, from the app; none today for either, so this stays hidden) */
@@ -3683,23 +3691,29 @@ function paintAi() {
 }
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in
    on its own, once, with OpenCode's device sign-in: a code here, approved on opencode.ai. Free models work without. */
-let ocPoll = 0;
+let ocPoll = 0, ocError = "";
 /* What the sign-in needs from you now, as one plain line and its buttons: Setup's row and the model menu both show it. */
 function openCodeSignIn() {
   const oc = (status.ai || {}).opencode || {}, login = oc.login || {}, signed = oc.signed_in || [], waiting = login.state === "waiting";
+  /* signed in while work was running: Fridae's OpenCode starts again when that work has finished, with the plan's models */
+  const pending = !!oc.pending && !waiting;
   const text = waiting ? (login.code ? "On the page that opens, sign in to your OpenCode account and enter the code " + login.code + "." : "Starting the sign-in...")
+    : pending ? "Signed in. Paid models start once running work has finished."
     : signed.length ? ""
+    : ocError ? ocError
     : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message : ".") + " Try again."
-    : oc.free_only ? "Free models only. Sign in to use your OpenCode plan." : "";
-  const buttons = waiting ? (login.url ? [["Open the sign-in page", "open"]] : []).concat([["Cancel", "cancel"]]) : [[signed.length ? "Sign in again" : "Sign in", "login"]];
-  return { text, buttons, signed, known: !!oc.known };
+    : oc.free_only ? "Free models only. Sign in to use a paid plan." : "";
+  const buttons = waiting ? (login.url ? [["Open the sign-in page", "open"]] : []).concat([["Cancel", "cancel"]]) : pending ? [] : [[signed.length ? "Sign in again" : "Sign in", "login"]];
+  return { text, buttons, signed, pending };
 }
-/* Sign in starts OpenCode's device sign-in and opens its page; the code to enter there shows here. */
+/* Sign in starts OpenCode's device sign-in and opens its page; the code to enter there shows here. A start that
+   fails says why, in the same line. */
 function openCodeButton(label, action) {
   const b = el("button", "pill", esc(label));
   b.onclick = async () => {
     b.disabled = true;
-    let r = {}; try { r = await api("/api/opencode", { action }); } catch (e) {}
+    let r = null; try { r = await api("/api/opencode", { action }); } catch (e) {}
+    ocError = !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
     if (action === "login" && r && r.state === "waiting" && r.url) { try { await api("/api/opencode", { action: "open" }); } catch (e) {} }
     await refresh(); watchOpenCode();
   };
@@ -3708,10 +3722,11 @@ function openCodeButton(label, action) {
 function openCodeRow() {
   const s = openCodeSignIn();
   const row = el("div", "g-row oc-row");
-  const what = s.text ? s.text + (s.buttons[0][1] === "login" ? " Your own OpenCode setup is never changed." : "")
+  const signIn = s.buttons.some((b) => b[1] === "login");
+  const what = s.text ? s.text + (signIn ? " Your own OpenCode setup is never changed." : "")
     : s.signed.length ? "Signed in: " + s.signed.join(", ") + ". Its models are in the menu under the message box."
-    : s.known ? "Not signed in." : "Checking the sign-in...";
-  row.innerHTML = "<b>OpenCode for Fridae</b><small></small><div class=\"act\"></div>";
+    : "Checking the sign-in...";
+  row.innerHTML = "<b>Fridae's OpenCode</b><small></small><div class=\"act\"></div>";
   row.querySelector("small").textContent = what;
   const act = row.querySelector(".act");
   s.buttons.forEach(([label, action]) => act.appendChild(openCodeButton(label, action)));

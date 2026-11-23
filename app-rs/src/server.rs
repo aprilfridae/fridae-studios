@@ -320,7 +320,10 @@ fn post(path: &str, body: Value) -> Reply {
                 send_json(opencode::login_state())
             }
             // the model picked in the menu under the message box: remembered for every OpenCode chat and expert
-            "model" => send_json(json!({"ok": opencode::remember_pick(&text_of("model"))})),
+            "model" => match opencode::remember_pick(&text_of("model")) {
+                Ok(()) => send_json(json!({"ok": true})),
+                Err(why) => send_json(json!({"ok": false, "error": why})),
+            },
             _ => send_json(opencode::login_state()),
         },
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),

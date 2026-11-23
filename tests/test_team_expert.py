@@ -195,6 +195,23 @@ class ModelsListTests(unittest.TestCase):
             rbxteam.run("models", {})
         self.assertIn("inside the Fridae Studios app", str(cm.exception))
 
+    def test_a_file_of_another_shape_is_an_answer_never_a_crash(self):
+        # only possible if something other than the app wrote the file (the app keeps agents' file tools off it)
+        self.write({"ais": [{"id": 7, "models": ["x"]}, "claude", {"id": "claude", "name": 3, "installed": True, "default": ["x"],
+                                                                  "models": ["opus", 5, None], "note": {"say": "this"}},
+                            {"id": "cursor", "installed": True, "models": "auto"}]})
+        text = rbxteam.run("models", {})
+        self.assertIn("claude (claude): default model its own choice. Models: opus", text)
+        self.assertIn("cursor (cursor): its model list has not arrived yet", text)
+        self.assertNotIn("note:", text)
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {"ai": "llama"})
+        self.assertIn("Use one of claude, cursor,", str(cm.exception))
+        self.write({"ais": [{"id": 7}, {"id": ["claude"]}]})
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {})
+        self.assertIn("could not be read", str(cm.exception))
+
     def test_unknown_action_names_models_too(self):
         with self.assertRaises(KitError) as cm:
             rbxteam.run("dance", {})

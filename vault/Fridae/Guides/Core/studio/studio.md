@@ -102,9 +102,11 @@ can also switch off "The Lead may pick an AI for a job" in Setup: your `ai` and 
 them out. `rbx_team` action `models` lists what each AI offers (its default model and its model ids; add `ai` for one
 AI's full list): name a model exactly as it is listed there. The spawn result always says which model runs. A model the
 AI does not offer runs on the nearest it has, or on that AI's default, and the result's `note` says which and why; the
-`note` also says when the user's table won over what you asked for, and when OpenCode has only free models because
-Fridae's OpenCode is not signed in to the user's plan (the user signs in under Setup, Connections: tell them in your
-report if a job needed a better model, and do not ask for the paid model again until they have). Do not swap an
+`note` also says when the user's table won over what you asked for, when OpenCode has only free models because
+Fridae's OpenCode is not signed in (the user signs in under Setup, Connections: tell them in your report if a job
+needed a better model, and do not ask for the paid model again until they have), and when the model that runs is
+billed per use and not on the user's plan (it costs the user money for every message: use it only if the job needs
+it, and say so in your report). Do not swap an
 expert's AI against the user's table, and do not do its job yourself because of such a refusal.
 
 ## Refused spawns

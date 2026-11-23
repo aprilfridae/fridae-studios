@@ -8,8 +8,9 @@
 //! A choice that cannot be honoured is refused with a reason the Lead can act on, never quietly moved to another AI;
 //! only a model the chosen AI does not offer runs on the nearest that AI has (OpenCode: the same model from another
 //! provider, or its free twin) or on that AI's default, and the result says which model runs and why. The Lead is also
-//! told when the user's table won over what it asked for, and when OpenCode has only free models because Fridae's
-//! copy of it is not signed in. A model swapped later, at a turn (`swap_line`), is said in the chat and to the Lead.
+//! told when the user's table won over what it asked for, and what the app knows about the model that runs (`More`:
+//! OpenCode has only free models because Fridae's OpenCode is not signed in, or the model is billed per use and not
+//! on the user's plan). A model swapped later, at a turn (`swap_line`), is said in the chat and to the Lead.
 
 use serde_json::{Value, json};
 
@@ -49,12 +50,15 @@ pub struct World<'a> {
     pub default_model: &'a dyn Fn(&str) -> Option<String>,
     /// The model an AI lists that is nearest to one it does not list exactly (AI, model asked for); None: its default.
     pub nearest: &'a dyn Fn(&str, &str) -> Option<String>,
-    /// Why an AI offers fewer models than the user may expect, when the app knows (OpenCode that is not signed in),
-    /// in words for the Lead.
-    pub why: &'a dyn Fn(&str) -> Option<String>,
+    /// What the app knows about the model that runs (`More`): the AI, the model set (None: none), the model that
+    /// runs (None: the AI's default).
+    pub why: &'a Why<'a>,
     /// Setup's "The Lead may pick an AI for a job" (on unless the user switched it off).
     pub lead_may_pick: bool,
 }
+
+/// `World::why`: (the AI, the model set, the model that runs) to what the app knows about it.
+pub type Why<'a> = dyn Fn(&str, Option<&str>, Option<&str>) -> Option<More> + 'a;
 
 /// The settings key behind Setup's "The Lead may pick an AI for a job".
 pub const LEAD_PICKS: &str = "lead_picks_ai";
@@ -141,6 +145,7 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
     }
     // a model the AI does not list exactly: the nearest it has, else its default, and the Lead is told which
     let list = (world.models)(&ai);
+    let set = model.clone();
     let model = match model {
         Some(m) if !list.is_empty() && !list.contains(&m) => {
             let (runs, on) = match (world.nearest)(&ai, &m) {
@@ -156,43 +161,55 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
         }
         other => other,
     };
-    notes.extend((world.why)(&ai));
+    notes.extend((world.why)(&ai, set.as_deref(), model.as_deref()).map(|m| m.lead.to_string()));
     Ok(Choice { ai, model, note: (!notes.is_empty()).then(|| notes.join(" ")) })
 }
 
+/// More to say about the model that runs, when the app knows something (OpenCode's `Caveat`): for the Lead; for the
+/// user, as the one sentence after a swap's line; and whether that tells the chat it is on a free model.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct More {
+    pub lead: &'static str,
+    pub chat: &'static str,
+    pub free: bool,
+}
+
+impl From<opencode::Caveat> for More {
+    fn from(c: opencode::Caveat) -> More {
+        More { lead: c.for_lead(), chat: c.after_swap(), free: c.says_free() }
+    }
+}
+
 /// What is said when a turn runs on another model than the one set for it (a model asked for while its AI's list had
-/// not arrived, or one that has since gone): for the chat, in the user's words, and for the Lead waiting for the result.
+/// not arrived, or one that has since gone): for the chat, in the user's words (model names, two short sentences at
+/// most), and for the Lead waiting for the result (model ids). `free`: the chat's line says it is on a free model.
 #[derive(Debug, PartialEq)]
 pub struct Swap {
     pub chat: String,
     pub lead: String,
+    pub free: bool,
 }
 
 /// None when the turn runs on what was asked for, when nothing was, or when what was asked for could not be a model id.
-/// `why` as `World::why`.
-pub fn swap_line(ai: &str, asked: Option<&str>, runs: Option<&str>, why: &dyn Fn(&str) -> Option<String>) -> Option<Swap> {
+pub fn swap_line(ai: &str, asked: Option<&str>, runs: Option<&str>, more: Option<More>) -> Option<Swap> {
     let asked = asked.filter(|a| !a.is_empty() && model_id_ok(a) && Some(*a) != runs)?;
     let name = ai_name(ai);
     let (shown, id) = match runs {
         Some(m) => (model_name(ai, m), format!("the model {m}")),
         None => (format!("{name}'s own choice"), format!("{name}'s own choice of model")),
     };
-    let reason = why(ai);
-    // the Lead reads "The user can sign in"; the user reads "Sign in"
-    let to_user = reason.as_deref().map(|r| format!(" {}", r.replace("The user can sign in", "Sign in"))).unwrap_or_default();
-    let to_lead = reason.map(|r| format!(" {r}")).unwrap_or_default();
+    let (to_user, to_lead) = more.map(|m| (format!(" {}", m.chat), format!(" {}", m.lead))).unwrap_or_default();
     Some(Swap {
-        chat: format!("{name} does not offer the model \"{asked}\", so this ran on {shown}.{to_user}"),
+        chat: format!("{} is not available, so this ran on {shown}.{to_user}", model_name(ai, asked)),
         lead: format!("it ran on {id}, not \"{asked}\" as set: {name} does not offer that one.{to_lead}"),
+        free: more.is_some_and(|m| m.free),
     })
 }
 
-/// The one line an OpenCode chat gets, once, when it runs on a free model because Fridae's OpenCode is not signed in.
-pub const FREE_MODEL_LINE: &str = "This chat is on a free model. Sign in under Setup, Connections to use your OpenCode plan.";
-
-/// Why an AI offers fewer models than the user may expect, when the app knows: OpenCode that is not signed in.
-pub fn why_fewer(ai: &str) -> Option<String> {
-    (ai == "opencode" && opencode::free_only()).then(|| opencode::NOT_SIGNED_IN.to_string())
+/// What the app knows about the model an AI runs (`World::why`): OpenCode's sign-in, its plan, and what is billed
+/// per use (`opencode::caveat`).
+pub fn why_more(ai: &str, set: Option<&str>, runs: Option<&str>) -> Option<More> {
+    (ai == "opencode").then(|| opencode::caveat(set, runs)).flatten().map(Into::into)
 }
 
 /// The real computer: what is installed, and each AI's own models.
@@ -202,7 +219,7 @@ pub fn world() -> World<'static> {
         models: &models_of,
         default_model: &default_of,
         nearest: &|ai, model| if ai == "opencode" { opencode::nearest_model(model) } else { None },
-        why: &why_fewer,
+        why: &why_more,
         lead_may_pick: lead_may_pick(&paths::guarded_settings()),
     }
 }
@@ -292,13 +309,13 @@ pub fn set_entry(expert: &str, ai: &str, model: &str) -> Result<Value, String> {
 }
 
 /// What a chat may ask for with `rbx_team` spawn's `ai` and `model`: each AI experts run on, whether it is installed,
-/// its default model, its model ids, and what the app knows about why it has few (`why_fewer`). `team::watch` keeps
+/// its default model, its model ids, and what the app knows about its default (`why_more`). `team::watch` keeps
 /// this in the work folder, where `rbx_team` action "models" reads it.
 pub fn for_lead() -> Value {
     let w = world();
     let ais: Vec<Value> = expert_ais()
         .into_iter()
-        .map(|ai| json!({"id": ai, "name": ai_name(ai), "installed": (w.installed)(ai), "default": default_of(ai), "models": models_of(ai), "note": why_fewer(ai)}))
+        .map(|ai| json!({"id": ai, "name": ai_name(ai), "installed": (w.installed)(ai), "default": default_of(ai), "models": models_of(ai), "note": why_more(ai, None, None).map(|m| m.lead)}))
         .collect();
     json!({"lead_may_pick": w.lead_may_pick, "ais": ais})
 }
@@ -350,7 +367,7 @@ mod tests {
                 _ => None,
             },
             nearest: &|_, _| None,
-            why: &|_| None,
+            why: &|_, _, _| None,
             lead_may_pick: true,
         }
     }
@@ -369,7 +386,7 @@ mod tests {
                 _ => None,
             },
             nearest: &|ai, m| (ai == "opencode" && m == "opencode/deepseek-v4.1-flash").then(|| "opencode/deepseek-v4.1-flash-free".to_string()),
-            why: &|ai| (ai == "opencode").then(|| opencode::NOT_SIGNED_IN.to_string()),
+            why: &|ai, _, _| (ai == "opencode").then(|| opencode::Caveat::NotSignedIn.into()),
             ..world_with(&["claude", "opencode"])
         }
     }
@@ -392,10 +409,10 @@ mod tests {
         assert!(note.starts_with("OpenCode does not offer the model \"opencode-go/kimi-k3\", so this expert runs on OpenCode's default (opencode/big-pickle).") && note.ends_with("Setup, Connections."), "{note}");
         // no model named: OpenCode's default runs, and the Lead still learns that it is a free one and why
         let c = resolve(NONE, Want { ai: Some("opencode"), model: None }, "claude", Some("opus"), "Coder", &w).unwrap();
-        assert_eq!((c.model.as_deref(), c.note.as_deref()), (None, Some(opencode::NOT_SIGNED_IN)));
+        assert_eq!((c.model.as_deref(), c.note.as_deref()), (None, Some(opencode::Caveat::NotSignedIn.for_lead())));
         // the user's table: the same
         let c = resolve(Want { ai: Some("opencode"), model: Some("opencode/big-pickle") }, NONE, "claude", None, "Coder", &w).unwrap();
-        assert_eq!((c.model.as_deref(), c.note.as_deref()), (Some("opencode/big-pickle"), Some(opencode::NOT_SIGNED_IN)));
+        assert_eq!((c.model.as_deref(), c.note.as_deref()), (Some("opencode/big-pickle"), Some(opencode::Caveat::NotSignedIn.for_lead())));
         // an expert that runs like its Lead is not what the Lead asked about: nothing is added
         assert_eq!(resolve(NONE, NONE, "opencode", Some("opencode/big-pickle"), "Coder", &w).unwrap().note, None);
     }
@@ -413,20 +430,49 @@ mod tests {
     }
 
     #[test]
+    fn a_twin_that_leaves_the_plan_is_said_to_be_billed_per_use() {
+        // the Lead asks for a plan model the plan does not have; OpenCode Zen has it, billed per use
+        let w = World {
+            models: &|_| vec!["opencode-go/kimi-k3".into(), "opencode/claude-opus-5-5".into()],
+            default_model: &|_| Some("opencode-go/kimi-k3".into()),
+            nearest: &|_, m| (m == "opencode-go/claude-opus-5-5").then(|| "opencode/claude-opus-5-5".to_string()),
+            // as `opencode::caveat` answers: the model that runs is not the one set, and it is billed per use
+            why: &|_, set, runs| (set != runs && runs == Some("opencode/claude-opus-5-5")).then(|| opencode::Caveat::PerUse.into()),
+            ..world_with(&["claude", "opencode"])
+        };
+        let c = resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode-go/claude-opus-5-5") }, "claude", None, "Coder", &w).unwrap();
+        assert_eq!(c.model.as_deref(), Some("opencode/claude-opus-5-5"));
+        assert_eq!(
+            c.note.as_deref(),
+            Some("OpenCode does not offer the model \"opencode-go/claude-opus-5-5\", so this expert runs on opencode/claude-opus-5-5, the nearest it has. That one is billed per use, not on the user's plan.")
+        );
+        // asked for by its own name, or a model of the plan: nothing to add
+        assert_eq!(resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode/claude-opus-5-5") }, "claude", None, "Coder", &w).unwrap().note, None);
+        assert_eq!(resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode-go/kimi-k3") }, "claude", None, "Coder", &w).unwrap().note, None);
+    }
+
+    #[test]
     fn a_turn_that_runs_on_another_model_than_asked_says_so() {
-        let none = |_: &str| None;
         // what was asked for runs, or nothing was asked for: nothing to say
-        assert_eq!(swap_line("cursor", Some("auto"), Some("auto"), &none), None);
-        assert_eq!(swap_line("cursor", None, Some("auto"), &none), None);
-        assert_eq!(swap_line("claude", Some("--yolo"), Some("opus"), &none), None, "not a model id: never shown");
-        let s = swap_line("claude", Some("newest"), Some("opus"), &none).unwrap();
-        assert_eq!((s.chat.as_str(), s.lead.as_str()), ("Claude does not offer the model \"newest\", so this ran on Opus.", "it ran on the model opus, not \"newest\" as set: Claude does not offer that one."));
-        // OpenCode, not signed in: the reason, in the user's words for the chat and the Lead's for the Lead
-        let why = |ai: &str| (ai == "opencode").then(|| opencode::NOT_SIGNED_IN.to_string());
-        let s = swap_line("opencode", Some("opencode/deepseek-v4.1-flash"), Some("opencode/deepseek-v4.1-flash-free"), &why).unwrap();
-        assert_eq!(s.chat, "OpenCode does not offer the model \"opencode/deepseek-v4.1-flash\", so this ran on OpenCode Zen · deepseek-v4.1-flash-free. Fridae's OpenCode is not signed in to a plan, so only free models are available. Sign in under Setup, Connections.");
-        assert!(s.lead.ends_with("OpenCode does not offer that one. Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections."), "{}", s.lead);
-        assert_eq!(FREE_MODEL_LINE, "This chat is on a free model. Sign in under Setup, Connections to use your OpenCode plan.");
+        assert_eq!(swap_line("cursor", Some("auto"), Some("auto"), None), None);
+        assert_eq!(swap_line("cursor", None, Some("auto"), None), None);
+        assert_eq!(swap_line("claude", Some("--yolo"), Some("opus"), None), None, "not a model id: never shown");
+        let s = swap_line("claude", Some("newest"), Some("opus"), None).unwrap();
+        assert_eq!((s.chat.as_str(), s.lead.as_str(), s.free), ("Newest is not available, so this ran on Opus.", "it ran on the model opus, not \"newest\" as set: Claude does not offer that one.", false));
+        // OpenCode, not signed in: the user reads names and what to do, the Lead ids and what to tell the user
+        let s = swap_line("opencode", Some("opencode/deepseek-v4.1-flash"), Some("opencode/deepseek-v4.1-flash-free"), Some(opencode::Caveat::NotSignedIn.into())).unwrap();
+        assert_eq!(s.chat, "OpenCode Zen · deepseek-v4.1-flash is not available, so this ran on OpenCode Zen · deepseek-v4.1-flash-free. Sign in under Setup, Connections to use paid models.");
+        assert_eq!(s.lead, "it ran on the model opencode/deepseek-v4.1-flash-free, not \"opencode/deepseek-v4.1-flash\" as set: OpenCode does not offer that one. Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections.");
+        assert!(s.free, "the chat has now been told it is on a free model");
+        // a twin billed per use: said to both, and it is no free model
+        let s = swap_line("opencode", Some("opencode-go/claude-opus-5-5"), Some("opencode/claude-opus-5-5"), Some(opencode::Caveat::PerUse.into())).unwrap();
+        assert_eq!(s.chat, "OpenCode Go · claude-opus-5-5 is not available, so this ran on OpenCode Zen · claude-opus-5-5. It is billed per use, not on your plan.");
+        assert!(s.lead.ends_with("That one is billed per use, not on the user's plan.") && !s.free, "{}", s.lead);
+        // the tag under a message holds two short sentences at most, whatever there is to add
+        for c in [opencode::Caveat::NotSignedIn, opencode::Caveat::Pending, opencode::Caveat::NoPlan, opencode::Caveat::PerUse] {
+            let s = swap_line("opencode", Some("opencode/a"), Some("opencode/b"), Some(c.into())).unwrap();
+            assert_eq!(s.chat.matches(". ").count(), 1, "{}", s.chat);
+        }
     }
 
     const NONE: Want = Want { ai: None, model: None };

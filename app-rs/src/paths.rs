@@ -600,6 +600,10 @@ pub fn config_file() -> PathBuf {
 pub fn app_protected() -> Vec<(PathBuf, bool)> {
     let w = &PATHS.work;
     let mut out = vec![(config_file(), false), (w.join("processes.json"), false), (w.join("usage.jsonl"), false), (w.join("limits.json"), false)];
+    // what each AI offers, as `rbx_team` action "models" hands it to a Lead (`team::write_models`), and the file it is
+    // written through: a helper must not be able to put words there that the Lead reads as the app's
+    out.push((w.join("team-models.json"), false));
+    out.push((w.join("team-models.tmp"), false));
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
     // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;
@@ -675,9 +679,11 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `projects`: the games, whose folders the AIs are given
 /// - `plugin_token`: the Studio plugin's secret
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
+/// - `opencode_model`, `opencode_model_signed_in`: the model every OpenCode chat and expert runs on when none is
+///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "projects", "plugin_token", "expert_ai", "lead_picks_ai"];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "projects", "plugin_token", "expert_ai", "lead_picks_ai", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -690,6 +696,8 @@ pub fn setting_name(key: &str) -> &'static str {
         "plugin_token" => "Studio plugin link",
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
+        "opencode_model" => "OpenCode's model",
+        "opencode_model_signed_in" => "OpenCode's model was picked while signed in",
         _ => "a setting",
     }
 }
@@ -869,8 +877,10 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
                 .collect();
             Some(Value::Array(list))
         }
-        "use_env_keys" | "gemini_use_api" | "lead_picks_ai" => v.as_bool().map(Value::from),
+        "use_env_keys" | "gemini_use_api" | "lead_picks_ai" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
+        // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
+        "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
         "expert_ai" => v.as_object().map(|_| v.clone()),
         _ => None,
     };
@@ -954,6 +964,10 @@ fn describe_change(key: &str, file: Option<&Value>, kept: Option<&Value>) -> Str
                 parts.push("the order or details differed".into());
             }
             format!("{name}: {}", parts.join("; "))
+        }
+        "opencode_model" => {
+            let show = |v: Option<&Value>| v.and_then(Value::as_str).map(shown_name).unwrap_or_else(|| "not set".into());
+            format!("{name}: the file said {}, put back to {}", show(file), show(kept))
         }
         "gemini_key" | "plugin_token" => match (file.is_some(), kept.is_some()) {
             (true, false) => format!("{name}: the file had one Fridae did not know; it was removed"),
@@ -2101,6 +2115,37 @@ mod tests {
         fs::write(&st.config, "not json").unwrap();
         assert_eq!(check_in(&mut g5, &st).first().map(String::as_str), Some("unreadable"));
         assert!(put_back_line(&["unreadable".into(), "projects".into()]).contains("could not be read"));
+    }
+
+    #[test]
+    fn the_model_picked_for_opencode_is_guarded_like_the_experts_table() {
+        assert!(GUARDED.contains(&"opencode_model") && GUARDED.contains(&"opencode_model_signed_in"));
+        let st = home_store("oc-pick");
+        put(&st, serde_json::json!({"opencode_model": "opencode-go/kimi-k3", "opencode_model_signed_in": true}));
+        let _ = start_in(&st);
+        // while the app is closed something writes a model billed per use into the file
+        put(&st, serde_json::json!({"opencode_model": "opencode/claude-opus-5-5", "opencode_model_signed_in": true}));
+        let mut g = start_in(&st);
+        assert_eq!(g.known.get("opencode_model"), Some(&serde_json::json!("opencode-go/kimi-k3")), "the copy wins");
+        let said = g.at_start.as_ref().unwrap().changes.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join("\n");
+        assert!(said.contains("OpenCode's model: the file said opencode/claude-opus-5-5, put back to opencode-go/kimi-k3"), "{said}");
+        assert_eq!(file_of(&st).get("opencode_model"), Some(&serde_json::json!("opencode-go/kimi-k3")));
+        // and while it runs: a free model with "picked while signed in" switched on is put back before the next turn
+        put(&st, serde_json::json!({"opencode_model": "opencode/beam-free", "opencode_model_signed_in": true}));
+        assert_eq!(check_in(&mut g, &st), ["opencode_model"]);
+        put(&st, serde_json::json!({"opencode_model": "opencode-go/kimi-k3", "opencode_model_signed_in": false}));
+        assert_eq!(check_in(&mut g, &st), ["opencode_model_signed_in"]);
+        assert_eq!(file_of(&st).get("opencode_model_signed_in"), Some(&serde_json::json!(true)));
+        assert!(put_back_line(&["opencode_model".into()]).contains("OpenCode's model"));
+        // the app's own route changes it
+        update_in(&mut g, &st, |c| c.insert("opencode_model".into(), serde_json::json!("opencode-go/glm-5.3")));
+        assert!(check_in(&mut g, &st).is_empty());
+        assert_eq!(start_in(&st).known.get("opencode_model"), Some(&serde_json::json!("opencode-go/glm-5.3")));
+        // a first run takes the file, but never a value that could not be a model id or a switch
+        let first = home_store("oc-pick-first");
+        put(&first, serde_json::json!({"opencode_model": "--yolo; rm -rf", "opencode_model_signed_in": "yes"}));
+        let g = start_in(&first);
+        assert!(g.known.get("opencode_model").is_none() && g.known.get("opencode_model_signed_in").is_none());
     }
 
     #[test]
