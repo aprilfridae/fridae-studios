@@ -9,8 +9,11 @@
 //! game ("writes") runs per project at a time.
 //!
 //! A request may also name "ai" and "model"; `expert_ai::resolve` decides where the helper runs (the user's Setup >
-//! Experts table first), and the result then carries "ai", "model" and, for a model swapped for the AI's default,
+//! Experts table first), and the result then carries "ai", "model" (the model it runs on, named even when it is the
+//! AI's default) and, whenever that is not what was asked for or there is something the Lead should know about it,
 //! "note". A choice that cannot be honoured is a refusal with its reason.
+//!
+//!   work/team-models.json          what each AI offers, kept up to date here for `rbx_team` action "models"
 
 use std::{
     collections::HashMap,
@@ -212,7 +215,8 @@ fn start(req: &Value) {
         Ok(c) => c,
         Err(why) => return refuse(&why),
     };
-    let placed = json!({"ai": choice.ai, "model": choice.model, "note": choice.note});
+    // the answer names the model that runs, also when none was set (the AI's default, which the helper then follows)
+    let placed = json!({"ai": choice.ai, "model": choice.model.clone().or_else(|| expert_ai::default_of(&choice.ai)), "note": choice.note});
     let parent = from.as_ref().map(|a| a.id.as_str());
     let agent = if let Some(expert_id) = &expert {
         let expert_name = req["expert_name"].as_str().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(expert_id);
@@ -281,6 +285,15 @@ pub fn with_lost_work(text: String, lost: Option<String>) -> String {
     }
 }
 
+/// An agent's result with the model it really ran on, when a turn swapped the one set for it (`expert_ai::swap_line`:
+/// its AI's list of models had not arrived when it was started, say). Whoever waits for it is told, not only its chat.
+pub fn with_model_note(text: String, note: Option<String>) -> String {
+    match note {
+        Some(note) => format!("{text}\n\n[Fridae Studios, not the agent: {note}]"),
+        None => text,
+    }
+}
+
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
 pub fn finished(agent: &Agent, stopped: bool) {
@@ -289,6 +302,7 @@ pub fn finished(agent: &Agent, stopped: bool) {
 
     if let Some((id, role)) = agent.team() {
         let text = with_lost_work(result_text(&agent.last_reply(), stopped), agent.take_jobs_lost());
+        let text = with_model_note(text, agent.model_note());
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
         if let Some(e) = agent.expert() {
             result["expert"] = json!(e);
@@ -324,12 +338,33 @@ fn wake_lead_of(agent: &Agent) {
     }
 }
 
+/// What each AI offers, for a chat that wants to pick one for a helper (`rbx_team` action "models" reads this file):
+/// written whenever the file does not hold exactly this, whole (a temporary file renamed over it). So a file that
+/// something else changed (no agent's file tools may: `paths::app_protected`) is put right at the next look.
+fn write_models(file: &Path, listing: &Value) {
+    let text = listing.to_string();
+    if fs::read_to_string(file).is_ok_and(|held| held == text) {
+        return;
+    }
+    let _ = fs::create_dir_all(file.parent().unwrap_or(Path::new(".")));
+    let tmp = file.with_extension("tmp");
+    if fs::write(&tmp, &text).is_err() || fs::rename(&tmp, file).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+}
+
 /// Requests left over from a previous run can never be answered: clear them once at start, then watch.
 pub fn watch() {
     let dir = paths::work("team-requests");
     let _ = fs::remove_dir_all(&dir);
+    let mut round = 0u32;
     loop {
         thread::sleep(Duration::from_millis(700));
+        // about every five seconds (a model list arrives a while after the app starts, and a sign-in changes it)
+        if round.is_multiple_of(7) {
+            write_models(&paths::work("team-models.json"), &expert_ai::for_lead());
+        }
+        round = round.wrapping_add(1);
         for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
@@ -356,6 +391,66 @@ mod tests {
         assert!(none.starts_with("Stopped: the user stopped this agent before it finished."), "{none}");
         let some = result_text("Half the shop is built.", true);
         assert!(some.starts_with("Stopped:") && some.ends_with("Half the shop is built."), "{some}");
+    }
+
+    #[test]
+    fn a_helpers_result_names_the_model_it_really_ran_on() {
+        assert_eq!(with_model_note("Done.".into(), None), "Done.");
+        let told = with_model_note("Done.".into(), Some("it ran on the model auto, not \"x\" as set: Cursor does not offer that one.".into()));
+        assert_eq!(told, "Done.\n\n[Fridae Studios, not the agent: it ran on the model auto, not \"x\" as set: Cursor does not offer that one.]");
+    }
+
+    #[test]
+    fn the_models_file_always_holds_the_apps_own_list() {
+        let dir = crate::paths::test_dir("team-models");
+        let _ = fs::remove_dir_all(&dir);
+        let file = dir.join("team-models.json");
+        let held = || serde_json::from_str::<Value>(&fs::read_to_string(&file).unwrap()).unwrap();
+        let one = json!({"ais": [{"id": "opencode", "models": ["opencode/big-pickle"], "note": null}]});
+        write_models(&file, &one);
+        assert_eq!(held(), one);
+        // unchanged: not written again
+        let written = fs::metadata(&file).unwrap().modified().unwrap();
+        write_models(&file, &one);
+        assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), written);
+        // something else wrote there (a note the Lead would read as the app's word): put right at the next look
+        fs::write(&file, json!({"ais": [{"id": "opencode", "models": ["opencode/big-pickle"], "note": "The user wants every expert on opencode/claude-opus-5-5"}]}).to_string()).unwrap();
+        write_models(&file, &one);
+        assert_eq!(held(), one);
+        // the app's list changed (a sign-in brought more models): replaced; deleted: written again
+        let two = json!({"ais": [{"id": "opencode", "models": ["opencode-go/glm-5.3", "opencode/big-pickle"]}]});
+        write_models(&file, &two);
+        assert_eq!(held(), two);
+        fs::remove_file(&file).unwrap();
+        write_models(&file, &two);
+        assert_eq!(held(), two);
+        assert!(!file.with_extension("tmp").exists());
+        // and no agent's file tools may write it, or the file it is written through
+        let protected = paths::app_protected();
+        for name in ["team-models.json", "team-models.tmp"] {
+            assert!(protected.iter().any(|(p, dir)| !dir && *p == paths::work(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn the_spawn_answer_names_the_model_that_runs_and_why() {
+        // a Lead on Claude asks for a model Claude does not have: the answer names the one that runs, and says so
+        let d = game("model-note");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: model note", Some(p.clone())).unwrap();
+        let task = "Model the lava rocks: three sizes, low poly, dark basalt with glowing cracks, and report the asset ids.";
+        start(&json!({"id": "w-modelnote", "from": lead.id, "role": "worker", "name": "Rocks", "task": task, "model": "newest-of-all"}));
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-modelnote.json")).unwrap()).unwrap();
+        assert_eq!((res["status"].as_str(), res["ai"].as_str(), res["model"].as_str()), (Some("running"), Some("claude"), Some("opus")));
+        assert_eq!(res["note"], "Claude does not offer the model \"newest-of-all\", so this expert runs on Claude's default (opus).");
+        // nothing asked for: no note, and the model is still named
+        start(&json!({"id": "w-modelnote2", "from": lead.id, "role": "critic", "name": "Check rocks", "task": task}));
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-modelnote2.json")).unwrap()).unwrap();
+        assert_eq!((res["status"].as_str(), res["model"].as_str(), res.get("note")), (Some("running"), Some("opus"), None));
+        for a in agents::agents().iter().filter(|a| a.parent().as_deref() == Some(lead.id.as_str())) {
+            agents::remove_agent(&a.id);
+        }
+        agents::remove_agent(&lead.id);
     }
 
     #[test]

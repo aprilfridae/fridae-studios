@@ -511,6 +511,58 @@ fn studio_fallback(ask: &Ask, has_project: bool) -> (Ask, Option<&'static str>) 
     }
 }
 
+/// The line a turn's model adds under the user's message, with what it settles: at most one line a message, and each
+/// thing said once in a chat.
+#[derive(Debug, PartialEq)]
+struct ModelLine {
+    text: String,
+    /// it says the turn ran on another model than the one set for it
+    swap: bool,
+    /// what the chat has now been told ("free": it is on a free model; "pick": the remembered pick was replaced)
+    told: Vec<&'static str>,
+}
+
+/// `swap`: the turn runs on another model than the one set for it (said once per such swap, and kept for a helper's
+/// Lead, who gets it with the result); `notes`: what else there is to say about the model, by kind (see
+/// `ModelLine::told`), the most pressing first: the first whose kind this chat has not been told is said, and only in
+/// a message that has no swap to say (it comes with a later message otherwise).
+fn model_line(st: &mut State, swap: Option<crate::expert_ai::Swap>, notes: Vec<(&'static str, String)>) -> Option<ModelLine> {
+    // what the Lead is told is about the helper's latest turn
+    if st.parent.is_some() {
+        st.model_note = swap.as_ref().map(|s| s.lead.clone());
+    }
+    if let Some(s) = swap.filter(|s| st.swap_told.as_deref() != Some(s.chat.as_str())) {
+        let told: Vec<&'static str> = if s.free { vec!["free"] } else { Vec::new() };
+        st.swap_told = Some(s.chat.clone());
+        for k in &told {
+            if !st.told.iter().any(|t| t.as_str() == *k) {
+                st.told.push(k.to_string());
+            }
+        }
+        return Some(ModelLine { text: s.chat, swap: true, told });
+    }
+    let (kind, text) = notes.into_iter().find(|(kind, _)| !st.told.iter().any(|t| t.as_str() == *kind))?;
+    st.told.push(kind.to_string());
+    Some(ModelLine { text, swap: false, told: vec![kind] })
+}
+
+/// What a reopened chat was already told about its model, from its saved messages (`ModelLine`, as the "user" event
+/// keeps it): the last swap's line, and the kinds said. So "once in a chat" holds across restarts of the app.
+fn told_from_log(log: &[Value]) -> (Option<String>, Vec<String>) {
+    let (mut swap, mut told) = (None, Vec::new());
+    for e in log.iter().filter(|e| is_user(e) && e["model_note"].is_string()) {
+        if e["model_swap"] == true {
+            swap = e["model_note"].as_str().map(str::to_string);
+        }
+        for k in e["model_told"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            if !told.iter().any(|t| t == k) {
+                told.push(k.to_string());
+            }
+        }
+    }
+    (swap, told)
+}
+
 /// Whether a message starts a night checkpoint (a plugin pin and a "Before the overnight run" commit). Not for the
 /// loop's own carry-ons, not for a waiting run going on, and not for a message to the Lead of a studio run that already
 /// has its "start" checkpoint (a decision, a reply while it works, Resume): those belong to the same run.
@@ -634,6 +686,12 @@ struct State {
     parent: Option<String>,
     /// A paused studio run's Lead has been told to wind down (see `pause_step`).
     pause_told: bool,
+    /// The line this chat was last shown for a turn that ran on another model than set (`model_line`): said once.
+    swap_told: Option<String>,
+    /// What else this chat has been told about its model, by kind (`ModelLine::told`): each said once.
+    told: Vec<String>,
+    /// For the Lead waiting for this helper's result: the model it really ran on, when not the one set for it.
+    model_note: Option<String>,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
     turn_started: f64,
     log_seq: u64,
@@ -1502,7 +1560,6 @@ struct GeminiSettings<'a> {
 
 impl GeminiLaunch {
     fn new(s: &GeminiSettings) -> GeminiLaunch {
-        use sha2::{Digest, Sha256};
         let rules = crate::acp::Rules {
             full: s.full,
             agent_id: s.agent_id.to_string(),
@@ -1526,8 +1583,7 @@ impl GeminiLaunch {
         // answer inside that, and keeps longer work going as a job (`jobs`)
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
-        // a fingerprint, not the settings themselves: one of them is the user's Gemini key
-        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        let guarded = guarded_print(s.guarded);
         GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
@@ -1764,7 +1820,6 @@ const CURSOR_HANDED_OVER: &str = "This chat's Cursor conversation was on a kept 
 
 impl CursorLaunch {
     fn new(s: &CursorSettings) -> CursorLaunch {
-        use sha2::{Digest, Sha256};
         // the servers as a session is handed them: with the app's settings in their environment, and the app's own
         // told where to note its results' pictures (a tool's result does not come over ACP: measured)
         let mut handed = cursor::kept_servers(s.servers);
@@ -1790,7 +1845,7 @@ impl CursorLaunch {
             images: true,
         };
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
-        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        let guarded = guarded_print(s.guarded);
         CursorLaunch {
             exe: s.exe.to_path_buf(),
             first: Vec::new(),
@@ -2136,6 +2191,12 @@ impl Agent {
         let tp = TurnProc::new(pid);
         st.proc_ = Some(tp.clone());
         tp
+    }
+
+    /// The chat's latest "user" event (what was sent, with its tags), for tests.
+    #[cfg(test)]
+    pub fn last_user_event_for_test(&self) -> Option<Value> {
+        self.st.lock().unwrap().log.iter().rev().find(|e| is_user(e)).cloned()
     }
 
     /// The text of the chat's latest "user" event (what was sent), for tests.
@@ -2718,14 +2779,40 @@ impl Agent {
         }
         // each AI has its own models: Claude's four families, or whatever Antigravity, Codex or Cursor lists
         // each AI starts on a set model rather than whatever its own program defaults to
+        let asked = model;
         let model: Option<String> = match self.ai().as_str() {
             "claude" => Some(model.filter(|m| MODELS.contains(m)).unwrap_or("opus").to_string()),
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
             "cursor" => cursor::pick_model(model),
+            // a model OpenCode does not list exactly runs on its nearest twin (`opencode::nearest`)
             "opencode" => opencode::pick_model(model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
+        // never in silence: a turn that runs on another model than the one set for it says so under the message (once),
+        // and a helper's Lead is told with its result. OpenCode has more to say: a model billed per use, a free model
+        // for want of a sign-in or a plan, a remembered pick that was replaced (`opencode::Caveat`, `replaced_pick`)
+        let model_note: Option<ModelLine> = {
+            let ai = self.ai();
+            // nothing is claimed about an AI whose list has not arrived: it takes the model as set, or falls back to
+            // its default without the app knowing that the model is not one of its own
+            let listed = match ai.as_str() {
+                "claude" => true,
+                "gemini" => !antigravity::models().is_empty(),
+                "cursor" => !cursor::models().is_empty(),
+                "opencode" => !opencode::models().is_empty(),
+                _ => !codex::models().is_empty(),
+            };
+            let caveat = (ai == "opencode").then(|| opencode::caveat(asked, model)).flatten();
+            let swap = listed.then(|| crate::expert_ai::swap_line(&ai, asked, model, caveat.map(Into::into))).flatten();
+            let replaced = (ai == "opencode" && !helper).then(|| opencode::replaced_pick(model)).flatten();
+            let notes: Vec<(&'static str, String)> = replaced.map(|l| ("pick", l)).into_iter().chain(caveat.and_then(|c| c.alone()).map(|l| ("free", l.to_string()))).collect();
+            let line = model_line(&mut self.st.lock().unwrap(), swap, notes);
+            if let Some(l) = line.as_ref().filter(|l| l.told.contains(&"pick")) {
+                opencode::replaced_said(&l.text);
+            }
+            line
+        };
         // an AI whose model ids carry their own effort is not given the setting (`caps`)
         let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort);
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
@@ -2735,6 +2822,8 @@ impl Agent {
                 "text": text, "selftest": selftest, "model": model, "gemini": gemini, "autopilot": autopilot || ask.overnight, "auto": auto, "app": ask.wake || ask.app, "typed": ask.typed,
                 "overnight": ask.overnight, "full": ask.full, "until": self.st.lock().unwrap().overnight_until,
                 "studio": ask.studio, "studio_waiting": false, "fallback": fallback,
+                // the line about the model, and what it settles (`told_from_log` reads these back in a reopened chat)
+                "model_note": model_note.as_ref().map(|l| l.text.as_str()), "model_swap": model_note.as_ref().map(|l| l.swap), "model_told": model_note.as_ref().map(|l| l.told.clone()),
                 "images": infos.iter().filter(|i| i.kind == "image").map(|i| format!("/att/{}", i.name)).collect::<Vec<_>>(),
                 "files": infos.iter().filter(|i| i.kind != "image").map(|i| i.label.clone()).collect::<Vec<_>>(),
             }),
@@ -3718,6 +3807,11 @@ impl Agent {
         self.st.lock().unwrap().jobs_lost.take()
     }
 
+    /// The model this helper really ran on, when not the one set for it (`model_line`): its Lead is told with its result.
+    pub fn model_note(&self) -> Option<String> {
+        self.st.lock().unwrap().model_note.clone()
+    }
+
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
@@ -4248,6 +4342,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
+        (st.swap_told, st.told) = told_from_log(&st.log);
     }
     if !settled {
         BUS.put("done", json!({"agent": agent.id})); // it was closed mid-reply: settle the view
@@ -4465,6 +4560,18 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
         servers["rbxkit"]["env"]["RBXKIT_TEST_TOOLS"] = json!("1");
     }
     servers
+}
+
+/// What a kept Gemini or Cursor process is keyed on of the guarded settings: a fingerprint, not the settings
+/// themselves (one of them is the user's Gemini key). The model picked for OpenCode is left out: no Gemini or Cursor
+/// process is started with it or decides by it, so picking one must not start those processes again.
+fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut g = guarded.clone();
+    for k in [opencode::PICK_KEY, opencode::PICK_SIGNED_KEY] {
+        g.remove(k);
+    }
+    paths::hex(&Sha256::digest(Value::Object(g).to_string().as_bytes()))
 }
 
 fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool) -> Value {
@@ -5900,6 +6007,100 @@ mod tests {
         a.halt();
         assert_eq!(begin_send(&mut a.st.lock().unwrap(), &carry_on, true, 2.0), None);
         assert!(!a.busy());
+    }
+
+    #[test]
+    fn what_is_said_about_a_turns_model_is_one_line_a_message_and_each_thing_once() {
+        use crate::expert_ai::Swap;
+        let swap = |chat: &str, free: bool| Some(Swap { chat: chat.to_string(), lead: "it ran on the model b, not \"a\" as set".to_string(), free });
+        let text = |l: Option<ModelLine>| l.map(|l| l.text);
+        // the user's own chat: the swap once, however many turns; nothing kept for a Lead
+        let mut st = State::default();
+        assert_eq!(text(model_line(&mut st, swap("A is not available, so this ran on B.", false), Vec::new())).as_deref(), Some("A is not available, so this ran on B."));
+        assert_eq!(model_line(&mut st, swap("A is not available, so this ran on B.", false), Vec::new()), None);
+        assert_eq!(st.model_note, None);
+        assert!(model_line(&mut st, swap("A is not available, so this ran on C.", false), Vec::new()).is_some(), "another swap is news");
+        // a note of one kind: once
+        let free = || vec![("free", "This chat is on a free model. Sign in under Setup, Connections to use a paid plan.".to_string())];
+        let mut st = State::default();
+        assert_eq!(model_line(&mut st, None, free()), Some(ModelLine { text: free().remove(0).1, swap: false, told: vec!["free"] }));
+        assert_eq!(model_line(&mut st, None, free()), None);
+        assert_eq!(model_line(&mut State::default(), None, Vec::new()), None);
+        // one line a message: the swap first, the note with a later message
+        let mut st = State::default();
+        let pick = || vec![("pick", "Your earlier pick, A, was replaced: this ran on B. Pick a model in the model picker to change it.".to_string())];
+        assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| l.swap && l.told.is_empty()));
+        assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| !l.swap && l.told == ["pick"]), "said with the next message");
+        assert_eq!(model_line(&mut st, swap("x", false), pick()), None);
+        // two things to say: one a message, the more pressing first, and neither twice
+        let both = || pick().into_iter().chain(free()).collect::<Vec<_>>();
+        let mut st = State::default();
+        assert!(model_line(&mut st, None, both()).is_some_and(|l| l.told == ["pick"]));
+        assert!(model_line(&mut st, None, both()).is_some_and(|l| l.told == ["free"]));
+        assert_eq!(model_line(&mut st, None, both()), None);
+        // a swap that already says the chat is on a free model: that is not said again
+        let mut st = State::default();
+        assert!(model_line(&mut st, swap("A is not available, so this ran on B. Sign in under Setup, Connections to use paid models.", true), free()).is_some_and(|l| l.told == ["free"]));
+        assert_eq!(model_line(&mut st, None, free()), None);
+        // an expert: its Lead gets the line with the result of that turn, every time, and not after a turn without one
+        let mut st = State { parent: Some("c-lead".into()), ..Default::default() };
+        model_line(&mut st, swap("x", false), Vec::new());
+        assert_eq!(st.model_note.as_deref(), Some("it ran on the model b, not \"a\" as set"));
+        model_line(&mut st, swap("x", false), Vec::new());
+        assert!(st.model_note.is_some(), "said again with the next result, though the chat is not told twice");
+        model_line(&mut st, None, Vec::new());
+        assert_eq!(st.model_note, None, "a later turn on the model that was set has nothing to add");
+        // a reopened chat knows what it was told: from the tags its saved messages carry
+        let log = vec![
+            json!({"kind": "user", "text": "one", "model_note": "A is not available, so this ran on B.", "model_swap": true, "model_told": ["free"]}),
+            json!({"kind": "text", "text": "ok"}),
+            json!({"kind": "user", "text": "two", "model_note": "Your earlier pick ...", "model_swap": false, "model_told": ["pick"]}),
+            json!({"kind": "user", "text": "three"}),
+        ];
+        assert_eq!(told_from_log(&log), (Some("A is not available, so this ran on B.".to_string()), vec!["free".to_string(), "pick".to_string()]));
+        assert_eq!(told_from_log(&[]), (None, Vec::new()));
+    }
+
+    #[test]
+    fn an_opencode_turn_says_under_the_message_which_model_ran_and_why() {
+        // the wiring in `send`, without an AI (tests find none: the message is noted, then "not installed"): Fridae's
+        // OpenCode as it was on 23 November 2026, signed in to nothing, and a chat set to a model it does not list
+        let _state = opencode::TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        opencode::set_for_test("opencode/beam-free\nopencode/big-pickle\nopencode/deepseek-v4.1-flash-free\n", &[], true);
+        let a = new_agent(Some("opencode")).unwrap();
+        let asked = Ask { model: Some("opencode/deepseek-v4.1-flash".into()), ..Default::default() };
+        a.send("Build the shop", &asked);
+        let e = a.last_user_event_for_test().unwrap();
+        assert_eq!(e["model"], "opencode/deepseek-v4.1-flash-free", "its free twin runs");
+        assert_eq!(e["model_note"], "OpenCode Zen · deepseek-v4.1-flash is not available, so this ran on OpenCode Zen · deepseek-v4.1-flash-free. Sign in under Setup, Connections to use paid models.");
+        assert_eq!((e["model_swap"].as_bool(), e["model_told"].clone()), (Some(true), json!(["free"])));
+        // the next message: nothing is said twice
+        for _ in 0..100 {
+            if !a.busy() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        a.send("And the lobby", &asked);
+        let e = a.last_user_event_for_test().unwrap();
+        assert_eq!((e["text"].as_str(), e["model"].as_str(), e["model_note"].is_null()), (Some("And the lobby"), Some("opencode/deepseek-v4.1-flash-free"), true));
+        // a chat on the default (what the page sends): one line that it is a free model, once
+        let b = new_agent(Some("opencode")).unwrap();
+        b.send("Hello", &Ask { model: opencode::default_model(), ..Default::default() });
+        let e = b.last_user_event_for_test().unwrap();
+        assert_eq!((e["model"].as_str(), e["model_note"].as_str()), (Some("opencode/big-pickle"), Some("This chat is on a free model. Sign in under Setup, Connections to use a paid plan.")));
+        assert_eq!(e["model_told"], json!(["free"]));
+        // another AI is told nothing of this, and nothing is claimed about a model while its list has not arrived
+        let c = new_agent(Some("gemini")).unwrap();
+        c.send("Hello", &Ask { model: Some("gemini-9".into()), ..Default::default() });
+        assert!(c.last_user_event_for_test().unwrap()["model_note"].is_null());
+        let d = new_agent(Some("claude")).unwrap();
+        d.send("Hello", &Ask { model: Some("newest".into()), ..Default::default() });
+        assert_eq!(d.last_user_event_for_test().unwrap()["model_note"], "Newest is not available, so this ran on Opus.");
+        opencode::set_for_test("", &[], false);
+        for x in [&a, &b, &c, &d] {
+            remove_agent(&x.id);
+        }
     }
 
     #[test]

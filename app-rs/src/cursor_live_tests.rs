@@ -307,6 +307,11 @@ fn the_launch_key_changes_with_everything_a_cursor_process_is_started_with() {
     let same = key(base());
     assert_eq!(key(base()), same, "the same settings: the process is kept");
     assert_eq!(key(CursorSettings { prompt: "other instructions", body: "another message", ..base() }), same, "the message itself is not what a process is started with");
+    // the one guarded setting no Cursor process is started with: the model picked for OpenCode
+    let mut g_opencode = guarded.clone();
+    g_opencode.insert("opencode_model".into(), json!("opencode-go/kimi-k3"));
+    g_opencode.insert("opencode_model_signed_in".into(), json!(true));
+    assert_eq!(key(CursorSettings { guarded: &g_opencode, ..base() }), same, "picking a model for OpenCode keeps the process");
     let other_servers = json!({"rbxkit": {"command": "python3", "args": ["mcp.py"], "env": {"RBXKIT_PROJECT": "/games/b"}}});
     let two_servers = json!({"rbxkit": servers["rbxkit"], "Roblox_Studio": {"command": "studio", "args": ["--stdio"]}});
     let more_rules = json!({"allow": ["Mcp(rbxkit:*)", "Shell(git)", "Shell(python3)"], "deny": ["Write(**/.cursor/**)"]});

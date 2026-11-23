@@ -268,6 +268,11 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
     let key = |s: GeminiSettings| GeminiLaunch::new(&s).key();
     let same = key(base());
     assert_eq!(key(base()), same, "the same settings: the process is kept");
+    // the one guarded setting no Gemini process is started with: the model picked for OpenCode
+    let mut g_opencode = guarded.clone();
+    g_opencode.insert("opencode_model".into(), json!("opencode-go/kimi-k3"));
+    g_opencode.insert("opencode_model_signed_in".into(), json!(true));
+    assert_eq!(key(GeminiSettings { guarded: &g_opencode, ..base() }), same, "picking a model for OpenCode keeps the process");
     let other_servers = json!({"rbxkit": {"command": "python3", "args": ["mcp.py"], "env": {"RBXKIT_PROJECT": "/games/a", "FRIDAE_GEMINI_USE_API": "1"}}});
     let two_servers = json!({"rbxkit": servers["rbxkit"], "Roblox_Studio": {"command": "studio", "args": ["--stdio"]}});
     let more_allowed = vec!["git".to_string(), "python3".to_string()];

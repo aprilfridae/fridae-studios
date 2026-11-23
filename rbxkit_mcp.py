@@ -1507,19 +1507,21 @@ TOOLS = [
      "app. Action 'spawn' (role, name, task): role 'worker' does an independent piece of the job, 'critic' reviews work and reports "
      "problems; the task must be a full brief (at least 80 characters: what to do, where, what is done already, what to leave alone, "
      "what to report), because the new agent knows nothing about this chat. Returns an id and status, or says the app did not pick "
-     "it up. Optional 'ai' and 'model' run it on another AI (see the studio guide; the user's Setup > Experts table wins). 'status' (optional ids) lists tasks. 'wait' (ids, timeout seconds, default 600, at most 840) blocks until they are done "
+     "it up. Optional 'ai' and 'model' run it on another AI (see the studio guide; the user's Setup > Experts table wins); the answer "
+     "says which AI and model it runs on, with a note whenever that is not what you asked for. 'models' (optional ai) lists what each "
+     "AI offers: its default model and its model ids. 'status' (optional ids) lists tasks. 'wait' (ids, timeout seconds, default 600, at most 840) blocks until they are done "
      "or refused and returns each agent's final reply (a studio run's Lead is handed back after 120 seconds at most, or sooner when a "
      "message or decision is waiting or the run was paused or ended; it says why). Agents started this way cannot start more. They share the one Studio: use "
      "rbx_studio_lock around playtests.",
-     schema({"action": {"type": "string", "enum": ["spawn", "status", "wait"]},
+     schema({"action": {"type": "string", "enum": ["spawn", "status", "wait", "models"]},
              "role": {"type": "string", "enum": ["worker", "critic"], "description": "spawn"},
              "name": {"type": "string", "description": "spawn: short title shown in the app, 34 characters at most"},
              "task": {"type": "string", "description": "spawn: the full instructions for the new agent"},
              "ids": {"type": "array", "items": S, "description": "status (optional) and wait: task ids returned by spawn"},
              "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"},
              "expert": {"type": "string", "description": "spawn (Studio mode): a roster expert id such as coder or security; its role comes from the roster and the task is added to the expert's own instructions"},
-             "ai": {"type": "string", "enum": ["claude", "gemini", "cursor", "opencode"], "description": "spawn (optional, use sparingly): run the new agent on this AI instead of your own. The user's Setup > Experts choice for that expert wins over it; an AI that is not installed is refused with the reason"},
-             "model": {"type": "string", "description": "spawn (optional): a model id of that AI (or of yours when ai is left out); one it does not offer falls back to its default, and the result says so"}}, ["action"]), t_team),
+             "ai": {"type": "string", "enum": ["claude", "gemini", "cursor", "opencode"], "description": "spawn (optional, use sparingly): run the new agent on this AI instead of your own. The user's Setup > Experts choice for that expert wins over it; an AI that is not installed is refused with the reason. models (optional): list this AI's models in full"},
+             "model": {"type": "string", "description": "spawn (optional): a model id of that AI (or of yours when ai is left out), exactly as action 'models' lists it; one it does not offer runs on the nearest it has or on its default, and the result says which and why"}}, ["action"]), t_team),
     ("rbx_promo", "Make vertical promo videos for a game (TikTok, Shorts, Reels): probe clips, render a recipe, check it. "
      "Read the guide first: rbx_guide topic `promo`. A long render returns a job id; poll it with action 'job'.",
      schema({"action": {"type": "string", "enum": ["status", "probe", "reference", "voice", "transcribe", "render", "check", "styles", "job"]},

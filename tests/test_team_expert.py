@@ -133,6 +133,91 @@ class ExpertSpawnTests(unittest.TestCase):
         self.assertIn("REFUSED: Gemini is not installed", text)
 
 
+class ModelsListTests(unittest.TestCase):
+    """rbx_team models: what each AI offers, read from the file the app keeps in the work folder."""
+
+    # as the app writes it (expert_ai::for_lead); OpenCode as Fridae's copy listed it while not signed in
+    LISTING = {"lead_may_pick": True, "ais": [
+        {"id": "claude", "name": "Claude", "installed": True, "default": "opus", "models": ["fable", "opus", "sonnet", "haiku"], "note": None},
+        {"id": "gemini", "name": "Gemini", "installed": False, "default": None, "models": [], "note": None},
+        {"id": "cursor", "name": "Cursor", "installed": True, "default": "auto", "models": ["auto"] + ["m%d" % i for i in range(60)], "note": None},
+        {"id": "opencode", "name": "OpenCode", "installed": True, "default": "opencode/big-pickle",
+         "models": ["opencode/beam-free", "opencode/big-pickle", "opencode/deepseek-v4.1-flash-free"],
+         "note": "Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections."}]}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="models é ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        p = mock.patch.object(rbxteam, "MODELS", os.path.join(self.tmp, "team-models.json"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def write(self, data):
+        with open(rbxteam.MODELS, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def test_lists_each_ai_with_its_default_and_models(self):
+        self.write(self.LISTING)
+        text = rbxteam.run("models", {})
+        self.assertIn("claude (Claude): default model opus. Models: fable, opus, sonnet, haiku", text)
+        self.assertIn("gemini (Gemini): not installed", text)
+        self.assertIn("opencode (OpenCode): default model opencode/big-pickle. Models: opencode/beam-free, opencode/big-pickle, "
+                      "opencode/deepseek-v4.1-flash-free", text)
+        self.assertIn("  note: Fridae's OpenCode is not signed in to a plan, so only free models are available.", text)
+        # a long list is cut, and says how to see all of it
+        self.assertIn("m38 ... and 21 more (give ai \"cursor\" to see them all)", text)
+        self.assertNotIn("m39,", text)
+
+    def test_one_ai_is_listed_in_full(self):
+        self.write(self.LISTING)
+        text = rbxteam.run("models", {"ai": " Cursor "})
+        self.assertIn("m59", text)
+        self.assertNotIn("claude (Claude)", text)
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {"ai": "llama"})
+        self.assertIn("claude, gemini, cursor, opencode", str(cm.exception))
+
+    def test_an_ai_whose_list_has_not_arrived_says_so(self):
+        listing = json.loads(json.dumps(self.LISTING))
+        listing["ais"][3].update({"models": [], "default": None, "note": None})
+        self.write(listing)
+        text = rbxteam.run("models", {"ai": "opencode"})
+        self.assertIn("opencode (OpenCode): its model list has not arrived yet", text)
+
+    def test_says_when_the_user_switched_the_leads_pick_off(self):
+        self.write(dict(self.LISTING, lead_may_pick=False))
+        self.assertIn("switched off \"The Lead may pick an AI for a job\"", rbxteam.run("models", {}))
+        self.write(self.LISTING)
+        self.assertNotIn("switched off", rbxteam.run("models", {}))
+
+    def test_without_the_app_it_says_so(self):
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {})
+        self.assertIn("inside the Fridae Studios app", str(cm.exception))
+
+    def test_a_file_of_another_shape_is_an_answer_never_a_crash(self):
+        # only possible if something other than the app wrote the file (the app keeps agents' file tools off it)
+        self.write({"ais": [{"id": 7, "models": ["x"]}, "claude", {"id": "claude", "name": 3, "installed": True, "default": ["x"],
+                                                                  "models": ["opus", 5, None], "note": {"say": "this"}},
+                            {"id": "cursor", "installed": True, "models": "auto"}]})
+        text = rbxteam.run("models", {})
+        self.assertIn("claude (claude): default model its own choice. Models: opus", text)
+        self.assertIn("cursor (cursor): its model list has not arrived yet", text)
+        self.assertNotIn("note:", text)
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {"ai": "llama"})
+        self.assertIn("Use one of claude, cursor,", str(cm.exception))
+        self.write({"ais": [{"id": 7}, {"id": ["claude"]}]})
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("models", {})
+        self.assertIn("could not be read", str(cm.exception))
+
+    def test_unknown_action_names_models_too(self):
+        with self.assertRaises(KitError) as cm:
+            rbxteam.run("dance", {})
+        self.assertIn("spawn, status, wait or models", str(cm.exception))
+
+
 class LeadWaitTests(unittest.TestCase):
     """rbx_team wait hands a studio run's Lead back early (live run L4), and refuses experts on an ended run (L2)."""
 

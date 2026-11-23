@@ -147,7 +147,20 @@ helpers.
 {"ai", "model"}}`) wins, then the request, then the Lead's own AI and model (`Agent::model`: the model it was started
 on, else its last message's). An AI the app cannot run experts on (ChatGPT, anything unknown) or one that is not
 installed is refused with a reason the Lead can act on, never moved to another AI; a model the chosen AI does not list
-runs on that AI's default, and the result's `note` says so (a list that has not arrived yet passes the model on). The
+runs on the nearest it has (`World::nearest`, OpenCode's only: `opencode::nearest`) or on that AI's default, and the
+result's `note` says which and why (a list that has not arrived yet passes the model on). Nothing about where an
+expert runs is silent: the result's `model` always names the model (the AI's default when none was set), the `note`
+also says when the user's table won over what the Lead asked for and what the app knows about the model that runs
+(`World::why`, `expert_ai::More`, OpenCode's `Caveat`: only free models because Fridae's OpenCode is not signed in, a
+sign-in that waits for running work, no plan model listed, or the same model billed per use that was left for the
+user to pick), and
+a model swapped later, at a turn (the list arrived after the spawn, or the model has gone), is said once under the
+message in that chat (`agents::model_line`, the "user" event's `model_note`: model names, two short sentences at most,
+one line a message; nothing is claimed about an AI whose list has not arrived) and added to the result the Lead
+collects (`team::with_model_note`). What a chat was told is read back from its saved messages when it is reopened
+(`told_from_log`). `rbx_team` action `models` lists what each AI offers, from `work/team-models.json`, which
+`team::watch` keeps holding exactly the app's list (`expert_ai::for_lead`, `write_models`; the file is among those no
+agent's file tools may write, `paths::app_protected`). The
 expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
 `agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
 the expert line and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
@@ -644,7 +657,8 @@ default); `FRIDAE_GEMINI_PER_TURN=1` turns it off whatever else is set; Windows 
 - **The launch key** (`GeminiLaunch::key`): the program, the workspace, the tool servers with their environment,
   the model, the effort, the mode, the chat, every folder and protected place the gate decides by, agy's data
   folder, the pictures file, the provider-keys switch, the allowed programs, and a fingerprint of every guarded
-  setting (`paths::GUARDED`; a hash, since one is the Gemini key). Any change closes the process and the next one
+  setting but the model picked for OpenCode, which no Gemini or Cursor process is started with (`paths::GUARDED`,
+  `guarded_print`; a hash, since one is the Gemini key). Any change closes the process and the next one
   resumes the conversation. The gate's rules are built per message as well.
 - **One process on a conversation.** agy keeps a conversation in a file of its own, so a turn (kept or per message)
   first waits until the chat's earlier kept processes are gone (`State::retiring`, `Kept::alone`, at most 12 s;
@@ -1128,9 +1142,40 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   chat's tool servers are removed again (`DELETE /api/experimental/mcp/<name>`).
 - **Models** come from `opencode models` run with the app's folders (so Fridae's sign-in decides them), cached, and
   refreshed with the status. The menu groups them by provider ("OpenCode Go · glm-5.3") with the filter, and hides
-  effort (OpenCode's model ids carry their own). Default (`default_model`): the user's own `model` in
-  `~/.config/opencode/opencode.json(c)` (read only) when Fridae's copy offers it, else the first `opencode-go/` model,
-  else the first listed. Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
+  effort (OpenCode's model ids carry their own). Three kinds of model (`Have`): on the plan (`opencode-go/`, not
+  free), free, and billed per use (everything else). Default (`default_model`, `default_of`): a model billed per use
+  only when the user chose it, a free one only when no plan model is listed. In order: the model the user last picked
+  for OpenCode in the menu; the user's own `model` in `~/.config/opencode/opencode.json(c)` (read only; not a free one
+  while a plan model is listed); a plan model (OpenCode's own default when it is one, else the first listed); a free
+  model (OpenCode's own default when it is one, else `big-pickle`, else the first); else none, and OpenCode picks.
+  The pick is two guarded settings (`paths::GUARDED`: they decide what every OpenCode chat and expert costs),
+  `opencode_model` and `opencode_model_signed_in`: the page posts it to `/api/opencode` action `model` and asks for
+  `status.ai.default_models.opencode`, so chats and experts agree. It is filed by whether Fridae's OpenCode was signed
+  in at that moment, never by what the model seemed to cost: a pick from before the sign-in (a free model, as nothing
+  else was listed) gives way to the plan's models after it, and any pick made while signed in stays. While the
+  sign-in is not known the list says it (a plan model listed means signed in, none means not: a copy signed in to
+  nothing lists no plan model), so a pick is never refused for that. A pick gone from the list moves only to the same model on the plan, never to a twin
+  billed per use; a chat is told once per app run when the pick was replaced (`replaced_pick`). Free
+  (`Have::is_free`): an id ending `-free`; an `opencode/` model the server lists at no price (`GET /api/model`, `cost`
+  all zero); `opencode/big-pickle` until a price list is known (`KNOWN_FREE`); and every model while nothing is
+  signed in. The server's price list and its own default (`GET /api/model/default`) are asked for once per server
+  start (`note_costs`) and kept across runs in `fridae-models.json` in the app's OpenCode folder (`Prices`), so the
+  default does not change by itself when a server starts; an answer that names no free model at all is not believed
+  and replaces nothing (`with_answer`). Measured on 2.3.2 (23 November 2026): a copy that never
+  signed in lists only models at no price, all under `opencode/` (eleven that day), its own default is `big-pickle`,
+  `opencode auth list` says "No authenticated integrations" (exit 0), and `opencode models` has no `--verbose`. Not
+  measured: anything of a signed-in copy (how a plan's prices are listed, what its own default is). A model that is
+  not listed exactly runs on its nearest twin (`nearest`: the same name under `opencode-go/`, then `opencode/`, then
+  any provider, and its `-free` twin only when none of those exists; never a guess at a similar name), but only when
+  that twin is on the plan or free (`twin`). One rule everywhere, for the default, a turn, a Lead's request and an
+  Experts row: the app never spends the user's money without the user's own choice. A model billed per use runs only
+  when the user picked it in the model picker (it is then the default), has it as their own OpenCode default, or set
+  it for that expert in Setup, Experts. A Lead's request for one, named exactly as listed, runs on the default
+  (`expert_ai::resolve`, `World::per_use`, `opencode::billed_per_use`), and the note says it is billed per use, that
+  Fridae did not choose it, and that the user can set it under Setup, Experts (`Caveat::PerUseAsked`). When a twin
+  billed per use was left, the default runs and the Lead's note and the chat's line say that the user can pick that
+  model themselves in the model picker (`Caveat::PerUseLeft`). While the list is empty or
+  the sign-in is not known, both are asked for again once a minute (`refresh_due`). Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
   under `ai: "opencode"`; OpenCode reports no plan limits, and the usage popover says so.
 - **Isolation** (`environment`): the server and the one-off commands (`models`, `auth`, those with `--standalone`)
   run with `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under
@@ -1142,11 +1187,25 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   sharing, no snapshots, no LSP or formatters, and policies that refuse every MCP server not named `fr*` and every
   skill. So Fridae's chats are not in the user's OpenCode (command line or desktop app), and nothing is written to
   `~/.config/opencode`, `~/.local/share/opencode` or the game's folder.
-- **Sign-in**: the sign-in lives in OpenCode's database, so Fridae's copy signs in on its own: Setup's "OpenCode for
-  Fridae" row starts OpenCode's device sign-in (`opencode --standalone auth login opencode --method device`, the code
+- **Sign-in**: the sign-in lives in OpenCode's database, so Fridae's copy signs in on its own: Setup's "Fridae's
+  OpenCode" row starts OpenCode's device sign-in (`opencode --standalone auth login opencode --method device`, the code
   is shown, approved on opencode.ai; `/api/opencode` login/open/cancel/state). Free models work without it. Copying
   the user's sign-in was ruled out: its refresh token is replaced on every refresh, so two copies would sign each
-  other out. Not tried live (it needs the user in a browser).
+  other out. The status says where it stands (`opencode::state`: `signed_in`, `known` once `opencode auth list` has
+  answered, `free_only`, `pending`); while `free_only`, the page's notice for OpenCode (`aiNotice("opencode")` in
+  `ui/index.html`: the top of the picker's models, and OpenCode's row in Setup, Connections) shows "Free
+  models only. Sign in to use a paid plan." with the button (one click starts the sign-in and opens its page; a start
+  that fails says why in the same line), and an OpenCode chat says once that it is on a free model
+  (`Caveat::NotSignedIn`). When the sign-in ends well (`login_ended`) the server is ended so the next turn starts one
+  with the new sign-in, and only then are the model list and the sign-in asked for again (`restart_if_wanted`,
+  `reload_models`): at once when no turn runs, else when the last running turn has ended (`leave`, on a thread of its
+  own). Until then everything is chosen from the list from before the sign-in, because whether a server started
+  before a sign-in can use the plan's models is not known; the status says `pending`, and the notice says
+  "Signed in. Paid models start once running work has finished." The start was run on 23 November 2026 in scratch
+  folders (2.3.2 prints the code and the page as the parser expects; the real lines are a test); and again from the page of
+  the dev binary on a fresh scratch copy (the notice, Sign in, the code shown, Cancel; the browser page held back). A
+  sign-in has never been completed (it needs the user in a browser), so what OpenCode lists and does after one is
+  untested.
 - **Tool servers**: one server serves every chat, and OpenCode keeps tool servers per folder, so chats on the same
   game would share them. Each chat's servers are named `fr<8 hex of sha256(chat id)>-<server>` (`chat_prefix`), and
   the rules deny `fr????????-*` and then allow the chat's own prefix. Measured: another chat's tools are not even
@@ -1438,7 +1497,7 @@ is an example the user can paste into their own House rules.
   a command can write anything there anyway).
 - **Settings that widen what an AI may do or can cost money** (`paths::GUARDED`, the one list: `allowed_commands`,
   `use_env_keys`, `gemini_use_api`, `gemini_key`, `gemini_images`, `projects`, `plugin_token`, `expert_ai`,
-  `lead_picks_ai`): while
+  `lead_picks_ai`, `opencode_model`, `opencode_model_signed_in`): while
   the app runs, its memory is the authority, not the file. They change only through the app's routes
   (`update_config`, which writes memory, the file and a copy); every decision reads memory (`paths::setting`,
   `guarded_settings`, `allowed_commands()`, `env_keys_on()`, `gemini_api_on()`). Before a chat's turn is sent, before

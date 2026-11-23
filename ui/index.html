@@ -108,6 +108,7 @@ input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-of
 /* one line that says something is missing, with the button that fixes it; nothing shows while it is empty */
 .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; padding: 8px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); font-size: 13px; line-height: 1.45; color: var(--dim); }
 .notice:empty { display: none; }
+.notice > .nt { display: contents; }
 /* lists of things to pick or read: the guide, allowed programs, saved chats */
 .g-group { font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); margin: 24px 0 4px; }
 .g-item { border-top: 1px solid var(--line); }
@@ -1121,7 +1122,7 @@ const CONTROLS = [
   ["The chat's name", "Press it for the game's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
   ["The game's name", "Press it for the game's folder, notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
-  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message."],
+  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. OpenCode says \"Free models only\" there, with a Sign in button, until Fridae's OpenCode is signed in."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
@@ -1131,7 +1132,7 @@ const CONTROLS = [
   ["Text size", "Ctrl (Cmd on a Mac) and + or - makes everything bigger or smaller; 0 resets it."],
   ["API keys on this computer", "Setup, Connections, Use API keys from my environment. Off unless you turn it on.", "", "An AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Setup instead."],
   ["Settings changed mid-turn", "A change in Setup reaches a working agent from its next turn.", "", "This goes for the paid Gemini textures switch and the Blender path: a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
-  ["Settings put back", "If the settings file changes without Fridae, it puts the risky settings back and says which.", "", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table) outside every folder an agent is given. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
+  ["Settings put back", "If the settings file changes without Fridae, it puts the risky settings back and says which.", "", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table, the model picked for OpenCode) outside every folder an agent is given. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
 ];
 const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l6-6M4.5 3H9v4.5"/></svg></span>';
 /* a longer explanation, folded behind one word */
@@ -2062,9 +2063,13 @@ function onEvent(e) {
       u.appendChild(docs);
     }
     u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
-    const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
+    /* an OpenCode model by its name ("OpenCode Zen · big-pickle"), as the picker and the app's own lines show it */
+    const ran = e.model && chatAi(p) === "opencode" ? ((modelsFor("opencode").find((m) => m[0] === e.model) || [])[1] || e.model) : e.model;
+    const tags = [ran, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
     if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
     if (e.fallback) { const f = el("span", "tag enter"); f.textContent = e.fallback; p.col.appendChild(f); }
+    /* which model ran and why, when that is not what was set (from the app: one line, two short sentences at most) */
+    if (e.model_note) { const f = el("span", "tag enter"); f.textContent = e.model_note; p.col.appendChild(f); }
   } else if (e.kind === "tool") {
     const s = steps(p);
     s.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
@@ -2486,10 +2491,35 @@ function modelsFor(ai) {
 /* The model the next message asks for: the one picked for this AI, else the AI's set default (Opus, Gemini 4 Carbon,
    the newest GPT Astra, Cursor's Auto). There is no "whatever the program is set to". */
 function modelOf(p) {
-  const ai = chatAi(p), list = modelsFor(ai), pick = chosenModel[ai];
+  /* OpenCode's pick is kept by the app (status.ai.default_models.opencode is that pick, or the app's choice while
+     there is none: a model of your plan, else a free one), so experts follow it too. With no such model the app
+     names none and OpenCode chooses: never the first one listed, which may be billed per use */
+  const ai = chatAi(p), list = modelsFor(ai), pick = ai === "opencode" ? "" : chosenModel[ai];
   if (list.some((m) => m[0] === pick)) return pick;
   const dflt = ai === "claude" ? "opus" : (((status.ai || {}).default_models || {})[ai]) || "";
+  if (ai === "opencode") return list.some((m) => m[0] === dflt) ? dflt : "";
   return list.some((m) => m[0] === dflt) ? dflt : list.length ? list[0][0] : "";
+}
+/* The model picked for OpenCode goes to the app's settings: shown at once, then confirmed by the next status. */
+async function pickOpenCodeModel(id) {
+  if (status.ai && status.ai.default_models) status.ai.default_models.opencode = id;
+  paintModel();
+  let r = null; try { r = await api("/api/opencode", { action: "model", model: id }); } catch (e) {}
+  if (!r || !r.ok) note((r && r.error) || "Could not save that pick. Try again.");
+  refresh();
+}
+/* A pick this window kept for OpenCode before the app did is handed to the app, and dropped here only when the app
+   has taken it, has one already, or no longer lists it. */
+let ocPickMoving = false;
+async function moveOpenCodePick() {
+  const old = chosenModel.opencode, oc = (status.ai || {}).opencode, list = modelsFor("opencode");
+  if (ocPickMoving || !old || !oc || !list.length) return;
+  ocPickMoving = true;
+  let settled = !!oc.pick || !list.some((m) => m[0] === old), sent = false;
+  if (!settled) { try { const r = await api("/api/opencode", { action: "model", model: old }); settled = !!(r && r.ok); sent = settled; } catch (e) {} }
+  if (settled) { delete chosenModel.opencode; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} }
+  ocPickMoving = false;
+  if (sent) refresh();
 }
 function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
 /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
@@ -2501,8 +2531,16 @@ function modelParts(ai, name) {
    its row in Setup, Connections (.notice in the row). Return a node (the words, and a button when there is something
    to press) or null for nothing; an empty slot takes no room. A notice is painted again when its markup changes (its
    words, a button's label or whether it is disabled): give the node a data- attribute for a change that does not
-   show. Nothing is said about any AI today. */
-function aiNotice(ai) { return null; }
+   show. OpenCode: Fridae's OpenCode is not signed in (free models only), with the sign-in one press away. */
+function aiNotice(ai) {
+  if (ai !== "opencode" || !((status.ai || {}).installed || {}).opencode) return null;
+  const s = openCodeSignIn();
+  if (!s.text) return null;
+  const n = el("span", "nt");
+  n.appendChild(el("span", "", esc(s.text)));
+  s.buttons.forEach(([label, action]) => n.appendChild(openCodeButton(label, action)));
+  return n;
+}
 function paintNotice(slot, ai) {
   const note = aiNotice(ai), sig = note ? note.outerHTML : "";
   if (slot.dataset.sig === sig) return;
@@ -2550,7 +2588,7 @@ function paintPicker() {
       if (g && g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
       const o = el("button", "opt", TICK + "<span><b>" + esc(rest) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
       o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
-      o.onclick = () => { chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
+      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
       lst.appendChild(o);
     });
     lst.scrollTop = top;
@@ -3784,22 +3822,49 @@ function paintAi() {
   });
 }
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in
-   on its own, once, with OpenCode's device sign-in: a code here, approved on opencode.ai. Free models work without. */
-let ocPoll = 0;
+   on its own, once, with OpenCode's device sign-in: a code here, approved on opencode.ai. Free models work without.
+   What it needs from you now, as one plain line and its buttons, is the notice (aiNotice): in the picker's models and
+   in OpenCode's row in Setup. Nothing to say (signed in, or not known yet): no text. */
+let ocPoll = 0, ocError = "";
+function openCodeSignIn() {
+  const oc = (status.ai || {}).opencode || {}, login = oc.login || {}, signed = oc.signed_in || [], waiting = login.state === "waiting";
+  /* signed in while work was running: Fridae's OpenCode starts again when that work has finished, with the plan's models */
+  const pending = !!oc.pending && !waiting;
+  const text = waiting ? (login.code ? "On the page that opens, sign in and enter the code " + login.code + "." : "Starting the sign-in...")
+    : pending ? "Signed in. Paid models start once running work has finished."
+    : signed.length ? ""
+    : ocError ? ocError
+    : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message + (/[.!?]$/.test(login.message) ? "" : ".") : ".") + " Try again."
+    : oc.free_only ? "Free models only. Sign in to use a paid plan." : "";
+  const buttons = waiting ? (login.url ? [["Open the sign-in page", "open"]] : []).concat([["Cancel", "cancel"]]) : pending || signed.length ? [] : [["Sign in", "login"]];
+  return { text, buttons, signed, pending, known: !!oc.known };
+}
+/* Sign in starts OpenCode's device sign-in and opens its page; the code to enter there shows in the notice. A start
+   that fails says why, in the same line. */
+function openCodeButton(label, action) {
+  const b = el("button", "pill sm", esc(label));
+  b.onclick = async () => {
+    b.disabled = true;
+    let r = null; try { r = await api("/api/opencode", { action }); } catch (e) {}
+    /* only a sign-in that could not start: a page that did not open leaves the sign-in's own line in place */
+    ocError = action !== "login" ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
+    if (action === "login" && r && r.state === "waiting" && r.url) { try { await api("/api/opencode", { action: "open" }); } catch (e) {} }
+    await refresh(); watchOpenCode();
+  };
+  return b;
+}
+/* Its row in Setup, under OpenCode's own: where the sign-in stands, in one short line (what to do about it is the
+   notice above it), and Sign in again once it is signed in. */
 function openCodeRow() {
-  const oc = (status.ai || {}).opencode || {}, login = oc.login || {}, signed = oc.signed_in || [];
+  const s = openCodeSignIn();
   const row = el("div", "g-row oc-row");
-  const what = login.state === "waiting"
-    ? (login.code ? "On the page that opens, sign in to your OpenCode account and enter the code " + login.code + "." : "Starting the sign-in...")
-    : signed.length ? "Signed in: " + signed.join(", ") + ". Its models are in the message box, under the AI's name."
-    : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message : ".") + " Try again."
-    : "Not signed in: only OpenCode's free models work. Sign in to use your OpenCode Go or Zen plan. Your own OpenCode setup is never changed.";
-  row.innerHTML = "<b>OpenCode for Fridae</b><small></small><div class=\"act\"></div>";
+  const what = s.signed.length ? "Signed in: " + s.signed.join(", ") + "."
+    : s.pending ? "Signed in."
+    : s.known ? "Not signed in. Your own OpenCode is never changed."
+    : "Checking the sign-in...";
+  row.innerHTML = "<b>Fridae's OpenCode</b><small></small><div class=\"act\"></div>";
   row.querySelector("small").textContent = what;
-  const act = row.querySelector(".act");
-  const button = (label, action) => { const b = el("button", "pill", esc(label)); b.onclick = async () => { await api("/api/opencode", { action }); await refresh(); watchOpenCode(); }; act.appendChild(b); };
-  if (login.state === "waiting") { if (login.url) button("Open the sign-in page", "open"); button("Cancel", "cancel"); }
-  else button(signed.length ? "Sign in again" : "Sign in to OpenCode for Fridae", "login");
+  if (s.signed.length && !s.buttons.length) row.querySelector(".act").appendChild(openCodeButton("Sign in again", "login"));
   return row;
 }
 /* while a sign-in waits, Setup follows it */
@@ -3956,6 +4021,7 @@ function paintPlugin(note) {
 $("plug-install").onclick = async () => { const r = await api("/api/plugin", { action: "install" }); await refresh(); if (!r.ok) paintPlugin(r.error || "Could not install the plugin."); };
 $("plug-remove").onclick = async () => { await api("/api/plugin", { action: "remove" }); await refresh(); paintPlugin("Removed. Studio stops using it the next time it starts."); };
 async function refresh() { try { status = await api("/api/status");
+  moveOpenCodePick();
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintLimits();
   paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys;
