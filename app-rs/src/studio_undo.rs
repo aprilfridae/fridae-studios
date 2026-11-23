@@ -603,7 +603,7 @@ fn undo_with(project: &str, stage: Option<&str>, files_only: bool, link: &dyn St
         }
     }
     lines.push("The run is paused. Press Resume in Review when it should carry on.".to_string());
-    lines.push("The board's cards were kept so you can still read them.".to_string());
+    lines.push("The run's task cards were kept.".to_string());
     let text = lines.join("\n");
     if let Some(l) = &live {
         if ok {

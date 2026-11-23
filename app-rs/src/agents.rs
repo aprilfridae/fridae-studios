@@ -282,9 +282,9 @@ fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) ->
                 if state.done >= 2 {
                     state.night = false;
                     Step::End(if studio {
-                        "Studio run finished: twice in a row there was nothing more it could do without you. See Review and the board for what needs you."
+                        "Studio run finished: twice in a row there was nothing more it could do without you. See Review for what needs you."
                     } else {
-                        "Overnight mode finished: twice in a row there was nothing more it could do without you. See the board for what needs you."
+                        "Overnight mode finished: twice in a row there was nothing more it could do without you. See Review for what needs you."
                     })
                 } else {
                     Step::CarryOn(if studio {
@@ -2254,7 +2254,7 @@ impl Agent {
             return json!({"ok": false, "text": text, "files_only": night["commit"].is_string()});
         }
         let (mut lines, ok) = (back.lines, back.studio_ok && back.project_ok);
-        lines.push("The board's cards from the night were kept so you can still read them.".to_string());
+        lines.push("The task cards from the night were kept.".to_string());
         let text = lines.join("\n");
         // marked done only when something was put back, so a failed try can be repeated
         if ok {
@@ -5477,7 +5477,7 @@ mod tests {
         assert_eq!((s.done, s.night), (1, true));
         assert_eq!(
             next_step(Mode::Overnight, true, "STATUS: DONE", &mut s),
-            Step::End("Overnight mode finished: twice in a row there was nothing more it could do without you. See the board for what needs you.")
+            Step::End("Overnight mode finished: twice in a row there was nothing more it could do without you. See Review for what needs you.")
         );
         assert!(!s.night);
     }
