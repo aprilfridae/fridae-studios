@@ -105,6 +105,14 @@ line.
 
 Plain English, short. Never "the board" in anything the user reads (Review holds its cards).
 
+## Changed afterwards, at the user's request (2026-11-23)
+
+Section 1 no longer holds. The page is called **Overview**, and the graph is back as its main part: every game, its
+chats and its experts, with drag, zoom, double-click to fit, and a press on a game or chat to open it. The project
+cards of section 1 (with the New project card, the totals line and Stop everything) sit in a column at its right,
+and go under the graph below about 1000 px. The graph keeps to section 9: its key is behind one small "?", it has a
+text alternative, it does not pulse with reduced motion, and it draws nothing while nothing changes.
+
 ## How it is checked
 
 - Every screen opened with a scratch copy of the user's real data at 1180 x 820 and at about 900 wide: Home, Chat (with

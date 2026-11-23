@@ -29,10 +29,11 @@ signed: choose "More info" then "Run anyway".
 Open Setup (the cog at the bottom left) and pick Guide for everything it
 can do and how the app works.
 
-The left side lists your games. "All projects" shows every game as a card;
-pick a game for its Chat (where you talk to its agent), Review (what is
-happening and what needs you) and Promos (promo videos from your clips);
-"New project" makes a new game folder or finds ideas from Roblox's charts.
+The left side lists your games. "Overview" shows every game, its chats and
+its experts as a live graph, with a card per game beside it. Pick a game
+for its Chat (where you talk to its agent), Review (what is happening and
+what needs you) and Promos (promo videos from your clips). "New project"
+makes a new game folder or finds ideas from Roblox's charts.
 
 Things to try
 -------------
