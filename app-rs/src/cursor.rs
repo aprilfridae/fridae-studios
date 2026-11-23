@@ -711,7 +711,7 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
         return Some(SIGNED_OUT.to_string());
     }
     if low.contains("cannot use this model") {
-        return Some("Cursor does not offer the chosen model to this account. Pick another model under the message box (Auto always works), then send your message again.".to_string());
+        return Some("Cursor does not offer the chosen model to this account. Pick another model in the message box (Auto always works), then send your message again.".to_string());
     }
     if low.contains("usage limit") || low.contains("rate limit") || low.contains("quota") {
         let line = stderr.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
