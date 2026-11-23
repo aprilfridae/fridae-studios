@@ -605,8 +605,10 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;
     // `tool-jobs`: where it notes its long calls' jobs, and where the app tells it a turn has ended, `jobs.rs`;
     // `antigravity`: where the app's tools run agy to make an image (`rbxgen.py`): agy starts the tool servers a
-    // folder's `.agents/mcp_config.json` names, and the tools keep the model's name and each chat's count there)
-    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs", "antigravity"] {
+    // folder's `.agents/mcp_config.json` names, and the tools keep the model's name and each chat's count there;
+    // `.agents`: a list of tool servers in the work folder itself, should agy also look in the folders above the
+    // one it works in (not measured): a Claude chat with no game works in the work folder)
+    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs", "antigravity", ".agents"] {
         out.push((w.join(d), true));
     }
     out
@@ -2271,6 +2273,7 @@ mod tests {
         assert_eq!(file_of(&st).get("gemini_images"), Some(&serde_json::json!(false)));
         // and where the tools run agy to make an image is no agent's to write (agy starts what a folder's list names)
         assert!(app_protected().iter().any(|(p, dir)| *dir && p.ends_with("antigravity")));
+        assert!(app_protected().iter().any(|(p, dir)| *dir && *p == PATHS.work.join(".agents")), "nor a list of tool servers in the work folder itself");
     }
 
     #[test]

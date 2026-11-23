@@ -47,6 +47,8 @@ if args[:1] == ["models"]:
 ask = json.loads(sys.stdin.readline())["message"]["content"]
 with open(log, "a") as f:
     f.write(json.dumps({"ask": ask, "cwd": os.getcwd(), "files": os.listdir(".")}) + "\n")
+if mode == "slow":
+    time.sleep(60)
 if mode == "signed-out":
     sys.stderr.write("Error: authentication required. Run agy to sign in.\n")
     sys.exit(1)
@@ -168,7 +170,7 @@ class ImageToolTests(ToolCase):
         self.assertEqual(out["size"], "1920x1080")
         self.assertEqual(out["made_at"], "1376x768", "what the model returned, so an enlargement is not a surprise")
         self.assertIn("uploads nothing", out["note"])
-        self.assertEqual(out["generated_this_hour"], "1 of 12")
+        self.assertEqual(out["started_this_hour"], "1 of 12 this chat may start")
         # the model was asked for the nearest shape it offers, on the cheapest Flash model agy lists
         calls = self.calls()
         self.assertEqual(calls[0], ["models"])
@@ -449,18 +451,22 @@ class ImageToolTests(ToolCase):
         self.out(action="generate", prompt="x", size="64x64")
 
     def test_a_chat_may_start_only_so_many_generations_in_an_hour(self):
-        with mock.patch.object(self.rbximage, "PER_HOUR", 2):
+        with mock.patch.object(self.rbxgen, "PER_HOUR", 2):
             self.out(action="generate", prompt="x", size="64x64")
-            self.assertEqual(self.out(action="generate", prompt="x", size="64x64")["generated_this_hour"], "2 of 2")
-            said = self.refused("generated 2 images in the last hour", action="generate", prompt="x", size="64x64")
+            self.assertEqual(self.out(action="generate", prompt="x", size="64x64")["started_this_hour"], "2 of 2 this chat may start")
+            said = self.refused("This chat has started 2 image generations in the last hour", action="generate", prompt="x", size="64x64")
             self.assertIn("ask them", said)
             self.assertEqual(len(self.turns()), 2, "the third never reached agy")
-            # a failed try counts too (it may have cost a turn); another chat has its own count; keep costs nothing
+            self.assertEqual(sorted(os.listdir(os.path.join(self.project, "art"))), ["Image-2.png", "Image.png"], "no name was taken for it")
+            # a failed try counts too (it may have cost a turn), and the words fit that; another chat has its own
+            # count; keep costs nothing
             with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": "c-other"}):
                 self.mode("signed-out")
                 self.refused("not signed in", action="generate", prompt="x", size="64x64")
                 self.refused("not signed in", action="generate", prompt="x", size="64x64")
-                self.refused("in the last hour", action="generate", prompt="x", size="64x64")
+                said = self.refused("has started 2 image generations in the last hour", action="generate", prompt="x", size="64x64")
+                self.assertIn("whether or not a picture came of it", said)
+                self.assertNotIn("has generated", said)
             self.mode("ok")
             self.out(action="keep", source=self.picture(os.path.join(self.project, "a.png")))
             # an hour on, it may again; a count file that does not read as one is no count
@@ -473,7 +479,58 @@ class ImageToolTests(ToolCase):
             with open(spent, "w") as f:
                 f.write("{broken")
             self.out(action="generate", prompt="x", size="64x64")
-        self.assertEqual(self.rbximage.PER_HOUR, 12)
+        self.assertEqual((self.rbxgen.PER_HOUR, self.rbxgen.PER_HOUR_PROJECT), (12, 30))
+
+    def test_a_games_whole_team_shares_one_count_and_textures_count_too(self):
+        def as_chat(chat, project=None):
+            return mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": chat, "RBXKIT_PROJECT": project or self.project})
+        other = os.path.join(self.tmp, "Other Game")
+        os.makedirs(other)
+        with mock.patch.object(self.rbxgen, "PER_HOUR_PROJECT", 3):
+            # the Lead, an expert, and an expert's texture (made by the same wrapper turn): three starts in one game
+            with as_chat("lead"):
+                self.out(action="generate", prompt="x", size="64x64")
+            with as_chat("expert-art"):
+                self.out(action="generate", prompt="x", size="64x64")
+            with as_chat("expert-world"):
+                self.rbxgen.antigravity_image(self.agy, "weathered oak planks")
+            # a fourth, by an expert that has started none itself
+            with as_chat("expert-ui"):
+                said = self.refused("This game's team (its Lead and experts together) has started 3 image generations", action="generate", prompt="x", size="64x64")
+                self.assertIn("ask them", said)
+                with self.assertRaises(self.rbxgen.SpendLimit):
+                    self.rbxgen.antigravity_image(self.agy, "moss")
+            self.assertEqual(len(self.turns()), 3)
+            # another game's team, and a chat with no game, have counts of their own
+            with as_chat("expert-ui", other):
+                self.out(action="generate", prompt="x", size="64x64")
+            with as_chat("loose-chat", ""), mock.patch.dict(os.environ, {"RBXKIT_PROJECT": ""}):
+                self.out(action="generate", prompt="x", size="64x64")
+        names = sorted(os.listdir(os.path.join(self.work, "antigravity", "spent")))
+        self.assertEqual([n for n in names if not n.startswith("project-")], ["expert-art.json", "expert-ui.json", "expert-world.json", "lead.json", "loose-chat.json"])
+        self.assertEqual(len([n for n in names if n.startswith("project-")]), 2, "one per game, named by a hash of its folder")
+
+    @unittest.skipUnless(np is not None, "a texture is processed with numpy")
+    def test_a_texture_past_the_count_asks_the_user_and_never_turns_to_the_paid_key(self):
+        import rbxtex
+        no_preview = mock.patch.object(rbxtex, "stage_preview", lambda path: None)     # never into a real Studio install
+        no_preview.start()
+        self.addCleanup(no_preview.stop)
+        png = io.BytesIO()
+        Image.new("RGB", (64, 64), (120, 90, 60)).save(png, format="PNG")
+        asked = []
+
+        def ask_user(prompt, kind, name, wait, agent):
+            asked.append(prompt)
+            return png.getvalue()
+        with mock.patch.object(self.rbxgen, "PER_HOUR", 0), mock.patch.object(self.rbxgen, "ask_user", ask_user), \
+                mock.patch.object(self.rbxgen, "api_key", lambda: "k"), mock.patch.object(self.rbxgen, "api_enabled", lambda: True), \
+                mock.patch.object(self.rbxgen, "request_image", side_effect=AssertionError("the paid API was used")):
+            out = self.rbxgen.generate("weathered oak planks", name="Oak", folder="count")
+        self.assertEqual(len(asked), 1)
+        self.assertIn("made by the user", out["model"])
+        self.assertIn("as many generated pictures this hour as they may", out["model"])
+        self.assertFalse(os.path.exists(self.log), "agy was never run")
 
     # ---------------------------------------------------------------- keep
     def test_keep_brings_geminis_own_picture_into_the_project_at_an_exact_size(self):
@@ -501,8 +558,8 @@ class ImageToolTests(ToolCase):
         self.assertEqual(out["file"], os.path.join(self.project, "store", "mood.jpg"))
         with Image.open(out["file"]) as img:
             self.assertEqual(img.format, "JPEG")
-        # the images this tool made, the chat's pictures, and this chat's own folder
-        for where in (("images", "unsaved"), ("chat-images",), ("gemini", "c-test"), ("cursor", "chats", "c-test")):
+        # what the app's own tools write (images, icons, textures, shots), the chat's pictures, and this chat's own folder
+        for where in (("images", "unsaved"), ("icons", "Weapons"), ("textures",), ("shots",), ("chat-images",), ("gemini", "c-test"), ("cursor", "chats", "c-test")):
             self.out(action="keep", source=self.picture(os.path.join(self.work, *where, "p.png")), size="32x32")
 
     def test_keep_refuses_a_source_elsewhere_and_anything_that_is_no_image(self):
@@ -528,7 +585,9 @@ class ImageToolTests(ToolCase):
                     ("https://example.com/a.png", "file on this computer"),
                     # another chat's folder, the rest of the work folder, and the app's own files
                     (self.picture(os.path.join(self.work, "gemini", "c-other", "theirs.png")), "somewhere else"),
-                    (self.picture(os.path.join(self.work, "shots", "x.png")), "somewhere else"),
+                    (self.picture(os.path.join(self.work, "vfx", "x.png")), "somewhere else"),
+                    (self.picture(os.path.join(self.work, "x.png")), "somewhere else"),
+                    (self.picture(os.path.join(self.work, "antigravity", "x.png")), "somewhere else"),
                     (self.picture(os.path.join(self.work, "chats", "x.png")), "somewhere else"),
                     # agy's own logs of a conversation, and anything not at the top of one conversation's folder
                     (self.picture(os.path.join(brain, "c1", ".system_generated", "logs", "media", "m.png")), "somewhere else"),
@@ -567,6 +626,75 @@ class ImageToolTests(ToolCase):
         self.assertTrue(rbxkit_mcp._Job("rbx_image", {}).queued)
         self.assertEqual(rbxkit_mcp._job_life("rbx_image", {}), 620)
         self.assertIn("rbx_image", rbxkit_mcp.INSTRUCTIONS)
+
+    def test_a_call_that_is_ended_mid_way_leaves_no_empty_file_and_no_folder(self):
+        # as a cancelled job is ended, or one whose turn is over: SIGTERM while agy is still working
+        import signal, subprocess
+        kit = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        code = ("import sys; sys.path.insert(0, %r); import rbxkit_mcp; "
+                "rbxkit_mcp.HANDLERS['rbx_image']({'action': 'generate', 'prompt': 'a boat', 'size': '64x64', 'name': 'Boat'})" % kit)
+        env = dict(os.environ, RBXKIT_WORK=self.work, FAKE_AGY_MODE="slow")
+        p = subprocess.Popen([sys.executable, "-c", code], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.addCleanup(lambda: p.poll() is None and p.kill())
+        turns = os.path.join(self.work, "antigravity", "turns")
+        deadline = time.time() + 30
+        while time.time() < deadline and not (os.path.exists(self.log) and len(self.calls()) >= 3):
+            time.sleep(0.05)
+        self.assertGreaterEqual(len(self.calls()), 3, "agy is working on it")
+        self.assertEqual(os.listdir(os.path.join(self.project, "art")), ["Boat.png"], "the name is taken while it works")
+        self.assertEqual(len(os.listdir(turns)), 1)
+        p.send_signal(signal.SIGTERM)
+        err = p.communicate(timeout=20)[1].decode()
+        self.assertNotEqual(p.returncode, 0, err)
+        self.assertEqual(os.listdir(self.project), [], "no empty file, and no folder made for it")
+        self.assertEqual(os.listdir(turns), [], "the wrapper's folder is gone")
+        self.assertEqual(os.listdir(os.path.join(self.work, "antigravity", "reserved")), [])
+
+    def test_what_a_killed_call_left_behind_is_swept_away_by_a_later_one_once_it_is_old(self):
+        turns = os.path.join(self.work, "antigravity", "turns")
+        notes = os.path.join(self.work, "antigravity", "reserved")
+        long_ago = time.time() - 3 * 3600
+        for name, when in (("old", long_ago), ("fresh", time.time())):
+            os.makedirs(os.path.join(turns, name, ".agents"))
+            os.utime(os.path.join(turns, name), (when, when))
+        os.makedirs(notes)
+        os.makedirs(os.path.join(self.project, "art"))
+
+        def taken(name, when, content=b""):
+            path = os.path.join(self.project, "art", name)
+            with open(path, "wb") as f:
+                f.write(content)
+            note = os.path.join(notes, name + ".json")
+            with open(note, "w") as f:
+                json.dump({"path": path, "at": when}, f)
+            os.utime(note, (when, when))
+            return path
+        empty_old = taken("Killed.png", long_ago)
+        empty_new = taken("Working.png", time.time())
+        filled_old = taken("Finished.png", long_ago, b"picture")
+        with open(os.path.join(notes, "junk.json"), "w") as f:
+            f.write("{not json")
+        os.utime(os.path.join(notes, "junk.json"), (long_ago, long_ago))
+        self.out(action="keep", source=self.picture(os.path.join(self.project, "a.png")), name="Kept")
+        self.assertEqual(os.listdir(turns), ["fresh"], "another call's folder, still at work, is left")
+        self.assertFalse(os.path.exists(empty_old), "the empty file a killed call left")
+        self.assertTrue(os.path.exists(empty_new), "a call still at work keeps its name")
+        self.assertTrue(os.path.exists(filled_old), "a picture is never swept")
+        self.assertEqual(os.listdir(notes), ["Working.png.json"])
+
+    def test_a_sixteen_bit_grey_picture_keeps_its_greys(self):
+        if np is None:
+            self.skipTest("the picture is made with numpy")
+        grey = np.tile(np.linspace(88 * 257, 255 * 257, 256, dtype=np.uint16)[None, :], (64, 1))
+        src = os.path.join(self.project, "height.png")
+        Image.fromarray(grey).save(src)
+        with Image.open(src) as img:
+            self.assertEqual(img.mode, "I;16")
+        out = self.out(action="keep", source=src, name="Height")
+        with Image.open(out["file"]) as img:
+            lo, hi = img.convert("L").getextrema()
+        self.assertLessEqual(lo, 92, "its dark end is still dark (before, every pixel was saved white)")
+        self.assertGreaterEqual(hi, 250)
 
     def test_an_error_of_its_own_never_reaches_the_agent_raw(self):
         with mock.patch.object(self.rbximage, "generate", side_effect=ZeroDivisionError("secret detail")):
@@ -769,6 +897,79 @@ class TransparentToolTests(ToolCase):
             self.assertEqual(img.getpixel((2, 2))[3], 0)
             self.assertGreaterEqual(img.getchannel("A").getbbox()[2], 118)
         self.assertFalse(os.path.exists(self.log), "keep generates nothing")
+
+    def test_a_clear_pixel_or_two_is_no_transparent_background(self):
+        # an opaque picture on white with ONE clear pixel in it: cut out as any picture on white is
+        img = Image.new("RGBA", (300, 300), (255, 255, 255, 255))
+        ImageDraw.Draw(img).ellipse((90, 90, 210, 210), fill=(200, 40, 40, 255))
+        img.putpixel((5, 5), (255, 255, 255, 0))
+        src = os.path.join(self.project, "refs", "one-clear-pixel.png")
+        os.makedirs(os.path.dirname(src))
+        img.save(src)
+        out = self.out(action="keep", source=src, size="200x200", transparent=True)
+        self.assertTrue(out["transparent"])
+        with Image.open(out["file"]) as saved:
+            alpha = np.asarray(saved.getchannel("A"))
+        self.assertLess(float((alpha > 0).mean()), 0.75, "the white round the subject is gone, not kept as the picture")
+        self.assertEqual(int(alpha[3, 3]), 0)
+        self.assertEqual(int(alpha[100, 100]), 255)
+        self.assertFalse(self.rbximage.has_alpha(img))
+        # a soft clear edge on an opaque picture is none either; a clear ring round the border is
+        soft = Image.new("RGBA", (200, 200), (30, 30, 200, 255))
+        for i in range(200):
+            soft.putpixel((i, 0), (30, 30, 200, 0))
+        self.assertFalse(self.rbximage.has_alpha(soft))
+        clear = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+        clear.paste((30, 30, 200, 255), (20, 20, 180, 180))
+        self.assertTrue(self.rbximage.has_alpha(clear))
+        self.assertFalse(self.rbximage.has_alpha(Image.new("RGB", (200, 200))))
+
+    def test_a_large_source_is_brought_down_before_it_is_cut_out(self):
+        big = Image.new("RGB", (3600, 2400), (255, 255, 255))
+        ImageDraw.Draw(big).rectangle((900, 600, 2700, 1800), fill=(200, 40, 40))
+        src = os.path.join(self.project, "big.jpg")
+        big.save(src, quality=85)
+        seen, real = [], self.rbximage.cut_out
+
+        def cut(img):
+            seen.append(img.size)
+            return real(img)
+        with mock.patch.object(self.rbximage, "cut_out", cut):
+            out = self.out(action="keep", source=src, size="256x256", transparent=True)
+            self.out(action="keep", source=src, size="1500x1000", transparent=True)
+            self.out(action="keep", source=src, size="3000x2000", transparent=True)
+            self.out(action="keep", source=self.picture(os.path.join(self.project, "small.png"), (300, 200), (255, 255, 255)), size="256x256", transparent=True)
+        self.assertEqual(seen[0], (512, 341), "about twice the size asked for")
+        self.assertEqual(seen[1], (2048, 1365), "2048 at most")
+        self.assertEqual(seen[2], (3000, 2000), "unless more was asked for")
+        self.assertEqual(seen[3], (300, 200), "a small source is cut as it is")
+        with Image.open(out["file"]) as saved:
+            self.assertEqual((saved.size, saved.getpixel((128, 128))[3], saved.getpixel((2, 2))[3]), ((256, 256), 255, 0))
+
+    def test_the_answer_says_when_parts_inside_the_subject_were_cleared_with_the_background(self):
+        # on white, a red badge with a white patch in it: the patch has the background's colour and goes with it
+        img = Image.new("RGB", (400, 400), (255, 255, 255))
+        d = ImageDraw.Draw(img)
+        d.ellipse((60, 60, 340, 340), fill=(200, 40, 40))
+        d.ellipse((160, 160, 240, 240), fill=(255, 255, 255))
+        src = os.path.join(self.project, "badge.png")
+        img.save(src)
+        out = self.out(action="keep", source=src, size="200x200", transparent=True)
+        self.assertTrue(out["transparent"])
+        self.assertRegex(out["cleared_inside"], r"About \d+% of the area inside the subject's outline")
+        self.assertIn("a source whose background is a colour the subject does not have", out["cleared_inside"])
+        with Image.open(out["file"]) as saved:
+            self.assertEqual(saved.getpixel((100, 100))[3], 0, "the design: what has the background's colour is cleared")
+        # a subject with nothing of the background's colour in it: nothing is said
+        d.ellipse((160, 160, 240, 240), fill=(200, 40, 40))
+        img.save(src)
+        self.assertNotIn("cleared_inside", self.out(action="keep", source=src, size="200x200", transparent=True))
+        # a generated picture: the same, and the way on is another background colour, never a second picture by itself
+        with mock.patch.object(self.rbximage, "_enclosed_share", lambda is_bg: 0.12):
+            out = self.out(action="generate", prompt="a stone", size="128x128", transparent=True)
+        self.assertIn("About 12%", out["cleared_inside"])
+        self.assertIn("name those colours in the prompt", out["cleared_inside"])
+        self.assertEqual(len(self.turns()), 1, "one picture was generated, and no second one by the tool")
 
 
 if __name__ == "__main__":

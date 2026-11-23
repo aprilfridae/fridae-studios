@@ -1379,14 +1379,17 @@ TOOLS = [
     ("rbx_image", "Make an AI-generated image, or keep one that already exists, saved in the game's project folder at an exact size. "
      "Good for the game icon, thumbnail key art, UI art and concept art. Action 'generate' makes a new picture from `prompt` "
      "(through Google's Antigravity on the user's own Gemini plan; it can take a minute or two). Each picture costs some of "
-     "that plan: make a few considered ones, never batches; a chat may start 12 in an hour, and the user can switch this "
-     "off in Setup. Action 'keep' brings an existing image file in instead and costs nothing: `source` is its full path "
-     "(the file your own image tool made, or an image in the project, this chat's own folder or the app's images). Either "
+     "that plan: make a few considered ones, never batches; a chat may start 12 in an hour and a game's whole team 30 "
+     "(generated textures count too), and the user can switch this off in Setup. Action 'keep' brings an existing image "
+     "file in instead and costs nothing: `source` is its full path (the file your own image tool made, or an image in the "
+     "project, this chat's own folder, or the app's images, icons, textures and shots). Either "
      "way the picture is cropped about its middle to the shape of `size` and resized to exactly that; it is never "
      "stretched, and an existing file is never replaced. With `transparent: true` the subject is cut out onto a "
      "transparent background and placed whole inside `size` (an item or shop icon): generate asks for it on a flat "
-     "colour and removes that; hard-edged subjects cut out cleanly, soft ones (smoke, glow, fur, glass) less so, and when "
-     "the background is not flat the picture is saved as it is and the answer says so. The answer names the saved file "
+     "colour and removes that; hard-edged subjects cut out cleanly, soft ones (smoke, glow, fur, glass) less so. Anything "
+     "in the background's own colour is cleared, also inside the subject (a white highlight on a white background): the "
+     "answer says when that happened. When the background is not flat the picture is saved as it is and the answer says "
+     "so. The answer names the saved file "
      "and carries the picture: look at it before you use or report it. Captured footage of the real game is still what "
      "shows gameplay; never another game's characters or art, and no lettering (add text natively with real fonts). "
      "rbx_image uploads nothing; uploads follow the guide's upload rules.",
@@ -1394,7 +1397,8 @@ TOOLS = [
              "transparent": {"type": "boolean", "description": "Cut the subject out onto a transparent background (PNG). Default false"},
              "prompt": {"type": "string", "description": "generate: what the image shows, in plain words: subject, setting, style, light, mood"},
              "source": {"type": "string", "description": "keep: full path of the image file to bring in. Read only from the project, this chat's own "
-                                                         "folder, the app's images, attachments and chat pictures, or the file your own image tool made"},
+                                                         "folder, the app's images, icons, textures, shots, attachments and chat pictures, or the "
+                                                         "file your own image tool made"},
              "size": {"type": "string", "description": "WIDTHxHEIGHT in pixels, e.g. 512x512 (icon) or 1920x1080 (thumbnail). "
                                                        "generate: default 1024x1024; keep: default the image's own size"},
              "name": {"type": "string", "description": "File name; saved as .png unless it ends in .jpg"},

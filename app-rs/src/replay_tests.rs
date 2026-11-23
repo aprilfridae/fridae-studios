@@ -197,6 +197,64 @@ fn gemini_commands_with_a_path_a_pipe_and_two_joined_are_refused_softly_and_so_i
     assert!(session.is_some());
 }
 
+#[cfg(unix)]
+#[test]
+fn a_gemini_turn_that_changed_its_own_list_of_tool_servers_has_it_put_back_and_the_chat_is_told() {
+    // agy's deny rule for the list compares case, so on a disk that ignores case another spelling of its name gets
+    // past it. Whatever way a turn changed the list, it is put back when the turn is over. A stand-in for agy here:
+    // it changes the list (or not), answers and exits.
+    let ws = paths::test_dir("gemini-own-list");
+    let _ = fs::remove_dir_all(&ws);
+    fs::create_dir_all(&ws).unwrap();
+    let list = ws.join(".agents").join("mcp_config.json");
+    let turn = |name: &str, script: &str| -> Vec<Value> {
+        let a = Agent::detached_for_test(name, None);
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        // the list as the app writes it for the turn, as `GeminiLaunch::per_turn` does through `turn_args`
+        antigravity::write_servers(&ws, &json!({"rbxkit": {"command": "py", "args": ["mcp.py"]}}));
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg(format!("cat >/dev/null; {script}; echo '{{\"event\":\"result\",\"result\":{{\"conversation_id\":\"c-1\",\"status\":\"SUCCESS\",\"response\":\"done\"}}}}'")).current_dir(&ws);
+        assert!(a.spawn_turn(cmd, "gemini", "the message\n"));
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        while a.st.lock().unwrap().running {
+            assert!(std::time::Instant::now() < until, "the turn never ended");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let st = a.st.lock().unwrap();
+        st.log.clone()
+    };
+    // a turn that leaves the list alone: nothing is said
+    let ev = turn("own-list-1", "true");
+    let ours = fs::read(&list).unwrap();
+    assert!(String::from_utf8_lossy(&ours).contains("rbxkit"));
+    assert!(!said(&ev, "error").iter().any(|e| e == antigravity::LIST_PUT_BACK), "{ev:?}");
+    // a turn that adds a server of its own to it: put back, and said
+    let ev = turn("own-list-2", r#"printf '{"mcpServers":{"mine":{"command":"/bin/sh"}}}' > .agents/mcp_config.json"#);
+    assert_eq!(fs::read(&list).unwrap(), ours, "as it was when the turn began");
+    assert_eq!(said(&ev, "error").iter().filter(|e| *e == antigravity::LIST_PUT_BACK).count(), 1, "{ev:?}");
+    assert_eq!(said(&ev, "text"), ["done"], "the turn itself is as ever");
+    // a turn that removes it, and one that writes it by another spelling of its name (the same file where the disk
+    // ignores case; another file, which agy does not read, where it does not)
+    let ev = turn("own-list-3", "rm .agents/mcp_config.json");
+    assert_eq!(fs::read(&list).unwrap(), ours);
+    assert!(said(&ev, "error").iter().any(|e| e == antigravity::LIST_PUT_BACK));
+    turn("own-list-4", r#"printf '{"mcpServers":{"mine":{"command":"/bin/sh"}}}' > .agents/MCP_CONFIG.JSON"#);
+    assert_eq!(fs::read(&list).unwrap(), ours, "whichever kind of disk this is");
+    // with no list when the turn began, one the turn made is removed
+    fs::remove_dir_all(ws.join(".agents")).unwrap();
+    assert!(antigravity::list_now(&ws).is_none());
+    fs::create_dir_all(ws.join(".agents")).unwrap();
+    fs::write(&list, "{}").unwrap();
+    assert!(antigravity::put_back(&ws, &None) && !list.exists());
+    assert!(!antigravity::put_back(&ws, &None), "nothing to put back");
+    // a list that is a link is never written through
+    let elsewhere = ws.join("elsewhere.json");
+    fs::write(&elsewhere, "theirs").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &list).unwrap();
+    assert!(!antigravity::put_back(&ws, &Some(b"ours".to_vec())));
+    assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "theirs");
+}
+
 #[test]
 fn gemini_started_afresh_when_its_conversation_was_gone_and_the_chat_is_told() {
     // agy only warns on stderr and opens a new conversation (measured)

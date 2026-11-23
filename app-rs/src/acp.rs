@@ -88,6 +88,9 @@ pub struct Rules {
     pub hidden_in: Vec<PathBuf>,
     /// The agent's own data folder (`~/.gemini/antigravity-cli`): it keeps a scratch folder per conversation there.
     pub agent_dir: PathBuf,
+    /// Agents may generate images on the user's Gemini plan (Setup's switch, `paths::gemini_images_on`). Off: the
+    /// agent's own image tool is refused in every mode.
+    pub images: bool,
 }
 
 /// The app's answer to one permission request, what the chat is shown when it is a refusal, and a word for the agent
@@ -345,6 +348,13 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
     }
     if server_tool(name, &rules.servers).is_some() {
         return allow();
+    }
+    // the user switched image generation off for agents: its own image tool, and the helper agy runs it in, are
+    // refused in every mode (agy 1.5.15 asks about neither, `acp-image.wire`; this is for a version that does, and
+    // Gemini is told in its standing text not to use the tool)
+    let image_tool = OWN_FOLDER_ONLY.contains(&name) || (name == "invoke_subagent" && raw["TypeName"] == "image-generator");
+    if image_tool && !rules.images {
+        return refuse(format!("Gemini asked to generate an image, which you have switched off for agents in Setup (\"Agents may generate images with Gemini\"), so it was refused. {STOPPED_THERE}"));
     }
     let command = raw["CommandLine"].as_str();
     let is_command = command.is_some() || kind == "execute" || name == "run_command";
@@ -1233,6 +1243,7 @@ mod tests {
             protected: vec![root.join("kit/config.json"), root.join("work/chats"), root.join("work/usage.jsonl"), root.join("ws/.agents/mcp_config.json")],
             hidden_in: vec![root.join("home")],
             agent_dir: root.join("gemini/antigravity-cli"),
+            images: true,
         };
         (r, root)
     }
@@ -1320,8 +1331,23 @@ mod tests {
         // only that tool: another of its own that the app does not know stays refused
         assert!(!ok(&call("generate_video", "other", json!({"Prompt": "a cat"}), &[])));
         // Full auto lets it through as before
-        let (full, _) = rules(true);
-        assert!(decide(&call("generate_image", "other", asked, &[]), &full, "s-1", &[]).allow);
+        let (mut full, _) = rules(true);
+        assert!(decide(&call("generate_image", "other", asked.clone(), &[]), &full, "s-1", &[]).allow);
+        // the user switched image generation off for agents: refused in Ask me and in Full auto, the tool and the
+        // helper agy runs it in (as recorded, `acp-image.wire`), and the chat is told why
+        let helper = json!({"Model": "inherit", "Prompt": "Generate an image: a single red apple.", "Role": "Image Generator", "TypeName": "image-generator"});
+        let mut ask_me = r.clone();
+        ask_me.images = false;
+        full.images = false;
+        for rules in [&ask_me, &full] {
+            for tool in [call("generate_image", "other", asked.clone(), &[]), call("invoke_subagent", "other", helper.clone(), &[])] {
+                let v = decide(&tool, rules, "s-1", &[]);
+                assert!(!v.allow && said(&v).contains("switched off for agents in Setup"), "{}", said(&v));
+            }
+        }
+        // with the switch on, another kind of helper is judged as before (Full auto lets it through)
+        full.images = true;
+        assert!(decide(&call("invoke_subagent", "other", helper, &[]), &full, "s-1", &[]).allow);
     }
 
     fn step(kind: &str, id: &str, name: &str, status: &str, raw: Value) -> Value {

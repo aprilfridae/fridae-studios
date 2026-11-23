@@ -225,6 +225,32 @@ pub fn rewrite_list(workspace: &Path, was: &[u8]) {
     replace_whole(&workspace.join(".agents").join("mcp_config.json"), was);
 }
 
+/// The workspace's list of tool servers as it is now (None: there is none), for `put_back`.
+pub fn list_now(workspace: &Path) -> Option<Vec<u8>> {
+    fs::read(workspace.join(".agents").join("mcp_config.json")).ok()
+}
+
+/// A turn on a process of its own is over: the workspace's list of tool servers is put back as it was when the turn
+/// began (`list_now`) if it is another now, and removed if there was none. True when it had been changed.
+///
+/// The deny rule for the file (`own_list`) is agy's, and agy compares case (measured for the app's settings,
+/// `full-auto-deny-rules.ndjson`): on a disk that ignores case `.agents/MCP_CONFIG.JSON` is this same file and gets
+/// past the rule, in the one folder where Ask me accepts writes. agy starts what the list names at the next
+/// message, so whatever a turn left there is undone before one comes. A link is left alone (`list_is_link`).
+pub fn put_back(workspace: &Path, was: &Option<Vec<u8>>) -> bool {
+    if list_is_link(workspace) || list_now(workspace) == *was {
+        return false;
+    }
+    let path = workspace.join(".agents").join("mcp_config.json");
+    match was {
+        Some(bytes) => replace_whole(&path, bytes),
+        None => fs::remove_file(&path).is_ok(),
+    }
+}
+
+/// What a chat is told when its turn had changed the list.
+pub const LIST_PUT_BACK: &str = "Gemini changed this folder's list of tool servers (.agents/mcp_config.json) during its turn. Fridae put the list back as it was: what is on that list is started as a program, so only you change it.";
+
 /// Whether the workspace's list of tool servers is a symbolic link. The app makes no such link, so one is the
 /// user's or came with the game's folder, and it may name any file (a shell start-up file, the app's settings): the
 /// app neither writes through it nor replaces it. The list is then not written, and the chat is told

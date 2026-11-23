@@ -7,8 +7,8 @@
 generate  The picture is made by Google's Antigravity command-line tool (agy) on the person's own Gemini plan, with
           no key (rbxgen.antigravity_image). The model is asked for the nearest shape it offers; the result is then
           cropped about its middle and resized to exactly the size asked for. Each one costs some of that plan, so:
-          only while the person has left "Agents may generate images with Gemini" on in Setup, and never more than
-          PER_HOUR in an hour for one chat.
+          only while the person has left "Agents may generate images with Gemini" on in Setup, and never more in an
+          hour than rbxgen.PER_HOUR for one chat or rbxgen.PER_HOUR_PROJECT for one game's whole team.
 keep      Brings an image that already exists into the project at an exact size: one Gemini's own generate_image
           tool left in Antigravity's folder for a conversation, or one in the project, this chat's own folder, or
           the app's images, attachments and chat pictures. Nothing else is read.
@@ -23,7 +23,7 @@ project saves under the app's work folder instead. An existing file is never rep
 import io, json, os, re, sys, time, warnings
 
 import rbxgen
-from rbxpaths import KitError, read_json, write_json
+from rbxpaths import KitError, write_json
 
 WORK = rbxgen.WORK
 RATIOS = ("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3")
@@ -34,8 +34,11 @@ FORMATS = ("PNG", "JPEG", "WEBP")
 ATTACHED_UP_TO = 1_400_000      # bytes: a saved file up to this size is itself the picture handed back
 DEFAULT_FOLDER = "art"
 NAME_MAX = 80                   # letters of a file name before its ending
-PER_HOUR = 12                   # generations one chat may start in an hour
 CHAT_FOLDERS = (("gemini",), ("chatgpt",), ("opencode",), ("cursor", "chats"))     # work/<these>/<chat id>
+# what the app's own tools write in the work folder, and what the user handed the chat: `keep` may read images there
+TOOL_FOLDERS = ("images", "attachments", "chat-images", "icons", "textures", "shots")
+CUT_LONG = 2048                 # the longest side a picture is cut out at, unless the size asked for is larger
+INSIDE_NOTED = 0.02             # share of the area inside the subject's outline that was cleared, from which the answer says so
 NOTE = "rbx_image uploads nothing. Look at the picture before you use or report it; uploads follow the guide's upload rules."
 # the flat background a cut-out is asked for: the first whose colour the prompt does not seem to want in the subject
 KEYS = (("magenta", "#FF00FF", ("magenta", "pink", "purple", "violet", "fuchsia", "lilac", "rose")),
@@ -196,15 +199,50 @@ def cut_out(img):
     faint = band & blend & (alpha < 0.35)
     rgb[faint] = est[faint]
     rgb[is_bg] = 0.0
-    out = np.dstack([rgb, alpha])
-    return Image.fromarray((out * 255 + 0.5).astype(np.uint8), "RGBA"), None
+    out = Image.fromarray((np.dstack([rgb, alpha]) * 255 + 0.5).astype(np.uint8), "RGBA")
+    out.info["cleared_inside"] = _enclosed_share(is_bg)
+    return out, None
+
+
+def _enclosed_share(is_bg):
+    """How much of the area inside the subject's outline was background-coloured and so made clear: the share of
+    that area the background cannot reach from the picture's border. A real hole counts, and so does a part of the
+    subject that happens to have the background's colour (a white highlight on white), which is why it is said.
+    Worked out on a coarse copy of the mask, so it is an estimate."""
+    import numpy as np
+    h, w = is_bg.shape
+    f = max(1, -(-max(h, w) // 256))
+    hh, ww = h // f, w // f
+    if hh < 4 or ww < 4:
+        return 0.0
+    c = is_bg[:hh * f, :ww * f].reshape(hh, f, ww, f).mean(axis=(1, 3)) >= 0.5
+    reach = np.zeros_like(c)
+    reach[0, :], reach[-1, :], reach[:, 0], reach[:, -1] = c[0, :], c[-1, :], c[:, 0], c[:, -1]
+    for _ in range(4 * (hh + ww) + 2000):
+        p = np.pad(reach, 1)
+        grown = (reach | p[:-2, 1:-1] | p[2:, 1:-1] | p[1:-1, :-2] | p[1:-1, 2:]) & c
+        if (grown == reach).all():
+            break
+        reach = grown
+    enclosed = c & ~reach
+    inside = int((~c).sum() + enclosed.sum())
+    return float(enclosed.sum()) / inside if inside else 0.0
 
 
 def has_alpha(img):
-    """Whether the image already has a transparent background of its own."""
+    """Whether the image already has a transparent background of its own: most of the ring round its border is
+    clear. (A clear pixel somewhere, or a soft edge on an opaque picture, is no transparent background.)"""
+    from PIL import ImageStat
     if img.mode not in ("RGBA", "LA", "PA") and not (img.mode == "P" and "transparency" in img.info):
         return False
-    return img.convert("RGBA").getchannel("A").getextrema()[0] < 250
+    w, h = img.size
+    ring = max(2, round(min(w, h) * 0.015))
+    if w <= 2 * ring or h <= 2 * ring:
+        return False
+    clear = img.convert("RGBA").getchannel("A").point(lambda v: 255 if v < 16 else 0)
+    whole = ImageStat.Stat(clear).sum[0] / 255
+    middle = ImageStat.Stat(clear.crop((ring, ring, w - ring, h - ring))).sum[0] / 255
+    return (whole - middle) / (w * h - (w - 2 * ring) * (h - 2 * ring)) >= 0.6
 
 
 def contain(img, w, h, margin=0.04):
@@ -320,6 +358,7 @@ def reserve(folder, name, fallback="Image", ending=None):
             path = os.path.join(directory, stem + ("" if n == 1 else "-%d" % n) + ext)
             try:
                 with open(path, "xb"):
+                    _note_taken(path)
                     return path, made
             except FileExistsError:
                 continue
@@ -329,13 +368,39 @@ def reserve(folder, name, fallback="Image", ending=None):
         raise ImageError("An image cannot be saved in the folder \"%s\" (%s). Give another folder." % (str(folder or DEFAULT_FOLDER)[:120], _plain(e)))
 
 
+_TAKEN = {}     # a name taken for a picture -> the note of it, for a later call's sweep should this one be ended outright
+
+
+def _note_taken(path):
+    """Note the empty file in the app's own folder, so that `rbxgen.sweep` can clear it away if this call is killed
+    before it could give the name back."""
+    import secrets
+    try:
+        os.makedirs(rbxgen.reserved_dir(), exist_ok=True)
+        note = os.path.join(rbxgen.reserved_dir(), secrets.token_hex(8) + ".json")
+        write_json(note, {"path": path, "at": time.time()})
+        _TAKEN[path] = note
+    except OSError:
+        pass
+
+
+def _forget_taken(path):
+    note = _TAKEN.pop(path, None)
+    if note:
+        try:
+            os.remove(note)
+        except OSError:
+            pass
+
+
 def release(path, made):
     """Give a reserved place back when no picture came for it."""
     try:
-        if os.path.getsize(path) == 0:
+        if os.path.getsize(path) == 0 and not os.path.islink(path):
             os.remove(path)
     except OSError:
         pass
+    _forget_taken(path)
     _unmake(made)
 
 
@@ -361,6 +426,7 @@ def store(img, path, made):
     instead and the answer says where, so a picture that was paid for is never thrown away. Returns (path, a note)."""
     try:
         _write(img, path)
+        _forget_taken(path)
         return path, None
     except OSError as e:
         release(path, made)
@@ -424,24 +490,55 @@ def _open(source):
 
 
 def _colours(img):
+    """The picture in 8-bit colour: RGBA when it has transparency, else RGB. A grey picture with more than 8 bits a
+    pixel (a 16-bit PNG) is brought down first: converted as it is, every value over 255 would turn white."""
+    if img.mode in ("I", "F") or img.mode.startswith("I;16"):
+        top = img.getextrema()[1]
+        scale = 255.0 / 65535 if top > 255 else (255.0 if img.mode == "F" and top <= 1 else 1.0)
+        img = img.convert("F").point(lambda v: v * scale).convert("L")
     return img.convert("RGBA") if img.mode in ("P", "LA", "PA", "RGBA") else img.convert("RGB")
 
 
-def _finish(img, w, h, transparent, path, made, extra):
+def _for_cutting(img, w, h):
+    """The picture no larger than the cut-out needs: about twice the size asked for (CUT_LONG at most, unless more
+    was asked for). The cut-out holds several working copies of the whole picture, so a large source is brought
+    down before it, not after."""
+    from PIL import Image
+    most = max(max(w, h), min(2 * max(w, h), CUT_LONG))
+    if max(img.size) > most:
+        img = img.copy()
+        img.thumbnail((most, most), Image.LANCZOS)
+    return img
+
+
+def _finish(img, w, h, transparent, path, made, extra, generated=False):
     """Crop or cut out, save, and answer."""
-    problem = None
+    problem, inside = None, 0.0
+    img = _colours(img)
     if transparent:
-        cut, why = (img.convert("RGBA"), None) if has_alpha(img) else cut_out(img)
+        if has_alpha(img):
+            cut, why = img, None
+        else:
+            cut, why = cut_out(_for_cutting(img.convert("RGB"), w, h))
         if cut is None:
             problem = ("The background could not be removed: %s. Nothing was guessed: this file still has its background. "
                        "For a cut-out, the subject must sit whole on one flat colour with no shadow or gradient." % why)
         else:
+            inside = float(cut.info.get("cleared_inside") or 0.0)
             img = contain(cut, w, h)
             extra = dict(extra, transparent=True)
     if not transparent or problem:
-        img = fit(_colours(img), w, h)
+        img = fit(img, w, h)
     path, note = store(img, path, made)
     out = _result(img, path, extra, sheet=bool(transparent and not problem))
+    if inside >= INSIDE_NOTED:
+        out["cleared_inside"] = (
+            "About %d%% of the area inside the subject's outline had the background's colour and was made clear too. Look at "
+            "the picture: a real hole is right, but a part of the subject (a highlight, an eye, a patch of that colour) is "
+            "now missing. %s" % (max(1, round(inside * 100)),
+                                 "If so, generate it once more only if it matters, and name those colours in the prompt so "
+                                 "another background colour is asked for." if generated else
+                                 "If so, use a source whose background is a colour the subject does not have."))
     if problem:
         out["transparent"] = False
         out["problem"] = problem
@@ -452,34 +549,13 @@ def _finish(img, w, h, transparent, path, made, extra):
 
 # ------------------------------------------------- what generating may cost
 def images_allowed():
-    """Whether agents may generate images on the person's Gemini plan: the switch in Setup (Textures), on unless they
-    turned it off. Run by the app, the app's own value is used, never the settings file (an AI's file tool may have
-    changed that)."""
+    """Whether agents may generate images on the person's Gemini plan: the switch in Setup, on unless they turned it
+    off. Run by the app, the app's own value is used, never the settings file (an AI's file tool may have changed
+    that). How many may be started in an hour is counted where the picture is made (`rbxgen.antigravity_image`), for
+    a chat and for a game's whole team, textures included."""
     if os.environ.get("FRIDAE_SETTINGS_FROM_APP") == "1":
         return os.environ.get("FRIDAE_GEMINI_IMAGES", "1") != "0"
     return rbxgen._config().get("gemini_images") is not False
-
-
-def _chat():
-    return re.sub(r"[^A-Za-z0-9_-]", "", os.environ.get("RBXKIT_AGENT_ID") or "")[:80]
-
-
-def _spent_file():
-    return os.path.join(rbxgen.turns_dir(), "spent", (_chat() or "command-line") + ".json")
-
-
-def _spent(now):
-    """When this chat started its generations of the last hour (a file that does not read as that counts as none)."""
-    had = read_json(_spent_file())
-    return [t for t in had if isinstance(t, (int, float)) and not isinstance(t, bool) and 0 <= now - t < 3600] if isinstance(had, list) else []
-
-
-def _note_spent(now):
-    try:
-        os.makedirs(os.path.dirname(_spent_file()), exist_ok=True)
-        write_json(_spent_file(), _spent(now) + [now])
-    except OSError:
-        pass
 
 
 # ----------------------------------------------------------------- generate
@@ -489,7 +565,7 @@ def generate(prompt, size=None, name=None, folder=None, transparent=False):
     prompt = str(prompt).strip()
     w, h = parse_size(size, default=(1024, 1024))
     if not images_allowed():
-        raise ImageError("The user has switched off image generation for agents (Setup, Textures: \"Agents may generate images "
+        raise ImageError("The user has switched off image generation for agents (Setup: \"Agents may generate images "
                          "with Gemini\"), so no image was made. Ask the user first: they can switch it on there, or make the "
                          "picture themselves, and you bring it in with action keep.")
     exe = rbxgen.antigravity_exe()
@@ -500,16 +576,14 @@ def generate(prompt, size=None, name=None, folder=None, transparent=False):
     if not rbxgen.find_antigravity():
         raise ImageError("Antigravity is switched off as a source of images in this app's settings "
                          "(\"textures_from_antigravity\": false in config.json), so no image was made. Tell the user.")
-    now = time.time()
-    if len(_spent(now)) >= PER_HOUR:
-        raise ImageError("This chat has generated %d images in the last hour, the most it may without the user's say. No image "
-                         "was made. Stop generating: tell the user what you still want to make and why, and ask them." % PER_HOUR)
+    refusal = rbxgen.spend_refusal()
+    if refusal:
+        raise ImageError(refusal)
     if transparent:
         try:
             import numpy  # noqa: F401
         except ImportError:
             raise ImageError("A transparent background needs the numpy library, which is missing here. Run rbx_doctor to see what to install.")
-    path, made = reserve(folder, name, ending=".png" if transparent else None)   # where it goes is settled, and writable, before anything is spent
     ratio = nearest_ratio(w, h)
     ask = prompt
     if transparent:
@@ -517,32 +591,38 @@ def generate(prompt, size=None, name=None, folder=None, transparent=False):
         ask = ("%s. The subject alone, whole and centred, with empty margin all round, on one perfectly flat solid pure %s "
                "background (%s) that fills the rest of the picture edge to edge: no shadow, no reflection, no floor, no "
                "gradient, no vignette, no border, no text. Do not use %s anywhere in the subject." % (prompt.rstrip("."), colour, code, colour))
-    _note_spent(now)
-    try:
-        raw = rbxgen.antigravity_image(exe, ask, aspect=ratio)
-        img = _open(raw)
-    except RuntimeError as e:
-        release(path, made)
-        raise ImageError(str(e))
-    except ImageError:
-        release(path, made)
-        raise
-    except Exception:
-        release(path, made)
-        raise ImageError("Antigravity returned a file that does not open as an image. Try once more.")
-    extra = {"made_at": "%dx%d" % img.size, "asked_for": ratio, "from": "generated by Antigravity on the user's Gemini plan",
-             "generated_this_hour": "%d of %d" % (len(_spent(time.time())), PER_HOUR)}
-    return _finish(img, w, h, transparent, path, made, extra)
+    # being told to end from here on (a cancelled job, a turn that is over) gives the name back like any failure does
+    with rbxgen.cleanly():
+        path, made = reserve(folder, name, ending=".png" if transparent else None)   # settled, and writable, before anything is spent
+        saved = False
+        try:
+            try:
+                img = _open(rbxgen.antigravity_image(exe, ask, aspect=ratio))
+            except RuntimeError as e:       # also the hourly count (rbxgen.SpendLimit): its own words
+                raise ImageError(str(e))
+            except ImageError:
+                raise
+            except Exception:
+                raise ImageError("Antigravity returned a file that does not open as an image. Try once more.")
+            extra = {"made_at": "%dx%d" % img.size, "asked_for": ratio, "from": "generated by Antigravity on the user's Gemini plan",
+                     "started_this_hour": "%d of %d this chat may start" % (rbxgen.started_this_hour(), rbxgen.PER_HOUR)}
+            out = _finish(img, w, h, transparent, path, made, extra, generated=True)
+            saved = True
+            return out
+        finally:
+            if not saved:
+                release(path, made)
 
 
 # --------------------------------------------------------------------- keep
 def _own_folders():
     """The folders `keep` reads besides Antigravity's: the game's project, and in the app's work folder this chat's own
-    folder, the images this tool made, the user's attachments and the chat pictures (what the app lets a chat read)."""
+    folder, what the app's own tools write (images, icons, textures, shots), the user's attachments and the chat
+    pictures."""
     work = os.path.realpath(WORK)
-    roots = [os.path.join(work, d) for d in ("images", "attachments", "chat-images")]
-    if _chat():
-        roots += [os.path.join(work, *parts, _chat()) for parts in CHAT_FOLDERS]
+    roots = [os.path.join(work, d) for d in TOOL_FOLDERS]
+    if rbxgen.chat_id():
+        roots += [os.path.join(work, *parts, rbxgen.chat_id()) for parts in CHAT_FOLDERS]
     project = _project()
     return ([project] if project else []) + roots
 
@@ -578,8 +658,8 @@ def source_file(source):
     real = os.path.realpath(raw)
     if not (any(_inside(real, root) for root in _own_folders()) or _generated_by_agy(real)):
         raise ImageError("The source must be an image inside the game's project folder, this chat's own folder, the app's "
-                         "images, attachments or chat pictures, or the file your own generate_image tool made; this file is "
-                         "somewhere else, so it was not read.")
+                         "images, icons, textures, shots, attachments or chat pictures, or the file your own generate_image "
+                         "tool made; this file is somewhere else, so it was not read.")
     if not os.path.isfile(real):
         raise ImageError("There is no such file: %s" % raw[:300])
     if os.path.getsize(real) > MAX_SOURCE:
@@ -596,21 +676,24 @@ def keep(source, size=None, name=None, folder=None, transparent=False):
     except Exception:
         raise ImageError("\"%s\" does not open as a PNG, JPEG or WebP image, so it was not kept." % os.path.basename(real)[:80])
     w, h = parse_size(size, default=within(img.size))
-    if transparent and not has_alpha(img):
+    if transparent:
         try:
             import numpy  # noqa: F401
         except ImportError:
             raise ImageError("A transparent background needs the numpy library, which is missing here. Run rbx_doctor to see what to install.")
-    was = "%dx%d" % img.size
-    path, made = reserve(folder, name, fallback=os.path.splitext(os.path.basename(real))[0] or "Image", ending=".png" if transparent else None)
-    extra = {"made_at": was, "from": "kept from " + real}
+    extra = {"made_at": "%dx%d" % img.size, "from": "kept from " + real}
     if size in (None, "") and (w, h) != img.size:
         extra["made_smaller"] = "The source is larger than %d pixels a side, so it was made smaller." % MAX_SIDE
-    try:
-        return _finish(img, w, h, transparent, path, made, extra)
-    except ImageError:
-        release(path, made)
-        raise
+    with rbxgen.cleanly():
+        path, made = reserve(folder, name, fallback=os.path.splitext(os.path.basename(real))[0] or "Image", ending=".png" if transparent else None)
+        saved = False
+        try:
+            out = _finish(img, w, h, transparent, path, made, extra)
+            saved = True
+            return out
+        finally:
+            if not saved:
+                release(path, made)
 
 
 def run(action, a):
@@ -622,6 +705,7 @@ def run(action, a):
         raise ImageError("This tool needs the Pillow library, which is missing here. Run rbx_doctor to see what to install.")
     see_through = a.get("transparent") is True or str(a.get("transparent")).lower() == "true"
     try:
+        rbxgen.sweep()      # what a call that was ended outright left behind, once it is old enough
         if action == "generate":
             return generate(a.get("prompt"), a.get("size"), a.get("name"), a.get("folder"), see_through)
         if action == "keep":

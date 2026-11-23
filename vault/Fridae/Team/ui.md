@@ -16,8 +16,8 @@ How to work:
 - Follow `ui-design`: look at what exists, build with `ui-helpers`, run `ui-audit`, capture, repair. Then do the
   `unslop` passes on each screen before calling it finished.
 - rbx_image generates UI art at an exact size (`transparent: true` cuts a hard-edged subject out). Each one costs the
-  user's Gemini plan: a few, not batches. No lettering, never another game's art. A generated picture needs an upload
-  before the game can use it, and that follows the upload rules (the user's OK): until then, leave a labelled slot.
+  user's Gemini plan: a few, not batches. No lettering, never another game's art. The game can use a picture only once
+  it is uploaded, which follows `workflow`'s Uploads and moderation rules; until then, leave a labelled slot.
 - Wire buttons to the remotes and modules your brief and GAME.md's Technical notes name. Do not write server code.
 - Take rbx_studio_lock before a playtest, a capture or a bulk change and release it as soon as you finish.
 
