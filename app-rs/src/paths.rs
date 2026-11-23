@@ -696,8 +696,8 @@ pub fn setting_name(key: &str) -> &'static str {
         "plugin_token" => "Studio plugin link",
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
-        "opencode_model" => "OpenCode's model",
-        "opencode_model_signed_in" => "OpenCode's model was picked while signed in",
+        // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
+        "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
         _ => "a setting",
     }
 }
@@ -969,6 +969,7 @@ fn describe_change(key: &str, file: Option<&Value>, kept: Option<&Value>) -> Str
             let show = |v: Option<&Value>| v.and_then(Value::as_str).map(shown_name).unwrap_or_else(|| "not set".into());
             format!("{name}: the file said {}, put back to {}", show(file), show(kept))
         }
+        "opencode_model_signed_in" => format!("{name}: Fridae's note of when you picked it was changed in the file; put back"),
         "gemini_key" | "plugin_token" => match (file.is_some(), kept.is_some()) {
             (true, false) => format!("{name}: the file had one Fridae did not know; it was removed"),
             (false, true) => format!("{name}: missing from the file; put back"),
@@ -1193,8 +1194,10 @@ pub fn check_settings() -> Vec<String> {
 /// window (`window:<key>`).
 pub fn put_back_line(keys: &[String]) -> String {
     let unread = keys.first().is_some_and(|k| k == "unreadable");
-    let names: Vec<&str> = keys.iter().filter(|k| *k != "unreadable" && !k.starts_with("window:")).map(|k| setting_name(k)).collect();
-    let window: Vec<&str> = keys.iter().filter_map(|k| k.strip_prefix("window:")).map(setting_name).collect();
+    // each setting named once (two keys may be one setting to the user)
+    let once = |names: Vec<&'static str>| names.iter().enumerate().filter(|(i, n)| !names[..*i].contains(n)).map(|(_, n)| *n).collect::<Vec<_>>();
+    let names: Vec<&str> = once(keys.iter().filter(|k| *k != "unreadable" && !k.starts_with("window:")).map(|k| setting_name(k)).collect());
+    let window: Vec<&str> = once(keys.iter().filter_map(|k| k.strip_prefix("window:")).map(setting_name).collect());
     let mut out = Vec::new();
     if unread {
         out.push(format!(
@@ -2136,7 +2139,9 @@ mod tests {
         put(&st, serde_json::json!({"opencode_model": "opencode-go/kimi-k3", "opencode_model_signed_in": false}));
         assert_eq!(check_in(&mut g, &st), ["opencode_model_signed_in"]);
         assert_eq!(file_of(&st).get("opencode_model_signed_in"), Some(&serde_json::json!(true)));
-        assert!(put_back_line(&["opencode_model".into()]).contains("OpenCode's model"));
+        // said in the user's words, the model named once, the app's own note on it not shown as a switch
+        assert_eq!(put_back_line(&["opencode_model".into(), "opencode_model_signed_in".into()]), "A setting was changed by something other than Fridae (OpenCode's model), so Fridae put it back as you had it. Change settings in Setup.");
+        assert_eq!(describe_change("opencode_model_signed_in", Some(&serde_json::json!(true)), Some(&serde_json::json!(false))), "OpenCode's model: Fridae's note of when you picked it was changed in the file; put back");
         // the app's own route changes it
         update_in(&mut g, &st, |c| c.insert("opencode_model".into(), serde_json::json!("opencode-go/glm-5.3")));
         assert!(check_in(&mut g, &st).is_empty());

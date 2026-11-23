@@ -1061,7 +1061,7 @@ const CONTROLS = [
   ["Full auto", "Under How it works in the menu below the message box. The agent never asks for permission: every tool and shell command runs straight away, and it keeps working until the job is done instead of stopping to check with you. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Turn it off to get the Allow buttons back."],
   ["Overnight (24 hours)", "Under How it works in the menu below the message box. Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
   ["Settings changed mid-turn", "A change in Setup to the paid Gemini textures switch or the Blender path reaches the building tools from an agent's next turn; a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
-  ["Settings put back", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table) outside every folder an agent is given. If the settings file changes without Fridae, it puts them back and says which. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
+  ["Settings put back", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table, the model picked for OpenCode) outside every folder an agent is given. If the settings file changes without Fridae, it puts them back and says which. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
   ["API keys on this computer", "Setup, The AIs, Use API keys from my environment. Off unless you turn it on: an AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Setup instead."],
   ["Paperclip", "Attach images or documents. Pasting, or dropping them on the window, does the same."],
   ["Text size", "Ctrl (Command on a Mac) and + or - makes everything bigger or smaller, and 0 resets it. It is also in Setup, under General."],
@@ -2385,12 +2385,12 @@ async function pickOpenCodeModel(id) {
   if (!r || !r.ok) note((r && r.error) || "Could not save that pick. Try again.");
   refresh();
 }
-/* A pick this window kept for OpenCode before the app did is handed to the app once the app knows whether it is signed
-   in (a pick is filed by that), and dropped here only when the app has taken it, has one already, or no longer lists it. */
+/* A pick this window kept for OpenCode before the app did is handed to the app, and dropped here only when the app
+   has taken it, has one already, or no longer lists it. */
 let ocPickMoving = false;
 async function moveOpenCodePick() {
   const old = chosenModel.opencode, oc = (status.ai || {}).opencode, list = modelsFor("opencode");
-  if (ocPickMoving || !old || !oc || !oc.known || !list.length) return;
+  if (ocPickMoving || !old || !oc || !list.length) return;
   ocPickMoving = true;
   let settled = !!oc.pick || !list.some((m) => m[0] === old), sent = false;
   if (!settled) { try { const r = await api("/api/opencode", { action: "model", model: old }); settled = !!(r && r.ok); sent = settled; } catch (e) {} }
@@ -3701,7 +3701,7 @@ function openCodeSignIn() {
     : pending ? "Signed in. Paid models start once running work has finished."
     : signed.length ? ""
     : ocError ? ocError
-    : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message : ".") + " Try again."
+    : login.state === "failed" ? "The sign-in did not finish" + (login.message ? ": " + login.message + (/[.!?]$/.test(login.message) ? "" : ".") : ".") + " Try again."
     : oc.free_only ? "Free models only. Sign in to use a paid plan." : "";
   const buttons = waiting ? (login.url ? [["Open the sign-in page", "open"]] : []).concat([["Cancel", "cancel"]]) : pending ? [] : [[signed.length ? "Sign in again" : "Sign in", "login"]];
   return { text, buttons, signed, pending };
@@ -3713,7 +3713,8 @@ function openCodeButton(label, action) {
   b.onclick = async () => {
     b.disabled = true;
     let r = null; try { r = await api("/api/opencode", { action }); } catch (e) {}
-    ocError = !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
+    /* only a sign-in that could not start: a page that did not open leaves the sign-in's own line in place */
+    ocError = action !== "login" ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
     if (action === "login" && r && r.state === "waiting" && r.url) { try { await api("/api/opencode", { action: "open" }); } catch (e) {} }
     await refresh(); watchOpenCode();
   };

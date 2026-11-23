@@ -377,6 +377,16 @@ fn prices() -> Prices {
     g.get_or_insert_with(|| fs::read_to_string(prices_file()).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).map(|v| prices_from_saved(&v)).unwrap_or_default()).clone()
 }
 
+/// The prices after a new answer from the server. An answer that names no free model is not believed (OpenCode
+/// gives some away at any time; an answer of another shape than the one measured would read as none): what was known
+/// before stays, and with it `KNOWN_FREE` while nothing was. Its own default is taken when the answer has one.
+fn with_answer(old: &Prices, free: Vec<String>, default: Option<String>) -> Prices {
+    if free.is_empty() {
+        return Prices { default: default.or_else(|| old.default.clone()), ..old.clone() };
+    }
+    Prices { known: true, free, default }
+}
+
 /// A new answer: kept for this run and, when it differs, for the next (the file replaced whole).
 fn keep_prices(p: Prices) {
     let mut g = PRICES.lock().unwrap();
@@ -521,9 +531,16 @@ fn nearest(have: &Have, asked: &str) -> Option<String> {
     None
 }
 
+/// The twin a model that is not listed exactly may run on: the nearest (`nearest`), unless that one is billed per
+/// use. The app never leaves the plan by itself, at a turn or for a Lead any more than for the default: a model
+/// billed per use runs only when it is asked for by its own name (the user's pick, their Experts table, a request).
+fn twin(have: &Have, asked: &str) -> Option<String> {
+    nearest(have, asked).filter(|t| !have.per_use(t))
+}
+
 /// The model a turn runs on: the one chosen when OpenCode lists it, or when the list has not arrived (OpenCode itself
-/// then says if it cannot use it); else its nearest twin (`nearest`); else the default. When that is not the model
-/// chosen, the chat and the Lead are told (`expert_ai::swap_line`, `caveat`).
+/// then says if it cannot use it); else its twin on the plan or free (`twin`); else the default. When that is not the
+/// model chosen, the chat and the Lead are told (`expert_ai::swap_line`, `caveat`).
 pub fn pick_model(chosen: Option<&str>) -> Option<String> {
     with_have(|h| pick_from(h, chosen))
 }
@@ -532,27 +549,26 @@ fn pick_from(have: &Have, chosen: Option<&str>) -> Option<String> {
     // a model id that could not be one (an agent's, say) is never put on a command line, nor shown
     match chosen.filter(|m| !m.is_empty() && crate::expert_ai::model_id_ok(m)) {
         Some(m) if have.list.is_empty() || have.lists(m) => Some(m.to_string()),
-        Some(m) => nearest(have, m).or_else(|| default_of(have)),
+        Some(m) => twin(have, m).or_else(|| default_of(have)),
         None => default_of(have),
     }
 }
 
-/// The listed model nearest to one that is not listed exactly, for an expert's model (`expert_ai::resolve`).
+/// The model an expert runs on when the one set for it is not listed exactly (`expert_ai::resolve`): its twin on the
+/// plan or free (`twin`); None: the default.
 pub fn nearest_model(asked: &str) -> Option<String> {
-    with_have(|h| nearest(h, asked))
+    with_have(|h| twin(h, asked))
 }
 
 /// What to save for a model the user picked in the menu: (its id, whether Fridae's OpenCode was signed in then).
-/// Refused for a model that is not listed, and while it is not known whether anything is signed in: a pick filed
-/// under the wrong answer would either stay a free model after the sign-in or be dropped after it.
+/// Refused only for a model that is not listed. While it is not known whether anything is signed in (`opencode auth
+/// list` has not answered, or keeps failing), the list says it: a copy that is signed in to nothing lists no plan
+/// model (measured), so a plan model in the list means signed in, and none means not.
 fn pick_to_save(have: &Have, id: &str, known: bool, signed_in: bool) -> Result<(String, bool), &'static str> {
     if !crate::expert_ai::model_id_ok(id) || !have.lists(id) {
         return Err("That model is not in the list any more. Pick another.");
     }
-    if !known {
-        return Err("Fridae is still checking the sign-in. Pick again in a moment.");
-    }
-    Ok((id.to_string(), signed_in))
+    Ok((id.to_string(), if known { signed_in } else { have.plan_listed() }))
 }
 
 /// Whether Fridae's OpenCode is known to be signed in to something. While a sign-in waits for the restart this is
@@ -602,7 +618,7 @@ fn note_costs(conn: Conn) {
             Ok((200, v)) => default_from(&v),
             _ => None,
         };
-        keep_prices(Prices { known: true, free: free_from(&models), default });
+        keep_prices(with_answer(&prices(), free_from(&models), default));
     });
 }
 
@@ -615,8 +631,11 @@ pub enum Caveat {
     Pending,
     /// signed in, but no model of a paid plan is listed, so the app's choice was a free one
     NoPlan,
-    /// the model that runs is not the one asked for, and it is billed per use
+    /// the model that runs is not the one asked for, and it is billed per use (the user's own pick or default)
     PerUse,
+    /// the model asked for is not listed, and the same model from another provider is billed per use, so it was
+    /// not taken
+    PerUseLeft,
 }
 
 impl Caveat {
@@ -627,6 +646,7 @@ impl Caveat {
             Caveat::Pending => "The user has just signed Fridae's OpenCode in. Paid models start once the work now running has finished; until then only free models are available.",
             Caveat::NoPlan => "Fridae's OpenCode lists no model from a paid plan, so its default is a free model.",
             Caveat::PerUse => "That one is billed per use, not on the user's plan.",
+            Caveat::PerUseLeft => "The same model from another provider is billed per use, not on the user's plan, so Fridae did not choose it. The user can pick it themselves in the model picker.",
         }
     }
 
@@ -637,6 +657,7 @@ impl Caveat {
             Caveat::Pending => "Paid models start once running work has finished.",
             Caveat::NoPlan => "No model from a paid plan is listed.",
             Caveat::PerUse => "It is billed per use, not on your plan.",
+            Caveat::PerUseLeft => "The same model billed per use is yours to pick in the model picker.",
         }
     }
 
@@ -644,8 +665,8 @@ impl Caveat {
     pub fn alone(self) -> Option<&'static str> {
         match self {
             Caveat::NotSignedIn => Some("This chat is on a free model. Sign in under Setup, Connections to use a paid plan."),
-            Caveat::NoPlan => Some("No model from a paid plan is listed, so this ran on a free model. Pick another under the message box."),
-            Caveat::Pending | Caveat::PerUse => None,
+            Caveat::NoPlan => Some("No model from a paid plan is listed, so this ran on a free model. Pick another in the model picker."),
+            Caveat::Pending | Caveat::PerUse | Caveat::PerUseLeft => None,
         }
     }
 
@@ -666,8 +687,13 @@ fn caveat_of(have: &Have, known: bool, pending: bool, asked: Option<&str>, runs:
     }
     let default = default_of(have);
     let runs = runs.or(default.as_deref())?;
-    if asked.is_some_and(|a| a != runs) && have.per_use(runs) {
-        return Some(Caveat::PerUse);
+    if let Some(asked) = asked.filter(|a| *a != runs) {
+        if have.per_use(runs) {
+            return Some(Caveat::PerUse);
+        }
+        if nearest(have, asked).is_some_and(|t| have.per_use(&t)) {
+            return Some(Caveat::PerUseLeft);
+        }
     }
     // the app's own choice of a free model (not the user's pick, nor their own default) for want of a plan model
     let apps_choice = Some(runs) == default.as_deref() && have.picked != Some(runs) && have.users != Some(runs);
@@ -690,7 +716,7 @@ fn replaced_of<'a>(have: &Have<'a>, runs: Option<&'a str>) -> Option<(&'a str, &
 /// The line a chat gets when the remembered pick was replaced, once per app run for each such replacement (the
 /// caller says when it has shown it: `replaced_said`).
 pub fn replaced_pick(runs: Option<&str>) -> Option<String> {
-    let line = with_have(|h| replaced_of(h, runs).map(|(pick, runs)| format!("Your earlier pick, {}, was replaced: this ran on {}. Pick a model under the message box to change it.", model_name(pick), model_name(runs))))?;
+    let line = with_have(|h| replaced_of(h, runs).map(|(pick, runs)| format!("Your earlier pick, {}, was replaced: this ran on {}. Pick a model in the model picker to change it.", model_name(pick), model_name(runs))))?;
     (PICK_TOLD.lock().unwrap().as_deref() != Some(line.as_str())).then_some(line)
 }
 
@@ -2324,11 +2350,11 @@ fn failure_text(err: &Value, model: Option<&str>) -> String {
     let message = err["message"].as_str().or(err.as_str()).unwrap_or("OpenCode stopped with an error.").trim().to_string();
     match err["type"].as_str().unwrap_or("") {
         "provider.no-route" => format!(
-            "{message}. Fridae's OpenCode cannot use {} now: it is not signed in to that provider, or the model is gone. Sign in under Setup, Connections, or pick another model under the message box.",
+            "{message}. Fridae's OpenCode cannot use {} now: it is not signed in to that provider, or the model is gone. Sign in under Setup, Connections, or pick another model in the model picker.",
             model.map(model_name).unwrap_or_else(|| "this model".to_string())
         ),
-        "provider.free-limit" => format!("{message}{} Pick another model under the message box, or sign in under Setup, Connections to use a paid plan.", resets_in(err)),
-        t if t.contains("limit") || t.contains("quota") => format!("{message}{} Pick another model under the message box, or wait.", resets_in(err)),
+        "provider.free-limit" => format!("{message}{} Pick another model in the model picker, or sign in under Setup, Connections to use a paid plan.", resets_in(err)),
+        t if t.contains("limit") || t.contains("quota") => format!("{message}{} Pick another model in the model picker, or wait.", resets_in(err)),
         _ => message,
     }
 }
@@ -2718,7 +2744,7 @@ mod tests {
         assert!(matches!(&fin[0], Out::Usage(u) if u.input == 120 && u.output == 9), "what the stopped step used still counts");
         let no_route = json!({"type": "provider.no-route", "message": "Model unavailable: opencode-go/glm-5.3"});
         let said = failure_text(&no_route, Some("opencode-go/glm-5.3"));
-        assert!(said.contains("Fridae's OpenCode cannot use OpenCode Go · glm-5.3 now") && said.contains("Sign in under Setup, Connections, or pick another model"), "{said}");
+        assert!(said.contains("Fridae's OpenCode cannot use OpenCode Go · glm-5.3 now") && said.contains("Sign in under Setup, Connections, or pick another model in the model picker."), "{said}");
     }
 
     #[test]
@@ -2852,10 +2878,15 @@ mod tests {
         let starting = Have { list: listed(UNSIGNED_LIST), all_free: false, free: &[], priced: false, ..Default::default() };
         assert_eq!(default_of(&starting).as_deref(), Some("opencode/big-pickle"));
         assert!(!starting.plan_listed() && starting.is_free("opencode/big-pickle"), "nothing there looks paid");
-        // a pick is not taken while the sign-in is not known...
-        assert_eq!(pick_to_save(&starting, "opencode/deepseek-v4.1-flash-free", false, false), Err("Fridae is still checking the sign-in. Pick again in a moment."));
-        // ...and once it is, it is filed as picked before the sign-in, whatever the prices say
+        // a pick is filed as picked before the sign-in, whatever the prices say
         assert_eq!(pick_to_save(&starting, "opencode/deepseek-v4.1-flash-free", true, false), Ok(("opencode/deepseek-v4.1-flash-free".to_string(), false)));
+        // while the sign-in is not known (`opencode auth list` has not answered, or never does) a pick is never
+        // refused: the list says it. No plan model listed: not signed in. One listed: signed in, whatever is picked
+        assert_eq!(pick_to_save(&starting, "opencode/deepseek-v4.1-flash-free", false, false), Ok(("opencode/deepseek-v4.1-flash-free".to_string(), false)));
+        assert_eq!(pick_to_save(&signed, "opencode-go/kimi-k3", false, false), Ok(("opencode-go/kimi-k3".to_string(), true)));
+        assert_eq!(pick_to_save(&signed, "opencode/beam-free", false, false), Ok(("opencode/beam-free".to_string(), true)));
+        // once it is known, that answer is the one that counts
+        assert_eq!(pick_to_save(&signed, "opencode/beam-free", true, false), Ok(("opencode/beam-free".to_string(), false)));
         assert_eq!(pick_to_save(&signed, "opencode-go/gone", true, true), Err("That model is not in the list any more. Pick another."));
         assert!(pick_to_save(&signed, "--yolo", true, true).is_err());
         // (a) after the sign-in that free pick gives way to the plan
@@ -2891,6 +2922,18 @@ mod tests {
         assert_eq!(nearest(&unsigned, "opencode/deepseek-v4.1-flash").as_deref(), Some("opencode/deepseek-v4.1-flash-free"));
         assert_eq!(nearest(&signed, "anthropic/deepseek-v4.1-flash").as_deref(), Some("opencode-go/deepseek-v4.1-flash"), "the paid one where it exists");
         assert_eq!(nearest(&unsigned, "opencode/kimi-k3"), None);
+        // a twin billed per use is found, but never taken by the app: at a turn and for a Lead the default runs
+        // instead (an overnight run set to `opencode-go/glm-5.3` does not go on on `opencode/glm-5.3` when the plan's
+        // models go), while a twin on the plan or a free one is taken
+        assert_eq!(nearest(&signed, "opencode-go/claude-opus-5-5").as_deref(), Some("opencode/claude-opus-5-5"));
+        assert_eq!(twin(&signed, "opencode-go/claude-opus-5-5"), None);
+        assert_eq!(pick_from(&signed, Some("opencode-go/claude-opus-5-5")).as_deref(), Some("opencode-go/claude-haiku-5-5"));
+        let lapsed = Have { list: no_plan(), ..Default::default() };
+        assert_eq!(pick_from(&lapsed, Some("opencode-go/glm-5.3")).as_deref(), Some("opencode/big-pickle"), "not opencode/glm-5.3");
+        assert_eq!(twin(&signed, "opencode/kimi-k3").as_deref(), Some("opencode-go/kimi-k3"), "onto the plan");
+        assert_eq!(twin(&unsigned, "opencode/deepseek-v4.1-flash").as_deref(), Some("opencode/deepseek-v4.1-flash-free"), "free");
+        // asked for by its own name and listed, a model billed per use runs
+        assert_eq!(pick_from(&signed, Some("opencode/claude-opus-5-5")).as_deref(), Some("opencode/claude-opus-5-5"));
         // a turn: the twin runs; nothing like it: the default; a listed free model that was asked for runs
         assert_eq!(pick_from(&unsigned, Some("opencode/deepseek-v4.1-flash")).as_deref(), Some("opencode/deepseek-v4.1-flash-free"));
         assert_eq!(pick_from(&unsigned, Some("opencode/kimi-k3")).as_deref(), Some("opencode/big-pickle"));
@@ -2911,9 +2954,13 @@ mod tests {
         // signed in with the plan: nothing to say, for the default or for a model asked for and run
         assert_eq!(caveat_of(&signed, true, false, None, None), None);
         assert_eq!(caveat_of(&signed, true, false, Some("opencode-go/kimi-k3"), Some("opencode-go/kimi-k3")), None);
-        // a twin that leaves the plan (a Lead's `opencode-go/claude-opus-5-5`, which the plan does not have)
-        assert_eq!(nearest(&signed, "opencode-go/claude-opus-5-5").as_deref(), Some("opencode/claude-opus-5-5"));
-        assert_eq!(caveat_of(&signed, true, false, Some("opencode-go/claude-opus-5-5"), Some("opencode/claude-opus-5-5")), Some(Caveat::PerUse));
+        // a Lead's `opencode-go/claude-opus-5-5`, which the plan does not have: the default runs, and it is said that
+        // the same model billed per use was left for the user to pick
+        assert_eq!(caveat_of(&signed, true, false, Some("opencode-go/claude-opus-5-5"), Some("opencode-go/claude-haiku-5-5")), Some(Caveat::PerUseLeft));
+        assert_eq!(caveat_of(&signed, true, false, Some("opencode/glm-3.5"), Some("opencode-go/claude-haiku-5-5")), None, "no such model anywhere: nothing was left");
+        // the default that runs instead is the user's own pick of a model billed per use: that is what is said
+        let picked = Have { picked: Some("opencode/claude-opus-5-5"), picked_signed_in: true, ..signed };
+        assert_eq!(caveat_of(&picked, true, false, Some("opencode-go/claude-opus-5-5"), Some("opencode/claude-opus-5-5")), Some(Caveat::PerUse));
         assert_eq!(caveat_of(&signed, true, false, Some("opencode/kimi-k3"), Some("opencode-go/kimi-k3")), None, "onto the plan");
         assert_eq!(caveat_of(&signed, true, false, Some("opencode/claude-opus-5-5"), Some("opencode/claude-opus-5-5")), None, "asked for, and run");
         // signed in, no plan model: the app's free default is said to be one, as the default and as the page sends it
@@ -2924,11 +2971,12 @@ mod tests {
         assert_eq!(caveat_of(&Have { picked: Some("opencode/big-pickle"), picked_signed_in: true, ..zen }, true, false, None, None), None);
         assert_eq!(caveat_of(&zen, true, false, Some("opencode/beam-free"), Some("opencode/beam-free")), None);
         // the words: one sentence after a swap, at most two alone, and a line of its own only where there is advice
-        for c in [Caveat::NotSignedIn, Caveat::Pending, Caveat::NoPlan, Caveat::PerUse] {
+        for c in [Caveat::NotSignedIn, Caveat::Pending, Caveat::NoPlan, Caveat::PerUse, Caveat::PerUseLeft] {
             assert_eq!(c.after_swap().matches(". ").count(), 0, "{c:?}: one sentence");
             assert!(c.alone().is_none_or(|l| l.matches(". ").count() == 1), "{c:?}: two sentences at most");
             assert_eq!(c.alone().is_some(), c.says_free(), "{c:?}");
-            assert!(c.for_lead().contains("Fridae's OpenCode") || c == Caveat::PerUse, "{c:?}: one name for it");
+            // the model is picked in the message box now: no line sends the user "under the message box" for it
+            assert!(!c.after_swap().contains("under the message box") && c.alone().is_none_or(|l| !l.contains("under the message box")), "{c:?}");
         }
     }
 
@@ -2978,6 +3026,14 @@ mod tests {
         let after = Have { priced: true, free: Box::leak(free.into_boxed_slice()), ..Default::default() };
         assert!(after.is_free("opencode/big-pickle") && !after.is_free("opencode-go/glm-5.3") && after.on_plan("opencode-go/glm-5.3") && after.per_use("opencode/claude-opus-5-5"));
         assert!(!Have { priced: true, ..Default::default() }.is_free("opencode/big-pickle"), "a price list that no longer gives it away is believed");
+        // a new answer replaces the old one, but an answer with no free model at all does not (and is not kept)
+        let old = Prices { known: true, free: vec!["opencode/big-pickle".into()], default: Some("opencode/big-pickle".into()) };
+        let new = with_answer(&old, vec!["opencode/beam-free".into()], Some("opencode-go/kimi-k3".into()));
+        assert_eq!(new, Prices { known: true, free: vec!["opencode/beam-free".into()], default: Some("opencode-go/kimi-k3".into()) });
+        assert_eq!(with_answer(&old, Vec::new(), None), old);
+        assert_eq!(with_answer(&old, Vec::new(), Some("opencode-go/kimi-k3".into())), Prices { default: Some("opencode-go/kimi-k3".into()), ..old.clone() });
+        let nothing = with_answer(&Prices::default(), Vec::new(), None);
+        assert!(!nothing.known, "nothing known before, nothing learned: big-pickle still counts as free");
         assert!(!after.on_plan("opencode-go/beam-free") && !after.per_use("opencode-go/beam-free") && !after.per_use("opencode-go/glm-5.3"));
     }
 

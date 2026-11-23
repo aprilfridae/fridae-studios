@@ -151,7 +151,8 @@ result's `note` says which and why (a list that has not arrived yet passes the m
 expert runs is silent: the result's `model` always names the model (the AI's default when none was set), the `note`
 also says when the user's table won over what the Lead asked for and what the app knows about the model that runs
 (`World::why`, `expert_ai::More`, OpenCode's `Caveat`: only free models because Fridae's OpenCode is not signed in, a
-sign-in that waits for running work, no plan model listed, or a twin that is billed per use and not on the plan), and
+sign-in that waits for running work, no plan model listed, or the same model billed per use that was left for the
+user to pick), and
 a model swapped later, at a turn (the list arrived after the spawn, or the model has gone), is said once under the
 message in that chat (`agents::model_line`, the "user" event's `model_note`: model names, two short sentences at most,
 one line a message; nothing is claimed about an AI whose list has not arrived) and added to the result the Lead
@@ -528,7 +529,8 @@ default); `FRIDAE_GEMINI_PER_TURN=1` turns it off whatever else is set; Windows 
 - **The launch key** (`GeminiLaunch::key`): the program, the workspace, the tool servers with their environment,
   the model, the effort, the mode, the chat, every folder and protected place the gate decides by, agy's data
   folder, the pictures file, the provider-keys switch, the allowed programs, and a fingerprint of every guarded
-  setting (`paths::GUARDED`; a hash, since one is the Gemini key). Any change closes the process and the next one
+  setting but the model picked for OpenCode, which no Gemini or Cursor process is started with (`paths::GUARDED`,
+  `guarded_print`; a hash, since one is the Gemini key). Any change closes the process and the next one
   resumes the conversation. The gate's rules are built per message as well.
 - **One process on a conversation.** agy keeps a conversation in a file of its own, so a turn (kept or per message)
   first waits until the chat's earlier kept processes are gone (`State::retiring`, `Kept::alone`, at most 12 s;
@@ -1022,20 +1024,25 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   `opencode_model` and `opencode_model_signed_in`: the page posts it to `/api/opencode` action `model` and asks for
   `status.ai.default_models.opencode`, so chats and experts agree. It is filed by whether Fridae's OpenCode was signed
   in at that moment, never by what the model seemed to cost: a pick from before the sign-in (a free model, as nothing
-  else was listed) gives way to the plan's models after it, and any pick made while signed in stays. A pick is refused
-  while the sign-in is not known. A pick gone from the list moves only to the same model on the plan, never to a twin
+  else was listed) gives way to the plan's models after it, and any pick made while signed in stays. While the
+  sign-in is not known the list says it (a plan model listed means signed in, none means not: a copy signed in to
+  nothing lists no plan model), so a pick is never refused for that. A pick gone from the list moves only to the same model on the plan, never to a twin
   billed per use; a chat is told once per app run when the pick was replaced (`replaced_pick`). Free
   (`Have::is_free`): an id ending `-free`; an `opencode/` model the server lists at no price (`GET /api/model`, `cost`
   all zero); `opencode/big-pickle` until a price list is known (`KNOWN_FREE`); and every model while nothing is
   signed in. The server's price list and its own default (`GET /api/model/default`) are asked for once per server
   start (`note_costs`) and kept across runs in `fridae-models.json` in the app's OpenCode folder (`Prices`), so the
-  default does not change by itself when a server starts. Measured on 2.3.2 (23 November 2026): a copy that never
+  default does not change by itself when a server starts; an answer that names no free model at all is not believed
+  and replaces nothing (`with_answer`). Measured on 2.3.2 (23 November 2026): a copy that never
   signed in lists only models at no price, all under `opencode/` (eleven that day), its own default is `big-pickle`,
   `opencode auth list` says "No authenticated integrations" (exit 0), and `opencode models` has no `--verbose`. Not
   measured: anything of a signed-in copy (how a plan's prices are listed, what its own default is). A model that is
   not listed exactly runs on its nearest twin (`nearest`: the same name under `opencode-go/`, then `opencode/`, then
-  any provider, and its `-free` twin only when none of those exists; never a guess at a similar name), and when that
-  twin is billed per use the Lead's note and the chat's line say so (`Caveat::PerUse`). While the list is empty or
+  any provider, and its `-free` twin only when none of those exists; never a guess at a similar name), but only when
+  that twin is on the plan or free (`twin`). One rule everywhere, for the default, a turn, a Lead's request and an
+  Experts row: the app never leaves the plan by itself. A model billed per use runs only when it is named exactly as
+  listed; when a twin billed per use was left, the default runs and the Lead's note and the chat's line say that the
+  user can pick that model themselves in the model picker (`Caveat::PerUseLeft`). While the list is empty or
   the sign-in is not known, both are asked for again once a minute (`refresh_due`). Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
   under `ai: "opencode"`; OpenCode reports no plan limits, and the usage popover says so.
 - **Isolation** (`environment`): the server and the one-off commands (`models`, `auth`, those with `--standalone`)

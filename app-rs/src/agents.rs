@@ -1534,7 +1534,6 @@ struct GeminiSettings<'a> {
 
 impl GeminiLaunch {
     fn new(s: &GeminiSettings) -> GeminiLaunch {
-        use sha2::{Digest, Sha256};
         let rules = crate::acp::Rules {
             full: s.full,
             agent_id: s.agent_id.to_string(),
@@ -1556,8 +1555,7 @@ impl GeminiLaunch {
         // answer inside that, and keeps longer work going as a job (`jobs`)
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
-        // a fingerprint, not the settings themselves: one of them is the user's Gemini key
-        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        let guarded = guarded_print(s.guarded);
         GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
@@ -1794,7 +1792,6 @@ const CURSOR_HANDED_OVER: &str = "This chat's Cursor conversation was on a kept 
 
 impl CursorLaunch {
     fn new(s: &CursorSettings) -> CursorLaunch {
-        use sha2::{Digest, Sha256};
         // the servers as a session is handed them: with the app's settings in their environment, and the app's own
         // told where to note its results' pictures (a tool's result does not come over ACP: measured)
         let mut handed = cursor::kept_servers(s.servers);
@@ -1819,7 +1816,7 @@ impl CursorLaunch {
             agent_dir: std::path::PathBuf::new(),
         };
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
-        let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
+        let guarded = guarded_print(s.guarded);
         CursorLaunch {
             exe: s.exe.to_path_buf(),
             first: Vec::new(),
@@ -4523,6 +4520,18 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
     servers
 }
 
+/// What a kept Gemini or Cursor process is keyed on of the guarded settings: a fingerprint, not the settings
+/// themselves (one of them is the user's Gemini key). The model picked for OpenCode is left out: no Gemini or Cursor
+/// process is started with it or decides by it, so picking one must not start those processes again.
+fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut g = guarded.clone();
+    for k in [opencode::PICK_KEY, opencode::PICK_SIGNED_KEY] {
+        g.remove(k);
+    }
+    paths::hex(&Sha256::digest(Value::Object(g).to_string().as_bytes()))
+}
+
 fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool) -> Value {
     let cmd = paths::mcp_command();
     let mut servers = json!({
@@ -5945,7 +5954,7 @@ mod tests {
         assert_eq!(model_line(&mut State::default(), None, Vec::new()), None);
         // one line a message: the swap first, the note with a later message
         let mut st = State::default();
-        let pick = || vec![("pick", "Your earlier pick, A, was replaced: this ran on B. Pick a model under the message box to change it.".to_string())];
+        let pick = || vec![("pick", "Your earlier pick, A, was replaced: this ran on B. Pick a model in the model picker to change it.".to_string())];
         assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| l.swap && l.told.is_empty()));
         assert!(model_line(&mut st, swap("x", false), pick()).is_some_and(|l| !l.swap && l.told == ["pick"]), "said with the next message");
         assert_eq!(model_line(&mut st, swap("x", false), pick()), None);
