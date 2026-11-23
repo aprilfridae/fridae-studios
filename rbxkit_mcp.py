@@ -25,9 +25,11 @@ them: always look before reporting a model, texture or icon as done.
   key, or by asking the user to make the image in their Gemini chat). For plain tileable surfaces prefer Studio's generate_material.
   Use it only for textures, never for UI, icons, logos or typography.
 - Generated images: `rbx_image` makes a picture from a prompt at an exact size and saves it in the game's project folder
-  (on the user's own Gemini plan, through Antigravity). Good for the game icon, thumbnail key art, UI art and concept
-  art. Captured footage of the real game is still what shows gameplay; never another game's characters or art.
-  Lettering and layout are still built natively with real fonts. Nothing is uploaded by an agent.
+  (on the user's own Gemini plan, through Antigravity; `transparent: true` cuts the subject out). Good for the game
+  icon, thumbnail key art, UI art and concept art. Each picture costs some of the user's plan: make a few considered
+  ones, never batches. Captured footage of the real game is still what shows gameplay; never another game's characters
+  or art. Lettering and layout are still built natively with real fonts. rbx_image uploads nothing; uploads follow
+  the guide's upload rules.
 To pick the style guide, look at the place first (its existing UI, materials and colours); if it is new or unclear,
 choose the closest and say which you chose. Guides already read in this chat do not need loading again.
 
@@ -1376,16 +1378,23 @@ TOOLS = [
      schema({"screenshot": S, "name": S, "folder": S, "size": {"type": "integer"}}, ["screenshot", "name"]), t_icon),
     ("rbx_image", "Make an AI-generated image, or keep one that already exists, saved in the game's project folder at an exact size. "
      "Good for the game icon, thumbnail key art, UI art and concept art. Action 'generate' makes a new picture from `prompt` "
-     "(through Google's Antigravity on the user's own Gemini plan; it can take a minute or two, and each one uses some of "
-     "that plan, so ask for what you need and no more). Action 'keep' brings an existing image file in instead: `source` "
-     "is its full path (the file your own image tool made, or an image in the project or the app's work folder). Either "
+     "(through Google's Antigravity on the user's own Gemini plan; it can take a minute or two). Each picture costs some of "
+     "that plan: make a few considered ones, never batches; a chat may start 12 in an hour, and the user can switch this "
+     "off in Setup. Action 'keep' brings an existing image file in instead and costs nothing: `source` is its full path "
+     "(the file your own image tool made, or an image in the project, this chat's own folder or the app's images). Either "
      "way the picture is cropped about its middle to the shape of `size` and resized to exactly that; it is never "
-     "stretched, and an existing file is never replaced. The answer names the saved file and carries the picture: look at "
-     "it before you use or report it. Captured footage of the real game is still what shows gameplay; never another game's "
-     "characters or art, and no lettering (add text natively with real fonts). Nothing is uploaded.",
+     "stretched, and an existing file is never replaced. With `transparent: true` the subject is cut out onto a "
+     "transparent background and placed whole inside `size` (an item or shop icon): generate asks for it on a flat "
+     "colour and removes that; hard-edged subjects cut out cleanly, soft ones (smoke, glow, fur, glass) less so, and when "
+     "the background is not flat the picture is saved as it is and the answer says so. The answer names the saved file "
+     "and carries the picture: look at it before you use or report it. Captured footage of the real game is still what "
+     "shows gameplay; never another game's characters or art, and no lettering (add text natively with real fonts). "
+     "rbx_image uploads nothing; uploads follow the guide's upload rules.",
      schema({"action": {"type": "string", "enum": ["generate", "keep"]},
+             "transparent": {"type": "boolean", "description": "Cut the subject out onto a transparent background (PNG). Default false"},
              "prompt": {"type": "string", "description": "generate: what the image shows, in plain words: subject, setting, style, light, mood"},
-             "source": {"type": "string", "description": "keep: full path of the image file to bring into the project"},
+             "source": {"type": "string", "description": "keep: full path of the image file to bring in. Read only from the project, this chat's own "
+                                                         "folder, the app's images, attachments and chat pictures, or the file your own image tool made"},
              "size": {"type": "string", "description": "WIDTHxHEIGHT in pixels, e.g. 512x512 (icon) or 1920x1080 (thumbnail). "
                                                        "generate: default 1024x1024; keep: default the image's own size"},
              "name": {"type": "string", "description": "File name; saved as .png unless it ends in .jpg"},

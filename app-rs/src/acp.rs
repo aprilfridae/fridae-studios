@@ -441,7 +441,13 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
         let card = once_card(&rules.agent_id, &text, "on this connection Gemini can read files anywhere on this computer without asking, so what it sends to the web is asked about each time.");
         return Verdict { allow: false, outs: vec![card], note: Some("[Fridae did not let your last turn look something up on the web, and the turn ended there. The user was shown it and may allow it.]".into()) };
     }
-    if OWN_FOLDER_ONLY.contains(&name) && paths.iter().all(|p| own_scratch(p)) {
+    // (the picture's name is no path argument, so it is judged here: a plain name, nothing that leaves the folder)
+    let plain_name = match &raw["ImageName"] {
+        Value::Null => true,
+        Value::String(n) => !n.contains(['/', '\\']) && !n.contains(".."),
+        _ => false,
+    };
+    if OWN_FOLDER_ONLY.contains(&name) && plain_name && paths.iter().all(|p| own_scratch(p)) {
         return allow();
     }
     refuse(format!("Gemini asked to use \"{what}\", which Fridae does not let it do in Ask me, so it was refused. {STOPPED_THERE} Ask again, and tell it to use the building tools."))
@@ -1307,6 +1313,10 @@ mod tests {
         // as a write it is judged as any write is; a path the app cannot read is refused
         assert!(!ok(&call("generate_image", "edit", asked.clone(), &[&root.join("home/games/x.jpg")])));
         assert!(!ok(&call("generate_image", "other", json!({"Prompt": "x", "Path": "../x.jpg"}), &[])));
+        // the picture's name is a plain name: one that would leave the folder is refused
+        for bad in [json!("../../x"), json!("a/b"), json!("a\\b"), json!(".."), json!(7), json!(["x"])] {
+            assert!(!ok(&call("generate_image", "other", json!({"Prompt": "x", "ImageName": bad}), &[])), "{bad}");
+        }
         // only that tool: another of its own that the app does not know stays refused
         assert!(!ok(&call("generate_video", "other", json!({"Prompt": "a cat"}), &[])));
         // Full auto lets it through as before

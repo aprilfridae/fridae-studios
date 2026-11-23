@@ -160,6 +160,44 @@ fn gemini_command_refused_by_the_apps_rule_carries_on_and_the_picture_it_generat
 }
 
 #[test]
+fn gemini_commands_with_a_path_a_pipe_and_two_joined_are_refused_softly_and_so_is_a_write_to_its_own_server_list() {
+    // A real turn (agy 1.5.15, Gemini 3.8 Flash at low effort, `--mode accept-edits`) with the deny rules `turn_args`
+    // passes outside Full auto: `write_file(<workspace>/.agents/mcp_config.json)` and `command(*)`. Asked to run
+    // `/bin/echo one`, `echo two | tr a-z A-Z` and `echo three && echo four`, to write note.txt, then to write its
+    // workspace's own list of tool servers. Each command's step ended in ERROR by the rule, note.txt was written, the
+    // list was refused by its rule, and the turn ended SUCCESS with exit 0 and nothing on stderr.
+    let raw = String::from_utf8(fixture("gemini", "commands-refused-softly-and-own-server-list.ndjson")).unwrap();
+    let steps: Vec<Value> = raw.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).map(|e| e["step_update"].clone()).filter(|s| s["step_type"] == "tool" && s["state"] != "ACTIVE").collect();
+    let ended: Vec<(String, String, String)> = steps
+        .iter()
+        .map(|s| {
+            let p = &s["tool_info"]["parameters"];
+            (s["tool_name"].as_str().unwrap().to_string(), p["CommandLine"].as_str().or(p["Path"].as_str()).unwrap().to_string(), s["state"].as_str().unwrap().to_string())
+        })
+        .collect();
+    let want = [
+        ("run_command", "/bin/echo one", "ERROR"),
+        ("run_command", "echo two | tr a-z A-Z", "ERROR"),
+        ("run_command", "echo three && echo four", "ERROR"),
+        ("write_file", "/scratch/ws/note.txt", "DONE"),
+        ("write_file", "/scratch/ws/.agents/mcp_config.json", "ERROR"),
+    ];
+    assert_eq!(ended.iter().map(|(a, b, c)| (a.as_str(), b.as_str(), c.as_str())).collect::<Vec<_>>(), want);
+    for s in steps.iter().filter(|s| s["state"] == "ERROR") {
+        let why = s["tool_info"]["error"]["message"].as_str().unwrap();
+        assert!(why.contains("Permission denied for") && why.contains("Matches user-configured deny rule"), "{why}");
+    }
+    let (ev, session) = replay("gemini", "commands-refused-softly-and-own-server-list", None, (true, 0));
+    assert!(!kinds(&ev).contains(&"error"), "{ev:?}");
+    assert_eq!(said(&ev, "tool"), ["Running a command", "Running a command", "Running a command", "Writing a file", "Writing a file"]);
+    let text = said(&ev, "text").join("\n");
+    assert_eq!(text.matches("Refused").count(), 4, "{text}");
+    assert!(text.contains("Step 4: Ran"), "{text}");
+    assert_eq!(kinds(&ev).last(), Some(&"done"));
+    assert!(session.is_some());
+}
+
+#[test]
 fn gemini_started_afresh_when_its_conversation_was_gone_and_the_chat_is_told() {
     // agy only warns on stderr and opens a new conversation (measured)
     let (ev, session) = replay("gemini", "missing-conversation", Some("00000000-0000-4000-8000-000000000099"), (true, 0));

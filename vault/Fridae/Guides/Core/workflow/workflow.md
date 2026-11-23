@@ -348,10 +348,19 @@ concept art) can be AI-generated with `rbx_image`
 makes the picture on the user's own Gemini plan, through Antigravity, at
 exactly the size you ask for, and saves it in the game's project folder.
 `rbx_image` with action `keep` brings in an image that already exists, such as
-one a Gemini agent's own generate_image tool made. Captured footage of the
-real game is still what shows gameplay. Never another game's characters or
-art, and no lettering in a generated picture. Nothing is uploaded by an
-agent: look at each image, name its file, and leave uploading to the user.
+one a Gemini agent's own generate_image tool made. With `transparent: true`
+the subject is cut out onto a transparent background (an item or shop icon):
+hard-edged subjects cut out cleanly, soft ones (smoke, glow, fur, glass) less
+so. Each generated picture costs some of the user's Gemini plan: make a few
+considered ones, never batches.
+
+Captured footage of the real game is still what shows gameplay. Thumbnails: at
+least three, at least one a real capture of the game; generated key art shows
+only what is really in the game (its characters, its places, its look) and
+promises nothing the game does not keep. The game's icon may be fully
+generated. Never another game's characters or art, and no lettering in a
+generated picture. `rbx_image` uploads nothing: look at each image and name
+its file; uploading it follows Uploads and moderation above, like any image.
 
 For UI art you can also use the game's own asset ids, Creator Store images
 (`search_asset`, `assetType: "Image"`), icon-booth renders, textures drawn

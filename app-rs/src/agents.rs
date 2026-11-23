@@ -4447,6 +4447,8 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
             // the guarded settings the tools act on, from the app's memory (`paths::GUARDED`): the tools never take
             // them from the settings file while the app runs them
             "FRIDAE_SETTINGS_FROM_APP": "1", "FRIDAE_GEMINI_USE_API": if paths::gemini_api_on() { "1" } else { "0" },
+            // whether agents may generate images on the user's Gemini plan (`rbx_image generate`; Setup, Textures)
+            "FRIDAE_GEMINI_IMAGES": if paths::gemini_images_on() { "1" } else { "0" },
             "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
     });
@@ -4889,10 +4891,12 @@ mod tests {
             assert!(t.contains("generate_image") && t.contains("rbx_image") && t.contains("`keep`"), "{t}");
         }
         assert!(!running_text("chatgpt", false, false).contains("generate_image"));
-        // every AI is told of the tool that makes images, and what it is not for
-        for word in ["rbx_image", "Gemini plan", "never another game's characters or art", "Nothing is uploaded"] {
+        // every AI is told of the tool that makes images, what it costs and what it is not for
+        for word in ["rbx_image", "Gemini plan", "a few considered\n  ones, never batches", "never another game's characters", "`transparent: true`", "rbx_image uploads nothing; uploads follow\n  the guide's upload rules"] {
             assert!(SYSTEM_PROMPT.contains(word), "{word}");
         }
+        assert!(!SYSTEM_PROMPT.contains("Nothing is uploaded"), "said of the tool only: the guide has its own upload rules");
+        assert!(mcp_servers_with("c1", "Chat", None, None, true)["rbxkit"]["env"]["FRIDAE_GEMINI_IMAGES"].is_string(), "the switch in Setup reaches the tool from the app's memory");
     }
 
     #[test]

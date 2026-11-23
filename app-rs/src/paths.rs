@@ -603,8 +603,10 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
     // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;
-    // `tool-jobs`: where it notes its long calls' jobs, and where the app tells it a turn has ended, `jobs.rs`)
-    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs"] {
+    // `tool-jobs`: where it notes its long calls' jobs, and where the app tells it a turn has ended, `jobs.rs`;
+    // `antigravity`: where the app's tools run agy to make an image (`rbxgen.py`): agy starts the tool servers a
+    // folder's `.agents/mcp_config.json` names, and the tools keep the model's name and each chat's count there)
+    for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs", "antigravity"] {
         out.push((w.join(d), true));
     }
     out
@@ -672,12 +674,13 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `allowed_commands`: the programs agents run without asking
 /// - `use_env_keys`: API keys in the environment reach the AIs (billed to that account)
 /// - `gemini_use_api`, `gemini_key`: textures billed to the Google key
+/// - `gemini_images`: agents may generate images on the user's Gemini plan (`rbx_image`); on unless set to false
 /// - `projects`: the games, whose folders the AIs are given
 /// - `plugin_token`: the Studio plugin's secret
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "projects", "plugin_token", "expert_ai", "lead_picks_ai"];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai"];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -686,6 +689,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "use_env_keys" => "Use API keys from my environment",
         "gemini_use_api" => "paid Gemini textures",
         "gemini_key" => "Gemini API key",
+        "gemini_images" => "Agents may generate images with Gemini",
         "projects" => "list of games",
         "plugin_token" => "Studio plugin link",
         "expert_ai" => "Experts table",
@@ -869,7 +873,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
                 .collect();
             Some(Value::Array(list))
         }
-        "use_env_keys" | "gemini_use_api" | "lead_picks_ai" => v.as_bool().map(Value::from),
+        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" => v.as_bool().map(Value::from),
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
         "expert_ai" => v.as_object().map(|_| v.clone()),
         _ => None,
@@ -1862,6 +1866,12 @@ pub fn gemini_api_on() -> bool {
     !gemini_key().is_empty() && setting("gemini_use_api").as_bool().unwrap_or(false)
 }
 
+/// Whether agents may generate images on the user's Gemini plan (`rbx_image generate`): yes unless the user switched
+/// it off in Setup.
+pub fn gemini_images_on() -> bool {
+    setting("gemini_images").as_bool().unwrap_or(true)
+}
+
 /// A file name with any folder part removed, so requests cannot reach outside a folder.
 pub fn base_name(s: &str) -> String {
     s.rsplit(['/', '\\']).next().unwrap_or("").to_string()
@@ -2241,6 +2251,26 @@ mod tests {
         let copy: Value = serde_json::from_str(&fs::read_to_string(&st.copy).unwrap()).unwrap();
         assert_eq!(copy["settings"].get("allowed_commands"), Some(&now));
         assert_eq!(copy["home"].as_str(), Some(real_home(&st.home).as_str()), "the copy names its home");
+    }
+
+    #[test]
+    fn the_switch_for_images_on_the_users_gemini_plan_is_a_guarded_setting_an_agent_cannot_turn_back_on() {
+        assert!(GUARDED.contains(&"gemini_images"));
+        assert_eq!(setting_name("gemini_images"), "Agents may generate images with Gemini");
+        assert_eq!(checked("gemini_images", &serde_json::json!(false)).0, Some(serde_json::json!(false)));
+        assert!(checked("gemini_images", &serde_json::json!("yes")).0.is_none(), "only on or off");
+        // the user switched it off in Setup; an agent's file tool writes it back on in the settings file
+        let st = home_store("images-switch");
+        put(&st, serde_json::json!({"gemini_images": false, "chat_ai": "claude"}));
+        let mut g = start_in(&st);
+        let mut cfg = file_of(&st);
+        cfg.insert("gemini_images".into(), serde_json::json!(true));
+        write_config(&st.config, &cfg);
+        assert_eq!(g.known.get("gemini_images"), Some(&serde_json::json!(false)), "what decides is the app's memory");
+        assert_eq!(check_in(&mut g, &st), ["gemini_images"]);
+        assert_eq!(file_of(&st).get("gemini_images"), Some(&serde_json::json!(false)));
+        // and where the tools run agy to make an image is no agent's to write (agy starts what a folder's list names)
+        assert!(app_protected().iter().any(|(p, dir)| *dir && p.ends_with("antigravity")));
     }
 
     #[test]

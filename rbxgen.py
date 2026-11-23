@@ -78,12 +78,30 @@ IMAGE_PATH = re.compile(r"[A-Za-z]:[\\/][^\r\n\"<>|?*]+?\.(?:png|jpe?g|webp)|/[^
 IMAGE_ENDINGS = (".png", ".jpg", ".jpeg", ".webp")
 MODELS_KEPT = 24 * 3600     # seconds the cheapest model's name is remembered before agy is asked again
 LEVELS = ("-minimal", "-low", "", "-medium", "-high", "-xhigh", "-max")
+MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")      # never anything agy could read as a flag
+CONVERSATION_ID = re.compile(r"^[A-Za-z0-9-]{1,80}$")
+MAX_MADE = 40 * 1024 * 1024  # bytes: the largest file taken as a generated picture (agy's are under a megabyte)
+# What the wrapper turn may not do, whatever the prompt says: run a command, or write a file with its file tools.
+# Its image tool needs neither (measured, agy 1.5.15: a picture was made under both rules).
+WRAPPER_DENY = ["command(*)", "write_file(*)"]
 
 
 def brain_dir():
     """Where Antigravity keeps a folder per conversation; its generate_image tool leaves each picture there
     (measured, agy 1.5.15: <home>/.gemini/antigravity-cli/brain/<conversation>/<name>_<time>.jpg)."""
     return os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli", "brain")
+
+
+def turns_dir():
+    """Where the wrapper turns run: a folder of the app's own that no agent's file tools may write (the app's deny
+    rules name work/antigravity, `paths::app_protected`), since agy starts the tool servers a folder's
+    .agents/mcp_config.json names."""
+    return os.path.join(WORK, "antigravity")
+
+
+def flash_model(model):
+    """Whether this is a model id the wrapper turn may be given: a plain id, and a Flash one."""
+    return isinstance(model, str) and len(model) <= 80 and bool(MODEL_ID.match(model)) and "flash" in model.lower()
 
 
 def cheapest_flash(ids):
@@ -93,43 +111,53 @@ def cheapest_flash(ids):
         low = mid.lower()
         level = next((i for i, end in enumerate(LEVELS) if end and low.endswith(end)), LEVELS.index(""))
         return ("lite" not in low, level, low)
-    flash = [m for m in ids if "flash" in m.lower()]
+    flash = [m for m in ids if flash_model(m)]
     return min(flash, key=rank) if flash else None
 
 
-def cheapest_model(exe):
-    """The model the wrapper turn runs on, so it costs the user's plan as little as possible: the cheapest Flash
-    model `agy models` lists (one "id<tab>name" per line), remembered for a day. None when agy does not say; the
-    turn then runs on agy's own default. (The turn only passes the request on: the picture itself is made by agy's
-    image helper, on whatever model agy gives that.)"""
+def _models_file():
+    return os.path.join(turns_dir(), "models.json")
+
+
+def _remember_model(exe, model):
+    """Keep the model's name for a day ("" for: name none, agy's own default)."""
     import time
-    from rbxpaths import no_window, read_json, write_json
-    kept = os.path.join(WORK, "antigravity", "models.json")
-    had = read_json(kept)
-    if isinstance(had, dict) and had.get("exe") == exe and had.get("model") and time.time() - float(had.get("at") or 0) < MODELS_KEPT:
+    from rbxpaths import write_json
+    try:
+        os.makedirs(turns_dir(), exist_ok=True)
+        write_json(_models_file(), {"exe": exe, "model": model or "", "at": time.time()})
+    except OSError:
+        pass
+
+
+def cheapest_model(exe, timeout=30):
+    """The model the wrapper turn runs on, so it costs the user's plan as little as possible: the cheapest Flash
+    model `agy models` lists (one "id<tab>name" per line), remembered for a day. None when agy does not say, or
+    would not take it earlier today; the turn then runs on agy's own default. (The turn only passes the request on:
+    the picture itself is made by agy's image helper, on whatever model agy gives that.) A remembered name is used
+    only if it is a plain Flash id; a file that does not read as expected is ignored."""
+    import time
+    from rbxpaths import no_window, read_json
+    had = read_json(_models_file())
+    try:
+        fresh = isinstance(had, dict) and had.get("exe") == exe and 0 <= time.time() - float(had.get("at")) < MODELS_KEPT
+    except (TypeError, ValueError):
+        fresh = False
+    if fresh and had.get("model") == "":
+        return None
+    if fresh and flash_model(had.get("model")):
         return had["model"]
     try:
-        p = subprocess.run([exe, "models"], capture_output=True, timeout=30, creationflags=no_window())
+        p = subprocess.run([exe, "models"], capture_output=True, timeout=max(1, timeout), creationflags=no_window())
     except (OSError, subprocess.TimeoutExpired):
         return None
     if p.returncode != 0:
         return None
     ids = [line.split("\t")[0].strip() for line in p.stdout.decode("utf-8", "replace").splitlines() if "\t" in line]
-    model = cheapest_flash([m for m in ids if m and " " not in m])
+    model = cheapest_flash(ids)
     if model:
-        try:
-            os.makedirs(os.path.dirname(kept), exist_ok=True)
-            write_json(kept, {"exe": exe, "model": model, "at": time.time()})
-        except OSError:
-            pass
+        _remember_model(exe, model)
     return model
-
-
-def _forget_model():
-    try:
-        os.remove(os.path.join(WORK, "antigravity", "models.json"))
-    except OSError:
-        pass
 
 
 def _shape_words(aspect):
@@ -143,32 +171,73 @@ def _shape_words(aspect):
     return "%s (%d:%d aspect ratio)" % ("landscape" if w > h else "portrait", w, h)
 
 
-def _why_no_image(text):
-    """What went wrong, in plain words, from what Antigravity wrote; None when it did not say."""
-    quota = re.search(r"[^\n\"]*\bquota\b[^\n\"]*", text, re.I) or re.search(r"[^\n\"]*RESOURCE_EXHAUSTED[^\n\"]*", text)
-    if quota:
-        said = re.sub(r"^.*?(?=Individual quota)", "", quota.group(0).strip(), flags=re.I)[:300]
-        return ("Your Gemini plan's quota is used up for now, so no image was made. Antigravity says: \"%s\" Do not try again "
-                "before it resets: tell the user, and carry on with work that needs no generated image." % said)
-    if re.search(r"authentication required|not authenticated|please sign in|login required|not logged in|unauthenticated", text, re.I):
+def _why_no_image(errors):
+    """What went wrong, in plain words, from Antigravity's own error output (never the model's words); None when it
+    did not say. Nothing Antigravity wrote is passed on as it is: only how long until the quota resets."""
+    if re.search(r"\bquota\b|RESOURCE_EXHAUSTED", errors, re.I):
+        resets = re.search(r"Resets in ((?:\d{1,3}[dhms]){1,4})", errors)
+        return ("Your Gemini plan's quota is used up for now, so no image was made (Antigravity reported that its quota was "
+                "reached%s). Do not try again before it resets: tell the user, and carry on with work that needs no "
+                "generated image." % ((", and that it resets in " + resets.group(1)) if resets else ""))
+    if re.search(r"authentication required|not authenticated|please sign in|login required|not logged in|unauthenticated", errors, re.I):
         return ("Antigravity is not signed in, so no image was made. The user opens a terminal, runs `agy`, signs in with "
                 "their Google account and closes it; then ask again.")
     return None
 
 
+def _made_in(conversation, named, started):
+    """The picture this turn made: an image file inside Antigravity's own folder for the conversation the turn
+    opened, written since the turn began, of a size a picture has. A file the answer names counts only if it is one
+    of those (the answer is the model's words, and the model read a prompt an agent wrote). Returns its bytes."""
+    if not CONVERSATION_ID.match(conversation or ""):
+        return None
+    home = os.path.realpath(os.path.join(brain_dir(), conversation))
+    if not os.path.isdir(home):
+        return None
+
+    def ours(path):
+        try:
+            real = os.path.realpath(path)
+            st = os.lstat(real)
+        except OSError:
+            return None
+        import stat
+        inside = os.path.dirname(real) == home
+        if not (inside and stat.S_ISREG(st.st_mode) and real.lower().endswith(IMAGE_ENDINGS)):
+            return None
+        return (st.st_mtime, real) if st.st_mtime >= started - 2 and 0 < st.st_size <= MAX_MADE else None
+
+    told = [m for m in (ours(p) for p in named) if m]
+    found = sorted((m for m in (ours(os.path.join(home, f)) for f in os.listdir(home)) if m), reverse=True)
+    for _, real in told + found:
+        try:
+            with open(real, "rb") as f:
+                return f.read(MAX_MADE + 1)[:MAX_MADE]
+        except OSError:
+            continue
+    return None
+
+
 def _one_turn(exe, ask, model, timeout):
-    """One headless Antigravity turn. Returns (image bytes or None, the conversation it opened, what it said)."""
+    """One headless Antigravity turn, in an empty folder made for it and removed afterwards. Returns (image bytes or
+    None, the conversation it opened, Antigravity's own error output)."""
+    import secrets, time
     from rbxpaths import no_window
     line = json.dumps({"event": "user", "message": {"content": ask}}) + "\n"
-    folder = os.path.join(WORK, "antigravity", "textures")
-    os.makedirs(folder, exist_ok=True)
-    args = [exe, "--input-format", "stream-json", "--output-format", "stream-json"] + (["--model", model] if model else [])
+    folder = os.path.join(turns_dir(), "turns", secrets.token_hex(8))
+    args = [exe, "--input-format", "stream-json", "--output-format", "stream-json", "--settings", json.dumps({"permissions": {"deny": WRAPPER_DENY}})]
+    if flash_model(model):
+        args += ["--model", model]
+    started = time.time()
     try:
-        p = subprocess.run(args, input=line.encode("utf-8"), capture_output=True, timeout=timeout, cwd=folder, creationflags=no_window())
+        os.makedirs(folder)
+        p = subprocess.run(args, input=line.encode("utf-8"), capture_output=True, timeout=max(1, timeout), cwd=folder, creationflags=no_window())
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Antigravity took longer than %d minutes to make the image." % (timeout // 60))
+        raise RuntimeError("Antigravity took too long to make the image, so it was ended. Try once more later.")
     except OSError as e:
-        raise RuntimeError("Antigravity could not be started (%s)." % e)
+        raise RuntimeError("Antigravity could not be started (%s)." % (e.strerror or type(e).__name__))
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
     reply, conversation, errors = "", "", []
     for raw in p.stdout.decode("utf-8", "replace").splitlines():
         try:
@@ -177,45 +246,47 @@ def _one_turn(exe, ask, model, timeout):
             continue
         if not isinstance(e, dict):
             continue
-        conversation = e.get("conversation_id") or conversation
+        # the conversation this turn opened: the one its first line names
+        conversation = conversation or str(e.get("conversation_id") or "")
         if e.get("event") == "result":
-            r = e.get("result") or {}
-            reply = r.get("response") or ""
+            r = e.get("result") if isinstance(e.get("result"), dict) else {}
+            reply = str(r.get("response") or "")
             err = r.get("error")
-            errors.append(err.get("message") or json.dumps(err) if isinstance(err, dict) else str(err or ""))
-    paths = [m.group(0).strip() for m in IMAGE_PATH.finditer(reply)]
-    # if the answer did not name the file, it is the newest image in this conversation's own folder
-    brain = os.path.join(brain_dir(), conversation)
-    if conversation and os.path.isdir(brain):
-        made = [os.path.join(brain, f) for f in os.listdir(brain) if f.lower().endswith(IMAGE_ENDINGS)]
-        paths += sorted(made, key=os.path.getmtime, reverse=True)
-    for path in paths:
-        if os.path.isfile(path):
-            with open(path, "rb") as f:
-                return f.read(), conversation, ""
-    said = "\n".join(x for x in [p.stderr.decode("utf-8", "replace").strip()] + errors + [reply.strip()] if x)
-    return None, conversation, said
+            errors.append(str(err.get("message") or "") if isinstance(err, dict) else str(err or ""))
+    raw = _made_in(conversation, [m.group(0).strip() for m in IMAGE_PATH.finditer(reply)], started)
+    if raw is not None:
+        return raw, conversation, ""
+    return None, conversation, "\n".join(x for x in [p.stderr.decode("utf-8", "replace").strip()] + errors if x)
 
 
 def antigravity_image(exe, prompt, timeout=420, aspect="1:1", model=None):
     """Have Antigravity generate one image and return its bytes.
 
-    It is run without its own interface and given no permissions beyond its defaults, so it can make the
-    image and nothing else. It answers with the path of the file it wrote. `aspect` is the shape asked for
-    ("1:1", "16:9", ...); the model keeps to it only roughly, so the caller crops. The turn runs on `model`, or on
-    the cheapest Flash model agy lists.
+    It is run without its own interface, in an empty folder of the app's own, and told it may run no command and
+    write no file, so it can make the image and nothing else. The picture is taken only from Antigravity's own
+    folder for the conversation the turn opened. `aspect` is the shape asked for ("1:1", "16:9", ...); the model
+    keeps to it only roughly, so the caller crops. The turn runs on `model`, or on the cheapest Flash model agy
+    lists. `timeout` is for the whole call, the question about models and a second try included.
     """
+    import time
+    deadline = time.monotonic() + timeout
+    left = lambda: deadline - time.monotonic()
+    # (measured: agy's image helper looks at its own picture and may make a second one unasked, which costs the plan
+    # twice; whether these words stop it was not measured)
     ask = ("Use your generate_image tool exactly once to make this image, then reply with only the full path of the image file "
-           "it produced. Do nothing else and do not edit the image. Image: %s. %s" % (_shape_words(aspect), prompt))
-    model = model or cheapest_model(exe)
-    raw, conversation, said = _one_turn(exe, ask, model, timeout)
-    if raw is None and model and not conversation and not _why_no_image(said):
-        # agy would not start a turn on that model (it never opened a conversation): once more on its own default
-        _forget_model()
-        raw, conversation, said = _one_turn(exe, ask, None, timeout)
+           "it produced. Do nothing else and do not edit the image. One image only: whoever makes it does not judge it, "
+           "redo it or make a second version. Image: %s. %s" % (_shape_words(aspect), prompt))
+    model = model if flash_model(model) else cheapest_model(exe, timeout=min(30, left()))
+    raw, conversation, errors = _one_turn(exe, ask, model, left())
+    if raw is None and model and not conversation and not _why_no_image(errors) and left() > 60:
+        # agy would not start a turn on that model (it never opened a conversation): once more on its own default,
+        # and no model is named for the rest of the day
+        _remember_model(exe, "")
+        raw, conversation, errors = _one_turn(exe, ask, None, left())
     if raw is not None:
         return raw
-    raise RuntimeError(_why_no_image(said) or "Antigravity did not produce an image%s" % ((": " + said[:200]) if said else "."))
+    raise RuntimeError(_why_no_image(errors) or "Antigravity did not produce an image this time. Try once more; if it "
+                                               "fails again, tell the user and carry on without it.")
 
 
 def _post(path, body, key, timeout=180):

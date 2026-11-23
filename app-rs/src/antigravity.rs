@@ -128,11 +128,17 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     let mut args: Vec<String> = ["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"].iter().map(|a| a.to_string()).collect();
     // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
     let mut deny = denied();
+    // nor is the workspace's own list of tool servers: agy starts whatever that list names, and the app keeps the
+    // entries it did not make (`write_servers`). The kept path protects it too (`GeminiLaunch::new`). Measured in
+    // Ask me (`commands-refused-softly-and-own-server-list.ndjson`): the write was refused, the turn went on, and
+    // another file in the workspace was written.
+    deny.extend(own_list(workspace));
     if !full {
         // A command needs approval nobody is there to give, and a step refused for that ends the turn at once
         // ("auto-denied", `explain`). Refused by a rule of ours instead, the model is told no and the turn carries
-        // on (measured, agy 1.5.15: `tests/fixtures/gemini/command-refused-softly-then-image.ndjson`). The programs
-        // the user allowed are not handed to agy: it runs commands through zsh, which reads the user's `.zshenv`.
+        // on (measured, agy 1.5.15: `tests/fixtures/gemini/command-refused-softly-then-image.ndjson`; a command with
+        // a path, one with a pipe and one with `&&` likewise, in the recording named above). The programs the user
+        // allowed are not handed to agy: it runs commands through zsh, which reads the user's `.zshenv`.
         deny.push(COMMANDS_REFUSED.into());
     }
     args.push(json!({"permissions": {"allow": allowed, "deny": deny}}).to_string());
@@ -154,6 +160,18 @@ const COMMANDS_REFUSED: &str = "command(*)";
 /// covers a folder's contents as its grants do.
 fn denied() -> Vec<String> {
     crate::paths::app_protected().into_iter().map(|(p, _)| format!("write_file({})", p.display())).collect()
+}
+
+/// The deny rules for the workspace's list of tool servers (`.agents/mcp_config.json`): by the path as the app has
+/// it, and by the path with links followed where that is another (agy names a file by its real path: a Mac's /tmp is
+/// /private/tmp).
+fn own_list(workspace: &Path) -> Vec<String> {
+    let list = |ws: &Path| ws.join(".agents").join("mcp_config.json");
+    let mut paths = vec![list(workspace)];
+    if let Some(real) = fs::canonicalize(workspace).ok().filter(|r| r != workspace) {
+        paths.push(list(&real));
+    }
+    paths.iter().map(|p| format!("write_file({})", p.display())).collect()
 }
 
 /// Add our servers to the workspace's list, leaving any the user put there.
@@ -313,6 +331,8 @@ pub fn conversation_dir(data: &Path, conversation: &str) -> Option<PathBuf> {
 }
 
 const PICTURE_ENDINGS: [&str; 4] = [".png", ".jpg", ".jpeg", ".webp"];
+/// The largest file shown as a generated picture (agy's are under a megabyte).
+const PICTURE_CAP: u64 = 20 * 1024 * 1024;
 
 /// The pictures Antigravity's own image tool makes during a turn. No event names the file (the tool runs in a helper
 /// of agy's, and only the model's words say where the picture went), so the conversation's folder is looked at: an
@@ -334,7 +354,10 @@ impl Generated {
 
     fn images(dir: &Path) -> Vec<PathBuf> {
         let is_picture = |p: &PathBuf| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| PICTURE_ENDINGS.iter().any(|e| n.to_lowercase().ends_with(e)));
-        let mut found: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| is_picture(p) && p.is_file()).collect();
+        // a plain file of a size a picture has: never a link (it may name any file) and nothing over the cap, which
+        // would be read whole to be shown
+        let plain = |p: &PathBuf| p.symlink_metadata().is_ok_and(|m| m.file_type().is_file() && m.len() <= PICTURE_CAP);
+        let mut found: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| is_picture(p) && plain(p)).collect();
         found.sort();
         found
     }
@@ -501,7 +524,11 @@ mod tests {
         let s = settings(&ask);
         let deny = texts(&s["permissions"]["deny"]);
         assert!(deny.iter().any(|d| d == "command(*)"), "{deny:?}");
-        assert!(deny.iter().any(|d| d.starts_with("write_file(")), "the app's own files stay refused: {deny:?}");
+        assert!(deny.iter().any(|d| d.starts_with("write_file(") && d.contains("chats")), "the app's own files stay refused: {deny:?}");
+        // nor its own list of tool servers (agy starts what that names), where agy runs its image tool, or the count
+        let own = format!("write_file({})", ws.join(".agents").join("mcp_config.json").display());
+        assert!(deny.contains(&own), "{deny:?}");
+        assert!(deny.contains(&format!("write_file({})", paths::work("antigravity").display())), "{deny:?}");
         // the app's two tool servers and nothing else: no program is handed to agy, also not one the user allowed
         let mut allow = texts(&s["permissions"]["allow"]);
         allow.sort();
@@ -511,8 +538,21 @@ mod tests {
         let full = turn_args(&ws, &servers, None, None, None, true);
         let deny = texts(&settings(&full)["permissions"]["deny"]);
         assert!(!deny.iter().any(|d| d.starts_with("command(")), "{deny:?}");
-        assert!(deny.iter().any(|d| d.starts_with("write_file(")));
+        assert!(deny.iter().any(|d| d.starts_with("write_file(")) && deny.contains(&own), "{deny:?}");
         assert!(full.iter().any(|a| a == "--dangerously-skip-permissions"));
+        // a workspace reached through a link is named both ways (agy names a file by its real path)
+        #[cfg(unix)]
+        {
+            let real = paths::test_dir("agy-args-real");
+            fs::create_dir_all(&real).unwrap();
+            let link = paths::test_dir("agy-args-link");
+            let _ = fs::remove_file(&link);
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let deny = texts(&settings(&turn_args(&link, &servers, None, None, None, false))["permissions"]["deny"]);
+            for ws in [link.clone(), fs::canonicalize(&real).unwrap()] {
+                assert!(deny.contains(&format!("write_file({})", ws.join(".agents").join("mcp_config.json").display())), "{deny:?}");
+            }
+        }
     }
 
     fn picture(path: &Path, seconds_old: u64) {
@@ -546,8 +586,14 @@ mod tests {
         assert!(matches!(&outs[..], [Out::Conversation(_), Out::Tool(n)] if n == "generate_image"), "named as the tool it is");
         let outs = t.feed(&step(3, "DONE", "subagent", helper));
         assert!(!outs.iter().any(|o| matches!(o, Out::Tool(_))) && pictures(&outs).is_empty(), "once, and no picture yet");
-        // the picture arrives while the model waits; the next finished step shows it, once
+        // the picture arrives while the model waits; the next finished step shows it, once. A link is never
+        // followed (it may name any file) and a file too large to be a picture is not read
         picture(&dir.join("red_apple_2.jpg"), 10);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("earlier_1.jpg"), dir.join("linked_4.jpg")).unwrap();
+        let huge = fs::File::create(dir.join("huge_5.png")).unwrap();
+        huge.set_len(PICTURE_CAP + 1).unwrap();
+        huge.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(10)).unwrap();
         assert!(pictures(&t.feed(&step(5, "ACTIVE", "tool", json!({"tool_name": "schedule"})))).is_empty(), "a step that is not over");
         assert_eq!(pictures(&t.feed(&step(5, "DONE", "tool", json!({"tool_name": "schedule"})))), [dir.join("red_apple_2.jpg").display().to_string()]);
         assert!(pictures(&t.feed(&step(6, "DONE", "agent_response", json!({})))).is_empty());

@@ -15,9 +15,9 @@ How to work:
   spacing do the work; no rainbow gradients, thick black strokes or bubbly fonts unless GAME.md asks for that look.
 - Follow `ui-design`: look at what exists, build with `ui-helpers`, run `ui-audit`, capture, repair. Then do the
   `unslop` passes on each screen before calling it finished.
-- UI art (a panel background, an item picture) may be AI-generated at the exact size with rbx_image, on the user's own
-  Gemini plan through Antigravity (on Gemini, your own generate_image and then rbx_image `keep` works too). No
-  lettering in it, never another game's characters or art, and you do not upload it: name each file in the report.
+- rbx_image generates UI art at an exact size (`transparent: true` cuts a hard-edged subject out). Each one costs the
+  user's Gemini plan: a few, not batches. No lettering, never another game's art. A generated picture needs an upload
+  before the game can use it, and that follows the upload rules (the user's OK): until then, leave a labelled slot.
 - Wire buttons to the remotes and modules your brief and GAME.md's Technical notes name. Do not write server code.
 - Take rbx_studio_lock before a playtest, a capture or a bulk change and release it as soon as you finish.
 
@@ -30,6 +30,6 @@ landscape (nothing under the thumbstick or jump button, touch targets at least 4
 
 Hand back a complete report: the ScreenGuis and scripts created (full paths), the audit result, the lines to add to
 GAME.md's UI inventory, what is unfinished or assumed, and a screen_capture of each screen at phone and PC size with
-every saved file path named so the Lead can file them. Never start other agents, publish, spend, or delete the user's
-work. Do not file review items; the Lead does. If you learned something reusable, save it with rbx_stage action
-`lesson`.
+every saved file path named so the Lead can file them. Never start other agents, publish, spend money or Robux, or
+delete the user's work. Do not file review items; the Lead does. If you learned something reusable, save it with
+rbx_stage action `lesson`.
