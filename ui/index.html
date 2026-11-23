@@ -2051,6 +2051,9 @@ function onEvent(e) {
     studioWaitLine(p, !!e.value);
   } else if (e.kind === "renamed") {
     p.name = e.name;
+  } else if (e.kind === "account") {
+    /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
+    p.account = e.account; if (p.id === current) paintModel();
   } else if (e.kind === "queued") {
     paintQueue(p, e.items || [], !!e.paused, !!e.kept);
   } else if (e.kind === "user") {
@@ -2563,6 +2566,42 @@ function aiNotice(ai) {
   return n;
 }
 let noticePresses = 0;
+/* A second account for an AI (status.ai.accounts, Claude today): a sign-in of Fridae's own for the same tool, which a
+   chat moves to when the first account runs out of usage. In a chat, a few words say which account it is on, only
+   while there is a second one. */
+function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }
+function accountWords(ai, p) { return accountOf(ai).exists && p && p.account ? " · account " + p.account : ""; }
+/* Its line in Setup, under the AI's own: Add; then its sign-in (the same line and buttons as any sign-in) or who is
+   signed in, and Remove. Your own account is never changed from here. */
+function secondAccountRow(ai) {
+  const id = ai + "2", acc = accountOf(ai), s = signInOf(id), line = signInLine(id), waiting = ((s.login || {}).state === "waiting");
+  const row = el("div", "g-row oc-row");
+  row.innerHTML = "<b>Second account</b><small></small><div class=\"act\"></div>";
+  row.querySelector("small").textContent = !acc.exists ? (sgError[id] || "None. Add one to carry on when the first runs out of usage.")
+    : line.text ? line.text
+    : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + ((acc.used || [])[1] ? " Out of usage for now." : "")
+    : "Checking the sign-in...";
+  const act = row.querySelector(".act");
+  if (!acc.exists) act.appendChild(accountButton(ai, "Add", "add"));
+  else {
+    line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
+    if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove"));
+  }
+  return row;
+}
+/* Add makes the app's folder for the second account and starts the tool's sign-in for it (its page opens in your
+   browser); Remove deletes that folder. */
+function accountButton(ai, label, action) {
+  const b = el("button", "pill sm", esc(label)), id = ai + "2";
+  b.onclick = async () => {
+    b.disabled = true; noticePresses++;
+    let r = null; try { r = await api("/api/accounts", { ai, action }); } catch (e) {}
+    sgConfirm[id] = null;
+    sgError[id] = !r ? "Could not reach the app. Try again." : r.ok === false && action === "add" ? (r.error || "The second account could not be added.") + " Try again." : "";
+    await refresh(); watchOpenCode();
+  };
+  return b;
+}
 /* Your own sign-in to Claude Code, Cursor and Gemini, as the app has it from each tool (status.ai.sign_in: state
    "in", "out" or "unknown", who, and the sign-in started here). What it needs from you now, as one plain line and its
    buttons; nothing to say (signed in, not known yet, or no sign-in offered on this computer): no text. There is no
@@ -2617,7 +2656,7 @@ function paintNotice(slot, ai) {
 function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen), ownEffort = ownLevel(ai, chosen);
-  $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "");
+  $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p);
   $("model").title = [aiName(ai), cur ? cur[1] : "", ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message.";
   paintGap(ai, p);
   if ($("settings-panel").classList.contains("on")) paintPicker();
@@ -3869,7 +3908,7 @@ async function switchAi(id) {
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
 function paintAi() {
   const ai = status.ai || {}, have = ai.installed || {};
-  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, ai.sign_in || null, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.outerHTML : ""; })]);
+  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, ai.sign_in || null, ai.accounts || null, noticePresses, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.outerHTML : ""; })]);
   if (paintAi.sig === sig) return;
   paintAi.sig = sig;
   $("ai-default").innerHTML = ""; $("ai-list").innerHTML = "";
@@ -3888,6 +3927,7 @@ function paintAi() {
     paintNotice(row.querySelector(".notice"), id);
     $("ai-list").appendChild(row);
     if (id === "opencode" && have[id]) $("ai-list").appendChild(openCodeRow());
+    if (have[id] && accountOf(id).offered) $("ai-list").appendChild(secondAccountRow(id));
   });
 }
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in

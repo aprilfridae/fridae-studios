@@ -161,6 +161,7 @@ fn status() -> Value {
                "caps": crate::caps::table(),
                "opencode": opencode::state(),
                "sign_in": crate::signin::state(),
+               "accounts": crate::accounts::state(),
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
@@ -311,6 +312,24 @@ fn post(path: &str, body: Value) -> Reply {
                     send_json(json!({"ok": true}))
                 }
                 None => send_json(json!({"ok": false})),
+            }
+        }
+        // a second account for an AI (Setup, Connections): Add makes the app's folder for it and starts the tool's
+        // sign-in there; Remove deletes that folder. Only from the page: the setting is guarded.
+        "/api/accounts" => {
+            let ai = text_of("ai");
+            let id = format!("{ai}2");
+            match text_of("action").as_str() {
+                "add" => match crate::accounts::add(&ai) {
+                    Ok(_) => send_json(crate::signin::login_start(&id, false)),
+                    Err(why) => send_json(json!({"ok": false, "error": why})),
+                },
+                "remove" if crate::accounts::AIS.contains(&ai.as_str()) => {
+                    crate::signin::forget(&id);
+                    crate::accounts::remove(&ai);
+                    send_json(json!({"ok": true}))
+                }
+                _ => send_json(json!({"ok": false})),
             }
         }
         // the user's own sign-in to Claude Code, Cursor or Gemini: start the tool's sign-in, end one that waits, or

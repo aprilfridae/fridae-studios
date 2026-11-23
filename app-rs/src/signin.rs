@@ -55,6 +55,31 @@ use crate::{
 /// The AIs whose sign-in is the user's own.
 pub const AIS: [&str; 3] = ["claude", "cursor", "gemini"];
 
+/// A second account's sign-in (`accounts`): the same tool, asked and signed in the same way, in the app's own folder
+/// for it. The one sign-in here that is not the user's own outside Fridae.
+pub const SECOND: [&str; 1] = ["claude2"];
+
+/// Every sign-in the app knows: the three AIs' own, then the second accounts'.
+fn ids() -> impl Iterator<Item = &'static str> {
+    AIS.into_iter().chain(SECOND)
+}
+
+/// The AI a sign-in belongs to ("claude2" is Claude's second account).
+pub fn tool(id: &str) -> &str {
+    match id {
+        "claude2" => "claude",
+        other => other,
+    }
+}
+
+/// A sign-in's name in a line the user reads.
+fn name(id: &str) -> String {
+    match id {
+        "claude2" => "Claude's second account".to_string(),
+        other => crate::expert_ai::ai_name(other).to_string(),
+    }
+}
+
 /// How long the last answer stands before the tool is asked again by itself: one that says "signed in" for half an
 /// hour, anything else for five minutes (the user may be signing in from a terminal meanwhile).
 const AGAIN_SIGNED_IN: Duration = Duration::from_secs(30 * 60);
@@ -110,15 +135,29 @@ struct Entry {
 static STATE: Mutex<Option<HashMap<&'static str, Entry>>> = Mutex::new(None);
 
 fn with<R>(ai: &str, f: impl FnOnce(&mut Entry) -> R) -> Option<R> {
-    let key = AIS.iter().find(|a| **a == ai)?;
+    let key = ids().find(|a| *a == ai)?;
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
     Some(f(g.get_or_insert_with(HashMap::new).entry(key).or_default()))
 }
 
-/// Whether the app offers to sign this AI in: one of the three, and not on Windows (not measured there: the lines
-/// keep saying what they said before).
-pub fn offered(ai: &str) -> bool {
-    AIS.contains(&ai) && !cfg!(windows)
+/// Whether the app offers this sign-in: one of the three AIs' own, or a second account that exists, and not on
+/// Windows (not measured there: the lines keep saying what they said before).
+pub fn offered(id: &str) -> bool {
+    if cfg!(windows) {
+        return false;
+    }
+    AIS.contains(&id) || (SECOND.contains(&id) && crate::accounts::folder(tool(id)).is_some())
+}
+
+/// Whether the tool last said that somebody is signed in (for a second account: whether it can take a chat).
+pub fn signed_in(id: &str) -> bool {
+    with(id, |e| matches!(e.known, Known::In(_))).unwrap_or(false)
+}
+
+/// A sign-in is gone (a second account was removed): one that waits is ended, and what was known is forgotten.
+pub fn forget(id: &str) {
+    end_login(id);
+    with(id, |e| *e = Entry::default());
 }
 
 // ------------------------------------------------------------- who is signed in
@@ -190,7 +229,7 @@ fn due(known: &Known, asked_ago: Option<Duration>, asking: bool, logging_in: boo
 /// Ask a tool who is signed in, in the background. `now`: whatever the age of the last answer (at start, after a
 /// sign-in, after a turn that failed as signed out); otherwise only when `due`.
 pub fn check(ai: &str, now: bool) {
-    let Some(ai) = AIS.iter().copied().find(|a| *a == ai) else { return };
+    let Some(ai) = ids().find(|a| *a == ai) else { return };
     let go = with(ai, |e| {
         if now && e.asking {
             e.again = true;
@@ -293,38 +332,43 @@ fn ask(ai: &str) -> Answer {
         if !offered(ai) {
             return Answer::default();
         }
-        let Some(exe) = paths::find_ai(ai) else { return Answer::default() };
+        let Some(exe) = paths::find_ai(tool(ai)) else { return Answer::default() };
         let mut cmd = Command::new(exe);
-        cmd.args(if ai == "claude" { &["auth", "status", "--json"][..] } else { &["status", "--format", "json"][..] });
-        tool_env(&mut cmd, ai);
+        cmd.args(if tool(ai) == "claude" { &["auth", "status", "--json"][..] } else { &["status", "--format", "json"][..] });
+        if !tool_env(&mut cmd, ai) {
+            return Answer::default();
+        }
         // (Claude Code ends with code 1 when nobody is signed in: its answer is read either way)
         let Some((out, _, _)) = run_limited(cmd, CHECK_WAIT) else { return Answer::default() };
-        if ai == "claude" { parse_claude(&out) } else { parse_cursor(&out) }
+        if tool(ai) == "claude" { parse_claude(&out) } else { parse_cursor(&out) }
     }
 }
 
 /// The environment a turn of this AI gets, for its status and its sign-in: the same keys kept or passed
-/// (`paths::child_env`), and for Cursor the app's own config and data folders a Cursor turn runs with.
-fn tool_env(cmd: &mut Command, ai: &str) {
-    match ai {
+/// (`paths::child_env`), for Cursor the app's own config and data folders a Cursor turn runs with, and for a second
+/// account its own folder. False when that folder is not there: the command must then not be run at all, since
+/// without it the tool would ask about, or sign in, the user's own account.
+fn tool_env(cmd: &mut Command, id: &str) -> bool {
+    match tool(id) {
         "cursor" => crate::cursor::environment(cmd),
-        _ => paths::child_env(cmd, ai),
+        ai => paths::child_env(cmd, ai),
     }
-    if ai == "gemini" && let Some(h) = antigravity::home_override() {
+    if id == "gemini" && let Some(h) = antigravity::home_override() {
         cmd.env("HOME", h);
     }
+    !SECOND.contains(&id) || crate::accounts::env(cmd, tool(id), 2)
 }
 
 /// At start: every tool is asked once.
 pub fn start() {
-    for ai in AIS {
+    for ai in ids() {
         check(ai, true);
     }
 }
 
 /// From the page's status: each tool is asked again when its last answer is old enough (`due`).
 pub fn refresh() {
-    for ai in AIS {
+    for ai in ids() {
         check(ai, false);
     }
 }
@@ -338,8 +382,10 @@ pub struct Failure {
     pub sign_in: bool,
 }
 
-/// Claude Code's line for "nobody is signed in", in the app's words.
+/// Claude Code's line for "nobody is signed in", in the app's words: for the user's own account, and for a chat that
+/// runs on the second one.
 const CLAUDE_SIGNED_OUT: &str = "Claude is not signed in. Sign in, then send your message again.";
+const CLAUDE2_SIGNED_OUT: &str = "Claude's second account is not signed in. Sign in, then send your message again.";
 
 /// A failed turn's words as the chat shows them. Only Claude Code's plain "Not logged in" becomes the app's own line.
 /// Its other lines that end in "Please run /login" (a key that is not valid, an account without access, a gateway's
@@ -353,8 +399,8 @@ fn failure_of(ai: &str, said: &str, by_key: bool, offered: bool) -> Failure {
         return as_said(false);
     }
     let low = said.trim().to_lowercase();
-    match ai {
-        "claude" if low.starts_with("not logged in") => Failure { text: CLAUDE_SIGNED_OUT.to_string(), sign_in: true },
+    match tool(ai) {
+        "claude" if low.starts_with("not logged in") => Failure { text: if ai == "claude2" { CLAUDE2_SIGNED_OUT } else { CLAUDE_SIGNED_OUT }.to_string(), sign_in: true },
         "claude" if low.contains("please run /login") => as_said(!by_key),
         "cursor" => as_said(said == crate::cursor::SIGNED_OUT),
         "gemini" => as_said(said == antigravity::SIGNED_OUT),
@@ -440,14 +486,16 @@ fn login_command(ai: &str) -> Result<Command, String> {
     };
     #[allow(unreachable_code)]
     {
-        let exe = paths::find_ai(ai).ok_or_else(|| format!("{} is not installed.", crate::expert_ai::ai_name(ai)))?;
+        let exe = paths::find_ai(tool(ai)).ok_or_else(|| format!("{} is not installed.", crate::expert_ai::ai_name(tool(ai))))?;
         let mut cmd = Command::new(exe);
-        cmd.args(match ai {
+        cmd.args(match tool(ai) {
             "claude" => &["auth", "login"][..],
             "cursor" => &["login"][..],
             _ => &["acp"][..],
         });
-        tool_env(&mut cmd, ai);
+        if !tool_env(&mut cmd, ai) {
+            return Err("The second account's folder is not there. Remove it in Setup and add it again.".to_string());
+        }
         Ok(cmd)
     }
 }
@@ -455,11 +503,13 @@ fn login_command(ai: &str) -> Result<Command, String> {
 /// What the button says instead of starting, when the tool does not say plainly that nobody is signed in: a sign-in
 /// that is there is the user's own, also outside Fridae, and finishing a new one replaces it.
 fn confirm_line(ai: &str, known: &Known) -> String {
-    let name = crate::expert_ai::ai_name(ai);
+    let name = name(ai);
+    // a second account's sign-in is the app's own: it is replaced here only
+    let also = if SECOND.contains(&ai) { "" } else { ", also outside Fridae" };
     match known {
-        Known::In(Some(who)) => format!("{name} says it is signed in as {who}. Signing in again replaces that sign-in, also outside Fridae. Press again to go on."),
-        Known::In(None) => format!("{name} says it is signed in. Signing in again replaces that sign-in, also outside Fridae. Press again to go on."),
-        _ => format!("Fridae could not tell whether {name} is signed in. Signing in replaces a sign-in that is there, also outside Fridae. Press again to go on."),
+        Known::In(Some(who)) => format!("{name} says it is signed in as {who}. Signing in again replaces that sign-in{also}. Press again to go on."),
+        Known::In(None) => format!("{name} says it is signed in. Signing in again replaces that sign-in{also}. Press again to go on."),
+        _ => format!("Fridae could not tell whether {name} is signed in. Signing in replaces a sign-in that is there{also}. Press again to go on."),
     }
 }
 
@@ -471,7 +521,7 @@ fn confirm_line(ai: &str, known: &Known) -> String {
 /// button beside a failed message is there while the tool may still say "signed in". A press while a sign-in waits
 /// ends that one and starts afresh, so a page that was closed opens again (two clicks in quick succession are one).
 pub fn login_start(ai: &str, sure: bool) -> Value {
-    let Some(ai) = AIS.iter().copied().find(|a| *a == ai).filter(|a| offered(a)) else { return json!({"ok": false, "error": "Fridae cannot start that sign-in here."}) };
+    let Some(ai) = ids().find(|a| *a == ai).filter(|a| offered(a)) else { return json!({"ok": false, "error": "Fridae cannot start that sign-in here."}) };
     match with(ai, |e| (e.login.state == "waiting").then(|| e.login.since.map(|t| t.elapsed()).unwrap_or_default())).flatten() {
         Some(age) if age < SAME_CLICK => return login_state(ai),
         Some(_) => end_login(ai),
@@ -511,7 +561,7 @@ pub fn login_start(ai: &str, sure: bool) -> Value {
         paths::own_group(&mut cmd);
         let child = match cmd.start() {
             Ok(c) => c,
-            Err(err) => return json!({"ok": false, "error": format!("Could not start {}: {err}", crate::expert_ai::ai_name(ai))}),
+            Err(err) => return json!({"ok": false, "error": format!("Could not start {}: {err}", crate::expert_ai::ai_name(tool(ai)))}),
         };
         procs::record("signin", child.id());
         e.login = Login { pid: Some(child.id()), state: "waiting", message: String::new(), since: Some(Instant::now()) };
@@ -619,7 +669,7 @@ pub fn login_cancel(ai: &str) {
 
 /// When the app quits: no sign-in is left waiting.
 pub fn shut_down() {
-    for ai in AIS {
+    for ai in ids() {
         end_login(ai);
     }
 }
@@ -636,7 +686,7 @@ fn state_of(e: &Entry, offered: bool, kept_key: bool) -> Value {
 /// Whether a key for this AI is set on this computer and kept from it (the Setup switch "Use API keys from my
 /// environment" is off): then "not signed in" may only want that switch.
 fn kept_key(ai: &str) -> bool {
-    offered(ai) && !paths::env_keys_on() && !paths::env_keys_present(ai).is_empty()
+    offered(ai) && !paths::env_keys_on() && !paths::env_keys_present(tool(ai)).is_empty()
 }
 
 /// Where one AI's sign-in stands, for the page.
@@ -651,7 +701,7 @@ pub fn login_state(ai: &str) -> Value {
 /// `message`).
 pub fn state() -> Value {
     let mut out = serde_json::Map::new();
-    for ai in AIS {
+    for ai in ids() {
         out.insert(ai.to_string(), with(ai, |e| state_of(e, offered(ai), kept_key(ai))).unwrap_or(Value::Null));
     }
     Value::Object(out)
@@ -783,6 +833,10 @@ mod tests {
         assert_eq!(failure_of("cursor", crate::cursor::SIGNED_OUT, false, true), app(crate::cursor::SIGNED_OUT));
         assert_eq!(failure_of("gemini", antigravity::SIGNED_OUT, false, true), app(antigravity::SIGNED_OUT));
         assert_eq!(failure_of("cursor", "Cursor could not run this message.", false, true), as_said("Cursor could not run this message.", false));
+        // a chat on Claude's second account: the same words mean that account, and the button signs that one in
+        assert_eq!(failure_of("claude2", "Not logged in \u{b7} Please run /login", false, true), app("Claude's second account is not signed in. Sign in, then send your message again."));
+        assert_eq!(confirm_line("claude2", &Known::In(None)), "Claude's second account says it is signed in. Signing in again replaces that sign-in. Press again to go on.");
+        assert_eq!(confirm_line("claude", &Known::In(None)), "Claude says it is signed in. Signing in again replaces that sign-in, also outside Fridae. Press again to go on.");
         // OpenCode has its own sign-in and its own lines; ChatGPT is not offered; nor is anything on Windows
         assert_eq!(failure_of("opencode", "Not logged in", false, false), as_said("Not logged in", false));
         assert_eq!(failure_of("claude", "Not logged in \u{b7} Please run /login", false, false), as_said("Not logged in \u{b7} Please run /login", false));
@@ -847,8 +901,11 @@ mod tests {
         assert_eq!(state_of(&Entry::default(), false, false)["state"], "unknown");
         // every one of the three is in the status, and nothing else
         let all = state();
-        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "cursor", "gemini"]);
+        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude2", "cursor", "gemini"]);
         assert!(offered("claude") == !cfg!(windows) && !offered("opencode") && !offered("chatgpt"));
+        // a second account's sign-in is offered only once that account exists, and is Claude's own tool
+        assert!(!offered("claude2") && all["claude2"]["offered"] == false && tool("claude2") == "claude" && tool("cursor") == "cursor");
+        assert_eq!(login_start("claude2", true)["ok"], false, "no second account: nothing to sign in");
         // a sign-in for anything else is never started
         assert_eq!(login_start("opencode", true)["ok"], false);
         assert_eq!(login_start("../x", true)["ok"], false);
@@ -857,7 +914,7 @@ mod tests {
     /// A stand-in tool for the tests below, and the state as a fresh app has it.
     #[cfg(unix)]
     fn stand_in(status: Known, login: Option<&str>) {
-        *STAND_IN.lock().unwrap() = Some(StandIn { status: AIS.iter().map(|a| (*a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
+        *STAND_IN.lock().unwrap() = Some(StandIn { status: ids().map(|a| (a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 

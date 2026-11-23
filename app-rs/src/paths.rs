@@ -604,6 +604,8 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     // written through: a helper must not be able to put words there that the Lead reads as the app's
     out.push((w.join("team-models.json"), false));
     out.push((w.join("team-models.tmp"), false));
+    // the second accounts' folders (`accounts`): who pays for a turn is never an agent's to change
+    out.push((crate::accounts::base(), true));
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
     // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;
@@ -684,11 +686,13 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `projects`: the games, whose folders the AIs are given
 /// - `plugin_token`: the Studio plugin's secret
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
+/// - `second_accounts`: whether an AI has a second account, and the name of the app's folder for it (`accounts`):
+///   which account pays for a turn
 /// - `opencode_model`, `opencode_model_signed_in`: the model every OpenCode chat and expert runs on when none is
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -702,6 +706,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "plugin_token" => "Studio plugin link",
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
+        "second_accounts" => "Second accounts",
         // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
         "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
         _ => "a setting",
@@ -888,6 +893,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
         "expert_ai" => v.as_object().map(|_| v.clone()),
+        "second_accounts" => crate::accounts::checked_setting(v),
         _ => None,
     };
     if out.is_none() {

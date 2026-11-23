@@ -23,6 +23,7 @@ mod limits;
 mod live;
 mod media;
 mod notes;
+mod accounts;
 mod opencode;
 mod signin;
 mod paths;

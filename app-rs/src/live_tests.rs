@@ -215,6 +215,7 @@ fn settings<'a>(servers: &'a Value, allowed: &'a [String], denied: &'a [String])
         effort: Some("high"),
         work: Path::new("/work"),
         keys_on: false,
+        config_dir: None,
     }
 }
 
@@ -242,6 +243,7 @@ fn the_launch_key_changes_with_everything_a_turn_is_started_with() {
         ("the tool servers (a setting they are handed)", ClaudeSettings { servers: &other_servers, ..base() }),
         ("the tool-server file", ClaudeSettings { mcp_config: Path::new("/work/agent-tools/c2.json"), ..base() }),
         ("the provider-keys switch", ClaudeSettings { keys_on: true, ..base() }),
+        ("the account (the second account's folder)", ClaudeSettings { config_dir: Some(Path::new("/app/accounts/claude-2-abcdef")), ..base() }),
         ("the program", ClaudeSettings { exe: Path::new("/other/claude"), ..base() }),
         ("the kit folder", ClaudeSettings { kit: Path::new("/kit2"), ..base() }),
     ];
@@ -316,7 +318,7 @@ done
         }
 
         fn launch(&self, extra: &[&str]) -> ClaudeLaunch {
-            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new(), keys_on: false }
+            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new(), keys_on: false, config_dir: None }
         }
 
         /// Sends a message the kept way and waits for the turn to end. False: it went to no kept process.

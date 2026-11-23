@@ -563,6 +563,19 @@ fn told_from_log(log: &[Value]) -> (Option<String>, Vec<String>) {
     (swap, told)
 }
 
+/// The account a turn runs on. A chat that has an account keeps it: there is no switching back mid-chat (only a limit
+/// moves it, `rolled`), unless its second account is gone. A chat from before there were accounts, which has a
+/// conversation, is on the user's own. A new chat starts on the first account that is not used up (`accounts::pick`).
+fn account_for(current: u8, has_conversation: bool, second_exists: bool, have: crate::accounts::Have) -> u8 {
+    match current {
+        2 if second_exists => 2,
+        2 => 1,
+        1 => 1,
+        _ if has_conversation => 1,
+        _ => crate::accounts::pick(have),
+    }
+}
+
 /// Whether a message starts a night checkpoint (a plugin pin and a "Before the overnight run" commit). Not for the
 /// loop's own carry-ons, not for a waiting run going on, and not for a message to the Lead of a studio run that already
 /// has its "start" checkpoint (a decision, a reply while it works, Resume): those belong to the same run.
@@ -692,6 +705,9 @@ struct State {
     told: Vec<String>,
     /// For the Lead waiting for this helper's result: the model it really ran on, when not the one set for it.
     model_note: Option<String>,
+    /// Which of its AI's accounts this chat runs on (`accounts`): 0 not decided yet (a chat that has not run), 1 the
+    /// user's own, 2 the second. Decided at the chat's first turn and kept until that account runs out.
+    account: u8,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
     turn_started: f64,
     log_seq: u64,
@@ -1349,6 +1365,9 @@ struct ClaudeLaunch {
     servers: String,
     /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
     keys_on: bool,
+    /// the config folder of the account the turn runs on: None for the user's own, the app's folder for the second
+    /// account (`accounts`). Who is signed in, and so who pays, goes by it.
+    config_dir: Option<std::path::PathBuf>,
 }
 
 /// Everything a Claude Code turn's start depends on, as `send` has it for a message.
@@ -1370,6 +1389,8 @@ struct ClaudeSettings<'a> {
     /// where a chat without a game folder works
     work: &'a std::path::Path,
     keys_on: bool,
+    /// the second account's folder, when the turn runs on it
+    config_dir: Option<&'a std::path::Path>,
 }
 
 impl ClaudeLaunch {
@@ -1401,7 +1422,7 @@ impl ClaudeLaunch {
         }
         // the conversation lives in the project folder when there is one, so the agent works among the game's files
         let cwd = s.project.map(std::path::PathBuf::from).unwrap_or_else(|| s.work.to_path_buf());
-        ClaudeLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), args, cwd, servers: s.servers.to_string(), keys_on: s.keys_on }
+        ClaudeLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), args, cwd, servers: s.servers.to_string(), keys_on: s.keys_on, config_dir: s.config_dir.map(std::path::Path::to_path_buf) }
     }
 
     /// The command: `live` for a process kept open and sent messages as JSON lines (each played back, so a turn's
@@ -1425,12 +1446,17 @@ impl ClaudeLaunch {
         if let Some(h) = claude_home() {
             cmd.env("HOME", h);
         }
+        // the second account: its own config folder, where its sign-in and its conversations are
+        if let Some(dir) = &self.config_dir {
+            cmd.env("CLAUDE_CONFIG_DIR", dir);
+        }
         cmd
     }
 
-    /// Everything a kept process was started with that a later message could need otherwise.
+    /// Everything a kept process was started with that a later message could need otherwise. The account is part of
+    /// it: a process started under one account is never sent a message meant for the other.
     fn key(&self) -> String {
-        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, self.keys_on]).to_string()
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.args.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.cwd, self.servers, self.keys_on, self.config_dir]).to_string()
     }
 }
 
@@ -2454,7 +2480,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "account": st.account, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -2611,7 +2637,8 @@ impl Agent {
             return;
         }
         // (a turn whose usage the AI did not report is logged too, as such: the usage page says so instead of zero)
-        usage::record(&self.ai(), &self.id, self.project().as_deref(), turn, session);
+        let account = self.st.lock().unwrap().account;
+        usage::record(&self.ai(), account, &self.id, self.project().as_deref(), turn, session);
         self.put("usage", turn.json());
     }
 
@@ -2904,6 +2931,7 @@ impl Agent {
             self.st.lock().unwrap().ai = Some(kind.clone());
             self.put("ai", json!({"ai": kind}));
         }
+        let account = self.turn_account(&kind);
         // the AI was switched in a started chat: the new one gets the chat so far with its first message. It is kept
         // until that AI has opened a conversation (`got_session`), so a first turn that fails or is stopped hands it over again.
         // Cursor asked to resume a chat it no longer has (its saved chats were cleared) starts an empty one under that id
@@ -3090,6 +3118,7 @@ impl Agent {
                     effort,
                     work: &PATHS.work,
                     keys_on: paths::env_keys_on(),
+                    config_dir: (account == 2).then(|| crate::accounts::prepare("claude")).flatten().as_deref(),
                 });
                 return self.claude_turn(&launch, &text);
             }
@@ -3814,14 +3843,47 @@ impl Agent {
         self.st.lock().unwrap().model_note.clone()
     }
 
+    /// The account this turn runs on (`account_for`), kept for the chat. A chat that was on a second account which
+    /// has since been removed carries on with the user's own, in a new conversation handed the chat so far.
+    fn turn_account(&self, kind: &str) -> u8 {
+        if !crate::accounts::AIS.contains(&kind) {
+            return 1;
+        }
+        let have = crate::accounts::have(kind, paths::now_secs(), crate::signin::signed_in(&format!("{kind}2")));
+        let exists = crate::accounts::folder(kind).is_some();
+        let (account, was) = {
+            let mut st = self.st.lock().unwrap();
+            let was = st.account;
+            let account = account_for(was, st.session.is_some(), exists, have);
+            if was == 2 && account == 1 {
+                // its conversation was the second account's: this message starts a new one, with the chat so far
+                let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
+                st.handover = Some(same_ai_handover(&handover_text(&st.log[..upto], ai_label(kind), HANDOVER_CAP)));
+                st.session = None;
+            }
+            st.account = account;
+            (account, was)
+        };
+        if account != was && (exists || account == 2 || was == 2) {
+            self.put("account", json!({"account": account}));
+        }
+        account
+    }
+
+    /// The sign-in a failed turn of this chat is about: its AI's own, or the second account's when it runs on that.
+    fn sign_in_id(&self, kind: &str) -> String {
+        if crate::accounts::AIS.contains(&kind) && self.st.lock().unwrap().account == 2 { format!("{kind}2") } else { kind.to_string() }
+    }
+
     /// Why a turn failed, in the chat (`signin::failure`). When the reason is that nobody is signed in to the chat's
     /// AI, the line carries the AI's name for the Sign in button beside it, and the tool is asked again who is signed
     /// in, so the picker and Setup say the same.
     fn put_failure(&self, kind: &str, text: &str) {
-        let f = crate::signin::failure(kind, text);
+        let id = self.sign_in_id(kind);
+        let f = crate::signin::failure(&id, text);
         if f.sign_in {
-            self.put("error", json!({"text": f.text, "sign_in": kind}));
-            crate::signin::turn_failed(kind);
+            self.put("error", json!({"text": f.text, "sign_in": id}));
+            crate::signin::turn_failed(&id);
         } else {
             self.put("error", json!({"text": f.text}));
         }
@@ -4356,6 +4418,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
         st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
+        st.account = d["account"].as_u64().filter(|a| *a <= 2).unwrap_or(0) as u8;
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
         (st.swap_told, st.told) = told_from_log(&st.log);
     }
@@ -4584,7 +4647,8 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
 fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String {
     use sha2::{Digest, Sha256};
     let mut g = guarded.clone();
-    for k in [opencode::PICK_KEY, opencode::PICK_SIGNED_KEY] {
+    // nor is whether Claude has a second account (that is part of Claude's own launch key, as the account's folder)
+    for k in [opencode::PICK_KEY, opencode::PICK_SIGNED_KEY, crate::accounts::SETTING] {
         g.remove(k);
     }
     paths::hex(&Sha256::digest(Value::Object(g).to_string().as_bytes()))
@@ -5012,7 +5076,7 @@ mod tests {
         }
         // Claude's launch hands the entry on as it is, and OpenCode's server is given `send`'s own
         let servers = test_servers(true);
-        let launch = ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false });
+        let launch = ClaudeLaunch::new(&ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false });
         assert!(!launch.key().contains("RBXKIT_CALL_BUDGET") && !launch.key().contains("FRIDAE_TOOL_JOBS"));
         assert_eq!((crate::caps::call_budget("claude", true), crate::caps::call_budget("opencode", false)), (None, None));
         // and only agents on an AI that cuts calls off are told what "not finished yet" means
@@ -6117,6 +6181,36 @@ mod tests {
         for x in [&a, &b, &c, &d] {
             remove_agent(&x.id);
         }
+    }
+
+    #[test]
+    fn a_chat_keeps_its_account_and_a_new_one_starts_on_the_first_that_is_not_used_up() {
+        use crate::accounts::Have;
+        let (free, first_out) = (Have { first_used: false, second_ready: true }, Have { first_used: true, second_ready: true });
+        // a new chat or a new expert: the user's own account, or the second while the first is used up
+        assert_eq!(account_for(0, false, true, free), 1);
+        assert_eq!(account_for(0, false, true, first_out), 2);
+        assert_eq!(account_for(0, false, false, Have { first_used: true, second_ready: false }), 1, "no second account: as before");
+        // a chat from before there were accounts has a conversation on the user's own
+        assert_eq!(account_for(0, true, true, first_out), 1);
+        // a running chat stays where it is: no switching back when the first account has reset, none away on a guess
+        assert_eq!(account_for(2, true, true, free), 2);
+        assert_eq!(account_for(1, true, true, first_out), 1, "only a limit it hits itself moves it (`rolled`)");
+        // its second account was removed in Setup: back to the user's own
+        assert_eq!(account_for(2, true, false, free), 1);
+        // the launch: the second account's folder is given to the tool, and is part of the kept process's key
+        let servers = json!({});
+        let with = |dir: Option<&'static str>| ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, config_dir: dir.map(std::path::Path::new) });
+        let env = |l: &ClaudeLaunch| l.command(false, None).get_envs().find(|(k, _)| *k == "CLAUDE_CONFIG_DIR").and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        assert_eq!(env(&with(None)), None, "the user's own account: Claude Code's own folder, untouched");
+        assert_eq!(env(&with(Some("/app/accounts/claude-2-abcdef"))).as_deref(), Some("/app/accounts/claude-2-abcdef"));
+        assert_ne!(with(None).key(), with(Some("/app/accounts/claude-2-abcdef")).key(), "a kept process is never sent a message meant for the other account");
+        // Gemini's and Cursor's kept processes are not started again because Claude got a second account
+        let mut g = serde_json::Map::new();
+        g.insert("allowed_commands".into(), json!(["git"]));
+        let before = guarded_print(&g);
+        g.insert(crate::accounts::SETTING.into(), json!({"claude": "claude-2-abcdef"}));
+        assert_eq!(guarded_print(&g), before);
     }
 
     #[test]
