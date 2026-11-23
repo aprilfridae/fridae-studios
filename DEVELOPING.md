@@ -721,34 +721,56 @@ every call in time and keeps longer work going as a job. The design is
   chat shows them with the call that handed them over), or the same `NOT FINISHED YET` answer when the budget runs
   out again. Without a job name it takes the chat's only job. `list` shows the jobs; `cancel` ends one with all it
   started. A job that failed gives its error result once, as the tool gave it.
-- **Not jobs**: `rbx_guide`, `rbx_studio_snippet` and `rbx_studio_lock` (instant; answered by the server itself, one
-  at a time). `rbx_team` (its `wait` is already a wait: its timeout is capped two seconds inside the budget, and its
-  own answer says who is still working and to call wait again). `rbx_promo`'s `render` and `job` (renders are the
-  server's own threads and already return a job id: their waits are capped the same way, `_promo_wait`); its other
-  actions are jobs. **A texture waiting for the user is a job**, not a wait that returns: the design says such waits
-  "need no job", but `rbxgen.ask_user` withdraws the user's card the moment it returns, so the wait has to carry on
-  somewhere, and the job is where.
-- **One at a time**: `rbx_blender` (lane `blender`) and `rbx_project`, the one tool that talks to Studio itself (lane
-  `studio`), run one job at a time in the order asked (`LANES`). A second call while one is going is queued: it
-  waits out the budget, then answers `NOT FINISHED YET … has not started. It is queued behind job-… (rbx_blender),
-  because Blender work runs one at a time`. Other tools are not held up, and without a lane two jobs may run at
-  once (before, the one-thread server ran everything one after another).
-- **Nothing outlives the job, the turn or the server.** A job child leads a process group of its own; cancelling or
-  dropping a job sends that group SIGTERM and SIGKILL 0.3 s later, so a child that ignores SIGTERM goes too. The
-  server ends every job when its input closes and when it gets SIGTERM, SIGHUP or SIGINT (handlers installed only
-  with a budget). Should the server be killed outright, a small watcher (the same program, `RBXKIT_JOB_REAPER=1`,
-  started with the first job, in the server's own process group, holding a pipe from it) kills the job groups when
-  the pipe closes. The app's own Stop reaches the groups as well (`procs::tree_groups`).
+- **Not jobs**: `rbx_guide`, `rbx_studio_snippet`, `rbx_studio_lock` and `rbx_board` (instant; answered by the
+  server itself, one at a time). `rbx_team` (its `wait` is already a wait: its timeout is capped two seconds inside
+  the budget, and its own answer says who is still working and to call wait again). `rbx_promo`'s `render` and
+  `job` (renders are the server's own threads and already return a job id: their waits are capped the same way,
+  `_promo_wait`); its other actions are jobs. **A texture waiting for the user is a job**, not a wait that returns:
+  the design says such waits "need no job", but `rbxgen.ask_user` withdraws the user's card the moment it returns,
+  so the wait has to carry on somewhere, and the job is where.
+- **One at a time**: jobs run one after another in the order the calls were read, as every call did on the one
+  thread (calls an AI sends together keep their order: a call takes its place in line before the next one is
+  looked at). A call behind a running job waits out the budget, then answers `NOT FINISHED YET … has not started.
+  It is queued behind job-… (rbx_blender), because the rbx tools that make or change files run one at a time`. The
+  reason is shared files: two texture calls write one folder's `_check.png`, Blender and a package or an icon read
+  and write one model's files, a checkpoint commits the project while another tool writes into it. Only the tools
+  in `BESIDE` run beside others, each with its reason there: `rbx_market`, `rbx_research` (they read the web and
+  write no file), `rbx_economy` (a calculation), `rbx_doctor` (looks for programs). `rbx_vault` is not among them:
+  it keeps an index cache in the work folder.
+- **A job's longest life** (`_job_life`): the tool's own time limit where it has one, plus 20 seconds for the tool
+  to say so itself (`rbx_blender`: its `timeout`, 600 by default; the `run_rbx` tools 600; a generated texture
+  720; `rbx_doctor` 120), otherwise 15 minutes, and never more than 15 minutes whatever a model asks for
+  (`JOB_LIFE`: what a process per message gives one call). It runs from when the job's process starts, not from
+  when it was queued. Past it the server ends the job with all it started, and `rbx_job wait` returns that once as
+  an error ("was ended: it ran for N seconds … Do not wait for it again"). A wait on a job that is gone always
+  says so ("No job … do not wait for it again"), never `NOT FINISHED YET`. **The app bounds the AI as well**
+  (`paths::JOB_POLL_LIMIT`, `watch_stall`): a turn whose tool calls have all been `rbx_job` for 30 minutes (twice
+  a job's longest life, so a job queued behind another is covered) is ended and the chat told why. Each wait is
+  output, so the stall guard alone would never see such a turn.
+- **Nothing outlives the job, the turn or the server.** A job child leads a process group of its own. **When a job
+  ends, for any reason, what is left of its group is ended**: when it returns by itself (its output has ended; if
+  `ps` shows another member of the group, SIGTERM, 0.3 s, SIGKILL), at its longest life, when cancelled or dropped
+  (SIGTERM, 0.3 s, SIGKILL). A program a tool started and left behind, such as Blender after `run_rbx` gave up on
+  it, goes then, and a child that ignores SIGTERM too. A group is only ever signalled while its leader is unreaped
+  (the leader is reaped in one place, `_run_job`, under the job's own lock, which whoever signals also holds), so
+  the group's number cannot have become another process's. The server ends every job when its input closes and
+  when it gets SIGTERM, SIGHUP or SIGINT (handlers installed only with a budget). Should the server be killed
+  outright, a small watcher (the same program, `RBXKIT_JOB_REAPER=1`, started with the first job, in the server's
+  own process group, holding a pipe from it) kills the job groups when the pipe closes. The app's own Stop reaches
+  the groups as well (`procs::tree_groups`).
 - **The turn's end** (`app-rs/src/jobs.rs`). The server notes each job in `work/tool-jobs/<chat>.jsonl`
   (`FRIDAE_TOOL_JOBS`; the folder is one of `paths::app_protected`, like `tool-pictures`): `{"job", "tool", "at":
   "started"}`, and `{"job", "at": "collected"}` when its result was given back or it was cancelled. After every turn
   (`Agent::drop_jobs`, from `after_turn`, and from a kept turn before it looks for commands left running) the app
-  reads it: jobs started and not collected are work thrown away, and the chat is told in one line ("The turn ended
-  before the result of rbx_blender was collected, so that work was ended with the turn and thrown away."). On a
+  reads it (its first 256 KB): jobs started and not collected are work thrown away, and the chat is told in one
+  line ("The turn ended before the result of rbx_blender was collected, so that work was ended with the turn and
+  thrown away."; only a name like `rbx_…` is ever printed from the file, anything else reads "a tool"). **An
+  expert's Lead is told too**: the line is added to the result the expert hands back (`team::with_lost_work`). On a
   process per message the server has gone with the turn. A kept process's server lives on, so the app appends
-  `{"turn": "ended"}`; the server (which looks five times a second while it has had a job) ends every job and answers
-  `{"dropped": [..]}`, which the app waits up to three seconds for, then empties the file. A server that did not
-  answer in time is left the line alone to act on when it reads it.
+  `{"turn": "ended", "at": <now>}`; the server (which reads the file five times a second once it has had a job)
+  ends every job it noted up to that time and answers `{"dropped": [..], "at": <the same>}`, which the app waits
+  up to three seconds for, then empties the file. A server that did not answer in time is left the line alone to
+  act on when it reads it; because the line carries its time, a job of a later turn is never ended by it.
 - **Chats are apart** by construction: jobs are in the memory of one tool server, and each chat has its own. A job
   name (`job-` and twelve random hex digits) means nothing to another chat's server. The notes file names jobs and
   tools only, never arguments or results.
@@ -772,22 +794,42 @@ every call in time and keeps longer work going as a job. The design is
     process and its tool server still there).
   - `rbx_team wait` asked for 100 s on Cursor returned after 42 s, and asked for 170 s on Gemini's kept process
     after 147 s, each saying who was still not finished. Both were cut off before.
+  - These turns ran before the review's fixes (one job at a time, a job's longest life, what a job leaves behind,
+    the app's bound on waiting); the answer a model reads for work still going is unchanged, and no real turn
+    was run after them.
 - **Trying it by hand**: `FRIDAE_TEST_TOOLS=1` (debug builds only) gives the app's tool server `RBXKIT_TEST_TOOLS=1`,
   under which it also offers `rbx_test_slow` (`seconds`, `word`); it is never listed otherwise. To record a process
   per message, stand a script where `FRIDAE_CURSOR` points that passes its arguments to `cursor-agent` and copies
   its output with `tee`.
-- **Known and left**: a tool that leaves something running after it has *finished* is left alone, as before. The
-  AI's own cancel of a call is not acted on: a call it has given up on still waits to the budget's end (its job is
-  dropped with the turn). On Windows a job is ended with `taskkill /T` and there is no watcher (no AI with a budget runs
-  there today). The page shows `rbx_job` as one more step ("Waiting for work that takes a while"), not as part of
-  the call it waits for.
-- **Tests**: `tests/test_long_calls.py` (a real server process over its pipes: no budget, nothing added; with one, in
-  time, the same result, pictures noted when given, two waits, once only, cancel with a child that ignores SIGTERM,
-  the queue, a failing job, the team wait, two chats' servers apart, the notes and the turn's end, and the server
-  closing, told to end and killed outright, each with such a child); `jobs.rs` (the entry, the notes, the turn's
-  end with and without an answer); `caps.rs` (the numbers and budgets); `acp_tests.rs` and `cursor_live_tests.rs`
+- **Before installing a build**: `python tests/long_calls_proof.py "<build>/Contents/Resources/tools/fridae-cli"
+  --mcp` runs six calls against the packaged tool server (the tool list, a real tool as a job child and how long
+  that took, a call past the budget, two waits, a job left running, nothing left once its input closes) and exits
+  non-zero on any difference; `RBXKIT_TEST_SERVER="<the same command>" python -m unittest tests.test_long_calls`
+  runs the whole file against it. In a build a job child is `fridae-cli --mcp` with `RBXKIT_JOB_CHILD=1`
+  (`rbxpaths.mcp_command`); **no build has been run this way yet**.
+- **Known and left**: A call the AI has cancelled (`notifications/cancelled`) answers nothing and takes no result,
+  but its job runs on until collected, its life or the turn's end. A turn's end with a kept process whose tool
+  server has died waits the three seconds out (the app cannot tell a dead server from a slow one; only when jobs
+  were outstanding). Every job costs a process start (about 0.09 s from source; `rbx_stage` and `rbx_vault` are
+  called often and stay jobs: a stage's checkpoint may run git for longer than a budget, and the vault writes its
+  index cache). `rbx_promo`'s render thread cannot be ended by Stop, as before. On Windows a job is ended with
+  `taskkill /T` and there is no watcher (no AI with a budget runs there today). The page shows `rbx_job` as one
+  more step ("Waiting for work that takes a while"), not as part of the call it waits for. A tool's result that
+  names a picture in a folder with letters outside ASCII is not given its picture (the result writes them as
+  escapes; with or without a budget, found while testing).
+- **Tests**: `tests/test_long_calls.py`, 20 tests against real server processes over their pipes: no budget, nothing
+  added; with one, in time, the same result (also for `rbx_economy`, a real tool, run as a job); pictures noted
+  when given; two waits; once only; cancel with a child that ignores SIGTERM; a job that hangs ended at its life,
+  said once, the next in line then running; each tool's longest life; a child left behind by a job that returned,
+  gone when the result is given; two calls sent together run in order and the second names the first; which tools
+  run beside others; **two real `rbx_texture` calls on one folder sent together** (needs numpy and Pillow: each
+  gets its own sheet, the second queued behind the first); a call the client cancelled; the team wait; two chats'
+  servers apart; the notes, the turn's end and a late line of an earlier turn; and the server closing, told to end
+  and killed outright, each with such a child. `tests/long_calls_proof.py` (above). `jobs.rs` (the entry, the
+  notes, the turn's end with and without an answer, names from the file, and **both sides together**: the app's
+  `end_turn` against a real tool server with a job running); `caps.rs`; `acp_tests.rs` and `cursor_live_tests.rs`
   (the entry on each path, in the launch key); `agents.rs` (Claude's entry has none, who is told, the line in the
-  chat); the two recordings above.
+  chat and in a Lead's result, a turn that only waits past any job's life ended); the recordings above.
 
 ## Cursor as a chat's AI
 

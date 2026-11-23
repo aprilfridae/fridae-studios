@@ -275,6 +275,26 @@ pub fn stalled(quiet: std::time::Duration, waiting_long: bool, tool_open: bool) 
     !waiting_long && quiet >= if tool_open { STALL_WORKING } else { STALL }
 }
 
+/// How long a turn may do nothing but wait on the tool server's jobs (`rbx_job` calls with no other tool between):
+/// twice the longest a job lives (15 minutes, `JOB_LIFE` in `rbxkit_mcp.py`), which covers a job queued behind
+/// another. The tool server ends a job that outlives its time and says so, so a model that keeps waiting past this
+/// is waiting on nothing; each wait is output, so the stall guard above never sees it.
+pub const JOB_POLL_LIMIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+pub fn polled_too_long(waiting_since: Option<std::time::Instant>) -> bool {
+    waiting_since.is_some_and(|t| t.elapsed() >= JOB_POLL_LIMIT)
+}
+
+/// Whether a tool is the one that waits on a job, by any AI's name for it (`mcp__rbxkit__rbx_job`, `rbx_job`).
+pub fn waits_on_job(tool: &str) -> bool {
+    tool == "rbx_job" || tool.ends_with("_rbx_job")
+}
+
+/// What the chat is told when a turn was ended for that.
+pub fn polled_message() -> String {
+    format!("The AI did nothing but wait on tool work for {} minutes, longer than any of that work may take, so Fridae ended this turn. Send your message again to carry on.", JOB_POLL_LIMIT.as_secs() / 60)
+}
+
 /// How long a stopped agent gets to end by itself (SIGTERM) before it is killed (Unix).
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_millis(2000);
 

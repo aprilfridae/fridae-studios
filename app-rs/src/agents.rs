@@ -31,6 +31,8 @@ pub const MAX_AGENTS: usize = 8;
 pub const MAX_ATTACH: usize = 10;
 /// The error text a turn ended by the stall guard carries to `after_turn`.
 const STALLED: &str = "\u{0}stalled";
+/// And one ended for doing nothing but wait on the tool server's jobs for too long (`paths::JOB_POLL_LIMIT`).
+const POLLED: &str = "\u{0}polled";
 /// How long a turn's leader gets to exit by itself once its output has closed, before its group is ended (Cursor).
 const LEADER_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// Aliases the agent CLI resolves to the latest model of each family.
@@ -189,6 +191,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
     st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
     st.turn_auto = auto;
     st.turn_tools = 0;
+    st.job_polls = None;
     st.turn_progress = false;
     st.sending = true;
     Some(waiting)
@@ -642,6 +645,12 @@ struct State {
     /// The current (or latest) turn was the loop's own carry-on, and how many tools it called (the no-progress guard).
     turn_auto: bool,
     turn_tools: u32,
+    /// Since when this turn's tool calls have all been waits on a job (`rbx_job`), with no other tool between: a
+    /// turn that only waits for longer than any job may live is ended (`watch_stall`, `paths::JOB_POLL_LIMIT`).
+    job_polls: Option<std::time::Instant>,
+    /// What the chat was told when this turn ended with tool work thrown away (`drop_jobs`), for the result an
+    /// expert hands its Lead (`team::finished`).
+    jobs_lost: Option<String>,
     /// Studio carry-on turns in a row without a tool call (see `no_progress`).
     idle_turns: u32,
     /// Whether this turn made a progress call (see `progress_call`), and how many Studio carry-ons in a row made none.
@@ -753,6 +762,8 @@ pub struct TurnProc {
     killed: AtomicBool,
     /// nothing came for STALL, so it was ended
     stalled: AtomicBool,
+    /// it did nothing but wait on jobs for JOB_POLL_LIMIT, so it was ended
+    overpolled: AtomicBool,
     /// The turn runs on the chat's kept Claude Code process: Stop asks it to interrupt and it lives on.
     live: Option<Arc<Live>>,
     /// Claude Code has started on the turn's message (a kept process): an interrupt before that would end nothing.
@@ -779,12 +790,12 @@ const START_WAIT: Duration = Duration::from_secs(if cfg!(test) { 2 } else { 90 }
 
 impl TurnProc {
     fn new(pid: u32) -> Arc<TurnProc> {
-        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: None, acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), overpolled: AtomicBool::new(false), live: None, acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
     }
 
     /// A turn on a chat's kept Claude Code process.
     fn on(live: &Arc<Live>) -> Arc<TurnProc> {
-        Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+        Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), overpolled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
     }
 
     /// Whether the kept process's tree has a process group now that it did not have when it took the turn's message:
@@ -941,7 +952,19 @@ impl TurnProc {
 /// tool. `last` holds when the last line came, whether it started such a long tool, and whether it started any tool.
 fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::Instant, bool, bool)>>) {
     while !tp.done.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(if cfg!(test) { 1 } else { 5 }));
+        // a turn that only waits on the tool server's jobs, for longer than any job may live: each wait is output,
+        // so the quiet clock below never runs out for it
+        if paths::polled_too_long(me.st.lock().unwrap().job_polls) {
+            let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            if tp.done.load(Ordering::SeqCst) {
+                return;
+            }
+            tp.overpolled.store(true, Ordering::SeqCst);
+            drop(_gate);
+            tp.end();
+            return;
+        }
         let mut l = last.lock().unwrap_or_else(|e| e.into_inner());
         let waiting = l.1 || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
         if waiting {
@@ -3236,7 +3259,7 @@ impl Agent {
         if killed {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
-        let err = if stalled { STALLED.to_string() } else { err };
+        let err = if stalled { STALLED.to_string() } else if tp.overpolled.load(Ordering::SeqCst) { POLLED.to_string() } else { err };
         // a failed result is the turn's end even though the process was then closed by the app (its exit says nothing)
         let exit = if t.got_result { Some((true, 0)) } else { status };
         self.after_turn(kind, t, &err, exit, stopped);
@@ -3261,7 +3284,11 @@ impl Agent {
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
     /// A tool from Roblox Studio's connector is noted with its time, for a studio run's undo log (`run_log`).
     fn show_tool(&self, name: &str, studio: bool) {
-        self.st.lock().unwrap().turn_tools += 1; // the no-progress guard counts every tool call, shown or not
+        {
+            let mut st = self.st.lock().unwrap();
+            st.turn_tools += 1; // the no-progress guard counts every tool call, shown or not
+            st.job_polls = if paths::waits_on_job(name) { st.job_polls.or_else(|| Some(std::time::Instant::now())) } else { None };
+        }
         let known = FRIENDLY.iter().filter(|(k, _)| name == k.as_str() || name.ends_with(&format!("_{k}"))).max_by_key(|(k, _)| k.len());
         let label = match known {
             Some((_, v)) => v.as_str().map(str::to_string),
@@ -3534,7 +3561,7 @@ impl Agent {
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
-        let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else { err };
+        let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else if tp.overpolled.load(Ordering::SeqCst) { POLLED.to_string() } else { err };
         self.after_turn(kind, t, &err, status.map(|s| (s.success(), s.code().unwrap_or(-1))), stopped);
     }
 
@@ -3638,8 +3665,15 @@ impl Agent {
         let Some(notes) = notes else { return };
         let tools = crate::jobs::end_turn(notes, kept.then_some(crate::jobs::DROP_WAIT));
         if !tools.is_empty() {
-            self.put("error", json!({"text": crate::jobs::dropped_text(&tools)}));
+            let text = crate::jobs::dropped_text(&tools);
+            self.put("error", json!({"text": text}));
+            self.st.lock().unwrap().jobs_lost = Some(text);
         }
+    }
+
+    /// What this turn's end threw away of its tool work, once: an expert's Lead is told with the expert's result.
+    pub fn take_jobs_lost(&self) -> Option<String> {
+        self.st.lock().unwrap().jobs_lost.take()
     }
 
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
@@ -3651,6 +3685,8 @@ impl Agent {
         self.drop_jobs(Some(&crate::jobs::file(&self.id)), false);
         if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
+        } else if err == POLLED && !stopped {
+            self.put("error", json!({"text": paths::polled_message()}));
         } else if (!got_result || result_error) && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
             self.put("error", json!({"text": "The memory of this earlier chat is no longer on this computer, so the agent has lost its context. Send your message again and it will carry on from what you tell it."}));
@@ -3677,6 +3713,7 @@ impl Agent {
             }
         }
         team::finished(self, stopped);
+        self.st.lock().unwrap().jobs_lost = None; // (a chat that is nobody's helper: said in the chat only)
         research::finished(self);
         self.put("done", json!({}));
         // autopilot: the agent ends each reply by saying whether there is more it can do alone; if so, it is told to carry on
@@ -4846,7 +4883,76 @@ mod tests {
         fs::write(&notes, "{\"job\": \"job-b\", \"tool\": \"rbx_generate_texture\", \"at\": \"started\"}\n").unwrap();
         a.drop_jobs(Some(&notes), true);
         assert!(said(&a)[1].contains("rbx_generate_texture"));
-        assert_eq!(fs::read_to_string(&notes).unwrap(), "{\"turn\": \"ended\"}\n", "left for the server, which did not answer here");
+        assert!(fs::read_to_string(&notes).unwrap().starts_with("{\"at\":") && fs::read_to_string(&notes).unwrap().trim_end().ends_with("\"turn\":\"ended\"}"), "the app's line, left for the server, which did not answer here");
+        assert_eq!(a.take_jobs_lost().as_deref(), Some(said(&a)[1].as_str()), "kept for the result a Lead is handed");
+        assert_eq!(a.take_jobs_lost(), None, "once");
+    }
+
+    /// Unattended: a turn that does nothing but wait on a job, for longer than any job may live, is ended by the app
+    /// (the tool server ends the job itself long before: `tests/test_long_calls.py`; this is the bound on the AI).
+    #[cfg(unix)]
+    #[test]
+    fn a_turn_that_only_waits_on_jobs_past_any_jobs_life_is_ended() {
+        let since = |mins: u64| std::time::Instant::now().checked_sub(Duration::from_secs(mins * 60));
+        assert!(!paths::polled_too_long(None) && !paths::polled_too_long(since(29)) && paths::polled_too_long(since(31)));
+        assert!(paths::waits_on_job("rbx_job") && paths::waits_on_job("mcp__rbxkit__rbx_job") && paths::waits_on_job("mcp_rbxkit_rbx_job"));
+        assert!(!paths::waits_on_job("rbx_team") && !paths::waits_on_job("rbx_jobs") && !paths::waits_on_job("Bash"));
+        // which calls count: waits in a row, from the first of them; any other tool call starts the count again
+        let a = Agent::detached_for_test("c-poll-count", None);
+        let polls = |a: &Arc<Agent>| a.st.lock().unwrap().job_polls;
+        a.show_tool("rbx_blender", false);
+        assert!(polls(&a).is_none());
+        a.show_tool("mcp__rbxkit__rbx_job", false);
+        let first = polls(&a).expect("counted from the first wait");
+        a.show_tool("rbx_job", false);
+        assert_eq!(polls(&a), Some(first), "a second wait in a row does not start the clock again");
+        a.show_tool("rbx_board", false);
+        assert!(polls(&a).is_none(), "other work between waits: not only waiting");
+        // a real process as the turn, waiting since longer than the limit: the guard ends it and the chat says why
+        let (child, grandchild) = shell_with_grandchild();
+        let a = Agent::detached_for_test("c-poll-ended", None);
+        let tp = a.set_turn_pid_for_test(child.id());
+        a.st.lock().unwrap().job_polls = since(31);
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, true)));
+        let guard = {
+            let (a, tp) = (a.clone(), tp.clone());
+            thread::spawn(move || watch_stall(a, tp, last))
+        };
+        guard.join().unwrap();
+        assert!(tp.overpolled.load(Ordering::SeqCst) && !tp.stalled.load(Ordering::SeqCst));
+        assert!(gone(&grandchild), "the turn's processes were ended");
+        let mut child = child;
+        let _ = child.wait();
+        a.after_turn("cursor", TurnEnd::default(), POLLED, Some((false, -1)), false);
+        let errors: Vec<String> = a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error").map(|e| e["text"].as_str().unwrap_or("").to_string()).collect();
+        assert_eq!(errors, [paths::polled_message()], "said once, in place of an unexplained exit");
+        // a turn waiting for less than that is left alone
+        let (child, grandchild) = shell_with_grandchild();
+        let b = Agent::detached_for_test("c-poll-fine", None);
+        let tp = b.set_turn_pid_for_test(child.id());
+        b.st.lock().unwrap().job_polls = since(5);
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, true)));
+        let guard = {
+            let (b, tp) = (b.clone(), tp.clone());
+            thread::spawn(move || watch_stall(b, tp, last))
+        };
+        thread::sleep(Duration::from_millis(2500));
+        assert!(!guard.is_finished() && !tp.overpolled.load(Ordering::SeqCst));
+        tp.done.store(true, Ordering::SeqCst);
+        guard.join().unwrap();
+        tp.end();
+        assert!(gone(&grandchild));
+        let mut child = child;
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn an_experts_lead_is_told_of_work_its_turns_end_threw_away() {
+        let lost = crate::jobs::dropped_text(&["rbx_blender".to_string()]);
+        let told = team::with_lost_work("The chair model is done.".to_string(), Some(lost.clone()));
+        assert!(told.starts_with("The chair model is done.\n\n[Fridae Studios, not the agent: The turn ended before the result of rbx_blender was collected"), "{told}");
+        assert!(told.contains("it was not finished"));
+        assert_eq!(team::with_lost_work("Done.".to_string(), None), "Done.", "nothing lost: the reply as it is");
     }
 
     #[test]

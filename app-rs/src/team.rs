@@ -271,6 +271,16 @@ pub fn result_text(reply: &str, stopped: bool) -> String {
     }
 }
 
+/// An agent's result with what its turn's end threw away: an agent that ended its turn while tool work was still
+/// going (a "not finished yet" answer it did not wait out) may report that work as done or under way, and its own
+/// chat alone was told otherwise. Whoever waits for it is told too.
+pub fn with_lost_work(text: String, lost: Option<String>) -> String {
+    match lost {
+        Some(lost) => format!("{text}\n\n[Fridae Studios, not the agent: {lost} Whatever the reply above says about that work, it was not finished: have it done again if it is needed.]"),
+        None => text,
+    }
+}
+
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
 pub fn finished(agent: &Agent, stopped: bool) {
@@ -278,7 +288,7 @@ pub fn finished(agent: &Agent, stopped: bool) {
     agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
 
     if let Some((id, role)) = agent.team() {
-        let text = result_text(&agent.last_reply(), stopped);
+        let text = with_lost_work(result_text(&agent.last_reply(), stopped), agent.take_jobs_lost());
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
         if let Some(e) = agent.expert() {
             result["expert"] = json!(e);
