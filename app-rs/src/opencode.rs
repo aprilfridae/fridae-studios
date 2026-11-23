@@ -62,6 +62,12 @@ static MODELS: Mutex<(Vec<(String, String)>, Option<Instant>)> = Mutex::new((Vec
 static LOADING: AtomicBool = AtomicBool::new(false);
 /// The integrations Fridae's OpenCode is signed in to, by name (`opencode auth list`).
 static SIGNED_IN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Whether `opencode auth list` has answered since the app started: until then nothing is said about the sign-in.
+static AUTH_KNOWN: AtomicBool = AtomicBool::new(false);
+/// Models the app's server listed at no cost (`free_from`), beyond those whose id ends in `-free`.
+static FREE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// A sign-in finished while a turn was running: the server starts again once no turn uses it (`restart_if_wanted`).
+static RESTART: AtomicBool = AtomicBool::new(false);
 
 /// The app's OpenCode server, while it runs.
 static SERVER: Mutex<Option<Server>> = Mutex::new(None);
@@ -209,19 +215,44 @@ pub fn load_models() {
     MODELS.lock().unwrap().1 = Some(Instant::now());
     std::thread::spawn(|| {
         if let Some(exe) = paths::find_opencode() {
+            // what it printed, and whether it ended well (false too when it could not be run)
             let run = |args: &[&str]| {
                 let mut cmd = opencode(&exe);
                 cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
-                cmd.run_output().ok().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+                cmd.run_output().ok().map(|o| (String::from_utf8_lossy(&o.stdout).to_string(), o.status.success())).unwrap_or_default()
             };
-            let list = parse_models(&run(&["models"]));
+            let list = parse_models(&run(&["models"]).0);
             if !list.is_empty() {
                 MODELS.lock().unwrap().0 = list;
             }
-            *SIGNED_IN.lock().unwrap() = parse_auth_list(&run(&["auth", "list"]));
+            // an answer only: a command that failed says nothing about the sign-in (measured, 2.3.2: signed in to
+            // nothing, it prints "No authenticated integrations" and ends well)
+            let (auth, ok) = run(&["auth", "list"]);
+            if ok {
+                *SIGNED_IN.lock().unwrap() = parse_auth_list(&auth);
+                AUTH_KNOWN.store(true, Ordering::SeqCst);
+            }
         }
         LOADING.store(false, Ordering::SeqCst);
     });
+}
+
+/// Ask for the model list and the sign-in again, after a sign-in ended. A list being loaded now was asked for before
+/// it: that one is waited for first (a minute at most). After a sign-in that worked the old list is dropped first, so
+/// nothing is chosen from it meanwhile, and while it stays empty `refresh_models` keeps asking.
+fn reload_models(signed_in: bool) {
+    for _ in 0..240 {
+        if !LOADING.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    if signed_in {
+        MODELS.lock().unwrap().0.clear();
+        // and "not signed in" is no longer known to be true: nothing is said about it until the answer is in
+        AUTH_KNOWN.store(false, Ordering::SeqCst);
+    }
+    load_models();
 }
 
 /// While the list is empty, ask again at most once a minute (the page's status calls this).
@@ -299,32 +330,196 @@ fn model_setting(text: &str) -> Option<String> {
     v["model"].as_str().map(str::trim).filter(|m| m.contains('/')).map(|m| m.split('#').next().unwrap_or(m).to_string())
 }
 
-/// The model an OpenCode chat uses unless the user picks another: the user's own OpenCode default when Fridae's copy
-/// offers it, else the first OpenCode Go model, else the first model listed. Nothing before the list arrives (OpenCode
-/// then picks).
-pub fn default_model() -> Option<String> {
-    default_of(&models(), users_default().as_deref())
+/// What a model is chosen from: the list, what is known to cost nothing, and what the user set.
+#[derive(Clone, Copy, Default)]
+struct Have<'a> {
+    list: &'a [(String, String)],
+    /// models the server listed at no cost (`FREE`)
+    free: &'a [String],
+    /// signed in to nothing: every model listed costs nothing, whatever its name (see `paid_listed`)
+    all_free: bool,
+    /// the model the user last picked for OpenCode in Fridae (`PICK_KEY`)
+    picked: Option<&'a str>,
+    /// that pick is a free model the user chose while paid ones were listed (`PICK_FREE_KEY`)
+    picked_free_ok: bool,
+    /// the user's own OpenCode default (`users_default`)
+    users: Option<&'a str>,
 }
 
-fn default_of(list: &[(String, String)], users: Option<&str>) -> Option<String> {
-    if let Some(u) = users.filter(|u| list.iter().any(|(id, _)| id == u)) {
+impl Have<'_> {
+    /// Whether a model costs nothing: its id says so (`opencode/beam-free`), or the server listed it at no cost.
+    fn is_free(&self, id: &str) -> bool {
+        self.all_free || id.ends_with("-free") || self.free.iter().any(|f| f == id)
+    }
+
+    fn lists(&self, id: &str) -> bool {
+        self.list.iter().any(|(m, _)| m == id)
+    }
+}
+
+/// Whether a model that costs something is listed. Fridae's OpenCode lists one only once it is signed in (measured,
+/// 2.3.2: a copy that never signed in listed eleven models, every one at no cost).
+fn paid_listed(have: &Have) -> bool {
+    have.list.iter().any(|(id, _)| !have.is_free(id))
+}
+
+/// The settings keys (plain ones, not guarded) for the model the user last picked for OpenCode in Fridae, and for
+/// "that pick is a free model, chosen while paid ones were listed".
+const PICK_KEY: &str = "opencode_model";
+const PICK_FREE_KEY: &str = "opencode_model_free";
+
+/// The user's last pick: (model id, a free model chosen over paid ones).
+fn saved_pick() -> (Option<String>, bool) {
+    let cfg = paths::load_config();
+    let id = cfg.get(PICK_KEY).and_then(Value::as_str).map(str::trim).filter(|m| crate::expert_ai::model_id_ok(m)).map(str::to_string);
+    (id, cfg.get(PICK_FREE_KEY).and_then(Value::as_bool).unwrap_or(false))
+}
+
+/// Runs `f` with everything a model is chosen from, as it is now.
+fn with_have<R>(f: impl FnOnce(&Have) -> R) -> R {
+    let (list, free, users, (picked, picked_free_ok)) = (models(), FREE.lock().unwrap().clone(), users_default(), saved_pick());
+    f(&Have { list: &list, free: &free, all_free: free_only(), picked: picked.as_deref(), picked_free_ok, users: users.as_deref() })
+}
+
+/// The model an OpenCode chat uses unless a message names another. Never a free model while a paid one is listed
+/// (unless the user picked that free model over paid ones): the model the user last picked for OpenCode in Fridae (or
+/// its nearest twin, if it is gone from the list), the user's own OpenCode default, the first paid OpenCode Go model,
+/// the first paid model of any provider, and only then a free one. Before the list arrives: the pick or the user's
+/// default as they are (OpenCode itself then says if it cannot use it), else nothing (OpenCode then picks).
+pub fn default_model() -> Option<String> {
+    with_have(default_of)
+}
+
+fn default_of(have: &Have) -> Option<String> {
+    if have.list.is_empty() {
+        return have.picked.or(have.users).map(str::to_string);
+    }
+    let paid = paid_listed(have);
+    let fits = |id: &str, free_ok: bool| have.lists(id) && (!paid || free_ok || !have.is_free(id));
+    if let Some(m) = have.picked.and_then(|p| nearest(have, p).filter(|m| fits(m, have.picked_free_ok && m == p))) {
+        return Some(m);
+    }
+    if let Some(u) = have.users.filter(|u| fits(u, false)) {
         return Some(u.to_string());
     }
-    list.iter().find(|(id, _)| id.starts_with("opencode-go/")).or(list.first()).map(|(id, _)| id.clone()).or_else(|| users.map(str::to_string))
+    let ids = || have.list.iter().map(|(id, _)| id);
+    ids()
+        .find(|id| id.starts_with("opencode-go/") && !have.is_free(id))
+        .or_else(|| ids().find(|id| !have.is_free(id)))
+        // only free ones: one not named "-free" first (OpenCode's own default there, `big-pickle`; measured)
+        .or_else(|| ids().find(|id| !id.ends_with("-free")))
+        .or_else(|| ids().next())
+        .cloned()
 }
 
-/// The model a turn asks for: the one chosen when OpenCode lists it, or when the list has not arrived (OpenCode itself
-/// then says if it cannot use it); otherwise the default.
-pub fn pick_model(chosen: Option<&str>) -> Option<String> {
-    pick_from(&models(), chosen, users_default().as_deref())
-}
-
-fn pick_from(list: &[(String, String)], chosen: Option<&str>, users: Option<&str>) -> Option<String> {
-    // a model id that could not be one (an agent's, say) is never put on a command line
-    match chosen.filter(|m| !m.is_empty() && crate::expert_ai::model_id_ok(m)) {
-        Some(m) if list.is_empty() || list.iter().any(|(id, _)| id == m) => Some(m.to_string()),
-        _ => default_of(list, users),
+/// The listed model nearest to one asked for that may not be listed exactly: itself; else the same model name from
+/// OpenCode Go, then OpenCode Zen, then any provider; else, only when none of those exists, its "-free" twin in the
+/// same order. None when the list has nothing like it.
+fn nearest(have: &Have, asked: &str) -> Option<String> {
+    if have.lists(asked) {
+        return Some(asked.to_string());
     }
+    let name = asked.split_once('/').map_or(asked, |(_, m)| m);
+    let twin = format!("{name}-free");
+    let names: &[&str] = if name.ends_with("-free") { &[name] } else { &[name, &twin] };
+    for n in names {
+        for provider in [Some("opencode-go"), Some("opencode"), None] {
+            let found = have.list.iter().map(|(id, _)| id).find(|id| id.split_once('/').is_some_and(|(p, m)| m == *n && provider.is_none_or(|x| p == x)));
+            if let Some(id) = found {
+                return Some(id.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The model a turn runs on, and the model asked for when that is not it (so the chat can say so): the one chosen
+/// when OpenCode lists it, or when the list has not arrived (OpenCode itself then says if it cannot use it); else its
+/// nearest twin (`nearest`); else the default.
+pub fn pick_model(chosen: Option<&str>) -> (Option<String>, Option<String>) {
+    with_have(|h| pick_from(h, chosen))
+}
+
+fn pick_from(have: &Have, chosen: Option<&str>) -> (Option<String>, Option<String>) {
+    // a model id that could not be one (an agent's, say) is never put on a command line, nor shown
+    match chosen.filter(|m| !m.is_empty() && crate::expert_ai::model_id_ok(m)) {
+        Some(m) if have.list.is_empty() || have.lists(m) => (Some(m.to_string()), None),
+        Some(m) => (nearest(have, m).or_else(|| default_of(have)), Some(m.to_string())),
+        None => (default_of(have), None),
+    }
+}
+
+/// The listed model nearest to one that is not listed exactly, for an expert's model (`expert_ai::resolve`).
+pub fn nearest_model(asked: &str) -> Option<String> {
+    with_have(|h| nearest(h, asked))
+}
+
+/// Whether a model costs nothing.
+pub fn is_free(id: &str) -> bool {
+    with_have(|h| h.is_free(id))
+}
+
+/// What to save for a model the user picked in the menu: (its id, whether it is a free model chosen while paid ones
+/// were listed). None for a model that is not listed.
+fn pick_to_save(have: &Have, id: &str) -> Option<(String, bool)> {
+    (crate::expert_ai::model_id_ok(id) && have.lists(id)).then(|| (id.to_string(), have.is_free(id) && paid_listed(have)))
+}
+
+/// The user picked a model for OpenCode in the menu under the message box: remembered in the settings, for every
+/// OpenCode chat and expert that names none. False for a model Fridae's OpenCode does not list.
+pub fn remember_pick(id: &str) -> bool {
+    let Some((id, free_ok)) = with_have(|h| pick_to_save(h, id.trim())) else { return false };
+    paths::update_config(|cfg| {
+        cfg.insert(PICK_KEY.into(), json!(id));
+        cfg.insert(PICK_FREE_KEY.into(), json!(free_ok));
+    });
+    true
+}
+
+/// The models the server lists at no cost, as ids (`GET /api/model`: each with `providerID`, `id` and `cost`, a list
+/// of prices). Only OpenCode Zen's (`opencode/...`): it is paid by use, so a price of nothing there means free, while
+/// a plan's models (OpenCode Go) may be listed at no price per use and are not free. (How a signed-in copy lists a
+/// plan's prices is not measured: Fridae's copy has never been signed in.)
+fn free_from(answer: &Value) -> Vec<String> {
+    let zero = |c: &Value| c["input"].as_f64() == Some(0.0) && c["output"].as_f64() == Some(0.0);
+    answer["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| m["providerID"] == "opencode" && m["cost"].as_array().is_some_and(|c| !c.is_empty() && c.iter().all(zero)))
+        .filter_map(|m| m["id"].as_str().map(|id| format!("opencode/{id}")))
+        .collect()
+}
+
+/// Ask the running server which models cost nothing (in the background, once per server start).
+fn note_costs(conn: Conn) {
+    std::thread::spawn(move || {
+        if let Ok((200, v)) = call(&conn, "GET", "/api/model", None) {
+            let free = free_from(&v);
+            if !free.is_empty() {
+                *FREE.lock().unwrap() = free;
+            }
+        }
+    });
+}
+
+/// What the Lead and the chat are told when a model is not there because nobody signed in.
+pub const NOT_SIGNED_IN: &str = "Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections.";
+
+fn free_only_of(known: bool, signed_in: &[String]) -> bool {
+    known && signed_in.is_empty()
+}
+
+/// Whether Fridae's OpenCode is known not to be signed in to anything: only free models work then (see `paid_listed`).
+/// False until `opencode auth list` has answered.
+pub fn free_only() -> bool {
+    free_only_of(AUTH_KNOWN.load(Ordering::SeqCst), &signed_in())
+}
+
+/// The sign-in and the model pick, for the page: `signed_in` the integrations by name, `known` whether that was asked
+/// yet, `free_only` (known, and signed in to nothing), `pick` the model the user last picked, `login` the sign-in under way.
+pub fn state() -> Value {
+    json!({"signed_in": signed_in(), "known": AUTH_KNOWN.load(Ordering::SeqCst), "free_only": free_only(), "pick": saved_pick().0, "login": login_state()})
 }
 
 /// A model's name as the page shows it ("OpenCode Go · glm-5.3").
@@ -744,6 +939,7 @@ fn ensure() -> Result<Conn, String> {
     let server = start_server()?;
     let conn = Conn { port: server.port, auth: server.auth.clone() };
     *SERVER.lock().unwrap() = Some(server);
+    note_costs(conn.clone()); // which of its models cost nothing, for the default model
     if !WATCHING.swap(true, Ordering::SeqCst) {
         std::thread::spawn(watch_idle);
     }
@@ -879,16 +1075,26 @@ fn watch_idle() {
 
 /// Ends the server if no turn is running and none has used it for `idle`. Decided and taken under the server's lock
 /// (a turn notes its use under the same lock in `ensure`), so a turn that has just been given the server never has
-/// it ended under it.
-fn stop_if_idle(idle: Duration) {
-    let taken = {
+/// it ended under it. Returns whether no server is left running.
+fn stop_if_idle(idle: Duration) -> bool {
+    let (taken, gone) = {
         let a = active();
         let mut g = SERVER.lock().unwrap();
         let quiet = a.as_ref().is_none_or(|a| a.is_empty()) && g.as_ref().is_some_and(|s| s.last_used.elapsed() >= idle);
-        if quiet { g.take() } else { None }
+        let taken = if quiet { g.take() } else { None };
+        (taken, g.is_none())
     };
     if let Some(s) = taken {
         end_server(s);
+    }
+    gone
+}
+
+/// After a sign-in the server starts again, so it works with the new sign-in from its first turn: at once when no
+/// turn is running, else as soon as the last one has ended (`run` calls this again). The next turn starts it.
+fn restart_if_wanted() {
+    if RESTART.load(Ordering::SeqCst) && stop_if_idle(Duration::ZERO) {
+        RESTART.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1199,6 +1405,7 @@ pub fn run(spec: &Spec, mut put: impl FnMut(Out)) -> Ended {
     if let Some(s) = SERVER.lock().unwrap().as_mut() {
         s.last_used = Instant::now();
     }
+    restart_if_wanted(); // a sign-in that finished during this turn
     Ended { killed: me.killed.load(Ordering::SeqCst), ..ended }
 }
 
@@ -2028,19 +2235,13 @@ pub fn login_start() -> Value {
                 l.message = if ok { String::new() } else { last };
             }
         }
-        // what it may now use; a server with no turn running starts again with the new sign-in
+        // what it may now use: the server starts again with the new sign-in (once no turn runs on it), and the model
+        // list and the sign-in are asked for again
         if ok {
-            stop_if_idle(Duration::ZERO);
+            RESTART.store(true, Ordering::SeqCst);
+            restart_if_wanted();
         }
-        // a list being loaded now was asked for before the sign-in: wait for it, then ask again
-        for _ in 0..240 {
-            if !LOADING.load(Ordering::SeqCst) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        MODELS.lock().unwrap().0.clear();
-        load_models();
+        reload_models(ok);
     });
     // the page and code come within a second or two
     for _ in 0..40 {
@@ -2345,16 +2546,171 @@ mod tests {
         assert_eq!(list[3].1, "OpenCode Zen · beam-free");
         assert_eq!(list[4].1, "abliteration-ai · abliterated-model");
         // the default: the user's own OpenCode default when offered, else the first OpenCode Go model, else the first
-        assert_eq!(default_of(&list, Some("opencode/big-pickle")).as_deref(), Some("opencode/big-pickle"));
-        assert_eq!(default_of(&list, Some("anthropic/gone")).as_deref(), Some("opencode-go/glm-5.3"));
-        assert_eq!(default_of(&list[2..], None).as_deref(), Some("opencode/big-pickle"));
-        assert_eq!(default_of(&[], None), None, "before the list arrives OpenCode picks");
-        assert_eq!(pick_from(&list, Some("gone/model"), None).as_deref(), Some("opencode-go/glm-5.3"));
-        assert_eq!(pick_from(&[], Some("opencode-go/glm-5.3"), None).as_deref(), Some("opencode-go/glm-5.3"));
+        let have = |list: &'static [(String, String)], users: Option<&'static str>| Have { list, users, ..Default::default() };
+        let list: &'static [(String, String)] = Box::leak(list.into_boxed_slice());
+        assert_eq!(default_of(&have(list, Some("opencode/big-pickle"))).as_deref(), Some("opencode/big-pickle"));
+        assert_eq!(default_of(&have(list, Some("anthropic/gone"))).as_deref(), Some("opencode-go/glm-5.3"));
+        assert_eq!(default_of(&have(&list[2..], None)).as_deref(), Some("opencode/big-pickle"));
+        assert_eq!(default_of(&have(&[], None)), None, "before the list arrives OpenCode picks");
+        assert_eq!(pick_from(&have(list, None), Some("gone/model")).0.as_deref(), Some("opencode-go/glm-5.3"));
+        assert_eq!(pick_from(&have(&[], None), Some("opencode-go/glm-5.3")), (Some("opencode-go/glm-5.3".to_string()), None));
         assert_eq!(model_setting("{\n // mine\n \"model\": \"opencode-go/kimi-k3#high\",\n}").as_deref(), Some("opencode-go/kimi-k3"));
         assert_eq!(model_setting("{\"theme\": \"x\"}"), None);
         assert_eq!(model_ref("opencode-go/glm-5.3"), Some(json!({"providerID": "opencode-go", "id": "glm-5.3"})));
         assert_eq!(model_ref("nonsense"), None);
+    }
+
+    /// What the user's own signed-in OpenCode listed on 23 November 2026 (`opencode models`, v2.3.2, an OpenCode Go
+    /// plan; shortened), in OpenCode's order.
+    const SIGNED_IN_LIST: &str = "opencode-go/beam-free\nopencode-go/claude-haiku-5-5\nopencode-go/deepseek-v4-pro\nopencode-go/deepseek-v4.1-flash\nopencode-go/glm-5.3\nopencode-go/hy4-flash-free\nopencode-go/kimi-k3\nopencode/beam-free\nopencode/big-pickle\nopencode/claude-opus-5-5\nopencode/deepseek-v4.1-flash\nopencode/deepseek-v4.1-flash-free\nopencode/flint-40b-free\nopencode/glm-5.3\n";
+    /// What Fridae's own copy, never signed in, listed the same day: every model OpenCode gives away, nothing else.
+    const UNSIGNED_LIST: &str = "opencode/beam-free\nopencode/big-pickle\nopencode/deepseek-v4.1-flash-free\nopencode/flint-40b-free\nopencode/hy4-flash-free\nopencode/iceman-free\nopencode/mimo-v2.6-flash-free\nopencode/nemotron-3.5-lightning-free\nopencode/nemotron-3.5-super-vl-free\nopencode/qwen4-max-free\nopencode/tidepool-alpha-free\n";
+
+    fn listed(text: &str) -> &'static [(String, String)] {
+        Box::leak(parse_models(text).into_boxed_slice())
+    }
+
+    #[test]
+    fn the_default_is_never_a_free_model_while_a_paid_one_is_listed() {
+        let signed = listed(SIGNED_IN_LIST);
+        let free: &'static [String] = Box::leak(vec!["opencode/big-pickle".to_string()].into_boxed_slice());
+        let have = Have { list: signed, free, ..Default::default() };
+        // the list starts with a free model (opencode-go/beam-free): the first paid OpenCode Go model is the default
+        assert_eq!(default_of(&have).as_deref(), Some("opencode-go/claude-haiku-5-5"));
+        // the user's own OpenCode default comes before that, unless it is a free one
+        assert_eq!(default_of(&Have { users: Some("opencode-go/kimi-k3"), ..have }).as_deref(), Some("opencode-go/kimi-k3"));
+        assert_eq!(default_of(&Have { users: Some("opencode/beam-free"), ..have }).as_deref(), Some("opencode-go/claude-haiku-5-5"));
+        // the model last picked in Fridae comes first of all
+        let picked = Have { picked: Some("opencode-go/glm-5.3"), users: Some("opencode-go/kimi-k3"), ..have };
+        assert_eq!(default_of(&picked).as_deref(), Some("opencode-go/glm-5.3"));
+        // a free model picked while nothing else was listed (before the sign-in) gives way to a paid one...
+        let old = Have { picked: Some("opencode/deepseek-v4.1-flash-free"), ..have };
+        assert_eq!(default_of(&old).as_deref(), Some("opencode-go/claude-haiku-5-5"));
+        // ...but one picked while paid models were listed is the user's choice
+        assert_eq!(default_of(&Have { picked_free_ok: true, ..old }).as_deref(), Some("opencode/deepseek-v4.1-flash-free"));
+        // a pick that is gone from the list: the same model from another provider
+        let gone = Have { picked: Some("anthropic/kimi-k3"), ..have };
+        assert_eq!(default_of(&gone).as_deref(), Some("opencode-go/kimi-k3"));
+        // no OpenCode Go plan: the first paid model, never the free ones before it (big-pickle costs nothing)
+        let zen: Vec<(String, String)> = signed.iter().filter(|(id, _)| id.starts_with("opencode/")).cloned().collect();
+        assert_eq!(default_of(&Have { list: &zen, free, ..Default::default() }).as_deref(), Some("opencode/claude-opus-5-5"));
+    }
+
+    #[test]
+    fn with_only_free_models_listed_the_default_is_one_of_them() {
+        let unsigned = listed(UNSIGNED_LIST);
+        let free: &'static [String] = Box::leak(vec!["opencode/big-pickle".to_string()].into_boxed_slice());
+        // OpenCode's own default there (measured: `/api/model/default` answers big-pickle), known free or not yet
+        assert_eq!(default_of(&Have { list: unsigned, free, ..Default::default() }).as_deref(), Some("opencode/big-pickle"));
+        assert_eq!(default_of(&Have { list: unsigned, ..Default::default() }).as_deref(), Some("opencode/big-pickle"));
+        // a free pick is kept while nothing paid is listed
+        let have = Have { list: unsigned, free, picked: Some("opencode/flint-40b-free"), ..Default::default() };
+        assert_eq!(default_of(&have).as_deref(), Some("opencode/flint-40b-free"));
+        assert!(!paid_listed(&have) && paid_listed(&Have { list: listed(SIGNED_IN_LIST), free, ..Default::default() }));
+    }
+
+    #[test]
+    fn a_model_that_is_not_listed_exactly_runs_on_its_nearest_twin() {
+        let signed = Have { list: listed(SIGNED_IN_LIST), ..Default::default() };
+        let unsigned = Have { list: listed(UNSIGNED_LIST), ..Default::default() };
+        // the same name under OpenCode Go first, then OpenCode Zen
+        assert_eq!(nearest(&signed, "anthropic/glm-5.3").as_deref(), Some("opencode-go/glm-5.3"));
+        assert_eq!(nearest(&signed, "anthropic/claude-opus-5-5").as_deref(), Some("opencode/claude-opus-5-5"));
+        assert_eq!(nearest(&signed, "glm-5.3").as_deref(), Some("opencode-go/glm-5.3"), "no provider named");
+        assert_eq!(nearest(&signed, "opencode/deepseek-v4.1-flash").as_deref(), Some("opencode/deepseek-v4.1-flash"), "listed: itself");
+        // last night's case: the paid model asked of a copy that is not signed in: its free twin, as nothing else exists
+        assert_eq!(nearest(&unsigned, "opencode/deepseek-v4.1-flash").as_deref(), Some("opencode/deepseek-v4.1-flash-free"));
+        assert_eq!(nearest(&signed, "anthropic/deepseek-v4.1-flash").as_deref(), Some("opencode-go/deepseek-v4.1-flash"), "the paid one where it exists");
+        assert_eq!(nearest(&unsigned, "opencode/kimi-k3"), None);
+        // a turn: the twin runs, and what was asked for is handed back so the chat can say so
+        assert_eq!(pick_from(&unsigned, Some("opencode/deepseek-v4.1-flash")), (Some("opencode/deepseek-v4.1-flash-free".into()), Some("opencode/deepseek-v4.1-flash".into())));
+        assert_eq!(pick_from(&unsigned, Some("opencode/kimi-k3")), (Some("opencode/big-pickle".into()), Some("opencode/kimi-k3".into())), "nothing like it: the default");
+        assert_eq!(pick_from(&signed, Some("opencode-go/beam-free")), (Some("opencode-go/beam-free".into()), None), "a listed free model that was asked for runs");
+        assert_eq!(pick_from(&signed, None), (Some("opencode-go/claude-haiku-5-5".into()), None));
+        assert_eq!(pick_from(&signed, Some("--yolo")), (Some("opencode-go/claude-haiku-5-5".into()), None), "not a model id: never shown or run");
+    }
+
+    #[test]
+    fn the_servers_model_list_says_which_models_cost_nothing() {
+        // `GET /api/model` of opencode v2.3.2, not signed in (two of its ten models, fields the app does not read left
+        // out), and a paid one as the same list shows it
+        let answer: Value = serde_json::from_str(
+            r#"{"data":[{"id":"big-pickle","modelID":"big-pickle","providerID":"opencode","type":"chat","name":"Big Pickle","cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}],"status":"active","enabled":true},
+            {"id":"beam-free","modelID":"beam-free","providerID":"opencode","name":"Beam Free","cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}],"status":"active"},
+            {"id":"claude-opus-5-5","providerID":"opencode","cost":[{"input":5,"output":25,"cache":{"read":0.5,"write":6.25}}]},
+            {"id":"glm-5.3","providerID":"opencode-go","cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}]},
+            {"id":"no-cost-given","providerID":"opencode"}]}"#,
+        )
+        .unwrap();
+        // only OpenCode Zen's prices say "free": a plan's models (OpenCode Go) may be listed at no cost per message
+        assert_eq!(free_from(&answer), ["opencode/big-pickle", "opencode/beam-free"]);
+        let known = free_from(&answer);
+        let have = Have { free: &known, ..Default::default() };
+        assert!(have.is_free("opencode/big-pickle") && have.is_free("opencode-go/hy4-flash-free") && !have.is_free("opencode-go/glm-5.3"));
+    }
+
+    #[test]
+    fn free_models_only_is_said_once_the_sign_in_is_known_to_be_missing() {
+        assert!(!free_only_of(false, &[]), "not asked yet: nothing is claimed");
+        assert!(free_only_of(true, &[]));
+        assert!(!free_only_of(true, &["OpenCode Console".to_string()]));
+        assert_eq!(parse_auth_list("No authenticated integrations\n"), Vec::<String>::new(), "as v2.3.2 says it (measured)");
+        assert_eq!(NOT_SIGNED_IN, "Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections.");
+    }
+
+    #[test]
+    fn a_pick_is_remembered_only_for_a_model_that_is_listed() {
+        let signed = Have { list: listed(SIGNED_IN_LIST), ..Default::default() };
+        assert_eq!(pick_to_save(&signed, "opencode-go/glm-5.3"), Some(("opencode-go/glm-5.3".to_string(), false)));
+        assert_eq!(pick_to_save(&signed, "opencode-go/beam-free"), Some(("opencode-go/beam-free".to_string(), true)), "free, chosen over paid ones");
+        let unsigned = Have { list: listed(UNSIGNED_LIST), ..Default::default() };
+        // not signed in: nothing paid is listed (big-pickle costs nothing too, though its name does not say so)
+        assert_eq!(pick_to_save(&Have { all_free: true, ..unsigned }, "opencode/beam-free"), Some(("opencode/beam-free".to_string(), false)), "free, with nothing else to choose");
+        assert!(!paid_listed(&Have { all_free: true, ..unsigned }));
+        assert_eq!(pick_to_save(&signed, "opencode-go/gone"), None);
+        assert_eq!(pick_to_save(&signed, "--yolo"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sign_in_that_finishes_during_a_turn_restarts_the_server_when_the_turn_is_over() {
+        // a stand-in for the server: a process in a group of its own (no other test touches the server or the turns)
+        let mut cmd = Command::new("/bin/sleep");
+        cmd.arg("60").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        paths::own_group(&mut cmd);
+        let child = cmd.start().unwrap();
+        let pid = child.id();
+        *SERVER.lock().unwrap() = Some(Server { child, port: 1, auth: "Basic test".into(), last_used: Instant::now() });
+        let turn = Arc::new(Active::default());
+        active().as_mut().unwrap().insert("restart-test".into(), turn);
+        // the sign-in ends while the turn runs: the server is left alone, and the restart stays wanted
+        RESTART.store(true, Ordering::SeqCst);
+        restart_if_wanted();
+        assert!(SERVER.lock().unwrap().is_some() && RESTART.load(Ordering::SeqCst), "a running turn keeps its server");
+        // the turn ends (`run` calls this): the server is ended, so the next turn starts one with the new sign-in
+        active().as_mut().unwrap().remove("restart-test");
+        restart_if_wanted();
+        assert!(SERVER.lock().unwrap().is_none() && !RESTART.load(Ordering::SeqCst));
+        let alive = Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).run_status().is_ok_and(|s| s.success());
+        assert!(!alive, "the old server is gone");
+        // nothing wanted: a server is never ended by this
+        restart_if_wanted();
+        assert!(stop_if_idle(Duration::ZERO), "no server is left");
+    }
+
+    #[test]
+    fn the_sign_in_as_opencode_printed_it_today() {
+        // stdout of `opencode --standalone auth login opencode --method device`, v2.3.2, in scratch folders on 23
+        // November 2026, ended before anyone approved it (the code's characters replaced)
+        let out = "\u{250c}  Connect an integration\n\u{1b}[?25l\u{2502}\n\u{25d2}  Starting authorization\u{1b}[999D\u{1b}[J\u{25c7}  Authorization started\n\u{1b}[?25h\u{2502}\n\u{25cf}  Enter code: WXYZ-2345\n\u{2502}\n\u{25cf}  https://opencode.ai/console/device?user_code=WXYZ-2345&client_id=opencode-cli\n\u{2502}\n\u{25c7}  Waiting for authorization...\n";
+        let (mut url, mut code) = (None, None);
+        for line in out.lines() {
+            let (u, c) = login_line(line);
+            url = u.or(url);
+            code = c.or(code);
+        }
+        assert_eq!(code.as_deref(), Some("WXYZ-2345"));
+        assert_eq!(url.as_deref(), Some("https://opencode.ai/console/device?user_code=WXYZ-2345&client_id=opencode-cli"));
     }
 
     #[test]

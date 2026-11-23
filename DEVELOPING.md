@@ -146,7 +146,15 @@ helpers.
 {"ai", "model"}}`) wins, then the request, then the Lead's own AI and model (`Agent::model`: the model it was started
 on, else its last message's). An AI the app cannot run experts on (ChatGPT, anything unknown) or one that is not
 installed is refused with a reason the Lead can act on, never moved to another AI; a model the chosen AI does not list
-runs on that AI's default, and the result's `note` says so (a list that has not arrived yet passes the model on). The
+runs on the nearest it has (`World::nearest`, OpenCode's only: `opencode::nearest`) or on that AI's default, and the
+result's `note` says which and why (a list that has not arrived yet passes the model on). Nothing about where an
+expert runs is silent: the result's `model` always names the model (the AI's default when none was set), the `note`
+also says when the user's table won over what the Lead asked for and when OpenCode has only free models because
+Fridae's copy is not signed in (`World::why`, `opencode::NOT_SIGNED_IN`), and a model swapped later, at a turn (the
+list arrived after the spawn, or the model has gone), is said once under the message in that chat (`model_lines`, the
+"user" event's `fallback`) and added to the result the Lead collects (`team::with_model_note`). `rbx_team` action
+`models` lists what each AI offers, from `work/team-models.json`, which `team::watch` keeps up to date
+(`expert_ai::for_lead`). The
 expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
 `agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
 the expert line and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
@@ -1000,9 +1008,19 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   chat's tool servers are removed again (`DELETE /api/experimental/mcp/<name>`).
 - **Models** come from `opencode models` run with the app's folders (so Fridae's sign-in decides them), cached, and
   refreshed with the status. The menu groups them by provider ("OpenCode Go · glm-5.3") with the filter, and hides
-  effort (OpenCode's model ids carry their own). Default (`default_model`): the user's own `model` in
-  `~/.config/opencode/opencode.json(c)` (read only) when Fridae's copy offers it, else the first `opencode-go/` model,
-  else the first listed. Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
+  effort (OpenCode's model ids carry their own). Default (`default_model`, `default_of`), never a free model while a
+  paid one is listed: the model the user last picked for OpenCode in the menu (settings keys `opencode_model` and
+  `opencode_model_free`, plain ones; the page posts the pick to `/api/opencode` action `model` and asks for
+  `status.ai.default_models.opencode`, so chats and experts agree), the user's own `model` in
+  `~/.config/opencode/opencode.json(c)` (read only), the first paid `opencode-go/` model, the first paid model, and
+  only then a free one. A free pick counts while nothing paid is listed, or when it was picked while paid models were
+  (`opencode_model_free`), so a pick made before the sign-in gives way to the plan's models after it. Free
+  (`Have::is_free`): an id ending `-free`; an `opencode/` model the server lists at no cost (`GET /api/model`, `cost`
+  all zero, asked once per server start, `note_costs`; `big-pickle` is one); and every model while nothing is signed
+  in. Measured on 2.3.2 (23 November 2026): a copy that never signed in lists only models at no cost, all under
+  `opencode/` (eleven that day), `opencode auth list` says "No authenticated integrations", and `opencode models` has
+  no `--verbose`. A model that is not listed exactly runs on its nearest twin (`nearest`: the same name under
+  `opencode-go/`, then `opencode/`, then any provider, and its `-free` twin only when none of those exists). Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
   under `ai: "opencode"`; OpenCode reports no plan limits, and the usage popover says so.
 - **Isolation** (`environment`): the server and the one-off commands (`models`, `auth`, those with `--standalone`)
   run with `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under
@@ -1018,7 +1036,15 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   Fridae" row starts OpenCode's device sign-in (`opencode --standalone auth login opencode --method device`, the code
   is shown, approved on opencode.ai; `/api/opencode` login/open/cancel/state). Free models work without it. Copying
   the user's sign-in was ruled out: its refresh token is replaced on every refresh, so two copies would sign each
-  other out. Not tried live (it needs the user in a browser).
+  other out. The status says where it stands (`opencode::state`: `signed_in`, `known` once `opencode auth list` has
+  answered, `free_only`); while `free_only`, the model menu of an OpenCode chat and Setup's row show "Free models
+  only. Sign in to use your OpenCode plan." with the button (one click starts the sign-in and opens its page), and an
+  OpenCode chat says once that it is on a free model (`expert_ai::FREE_MODEL_LINE`). When the sign-in ends well the
+  model list and the sign-in are asked for again (`reload_models`) and the server is ended so the next turn starts one
+  with the new sign-in, at once when idle, else when the last running turn has ended (`restart_if_wanted`). The start
+  was run on 23 November 2026 in scratch folders (2.3.2 prints the code and the page as the parser expects; the real
+  lines are a test); a sign-in has never been completed (it needs the user in a browser), so what OpenCode lists and
+  does after one is untested.
 - **Tool servers**: one server serves every chat, and OpenCode keeps tool servers per folder, so chats on the same
   game would share them. Each chat's servers are named `fr<8 hex of sha256(chat id)>-<server>` (`chat_prefix`), and
   the rules deny `fr????????-*` and then allow the chat's own prefix. Measured: another chat's tools are not even

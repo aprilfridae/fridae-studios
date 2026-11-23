@@ -6,7 +6,10 @@
 //! 3. Otherwise the Lead's own AI and model.
 //!
 //! A choice that cannot be honoured is refused with a reason the Lead can act on, never quietly moved to another AI;
-//! only a model the chosen AI does not offer falls back to that AI's default, and the result says so.
+//! only a model the chosen AI does not offer runs on the nearest that AI has (OpenCode: the same model from another
+//! provider, or its free twin) or on that AI's default, and the result says which model runs and why. The Lead is also
+//! told when the user's table won over what it asked for, and when OpenCode has only free models because Fridae's
+//! copy of it is not signed in. A model swapped later, at a turn (`swap_line`), is said in the chat and to the Lead.
 
 use serde_json::{Value, json};
 
@@ -44,6 +47,11 @@ pub struct World<'a> {
     pub models: &'a dyn Fn(&str) -> Vec<String>,
     /// An AI's default model.
     pub default_model: &'a dyn Fn(&str) -> Option<String>,
+    /// The model an AI lists that is nearest to one it does not list exactly (AI, model asked for); None: its default.
+    pub nearest: &'a dyn Fn(&str, &str) -> Option<String>,
+    /// Why an AI offers fewer models than the user may expect, when the app knows (OpenCode that is not signed in),
+    /// in words for the Lead.
+    pub why: &'a dyn Fn(&str) -> Option<String>,
     /// Setup's "The Lead may pick an AI for a job" (on unless the user switched it off).
     pub lead_may_pick: bool,
 }
@@ -124,14 +132,67 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
         None if ai == lead_ai && !from_table => lead_model.map(str::to_string),
         None => None,
     };
-    let Some(m) = model else { return Ok(Choice { ai, model: None, note: None }) };
-    let list = (world.models)(&ai);
-    if list.is_empty() || list.iter().any(|x| *x == m) {
-        return Ok(Choice { ai, model: Some(m), note: None });
+    let name = ai_name(&ai);
+    let mut notes: Vec<String> = Vec::new();
+    // the user's table won over something else the Lead asked for
+    let other_ai = request.ai().is_some_and(|a| !a.eq_ignore_ascii_case(&ai) && !(a.eq_ignore_ascii_case("antigravity") && ai == "gemini"));
+    if from_table && (other_ai || request.model().is_some_and(|m| Some(m) != model.as_deref())) {
+        notes.push(format!("The user set the {expert} to run on {name} in Setup > Experts, so that was used, not the ai and model you asked for."));
     }
-    let dflt = (world.default_model)(&ai);
-    let note = format!("{} does not offer the model \"{m}\", so this expert runs on {}'s default ({}).", ai_name(&ai), ai_name(&ai), dflt.as_deref().unwrap_or("its own"));
-    Ok(Choice { ai, model: dflt, note: Some(note) })
+    // a model the AI does not list exactly: the nearest it has, else its default, and the Lead is told which
+    let list = (world.models)(&ai);
+    let model = match model {
+        Some(m) if !list.is_empty() && !list.contains(&m) => {
+            let (runs, on) = match (world.nearest)(&ai, &m) {
+                Some(n) => (Some(n.clone()), format!("{n}, the nearest it has")),
+                None => {
+                    let dflt = (world.default_model)(&ai);
+                    let on = format!("{name}'s default ({})", dflt.as_deref().unwrap_or("its own"));
+                    (dflt, on)
+                }
+            };
+            notes.push(format!("{name} does not offer the model \"{m}\", so this expert runs on {on}."));
+            runs
+        }
+        other => other,
+    };
+    notes.extend((world.why)(&ai));
+    Ok(Choice { ai, model, note: (!notes.is_empty()).then(|| notes.join(" ")) })
+}
+
+/// What is said when a turn runs on another model than the one set for it (a model asked for while its AI's list had
+/// not arrived, or one that has since gone): for the chat, in the user's words, and for the Lead waiting for the result.
+#[derive(Debug, PartialEq)]
+pub struct Swap {
+    pub chat: String,
+    pub lead: String,
+}
+
+/// None when the turn runs on what was asked for, when nothing was, or when what was asked for could not be a model id.
+/// `why` as `World::why`.
+pub fn swap_line(ai: &str, asked: Option<&str>, runs: Option<&str>, why: &dyn Fn(&str) -> Option<String>) -> Option<Swap> {
+    let asked = asked.filter(|a| !a.is_empty() && model_id_ok(a) && Some(*a) != runs)?;
+    let name = ai_name(ai);
+    let (shown, id) = match runs {
+        Some(m) => (model_name(ai, m), format!("the model {m}")),
+        None => (format!("{name}'s own choice"), format!("{name}'s own choice of model")),
+    };
+    let reason = why(ai);
+    // the Lead reads "The user can sign in"; the user reads "Sign in"
+    let to_user = reason.as_deref().map(|r| format!(" {}", r.replace("The user can sign in", "Sign in"))).unwrap_or_default();
+    let to_lead = reason.map(|r| format!(" {r}")).unwrap_or_default();
+    Some(Swap {
+        chat: format!("{name} does not offer the model \"{asked}\", so this ran on {shown}.{to_user}"),
+        lead: format!("it ran on {id}, not \"{asked}\" as set: {name} does not offer that one.{to_lead}"),
+    })
+}
+
+/// The one line an OpenCode chat gets, once, when it runs on a free model because Fridae's OpenCode is not signed in.
+pub const FREE_MODEL_LINE: &str = "This chat is on a free model. Sign in under Setup, Connections to use your OpenCode plan.";
+
+/// Why an AI offers fewer models than the user may expect, when the app knows: OpenCode that is not signed in.
+pub fn why_fewer(ai: &str) -> Option<String> {
+    (ai == "opencode" && opencode::free_only()).then(|| opencode::NOT_SIGNED_IN.to_string())
 }
 
 /// The real computer: what is installed, and each AI's own models.
@@ -140,6 +201,8 @@ pub fn world() -> World<'static> {
         installed: &|ai| expert_ais().contains(&ai) && paths::find_ai(ai).is_some(),
         models: &models_of,
         default_model: &default_of,
+        nearest: &|ai, model| if ai == "opencode" { opencode::nearest_model(model) } else { None },
+        why: &why_fewer,
         lead_may_pick: lead_may_pick(&paths::guarded_settings()),
     }
 }
@@ -228,6 +291,18 @@ pub fn set_entry(expert: &str, ai: &str, model: &str) -> Result<Value, String> {
     }))
 }
 
+/// What a chat may ask for with `rbx_team` spawn's `ai` and `model`: each AI experts run on, whether it is installed,
+/// its default model, its model ids, and what the app knows about why it has few (`why_fewer`). `team::watch` keeps
+/// this in the work folder, where `rbx_team` action "models" reads it.
+pub fn for_lead() -> Value {
+    let w = world();
+    let ais: Vec<Value> = expert_ais()
+        .into_iter()
+        .map(|ai| json!({"id": ai, "name": ai_name(ai), "installed": (w.installed)(ai), "default": default_of(ai), "models": models_of(ai), "note": why_fewer(ai)}))
+        .collect();
+    json!({"lead_may_pick": w.lead_may_pick, "ais": ais})
+}
+
 /// GET /api/experts: the kit's roster (every expert but the Lead), the user's table, and for each AI experts may run
 /// on whether it is installed, its models and its default, with Cursor's documented gaps.
 pub fn listing() -> Value {
@@ -274,8 +349,84 @@ mod tests {
                 "claude" => Some("opus".into()),
                 _ => None,
             },
+            nearest: &|_, _| None,
+            why: &|_| None,
             lead_may_pick: true,
         }
+    }
+
+    /// OpenCode as Fridae's copy was on 23 November 2026: never signed in, so it listed free models only.
+    fn opencode_not_signed_in() -> World<'static> {
+        World {
+            models: &|ai| match ai {
+                "opencode" => vec!["opencode/beam-free".into(), "opencode/big-pickle".into(), "opencode/deepseek-v4.1-flash-free".into()],
+                "claude" => vec!["opus".into(), "sonnet".into()],
+                _ => Vec::new(),
+            },
+            default_model: &|ai| match ai {
+                "opencode" => Some("opencode/big-pickle".into()),
+                "claude" => Some("opus".into()),
+                _ => None,
+            },
+            nearest: &|ai, m| (ai == "opencode" && m == "opencode/deepseek-v4.1-flash").then(|| "opencode/deepseek-v4.1-flash-free".to_string()),
+            why: &|ai| (ai == "opencode").then(|| opencode::NOT_SIGNED_IN.to_string()),
+            ..world_with(&["claude", "opencode"])
+        }
+    }
+
+    #[test]
+    fn a_model_opencode_lacks_runs_on_its_twin_and_the_lead_is_told_which_and_why() {
+        // last night: the Lead asked for a paid model of a copy that is not signed in
+        let w = opencode_not_signed_in();
+        let asked = Want { ai: Some("opencode"), model: Some("opencode/deepseek-v4.1-flash") };
+        let c = resolve(NONE, asked, "claude", Some("opus"), "Coder", &w).unwrap();
+        assert_eq!((c.ai.as_str(), c.model.as_deref()), ("opencode", Some("opencode/deepseek-v4.1-flash-free")));
+        assert_eq!(
+            c.note.as_deref(),
+            Some("OpenCode does not offer the model \"opencode/deepseek-v4.1-flash\", so this expert runs on opencode/deepseek-v4.1-flash-free, the nearest it has. Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections.")
+        );
+        // nothing like it: the default, named, with the same reason
+        let c = resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode-go/kimi-k3") }, "claude", None, "Coder", &w).unwrap();
+        assert_eq!(c.model.as_deref(), Some("opencode/big-pickle"));
+        let note = c.note.unwrap();
+        assert!(note.starts_with("OpenCode does not offer the model \"opencode-go/kimi-k3\", so this expert runs on OpenCode's default (opencode/big-pickle).") && note.ends_with("Setup, Connections."), "{note}");
+        // no model named: OpenCode's default runs, and the Lead still learns that it is a free one and why
+        let c = resolve(NONE, Want { ai: Some("opencode"), model: None }, "claude", Some("opus"), "Coder", &w).unwrap();
+        assert_eq!((c.model.as_deref(), c.note.as_deref()), (None, Some(opencode::NOT_SIGNED_IN)));
+        // the user's table: the same
+        let c = resolve(Want { ai: Some("opencode"), model: Some("opencode/big-pickle") }, NONE, "claude", None, "Coder", &w).unwrap();
+        assert_eq!((c.model.as_deref(), c.note.as_deref()), (Some("opencode/big-pickle"), Some(opencode::NOT_SIGNED_IN)));
+        // an expert that runs like its Lead is not what the Lead asked about: nothing is added
+        assert_eq!(resolve(NONE, NONE, "opencode", Some("opencode/big-pickle"), "Coder", &w).unwrap().note, None);
+    }
+
+    #[test]
+    fn the_lead_is_told_when_the_users_table_won_over_what_it_asked_for() {
+        let w = world_with(&["claude", "cursor"]);
+        let table = Want { ai: Some("cursor"), model: Some("auto") };
+        let c = resolve(table, Want { ai: Some("claude"), model: Some("haiku") }, "claude", Some("opus"), "World builder", &w).unwrap();
+        assert_eq!(c.note.as_deref(), Some("The user set the World builder to run on Cursor in Setup > Experts, so that was used, not the ai and model you asked for."));
+        // asked for what the table says anyway, or for nothing: nothing to tell
+        assert_eq!(resolve(table, Want { ai: Some("cursor"), model: Some("auto") }, "claude", None, "World builder", &w).unwrap().note, None);
+        assert_eq!(resolve(table, Want { ai: Some("Cursor"), model: None }, "claude", None, "World builder", &w).unwrap().note, None);
+        assert_eq!(resolve(table, NONE, "claude", None, "World builder", &w).unwrap().note, None);
+    }
+
+    #[test]
+    fn a_turn_that_runs_on_another_model_than_asked_says_so() {
+        let none = |_: &str| None;
+        // what was asked for runs, or nothing was asked for: nothing to say
+        assert_eq!(swap_line("cursor", Some("auto"), Some("auto"), &none), None);
+        assert_eq!(swap_line("cursor", None, Some("auto"), &none), None);
+        assert_eq!(swap_line("claude", Some("--yolo"), Some("opus"), &none), None, "not a model id: never shown");
+        let s = swap_line("claude", Some("newest"), Some("opus"), &none).unwrap();
+        assert_eq!((s.chat.as_str(), s.lead.as_str()), ("Claude does not offer the model \"newest\", so this ran on Opus.", "it ran on the model opus, not \"newest\" as set: Claude does not offer that one."));
+        // OpenCode, not signed in: the reason, in the user's words for the chat and the Lead's for the Lead
+        let why = |ai: &str| (ai == "opencode").then(|| opencode::NOT_SIGNED_IN.to_string());
+        let s = swap_line("opencode", Some("opencode/deepseek-v4.1-flash"), Some("opencode/deepseek-v4.1-flash-free"), &why).unwrap();
+        assert_eq!(s.chat, "OpenCode does not offer the model \"opencode/deepseek-v4.1-flash\", so this ran on OpenCode Zen · deepseek-v4.1-flash-free. Fridae's OpenCode is not signed in to a plan, so only free models are available. Sign in under Setup, Connections.");
+        assert!(s.lead.ends_with("OpenCode does not offer that one. Fridae's OpenCode is not signed in to a plan, so only free models are available. The user can sign in under Setup, Connections."), "{}", s.lead);
+        assert_eq!(FREE_MODEL_LINE, "This chat is on a free model. Sign in under Setup, Connections to use your OpenCode plan.");
     }
 
     const NONE: Want = Want { ai: None, model: None };
@@ -293,7 +444,9 @@ mod tests {
         let w = world_with(&["claude", "cursor"]);
         let table = Want { ai: Some("cursor"), model: Some("gpt-5.3-codex") };
         let asked = Want { ai: Some("claude"), model: Some("haiku") };
-        assert_eq!(resolve(table, asked, "claude", Some("opus"), "World builder", &w), Ok(Choice { ai: "cursor".into(), model: Some("gpt-5.3-codex".into()), note: None }));
+        let c = resolve(table, asked, "claude", Some("opus"), "World builder", &w).unwrap();
+        assert_eq!((c.ai.as_str(), c.model.as_deref()), ("cursor", Some("gpt-5.3-codex")));
+        assert!(c.note.is_some_and(|n| n.starts_with("The user set the World builder to run on Cursor")), "the Lead is told its own pick was not used");
         // the table names an AI only: that AI's default, not the Lead's model
         let table = Want { ai: Some("cursor"), model: None };
         assert_eq!(resolve(table, asked, "claude", Some("opus"), "World builder", &w).unwrap().model, None);
@@ -332,7 +485,7 @@ mod tests {
         let asked = Want { ai: Some("cursor"), model: Some("newest-astra") };
         let c = resolve(NONE, asked, "claude", None, "World builder", &w).unwrap();
         assert_eq!((c.ai.as_str(), c.model.as_deref()), ("cursor", Some("auto")));
-        assert!(c.note.unwrap().contains("does not offer the model \"newest-astra\""));
+        assert_eq!(c.note.as_deref(), Some("Cursor does not offer the model \"newest-astra\", so this expert runs on Cursor's default (auto)."));
         // an AI whose list has not arrived: the model is passed on, and that AI itself says if it is wrong
         let w = world_with(&["claude", "gemini"]);
         let c = resolve(NONE, Want { ai: Some("gemini"), model: Some("g-4") }, "claude", None, "Coder", &w).unwrap();

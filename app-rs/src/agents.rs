@@ -488,6 +488,28 @@ fn studio_fallback(ask: &Ask, has_project: bool) -> (Ask, Option<&'static str>) 
     }
 }
 
+/// What a turn's model adds under the user's message. `swap`: the turn runs on another model than the one set for it
+/// (said once per such swap, and kept for a helper's Lead, who gets it with the result); `free`: an OpenCode turn on a
+/// free model because Fridae's OpenCode is not signed in (said once per chat, unless the swap's line just said so).
+fn model_lines(st: &mut State, swap: Option<crate::expert_ai::Swap>, free: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    // what the Lead is told is about the helper's latest turn
+    if st.parent.is_some() {
+        st.model_note = swap.as_ref().map(|s| s.lead.clone());
+    }
+    if let Some(s) = swap {
+        if st.swap_told.as_deref() != Some(s.chat.as_str()) {
+            st.swap_told = Some(s.chat.clone());
+            st.free_told |= s.chat.contains("not signed in");
+            out.push(s.chat);
+        }
+    }
+    if free && !std::mem::replace(&mut st.free_told, true) {
+        out.push(crate::expert_ai::FREE_MODEL_LINE.to_string());
+    }
+    out
+}
+
 /// Whether a message starts a night checkpoint (a plugin pin and a "Before the overnight run" commit). Not for the
 /// loop's own carry-ons, not for a waiting run going on, and not for a message to the Lead of a studio run that already
 /// has its "start" checkpoint (a decision, a reply while it works, Resume): those belong to the same run.
@@ -608,6 +630,12 @@ struct State {
     parent: Option<String>,
     /// A paused studio run's Lead has been told to wind down (see `pause_step`).
     pause_told: bool,
+    /// The line this chat was last shown for a turn that ran on another model than set (`model_lines`): said once.
+    swap_told: Option<String>,
+    /// This chat was told that it runs on a free model because Fridae's OpenCode is not signed in: said once.
+    free_told: bool,
+    /// For the Lead waiting for this helper's result: the model it really ran on, when not the one set for it.
+    model_note: Option<String>,
     /// When the current (or latest) turn began, and the newest Studio output line the agent has been shown.
     turn_started: f64,
     log_seq: u64,
@@ -2689,14 +2717,27 @@ impl Agent {
         }
         // each AI has its own models: Claude's four families, or whatever Antigravity, Codex or Cursor lists
         // each AI starts on a set model rather than whatever its own program defaults to
+        let asked = model;
         let model: Option<String> = match self.ai().as_str() {
             "claude" => Some(model.filter(|m| MODELS.contains(m)).unwrap_or("opus").to_string()),
             "gemini" => model.filter(|m| antigravity::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(antigravity::default_model),
             "cursor" => cursor::pick_model(model),
-            "opencode" => opencode::pick_model(model),
+            // a model OpenCode does not list exactly runs on its nearest twin (`opencode::nearest`)
+            "opencode" => opencode::pick_model(model).0,
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
         let model = model.as_deref();
+        // never in silence: a turn that runs on another model than the one set for it says so under the message (once),
+        // and a helper's Lead is told with its result; an OpenCode chat on a free model because Fridae's OpenCode is
+        // not signed in says that once too
+        let fallback: Option<String> = {
+            let ai = self.ai();
+            let swap = crate::expert_ai::swap_line(&ai, asked, model, &crate::expert_ai::why_fewer);
+            let free = ai == "opencode" && opencode::free_only() && model.is_some_and(opencode::is_free);
+            let lines = model_lines(&mut self.st.lock().unwrap(), swap, free);
+            let all: Vec<String> = fallback.map(str::to_string).into_iter().chain(lines).collect();
+            (!all.is_empty()).then(|| all.join(" "))
+        };
         // an AI whose model ids carry their own effort is not given the setting (`caps`)
         let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort);
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
@@ -3674,6 +3715,11 @@ impl Agent {
     /// What this turn's end threw away of its tool work, once: an expert's Lead is told with the expert's result.
     pub fn take_jobs_lost(&self) -> Option<String> {
         self.st.lock().unwrap().jobs_lost.take()
+    }
+
+    /// The model this helper really ran on, when not the one set for it (`model_lines`): its Lead is told with its result.
+    pub fn model_note(&self) -> Option<String> {
+        self.st.lock().unwrap().model_note.clone()
     }
 
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
@@ -5826,6 +5872,36 @@ mod tests {
         a.halt();
         assert_eq!(begin_send(&mut a.st.lock().unwrap(), &carry_on, true, 2.0), None);
         assert!(!a.busy());
+    }
+
+    #[test]
+    fn a_swapped_model_and_a_free_model_are_each_said_once() {
+        use crate::expert_ai::{FREE_MODEL_LINE, Swap};
+        let swap = |chat: &str| Some(Swap { chat: chat.to_string(), lead: "it ran on the model b, not \"a\" as set".to_string() });
+        // the user's own chat: the swap once, however many turns; nothing kept for a Lead
+        let mut st = State::default();
+        assert_eq!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on B."), false), ["Cursor does not offer the model \"a\", so this ran on B."]);
+        assert!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on B."), false).is_empty());
+        assert_eq!(st.model_note, None);
+        assert_eq!(model_lines(&mut st, swap("Cursor does not offer the model \"a\", so this ran on C."), false).len(), 1, "another swap is news");
+        // an OpenCode chat on a free model, not signed in: one line, once
+        let mut st = State::default();
+        assert_eq!(model_lines(&mut st, None, true), [FREE_MODEL_LINE]);
+        assert!(model_lines(&mut st, None, true).is_empty());
+        assert!(model_lines(&mut State::default(), None, false).is_empty());
+        // a swap that already says nobody is signed in: the free line is not added after it, then or later
+        let mut st = State::default();
+        let said = "OpenCode does not offer the model \"a\", so this ran on B. Fridae's OpenCode is not signed in to a plan, so only free models are available. Sign in under Setup, Connections.";
+        assert_eq!(model_lines(&mut st, swap(said), true), [said]);
+        assert!(model_lines(&mut st, swap(said), true).is_empty());
+        // an expert: its Lead gets the line with the result, every time
+        let mut st = State { parent: Some("c-lead".into()), ..Default::default() };
+        model_lines(&mut st, swap("x"), false);
+        assert_eq!(st.model_note.as_deref(), Some("it ran on the model b, not \"a\" as set"));
+        model_lines(&mut st, swap("x"), false);
+        assert!(st.model_note.is_some(), "said again with the next result, though the chat is not told twice");
+        model_lines(&mut st, None, false);
+        assert_eq!(st.model_note, None, "a later turn on the model that was set has nothing to add");
     }
 
     #[test]

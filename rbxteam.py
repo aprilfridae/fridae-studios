@@ -9,6 +9,9 @@ results; the app does the rest.
             "expert": id, "expert_name", "expert_text", "writes": bool; "role" is then the expert's kind
   result    WORK/team-results/<id>.json    written and updated by the app
             {"id", "agent", "name", "role", "status": "running" | "done" | "refused", "reason", "text"}
+            and, from spawn, where it runs: "ai", "model" and "note" (when that is not what was asked for, and why)
+  models    WORK/team-models.json          kept up to date by the app: what each AI offers
+            {"lead_may_pick", "ais": [{"id", "name", "installed", "default", "models": [ids], "note"}]}
 
 A worker does a piece of the job; a critic reviews work and reports problems.
 Agents started this way cannot start more.
@@ -20,6 +23,8 @@ from rbxpaths import WORK, KitError, read_json, write_json
 REQUESTS = os.path.join(WORK, "team-requests")
 RESULTS = os.path.join(WORK, "team-results")
 NUDGES = os.path.join(WORK, "team-nudge")  # WORK/team-nudge/<agent id>: the app has something waiting for that Lead
+MODELS = os.path.join(WORK, "team-models.json")
+MODELS_SHOWN = 40  # of one AI's models, when every AI is listed (Cursor offers hundreds)
 ROLES = ("worker", "critic")
 FINISHED = ("done", "refused")
 PICKUP = 15       # seconds to wait for the app to answer a spawn
@@ -199,6 +204,42 @@ EARLY = {
 }
 
 
+def models(ai=None):
+    """What each AI offers, as text: whether it is installed, its default model and its model ids, with what the app
+    knows about why an AI has few (OpenCode that is not signed in). `ai` lists that one in full."""
+    data = read_json(MODELS)
+    ais = data.get("ais") if isinstance(data, dict) else None
+    if not isinstance(ais, list) or not ais:
+        raise TeamError("The app has not listed its AIs' models. This only works when this chat runs inside the Fridae "
+                        "Studios app with it open; if it is, try again in a few seconds.")
+    ais = [a for a in ais if isinstance(a, dict) and a.get("id")]
+    want = str(ai or "").strip().lower()
+    if want:
+        ais = [a for a in ais if a["id"] == want]
+        if not ais:
+            raise TeamError("\"%s\" is not an AI this app runs agents on. Use one of %s, or leave ai out to list them all."
+                            % (want, ", ".join(a["id"] for a in data["ais"] if isinstance(a, dict) and a.get("id"))))
+    out = ["Where an agent can run (rbx_team spawn's 'ai' and 'model'; leave both out and it runs like you). Model ids "
+           "are given exactly as written here."]
+    if data.get("lead_may_pick") is False:
+        out.append("The user has switched off \"The Lead may pick an AI for a job\" in Setup, so leave ai and model out: "
+                   "this list is for your information only.")
+    for a in ais:
+        head = "%s (%s): " % (a["id"], a.get("name") or a["id"])
+        ids = [str(m) for m in a.get("models") or []]
+        if not a.get("installed"):
+            out.append(head + "not installed")
+        elif not ids:
+            out.append(head + "its model list has not arrived yet (a model you name is passed on as it is)")
+        else:
+            shown = ids if want or len(ids) <= MODELS_SHOWN else ids[:MODELS_SHOWN]
+            more = "" if len(shown) == len(ids) else " ... and %d more (give ai \"%s\" to see them all)" % (len(ids) - len(shown), a["id"])
+            out.append("%sdefault model %s. Models: %s%s" % (head, a.get("default") or "its own choice", ", ".join(shown), more))
+        if a.get("note"):
+            out.append("  note: %s" % a["note"])
+    return "\n".join(out)
+
+
 def _line(rid, r):
     if not r:
         return "%s  unknown: the app has no record of this task" % rid
@@ -252,4 +293,6 @@ def run(action, a=None):
         else:
             out.append("All finished. Check the work yourself before reporting it as done.")
         return "\n".join(out)
-    raise TeamError("Unknown action '%s'. Use spawn, status or wait." % action)
+    if action == "models":
+        return models(a.get("ai"))
+    raise TeamError("Unknown action '%s'. Use spawn, status, wait or models." % action)

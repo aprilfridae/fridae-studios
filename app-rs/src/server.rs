@@ -158,7 +158,7 @@ fn status() -> Value {
                "offered": paths::AIS,
                "gaps": {"cursor": cursor::gaps(), "opencode": opencode::gaps()},
                "caps": crate::caps::table(),
-               "opencode": {"signed_in": opencode::signed_in(), "login": opencode::login_state()},
+               "opencode": opencode::state(),
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
@@ -319,6 +319,8 @@ fn post(path: &str, body: Value) -> Reply {
                 opencode::login_cancel();
                 send_json(opencode::login_state())
             }
+            // the model picked in the menu under the message box: remembered for every OpenCode chat and expert
+            "model" => send_json(json!({"ok": opencode::remember_pick(&text_of("model"))})),
             _ => send_json(opencode::login_state()),
         },
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
