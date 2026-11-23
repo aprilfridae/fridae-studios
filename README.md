@@ -55,8 +55,10 @@ An amber dot at the bottom left of the window shows while one of them is missing
 
 ## Finding your way
 
-The left side lists your games. **All projects**, at the top, is one page for every game: a card per game
-with its run, who is working on what, what needs you and what it has cost. Pick a game and it has three tabs:
+The left side lists your games. **Overview**, at the top, is one page for every game: a live graph of the games,
+their chats and the experts each Lead started (press a game for its Review, a chat to open it; drag to arrange,
+scroll to zoom, double-click to fit), and beside it a card per game with its run, who is working on what, what needs
+you and what it has cost. Pick a game and it has three tabs:
 
 - **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. In the message
   box, the button that names the AI and model ("Claude · Opus") switches between **Claude**, **Gemini**, **Cursor**

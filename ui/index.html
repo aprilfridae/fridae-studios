@@ -456,11 +456,28 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-note:empty { min-height: 0; margin: 0; }
 .r-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 
-/* all projects: one card per game, and one to start a new one */
-.ap-page { max-width: 1120px; margin: 0 auto; }
-.ap-head { display: flex; align-items: center; gap: 12px; min-height: var(--h-m); margin: 0 0 16px; }
+/* overview: the live graph of every game, its chats and its experts; beside it, one card per game and one to start
+   a new one. Under 1000px the cards go under the graph. */
+#allproj { padding: 0; overflow: hidden; }
+body.all #allproj { display: grid; grid-template-columns: minmax(0, 1fr) 400px; }
+.o-graph { position: relative; min-width: 0; min-height: 0; }
+.o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.o-graph canvas.over { cursor: pointer; }
+/* what the graph shows, behind one small "?" in its corner */
+.o-key { position: absolute; left: 16px; bottom: 16px; z-index: 1; }
+.o-key summary { width: var(--h-s); height: var(--h-s); display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--dim); font-size: 13px; cursor: pointer; list-style: none; transition: background-color 140ms ease, color 140ms ease; }
+.o-key summary::-webkit-details-marker { display: none; }
+.o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
+.o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
+.ap-side { border-left: 1px solid var(--line); padding: 24px 16px 48px; overflow-y: auto; min-width: 0; min-height: 0; }
+.ap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-m); margin: 0 0 16px; }
 .ap-head .sub { margin: 0; font-size: 14px; }
-.ap-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.ap-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (max-width: 1000px) {
+  body.all #allproj { grid-template-columns: minmax(0, 1fr); grid-template-rows: 460px auto; overflow-y: auto; }
+  .ap-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; min-height: auto; padding: 24px 24px 48px; }
+  .ap-cards { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+}
 .ap-card { display: flex; flex-direction: column; width: 100%; min-height: 136px; text-align: left; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 140ms ease, background-color 140ms ease; }
 .ap-card:hover { border-color: var(--dim); }
 .ap-card.hot { border-color: var(--text); }
@@ -819,10 +836,16 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     </div>
     </div>
 
-    <div id="allproj"><div class="ap-page">
-      <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill" id="ap-stop-all" hidden>Stop everything</button></div>
-      <div class="ap-cards" id="ap-cards"></div>
-    </div></div>
+    <div id="allproj">
+      <div class="o-graph">
+        <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
+        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
+      </div>
+      <div class="ap-side">
+        <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
+        <div class="ap-cards" id="ap-cards"></div>
+      </div>
+    </div>
 
     <div id="review"><div class="rv-page">
       <section class="rv-run" aria-label="The run">
@@ -1117,7 +1140,7 @@ const GUIDE = [
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
-  ["All projects", "One card per game: its run, what needs you and what it has cost.", "", "Press a card to open the game: its Review when something needs you, else its Chat. This page opens first when a game has a run going or something waits for you."],
+  ["Overview", "A live graph of every game, its chats and its experts, with one card per game beside it.", "", "In the graph a square is a game, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a game for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a game's run, what needs you and what it has cost; press it to open the game: its Review when something needs you, else its Chat. This page opens first when a game has a run going or something waits for you."],
   ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that game's Review. New project makes a folder for a new game and has ideas to start from. Chats that belong to no game sit under No project."],
   ["Chat, Review, Promos", "A game's three tabs: talk to its agent, see what needs you, make promo videos."],
   ["The chat's name", "Press it for the game's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
@@ -1262,7 +1285,7 @@ function showProject(key, tab) {
 }
 function showNewProject() { curProj = null; setView("newproj"); }
 function showAll() { curProj = null; setView("all"); }
-/* the page in front is a project's tab, or one of the two pages of no project: All projects and New project */
+/* the page in front is a project's tab, or one of the two pages of no project: Overview and New project */
 const isPage = (v) => v === "newproj" || v === "all";
 let homeProj = null;   /* the project last in front, for the place kept across restarts */
 function savePlace() {
@@ -1330,9 +1353,9 @@ function projState(path) {
 function paintSide() {
   const list = $("proj-list"); if (!list) return;
   const rows = [];
-  const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>All projects</b><span class="state"></span>');
+  const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
   if ([...agents.values()].some((p) => p.busy)) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
-  all.title = "Every game at work, and what needs you";
+  all.title = "Every game, its chats and its experts, and what needs you";
   all.onclick = showAll;
   rows.push(all);
   for (const x of projects.projects || []) {
@@ -1371,7 +1394,7 @@ function paintView() {
   if (view !== "review") $("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
   ["chat", "review", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
-  const name = view === "newproj" ? "New project" : view === "all" ? "All projects" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
+  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
   $("b-proj").textContent = name; $("b-proj").disabled = !curProj || isPage(view);
   $("b-proj").title = curProj && !isPage(view) ? "The game's folder, notes and git history" : "";
   $("tabs").hidden = isPage(view);
@@ -3570,14 +3593,14 @@ $("rv-all").onclick = async () => {
   });
   paintReviewBadge(); paintReview();
 };
-/* ---------- All projects: one card per game, and one to start a new game ---------- */
+/* ---------- Overview: the live graph of every game, and beside it one card per game and one to start a new game ---------- */
 let apTimer = 0;
 function openAll() {
-  loadHistory(); paintAll(); loadReview(); loadRvUsage(true);
+  loadHistory(); paintAll(); overviewOpen(); loadReview(); loadRvUsage(true);
   clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); loadRvUsage(); } else clearInterval(apTimer); }, 5000);
 }
 /* what needs the user on a game: items the run waits for, then to-dos only they can do. The one count of it: the
-   sidebar, the Review tab, Review's Needs you and the All projects cards all use this. */
+   sidebar, the Review tab, Review's Needs you and the Overview cards all use this. */
 function needsOf(r) {
   return rvWaiting(r).filter((i) => i.blocking).concat(rvNeeds(r).filter((c) => !rvDone.has(c.id)));
 }
@@ -3624,6 +3647,232 @@ function paintAll() {
   $("ap-stop-all").hidden = !working;
 }
 $("ap-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) api("/api/stop", { agent: p.id }); };
+
+/* The graph: each game a square, its chats around it, each expert tied to the Lead that started it, saved chats dim,
+   and the last few steps of anything that is working. Drag to arrange, scroll to zoom, double-click to fit.
+   It is drawn only while something changes: nodes still finding their place, a drag, the zoom easing to fit, or a
+   working chat pulsing. Settled and with nothing at work, no frame is asked for at all (`og.raf` is 0); a look at
+   what there is to draw every 900 ms (`overviewTick`) and the pointer wake it again.
+   The layout cools as it goes (`og.heat`): at full strength for two seconds after it starts, then easing off over
+   about five more, so it always comes to rest instead of drifting for ever. */
+const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", drawn: 0, last: 0, still: false };
+/* less motion: nothing drifts or pulses. The nodes are put straight where they come to rest, and a working chat is
+   bright with a ring that does not move. */
+{ const m = window.matchMedia("(prefers-reduced-motion: reduce)"); og.still = m.matches; m.addEventListener("change", () => { og.still = m.matches; overviewPoke(); }); }
+/* what the graph needs of each event as it passes: how many steps a chat has taken since its last message, and its
+   last few steps while it works (after the first batch only: a chat put back from its log shows none) */
+function overviewNote(e) {
+  if (!e.agent || (e.kind !== "tool" && e.kind !== "user")) return;
+  const p = agents.get(e.agent); if (!p) return;
+  if (e.kind === "user") { p.steps = 0; return; }
+  p.steps = (p.steps || 0) + 1;
+  if (e.id > bootMark) p.recent = (p.recent || []).concat([{ label: e.label, t: Date.now() }]).slice(-4);
+}
+function overviewWanted() {
+  const want = new Map(), links = [];
+  const add = (id, kind, label, extra) => { want.set(id, Object.assign({ id, kind, label }, extra || {})); };
+  const link = (a, b) => { if (want.has(a) && want.has(b)) links.push([a, b]); };
+  const open = [...agents.values()].filter((p) => p.started || p.busy);
+  const openIds = new Set(open.map((p) => p.id));
+  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id)).slice(0, 60);
+  for (const x of projects.projects || []) add("proj:" + x.path, "project", x.name, { path: x.path, busy: open.some((p) => p.busy && projKey(p) === x.path) });
+  if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
+  for (const p of open) {
+    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name;
+    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
+  }
+  for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
+  for (const p of open) {
+    if (isHelper(p) && want.has("chat:" + p.parent)) link("chat:" + p.parent, "chat:" + p.id);
+    else link("proj:" + projKey(p), "chat:" + p.id);
+    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: "chat:" + p.id, newest: i === all.length - 1 }); links.push(["chat:" + p.id, id]); });
+  }
+  for (const c of savedChats) {
+    if (c.parent && (openIds.has(c.parent) || want.has("saved:" + c.parent))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
+    else link("proj:" + (c.project || ""), "saved:" + c.id);
+  }
+  /* a saved chat of no game, with no square to hang from, is left out */
+  for (const id of [...want.keys()]) if (id.startsWith("saved:") && !links.some((l) => l[1] === id)) want.delete(id);
+  return { want, links };
+}
+/* bring the nodes into line with what there is to show; true when anything that shows has changed */
+function overviewSync() {
+  const { want, links } = overviewWanted();
+  for (const id of [...og.nodes.keys()]) if (!want.has(id)) og.nodes.delete(id);
+  for (const [id, w] of want) {
+    const have = og.nodes.get(id);
+    if (have) Object.assign(have, w);
+    else {
+      /* a new node appears beside what it is tied to, so the picture grows instead of jumping */
+      const tie = links.find((l) => l[1] === id && og.nodes.has(l[0])) || links.find((l) => l[0] === id && og.nodes.has(l[1]));
+      const near = tie ? og.nodes.get(tie[0] === id ? tie[1] : tie[0]) : null, a = Math.random() * 6.283, d = near ? 40 : 120 + Math.random() * 80;
+      og.nodes.set(id, Object.assign({ x: (near ? near.x : 0) + Math.cos(a) * d, y: (near ? near.y : 0) + Math.sin(a) * d, vx: 0, vy: 0 }, w));
+    }
+  }
+  og.links = links.filter((l) => og.nodes.has(l[0]) && og.nodes.has(l[1]));
+  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1)).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
+  if (sig === og.sig) return false;
+  og.sig = sig;
+  /* the same picture in words, for a reader who cannot see the canvas (the cards beside it say the rest) */
+  const all = [...og.nodes.values()], count = (k) => all.filter((n) => n.kind === k).length, plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+  const busy = all.filter((n) => n.busy && n.kind !== "project").map((n) => n.label);
+  $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "game"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
+  return true;
+}
+const NODE = { project: 8, chat: 6, expert: 4, saved: 3, step: 2.5 };
+const radius = (n) => NODE[n.kind] + (n.weight || 0) * 0.6;
+/* one step of the layout; false once every node has come to rest (and until something wakes it) */
+function overviewStep() {
+  if (og.asleep) return false;
+  const nodes = [...og.nodes.values()], k = og.heat;
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    a.vx -= a.x * 0.0009 * k; a.vy -= a.y * 0.0009 * k;               /* a gentle pull to the middle */
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j]; let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 0.01;
+      const f = Math.min(3, 2600 / d2) * k, d = Math.sqrt(d2); dx /= d; dy /= d;   /* everything pushes everything else away */
+      a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+    }
+  }
+  for (const [ia, ib] of og.links) {
+    const a = og.nodes.get(ia), b = og.nodes.get(ib); const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+    const want = b.kind === "step" ? 46 : b.kind === "saved" ? 84 : b.kind === "expert" ? 70 : 140, f = (d - want) * 0.012 * k;   /* a tie holds two nodes at a set distance */
+    a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+  }
+  let fastest = 0;
+  for (const n of nodes) { if (og.drag && og.drag.node === n) { n.vx = n.vy = 0; continue; } n.vx *= 0.86; n.vy *= 0.86; n.x += n.vx; n.y += n.vy; fastest = Math.max(fastest, Math.abs(n.vx), Math.abs(n.vy)); }
+  /* cooling: full strength for the first 120 steps after it starts (a drag keeps it warm), then easing off */
+  if (og.drag) og.heat = Math.max(og.heat, 0.5); else if (++og.age > 120) og.heat *= 0.985;
+  /* at rest: it has cooled right down, or nothing has moved a fiftieth of a pixel for half a second of frames */
+  og.calm = fastest < 0.02 ? og.calm + 1 : 0;
+  if ((og.heat < 0.01 || og.calm > 30) && !og.drag) { og.asleep = true; for (const n of nodes) n.vx = n.vy = 0; }
+  return !og.asleep;
+}
+/* draw it once; true while the zoom is still easing towards the fit */
+function overviewDraw(now) {
+  const cv = $("o-canvas"), box0 = cv.parentNode.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  if (!box0.width || !box0.height) return false;
+  if (cv.width !== Math.round(box0.width * dpr) || cv.height !== Math.round(box0.height * dpr)) { cv.width = Math.round(box0.width * dpr); cv.height = Math.round(box0.height * dpr); }
+  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box0.width, box0.height);
+  /* names are 12px on the screen whatever the zoom (13px for a game), growing only when zoomed well in */
+  const FONT = "px Geist, 'Segoe UI', sans-serif", named = (n) => n.kind !== "saved" && n.kind !== "step";
+  const short = (n) => (n.label.length > 30 ? n.label.slice(0, 29) + "…" : n.label), px = (n) => (n.kind === "project" ? 13 : 12);
+  let easing = false;
+  if (!og.mine && og.nodes.size && !og.drag) {
+    /* fit: the middle of what there is goes to the middle of the space, at the zoom that keeps every node, and
+       every name that always shows, inside it with a margin (held still while a node is dragged, so the picture
+       does not slide under the pointer) */
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const n of og.nodes.values()) { x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y); }
+    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+    let fit = 1.8;
+    for (const n of og.nodes.values()) {
+      let half = 12;
+      if (named(n)) { c.font = (n.kind === "project" ? "500 " : "") + px(n) + FONT; half = c.measureText(short(n)).width / 2 + 8; }
+      if (Math.abs(n.x - mx) > 1) fit = Math.min(fit, (box0.width / 2 - half) / Math.abs(n.x - mx));
+      if (Math.abs(n.y - my) > 1) fit = Math.min(fit, (box0.height / 2 - 40) / (Math.abs(n.y - my) + radius(n)));
+    }
+    fit = Math.max(0.3, fit);
+    const near = Math.abs(fit - og.zoom) < 0.002 && Math.abs(mx - og.cx) < 0.5 && Math.abs(my - og.cy) < 0.5;
+    if (og.still || near) { og.zoom = fit; og.cx = mx; og.cy = my; }
+    else { og.zoom += (fit - og.zoom) * 0.06; og.cx += (mx - og.cx) * 0.06; og.cy += (my - og.cy) * 0.06; easing = true; }
+  }
+  c.translate(box0.width / 2 + og.panX, box0.height / 2 + og.panY); c.scale(og.zoom, og.zoom); c.translate(-og.cx, -og.cy);
+  const near = new Set(); if (og.hover) { near.add(og.hover.id); og.links.forEach(([a, b]) => { if (a === og.hover.id) near.add(b); if (b === og.hover.id) near.add(a); }); }
+  const lit = (id) => !og.hover || near.has(id);
+  c.lineWidth = 1 / og.zoom;
+  for (const [ia, ib] of og.links) {
+    const a = og.nodes.get(ia), b = og.nodes.get(ib), on = og.hover && near.has(ia) && near.has(ib);
+    c.strokeStyle = "rgba(255,255,255," + (on ? 0.5 : og.hover ? 0.04 : a.busy || b.busy ? 0.22 : 0.1) + ")";
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+  }
+  const pulse = og.still ? 0.5 : 0.5 + 0.5 * Math.sin(now / 420), size = (p) => p / Math.min(1.4, og.zoom);
+  for (const n of og.nodes.values()) {
+    const r = radius(n), dim = lit(n.id) ? 1 : 0.18;
+    const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85;
+    if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
+    c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
+    c.beginPath();
+    if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
+    c.fill();
+    /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
+       step, the one its chat is on now (all of its last steps under the pointer or zoomed in) */
+    const wordy = named(n) || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id) && (n.newest || !!og.hover || og.zoom >= 1));
+    if (wordy) {
+      c.font = (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT;
+      c.fillStyle = "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : 0.62) * dim + ")";
+      const chat = n.kind === "step" && og.nodes.get(n.of);
+      if (chat) {
+        /* a step's name sits beside it, on the side away from its chat, so it never lies across the chat's own */
+        const side = n.x < chat.x ? -1 : 1;
+        c.textAlign = side < 0 ? "right" : "left"; c.textBaseline = "middle";
+        c.fillText(short(n), n.x + side * (r + size(6)), n.y);
+        c.textBaseline = "alphabetic";
+      } else { c.textAlign = "center"; c.fillText(short(n), n.x, n.y + r + size(14)); }
+    }
+  }
+  og.drawn++;
+  return easing;
+}
+/* A frame: move, draw, and ask for the next one only if there is a reason to. */
+function overviewFrame(now) {
+  og.raf = 0;
+  if (view !== "all") return;
+  let moving;
+  if (og.still && !og.drag) { for (let i = 0; i < 400 && overviewStep(); i++); moving = !og.asleep; if (moving) { og.raf = requestAnimationFrame(overviewFrame); return; } }   /* straight to rest, then drawn once */
+  else moving = overviewStep();
+  const pulsing = !og.still && [...og.nodes.values()].some((n) => n.busy);
+  /* a pulse alone needs no more than thirty frames a second */
+  const easing = !moving && pulsing && !og.drag && now - og.last < 30 ? false : (og.last = now, overviewDraw(now));
+  if (moving || easing || pulsing || og.drag) og.raf = requestAnimationFrame(overviewFrame);
+}
+/* draw once more (the pointer moved over it, it was zoomed or panned, its space changed) */
+function overviewPoke() { if (view === "all" && !og.raf) og.raf = requestAnimationFrame(overviewFrame); }
+/* the layout has something to do again (a node came or went, one was dragged) */
+function overviewWake() { og.asleep = false; og.calm = 0; og.heat = Math.max(og.heat, 0.3); overviewPoke(); }
+/* every 900 ms while the page is in front: is there something else to show? */
+function overviewTick() {
+  if (view !== "all") { clearInterval(og.timer); og.timer = 0; return; }
+  if (overviewSync()) overviewWake();
+}
+function overviewOpen() {
+  /* the first time, the layout starts from scratch at full strength; coming back to it, only what changed stirs it */
+  const first = !og.nodes.size;
+  if (overviewSync()) { if (first) { og.heat = 1; og.age = 0; og.asleep = false; og.calm = 0; } else overviewWake(); }
+  og.last = 0; overviewPoke();
+  if (!og.timer) og.timer = setInterval(overviewTick, 900);
+}
+/* where the pointer is, in the graph's own coordinates, and which node is under it */
+function overviewAt(ev) {
+  const r = $("o-canvas").getBoundingClientRect(), x = (ev.clientX - r.left - r.width / 2 - og.panX) / og.zoom + og.cx, y = (ev.clientY - r.top - r.height / 2 - og.panY) / og.zoom + og.cy;
+  let hit = null, best = 1e9;
+  for (const n of og.nodes.values()) { const d = Math.hypot(n.x - x, n.y - y); if (d < radius(n) + 7 / og.zoom && d < best) { best = d; hit = n; } }
+  return { x, y, hit };
+}
+{
+  const cv = $("o-canvas");
+  cv.addEventListener("mousemove", (ev) => {
+    const at = overviewAt(ev);
+    if (og.drag) { og.drag.moved = true; if (og.drag.node) { og.drag.node.x = at.x; og.drag.node.y = at.y; overviewWake(); } else { og.panX += ev.movementX; og.panY += ev.movementY; og.mine = true; overviewPoke(); } return; }
+    if (og.hover !== at.hit) { og.hover = at.hit; overviewPoke(); }
+    cv.classList.toggle("over", !!at.hit && at.hit.kind !== "step");
+  });
+  cv.addEventListener("mousedown", (ev) => { og.drag = { node: overviewAt(ev).hit, moved: false }; });
+  window.addEventListener("mouseup", () => {
+    const d = og.drag; og.drag = null; if (!d) return;
+    if (d.moved) { if (d.node) overviewWake(); return; }   /* a dragged node is let go: the rest settle around it */
+    if (!d.node) return;
+    const n = d.node;
+    /* a game opens its Review; a chat opens in Chat; an expert opens its Lead's chat with its line open */
+    if (n.kind === "project") showProject(n.path, n.path ? "review" : "chat");
+    else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
+    else if (n.kind === "saved") openChatById(n.chat);
+  });
+  cv.addEventListener("mouseleave", () => { if (og.hover) { og.hover = null; overviewPoke(); } });
+  cv.addEventListener("dblclick", () => { og.mine = false; og.panX = og.panY = 0; overviewPoke(); });   /* double-click: fit it to the space again */
+  cv.addEventListener("wheel", (ev) => { ev.preventDefault(); og.mine = true; og.zoom = Math.max(0.4, Math.min(3, og.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); overviewPoke(); }, { passive: false });
+  new ResizeObserver(overviewPoke).observe(cv.parentNode);
+}
 
 /* a new review item: Review reloads; the chat that filed it gets one line pointing there */
 function onReviewItem(e) {
@@ -4060,7 +4309,7 @@ document.addEventListener("keydown", (e) => {
 });
 window.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); setScale(scale + (e.deltaY < 0 ? 5 : -5)); } }, { passive: false });
 
-/* After the first batch of events: closed experts' lines say so. Then All projects opens when a game has a run going
+/* After the first batch of events: closed experts' lines say so. Then Overview opens when a game has a run going
    or something waiting for the user; else the project last in front (or the newest game with a started chat, or the
    first game) opens, on its last tab. */
 function boot() {
@@ -4069,7 +4318,7 @@ function boot() {
   const known = (k) => k === "" ? [...agents.values()].some((p) => isChat(p) && !p.project && p.started) : list.some((x) => x.path === k);
   let key = curProj !== null && known(curProj) ? curProj : null;
   if (key === null) { const p = [...agents.values()].filter((x) => isChat(x) && x.started && x.project).pop(); key = p ? projKey(p) : list.length ? list[0].path : ""; }
-  /* any game with a run going, or something that needs the user: All projects comes first */
+  /* any game with a run going, or something that needs the user: Overview comes first */
   const going = list.some((x) => runActive(rvAll[x.path] && rvAll[x.path].run) || projState(x.path).n);
   if (going) { homeProj = key; showAll(); return; }
   showProject(key, isPage(view) ? "chat" : view);
@@ -4078,12 +4327,12 @@ const ONCE = new URLSearchParams(location.search).has("once");
 const SHOW = new URLSearchParams(location.search).get("show");
 let bootMark = Infinity;  /* agents created after the first batch get selected; replayed ones do not */
 async function poll() {
-  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) onEvent(e); if (SHOW) select(SHOW); stick(true); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
+  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
   for (;;) {
     try {
       const r = await api("/api/events?after=" + after);
       const first = after === 0;
-      for (const e of r.events) { after = e.id; onEvent(e); }
+      for (const e of r.events) { after = e.id; onEvent(e); overviewNote(e); }
       if (r.events.length > 40) calm(scroller);   /* a chat put back from its log is simply there: nothing fades in */
       if (first) { bootMark = after; boot(); stick(true); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }

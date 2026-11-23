@@ -214,16 +214,21 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
   when it began (the scripts are still saved to disk first, so it too needs the current plugin).
 - `ui/index.html`: the Review tab, Studio in the run-mode menu, experts by name, the undo picker.
 
-**The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists All projects, the games
+**The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists Overview, the games
 (`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
-front (`""` for No project, `null` on the All projects and New project pages) and `view` is `chat`, `review`,
-`promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start All projects opens when a
+front (`""` for No project, `null` on the Overview and New project pages) and `view` is `chat`, `review`,
+`promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start Overview opens when a
 game has a run going or something waiting for the user (`needsOf`: blocking review items and needs cards, the one
 count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. A helper
 (an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
 log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
-`parent`, `team` and `expert` in `agent_new`. All projects is a grid of cards, one per game (`apCard`, `paintAll`),
-and a New project card; a card opens the game's Review when something needs the user, else its Chat. The message box
+`parent`, `team` and `expert` in `agent_new`. Overview (`view` `all`) is the graph beside a column of cards. The cards, one per game and a New project card
+(`apCard`, `paintAll`), open the game's Review when something needs the user, else its Chat. The graph (`og`,
+`overviewWanted`, `overviewSync`, `overviewStep`, `overviewDraw`) draws games, their open and saved chats, experts
+tied to their Lead and a working chat's last steps (`overviewNote`, called from `poll` beside `onEvent`). It asks
+for a frame only while something changes: the layout cools (`og.heat`) and goes to sleep, after which nothing is
+drawn until the pointer, a resize, or the 900 ms look at what there is to show (`overviewTick`, only while the page
+is in front) wakes it; a working chat pulses at thirty frames a second, and not at all with reduced motion. The message box
 holds three menus (`POPS`: what to add, the AI and model picker `paintPicker`, the mode menu `paintSwitch`);
 `aiNotice(ai)` is the one place to say something about an AI in the picker and in Setup, Connections. The clean-up's
 spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
@@ -242,7 +247,7 @@ spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
   one (`/api/open-chat`) only to read its log when its line is opened.
 - The page makes no chat just for looking: a game with no chat shows an empty page (`showDraft`), and the chat is
   made (`/api/new` with the chosen AI, then `/api/project use`) when its first message is sent.
-- Usage lines carry `project` (the chat's game) so Review and All projects can show what a game has cost.
+- Usage lines carry `project` (the chat's game) so Review and Overview can show what a game has cost.
 
 **Testing without an AI.**
 - Python: `python3 -m unittest tests.test_stage tests.test_roster tests.test_team_expert tests.test_project_save
