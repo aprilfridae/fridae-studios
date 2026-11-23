@@ -1843,45 +1843,54 @@ setInterval(paintUsage, 60000); paintUsage();
 
 /* ---------- undo the night: an overnight run's checkpoint, taken back from the game's Review, or from the chat
    itself when the chat belongs to no game (it has no Review) ---------- */
-/* this chat's overnight run can be undone now (a studio run has its own undo, under Run settings in Review) */
-function nightOpen(p) { return !!(p && p.night && !p.nightUndone && !p.busy && !p.studio && !p.night.run); }
+/* the night began with something saved to go back to: the project's files (a commit), Studio's steps, or both */
+function nightSaved(p) { return !!(p && p.night && (p.night.commit || p.night.studio)); }
+/* This chat's overnight run can be undone now: a checkpoint was saved, it is not undone, the chat is not at work, and
+   no undo of it is on its way (a studio run has its own undo, under Run settings in Review). */
+function nightOpen(p) { return nightSaved(p) && !p.nightUndone && !p.nightUndoing && !p.busy && !p.studio && !p.night.run; }
 /* the chats of this game whose overnight run can be undone: each gets its own line in Review */
 function nightChats(path) { return path ? [...agents.values()].filter((p) => isChat(p) && projKey(p) === path && nightOpen(p)) : []; }
 /* The card that asks before undoing one chat's night. It is that chat's alone (data-chat), wherever it is shown, and it
-   checks once more that the night is still there to undo before it calls the app. */
+   checks once more that the night is still there to undo before it calls the app. While the call is on its way the
+   chat is marked (nightUndoing), so its undo is offered nowhere else until the app has answered. */
 function nightCard(p, onUndone) {
   const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
   const what = [p.night.studio ? "the agents' changes in Studio since then, step by step, stopping at the first step that is yours; and the text of every script goes back to how it was then, your own and other chats' script edits included (first, the scripts as they are now are saved in the game's folder, in .fridae/before-undo/ under the time of the undo)" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
   const card = el("div", "ask night-ask enter", "<h4>Undo the night?</h4><p></p><div class=\"act\"><button class=\"pill main\">Undo the night</button><button class=\"pill\">Keep it</button></div>");
   card.dataset.chat = p.id;
-  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run in “" + p.name + "” began. " + (what.length ? "Undone: " + what.join("; and ") + "." : "Nothing was checkpointed, so there is little to undo.") + " The task cards are kept. Studio must still be open on the same place.";
+  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run in “" + p.name + "” began. Undone: " + what.join("; and ") + ". The task cards are kept. Studio must still be open on the same place.";
   const [go, keep] = card.querySelectorAll("button");
   /* shown only after the app refused Studio's part: the files go back, Studio is left as it is */
   const files = el("button", "pill", "Undo the files only"); files.hidden = true; card.querySelector(".act").insertBefore(files, keep);
   keep.onclick = () => card.remove();
   const undo1 = async (filesOnly) => {
-    if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }   /* undone meanwhile, at work again, or closed */
+    if (p.nightUndoing) return;                                              /* already on its way */
+    if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }       /* undone meanwhile, at work again, or closed */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
+    const repaint = () => { paintNightTag(p); if (view === "review") paintNight(); };
+    p.nightUndoing = true; repaint();
     let r; try { r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly }); } catch (e) { r = null; }
-    if (r && !r.ok && r.files_only) {
-      card.querySelector("p").textContent = r.text || "";
-      go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.textContent = "Undo the files only"; files.hidden = false;
-      return;
-    }
-    if (r && r.ok) { card.remove(); p.nightUndone = true; paintNightTag(p); if (onUndone) onUndone(); return; }
-    /* it stays open and says why */
-    card.querySelector("p").textContent = (r && r.text) || "Could not undo the night.";
+    p.nightUndoing = false;
+    if (r && r.ok) { card.remove(); p.nightUndone = true; repaint(); if (onUndone) onUndone(); return; }
+    repaint();
     go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.textContent = "Undo the files only";
+    /* it stays open and says why; when the app refused only Studio's part, the files alone can still go back */
+    if (r && r.files_only) { card.querySelector("p").textContent = r.text || ""; files.hidden = false; }
+    else card.querySelector("p").textContent = (r && r.text) || "Could not undo the night.";
   };
   go.onclick = () => undo1(false);
   files.onclick = () => undo1(true);
   return card;
 }
 /* Review: one line per chat of the game in front whose night can be undone, each with its own button and its own
-   card under it. A line goes with its chat, so nothing of another game's (or another chat's) is ever left open. */
+   card under it. A line goes with its chat, so nothing of another game's (or another chat's) is ever left open. A
+   line whose undo is on its way stays where it is, with its card, until the app answers; it is not made anew. */
 function paintNight() {
-  const host = $("rv-nights"), list = nightChats(rvPathNow()), keep = new Set(list.map((p) => p.id));
-  for (const row of [...host.children]) if (!keep.has(row.dataset.chat)) row.remove();
+  const host = $("rv-nights"), path = rvPathNow(), list = nightChats(path), keep = new Set(list.map((p) => p.id));
+  for (const row of [...host.children]) {
+    const p = agents.get(row.dataset.chat), undoing = !!(p && p.nightUndoing && projKey(p) === path);
+    if (!keep.has(row.dataset.chat) && !undoing) row.remove(); else row.querySelector("button").disabled = undoing;
+  }
   for (const p of list) {
     let row = [...host.children].find((r) => r.dataset.chat === p.id);
     if (!row) {
@@ -1890,7 +1899,6 @@ function paintNight() {
       row.querySelector("button").onclick = () => {
         if (!nightOpen(p)) { paintNight(); return; }
         row.querySelector(".rv-night-box").replaceChildren(nightCard(p, () => {
-          paintNight();
           /* its line is gone; the chat holds what went back */
           const b = el("button", "linkish", "Open the chat"); b.onclick = () => { sayTip.classList.remove("on"); openChatById(p.id); };
           say("The night was undone. The chat says what went back.", b);
@@ -1901,20 +1909,22 @@ function paintNight() {
     row.querySelector("span").textContent = "The overnight run in “" + p.name + "” can be undone.";
   }
 }
-/* The chat's own line where the night began. It says where the undo is: Review for a game's chat (Run settings for a
-   studio run); for a chat with no game, which has no Review, the undo is this line's own link. */
+/* The chat's own line where the night began. With a checkpoint it says where the undo is: Review for a game's chat
+   (Run settings for a studio run); for a chat with no game, which has no Review, the undo is this line's own link.
+   With no checkpoint it says so, and points at no undo. */
 function paintNightTag(p) {
   const t = p.nightTag; if (!t) return;
-  const n = p.night || {}, saved = !!(n.commit || n.studio), run = !!(p.studio || n.run), game = !!p.project;
-  const none = "No checkpoint: no git in the project and Studio not connected";
-  t.querySelector("span").textContent = run ? (saved ? "Checkpoint saved · Undo this run is in Review, under Run settings" : none)
-    : game ? (saved ? "Checkpoint saved" : none) + " · Undo the night is in Review"
-    : saved ? "Checkpoint saved" : "No checkpoint: Studio not connected";
+  const run = !!(p.studio || (p.night && p.night.run)), game = !!p.project;
+  t.querySelector("span").textContent = !nightSaved(p) ? (game ? "No checkpoint: no git in the project and Studio not connected" : "No checkpoint: Studio not connected")
+    : "Checkpoint saved" + (run ? " · Undo this run is in Review, under Run settings" : game ? " · Undo the night is in Review" : "");
   const b = t.querySelector("button"); if (b) b.hidden = run || game || !nightOpen(p);
 }
+/* a night begins: its line goes into the chat, and anything left open about the night before it goes */
 function nightTag(p) {
-  /* an earlier night's line keeps its words and loses its link: only the newest night can be undone */
+  /* an earlier night's line keeps its words and loses its link, and an open card asking about it is taken away: only
+     the newest night can be undone, and a card left open would undo that one under the older one's words */
   if (p.nightTag) { const old = p.nightTag.querySelector("button"); if (old) old.remove(); }
+  document.querySelectorAll(".night-ask[data-chat]").forEach((c) => { if (c.dataset.chat === p.id) c.remove(); });
   const t = el("span", "tag enter", '<span></span><button class="linkish" hidden title="Put Studio back as it was before the overnight run began">Undo the night</button>');
   t.querySelector("button").onclick = () => {
     if (!nightOpen(p)) { paintNightTag(p); return; }
@@ -2071,8 +2081,9 @@ function onEvent(e) {
   } else if (e.kind === "text") {
     /* The agent's last line "STATUS: <WORD>" is for the app, not the reader: it is never shown as written (the saved
        chat keeps it). CONTINUE, DONE and NEEDS YOU are said in plain words; WAITING alone shows as the "Waiting for
-       you" line; any other word, or a reason after one, is shown as it is, so nothing the agent said is lost. */
-    const said = /\n?[ \t]*STATUS:[ \t]*(CONTINUE|DONE|NEEDS YOU[^\n]*)\s*$/i.exec(e.text) || /(?:^|\n)[ \t]*STATUS:[ \t]*([A-Z][A-Z _-]*(?::[^\n]*)?)\.?\s*$/.exec(e.text);
+       you" line; any other word, or a reason after one, is shown as it is, so nothing the agent said is lost. The
+       line must be a line of its own: a sentence that ends "...the build status: done" is left as it was written. */
+    const said = /(?:^|\n)[ \t]*STATUS:[ \t]*(CONTINUE|DONE|NEEDS YOU[^\n]*)\s*$/i.exec(e.text) || /(?:^|\n)[ \t]*STATUS:[ \t]*([A-Z][A-Z _-]*(?::[^\n]*)?)\.?\s*$/.exec(e.text);
     const text = said ? e.text.slice(0, said.index).trimEnd() : e.text;
     let plain = "";
     if (said) {
