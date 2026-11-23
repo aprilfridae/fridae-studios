@@ -886,7 +886,7 @@ mod recorded {
         // turn there without a word
         let c = Chat::recorded("rec-two", "acp-two");
         c.ask("the first message");
-        assert_eq!(c.said("tool"), ["Updating the board", "Writing a file", "Reading a file", "Running a command"]);
+        assert_eq!(c.said("tool"), ["Updating its task list", "Writing a file", "Reading a file", "Running a command"]);
         let ev = c.events();
         let card = ev.iter().find(|e| e["kind"] == "blocked").expect("the card that offers to allow the program");
         assert_eq!(card["commands"], json!([{"name": "ls", "command": "ls -la"}]));

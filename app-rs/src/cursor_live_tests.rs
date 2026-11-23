@@ -711,7 +711,7 @@ mod stand_in {
     fn tools_are_named_as_a_process_per_message_names_them() {
         let c = Chat::new("tools");
         c.send("tools");
-        assert_eq!(c.said("tool"), ["Updating the board", "Reading a file"], "{:?}", c.said("tool"));
+        assert_eq!(c.said("tool"), ["Updating its task list", "Reading a file"], "{:?}", c.said("tool"));
         assert_eq!(c.said("text"), ["done"]);
     }
 
@@ -821,7 +821,7 @@ mod recorded {
         // workspace: asked about and refused. Cursor carried on after each refusal and summed up
         let c = Chat::playing("rec-two", "acp-two");
         c.ask("the first message");
-        assert_eq!(c.said("tool"), ["Updating the board", "Running a command", "Running a command", "Editing a file"]);
+        assert_eq!(c.said("tool"), ["Updating its task list", "Running a command", "Running a command", "Editing a file"]);
         let text = c.said("text");
         assert_eq!(text.len(), 2, "what it said before its first tool, and its summary: {text:?}");
         assert!(text[1].contains("`touch /fridae-probe-app.txt`: refused") && text[1].contains("`whichshell app`: ran"), "{text:?}");
