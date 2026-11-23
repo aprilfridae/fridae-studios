@@ -31,6 +31,8 @@ pub const MAX_AGENTS: usize = 8;
 pub const MAX_ATTACH: usize = 10;
 /// The error text a turn ended by the stall guard carries to `after_turn`.
 const STALLED: &str = "\u{0}stalled";
+/// And one ended for doing nothing but wait on the tool server's jobs for too long (`paths::JOB_POLL_LIMIT`).
+const POLLED: &str = "\u{0}polled";
 /// How long a turn's leader gets to exit by itself once its output has closed, before its group is ended (Cursor).
 const LEADER_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// Aliases the agent CLI resolves to the latest model of each family.
@@ -51,6 +53,8 @@ const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
 /// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
 const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
+/// For every agent (a chat, a Lead, an expert) on an AI and path that cuts tool calls off (`caps::call_budget`).
+const LONG_CALLS_PROMPT: &str = include_str!("text/long_calls.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
 const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
@@ -187,6 +191,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
     st.last_ask = Ask { attachments: Vec::new(), kickoff: None, ..ask.clone() };
     st.turn_auto = auto;
     st.turn_tools = 0;
+    st.job_polls = None;
     st.turn_progress = false;
     st.sending = true;
     Some(waiting)
@@ -640,6 +645,12 @@ struct State {
     /// The current (or latest) turn was the loop's own carry-on, and how many tools it called (the no-progress guard).
     turn_auto: bool,
     turn_tools: u32,
+    /// Since when this turn's tool calls have all been waits on a job (`rbx_job`), with no other tool between: a
+    /// turn that only waits for longer than any job may live is ended (`watch_stall`, `paths::JOB_POLL_LIMIT`).
+    job_polls: Option<std::time::Instant>,
+    /// What the chat was told when this turn ended with tool work thrown away (`drop_jobs`), for the result an
+    /// expert hands its Lead (`team::finished`).
+    jobs_lost: Option<String>,
     /// Studio carry-on turns in a row without a tool call (see `no_progress`).
     idle_turns: u32,
     /// Whether this turn made a progress call (see `progress_call`), and how many Studio carry-ons in a row made none.
@@ -751,6 +762,8 @@ pub struct TurnProc {
     killed: AtomicBool,
     /// nothing came for STALL, so it was ended
     stalled: AtomicBool,
+    /// it did nothing but wait on jobs for JOB_POLL_LIMIT, so it was ended
+    overpolled: AtomicBool,
     /// The turn runs on the chat's kept Claude Code process: Stop asks it to interrupt and it lives on.
     live: Option<Arc<Live>>,
     /// Claude Code has started on the turn's message (a kept process): an interrupt before that would end nothing.
@@ -777,12 +790,12 @@ const START_WAIT: Duration = Duration::from_secs(if cfg!(test) { 2 } else { 90 }
 
 impl TurnProc {
     fn new(pid: u32) -> Arc<TurnProc> {
-        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: None, acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+        Arc::new(TurnProc { pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), overpolled: AtomicBool::new(false), live: None, acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
     }
 
     /// A turn on a chat's kept Claude Code process.
     fn on(live: &Arc<Live>) -> Arc<TurnProc> {
-        Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
+        Arc::new(TurnProc { pid: live.pid, reaped: Mutex::new(false), done: AtomicBool::new(false), killed: AtomicBool::new(false), stalled: AtomicBool::new(false), overpolled: AtomicBool::new(false), live: Some(live.clone()), acked: AtomicBool::new(false), heard: AtomicBool::new(false), silent: AtomicBool::new(false), requeued: AtomicBool::new(false), tool_open: AtomicBool::new(false), discard: AtomicBool::new(false), standing: Mutex::new(Vec::new()) })
     }
 
     /// Whether the kept process's tree has a process group now that it did not have when it took the turn's message:
@@ -939,7 +952,19 @@ impl TurnProc {
 /// tool. `last` holds when the last line came, whether it started such a long tool, and whether it started any tool.
 fn watch_stall(me: Arc<Agent>, tp: Arc<TurnProc>, last: Arc<Mutex<(std::time::Instant, bool, bool)>>) {
     while !tp.done.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_secs(5));
+        thread::sleep(Duration::from_secs(if cfg!(test) { 1 } else { 5 }));
+        // a turn that only waits on the tool server's jobs, for longer than any job may live: each wait is output,
+        // so the quiet clock below never runs out for it
+        if paths::polled_too_long(me.st.lock().unwrap().job_polls) {
+            let _gate = tp.reaped.lock().unwrap_or_else(|e| e.into_inner());
+            if tp.done.load(Ordering::SeqCst) {
+                return;
+            }
+            tp.overpolled.store(true, Ordering::SeqCst);
+            drop(_gate);
+            tp.end();
+            return;
+        }
         let mut l = last.lock().unwrap_or_else(|e| e.into_inner());
         let waiting = l.1 || me.st.lock().unwrap().making || !working_helpers_of(&me.id).is_empty();
         if waiting {
@@ -1416,6 +1441,8 @@ struct GeminiLaunch {
     /// any of them starts another process
     allowed: Vec<String>,
     guarded: String,
+    /// where the app's tool server notes its long calls' jobs for this chat (`jobs`)
+    jobs: Option<std::path::PathBuf>,
 }
 
 /// Everything a Gemini turn's start depends on, as `send` has it for a message.
@@ -1436,6 +1463,8 @@ struct GeminiSettings<'a> {
     hidden_in: &'a [std::path::PathBuf],
     /// where the app's tool server notes its results' pictures for this chat
     pictures: Option<&'a std::path::Path>,
+    /// where it notes its long calls' jobs (`jobs::file`)
+    jobs: Option<&'a std::path::Path>,
     /// the programs the user allowed, and all the guarded settings, from the app's memory
     allowed: &'a [String],
     guarded: &'a Map<String, Value>,
@@ -1465,10 +1494,13 @@ impl GeminiLaunch {
         if let (Some(file), true) = (s.pictures, servers["rbxkit"].is_object()) {
             servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
         }
+        // over ACP agy cuts a tool server's call off after three minutes (measured): the app's server is told to
+        // answer inside that, and keeps longer work going as a job (`jobs`)
+        crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         // a fingerprint, not the settings themselves: one of them is the user's Gemini key
         let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
-        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded }
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
     /// The kept process: `agy acp`, in the chat's workspace.
@@ -1571,11 +1603,13 @@ impl Kept for GeminiLaunch {
 
     fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
         let s = &self.spec;
-        // (a process per message hands its tools' results over itself: its tool server notes no pictures)
+        // (a process per message hands its tools' results over itself: its tool server notes no pictures; and it
+        // gives a tool call its 15 minutes, so the server is given no budget there)
         let mut servers = s.servers.clone();
         if let Some(env) = servers["rbxkit"]["env"].as_object_mut() {
             env.remove("FRIDAE_TOOL_PICTURES");
         }
+        crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", false), self.jobs.as_deref());
         let mut cmd = Command::new(&self.exe);
         cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
@@ -1598,6 +1632,8 @@ impl Kept for GeminiLaunch {
         let mut host = AcpHost { a, tp, last, t: TurnEnd::default(), renote: first.then_some((live.owner, live.pid)) };
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, None, &mut host);
         let mut t = host.t;
+        // the tool server lives on with the process: its jobs do not (`jobs`)
+        a.drop_jobs(self.jobs.as_deref(), true);
         if let Some(was) = list_was {
             antigravity::rewrite_list(&self.spec.cwd, &was);
         }
@@ -1658,6 +1694,8 @@ struct CursorLaunch {
     spec: crate::acp::Spec,
     /// whether the model has an id on the kept path (`cursor::kept_model`)
     kept_model: bool,
+    /// where the app's tool server notes its long calls' jobs for this chat (`jobs`)
+    jobs: Option<std::path::PathBuf>,
     keys_on: bool,
     /// Cursor's allow list and deny rules as its settings file is written with them (the programs the user allowed
     /// are in it), where its settings, data and home folders are, and a fingerprint of every guarded setting
@@ -1682,6 +1720,8 @@ struct CursorSettings<'a> {
     full: bool,
     /// where the app's tool server notes its results' pictures for this chat
     pictures: Option<&'a std::path::Path>,
+    /// where it notes its long calls' jobs (`jobs::file`)
+    jobs: Option<&'a std::path::Path>,
     /// Cursor's rules as written now (`cursor::rules_now`), and its folders (`cursor::folders`)
     rules: &'a Value,
     folders: (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf),
@@ -1703,6 +1743,11 @@ impl CursorLaunch {
         if let (Some(file), true) = (s.pictures, handed["rbxkit"].is_object()) {
             handed["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"] = json!(file.display().to_string());
         }
+        // Cursor cuts a tool server's call off after 60 seconds on either path (measured): the app's server is told
+        // to answer inside that, and keeps longer work going as a job (`jobs`)
+        crate::jobs::set(&mut handed, crate::caps::call_budget("cursor", true), s.jobs);
+        let mut servers = s.servers.clone();
+        crate::jobs::set(&mut servers, crate::caps::call_budget("cursor", false), s.jobs);
         let kept_model = cursor::kept_model(s.model);
         let rules = crate::acp::Rules {
             full: s.full,
@@ -1723,7 +1768,8 @@ impl CursorLaunch {
             workspace: s.workspace.to_path_buf(),
             kit: s.kit.to_path_buf(),
             project: s.project.filter(|p| !p.is_empty()).map(str::to_string),
-            servers: s.servers.clone(),
+            servers,
+            jobs: s.jobs.map(std::path::Path::to_path_buf),
             model: s.model.map(str::to_string),
             full: s.full,
             spec,
@@ -1805,6 +1851,9 @@ impl Kept for CursorLaunch {
         });
         let end = crate::acp::turn(live, &self.spec, resume.as_deref(), text, fresh.as_deref(), &mut host);
         let mut t = host.t;
+        // the tool server lives on with the process: its jobs do not (`jobs`). Before the look below, which would
+        // take a job's process group for a command left running
+        a.drop_jobs(self.jobs.as_deref(), true);
         // a command the turn started and left running: nothing of a chat's runs on once the chat shows it has finished
         let left = end.background || (!end.ended && tp.left_running());
         if left && !a.st.lock().unwrap().stopped {
@@ -1855,6 +1904,12 @@ impl Kept for CursorLaunch {
     }
 }
 
+/// Whether an agent on this AI is told what a "not finished yet" answer means (`text/long_calls.txt`): where a
+/// process per message cuts tool calls off, or the kept process does and this chat may run on one.
+fn long_calls_told(ai: &str, kept_allowed: bool) -> bool {
+    crate::caps::call_budget(ai, false).is_some() || (kept_allowed && crate::caps::call_budget(ai, true).is_some())
+}
+
 /// The home folder and data folder agy runs with when they are not the app's own (testing only, see
 /// `antigravity::home_override`).
 fn agy_home() -> Option<std::path::PathBuf> {
@@ -1876,15 +1931,16 @@ fn per_turn_forced(ai: &str) -> bool {
 ///
 /// Gemini: over ACP agy cuts off every call to a tool server after three minutes, whatever time limit the server's
 /// entry asks for (measured twice with a stand-in server; a process per message gives 15 minutes). A Lead waiting
-/// for its experts, a texture waiting for the user and a Blender build all take longer, so by default they would
-/// fail where they work today.
+/// for its experts, a texture waiting for the user and a Blender build all take longer. The app's tool server now
+/// answers inside that limit and keeps longer work going as a job (`jobs`; a four-minute job was waited for on a
+/// kept process, measured), so this reason no longer stands: whether Gemini stays on the list is a decision of its
+/// own.
 ///
-/// Cursor: over ACP it cuts a tool server's call off after 60 seconds (measured three times, whatever the server's
-/// entry or the environment asks for), which is under the 15 minutes the app asks every AI for. A process per
-/// message was measured with the same 60-second limit, so nothing is lost against today; it is on request all the
-/// same, by the rule this list was made by, until that limit is dealt with for both. When asked for, only Ask me
-/// messages on the model Auto run on it (`CursorLaunch::fits`): Cursor's sandbox is not applied over ACP (measured),
-/// so Full auto and Studio always run a process per message.
+/// Cursor: it cuts a tool server's call off after 60 seconds, over ACP and on a process per message alike (measured),
+/// which jobs now deal with on both paths. It stays on request for another reason: Cursor's sandbox is not applied
+/// over ACP (measured), so only Ask me messages on the model Auto can run on the kept process at all
+/// (`CursorLaunch::fits`), a chat moves off it for good with its first Full auto message, and its turns report no
+/// usage there.
 const KEPT_ON_REQUEST: &[&str] = &["gemini", "cursor"];
 
 /// Whether an AI the table says can be kept open is kept open on this run of the app.
@@ -2784,6 +2840,11 @@ impl Agent {
         if kind != "claude" {
             let _ = fs::create_dir_all(&workspace);
             // Cursor has its own text: it may run the programs the user allowed, and a refused one becomes a card
+            // where the AI cuts tool calls off: what a "not finished yet" answer means (Cursor on both its paths,
+            // Gemini on its kept process)
+            if long_calls_told(&kind, self.live_allowed()) {
+                prompt += LONG_CALLS_PROMPT;
+            }
             if kind == "cursor" {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
@@ -2844,6 +2905,7 @@ impl Agent {
                     protected.push(h.join("Library"));
                 }
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let jobs = crate::jobs::file(&self.id);
                 let launch = GeminiLaunch::new(&GeminiSettings {
                     exe: &exe,
                     agent_id: &self.id,
@@ -2857,6 +2919,7 @@ impl Agent {
                     protected: &protected,
                     hidden_in: &hidden_in,
                     pictures: Some(&pictures),
+                    jobs: Some(&jobs),
                     allowed: &paths::allowed_commands(),
                     guarded: &paths::guarded_settings(),
                     keys_on: paths::env_keys_on(),
@@ -2869,6 +2932,7 @@ impl Agent {
             // its models carry their own effort in the id, so the effort setting is not passed
             "cursor" => {
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
+                let jobs = crate::jobs::file(&self.id);
                 let launch = CursorLaunch::new(&CursorSettings {
                     exe: &exe,
                     agent_id: &self.id,
@@ -2879,6 +2943,7 @@ impl Agent {
                     model,
                     full: ask.full,
                     pictures: Some(&pictures),
+                    jobs: Some(&jobs),
                     rules: &cursor::rules_now(&servers),
                     folders: cursor::folders(),
                     guarded: &paths::guarded_settings(),
@@ -3194,7 +3259,7 @@ impl Agent {
         if killed {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
-        let err = if stalled { STALLED.to_string() } else { err };
+        let err = if stalled { STALLED.to_string() } else if tp.overpolled.load(Ordering::SeqCst) { POLLED.to_string() } else { err };
         // a failed result is the turn's end even though the process was then closed by the app (its exit says nothing)
         let exit = if t.got_result { Some((true, 0)) } else { status };
         self.after_turn(kind, t, &err, exit, stopped);
@@ -3219,7 +3284,11 @@ impl Agent {
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
     /// A tool from Roblox Studio's connector is noted with its time, for a studio run's undo log (`run_log`).
     fn show_tool(&self, name: &str, studio: bool) {
-        self.st.lock().unwrap().turn_tools += 1; // the no-progress guard counts every tool call, shown or not
+        {
+            let mut st = self.st.lock().unwrap();
+            st.turn_tools += 1; // the no-progress guard counts every tool call, shown or not
+            st.job_polls = if paths::waits_on_job(name) { st.job_polls.or_else(|| Some(std::time::Instant::now())) } else { None };
+        }
         let known = FRIENDLY.iter().filter(|(k, _)| name == k.as_str() || name.ends_with(&format!("_{k}"))).max_by_key(|(k, _)| k.len());
         let label = match known {
             Some((_, v)) => v.as_str().map(str::to_string),
@@ -3492,7 +3561,7 @@ impl Agent {
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
-        let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else { err };
+        let err = if tp.stalled.load(Ordering::SeqCst) { STALLED.to_string() } else if tp.overpolled.load(Ordering::SeqCst) { POLLED.to_string() } else { err };
         self.after_turn(kind, t, &err, status.map(|s| (s.success(), s.code().unwrap_or(-1))), stopped);
     }
 
@@ -3589,13 +3658,35 @@ impl Agent {
         self.after_turn("opencode", t, &ended.err, exit, stopped);
     }
 
+    /// The turn is over, and no job of the app's tool server outlives it (`jobs::end_turn`). When work was still
+    /// going, or finished and never collected, the chat says so in one line: it was thrown away. `kept`: the turn
+    /// ran on a kept process, whose tool server is still there and is told to end its jobs now.
+    fn drop_jobs(&self, notes: Option<&std::path::Path>, kept: bool) {
+        let Some(notes) = notes else { return };
+        let tools = crate::jobs::end_turn(notes, kept.then_some(crate::jobs::DROP_WAIT));
+        if !tools.is_empty() {
+            let text = crate::jobs::dropped_text(&tools);
+            self.put("error", json!({"text": text}));
+            self.st.lock().unwrap().jobs_lost = Some(text);
+        }
+    }
+
+    /// What this turn's end threw away of its tool work, once: an expert's Lead is told with the expert's result.
+    pub fn take_jobs_lost(&self) -> Option<String> {
+        self.st.lock().unwrap().jobs_lost.take()
+    }
+
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
         let TurnEnd { got_result, result_error, result_text, result_said, .. } = t;
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
+        // a process per message took its tool server, and so its jobs, with it (a kept turn has said so already)
+        self.drop_jobs(Some(&crate::jobs::file(&self.id)), false);
         if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
+        } else if err == POLLED && !stopped {
+            self.put("error", json!({"text": paths::polled_message()}));
         } else if (!got_result || result_error) && err.contains("No conversation found") {
             self.st.lock().unwrap().session = None;
             self.put("error", json!({"text": "The memory of this earlier chat is no longer on this computer, so the agent has lost its context. Send your message again and it will carry on from what you tell it."}));
@@ -3622,6 +3713,7 @@ impl Agent {
             }
         }
         team::finished(self, stopped);
+        self.st.lock().unwrap().jobs_lost = None; // (a chat that is nobody's helper: said in the chat only)
         research::finished(self);
         self.put("done", json!({}));
         // autopilot: the agent ends each reply by saying whether there is more it can do alone; if so, it is told to carry on
@@ -4324,6 +4416,12 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
     if let Some(script) = std::env::var_os("FRIDAE_STUDIO_STANDIN").filter(|v| !v.is_empty()) {
         servers["Roblox_Studio"] = json!({"type": "stdio", "command": "/usr/bin/python3", "args": [script.to_string_lossy()]});
     }
+    // FRIDAE_TEST_TOOLS=1 (testing only, debug builds only): the app's tool server also offers its stand-in for a
+    // slow tool (`rbx_test_slow`: it waits, then returns a line and a small picture), for trying long calls live
+    #[cfg(debug_assertions)]
+    if std::env::var("FRIDAE_TEST_TOOLS").is_ok_and(|v| v == "1") {
+        servers["rbxkit"]["env"]["RBXKIT_TEST_TOOLS"] = json!("1");
+    }
     servers
 }
 
@@ -4736,6 +4834,125 @@ mod tests {
         let own = restored_event("c1", "My chat", &json!({"role": null, "parent": null}));
         assert!(own.get("role").is_none() && own.get("parent").is_none() && own.get("expert").is_none());
         assert_eq!(own["ai"], "claude");
+    }
+
+    #[test]
+    fn claudes_and_opencodes_tool_server_gets_no_budget() {
+        // the entry every AI's is built from has none; Cursor's and Gemini's launches add theirs (their own tests)
+        for no_studio in [false, true] {
+            let env = test_servers(no_studio)["rbxkit"]["env"].clone();
+            assert!(env.get("RBXKIT_CALL_BUDGET").is_none() && env.get("FRIDAE_TOOL_JOBS").is_none() && env.get("RBXKIT_TEST_TOOLS").is_none(), "{env}");
+        }
+        // Claude's launch hands the entry on as it is, and OpenCode's server is given `send`'s own
+        let servers = test_servers(true);
+        let launch = ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false });
+        assert!(!launch.key().contains("RBXKIT_CALL_BUDGET") && !launch.key().contains("FRIDAE_TOOL_JOBS"));
+        assert_eq!((crate::caps::call_budget("claude", true), crate::caps::call_budget("opencode", false)), (None, None));
+        // and only agents on an AI that cuts calls off are told what "not finished yet" means
+        assert!(long_calls_told("cursor", false) && long_calls_told("cursor", true));
+        assert!(long_calls_told("gemini", true) && !long_calls_told("gemini", false), "Gemini: on its kept process only");
+        for ai in ["claude", "opencode", "chatgpt"] {
+            assert!(!long_calls_told(ai, true) && !long_calls_told(ai, false), "{ai}");
+        }
+        for word in ["NOT FINISHED YET", "rbx_job", "\"wait\"", "report"] {
+            assert!(LONG_CALLS_PROMPT.contains(word), "{word}");
+        }
+        assert!(!SYSTEM_PROMPT.contains("rbx_job") && !STUDIO_PROMPT.contains("rbx_job"), "Claude's standing text is unchanged");
+    }
+
+    #[test]
+    fn a_turn_that_ends_with_tool_work_still_going_says_so_once() {
+        let a = Agent::detached_for_test("c-jobs-dropped", None);
+        let notes = crate::jobs::file(&a.id);
+        fs::create_dir_all(notes.parent().unwrap()).unwrap();
+        fs::write(&notes, "{\"job\": \"job-a\", \"tool\": \"rbx_blender\", \"at\": \"started\"}\n").unwrap();
+        let said = |a: &Arc<Agent>| a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error").map(|e| e["text"].as_str().unwrap_or("").to_string()).collect::<Vec<_>>();
+        // a process per message: its tool server went with it, so nothing is waited for
+        let began = std::time::Instant::now();
+        a.after_turn("cursor", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert!(began.elapsed() < Duration::from_secs(2));
+        assert_eq!(said(&a), ["The turn ended before the result of rbx_blender was collected, so that work was ended with the turn and thrown away."]);
+        assert_eq!(fs::read_to_string(&notes).unwrap(), "");
+        a.after_turn("cursor", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert_eq!(said(&a).len(), 1, "once");
+        // a turn whose jobs were all collected, and a chat with no notes at all, say nothing
+        let b = Agent::detached_for_test("c-jobs-none", None);
+        b.after_turn("claude", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        assert!(said(&b).is_empty());
+        // a kept process: its tool server is told, and the line is said by the turn itself
+        fs::write(&notes, "{\"job\": \"job-b\", \"tool\": \"rbx_generate_texture\", \"at\": \"started\"}\n").unwrap();
+        a.drop_jobs(Some(&notes), true);
+        assert!(said(&a)[1].contains("rbx_generate_texture"));
+        assert!(fs::read_to_string(&notes).unwrap().starts_with("{\"at\":") && fs::read_to_string(&notes).unwrap().trim_end().ends_with("\"turn\":\"ended\"}"), "the app's line, left for the server, which did not answer here");
+        assert_eq!(a.take_jobs_lost().as_deref(), Some(said(&a)[1].as_str()), "kept for the result a Lead is handed");
+        assert_eq!(a.take_jobs_lost(), None, "once");
+    }
+
+    /// Unattended: a turn that does nothing but wait on a job, for longer than any job may live, is ended by the app
+    /// (the tool server ends the job itself long before: `tests/test_long_calls.py`; this is the bound on the AI).
+    #[cfg(unix)]
+    #[test]
+    fn a_turn_that_only_waits_on_jobs_past_any_jobs_life_is_ended() {
+        let since = |mins: u64| std::time::Instant::now().checked_sub(Duration::from_secs(mins * 60));
+        assert!(!paths::polled_too_long(None) && !paths::polled_too_long(since(29)) && paths::polled_too_long(since(31)));
+        assert!(paths::waits_on_job("rbx_job") && paths::waits_on_job("mcp__rbxkit__rbx_job") && paths::waits_on_job("mcp_rbxkit_rbx_job"));
+        assert!(!paths::waits_on_job("rbx_team") && !paths::waits_on_job("rbx_jobs") && !paths::waits_on_job("Bash"));
+        // which calls count: waits in a row, from the first of them; any other tool call starts the count again
+        let a = Agent::detached_for_test("c-poll-count", None);
+        let polls = |a: &Arc<Agent>| a.st.lock().unwrap().job_polls;
+        a.show_tool("rbx_blender", false);
+        assert!(polls(&a).is_none());
+        a.show_tool("mcp__rbxkit__rbx_job", false);
+        let first = polls(&a).expect("counted from the first wait");
+        a.show_tool("rbx_job", false);
+        assert_eq!(polls(&a), Some(first), "a second wait in a row does not start the clock again");
+        a.show_tool("rbx_board", false);
+        assert!(polls(&a).is_none(), "other work between waits: not only waiting");
+        // a real process as the turn, waiting since longer than the limit: the guard ends it and the chat says why
+        let (child, grandchild) = shell_with_grandchild();
+        let a = Agent::detached_for_test("c-poll-ended", None);
+        let tp = a.set_turn_pid_for_test(child.id());
+        a.st.lock().unwrap().job_polls = since(31);
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, true)));
+        let guard = {
+            let (a, tp) = (a.clone(), tp.clone());
+            thread::spawn(move || watch_stall(a, tp, last))
+        };
+        guard.join().unwrap();
+        assert!(tp.overpolled.load(Ordering::SeqCst) && !tp.stalled.load(Ordering::SeqCst));
+        assert!(gone(&grandchild), "the turn's processes were ended");
+        let mut child = child;
+        let _ = child.wait();
+        a.after_turn("cursor", TurnEnd::default(), POLLED, Some((false, -1)), false);
+        let errors: Vec<String> = a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error").map(|e| e["text"].as_str().unwrap_or("").to_string()).collect();
+        assert_eq!(errors, [paths::polled_message()], "said once, in place of an unexplained exit");
+        // a turn waiting for less than that is left alone
+        let (child, grandchild) = shell_with_grandchild();
+        let b = Agent::detached_for_test("c-poll-fine", None);
+        let tp = b.set_turn_pid_for_test(child.id());
+        b.st.lock().unwrap().job_polls = since(5);
+        let last = Arc::new(Mutex::new((std::time::Instant::now(), false, true)));
+        let guard = {
+            let (b, tp) = (b.clone(), tp.clone());
+            thread::spawn(move || watch_stall(b, tp, last))
+        };
+        thread::sleep(Duration::from_millis(2500));
+        assert!(!guard.is_finished() && !tp.overpolled.load(Ordering::SeqCst));
+        tp.done.store(true, Ordering::SeqCst);
+        guard.join().unwrap();
+        tp.end();
+        assert!(gone(&grandchild));
+        let mut child = child;
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn an_experts_lead_is_told_of_work_its_turns_end_threw_away() {
+        let lost = crate::jobs::dropped_text(&["rbx_blender".to_string()]);
+        let told = team::with_lost_work("The chair model is done.".to_string(), Some(lost.clone()));
+        assert!(told.starts_with("The chair model is done.\n\n[Fridae Studios, not the agent: The turn ended before the result of rbx_blender was collected"), "{told}");
+        assert!(told.contains("it was not finished"));
+        assert_eq!(team::with_lost_work("Done.".to_string(), None), "Done.", "nothing lost: the reply as it is");
     }
 
     #[test]

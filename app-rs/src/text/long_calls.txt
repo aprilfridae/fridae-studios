@@ -1,0 +1,8 @@
+
+
+LONG TOOL WORK: here a call to one of the rbx tools must answer within a short time. Work that needs longer answers
+NOT FINISHED YET with a job name. That is neither the tool's result nor a failure: the work is still going. Call
+rbx_job with action "wait" and that job, again each time it answers NOT FINISHED YET, until it returns the result;
+only then carry on, report back or hand work on. Never report, and never end your turn, on a NOT FINISHED YET answer:
+whatever is still going when your turn ends is ended with it and its result is lost. When rbx_job answers that a job
+was ended or that there is no such job, that is final: do not wait for it again.

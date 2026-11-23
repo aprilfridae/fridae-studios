@@ -154,6 +154,7 @@ impl Chat {
             protected,
             hidden_in: &[],
             pictures: None,
+        jobs: None,
             allowed: &[],
             guarded,
             keys_on: false,
@@ -305,6 +306,7 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
         ("the app's own files", GeminiSettings { protected: &more_protected, ..base() }),
         ("the home folder whose hidden files are kept from it", GeminiSettings { hidden_in: &home_dirs, ..base() }),
         ("where its tool server notes pictures", GeminiSettings { pictures: Some(Path::new("/work/tool-pictures/c1.jsonl")), ..base() }),
+        ("where its tool server notes its jobs", GeminiSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() }),
         ("the provider-keys switch as the process gets it", GeminiSettings { keys_on: true, ..base() }),
         ("the program", GeminiSettings { exe: Path::new("/other/agy"), ..base() }),
         ("the kit folder", GeminiSettings { kit: Path::new("/kit2"), ..base() }),
@@ -332,6 +334,16 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
     assert_eq!(with_notes.spec.pictures.as_deref(), Some(notes));
     let (per, _) = Kept::per_turn(&with_notes, None, "hello");
     assert!(!fs::read_to_string(c.dir.join(".agents").join("mcp_config.json")).unwrap().contains("FRIDAE_TOOL_PICTURES"), "a process per message hands its results over itself");
+    drop(per);
+    // agy cuts a tool call off after three minutes over ACP: the app's tool server is given 150 seconds to answer
+    // in and the file the turn's end is told through, on the kept path only (a process per message has 15 minutes)
+    let with_jobs = GeminiLaunch::new(&GeminiSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() });
+    assert_eq!(with_jobs.spec.servers["rbxkit"]["env"]["RBXKIT_CALL_BUDGET"], "150");
+    assert_eq!(with_jobs.spec.servers["rbxkit"]["env"]["FRIDAE_TOOL_JOBS"], "/work/tool-jobs/c1.jsonl");
+    assert!(l.spec.servers["rbxkit"]["env"].get("RBXKIT_CALL_BUDGET").is_none(), "never a budget without that file");
+    let (per, _) = Kept::per_turn(&with_jobs, None, "hello");
+    let list = fs::read_to_string(c.dir.join(".agents").join("mcp_config.json")).unwrap();
+    assert!(list.contains("rbxkit") && !list.contains("RBXKIT_CALL_BUDGET") && !list.contains("FRIDAE_TOOL_JOBS"), "a process per message: no budget, the tool server as ever");
     drop(per);
     assert_eq!(l.spec.rules.servers, ["rbxkit"]);
     assert_eq!(l.spec.rules.agent_dir, Path::new("/home/u/.gemini/antigravity-cli"));
@@ -1121,6 +1133,46 @@ mod recorded {
         assert_eq!(fs::read_to_string(c.dir.join("kit").join("config.json")).unwrap(), "{}");
         assert_eq!(c.recorded_answers(), ["deny"]);
         assert_eq!(c.pid(), None, "an expert holds nothing between jobs");
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_job_longer_than_agys_three_minutes_is_waited_for_and_its_real_result_reported() {
+        // recorded through the app with the tool server given its budget (`session/new` hands it
+        // RBXKIT_CALL_BUDGET=150 and the notes file): the stand-in tool was asked to work for 240 seconds, a minute
+        // past agy's cut-off. The call answered "not finished yet" at 150 s (153 s on the chat's clock), the model
+        // called `rbx_job wait`, which returned the tool's own result at 240 s, and it reported the word in it. Where
+        // the call was cut off before ("timed out after 3m0s", the recording above), both calls completed.
+        let raw = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gemini/acp-long-job.wire")).unwrap();
+        let new = raw.lines().find(|l| l.contains("\"session/new\"")).unwrap();
+        assert!(new.contains(r#"{"name":"RBXKIT_CALL_BUDGET","value":"150"}"#) && new.contains(r#"{"name":"FRIDAE_TOOL_JOBS","value":"/scratch/work/tool-jobs/"#), "the entry as the app handed it over");
+        assert!(!raw.contains("timed out"));
+        let completed = |tool: &str| raw.lines().any(|l| l.contains("\"tool_call_update\"") && l.contains(&format!("\"name\":\"{tool}\"")) && l.contains("\"status\":\"completed\""));
+        assert!(completed("mcp_rbxkit_rbx_test_slow") && completed("mcp_rbxkit_rbx_job"));
+        let c = Chat::recorded("rec-long-job", "acp-long-job");
+        c.ask("the message");
+        assert_eq!(c.said("tool"), ["rbx test slow", "Waiting for work that takes a while"]);
+        assert_eq!(c.said("text"), ["The tool returned the result word **MARBLE**."]);
+        assert!(c.said("error").is_empty(), "the job was collected: nothing was thrown away");
+        assert_eq!(c.recorded_answers(), ["allow", "allow"]);
+        assert!(c.pid().is_some());
+        c.clean();
+    }
+
+    #[test]
+    fn recorded_full_auto_write_to_the_apps_settings_by_a_file_tool_is_refused() {
+        // recorded in Full auto, on a kept process that resumed the chat's conversation: asked to overwrite the app's
+        // settings file with its file tool, agy asked (`write_file`), the app said no, the call failed and agy ended
+        // the turn. The file was unchanged afterwards (checked when recorded).
+        let c = Chat::recorded("rec-full-protected", "acp-full-auto-protected-write");
+        c.a.st.lock().unwrap().session = Some("00000000-0000-4000-8000-0000000000c1".into());
+        c.say("the message", As { effort: Some("low"), full: true });
+        c.wait();
+        assert_eq!(c.said("tool"), ["Writing a file"]);
+        let errors = c.said("error");
+        assert!(errors.len() == 1 && errors[0].contains("kit/config.json") && errors[0].contains("which no AI's file tools may change"), "{errors:?}");
+        assert_eq!(fs::read_to_string(c.dir.join("kit").join("config.json")).unwrap(), "{}");
+        assert_eq!(c.recorded_answers(), ["deny"]);
         c.clean();
     }
 }

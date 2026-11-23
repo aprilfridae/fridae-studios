@@ -172,6 +172,7 @@ impl Chat {
             model: Some("auto"),
             full: false,
             pictures: None,
+        jobs: None,
             rules,
             folders: (self.dir.join("config"), self.dir.join("data"), PathBuf::from("/home/u")),
             guarded,
@@ -338,6 +339,7 @@ fn the_launch_key_changes_with_everything_a_cursor_process_is_started_with() {
         ("the tool servers (a setting they are handed)", CursorSettings { servers: &other_servers, ..base() }),
         ("the tool servers (one more)", CursorSettings { servers: &two_servers, ..base() }),
         ("where its tool server notes pictures", CursorSettings { pictures: Some(Path::new("/work/tool-pictures/c1.jsonl")), ..base() }),
+        ("where its tool server notes its jobs", CursorSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() }),
         ("the provider-keys switch", CursorSettings { keys_on: true, ..base() }),
         ("the program", CursorSettings { exe: Path::new("/other/cursor-agent"), ..base() }),
         ("the chat", CursorSettings { agent_id: "another", ..base() }),
@@ -366,6 +368,18 @@ fn the_launch_key_changes_with_everything_a_cursor_process_is_started_with() {
     let noted = CursorLaunch::new(&CursorSettings { pictures: Some(Path::new("/work/tool-pictures/c1.jsonl")), ..base() });
     assert_eq!(noted.spec.servers["rbxkit"]["env"]["FRIDAE_TOOL_PICTURES"], "/work/tool-pictures/c1.jsonl");
     assert!(noted.servers["rbxkit"]["env"].get("FRIDAE_TOOL_PICTURES").is_none(), "a process per message hands its results over itself");
+    // Cursor cuts a tool call off after 60 seconds on both paths: the app's tool server is given 45 to answer in,
+    // and the file the turn's end is told through, in the session's servers and in the workspace's file alike
+    let budgeted = CursorLaunch::new(&CursorSettings { jobs: Some(Path::new("/work/tool-jobs/c1.jsonl")), ..base() });
+    for (path, servers) in [("kept", &budgeted.spec.servers), ("per message", &budgeted.servers)] {
+        assert_eq!(servers["rbxkit"]["env"]["RBXKIT_CALL_BUDGET"], "45", "{path}");
+        assert_eq!(servers["rbxkit"]["env"]["FRIDAE_TOOL_JOBS"], "/work/tool-jobs/c1.jsonl", "{path}");
+    }
+    let (per, _) = Kept::per_turn(&budgeted, None, "hello");
+    drop(per);
+    let file: Value = serde_json::from_str(&fs::read_to_string(c.dir.join(".cursor").join("mcp.json")).unwrap()).unwrap();
+    assert_eq!(file["mcpServers"]["rbxkit"]["env"]["RBXKIT_CALL_BUDGET"], "45", "as a process per message reads it");
+    assert!(l.spec.servers["rbxkit"]["env"].get("RBXKIT_CALL_BUDGET").is_none() && l.servers["rbxkit"]["env"].get("RBXKIT_CALL_BUDGET").is_none(), "never a budget without that file");
     assert_eq!((l.spec.agent, l.spec.model.as_deref(), l.spec.effort.as_deref()), (crate::acp::Agent::Cursor, Some("default[]"), None), "Auto, by its id there");
     assert_eq!(l.spec.rules.servers, ["rbxkit"]);
     // the per-message command with the same settings: today's, unchanged

@@ -18,6 +18,7 @@ mod codex;
 mod cursor;
 mod expert_ai;
 mod fridae_lock;
+mod jobs;
 mod limits;
 mod live;
 mod media;

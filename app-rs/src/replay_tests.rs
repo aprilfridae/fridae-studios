@@ -112,6 +112,31 @@ fn cursor_plain_tool_resumed_and_signed_out() {
 }
 
 #[test]
+fn cursor_reports_the_real_result_of_a_job_longer_than_its_cut_off() {
+    // A real turn on a process per message (cursor-agent 2026.11.22, Auto), with the app's tool server given its
+    // 45-second budget: the stand-in tool was asked to work for 240 seconds, four times Cursor's 60-second cut-off.
+    // The call answered "not finished yet" at 44 s, `rbx_job wait` did so four more times, the fifth returned the
+    // tool's own result with its picture, and the model reported the word in it. No call was cut off.
+    let raw = String::from_utf8(fixture("cursor", "long-job.ndjson")).unwrap();
+    let results: Vec<String> = raw
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|e| e["type"] == "tool_call" && e["subtype"] == "completed")
+        .filter_map(|e| e["tool_call"]["mcpToolCall"]["result"]["success"]["content"][0]["text"]["text"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(results.len(), 6, "the slow call and five waits");
+    assert!(results[..5].iter().all(|r| r.starts_with("NOT FINISHED YET. This is not the tool's result")), "{results:?}");
+    assert!(results[5].starts_with("The stand-in tool worked for 240 seconds and finished. Its result word is MARBLE."), "{}", results[5]);
+    assert!(!raw.contains("Request timed out") && !raw.contains("-32001"), "nothing was cut off");
+    let (ev, _) = replay("cursor", "long-job", None, (true, 0));
+    assert_eq!(kinds(&ev), ["text", "tool", "text", "tool", "tool", "tool", "tool", "tool", "images", "text", "usage", "done"]);
+    assert_eq!(said(&ev, "tool")[0], "rbx test slow");
+    assert!(said(&ev, "tool")[1..].iter().all(|t| t == "Waiting for work that takes a while"), "{:?}", said(&ev, "tool"));
+    assert_eq!(said(&ev, "text").last().map(String::as_str), Some("Result word: **MARBLE**"));
+    assert!(!kinds(&ev).contains(&"error"), "and nothing is said about work thrown away: the job was collected");
+}
+
+#[test]
 fn cursor_refused_command_shows_the_card_or_a_plain_line() {
     let _held = paths::ALLOWED_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // `./git status` refused: git not allowed yet, the card offers it
