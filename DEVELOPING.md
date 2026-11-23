@@ -61,6 +61,7 @@ agent reads the built-in guides and uses the tools itself.
 | `rbx_texture` | Draws particle textures and flipbook sheets, checks them, previews them in Studio for free |
 | `rbx_check_images` | Checks any texture or flipbook sheet from its pixels |
 | `rbx_icon` | Cuts a transparent icon out of an icon-booth screenshot |
+| `rbx_image` | Makes an AI-generated image (icon, thumbnail key art, UI art) on your Gemini plan through Antigravity, or keeps an existing image, saved in the game's project at an exact size |
 | `rbx_video` | Reads a reference video as a sheet of frames |
 | `rbx_animation` | Turns a Blender animation into a Roblox animation file |
 | `rbx_vfx_package` | Installs the VFX modules into a place without uploading |
@@ -422,6 +423,49 @@ stdin, with an id of the app's own. The old way, a process per turn with `--resu
   `.codex/config.toml` the same) is neither written through nor replaced: the app makes no such link, and one that
   came with a game's folder may name any file. The list is then not written, and a Gemini chat that runs a process
   per message is told why its tools may be missing (`antigravity::LIST_IS_A_LINK`).
+
+## Gemini: commands that are refused, and generated images
+
+A Gemini chat is one `agy` process per message (`antigravity.rs`), in `--mode accept-edits` with the app's settings
+for the session. Measured with agy 1.5.15, Gemini 3.8 Flash at low effort:
+
+- **A refused command no longer ends the turn.** Headless agy cannot ask, so a step that needs approval is
+  "auto-denied" and the turn ends there with nothing said (`explain` words it for the chat). Outside Full auto the
+  settings now carry `"deny": ["command(*)"]`: the command's step ends in `ERROR` ("Permission denied for
+  unsandboxed(...). Matches user-configured deny rule."), the model reads that and carries on, the result is
+  `SUCCESS`, exit 0, nothing on stderr. Recorded as `tests/fixtures/gemini/command-refused-softly-then-image.ndjson`
+  and replayed by `replay_tests.rs`. The programs the user allowed are still not handed to agy (it runs commands
+  through zsh, which reads the user's `.zshenv`). Full auto is unchanged (`--dangerously-skip-permissions`, no command
+  rule). Gemini is told in its standing text (`text/gemini_turn.txt`, chosen by `agents::running_text`).
+- **Its own image tool works with no permission.** `generate_image` is run by a helper agy starts: in the stream a
+  step of type `subagent` (`tool_name: invoke_subagent`, `subagent_info.subagents[].type_name: image-generator`), not
+  a tool step. The helper runs on a model of agy's choosing (recorded: `gemini-4-hydrogen-tiered-high` under a
+  flash-low chat) and calls `generate_image {AspectRatio, ImageName, Prompt}`. The picture (1024 x 1024 JPEG for
+  `1:1`) lands in the **parent** conversation's folder, `~/.gemini/antigravity-cli/brain/<conversation>/<name>_<ms>.jpg`.
+  No event names the file, so `antigravity::Generated` looks in that folder whenever a step is over and at the
+  turn's end: an image file that was not there when the turn began is shown in the chat (`Out::Pictures`, copied to
+  `work/chat-images` as every chat picture is). A file written in the last second and a half waits for the next look, so none is read half written. A picture
+  that lands after the turn has ended is not shown.
+- **Over ACP** (the kept process, one live turn, `tests/fixtures/gemini/acp-image.wire`): the helper is a
+  `tool_call` named `invoke_subagent` (`rawInput: {Model: "inherit", Prompt, Role, TypeName: "image-generator"}`) and
+  **agy sends no `session/request_permission` for it**, nor for the helper's own `generate_image`. So the gate was
+  never what stopped images there; `acp::decide` now lets a `generate_image` request through should a version ask
+  (only with no path, or one inside agy's folder for the conversation), and `acp::Turn` shows the picture the same
+  way (`watch`, looked for at each `usage_update`, finished tool call and the turn's end). Not measured: whether a
+  helper's other steps (a command, a file write) are asked about over ACP.
+- **`rbx_image`** (`rbximage.py`, every AI): `generate` runs one bare headless agy turn (`rbxgen.antigravity_image`,
+  shared with `rbx_generate_texture`) that asks for the nearest shape of `1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3`, then
+  crops about the middle and resizes to exactly `size` with Pillow. The wrapper turn runs on the cheapest Flash model
+  `agy models` lists (a "lite" one first, then the lowest level; remembered for a day in
+  `work/antigravity/models.json`; no `--model` when agy lists none, and one more try without it when agy opens no
+  conversation on that model). The picture itself is still made by agy's helper on agy's own choice of model.
+  `keep` imports an image file from the project, the app's work folder or `~/.gemini/antigravity-cli/brain` and
+  refuses any other source (judged by the real path, so a link out of the project is refused). Output goes to
+  `<project>/<folder>` (default `art`), never outside the project, never into a hidden folder, never over an existing
+  file (a number is added); a chat with no project saves under `work/images`. Failures are said as they are: agy not
+  installed, not signed in, quota ("Individual quota reached. ... Resets in 2h40m52s.", the wording found in agy's own
+  log; where a headless turn prints it was not measured, so stderr, the result's error and its response are all
+  read). It takes its turn among jobs like the other file-writing tools (`OWN_LIMIT` 600 s).
 
 ## Gemini: one `agy acp` process kept open per chat (built, on request)
 
@@ -1280,6 +1324,9 @@ is an example the user can paste into their own House rules.
 - Textures (tileable materials, particle sprites, decals) can be generated
   with Google's Gemini if you add your own Gemini API key in Setup. It is
   deliberately not used for UI, icons, logos or lettering.
+- Other pictures (the game icon, thumbnail key art, UI art, concept art) can
+  be AI-generated with `rbx_image`, on your own Gemini plan through Google's
+  Antigravity (`agy`, signed in). Nothing is uploaded by an agent.
 - Texture previews and local module loading copy small files into your
   Studio install's `content/rbxkit` folder. Studio updates wipe that folder;
   nothing depends on it lasting.

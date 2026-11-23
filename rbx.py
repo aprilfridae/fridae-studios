@@ -260,7 +260,7 @@ def main(argv=None):
     w = sub.add_parser("where", help="print kit paths")
     w.set_defaults(fn=cmd_where)
 
-    names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen",
+    names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen", "rbximage": "image",
              "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",
              "rbxpromo.cli": "promo", "rbxstage": "stage"}
     for mod, name in names.items():

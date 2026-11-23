@@ -15,6 +15,9 @@ How to work:
 - Follow the `promo` loop: probe, plan, render, look, fix. Pick moments with rbx_promo `probe` and rbx_video `frames`,
   write the promo.json recipe, render with rbx_promo, then run rbx_promo `check` and look at the frames of the result.
   A long render returns a job id: poll it with action `job`.
+- A cover image or an end card may be AI-generated with rbx_image (on the user's own Gemini plan, through Antigravity;
+  on Gemini, your own generate_image and then rbx_image `keep` works too). The promo itself is still cut only from the
+  real clips: a generated picture never stands in for gameplay, and never another game's characters or art.
 - Write the post caption and hashtags as the guide says. Music and voice only within its rules.
 - With no usable clips, render nothing: list in the report the shots the user should record and how long each.
 

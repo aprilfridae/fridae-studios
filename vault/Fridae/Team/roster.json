@@ -9,7 +9,7 @@
   "stage": "build", "guides": ["roblox-luau", "roblox-architecture", "roblox-security", "roblox-networking", "lihfolk-systems"],
   "tools": ["rbx_project", "rbx_studio_lock"], "kind": "worker", "writes": true},
  {"id": "ui", "name": "UI builder", "job": "Builds the menus and the HUD",
-  "stage": "build", "guides": ["ui-design", "roblox-ui", "web-to-roblox", "unslop"], "tools": ["rbx_studio_lock"], "kind": "worker", "writes": true},
+  "stage": "build", "guides": ["ui-design", "roblox-ui", "web-to-roblox", "unslop"], "tools": ["rbx_studio_lock", "rbx_image"], "kind": "worker", "writes": true},
  {"id": "world", "name": "World builder", "job": "Builds the map, terrain, lighting and models",
   "stage": "build", "guides": ["roblox-world-building", "lihfolk-worldbuilding", "roblox-blender-modeling"],
   "tools": ["rbx_blender", "rbx_texture", "rbx_studio_lock"], "kind": "worker", "writes": true},
@@ -25,7 +25,7 @@
  {"id": "economy", "name": "Economy and shop", "job": "Sets prices, rewards, drop rates and the shop",
   "stage": "test", "guides": ["economy-design", "roblox-monetization"], "tools": ["rbx_economy", "rbx_studio_lock"], "kind": "worker", "writes": true},
  {"id": "art", "name": "Icon and thumbnails", "job": "Makes the game icon, thumbnails and store text",
-  "stage": "launch", "guides": ["workflow", "reference-design-contract"], "tools": ["rbx_icon", "rbx_studio_snippet", "rbx_vault", "rbx_studio_lock"], "kind": "worker", "writes": false},
+  "stage": "launch", "guides": ["workflow", "reference-design-contract"], "tools": ["rbx_icon", "rbx_image", "rbx_studio_snippet", "rbx_vault", "rbx_studio_lock"], "kind": "worker", "writes": false},
  {"id": "promo", "name": "Promo maker", "job": "Makes vertical promo videos from the user's clips",
-  "stage": "promote", "guides": ["promo"], "tools": ["rbx_promo", "rbx_video"], "kind": "worker", "writes": false}
+  "stage": "promote", "guides": ["promo"], "tools": ["rbx_promo", "rbx_video", "rbx_image"], "kind": "worker", "writes": false}
 ]

@@ -1105,6 +1105,28 @@ mod recorded {
     }
 
     #[test]
+    fn recorded_image_tool_is_a_helper_agy_starts_without_asking_and_the_turn_ends_with_the_pictures_path() {
+        // recorded with agy 1.5.15 by a small probe that spoke these same messages (no tool servers, no effort set):
+        // asked to use its generate_image tool once, agy started its image helper (`invoke_subagent`, `TypeName:
+        // image-generator`) with no permission request at all, said it was waiting, and went on by itself to name
+        // the file once the helper had made it, in its own folder for the conversation
+        let c = Chat::recorded("rec-image", "acp-image");
+        c.say("the message", As { effort: None, full: false });
+        c.wait();
+        assert_eq!(c.said("tool"), ["Generating an image"]);
+        let text = c.said("text").join("\n");
+        assert!(text.ends_with("/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-0000000000b1/red_apple_white_bg_1795466983981.jpg"), "{text}");
+        assert!(c.said("error").is_empty(), "{:?}", c.kinds());
+        assert_eq!(c.kinds().last().map(String::as_str), Some("done"));
+        assert_eq!(c.tokens(), [(14000, 157, 14965)]);
+        let all = fs::read_to_string(c.script.with_extension("sh.wire")).unwrap();
+        assert!(!all.contains("session/request_permission"), "nothing was asked");
+        assert!(c.recorded_answers().is_empty());
+        assert!(c.pid().is_some(), "the helper's call was over when the turn ended: the process is kept");
+        c.clean();
+    }
+
+    #[test]
     fn recorded_studio_mode_lead_turn() {
         // recorded in Studio mode (Full auto's rules): the Lead called the app's team tool twice and ended the turn
         // waiting for the user

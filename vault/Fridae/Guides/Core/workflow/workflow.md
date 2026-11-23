@@ -341,7 +341,19 @@ uploading anything.
 
 That generator is for textures only. Never use it for UI, icons, logos,
 typography or any graphic design, and never for an image with text in it.
-For UI art and concept images use the game's own asset ids, Creator Store images
+
+Pictures that are not textures (the game's icon, thumbnail key art, UI art,
+concept art) can be AI-generated with `rbx_image`
+(`rbx.py image generate "<what it shows>" --size 512x512 --name <Name>`). It
+makes the picture on the user's own Gemini plan, through Antigravity, at
+exactly the size you ask for, and saves it in the game's project folder.
+`rbx_image` with action `keep` brings in an image that already exists, such as
+one a Gemini agent's own generate_image tool made. Captured footage of the
+real game is still what shows gameplay. Never another game's characters or
+art, and no lettering in a generated picture. Nothing is uploaded by an
+agent: look at each image, name its file, and leave uploading to the user.
+
+For UI art you can also use the game's own asset ids, Creator Store images
 (`search_asset`, `assetType: "Image"`), icon-booth renders, textures drawn
 with `rbx.py tex`, or images the user supplies. Leave labelled slots and
 report what is missing rather than faking art.

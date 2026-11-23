@@ -13,9 +13,12 @@
 //! - There is no flag for standing instructions, so they are placed at the top of a conversation's first message.
 //! - Tool servers are read from `<workspace>/.agents/mcp_config.json`, so each chat gets a workspace folder.
 //! - It is limited the same way Claude Code is: the settings passed for the session allow our two tool servers,
-//!   and `accept-edits` lets it write files. Anything else that needs approval (a shell command, the browser) is
-//!   refused, because nobody is there to approve it. A refusal ends its turn with a note on stderr, which
-//!   `explain` turns into a message for the user.
+//!   and `accept-edits` lets it write files. A shell command is refused by a deny rule of the app's (`command(*)`),
+//!   which tells the model no and lets the turn carry on. Anything else that needs approval (the browser) is
+//!   refused because nobody is there to approve it, and that refusal ends its turn with a note on stderr, which
+//!   `explain` turns into a message for the user. Full auto refuses nothing but writes to the app's own files.
+//! - Its own `generate_image` tool needs no approval. The picture lands in agy's folder for the conversation and
+//!   is shown in the chat from there (`Generated`); `rbx_image keep` copies it into the game's project.
 //! - Tools on a server are all called through one built-in tool, `call_mcp_tool`, which names the real one in
 //!   its parameters.
 
@@ -23,7 +26,7 @@ use crate::paths::Start;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
     sync::OnceLock,
 };
@@ -124,7 +127,15 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     let allowed: Vec<String> = servers.as_object().map(|s| s.keys().map(|name| format!("mcp({name}/*)")).collect()).unwrap_or_default();
     let mut args: Vec<String> = ["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"].iter().map(|a| a.to_string()).collect();
     // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
-    args.push(json!({"permissions": {"allow": allowed, "deny": denied()}}).to_string());
+    let mut deny = denied();
+    if !full {
+        // A command needs approval nobody is there to give, and a step refused for that ends the turn at once
+        // ("auto-denied", `explain`). Refused by a rule of ours instead, the model is told no and the turn carries
+        // on (measured, agy 1.5.15: `tests/fixtures/gemini/command-refused-softly-then-image.ndjson`). The programs
+        // the user allowed are not handed to agy: it runs commands through zsh, which reads the user's `.zshenv`.
+        deny.push(COMMANDS_REFUSED.into());
+    }
+    args.push(json!({"permissions": {"allow": allowed, "deny": deny}}).to_string());
     if full {
         args.push("--dangerously-skip-permissions".into()); // full auto: nothing is refused
     }
@@ -135,6 +146,9 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     }
     args
 }
+
+/// Antigravity's rule that refuses every shell command.
+const COMMANDS_REFUSED: &str = "command(*)";
 
 /// Antigravity's deny rules for the app's own files (`paths::app_protected`): `write_file(<absolute path>)`, which
 /// covers a folder's contents as its grants do.
@@ -281,12 +295,68 @@ pub fn pictures_in(output: &str) -> Vec<String> {
     found
 }
 
+/// Antigravity's own data folder as a process per message has it: `<home>/.gemini/antigravity-cli`. (Tests have a
+/// folder of their own, so none reads the user's.)
+pub fn data_dir() -> PathBuf {
+    #[cfg(test)]
+    return paths::test_dir("agy-data").join("antigravity-cli");
+    #[cfg(not(test))]
+    home_override().unwrap_or_else(paths::home_dir).join(".gemini").join("antigravity-cli")
+}
+
+/// Antigravity's folder for one conversation inside its data folder (`brain/<id>`): its scratch files, and where
+/// its `generate_image` tool leaves each picture (`<name>_<time>.jpg`, measured). None for an id that is no plain
+/// name.
+pub fn conversation_dir(data: &Path, conversation: &str) -> Option<PathBuf> {
+    let plain = !conversation.is_empty() && conversation.len() <= 80 && conversation.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    plain.then(|| data.join("brain").join(conversation))
+}
+
+const PICTURE_ENDINGS: [&str; 4] = [".png", ".jpg", ".jpeg", ".webp"];
+
+/// The pictures Antigravity's own image tool makes during a turn. No event names the file (the tool runs in a helper
+/// of agy's, and only the model's words say where the picture went), so the conversation's folder is looked at: an
+/// image file that was not there when the turn began is one this turn made.
+#[derive(Default)]
+pub struct Generated {
+    dir: Option<PathBuf>,
+    known: HashSet<PathBuf>,
+}
+
+impl Generated {
+    /// Start watching a conversation's folder: what is in it now is not this turn's. The first call counts.
+    pub fn watch(&mut self, dir: PathBuf) {
+        if self.dir.is_none() {
+            self.known = Self::images(&dir).into_iter().collect();
+            self.dir = Some(dir);
+        }
+    }
+
+    fn images(dir: &Path) -> Vec<PathBuf> {
+        let is_picture = |p: &PathBuf| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| PICTURE_ENDINGS.iter().any(|e| n.to_lowercase().ends_with(e)));
+        let mut found: Vec<PathBuf> = fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| is_picture(p) && p.is_file()).collect();
+        found.sort();
+        found
+    }
+
+    /// The pictures made since the last look, four at most. While the turn runs (`ended` false) a file written in
+    /// the last moments waits for the next look, so none is read half written.
+    pub fn fresh(&mut self, ended: bool) -> Vec<String> {
+        let Some(dir) = self.dir.clone() else { return Vec::new() };
+        let settled = |p: &PathBuf| ended || p.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_millis() >= 1500);
+        let new: Vec<PathBuf> = Self::images(&dir).into_iter().filter(|p| !self.known.contains(p) && settled(p)).take(4).collect();
+        self.known.extend(new.iter().cloned());
+        new.iter().map(|p| p.display().to_string()).collect()
+    }
+}
+
 /// Reads one turn's events. Text arrives in pieces; a reply is shown when its step is done.
 #[derive(Default)]
 pub struct Turn {
     texts: HashMap<i64, String>,
     shown: HashSet<i64>,
     said_something: bool,
+    made: Generated,
 }
 
 impl Turn {
@@ -295,6 +365,17 @@ impl Turn {
         let step = &e["step_update"];
         if let Some(id) = e["conversation_id"].as_str().or(step["conversation_id"].as_str()).or(e["result"]["conversation_id"].as_str()).filter(|s| !s.is_empty()) {
             out.push(Out::Conversation(id.to_string()));
+            if let Some(dir) = conversation_dir(&data_dir(), id) {
+                self.made.watch(dir);
+            }
+        }
+        // the pictures its own image tool made: looked for whenever a step is over, and when the turn is
+        let ended = e["event"] == "result";
+        if ended || matches!(step["state"].as_str(), Some("DONE" | "ERROR")) {
+            let pictures = self.made.fresh(ended);
+            if !pictures.is_empty() {
+                out.push(Out::Pictures(pictures));
+            }
         }
         match e["event"].as_str().unwrap_or("") {
             "init" => {
@@ -324,6 +405,14 @@ impl Turn {
                             if !pictures.is_empty() {
                                 out.push(Out::Pictures(pictures));
                             }
+                        }
+                    }
+                    // its image tool runs in a helper of its own (recorded: `tool_name: invoke_subagent`, the
+                    // helper's `type_name: image-generator`), shown as the tool it is
+                    "subagent" => {
+                        let image = step["subagent_info"]["subagents"].as_array().is_some_and(|l| l.iter().any(|a| a["type_name"] == "image-generator"));
+                        if image && self.shown.insert(index) {
+                            out.push(Out::Tool("generate_image".into()));
                         }
                     }
                     "agent_response" => {
@@ -389,4 +478,97 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
         return Some(SIGNED_OUT.to_string());
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(args: &[String]) -> Value {
+        let at = args.iter().position(|a| a == "--settings").unwrap();
+        serde_json::from_str(&args[at + 1]).unwrap()
+    }
+
+    fn texts(v: &Value) -> Vec<String> {
+        v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn outside_full_auto_every_command_is_refused_by_a_rule_so_the_turn_carries_on() {
+        let ws = paths::test_dir("agy-args");
+        let servers = json!({"rbxkit": {"command": "py"}, "Roblox_Studio": {"command": "studio"}});
+        let ask = turn_args(&ws, &servers, Some("c-1"), Some("gemini-3.8-flash-low"), None, false);
+        let s = settings(&ask);
+        let deny = texts(&s["permissions"]["deny"]);
+        assert!(deny.iter().any(|d| d == "command(*)"), "{deny:?}");
+        assert!(deny.iter().any(|d| d.starts_with("write_file(")), "the app's own files stay refused: {deny:?}");
+        // the app's two tool servers and nothing else: no program is handed to agy, also not one the user allowed
+        let mut allow = texts(&s["permissions"]["allow"]);
+        allow.sort();
+        assert_eq!(allow, ["mcp(Roblox_Studio/*)", "mcp(rbxkit/*)"]);
+        assert!(!ask.iter().any(|a| a == "--dangerously-skip-permissions"));
+        // Full auto: commands run, so the rule is not there
+        let full = turn_args(&ws, &servers, None, None, None, true);
+        let deny = texts(&settings(&full)["permissions"]["deny"]);
+        assert!(!deny.iter().any(|d| d.starts_with("command(")), "{deny:?}");
+        assert!(deny.iter().any(|d| d.starts_with("write_file(")));
+        assert!(full.iter().any(|a| a == "--dangerously-skip-permissions"));
+    }
+
+    fn picture(path: &Path, seconds_old: u64) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::RgbImage::from_pixel(4, 4, image::Rgb([200, 30, 30])).save(path).unwrap();
+        let f = fs::File::options().write(true).open(path).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds_old)).unwrap();
+    }
+
+    fn pictures(outs: &[Out]) -> Vec<String> {
+        outs.iter().flat_map(|o| if let Out::Pictures(p) = o { p.clone() } else { Vec::new() }).collect()
+    }
+
+    #[test]
+    fn a_picture_its_own_image_tool_made_is_shown_once_and_an_earlier_turns_never() {
+        let id = "00000000-0000-4000-8000-00000000b001";
+        let dir = conversation_dir(&data_dir(), id).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        picture(&dir.join("earlier_1.jpg"), 600);
+        fs::write(dir.join("notes.md"), "x").unwrap();
+        let mut t = Turn::default();
+        let step = |index: i64, state: &str, kind: &str, more: Value| {
+            let mut s = json!({"conversation_id": id, "step_index": index, "state": state, "step_type": kind});
+            s.as_object_mut().unwrap().extend(more.as_object().cloned().unwrap_or_default());
+            json!({"event": "step_update", "step_update": s})
+        };
+        assert!(pictures(&t.feed(&json!({"event": "init", "conversation_id": id, "init": {"model": "gemini-3.8-flash-low"}}))).is_empty());
+        // the image tool, as recorded: a helper of agy's own
+        let helper = json!({"tool_name": "invoke_subagent", "subagent_info": {"subagents": [{"type_name": "image-generator", "role": "Image Generator"}]}});
+        let outs = t.feed(&step(3, "ACTIVE", "subagent", helper.clone()));
+        assert!(matches!(&outs[..], [Out::Conversation(_), Out::Tool(n)] if n == "generate_image"), "named as the tool it is");
+        let outs = t.feed(&step(3, "DONE", "subagent", helper));
+        assert!(!outs.iter().any(|o| matches!(o, Out::Tool(_))) && pictures(&outs).is_empty(), "once, and no picture yet");
+        // the picture arrives while the model waits; the next finished step shows it, once
+        picture(&dir.join("red_apple_2.jpg"), 10);
+        assert!(pictures(&t.feed(&step(5, "ACTIVE", "tool", json!({"tool_name": "schedule"})))).is_empty(), "a step that is not over");
+        assert_eq!(pictures(&t.feed(&step(5, "DONE", "tool", json!({"tool_name": "schedule"})))), [dir.join("red_apple_2.jpg").display().to_string()]);
+        assert!(pictures(&t.feed(&step(6, "DONE", "agent_response", json!({})))).is_empty());
+        // one written this instant waits (it may not be whole) and is shown when the turn ends, before the ending
+        picture(&dir.join("pear_3.png"), 0);
+        assert!(pictures(&t.feed(&step(7, "ERROR", "tool", json!({"tool_name": "run_command"})))).is_empty());
+        let outs = t.feed(&json!({"event": "result", "result": {"conversation_id": id, "status": "SUCCESS", "response": "done"}}));
+        assert_eq!(pictures(&outs), [dir.join("pear_3.png").display().to_string()]);
+        assert!(matches!(outs.last(), Some(Out::Finished)));
+        // the next turn of the same conversation: nothing of this one's is shown again
+        let mut next = Turn::default();
+        next.feed(&json!({"event": "init", "conversation_id": id, "init": {}}));
+        assert!(pictures(&next.feed(&json!({"event": "result", "result": {"conversation_id": id, "status": "SUCCESS"}}))).is_empty());
+    }
+
+    #[test]
+    fn a_conversations_folder_is_only_ever_inside_agys_own() {
+        let data = Path::new("/data/antigravity-cli");
+        assert_eq!(conversation_dir(data, "00bd7342-4e1f-40e5").unwrap(), data.join("brain").join("00bd7342-4e1f-40e5"));
+        for bad in ["", "..", "../x", "a/b", "a\\b", "."] {
+            assert!(conversation_dir(data, bad).is_none(), "{bad}");
+        }
+    }
 }

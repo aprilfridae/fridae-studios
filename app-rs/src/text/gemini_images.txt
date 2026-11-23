@@ -1,0 +1,4 @@
+
+Your own generate_image tool works here and its picture shows in the chat, but the file stays in your own conversation
+folder: to use it in the game, call rbx_image with action `keep` and that file's path (it is copied into the project
+folder at the size you ask for). Or call rbx_image `generate`, which does both in one step.

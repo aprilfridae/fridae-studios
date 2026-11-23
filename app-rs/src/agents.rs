@@ -53,6 +53,21 @@ const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
 /// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
 const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
+/// And for Gemini on a process per message outside Full auto: a command is refused by the app's rule and the turn
+/// carries on (`antigravity::turn_args`).
+const GEMINI_TURN_PROMPT: &str = include_str!("text/gemini_turn.txt");
+/// For every Gemini chat: its own image tool works, and how its picture gets into the game's project.
+const GEMINI_IMAGES_PROMPT: &str = include_str!("text/gemini_images.txt");
+
+/// What an AI without a text of its own (Cursor and OpenCode have one) is told about how it runs here.
+fn running_text(kind: &str, full: bool, kept: bool) -> String {
+    let how = match kind {
+        "gemini" if !full && kept => GEMINI_KEPT_PROMPT,
+        "gemini" if !full => GEMINI_TURN_PROMPT,
+        _ => OTHER_AI_PROMPT,
+    };
+    if kind == "gemini" { format!("{how}{GEMINI_IMAGES_PROMPT}") } else { how.to_string() }
+}
 /// For every agent (a chat, a Lead, an expert) on an AI and path that cuts tool calls off (`caps::call_budget`).
 const LONG_CALLS_PROMPT: &str = include_str!("text/long_calls.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
@@ -2849,10 +2864,8 @@ impl Agent {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
                 prompt += &opencode::instructions(project.as_deref(), &paths::allowed_commands(), ask.full);
-            } else if kind == "gemini" && !ask.full && self.live_allowed() {
-                prompt += GEMINI_KEPT_PROMPT;
             } else {
-                prompt += OTHER_AI_PROMPT;
+                prompt += &running_text(&kind, ask.full, self.live_allowed());
             }
             // OpenCode takes the standing instructions on the session itself, afresh every turn (see `opencode::run`)
             text = match &session {
@@ -4858,6 +4871,28 @@ mod tests {
             assert!(LONG_CALLS_PROMPT.contains(word), "{word}");
         }
         assert!(!SYSTEM_PROMPT.contains("rbx_job") && !STUDIO_PROMPT.contains("rbx_job"), "Claude's standing text is unchanged");
+    }
+
+    #[test]
+    fn gemini_is_told_how_commands_are_answered_on_the_path_it_runs_on_and_that_it_can_make_images() {
+        // a process per message outside Full auto: a command is refused by the app's rule and the turn carries on
+        let turn = running_text("gemini", false, false);
+        assert!(turn.contains("Shell commands are refused in\nthis mode") && turn.contains("your turn carries on") && turn.contains("use the tools"), "{turn}");
+        assert!(!turn.contains("a refused step ends your turn"), "no longer true of a command: {turn}");
+        // its kept process: each command is asked about; Full auto and the other AIs: as before
+        assert!(running_text("gemini", false, true).contains("shown to the user, who may let that"));
+        assert!(running_text("gemini", true, false).starts_with(OTHER_AI_PROMPT) && running_text("gemini", true, true).starts_with(OTHER_AI_PROMPT));
+        assert_eq!(running_text("chatgpt", false, false), OTHER_AI_PROMPT);
+        // every Gemini chat: its own image tool, and the way into the project
+        for (full, kept) in [(false, false), (false, true), (true, false)] {
+            let t = running_text("gemini", full, kept);
+            assert!(t.contains("generate_image") && t.contains("rbx_image") && t.contains("`keep`"), "{t}");
+        }
+        assert!(!running_text("chatgpt", false, false).contains("generate_image"));
+        // every AI is told of the tool that makes images, and what it is not for
+        for word in ["rbx_image", "Gemini plan", "never another game's characters or art", "Nothing is uploaded"] {
+            assert!(SYSTEM_PROMPT.contains(word), "{word}");
+        }
     }
 
     #[test]

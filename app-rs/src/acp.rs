@@ -104,6 +104,13 @@ pub struct Verdict {
 const WRITERS: &[&str] = &["write_file"];
 const READERS: &[&str] = &["read_file"];
 
+/// The agent's own tools that are let through in Ask me because they touch nothing of the user's. agy's image tool
+/// makes a picture from words and writes it into its own folder for the conversation (measured on a process per
+/// message, where it needs no permission either: `command-refused-softly-then-image.ndjson`). Over ACP agy 1.5.15
+/// did not ask about it at all (`acp-image.wire`: the tool runs in a helper, `invoke_subagent`, started unasked), so
+/// this answer is for a version that does ask; one that names a path outside that folder is still refused.
+const OWN_FOLDER_ONLY: &[&str] = &["generate_image"];
+
 /// Whether the app approves a command by itself in Ask me when every program in it is one the user allowed
 /// (`paths::command_allowed`). That check is written for `/bin/sh`, so it holds only where agy runs commands with
 /// that shell and no start-up file of the user's: see DEVELOPING.md for what was measured.
@@ -434,6 +441,9 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
         let card = once_card(&rules.agent_id, &text, "on this connection Gemini can read files anywhere on this computer without asking, so what it sends to the web is asked about each time.");
         return Verdict { allow: false, outs: vec![card], note: Some("[Fridae did not let your last turn look something up on the web, and the turn ended there. The user was shown it and may allow it.]".into()) };
     }
+    if OWN_FOLDER_ONLY.contains(&name) && paths.iter().all(|p| own_scratch(p)) {
+        return allow();
+    }
     refuse(format!("Gemini asked to use \"{what}\", which Fridae does not let it do in Ask me, so it was refused. {STOPPED_THERE} Ask again, and tell it to use the building tools."))
 }
 
@@ -496,6 +506,8 @@ pub struct Turn {
     /// have been shown
     pictures: Option<PathBuf>,
     pictures_seen: usize,
+    /// agy: the pictures its own image tool leaves in its folder for the conversation (`watch`)
+    made: antigravity::Generated,
     /// the agent said something or called a tool
     pub began: bool,
     /// Cursor: it thought about the message (so the turn used something, also when it was stopped before it spoke)
@@ -514,7 +526,21 @@ impl Turn {
     }
 
     pub fn of(agent: Agent, full: bool, servers: &[String], pictures: Option<&Path>) -> Turn {
-        Turn { agent, full, kinds: HashMap::new(), commands: HashMap::new(), named: HashSet::new(), tools: HashMap::new(), blocked: Vec::new(), servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, began: false, thought: false, said: false, refused: false, mode_lost: false }
+        Turn { agent, full, kinds: HashMap::new(), commands: HashMap::new(), named: HashSet::new(), tools: HashMap::new(), blocked: Vec::new(), servers: servers.to_vec(), text: String::new(), seen: HashSet::new(), open: HashSet::new(), long: HashSet::new(), pictures: pictures.map(Path::to_path_buf), pictures_seen: 0, made: antigravity::Generated::default(), began: false, thought: false, said: false, refused: false, mode_lost: false }
+    }
+
+    /// agy's folder for this conversation (`antigravity::conversation_dir`): an image file that appears there during
+    /// the turn is one its own image tool made, and is shown in the chat as a process per message shows it.
+    pub fn watch(&mut self, dir: PathBuf) {
+        self.made.watch(dir);
+    }
+
+    /// The pictures agy's image tool made since the last look.
+    fn generated(&mut self, ended: bool, out: &mut Vec<Out>) {
+        let pictures = self.made.fresh(ended);
+        if !pictures.is_empty() {
+            out.push(Out::Pictures(pictures));
+        }
     }
 
     pub fn tool_open(&self) -> bool {
@@ -581,9 +607,13 @@ impl Turn {
                     self.flush(&mut out);
                     // it reads each tool's description file before calling it: not worth a line in the chat
                     let housekeeping = u["rawInput"]["Path"].as_str().or(u["locations"][0]["path"].as_str()).is_some_and(|p| p.replace('\\', "/").contains("/antigravity-cli/mcp/"));
+                    // its image tool runs in a helper of its own (recorded, `acp-image.wire`: `invoke_subagent` with
+                    // `rawInput.TypeName: image-generator`), shown as the tool it is
+                    let image = name == "invoke_subagent" && u["rawInput"]["TypeName"] == "image-generator";
                     match ours {
                         // named as Claude Code, Cursor and OpenCode name a server's tool, with what it was asked
                         Some((server, tool)) => out.push(Out::ToolArgs(format!("mcp__{server}__{tool}"), u["rawInput"].clone())),
+                        None if image => out.push(Out::Tool("generate_image".into())),
                         None if !name.is_empty() && !housekeeping => out.push(Out::Tool(name.to_string())),
                         None => {}
                     }
@@ -600,6 +630,7 @@ impl Turn {
                                 out.push(Out::Pictures(pictures));
                             }
                         }
+                        self.generated(false, &mut out);
                     }
                     _ => {
                         self.open.insert(id.to_string());
@@ -609,6 +640,9 @@ impl Turn {
                     }
                 }
             }
+            // agy says what the conversation has used after each of the model's steps (recorded: also right after
+            // its image helper reported back): a moment to look for the picture
+            "usage_update" => self.generated(false, &mut out),
             "config_option_update" => {
                 if mode_in(&u["configOptions"]).is_some_and(|m| m != "default") {
                     self.mode_lost = true;
@@ -770,6 +804,7 @@ impl Turn {
             return out;
         }
         let r = &answer["result"];
+        self.generated(true, &mut out);
         if r["usage"].is_object() {
             out.push(Out::Usage(usage::Turn::from_agy_acp(&r["usage"])));
         }
@@ -1095,6 +1130,9 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, fre
         return gone(&mut c, false);
     }
     let mut t = Turn::of(spec.agent, spec.rules.full, &spec.rules.servers, spec.pictures.as_deref());
+    if let Some(dir) = antigravity::conversation_dir(&spec.rules.agent_dir, &session.id).filter(|_| !cursor) {
+        t.watch(dir);
+    }
     loop {
         let Ok(line) = rx.recv() else {
             // it died, or was ended: what it had written so far is still shown
@@ -1249,8 +1287,71 @@ mod tests {
         assert!(!ok(&write(&root.join("gemini/antigravity-cli/settings.json"))));
         // anything else the app does not know, and a change of the mode in which every step asks
         assert!(!ok(&call("browser_subagent", "other", json!({"Task": "open a page"}), &[])));
-        assert!(!ok(&call("generate_image", "other", json!({"Prompt": "a cat"}), &[])));
         assert!(!ok(&call("command_status", "other", json!({"CommandId": "c1"}), &[])), "a name no recording has");
+    }
+
+    #[test]
+    fn its_own_image_tool_is_let_through_and_only_into_its_own_folder_for_the_conversation() {
+        let (r, root) = rules(false);
+        let ok = |t: &Value| decide(t, &r, "s-1", &[]).allow;
+        // as agy's image helper calls it (read in the helper's own transcript): a prompt, a shape, a name, no path
+        let asked = json!({"AspectRatio": "1:1", "ImageName": "grey_skipping_stone", "Prompt": "A clean studio photograph of a skipping stone."});
+        assert!(ok(&call("generate_image", "other", asked.clone(), &[])));
+        // should a version say where the picture goes: its folder for this conversation, and nowhere else
+        let own = root.join("gemini/antigravity-cli/brain/s-1/grey_skipping_stone_1.jpg");
+        assert!(ok(&call("generate_image", "other", asked.clone(), &[&own])));
+        for p in ["gemini/antigravity-cli/brain/s-2/x.jpg", "home/games/x.jpg", "ws/x.jpg", "kit/config.json"] {
+            let v = decide(&call("generate_image", "other", asked.clone(), &[&root.join(p)]), &r, "s-1", &[]);
+            assert!(!v.allow && said(&v).contains("does not let it do in Ask me"), "{p}: {}", said(&v));
+        }
+        // as a write it is judged as any write is; a path the app cannot read is refused
+        assert!(!ok(&call("generate_image", "edit", asked.clone(), &[&root.join("home/games/x.jpg")])));
+        assert!(!ok(&call("generate_image", "other", json!({"Prompt": "x", "Path": "../x.jpg"}), &[])));
+        // only that tool: another of its own that the app does not know stays refused
+        assert!(!ok(&call("generate_video", "other", json!({"Prompt": "a cat"}), &[])));
+        // Full auto lets it through as before
+        let (full, _) = rules(true);
+        assert!(decide(&call("generate_image", "other", asked, &[]), &full, "s-1", &[]).allow);
+    }
+
+    fn step(kind: &str, id: &str, name: &str, status: &str, raw: Value) -> Value {
+        json!({"sessionUpdate": kind, "toolCallId": id, "name": name, "status": status, "kind": "other", "title": format!("Run {name}"), "rawInput": raw})
+    }
+
+    #[test]
+    fn a_picture_its_own_image_tool_made_is_shown_from_its_folder_for_the_conversation() {
+        let dir = paths::test_dir("acp-generated").join("antigravity-cli").join("brain").join("s-9");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = |p: &Path, secs: u64| {
+            image::RgbImage::from_pixel(4, 4, image::Rgb([9, 9, 9])).save(p).unwrap();
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs)).unwrap();
+        };
+        old(&dir.join("earlier_turn.jpg"), 900);
+        let pictures = |outs: &[Out]| outs.iter().flat_map(|o| if let Out::Pictures(p) = o { p.clone() } else { Vec::new() }).collect::<Vec<_>>();
+        let mut t = Turn::new(&["rbxkit".to_string()], None);
+        t.watch(dir.clone());
+        // recorded (`acp-image.wire`): the image tool is a helper agy starts, and no permission is asked for it
+        let helper = json!({"Model": "inherit", "Prompt": "Generate an image: a single red apple.", "Role": "Image Generator", "TypeName": "image-generator"});
+        let outs = t.feed(&step("tool_call", "call_1", "invoke_subagent", "in_progress", helper.clone()));
+        assert!(matches!(&outs[..], [Out::Tool(n)] if n == "generate_image"), "named as the tool it is");
+        assert!(pictures(&t.feed(&step("tool_call_update", "call_1", "invoke_subagent", "completed", helper))).is_empty(), "the helper has only been started");
+        // another kind of helper is shown by its own name
+        let outs = t.feed(&step("tool_call", "call_2", "invoke_subagent", "in_progress", json!({"TypeName": "researcher"})));
+        assert!(matches!(&outs[..], [Out::Tool(n)] if n == "invoke_subagent"));
+        // the picture lands while the model waits; agy's next word on usage is when it is looked for, and it is shown once
+        old(&dir.join("red_apple_1.jpg"), 5);
+        let u = json!({"sessionUpdate": "usage_update", "used": 9724, "size": 1048576});
+        assert_eq!(pictures(&t.feed(&u)), [dir.join("red_apple_1.jpg").display().to_string()]);
+        assert!(pictures(&t.feed(&u)).is_empty());
+        // one written this instant waits, and is shown when the turn ends
+        old(&dir.join("pear_2.png"), 0);
+        assert!(pictures(&t.feed(&u)).is_empty());
+        let end = t.finish(&json!({"result": {"stopReason": "end_turn", "usage": {"inputTokens": 1, "outputTokens": 1}}}));
+        assert_eq!(pictures(&end), [dir.join("pear_2.png").display().to_string()]);
+        // a chat that is not watched (Cursor's, or a session whose id is no plain name) shows nothing
+        let mut none = Turn::new(&[], None);
+        assert!(pictures(&none.feed(&u)).is_empty() && pictures(&none.finish(&json!({"result": {"stopReason": "end_turn"}}))).is_empty());
     }
 
     #[test]

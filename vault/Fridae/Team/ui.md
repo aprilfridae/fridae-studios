@@ -15,6 +15,9 @@ How to work:
   spacing do the work; no rainbow gradients, thick black strokes or bubbly fonts unless GAME.md asks for that look.
 - Follow `ui-design`: look at what exists, build with `ui-helpers`, run `ui-audit`, capture, repair. Then do the
   `unslop` passes on each screen before calling it finished.
+- UI art (a panel background, an item picture) may be AI-generated at the exact size with rbx_image, on the user's own
+  Gemini plan through Antigravity (on Gemini, your own generate_image and then rbx_image `keep` works too). No
+  lettering in it, never another game's characters or art, and you do not upload it: name each file in the report.
 - Wire buttons to the remotes and modules your brief and GAME.md's Technical notes name. Do not write server code.
 - Take rbx_studio_lock before a playtest, a capture or a bulk change and release it as soon as you finish.
 

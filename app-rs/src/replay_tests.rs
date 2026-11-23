@@ -88,6 +88,77 @@ fn gemini_resumed_with_a_file_written_and_a_command_refused() {
     assert_eq!(kinds(&ev).last(), Some(&"done"));
 }
 
+/// Recorded output handed over in two parts, with something done in between (a file agy wrote while the turn ran).
+struct Staged<F: FnMut()> {
+    parts: std::collections::VecDeque<Vec<u8>>,
+    between: Option<F>,
+}
+
+impl<F: FnMut()> std::io::Read for Staged<F> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.parts.front().is_some_and(Vec::is_empty) {
+            self.parts.pop_front();
+            if let Some(mut f) = self.between.take() {
+                f();
+            }
+        }
+        let Some(part) = self.parts.front_mut() else { return Ok(0) };
+        let n = part.len().min(buf.len());
+        buf[..n].copy_from_slice(&part[..n]);
+        part.drain(..n);
+        Ok(n)
+    }
+}
+
+#[test]
+fn gemini_command_refused_by_the_apps_rule_carries_on_and_the_picture_it_generated_is_shown() {
+    // A real turn (agy 1.5.15, Gemini 3.8 Flash at low effort) with the settings `turn_args` now passes outside Full
+    // auto: `"deny": ["command(*)"]`. Asked to run `echo hello-from-shell`, then to use its generate_image tool once,
+    // then to report. The command's step ended in ERROR ("Matches user-configured deny rule"), the turn went on, the
+    // image helper made a picture in agy's folder for the conversation, and the result was SUCCESS with exit 0 and
+    // nothing on stderr. Before, the first refused command ended the turn.
+    let raw = fixture("gemini", "command-refused-softly-then-image.ndjson");
+    let text = String::from_utf8(raw.clone()).unwrap();
+    assert!(text.contains(r#""state":"ERROR","step_type":"tool","tool_name":"run_command""#) && text.contains("Matches user-configured deny rule"));
+    assert!(text.contains(r#""type_name":"image-generator""#) && text.contains(r#""status":"SUCCESS""#));
+    // the picture is written while the turn runs: after the first line (`init`), as agy's helper did
+    let conversation = "00000000-0000-4000-8000-0000000000c1";
+    let dir = antigravity::conversation_dir(&antigravity::data_dir(), conversation).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    let cut = raw.iter().position(|b| *b == b'\n').unwrap() + 1;
+    let picture = dir.join("grey_skipping_stone_1795466515478.jpg");
+    let staged = Staged {
+        parts: [raw[..cut].to_vec(), raw[cut..].to_vec()].into(),
+        between: Some(|| {
+            fs::create_dir_all(&dir).unwrap();
+            image::RgbImage::from_pixel(8, 8, image::Rgb([120, 120, 120])).save(&picture).unwrap();
+        }),
+    };
+    let a = Agent::detached_for_test("replay-gemini-soft-refusal", None);
+    {
+        let mut st = a.st.lock().unwrap();
+        st.ai = Some("gemini".to_string());
+        st.running = true;
+    }
+    let last = Mutex::new((std::time::Instant::now(), false, false));
+    let t = a.consume(std::io::BufReader::with_capacity(64, staged), "gemini", &last, || {});
+    let stopped = a.turn_over();
+    a.after_turn("gemini", t, "", Some((true, 0)), stopped);
+    let st = a.st.lock().unwrap();
+    let ev = st.log.clone();
+    assert!(!kinds(&ev).contains(&"error"), "no error: {ev:?}");
+    assert_eq!(kinds(&ev).last(), Some(&"done"));
+    assert_eq!(said(&ev, "tool")[..2], ["Running a command", "Generating an image"], "{:?}", said(&ev, "tool"));
+    let texts = said(&ev, "text");
+    assert!(texts.last().unwrap().contains("grey_skipping_stone_1795466515478.jpg"), "its last words name the picture: {texts:?}");
+    assert!(texts[0].contains("refused"), "and it said the command was refused: {texts:?}");
+    let images: Vec<&Value> = ev.iter().filter(|e| e["kind"] == "images").collect();
+    assert_eq!(images.len(), 1, "{:?}", kinds(&ev));
+    assert_eq!(images[0]["urls"].as_array().map(Vec::len), Some(1), "shown from the chat's own pictures folder: {}", images[0]);
+    assert!(images[0]["urls"][0].as_str().unwrap().starts_with("/img/"));
+    assert_eq!(st.session.as_deref(), Some(conversation));
+}
+
 #[test]
 fn gemini_started_afresh_when_its_conversation_was_gone_and_the_chat_is_told() {
     // agy only warns on stderr and opens a new conversation (measured)
