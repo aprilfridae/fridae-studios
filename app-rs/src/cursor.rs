@@ -226,8 +226,8 @@ pub fn kept_model_name(id: &str) -> String {
     if id == KEPT_AUTO { "Cursor (Auto)".to_string() } else { id.to_string() }
 }
 
-/// What the chat is told when Cursor is not signed in.
-pub const SIGNED_OUT: &str = "Cursor is not signed in. Open a terminal, run `cursor-agent login`, sign in with your Cursor account, then send your message again.";
+/// What the chat is told when Cursor is not signed in, with the Sign in button beside it (`signin::signed_out_line`).
+pub const SIGNED_OUT: &str = "Cursor is not signed in. Sign in, then send your message again.";
 
 /// FRIDAE_CURSOR_HOME (testing only, debug builds only) gives a copy of the app with a scratch HOME the real one for
 /// Cursor alone, because Cursor finds its sign-in through the home folder's keychain.
@@ -959,7 +959,7 @@ mod tests {
     #[test]
     fn stderr_is_explained() {
         let out = "Error: Authentication required. Please run 'agent login' first, or set CURSOR_API_KEY environment variable.";
-        assert!(explain(out, false).unwrap().contains("cursor-agent login"));
+        assert_eq!(explain(out, false).as_deref(), Some("Cursor is not signed in. Sign in, then send your message again."));
         assert!(explain(out, true).is_none(), "a turn that answered is not explained by stderr");
         assert!(explain("Cannot use this model: nonsense-model. Available models: auto, gpt-5.2", false).unwrap().contains("Auto always works"));
         assert!(explain("something else", false).is_none());

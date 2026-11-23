@@ -3636,7 +3636,7 @@ impl Agent {
                                 Some(msg) => {
                                     t.result_text = msg.to_string();
                                     t.result_said = true;
-                                    self.put("error", json!({"text": msg}));
+                                    self.put_failure("claude", msg);
                                 }
                                 None => t.result_text = e["subtype"].as_str().unwrap_or("error").to_string(),
                             }
@@ -3765,7 +3765,7 @@ impl Agent {
                 t.result_error = true;
                 t.result_said = true;
                 t.result_text = text.clone();
-                self.put("error", json!({"text": text}));
+                self.put_failure(&self.ai(), &text);
             }
             Out::Usage(turn) => self.used(&turn),
             Out::Finished => t.got_result = true,
@@ -3814,6 +3814,19 @@ impl Agent {
         self.st.lock().unwrap().model_note.clone()
     }
 
+    /// Why a turn failed, in the chat. When the reason is that nobody is signed in to the chat's AI, the line is the
+    /// app's own and carries the AI's name for the Sign in button beside it (`signin::signed_out_line`), and the tool is
+    /// asked again who is signed in, so the picker and Setup say the same.
+    fn put_failure(&self, kind: &str, text: &str) {
+        match crate::signin::signed_out_line(kind, text) {
+            Some(line) => {
+                self.put("error", json!({"text": line, "sign_in": kind}));
+                crate::signin::turn_failed(kind);
+            }
+            None => self.put("error", json!({"text": text})),
+        }
+    }
+
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
@@ -3837,7 +3850,7 @@ impl Agent {
             "opencode" => opencode::explain(err, got_result),
             _ => None,
         } {
-            self.put("error", json!({"text": why}));
+            self.put_failure(kind, &why);
         } else if (!got_result && !exit.map(|(ok, _)| ok).unwrap_or(true)) || (result_error && !result_said) {
             let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
             let code = exit.map(|(_, c)| c).unwrap_or(-1);
@@ -4442,6 +4455,7 @@ pub fn shut_down() {
     }
     end_kept(&agents(), &turns);
     opencode::shut_down(); // the app's OpenCode server, with every OpenCode turn
+    crate::signin::shut_down(); // a sign-in that waits for the browser
     // each ended turn settles its chat ("Stopped.", then done) before the chats are saved, for a moment at most
     let until = std::time::Instant::now() + Duration::from_secs(3);
     while agents().iter().any(|a| a.st.lock().unwrap().running) && std::time::Instant::now() < until {
@@ -6103,6 +6117,25 @@ mod tests {
         for x in [&a, &b, &c, &d] {
             remove_agent(&x.id);
         }
+    }
+
+    #[test]
+    fn a_turn_that_failed_as_signed_out_carries_the_ai_for_its_sign_in_button() {
+        let a = new_agent(Some("cursor")).unwrap();
+        let last = |a: &Arc<Agent>| a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").cloned().unwrap();
+        // Cursor's and Gemini's signed-out lines are the app's own (said by `acp` and by `explain`): the same line,
+        // with the AI named for the button
+        a.put_failure("cursor", cursor::SIGNED_OUT);
+        assert_eq!((last(&a)["text"].as_str(), last(&a)["sign_in"].as_str()), (Some(cursor::SIGNED_OUT), (!cfg!(windows)).then_some("cursor")));
+        a.put_failure("gemini", antigravity::SIGNED_OUT);
+        assert_eq!(last(&a)["sign_in"].as_str(), (!cfg!(windows)).then_some("gemini"));
+        // any other failure is said as it is, with no button
+        a.put_failure("cursor", "Cursor could not run this message.");
+        assert_eq!((last(&a)["text"].as_str(), last(&a).get("sign_in")), (Some("Cursor could not run this message."), None));
+        // OpenCode's sign-in is Fridae's own, with its own lines and its own button
+        a.put_failure("opencode", "Fridae's OpenCode is not signed in. Open Setup, Connections, press Sign in, then send your message again.");
+        assert_eq!(last(&a).get("sign_in"), None);
+        remove_agent(&a.id);
     }
 
     #[test]

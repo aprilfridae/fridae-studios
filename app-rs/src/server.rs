@@ -152,6 +152,7 @@ fn blender_found() -> bool {
 fn status() -> Value {
     cursor::refresh_models(); // asks Cursor again while its list is empty (signed out or offline when the app started)
     opencode::refresh_models();
+    crate::signin::refresh(); // who is signed in to Claude Code, Cursor and Gemini: asked again every few minutes at most
     json!({
         "agent": paths::find_ai(&paths::default_ai()).is_some(),
         "ai": {"default": paths::default_ai(), "installed": {"claude": paths::find_agent().is_some(), "gemini": paths::find_antigravity().is_some(), "chatgpt": paths::find_codex().is_some(), "cursor": paths::find_cursor().is_some(), "opencode": paths::find_opencode().is_some()},
@@ -159,6 +160,7 @@ fn status() -> Value {
                "gaps": {"cursor": cursor::gaps(), "opencode": opencode::gaps()},
                "caps": crate::caps::table(),
                "opencode": opencode::state(),
+               "sign_in": crate::signin::state(),
                "models": {"gemini": antigravity::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "chatgpt": codex::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
                           "cursor": cursor::models().iter().map(|(id, name)| json!([id, name])).collect::<Vec<_>>(),
@@ -309,6 +311,23 @@ fn post(path: &str, body: Value) -> Reply {
                     send_json(json!({"ok": true}))
                 }
                 None => send_json(json!({"ok": false})),
+            }
+        }
+        // the user's own sign-in to Claude Code, Cursor or Gemini: start the tool's sign-in, end one that waits, or
+        // ask the tool again who is signed in. There is no signing out here.
+        "/api/signin" => {
+            let ai = text_of("ai");
+            match text_of("action").as_str() {
+                "login" => send_json(crate::signin::login_start(&ai)),
+                "cancel" => {
+                    crate::signin::login_cancel(&ai);
+                    send_json(crate::signin::login_state(&ai))
+                }
+                "check" => {
+                    crate::signin::check(&ai, true);
+                    send_json(crate::signin::login_state(&ai))
+                }
+                _ => send_json(crate::signin::login_state(&ai)),
             }
         }
         // Setup > Connections: Fridae's own OpenCode sign-in (OpenCode's device sign-in, approved in the browser)
@@ -519,7 +538,7 @@ pub fn start(token: String) -> String {
     thread::spawn(studio_watch::watch);
     thread::spawn(crate::studio_undo::watch);
     plugin::start();
-    antigravity::load_models();
+    crate::signin::start(); // who is signed in to Claude Code, Cursor and Gemini (Gemini's answer is its model list)
     codex::load_models();
     cursor::load_models();
     opencode::load_models();

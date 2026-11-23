@@ -24,6 +24,7 @@ mod live;
 mod media;
 mod notes;
 mod opencode;
+mod signin;
 mod paths;
 mod plugin;
 mod procs;

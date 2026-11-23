@@ -635,7 +635,12 @@ done
     fn a_failed_turn_and_a_turn_that_left_a_background_task_keep_no_process() {
         let c = Chat::new("signed-out");
         assert!(c.send("signed-out"));
-        assert_eq!(c.said("error"), ["Not logged in"]);
+        // Claude Code's own "Not logged in" is said in the app's words, and the line carries the AI for its Sign in
+        // button (not on Windows, where the app offers no sign-in and the tool's words stay)
+        let line = if cfg!(windows) { "Not logged in" } else { "Claude is not signed in. Sign in, then send your message again." };
+        assert_eq!(c.said("error"), [line]);
+        let event = c.a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").cloned().unwrap();
+        assert_eq!(event["sign_in"].as_str(), (!cfg!(windows)).then_some("claude"));
         assert_eq!((c.fails(), c.pid()), (0, None), "a new process gets to find the sign-in");
         assert!(c.send("again"));
         assert_eq!(c.starts().len(), 2);

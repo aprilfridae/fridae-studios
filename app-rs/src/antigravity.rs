@@ -37,27 +37,37 @@ use crate::paths;
 
 static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
 
-/// Ask Antigravity which models it offers (`agy models` prints one "id<tab>name" per line). Done once, in the
-/// background, because it goes to the network.
-pub fn load_models() {
-    std::thread::spawn(|| {
-        let Some(exe) = paths::find_antigravity() else { return };
-        let mut cmd = Command::new(exe);
-        cmd.arg("models");
-        paths::quiet(&mut cmd);
-        paths::child_env(&mut cmd, "gemini");
-        if let Some(h) = home_override() {
-            cmd.env("HOME", h);
-        }
-        let Ok(out) = cmd.run_output() else { return };
-        let list = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|l| l.split_once('\t'))
-            .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
-            .filter(|(id, name)| !id.is_empty() && !id.contains(' ') && !name.is_empty())
-            .collect();
+/// Ask Antigravity which models it offers (`agy models` prints one "id<tab>name" per line) and keep the list. It
+/// goes to the network, so only from a background thread (`signin::check`, at start and when the sign-in is asked
+/// about: with nobody signed in it prints no list but "Please sign in", which is how the app knows). Hands back what
+/// it printed (output, error output, ended well); None when agy is not installed or could not be run. The list is
+/// kept once it has come: an empty answer (signed out, offline) leaves it to a later one.
+pub fn ask_models() -> Option<(String, String, bool)> {
+    let exe = paths::find_antigravity()?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("models");
+    cmd.stdin(std::process::Stdio::null());
+    paths::quiet(&mut cmd);
+    paths::child_env(&mut cmd, "gemini");
+    if let Some(h) = home_override() {
+        cmd.env("HOME", h);
+    }
+    let out = cmd.run_output().ok()?;
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string());
+    let list = model_lines(&stdout);
+    if !list.is_empty() {
         let _ = MODELS.set(list);
-    });
+    }
+    Some((stdout, stderr, out.status.success()))
+}
+
+/// The "id<tab>name" lines of `agy models`.
+fn model_lines(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
+        .filter(|(id, name)| !id.is_empty() && !id.contains(' ') && !name.is_empty())
+        .collect()
 }
 
 /// FRIDAE_AGY_HOME and FRIDAE_AGY_DIR (testing only, debug builds only): a copy of the app with a scratch HOME gives
@@ -512,8 +522,13 @@ impl Turn {
     }
 }
 
-/// What the chat is told when nobody is signed in to Antigravity.
-pub const SIGNED_OUT: &str = "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again.";
+/// What the chat is told when nobody is signed in to Antigravity: with the Sign in button beside it
+/// (`signin::signed_out_line`), or on Windows, where the app offers no sign-in, with the way through a terminal.
+pub const SIGNED_OUT: &str = if cfg!(windows) {
+    "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again."
+} else {
+    "Gemini is not signed in. Sign in, then send your message again."
+};
 
 /// A plain-language message for what Antigravity wrote on stderr, if we recognise it.
 pub fn explain(stderr: &str, got_result: bool) -> Option<String> {

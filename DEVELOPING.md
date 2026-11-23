@@ -1080,6 +1080,42 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
   `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`; put `{"chat_ai": "cursor"}` in the kit's `config.json`. Each turn
   uses the user's Cursor plan.
 
+## Signing in to Claude Code, Cursor and Gemini
+
+`app-rs/src/signin.rs`; its header has the commands and what was measured. These three run on the user's own sign-in,
+the one their tools have outside Fridae too, so the app only asks each tool who is signed in and starts the tool's own
+sign-in. **Nothing in the app signs anyone out**: no tool is ever started with `logout`, there is no button for it, and
+a test reads the file's command lines to keep it so. (OpenCode is different: Fridae's own copy, see the next section.)
+
+- **Who is signed in** (`signin::check`, `Known`): `claude auth status --json` (`loggedIn`, `email`; exit code 1 when
+  signed out, the answer is read all the same), `cursor-agent status --format json` (`isAuthenticated`,
+  `userInfo.email`), and for Gemini `agy models`, which is the model list anyway (`antigravity::ask_models`): signed
+  out it ends with code 1 and "Error: Please sign in to view available models." agy has no command that names the
+  account. An answer the app cannot read is "not known", never "signed out", so no Sign in button shows on a guess.
+  Asked at start, after a sign-in, when a turn fails as signed out (`turn_failed`), and from the page's status only
+  when the last answer is old (`due`: half an hour after "signed in", five minutes otherwise). Each runs with the
+  environment a turn gets (`paths::child_env`) through `paths::Start`.
+- **Sign in** (`login_start`, `/api/signin` with `ai` and `action` login, cancel or check): `claude auth login`,
+  `cursor-agent login`, and for Gemini `agy acp` with `initialize` and then `authenticate` for the method
+  `oauth-personal` ("Log in with Google", from the `authMethods` agy lists). Each tool opens the browser itself and
+  waits for it to come back (Claude Code and agy give the page a `localhost` address to return to; Cursor's link carries
+  a challenge and an id instead); nothing is typed. Claude Code also prints a link and "Paste code here if prompted" for a browser on another computer: the app
+  has no place to paste one, so that way is not offered. When the tool ends, whatever it said, the app asks who is
+  signed in and goes by that. A sign-in nobody finishes is ended after ten minutes, and when the app quits.
+- **The page**: `status.ai.sign_in` (`offered`, `state`, `who`, `login`). `aiNotice(ai)` shows "Not signed in." with
+  Sign in, "Sign in on the page that opened in your browser." with Cancel, or "The sign-in did not finish. Try again.",
+  in the picker and in the AI's row in Setup, Connections, whose own line adds "Signed in as <account>." A turn that
+  failed as signed out says "<AI> is not signed in. Sign in, then send your message again." with the same button
+  (`Agent::put_failure`, the error event's `sign_in`; `signed_out_line` replaces Claude Code's own "Not logged in ·
+  Please run /login").
+- **Windows**: not offered (`signin::offered`; nothing was measured there). The lines say what they said before.
+- **Measured** (23 November 2026; Claude Code 2.1.319, cursor-agent 2026.11.22, agy 1.5.15): the three status
+  commands signed in (for real) and signed out (a scratch home; for Claude Code a scratch `CLAUDE_CONFIG_DIR` alone
+  also reads as signed out, so its sign-in is kept per config folder); the start of each sign-in in a scratch home,
+  with a stand-in `open` in place of the browser, ended before anything was done; and the same from the page of the
+  dev binary. **Not measured**: a sign-in that completes (how each tool ends then, agy's answer to `authenticate`,
+  and that the next status says "signed in"), since that would mean signing in for real.
+
 ## OpenCode as a chat's AI
 
 OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the server's own API description
