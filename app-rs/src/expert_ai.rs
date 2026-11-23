@@ -9,9 +9,10 @@
 //! only a model the chosen AI does not offer runs on the nearest that AI has (OpenCode: the same model from another
 //! provider, or its free twin) or on that AI's default, and the result says which model runs and why. The Lead is also
 //! told when the user's table won over what it asked for, and what the app knows about the model that runs (`More`:
-//! OpenCode has only free models because Fridae's OpenCode is not signed in, or the same model billed per use was
-//! left for the user to pick: the app never leaves the user's plan by itself). A model swapped later, at a turn
-//! (`swap_line`), is said in the chat and to the Lead.
+//! OpenCode has only free models because Fridae's OpenCode is not signed in, or a model billed per use was left for
+//! the user to choose). The app never spends the user's money without the user's own choice: a model billed per use
+//! runs only when the user picked it in the model picker or set it for that expert in Setup > Experts, never because
+//! a Lead asked for it. A model swapped later, at a turn (`swap_line`), is said in the chat and to the Lead.
 
 use serde_json::{Value, json};
 
@@ -51,6 +52,8 @@ pub struct World<'a> {
     pub default_model: &'a dyn Fn(&str) -> Option<String>,
     /// The model an AI lists that is nearest to one it does not list exactly (AI, model asked for); None: its default.
     pub nearest: &'a dyn Fn(&str, &str) -> Option<String>,
+    /// Whether a model an AI lists is billed to the user for each use, and not on a plan of theirs (AI, model).
+    pub per_use: &'a dyn Fn(&str, &str) -> bool,
     /// What the app knows about the model that runs (`More`): the AI, the model set (None: none), the model that
     /// runs (None: the AI's default).
     pub why: &'a Why<'a>,
@@ -144,9 +147,22 @@ pub fn resolve(table: Want, request: Want, lead_ai: &str, lead_model: Option<&st
     if from_table && (other_ai || request.model().is_some_and(|m| Some(m) != model.as_deref())) {
         notes.push(format!("The user set the {expert} to run on {name} in Setup > Experts, so that was used, not the ai and model you asked for."));
     }
+    let set = model.clone();
+    // the app never spends the user's money without the user's own choice: a model billed per use runs only when the
+    // user picked it (it is then the AI's default) or set it for this expert in Setup > Experts. A Lead's request for
+    // one runs on the default, and the Lead is told why (`World::why`)
+    let model = match model {
+        Some(m) if !from_table && request.model().is_some() && (world.per_use)(&ai, &m) => {
+            let dflt = (world.default_model)(&ai);
+            if dflt.as_deref() != Some(m.as_str()) {
+                notes.push(format!("The model \"{m}\" was not used, so this expert runs on {name}'s default ({}).", dflt.as_deref().unwrap_or("its own")));
+            }
+            dflt
+        }
+        other => other,
+    };
     // a model the AI does not list exactly: the nearest it has, else its default, and the Lead is told which
     let list = (world.models)(&ai);
-    let set = model.clone();
     let model = match model {
         Some(m) if !list.is_empty() && !list.contains(&m) => {
             let (runs, on) = match (world.nearest)(&ai, &m) {
@@ -220,6 +236,7 @@ pub fn world() -> World<'static> {
         models: &models_of,
         default_model: &default_of,
         nearest: &|ai, model| if ai == "opencode" { opencode::nearest_model(model) } else { None },
+        per_use: &|ai, model| ai == "opencode" && opencode::billed_per_use(model),
         why: &why_more,
         lead_may_pick: lead_may_pick(&paths::guarded_settings()),
     }
@@ -368,6 +385,7 @@ mod tests {
                 _ => None,
             },
             nearest: &|_, _| None,
+            per_use: &|_, _| false,
             why: &|_, _, _| None,
             lead_may_pick: true,
         }
@@ -450,9 +468,44 @@ mod tests {
         // the user's Experts table is held to the same: its row names a model that is gone
         let c = resolve(Want { ai: Some("opencode"), model: Some("opencode-go/claude-opus-5-5") }, NONE, "claude", None, "Coder", &w).unwrap();
         assert_eq!(c.model.as_deref(), Some("opencode-go/kimi-k3"));
-        // asked for by its own name, or a model of the plan: it runs, with nothing to add
-        assert_eq!(resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode/claude-opus-5-5") }, "claude", None, "Coder", &w).unwrap(), Choice { ai: "opencode".into(), model: Some("opencode/claude-opus-5-5".into()), note: None });
+        // a model of the plan runs, with nothing to add
         assert_eq!(resolve(NONE, Want { ai: Some("opencode"), model: Some("opencode-go/kimi-k3") }, "claude", None, "Coder", &w).unwrap().note, None);
+    }
+
+    #[test]
+    fn a_leads_request_never_spends_the_users_money_only_the_users_own_choice_does() {
+        // OpenCode lists a model billed per use; the plan's kimi-k3 is the default
+        let per_use = |_: &str, m: &str| m == "opencode/claude-opus-5-5";
+        let w = World {
+            models: &|_| vec!["opencode-go/kimi-k3".into(), "opencode/claude-opus-5-5".into()],
+            default_model: &|_| Some("opencode-go/kimi-k3".into()),
+            per_use: &per_use,
+            // as `opencode::caveat` answers when a listed model billed per use was set and another runs
+            why: &|_, set, runs| (set == Some("opencode/claude-opus-5-5") && runs != set).then(|| opencode::Caveat::PerUseAsked.into()),
+            ..world_with(&["claude", "opencode"])
+        };
+        // the Lead names it exactly as listed: the default runs, and the Lead is told why and what the user can do
+        let asked = Want { ai: Some("opencode"), model: Some("opencode/claude-opus-5-5") };
+        let c = resolve(NONE, asked, "claude", Some("opus"), "Coder", &w).unwrap();
+        assert_eq!((c.ai.as_str(), c.model.as_deref()), ("opencode", Some("opencode-go/kimi-k3")));
+        assert_eq!(
+            c.note.as_deref(),
+            Some("The model \"opencode/claude-opus-5-5\" was not used, so this expert runs on OpenCode's default (opencode-go/kimi-k3). That model is billed per use, not on the user's plan, so Fridae did not choose it. The user can set it for this expert under Setup, Experts if they want it.")
+        );
+        // a Lead on OpenCode asking for it by model alone: the same
+        let c = resolve(NONE, Want { ai: None, model: Some("opencode/claude-opus-5-5") }, "opencode", Some("opencode-go/kimi-k3"), "Coder", &w).unwrap();
+        assert_eq!(c.model.as_deref(), Some("opencode-go/kimi-k3"));
+        // the user set it for this expert in Setup > Experts: it runs, whatever the Lead asked for
+        let c = resolve(asked, NONE, "claude", None, "Coder", &w).unwrap();
+        assert_eq!((c.model.as_deref(), c.note), (Some("opencode/claude-opus-5-5"), None));
+        let c = resolve(asked, Want { ai: Some("opencode"), model: Some("opencode-go/kimi-k3") }, "claude", None, "Coder", &w).unwrap();
+        assert_eq!(c.model.as_deref(), Some("opencode/claude-opus-5-5"));
+        // the user picked it in the model picker: it is OpenCode's default then, and a request for it changes nothing
+        let picked = World { default_model: &|_| Some("opencode/claude-opus-5-5".into()), why: &|_, _, _| None, ..World { models: w.models, per_use: &per_use, ..world_with(&["claude", "opencode"]) } };
+        assert_eq!(resolve(NONE, asked, "claude", None, "Coder", &picked).unwrap(), Choice { ai: "opencode".into(), model: Some("opencode/claude-opus-5-5".into()), note: None });
+        // an expert that runs like its Lead (whose model the user chose) is not held back, nor is any other AI's model
+        assert_eq!(resolve(NONE, NONE, "opencode", Some("opencode/claude-opus-5-5"), "Coder", &w).unwrap().model.as_deref(), Some("opencode/claude-opus-5-5"));
+        assert_eq!(resolve(NONE, Want { ai: Some("opencode"), model: None }, "opencode", Some("opencode/claude-opus-5-5"), "Coder", &w).unwrap().model.as_deref(), Some("opencode/claude-opus-5-5"));
     }
 
     #[test]
@@ -476,7 +529,7 @@ mod tests {
         let s = swap_line("opencode", Some("opencode-go/gone"), Some("opencode/claude-opus-5-5"), Some(opencode::Caveat::PerUse.into())).unwrap();
         assert_eq!(s.chat, "OpenCode Go · gone is not available, so this ran on OpenCode Zen · claude-opus-5-5. It is billed per use, not on your plan.");
         // the tag under a message holds two short sentences at most, whatever there is to add
-        for c in [opencode::Caveat::NotSignedIn, opencode::Caveat::Pending, opencode::Caveat::NoPlan, opencode::Caveat::PerUse, opencode::Caveat::PerUseLeft] {
+        for c in [opencode::Caveat::NotSignedIn, opencode::Caveat::Pending, opencode::Caveat::NoPlan, opencode::Caveat::PerUse, opencode::Caveat::PerUseLeft, opencode::Caveat::PerUseAsked] {
             let s = swap_line("opencode", Some("opencode/a"), Some("opencode/b"), Some(c.into())).unwrap();
             assert_eq!(s.chat.matches(". ").count(), 1, "{}", s.chat);
         }

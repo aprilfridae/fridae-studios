@@ -105,9 +105,9 @@ AI does not offer runs on the nearest it has, or on that AI's default, and the r
 `note` also says when the user's table won over what you asked for, when OpenCode has only free models because
 Fridae's OpenCode is not signed in (the user signs in under Setup, Connections: tell them in your report if a job
 needed a better model, and do not ask for the paid model again until they have), and when the model you asked for
-exists only billed per use and not on the user's plan: the expert then runs on OpenCode's default, because only the
-user chooses a model that costs them money for every message (say in your report if the job needed it; a model billed
-per use that you name exactly as `models` lists it does run, so name one only when the job needs it). Do not swap an
+is billed per use and not on the user's plan: the expert then runs on OpenCode's default. Only the user chooses a
+model that costs them money for every message, in the model picker or for that expert under Setup, Experts; your
+request never does, however you name the model. Say in your report if the job needed it. Do not swap an
 expert's AI against the user's table, and do not do its job yourself because of such a refusal.
 
 ## Refused spawns

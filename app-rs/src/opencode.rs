@@ -554,6 +554,12 @@ fn pick_from(have: &Have, chosen: Option<&str>) -> Option<String> {
     }
 }
 
+/// Whether a model Fridae's OpenCode lists is billed per use (`Have::per_use`): one the app never chooses, and never
+/// runs because a Lead asked for it (`expert_ai::resolve`).
+pub fn billed_per_use(id: &str) -> bool {
+    with_have(|h| h.lists(id) && h.per_use(id))
+}
+
 /// The model an expert runs on when the one set for it is not listed exactly (`expert_ai::resolve`): its twin on the
 /// plan or free (`twin`); None: the default.
 pub fn nearest_model(asked: &str) -> Option<String> {
@@ -577,7 +583,7 @@ fn signed_in_now() -> bool {
     AUTH_KNOWN.load(Ordering::SeqCst) && !signed_in().is_empty()
 }
 
-/// The user picked a model for OpenCode in the menu under the message box: remembered in the settings, for every
+/// The user picked a model for OpenCode in the model picker: remembered in the settings, for every
 /// OpenCode chat and expert that names none. An error (in the user's words) when it cannot be taken now.
 pub fn remember_pick(id: &str) -> Result<(), &'static str> {
     let (id, signed_in) = with_have(|h| pick_to_save(h, id.trim(), AUTH_KNOWN.load(Ordering::SeqCst), signed_in_now()))?;
@@ -636,6 +642,8 @@ pub enum Caveat {
     /// the model asked for is not listed, and the same model from another provider is billed per use, so it was
     /// not taken
     PerUseLeft,
+    /// the model asked for is listed and billed per use, and it was not the user who asked (a Lead did): not taken
+    PerUseAsked,
 }
 
 impl Caveat {
@@ -647,6 +655,7 @@ impl Caveat {
             Caveat::NoPlan => "Fridae's OpenCode lists no model from a paid plan, so its default is a free model.",
             Caveat::PerUse => "That one is billed per use, not on the user's plan.",
             Caveat::PerUseLeft => "The same model from another provider is billed per use, not on the user's plan, so Fridae did not choose it. The user can pick it themselves in the model picker.",
+            Caveat::PerUseAsked => "That model is billed per use, not on the user's plan, so Fridae did not choose it. The user can set it for this expert under Setup, Experts if they want it.",
         }
     }
 
@@ -658,6 +667,7 @@ impl Caveat {
             Caveat::NoPlan => "No model from a paid plan is listed.",
             Caveat::PerUse => "It is billed per use, not on your plan.",
             Caveat::PerUseLeft => "The same model billed per use is yours to pick in the model picker.",
+            Caveat::PerUseAsked => "It is billed per use, so it is yours to pick in the model picker.",
         }
     }
 
@@ -666,7 +676,7 @@ impl Caveat {
         match self {
             Caveat::NotSignedIn => Some("This chat is on a free model. Sign in under Setup, Connections to use a paid plan."),
             Caveat::NoPlan => Some("No model from a paid plan is listed, so this ran on a free model. Pick another in the model picker."),
-            Caveat::Pending | Caveat::PerUse | Caveat::PerUseLeft => None,
+            Caveat::Pending | Caveat::PerUse | Caveat::PerUseLeft | Caveat::PerUseAsked => None,
         }
     }
 
@@ -688,6 +698,9 @@ fn caveat_of(have: &Have, known: bool, pending: bool, asked: Option<&str>, runs:
     let default = default_of(have);
     let runs = runs.or(default.as_deref())?;
     if let Some(asked) = asked.filter(|a| *a != runs) {
+        if have.lists(asked) && have.per_use(asked) {
+            return Some(Caveat::PerUseAsked);
+        }
         if have.per_use(runs) {
             return Some(Caveat::PerUse);
         }
@@ -2958,6 +2971,9 @@ mod tests {
         // the same model billed per use was left for the user to pick
         assert_eq!(caveat_of(&signed, true, false, Some("opencode-go/claude-opus-5-5"), Some("opencode-go/claude-haiku-5-5")), Some(Caveat::PerUseLeft));
         assert_eq!(caveat_of(&signed, true, false, Some("opencode/glm-3.5"), Some("opencode-go/claude-haiku-5-5")), None, "no such model anywhere: nothing was left");
+        // a Lead's request for a listed model billed per use, which the app does not run for it: the default runs
+        assert_eq!(caveat_of(&signed, true, false, Some("opencode/claude-opus-5-5"), Some("opencode-go/claude-haiku-5-5")), Some(Caveat::PerUseAsked));
+        assert!(signed.lists("opencode/claude-opus-5-5") && signed.per_use("opencode/claude-opus-5-5") && !signed.per_use("opencode-go/kimi-k3") && !signed.per_use("opencode/beam-free"));
         // the default that runs instead is the user's own pick of a model billed per use: that is what is said
         let picked = Have { picked: Some("opencode/claude-opus-5-5"), picked_signed_in: true, ..signed };
         assert_eq!(caveat_of(&picked, true, false, Some("opencode-go/claude-opus-5-5"), Some("opencode/claude-opus-5-5")), Some(Caveat::PerUse));
@@ -2971,7 +2987,7 @@ mod tests {
         assert_eq!(caveat_of(&Have { picked: Some("opencode/big-pickle"), picked_signed_in: true, ..zen }, true, false, None, None), None);
         assert_eq!(caveat_of(&zen, true, false, Some("opencode/beam-free"), Some("opencode/beam-free")), None);
         // the words: one sentence after a swap, at most two alone, and a line of its own only where there is advice
-        for c in [Caveat::NotSignedIn, Caveat::Pending, Caveat::NoPlan, Caveat::PerUse, Caveat::PerUseLeft] {
+        for c in [Caveat::NotSignedIn, Caveat::Pending, Caveat::NoPlan, Caveat::PerUse, Caveat::PerUseLeft, Caveat::PerUseAsked] {
             assert_eq!(c.after_swap().matches(". ").count(), 0, "{c:?}: one sentence");
             assert!(c.alone().is_none_or(|l| l.matches(". ").count() == 1), "{c:?}: two sentences at most");
             assert_eq!(c.alone().is_some(), c.says_free(), "{c:?}");

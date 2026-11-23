@@ -1043,9 +1043,13 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   not listed exactly runs on its nearest twin (`nearest`: the same name under `opencode-go/`, then `opencode/`, then
   any provider, and its `-free` twin only when none of those exists; never a guess at a similar name), but only when
   that twin is on the plan or free (`twin`). One rule everywhere, for the default, a turn, a Lead's request and an
-  Experts row: the app never leaves the plan by itself. A model billed per use runs only when it is named exactly as
-  listed; when a twin billed per use was left, the default runs and the Lead's note and the chat's line say that the
-  user can pick that model themselves in the model picker (`Caveat::PerUseLeft`). While the list is empty or
+  Experts row: the app never spends the user's money without the user's own choice. A model billed per use runs only
+  when the user picked it in the model picker (it is then the default), has it as their own OpenCode default, or set
+  it for that expert in Setup, Experts. A Lead's request for one, named exactly as listed, runs on the default
+  (`expert_ai::resolve`, `World::per_use`, `opencode::billed_per_use`), and the note says it is billed per use, that
+  Fridae did not choose it, and that the user can set it under Setup, Experts (`Caveat::PerUseAsked`). When a twin
+  billed per use was left, the default runs and the Lead's note and the chat's line say that the user can pick that
+  model themselves in the model picker (`Caveat::PerUseLeft`). While the list is empty or
   the sign-in is not known, both are asked for again once a minute (`refresh_due`). Usage (`input`, `output`, `reasoning`, `cache.read`, `cache.write`, `cost` per step) is logged
   under `ai: "opencode"`; OpenCode reports no plan limits, and the usage popover says so.
 - **Isolation** (`environment`): the server and the one-off commands (`models`, `auth`, those with `--standalone`)
@@ -1063,17 +1067,20 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   is shown, approved on opencode.ai; `/api/opencode` login/open/cancel/state). Free models work without it. Copying
   the user's sign-in was ruled out: its refresh token is replaced on every refresh, so two copies would sign each
   other out. The status says where it stands (`opencode::state`: `signed_in`, `known` once `opencode auth list` has
-  answered, `free_only`, `pending`); while `free_only`, the model menu of an OpenCode chat and Setup's row show "Free
+  answered, `free_only`, `pending`); while `free_only`, the page's notice for OpenCode (`aiNotice("opencode")` in
+  `ui/index.html`: the top of the picker's models, and OpenCode's row in Setup, Connections) shows "Free
   models only. Sign in to use a paid plan." with the button (one click starts the sign-in and opens its page; a start
   that fails says why in the same line), and an OpenCode chat says once that it is on a free model
   (`Caveat::NotSignedIn`). When the sign-in ends well (`login_ended`) the server is ended so the next turn starts one
   with the new sign-in, and only then are the model list and the sign-in asked for again (`restart_if_wanted`,
   `reload_models`): at once when no turn runs, else when the last running turn has ended (`leave`, on a thread of its
   own). Until then everything is chosen from the list from before the sign-in, because whether a server started
-  before a sign-in can use the plan's models is not known; the status says `pending`, and the row and the menu say
+  before a sign-in can use the plan's models is not known; the status says `pending`, and the notice says
   "Signed in. Paid models start once running work has finished." The start was run on 23 November 2026 in scratch
-  folders (2.3.2 prints the code and the page as the parser expects; the real lines are a test); a sign-in has never
-  been completed (it needs the user in a browser), so what OpenCode lists and does after one is untested.
+  folders (2.3.2 prints the code and the page as the parser expects; the real lines are a test); and again from the page of
+  the dev binary on a fresh scratch copy (the notice, Sign in, the code shown, Cancel; the browser page held back). A
+  sign-in has never been completed (it needs the user in a browser), so what OpenCode lists and does after one is
+  untested.
 - **Tool servers**: one server serves every chat, and OpenCode keeps tool servers per folder, so chats on the same
   game would share them. Each chat's servers are named `fr<8 hex of sha256(chat id)>-<server>` (`chat_prefix`), and
   the rules deny `fr????????-*` and then allow the chat's own prefix. Measured: another chat's tools are not even

@@ -2061,7 +2061,9 @@ function onEvent(e) {
       u.appendChild(docs);
     }
     u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
-    const tags = [e.model, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
+    /* an OpenCode model by its name ("OpenCode Zen · big-pickle"), as the picker and the app's own lines show it */
+    const ran = e.model && chatAi(p) === "opencode" ? ((modelsFor("opencode").find((m) => m[0] === e.model) || [])[1] || e.model) : e.model;
+    const tags = [ran, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
     if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
     if (e.fallback) { const f = el("span", "tag enter"); f.textContent = e.fallback; p.col.appendChild(f); }
     /* which model ran and why, when that is not what was set (from the app: one line, two short sentences at most) */
