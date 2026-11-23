@@ -221,8 +221,11 @@ game has a run going or something waiting for the user (`needsOf`: blocking revi
 count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. A helper
 (an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
 log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
-`parent`, `team` and `expert` in `agent_new`. The All projects graph (`overviewWanted` / `overviewFrame`) draws games,
-their open and saved chats, and experts tied to their Lead; it runs only while that page is in front.
+`parent`, `team` and `expert` in `agent_new`. All projects is a grid of cards, one per game (`apCard`, `paintAll`),
+and a New project card; a card opens the game's Review when something needs the user, else its Chat. The message box
+holds three menus (`POPS`: what to add, the AI and model picker `paintPicker`, the mode menu `paintSwitch`);
+`aiNotice(ai)` is the one place to say something about an AI in the picker and in Setup, Connections. The clean-up's
+spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
 - `POST /api/ai {agent, choice}` on a chat that has started switches it (`Agents::switch_ai`): refused while it works,
   otherwise the session is dropped and `handover` holds the chat so far as text (only what the user typed, as
   "User:", and each AI's replies under its name; carry-ons and the app's own messages, logged with `app: true`, are
