@@ -166,7 +166,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -427,6 +427,10 @@ fn post(path: &str, body: Value) -> Reply {
             paths::update_config(|cfg| {
                 if !body["use_api"].is_null() {
                     cfg.insert("gemini_use_api".into(), json!(body["use_api"].as_bool().unwrap_or(false)));
+                }
+                // "Agents may generate images with Gemini": on unless switched off
+                if let Some(on) = body["images"].as_bool() {
+                    cfg.insert("gemini_images".into(), json!(on));
                 }
                 if let Some(key) = body.get("key") {
                     match key.as_str().map(str::trim).filter(|k| !k.is_empty()) {

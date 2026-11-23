@@ -1,0 +1,4 @@
+
+The user has switched off image generation for agents (Setup, Images: "Agents may generate images with Gemini").
+Do not use your own generate_image tool here, and rbx_image `generate` is refused too. If a picture is needed, say
+which one and why and ask the user; rbx_image `keep` still brings in a picture they give you.

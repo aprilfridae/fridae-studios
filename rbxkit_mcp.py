@@ -23,7 +23,13 @@ them: always look before reporting a model, texture or icon as done.
 
 {routing}- Generated textures: `rbx_generate_texture` makes surface materials, particle sprites and decals (through the user's Gemini
   key, or by asking the user to make the image in their Gemini chat). For plain tileable surfaces prefer Studio's generate_material.
-  Use it only for textures. Never use it for UI, icons, logos, typography or any graphic design: build those natively.
+  Use it only for textures, never for UI, icons, logos or typography.
+- Generated images: `rbx_image` makes a picture from a prompt at an exact size and saves it in the game's project folder
+  (on the user's own Gemini plan, through Antigravity; `transparent: true` cuts the subject out). Good for the game
+  icon, thumbnail key art, UI art and concept art. Each picture costs some of the user's plan: make a few considered
+  ones, never batches. Captured footage of the real game is still what shows gameplay; never another game's characters
+  or art. Lettering and layout are still built natively with real fonts. rbx_image uploads nothing; uploads follow
+  the guide's upload rules.
 To pick the style guide, look at the place first (its existing UI, materials and colours); if it is new or unclear,
 choose the closest and say which you chose. Guides already read in this chat do not need loading again.
 
@@ -45,7 +51,7 @@ More tools, for when they fit:
 PREFACE = """> How to read this guide from an MCP client: tool names such as `execute_luau`, `screen_capture` or
 > `open_cloud_invoke` belong to the Roblox Studio MCP server. Where it says to run `rbx.py <command>`, you can
 > call the matching tool instead: blender -> rbx_blender, tex -> rbx_texture, sheet -> rbx_check_images,
-> icon -> rbx_icon, video -> rbx_video, anim -> rbx_animation, package -> rbx_vfx_package. A file under
+> icon -> rbx_icon, image -> rbx_image, video -> rbx_video, anim -> rbx_animation, package -> rbx_vfx_package. A file under
 > `studio/` is fetched with rbx_studio_snippet. Another guide ("the roblox-vfx skill") is rbx_guide with
 > that topic. Mentions of ToolSearch or skills are Claude Code details you can ignore.
 
@@ -495,6 +501,17 @@ def t_icon(a):
     return result(text, ok)
 
 
+def t_image(a):
+    """An AI-generated image, or an existing one, saved in the game's project at an exact size (rbximage). The
+    answer names the saved file and carries the picture, as the other picture tools' do."""
+    import rbximage
+    try:
+        out = rbximage.run(a.get("action"), a)
+    except KitError as e:
+        return result(str(e), False)
+    return result(json.dumps(out, indent=1, ensure_ascii=False))     # paths as they are, so the picture is found
+
+
 def t_video(a):
     if not a.get("path"):
         return result("Give 'path' to a video file.", False)
@@ -767,7 +784,7 @@ JOB_LIFE = 900.0             # the longest a job runs once started: the 15 minut
 LIFE_MARGIN = 20.0           # past a tool's own time limit, so the tool can say so itself first
 # the seconds each tool's own code gives its work (run_rbx's limit); rbx_blender's is its `timeout` argument
 OWN_LIMIT = {"rbx_doctor": 120, "rbx_texture": 600, "rbx_check_images": 600, "rbx_icon": 600, "rbx_video": 600,
-             "rbx_animation": 600, "rbx_vfx_package": 600, "rbx_generate_texture": 720}
+             "rbx_animation": 600, "rbx_vfx_package": 600, "rbx_generate_texture": 720, "rbx_image": 600}
 # answered by this process itself: instant, or tied to this process (the lock's owner, the promo renders it keeps)
 INLINE = ("rbx_guide", "rbx_studio_snippet", "rbx_studio_lock", "rbx_board")
 PROMO_INLINE = (None, "", "job", "render", "install")
@@ -1359,6 +1376,34 @@ TOOLS = [
      schema({"paths": {"type": "array", "items": S}, "no_preview": {"type": "boolean"}}, ["paths"]), t_check_images),
     ("rbx_icon", "Cut a transparent icon out of a screenshot of the Studio icon booth (see the 'workflow' guide, Icons).",
      schema({"screenshot": S, "name": S, "folder": S, "size": {"type": "integer"}}, ["screenshot", "name"]), t_icon),
+    ("rbx_image", "Make an AI-generated image, or keep one that already exists, saved in the game's project folder at an exact size. "
+     "Good for the game icon, thumbnail key art, UI art and concept art. Action 'generate' makes a new picture from `prompt` "
+     "(through Google's Antigravity on the user's own Gemini plan; it can take a minute or two). Each picture costs some of "
+     "that plan: make a few considered ones, never batches; a chat may start 12 in an hour and a game's whole team 30 "
+     "(generated textures count too), and the user can switch this off in Setup. Action 'keep' brings an existing image "
+     "file in instead and costs nothing: `source` is its full path (the file your own image tool made, or an image in the "
+     "project, this chat's own folder, or the app's images, icons, textures and shots). Either "
+     "way the picture is cropped about its middle to the shape of `size` and resized to exactly that; it is never "
+     "stretched, and an existing file is never replaced. With `transparent: true` the subject is cut out onto a "
+     "transparent background and placed whole inside `size` (an item or shop icon): generate asks for it on a flat "
+     "colour and removes that; hard-edged subjects cut out cleanly, soft ones (smoke, glow, fur, glass) less so. Anything "
+     "in the background's own colour is cleared, also inside the subject (a white highlight on a white background): the "
+     "answer says when that happened. When the background is not flat the picture is saved as it is and the answer says "
+     "so. The answer names the saved file "
+     "and carries the picture: look at it before you use or report it. Captured footage of the real game is still what "
+     "shows gameplay; never another game's characters or art, and no lettering (add text natively with real fonts). "
+     "rbx_image uploads nothing; uploads follow the guide's upload rules.",
+     schema({"action": {"type": "string", "enum": ["generate", "keep"]},
+             "transparent": {"type": "boolean", "description": "Cut the subject out onto a transparent background (PNG). Default false"},
+             "prompt": {"type": "string", "description": "generate: what the image shows, in plain words: subject, setting, style, light, mood"},
+             "source": {"type": "string", "description": "keep: full path of the image file to bring in. Read only from the project, this chat's own "
+                                                         "folder, the app's images, icons, textures, shots, attachments and chat pictures, or the "
+                                                         "file your own image tool made"},
+             "size": {"type": "string", "description": "WIDTHxHEIGHT in pixels, e.g. 512x512 (icon) or 1920x1080 (thumbnail). "
+                                                       "generate: default 1024x1024; keep: default the image's own size"},
+             "name": {"type": "string", "description": "File name; saved as .png unless it ends in .jpg"},
+             "folder": {"type": "string", "description": "Folder inside the game's project folder, e.g. store/thumbnails. Default: art"}},
+            ["action"]), t_image),
     ("rbx_video", "Look at a video: action 'info' for metadata, or 'frames' for frames tiled into a sheet (optionally start/end seconds and count).",
      schema({"path": S, "action": {"type": "string", "enum": ["info", "frames"]}, "start": {"type": "number"},
              "end": {"type": "number"}, "count": {"type": "integer"}}, ["path"]), t_video),

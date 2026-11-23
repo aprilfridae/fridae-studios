@@ -61,6 +61,7 @@ agent reads the built-in guides and uses the tools itself.
 | `rbx_texture` | Draws particle textures and flipbook sheets, checks them, previews them in Studio for free |
 | `rbx_check_images` | Checks any texture or flipbook sheet from its pixels |
 | `rbx_icon` | Cuts a transparent icon out of an icon-booth screenshot |
+| `rbx_image` | Makes an AI-generated image (icon, thumbnail key art, UI art) on your Gemini plan through Antigravity, or keeps an existing image, saved in the game's project at an exact size |
 | `rbx_video` | Reads a reference video as a sheet of frames |
 | `rbx_animation` | Turns a Blender animation into a Roblox animation file |
 | `rbx_vfx_package` | Installs the VFX modules into a place without uploading |
@@ -425,6 +426,130 @@ stdin, with an id of the app's own. The old way, a process per turn with `--resu
   `.codex/config.toml` the same) is neither written through nor replaced: the app makes no such link, and one that
   came with a game's folder may name any file. The list is then not written, and a Gemini chat that runs a process
   per message is told why its tools may be missing (`antigravity::LIST_IS_A_LINK`).
+
+## Gemini: commands that are refused, and generated images
+
+A Gemini chat is one `agy` process per message (`antigravity.rs`), in `--mode accept-edits` with the app's settings
+for the session. Measured with agy 1.5.15, Gemini 3.8 Flash at low effort:
+
+- **A refused command no longer ends the turn.** Headless agy cannot ask, so a step that needs approval is
+  "auto-denied" and the turn ends there with nothing said (`explain` words it for the chat). Outside Full auto the
+  settings now carry `"deny": ["command(*)"]`: the command's step ends in `ERROR` ("Permission denied for
+  unsandboxed(...). Matches user-configured deny rule."), the model reads that and carries on, the result is
+  `SUCCESS`, exit 0, nothing on stderr. Two recordings, both replayed by `replay_tests.rs`:
+  `tests/fixtures/gemini/command-refused-softly-then-image.ndjson` (`echo hello-from-shell`) and
+  `commands-refused-softly-and-own-server-list.ndjson` (`/bin/echo one`, `echo two | tr a-z A-Z`,
+  `echo three && echo four`: a path, a pipe and two joined commands are covered by the one rule). The programs the
+  user allowed are still not handed to agy (it runs commands through zsh, which reads the user's `.zshenv`). Full
+  auto is unchanged (`--dangerously-skip-permissions`, no command rule). Gemini is told in its standing text
+  (`text/gemini_turn.txt`, chosen by `agents::running_text`).
+- **Its own list of tool servers is not its to write.** The deny rules name `<workspace>/.agents/mcp_config.json`
+  (by the path the app has, and by the real path when that differs), in every mode, as the kept path's gate does:
+  agy starts what that list names and the app keeps entries it did not make. Measured in the second recording: the
+  write was refused by `write_file(<path>)`, the turn went on, and `note.txt` beside it was written. agy's rule
+  compares case, though, and on a disk that ignores case `.agents/MCP_CONFIG.JSON` is the same file (not measured
+  live). So the list is also read when the turn's process is started (`antigravity::list_now`, kept on the chat) and
+  put back when the turn is over if it is another by then (`put_back`: removed if there was none, never through a
+  link), with a line in the chat. `work/.agents` is one of `paths::app_protected()` too, should agy look for a list
+  in the folders above its own (not measured).
+- **Its own image tool works with no permission.** `generate_image` is run by a helper agy starts: in the stream a
+  step of type `subagent` (`tool_name: invoke_subagent`, `subagent_info.subagents[].type_name: image-generator`), not
+  a tool step. The helper runs on a model of agy's choosing (recorded: `gemini-4-hydrogen-tiered-high` under a
+  flash-low chat) and calls `generate_image {AspectRatio, ImageName, Prompt}`. The picture (1024 x 1024 JPEG for
+  `1:1`, 1376 x 768 for `16:9`) lands in the **parent** conversation's folder,
+  `~/.gemini/antigravity-cli/brain/<conversation>/<name>_<ms>.jpg`. **The helper looks at its own picture and may
+  make a second one unasked** (seen once: "the stone appears somewhat plump", then `_v2`), which costs the plan twice.
+  No event names the file, so `antigravity::Generated` looks in that folder whenever a step is over and at the
+  turn's end: an image file that was not there when the turn began is shown in the chat (`Out::Pictures`, copied to
+  `work/chat-images` as every chat picture is). Only plain files of 20 MB at most (never a link). A file written in
+  the last second and a half waits for the next look, so none is read half written. A picture that lands after the
+  turn has ended is not shown.
+- **Over ACP** (the kept process, one live turn, `tests/fixtures/gemini/acp-image.wire`): the helper is a
+  `tool_call` named `invoke_subagent` (`rawInput: {Model: "inherit", Prompt, Role, TypeName: "image-generator"}`) and
+  **agy sends no `session/request_permission` for it**, nor for the helper's own `generate_image`. So the gate was
+  never what stopped images there; `acp::decide` now lets a `generate_image` request through should a version ask
+  (only with a plain `ImageName` and no path, or one inside agy's folder for the conversation), and `acp::Turn`
+  shows the picture the same way (`watch`, looked for at each `usage_update`, finished tool call and the turn's
+  end). Not measured: whether a helper's other steps (a command, a file write) are asked about over ACP.
+- **When the user switched image generation off** (`gemini_images`, below): a Gemini chat's standing text says so
+  and not to use its own `generate_image` (`text/gemini_images_off.txt` in place of `gemini_images.txt`), and the
+  kept path's gate refuses `generate_image` and the image helper in every mode (`Rules::images`). On a process per
+  message nothing can refuse agy's own tool (no rule for it is known), so there the text is all there is; and a
+  conversation that is already running keeps the text it began with.
+
+### `rbx_image` (`rbximage.py`, every AI)
+
+- **`generate`** runs one headless agy turn (`rbxgen.antigravity_image`, shared with `rbx_generate_texture`) that
+  asks for the nearest shape of `1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3`, then crops about the middle and resizes to
+  exactly `size` with Pillow. **`keep`** brings in an image that exists and costs nothing.
+- **The wrapper turn is boxed in**, because its prompt is written by an agent:
+  - It runs in an empty folder made for the call, `work/antigravity/turns/<random>`, removed afterwards.
+    `work/antigravity` is one of `paths::app_protected()`, so no agent's file tool can plant a
+    `.agents/mcp_config.json` (agy starts what one names), the remembered model or the count there.
+  - **A call that is ended mid-way leaves nothing.** A cancelled job, or one whose turn is over, gets SIGTERM and
+    0.3 s later SIGKILL. While a call holds something (`rbxgen.cleanly`), SIGTERM unwinds it like an error, so the
+    `finally` clauses remove the wrapper's folder and give back the file name taken for the picture. Should a call
+    be killed outright all the same, the next one sweeps (`rbxgen.sweep`): wrapper folders, and names taken that are
+    still empty files (each noted in `work/antigravity/reserved`), once they are half an hour old.
+  - `--settings {"permissions": {"deny": ["command(*)", "write_file(*)"]}}`. Measured live: a picture was made under
+    both rules (the image tool needs neither).
+  - `--model` only ever gets an id matching `^[A-Za-z0-9][A-Za-z0-9._-]*$` that contains `flash`, whether it came from
+    `agy models` or from the remembered name (`work/antigravity/models.json`, a day; a file that does not read as
+    expected is ignored). The cheapest is a "lite" one first, then the lowest level. When agy opens no conversation
+    on that model, the turn is tried once more with none and "no model" is remembered for the day. One time limit
+    (420 s) covers the question about models, the turn and that second try; the tool's `OWN_LIMIT` is 600 s.
+  - **Only a picture this turn made is taken**: a plain image file directly in agy's folder for the conversation the
+    turn opened (`brain/<id>`, the id letters, digits and `-`), written since the turn began, 40 MB at most. A path
+    the answer names counts only if it is one of those. Nothing the model or agy wrote is passed on in an error:
+    the reasons are the tool's own words (not signed in; quota reached, with only the reset time read out of agy's
+    error; "did not produce an image").
+- **What it may cost the user's plan.** `paths::GUARDED` has `gemini_images` (Setup, Images: "Agents may generate
+  images with Gemini", on unless switched off), handed to the tool server from the app's memory as
+  `FRIDAE_GEMINI_IMAGES`, as `FRIDAE_GEMINI_USE_API` is; off, `generate` says so and tells the agent to ask the user.
+  `textures_from_antigravity: false` in config.json switches it off too. Starts are counted where the picture is
+  made (`rbxgen.antigravity_image`), so a generated texture counts like an image: 12 an hour for one chat
+  (`PER_HOUR`, `work/antigravity/spent/<chat>.json`) and 30 an hour for one game's whole team, its Lead and every
+  expert together (`PER_HOUR_PROJECT`, `spent/project-<hash of the project folder>.json`). A try that made nothing
+  counts too (it may have cost a turn). Past either, the tool refuses with a line telling the agent to ask the user;
+  a texture then goes to the user as when there is no source, never to the paid API instead. The cheap model only
+  covers the wrapper turn: the picture itself is made by agy's helper on agy's own choice of model, and the helper
+  may make two, which the count cannot see.
+- **Where it writes.** `<project>/<folder>` (default `art`), never outside the project, never a hidden folder (also
+  not through a link inside the project: the real path's parts are judged too), never over an existing file or
+  through a link at the file's name (the name is taken with `open(..., "xb")`, a number added when it is in use;
+  the picture is written beside it and renamed over it). A name is 80 letters at most. The folder is made and the
+  name taken **before** agy is run, and given back if no picture comes. Should the last write fail all the same,
+  the picture is saved under `work/images/unsaved` and the answer says where. A chat with no project saves under
+  `work/images`.
+- **What `keep` reads.** PNG, JPEG or WebP only (Pillow is told the three formats), 60 MB and 50 megapixels at
+  most, from: the project; this chat's own folder (`work/gemini|chatgpt|opencode/<chat>`, `work/cursor/chats/<chat>`);
+  what the app's own tools write and what the user handed over (`work/images`, `icons`, `textures`, `shots`,
+  `attachments`, `chat-images`); and a file at the top of one conversation's folder under
+  `~/.gemini/antigravity-cli/brain` (never below it, so not agy's `.system_generated` logs). Judged by the real
+  path. With no `size` the picture keeps its own, brought down to 4096 a side. A grey picture with more than 8 bits
+  a pixel (a 16-bit PNG) is scaled to 8 bits first.
+- **`transparent: true`** (both actions; `cut_out`, numpy and Pillow only). `generate` asks for the subject alone
+  on one flat chroma colour the prompt does not seem to want in the subject (magenta, else green, else blue). The
+  background's colour is the middle colour of a ring round the border; if under 97% of that ring is within a small
+  distance of it, nothing is guessed: the picture is saved as it is and the answer says the background could not be
+  removed. Otherwise: a pixel as close to that colour as the border's own noise is background, and so is a darker
+  shade of the same hue on a saturated background (a soft shadow, the rim of a dark outline); the two or three
+  pixels next to the background are the soft edge, where the subject's colour is carried outward from the pixels
+  just further in, a pixel that lies between the two colours gets the alpha of how far along it lies and has the
+  background's share taken out of its colour, and a pixel of any other colour (a thin outline) is kept. The cut-out
+  is trimmed, scaled to fit inside `size` with a small margin (resized with alpha-weighted colour, never stretched)
+  and saved as an RGBA PNG; the answer's `look_at` is a sheet of it over a dark and a light backdrop. A large source
+  is brought down before it is cut, to about twice the size asked for (2048 at most, unless more was asked for): the
+  cut holds several working copies of the whole picture. An image counts as already transparent only when most of
+  the ring round its border is clear (one clear pixel is no transparent background); it is then only trimmed and
+  placed. Soft subjects (smoke, glow, fur, glass) cut out less cleanly. Anything in the background's own colour is
+  cleared, also inside the subject (a white highlight on white): that is the design, the tool's description says
+  it, and when a noticeable share of the area inside the subject's outline was cleared (2% or more, worked out on a
+  coarse copy of the mask: what the background cannot reach from the border) the answer says so in
+  `cleared_inside` and how to go on. The tool never makes a second picture by itself. One real picture was cut out
+  this way (a painted skipping stone on magenta: no visible pixel left that looked magenta).
+- Failures are plain words, never a Python error (`rbximage.run` catches everything else). It takes its turn
+  among jobs like the other file-writing tools.
 
 ## Gemini: one `agy acp` process kept open per chat (built, on request)
 
@@ -1283,6 +1408,11 @@ is an example the user can paste into their own House rules.
 - Textures (tileable materials, particle sprites, decals) can be generated
   with Google's Gemini if you add your own Gemini API key in Setup. It is
   deliberately not used for UI, icons, logos or lettering.
+- Other pictures (the game icon, thumbnail key art, UI art, concept art) can
+  be AI-generated with `rbx_image`, on your own Gemini plan through Google's
+  Antigravity (`agy`, signed in). Each picture uses some of that plan: Setup >
+  Images has "Agents may generate images with Gemini" (on by default), and
+  one chat may start 12 in an hour (a game's whole team 30). `rbx_image` itself uploads nothing.
 - Texture previews and local module loading copy small files into your
   Studio install's `content/rbxkit` folder. Studio updates wipe that folder;
   nothing depends on it lasting.
@@ -1307,7 +1437,8 @@ is an example the user can paste into their own House rules.
   outside the chat's workspace or game, none of which holds them; in Full auto a case variant gets through (and
   a command can write anything there anyway).
 - **Settings that widen what an AI may do or can cost money** (`paths::GUARDED`, the one list: `allowed_commands`,
-  `use_env_keys`, `gemini_use_api`, `gemini_key`, `projects`, `plugin_token`, `expert_ai`, `lead_picks_ai`): while
+  `use_env_keys`, `gemini_use_api`, `gemini_key`, `gemini_images`, `projects`, `plugin_token`, `expert_ai`,
+  `lead_picks_ai`): while
   the app runs, its memory is the authority, not the file. They change only through the app's routes
   (`update_config`, which writes memory, the file and a copy); every decision reads memory (`paths::setting`,
   `guarded_settings`, `allowed_commands()`, `env_keys_on()`, `gemini_api_on()`). Before a chat's turn is sent, before

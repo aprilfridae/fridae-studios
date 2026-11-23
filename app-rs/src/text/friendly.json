@@ -6,6 +6,7 @@
  "rbx_texture": "Drawing textures",
  "rbx_check_images": "Checking images",
  "rbx_icon": "Cutting an icon",
+ "rbx_image": "Making an image",
  "rbx_video": "Reading a video",
  "rbx_animation": "Building an animation",
  "rbx_vfx_package": "Preparing VFX modules",
@@ -59,6 +60,8 @@
  "read_file": "Reading a file",
  "write_file": "Writing a file",
  "generate_image": "Generating an image",
+ "schedule": "Waiting a moment",
+ "manage_subagents": "Checking on its helper",
  "find_by_name": "Looking for files",
  "multi_replace_file_content": "Editing a file",
  "a tool": "Using a tool"

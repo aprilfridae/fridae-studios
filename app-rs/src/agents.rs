@@ -53,6 +53,29 @@ const RESEARCH_PROMPT: &str = include_str!("text/research.txt");
 const OTHER_AI_PROMPT: &str = include_str!("text/other_ai.txt");
 /// The same for Gemini on its kept process, where the programs the user allowed do run (`acp::decide`).
 const GEMINI_KEPT_PROMPT: &str = include_str!("text/gemini_kept.txt");
+/// And for Gemini on a process per message outside Full auto: a command is refused by the app's rule and the turn
+/// carries on (`antigravity::turn_args`).
+const GEMINI_TURN_PROMPT: &str = include_str!("text/gemini_turn.txt");
+/// For every Gemini chat: its own image tool works, and how its picture gets into the game's project.
+const GEMINI_IMAGES_PROMPT: &str = include_str!("text/gemini_images.txt");
+
+/// And when the user has switched image generation off for agents (Setup): not to use it.
+const GEMINI_IMAGES_OFF_PROMPT: &str = include_str!("text/gemini_images_off.txt");
+
+/// What an AI without a text of its own (Cursor and OpenCode have one) is told about how it runs here. `images`:
+/// agents may generate images on the user's Gemini plan (`paths::gemini_images_on`).
+fn running_text(kind: &str, full: bool, kept: bool, images: bool) -> String {
+    let how = match kind {
+        "gemini" if !full && kept => GEMINI_KEPT_PROMPT,
+        "gemini" if !full => GEMINI_TURN_PROMPT,
+        _ => OTHER_AI_PROMPT,
+    };
+    match kind {
+        "gemini" if images => format!("{how}{GEMINI_IMAGES_PROMPT}"),
+        "gemini" => format!("{how}{GEMINI_IMAGES_OFF_PROMPT}"),
+        _ => how.to_string(),
+    }
+}
 /// For every agent (a chat, a Lead, an expert) on an AI and path that cuts tool calls off (`caps::call_budget`).
 const LONG_CALLS_PROMPT: &str = include_str!("text/long_calls.txt");
 const AUTOPILOT_PROMPT: &str = include_str!("text/autopilot.txt");
@@ -583,6 +606,9 @@ struct State {
     /// twice, and the chat stays on a process per turn for the rest of this run of the app.
     live: Option<Arc<Live>>,
     live_fails: u32,
+    /// A Gemini turn on a process of its own: the workspace, and its list of tool servers as it was when the turn
+    /// began (None: no file). Put back when the turn is over if the turn changed it (`antigravity::put_back`).
+    own_list: Option<(std::path::PathBuf, Option<Vec<u8>>)>,
     /// Tests only: this chat asked for its AI's kept process as `FRIDAE_<AI>_KEPT=1` does (`live_allowed`).
     #[cfg(test)]
     kept_asked: bool,
@@ -1488,6 +1514,8 @@ impl GeminiLaunch {
             protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
             hidden_in: s.hidden_in.to_vec(),
             agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
+            // Setup's switch, from the settings this launch was given (the app's memory): on unless switched off
+            images: s.guarded.get("gemini_images").and_then(Value::as_bool).unwrap_or(true),
         };
         // the app's tool server is told where to note its results' pictures (a tool's result does not come over ACP)
         let mut servers = s.servers.clone();
@@ -1534,7 +1562,7 @@ impl GeminiLaunch {
     fn key(&self) -> String {
         let r = &self.spec.rules;
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
-               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
+               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, r.images, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
         .to_string()
     }
 }
@@ -1759,6 +1787,7 @@ impl CursorLaunch {
             protected: Vec::new(),
             hidden_in: Vec::new(),
             agent_dir: std::path::PathBuf::new(),
+            images: true,
         };
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         let guarded = paths::hex(&Sha256::digest(Value::Object(s.guarded.clone()).to_string().as_bytes()));
@@ -2849,10 +2878,8 @@ impl Agent {
                 prompt += &cursor::instructions(project.as_deref(), &paths::allowed_commands());
             } else if kind == "opencode" {
                 prompt += &opencode::instructions(project.as_deref(), &paths::allowed_commands(), ask.full);
-            } else if kind == "gemini" && !ask.full && self.live_allowed() {
-                prompt += GEMINI_KEPT_PROMPT;
             } else {
-                prompt += OTHER_AI_PROMPT;
+                prompt += &running_text(&kind, ask.full, self.live_allowed(), paths::gemini_images_on());
             }
             // OpenCode takes the standing instructions on the session itself, afresh every turn (see `opencode::run`)
             text = match &session {
@@ -3036,6 +3063,10 @@ impl Agent {
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd); // Stop ends the agent and all it started (Unix), never the app
         paths::child_env(&mut cmd, kind);
+        // Gemini: its workspace's list of tool servers as the app has just written it. agy starts whatever that list
+        // names, and its deny rule for the file compares case, so on a disk that ignores case another spelling of the
+        // name reaches the same file: whatever the turn did to the list is undone when the turn is over (`read`)
+        let own_list = (kind == "gemini").then(|| cmd.get_current_dir().map(|ws| (ws.to_path_buf(), antigravity::list_now(ws)))).flatten();
         let spawned = {
             cmd.start()
         };
@@ -3057,6 +3088,7 @@ impl Agent {
             st.stopped = false;
             st.pid = Some(child.id());
             st.proc_ = Some(tp.clone());
+            st.own_list = own_list;
         }
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(text.as_bytes());
@@ -3064,6 +3096,15 @@ impl Agent {
         let (me, kind) = (self.clone(), kind.to_string());
         thread::spawn(move || me.read(child, &kind, tp));
         true
+    }
+
+    /// A Gemini turn on a process of its own is over: its workspace's list of tool servers is put back as it was
+    /// when the turn began, if the turn changed it, and the chat is told.
+    fn put_list_back(&self) {
+        let Some((workspace, was)) = self.st.lock().unwrap().own_list.take() else { return };
+        if antigravity::put_back(&workspace, &was) {
+            self.put("error", json!({"text": antigravity::LIST_PUT_BACK}));
+        }
     }
 
     /// Whether this chat's turns go to one kept process (`live`): an AI the table says works that way (`caps.live`),
@@ -3557,6 +3598,7 @@ impl Agent {
         let status = child.wait().ok();
         crate::procs::forget(child.id());
         self.check_settings();
+        self.put_list_back();
         let stopped = self.turn_over();
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
@@ -4434,6 +4476,8 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
             // the guarded settings the tools act on, from the app's memory (`paths::GUARDED`): the tools never take
             // them from the settings file while the app runs them
             "FRIDAE_SETTINGS_FROM_APP": "1", "FRIDAE_GEMINI_USE_API": if paths::gemini_api_on() { "1" } else { "0" },
+            // whether agents may generate images on the user's Gemini plan (`rbx_image generate`; Setup, Images)
+            "FRIDAE_GEMINI_IMAGES": if paths::gemini_images_on() { "1" } else { "0" },
             "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
     });
@@ -4858,6 +4902,36 @@ mod tests {
             assert!(LONG_CALLS_PROMPT.contains(word), "{word}");
         }
         assert!(!SYSTEM_PROMPT.contains("rbx_job") && !STUDIO_PROMPT.contains("rbx_job"), "Claude's standing text is unchanged");
+    }
+
+    #[test]
+    fn gemini_is_told_how_commands_are_answered_on_the_path_it_runs_on_and_that_it_can_make_images() {
+        // a process per message outside Full auto: a command is refused by the app's rule and the turn carries on
+        let turn = running_text("gemini", false, false, true);
+        assert!(turn.contains("Shell commands are refused in\nthis mode") && turn.contains("your turn carries on") && turn.contains("use the tools"), "{turn}");
+        assert!(!turn.contains("a refused step ends your turn"), "no longer true of a command: {turn}");
+        // its kept process: each command is asked about; Full auto and the other AIs: as before
+        assert!(running_text("gemini", false, true, true).contains("shown to the user, who may let that"));
+        assert!(running_text("gemini", true, false, true).starts_with(OTHER_AI_PROMPT) && running_text("gemini", true, true, true).starts_with(OTHER_AI_PROMPT));
+        assert_eq!(running_text("chatgpt", false, false, true), OTHER_AI_PROMPT);
+        // every Gemini chat: its own image tool, and the way into the project
+        for (full, kept) in [(false, false), (false, true), (true, false)] {
+            let t = running_text("gemini", full, kept, true);
+            assert!(t.contains("generate_image") && t.contains("rbx_image") && t.contains("`keep`"), "{t}");
+            assert!(t.contains("Your own generate_image tool works here"), "{t}");
+            // the user switched image generation off for agents: told so, and not to use its own tool
+            let off = running_text("gemini", full, kept, false);
+            assert!(off.contains("The user has switched off image generation for agents") && off.contains("Do not use your own generate_image tool"), "{off}");
+            assert!(!off.contains("generate_image tool works here"), "{off}");
+            assert!(off.starts_with(&t[..40]), "the rest of how it runs is the same");
+        }
+        assert!(!running_text("chatgpt", false, false, false).contains("generate_image"));
+        // every AI is told of the tool that makes images, what it costs and what it is not for
+        for word in ["rbx_image", "Gemini plan", "a few considered\n  ones, never batches", "never another game's characters", "`transparent: true`", "rbx_image uploads nothing; uploads follow\n  the guide's upload rules"] {
+            assert!(SYSTEM_PROMPT.contains(word), "{word}");
+        }
+        assert!(!SYSTEM_PROMPT.contains("Nothing is uploaded"), "said of the tool only: the guide has its own upload rules");
+        assert!(mcp_servers_with("c1", "Chat", None, None, true)["rbxkit"]["env"]["FRIDAE_GEMINI_IMAGES"].is_string(), "the switch in Setup reaches the tool from the app's memory");
     }
 
     #[test]

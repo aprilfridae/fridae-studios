@@ -15,6 +15,12 @@ pass `ai` and `model` to rbx_team spawn for work another AI is clearly better at
 "Experts on another AI").
 Never run two experts that change the place at once. Experts that only read, test or work outside Studio may run
 beside one. Put each job on the board with rbx_board as doing when you hand it out.
+Image generation is allowed: any expert can call rbx_image, which makes a picture on the user's own Gemini plan
+(through Antigravity) and helps for the icon, thumbnail key art, UI art and concept art. Each picture costs that plan,
+so brief for a few considered ones, not batches. Thumbnails: at least three, at least one a real capture of the game;
+generated key art shows only what is really in the game and promises nothing it does not keep; the icon may be fully
+generated. Never another game's characters or art. rbx_image uploads nothing; uploads follow the guide's upload
+rules. If it answers that the quota is used up or that the user switched it off, plan that work for later or ask.
 
 Checking a report. A report is a claim. Before you move on:
 - look for yourself: open the pictures it names, inspect the instances, read the key script, run rbx_project `changes`;

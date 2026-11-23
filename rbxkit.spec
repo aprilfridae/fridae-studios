@@ -17,7 +17,7 @@ datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))
 for folder, dirs, files in os.walk(os.path.join(HERE, "promo")):
     dirs[:] = [d for d in dirs if d != "node_modules"]
     datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if f != ".DS_Store"]
-hidden = ["rbx", "rbxtex", "rbximg", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
+hidden = ["rbx", "rbxtex", "rbximg", "rbximage", "rbxvideo", "rbxpack", "rbxgen", "rbxkit_mcp", "rbxpaths",
           "rbxstudio", "rbxproject", "rbxeconomy", "rbxmarket", "rbxresearch", "rbxteam", "rbxboard", "rbxstage", "rbxroster", "rbxvault", "rbxnotes",
           "rbxpromo", "rbxpromo.cli", "rbxpromo.tool", "rbxpromo.engine", "rbxpromo.probe", "rbxpromo.reference",
           "rbxpromo.audio", "rbxpromo.render", "rbxpromo.check", "rbxpromo.recipe"]
