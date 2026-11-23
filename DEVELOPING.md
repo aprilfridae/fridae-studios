@@ -1116,6 +1116,60 @@ a test reads the file's command lines to keep it so. (OpenCode is different: Fri
   dev binary. **Not measured**: a sign-in that completes (how each tool ends then, agy's answer to `authenticate`,
   and that the next status says "signed in"), since that would mean signing in for real.
 
+## A second account: what was measured first
+
+Design: `docs/superpowers/specs/2026-11-23-second-accounts-design.md`. Measured on 23 November 2026 (Claude Code
+2.1.319, agy 1.5.15, macOS), before any code. No sign-in was completed and no limit was reached for real; the user's
+own sign-ins were only ever asked for their status.
+
+**The Mac keychain follows HOME.** `/usr/bin/security default-keychain` names `~/Library/Keychains/login.keychain-db`
+with the real home, and with any other HOME says "A default keychain could not be found" (only the system keychain
+is listed, which a user cannot write). So a tool that keeps its sign-in in the keychain is signed out under another
+HOME, and has no keychain there to keep a new sign-in in.
+
+**Claude Code keeps its sign-in per config folder.**
+- `CLAUDE_CONFIG_DIR=<another folder>` with the real HOME: `claude auth status --json` says `loggedIn: false`, while
+  the user's own entry is still in the keychain. So the entry is looked up by the config folder. Its name for a
+  second folder is not measured (it takes a sign-in in that folder to exist).
+- `claude auth login` started for such a folder with the real HOME prints what it prints for the first account and
+  waits; ended before anything was done. Afterwards the user's own status was `loggedIn: true` as before.
+- The folder then holds `.claude.json`, `backups`, `plugins`, `projects`, `sessions`: the conversations are kept in
+  the folder (`projectsDirectory` in the status), so a chat's `--resume` id belongs to one account.
+- What a turn loads, from Claude Code's own `init` line (a signed-out turn: no model is called): an empty second
+  folder gives the built-in skills, plugins and agents only (18 skills, 4 plugins, 23 tools here), without the
+  user's own. With the user's `settings.json`, `skills` and `plugins` linked into it, the user's plugin is back (5
+  plugins, 24 tools). The app's own flags (`--strict-mcp-config`, the allowed and denied tools, the mode, the
+  standing instructions) are on the command line and do not depend on the folder.
+- Not measured: a turn that really runs on a second account, and what removing one leaves in the keychain.
+
+**agy keeps its sign-in in the keychain, one per HOME, whatever folder it is given.**
+- `agy acp --gemini-dir <a fresh folder>` with the real HOME: `session/new` answers with a session, so it is signed in
+  as the user. The same with `--app-data-dir` and `--cli_dir_name` set to other names. None of agy's folders
+  separates the sign-in.
+- With another HOME, `agy models` says "Please sign in" and `session/new` says "Authentication required". The
+  process per message (`agy -p`) has no `--gemini-dir` at all.
+- agy's program names the keyring it uses (`go_keyring`, `keyring.macOSXKeychain`, `KeyringTokenStorage`). Under
+  another HOME there is no keychain (above), so whether a sign-in made there would be kept, and where, cannot be
+  known without completing one.
+- Under another HOME agy also starts from an empty `~/.gemini` (seen in the scratch home: no settings, MCP config,
+  plugins or conversations of the user's), and a command it runs would inherit that other home (git identity, keys);
+  the second point follows from how processes inherit HOME and was not run.
+
+So **a second Gemini account is not built**: the only thing that separates agy's sign-in is another HOME, and a turn
+there is not a turn like the first account's, with no way to learn beforehand whether the sign-in would even be kept.
+Two ways on, both for the user to decide: build it on a second HOME anyway and let the first real sign-in show whether
+agy keeps it; or use agy's own "Gemini API key" method as the second account (billed per use).
+
+**Usage limits, as they reach the app today.**
+- Claude Code: a `result` with `is_error` and the tool's words (`usage_limit` knows "You've hit your 5-hour limit ·
+  resets 12:50am (America/Los_Angeles)" and "Claude usage limit reached. Your limit will reset at 3pm."), and every
+  turn's `rate_limit_event` with each window's `resetsAt` as a time (`limits.rs`). The only recorded event is one
+  with the status "allowed" (`tests/fixtures/claude/plain-with-rate-limit.ndjson`); no recording of a turn that hit a
+  limit exists.
+- Gemini: its error text. From the user's chats of 22 November, as handed to the builder (not read by the builder):
+  "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h6m48s."
+- A studio run pauses on it (`LIMIT_END`); any other chat only shows the words.
+
 ## OpenCode as a chat's AI
 
 OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the server's own API description
