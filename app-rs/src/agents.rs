@@ -1162,7 +1162,7 @@ fn key_note(kind: &str, said: &str, present: &[&str], keys_on: bool) -> Option<S
     // OpenCode's keys stay kept from it whatever the switch says (paths::env_dropped): nothing to turn on
     (!keys_on && kind != "opencode" && sign_in && !present.is_empty()).then(|| {
         format!(
-            "{} is set on this computer, but Fridae keeps it from {} so you are never billed to it by surprise. If you sign in with that key or a company gateway, turn on Setup, The AIs, \"Use API keys from my environment\".",
+            "{} is set on this computer, but Fridae keeps it from {} so you are never billed to it by surprise. If you sign in with that key or a company gateway, turn on Setup, Connections, \"Use API keys from my environment\".",
             present.join(", "),
             ai_label(kind)
         )
@@ -3814,16 +3814,16 @@ impl Agent {
         self.st.lock().unwrap().model_note.clone()
     }
 
-    /// Why a turn failed, in the chat. When the reason is that nobody is signed in to the chat's AI, the line is the
-    /// app's own and carries the AI's name for the Sign in button beside it (`signin::signed_out_line`), and the tool is
-    /// asked again who is signed in, so the picker and Setup say the same.
+    /// Why a turn failed, in the chat (`signin::failure`). When the reason is that nobody is signed in to the chat's
+    /// AI, the line carries the AI's name for the Sign in button beside it, and the tool is asked again who is signed
+    /// in, so the picker and Setup say the same.
     fn put_failure(&self, kind: &str, text: &str) {
-        match crate::signin::signed_out_line(kind, text) {
-            Some(line) => {
-                self.put("error", json!({"text": line, "sign_in": kind}));
-                crate::signin::turn_failed(kind);
-            }
-            None => self.put("error", json!({"text": text})),
+        let f = crate::signin::failure(kind, text);
+        if f.sign_in {
+            self.put("error", json!({"text": f.text, "sign_in": kind}));
+            crate::signin::turn_failed(kind);
+        } else {
+            self.put("error", json!({"text": f.text}));
         }
     }
 

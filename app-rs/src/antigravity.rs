@@ -22,7 +22,6 @@
 //! - Tools on a server are all called through one built-in tool, `call_mcp_tool`, which names the real one in
 //!   its parameters.
 
-use crate::paths::Start;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -40,25 +39,24 @@ static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
 /// Ask Antigravity which models it offers (`agy models` prints one "id<tab>name" per line) and keep the list. It
 /// goes to the network, so only from a background thread (`signin::check`, at start and when the sign-in is asked
 /// about: with nobody signed in it prints no list but "Please sign in", which is how the app knows). Hands back what
-/// it printed (output, error output, ended well); None when agy is not installed or could not be run. The list is
+/// it printed (output, error output, ended well); None when agy is not installed, could not be run, or did not answer
+/// in time. The list is
 /// kept once it has come: an empty answer (signed out, offline) leaves it to a later one.
 pub fn ask_models() -> Option<(String, String, bool)> {
     let exe = paths::find_antigravity()?;
     let mut cmd = Command::new(exe);
     cmd.arg("models");
-    cmd.stdin(std::process::Stdio::null());
-    paths::quiet(&mut cmd);
     paths::child_env(&mut cmd, "gemini");
     if let Some(h) = home_override() {
         cmd.env("HOME", h);
     }
-    let out = cmd.run_output().ok()?;
-    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string());
+    // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
+    let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
     let list = model_lines(&stdout);
     if !list.is_empty() {
         let _ = MODELS.set(list);
     }
-    Some((stdout, stderr, out.status.success()))
+    Some((stdout, stderr, ok))
 }
 
 /// The "id<tab>name" lines of `agy models`.

@@ -1124,7 +1124,7 @@ const CONTROLS = [
   ["The chat's name", "Press it for the game's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
   ["The game's name", "Press it for the game's folder, notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
-  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in)."],
+  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
@@ -2556,37 +2556,54 @@ function aiNotice(ai) {
   const s = ai === "opencode" ? openCodeSignIn() : signInLine(ai);
   if (!s.text) return null;
   const n = el("span", "nt");
+  /* a press is a change that does not show: with it the notice is painted again, so a pressed button is never left greyed */
+  n.dataset.n = String(noticePresses);
   n.appendChild(el("span", "", esc(s.text)));
   s.buttons.forEach(([label, action]) => n.appendChild(ai === "opencode" ? openCodeButton(label, action) : signInButton(ai, label, action)));
   return n;
 }
+let noticePresses = 0;
 /* Your own sign-in to Claude Code, Cursor and Gemini, as the app has it from each tool (status.ai.sign_in: state
    "in", "out" or "unknown", who, and the sign-in started here). What it needs from you now, as one plain line and its
    buttons; nothing to say (signed in, not known yet, or no sign-in offered on this computer): no text. There is no
    signing out here: these are your own tools' sign-ins, which Fridae only ever asks about and starts. */
-const sgError = {};
+const sgError = {}, sgConfirm = {};
 function signInOf(ai) { return (((status.ai || {}).sign_in || {})[ai]) || {}; }
+/* the app's line that says what a new sign-in does to one that is there: it stands for a minute, for the second press */
+function signInConfirm(ai) { const c = sgConfirm[ai]; return c && Date.now() - c.at < 60000 ? c.text : ""; }
 function signInLine(ai) {
   const s = signInOf(ai), login = s.login || {};
-  if (!s.offered || s.state === "in") return { text: "", buttons: [] };
-  if (login.state === "waiting") return { text: "Sign in on the page that opened in your browser.", buttons: [["Cancel", "cancel"]] };
+  if (!s.offered) return { text: "", buttons: [] };
+  /* one that waits is said first, whatever the tool says about who is signed in (it may have been started beside a
+     failed message while the tool still said "signed in") */
+  if (login.state === "waiting") return { text: "Sign in on the page that opened in your browser. If none opened, cancel and try again.", buttons: [["Cancel", "cancel"]] };
+  if (signInConfirm(ai)) return { text: signInConfirm(ai), buttons: [["Sign in anyway", "sure"]] };
+  if (s.state === "in") return { text: "", buttons: [] };
   const why = login.message ? ": " + login.message + (/[.!?]$/.test(login.message) ? "" : ".") : ".";
   const text = sgError[ai] ? sgError[ai]
     : s.state !== "out" ? ""
     : login.state === "failed" ? "The sign-in did not finish" + why + " Try again."
+    /* a key on this computer that Fridae keeps from this AI: the switch may be all that is missing */
+    : s.kept_key ? "Not signed in. If you use an API key, turn on \"Use API keys from my environment\" in Setup, Connections."
     : "Not signed in.";
   return { text, buttons: text ? [["Sign in", "login"]] : [] };
 }
 /* Sign in starts the tool's own sign-in, which opens its page in your browser; the app then asks the tool who is
-   signed in. A start that fails says why, in the same line. `fromChat`: pressed beside a failed message, where no
-   notice is in view, so the next step is said over the message box. */
+   signed in. The app first asks the tool again: when it does not say "nobody is signed in", the answer is a line
+   that says what a new sign-in does, and only a second press ("sure") starts it. A start that fails says why, in the
+   same line. `fromChat`: pressed beside a failed message, where no notice is in view, so what comes next is said
+   over the message box, and the second press is on the same button. */
 function signInButton(ai, label, action, fromChat) {
   const b = el("button", "pill sm", esc(label));
   b.onclick = async () => {
-    b.disabled = true;
-    let r = null; try { r = await api("/api/signin", { ai, action }); } catch (e) {}
-    sgError[ai] = action !== "login" ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
-    if (fromChat) { say(sgError[ai] || "Sign in on the page that opened in your browser, then send your message again."); b.disabled = false; }
+    b.disabled = true; noticePresses++;
+    const sure = action === "sure" || !!(fromChat && signInConfirm(ai));
+    const body = action === "cancel" ? { ai, action } : { ai, action: "login", sure };
+    let r = null; try { r = await api("/api/signin", body); } catch (e) {}
+    const asked = !!(r && r.confirm);
+    sgConfirm[ai] = asked ? { text: r.error, at: Date.now() } : null;
+    sgError[ai] = action === "cancel" || asked ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
+    if (fromChat) { say(asked ? r.error : sgError[ai] || "Sign in on the page that opened in your browser, then send your message again."); b.disabled = false; }
     await refresh(); watchOpenCode();
   };
   return b;
@@ -3896,7 +3913,7 @@ function openCodeSignIn() {
 function openCodeButton(label, action) {
   const b = el("button", "pill sm", esc(label));
   b.onclick = async () => {
-    b.disabled = true;
+    b.disabled = true; noticePresses++;
     let r = null; try { r = await api("/api/opencode", { action }); } catch (e) {}
     /* only a sign-in that could not start: a page that did not open leaves the sign-in's own line in place */
     ocError = action !== "login" ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";

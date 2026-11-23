@@ -1085,29 +1085,49 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
 `app-rs/src/signin.rs`; its header has the commands and what was measured. These three run on the user's own sign-in,
 the one their tools have outside Fridae too, so the app only asks each tool who is signed in and starts the tool's own
 sign-in. **Nothing in the app signs anyone out**: no tool is ever started with `logout`, there is no button for it, and
-a test reads the file's command lines to keep it so. (OpenCode is different: Fridae's own copy, see the next section.)
+a test reads every source file of the app, the page and the Python tools to keep it so (the word may stand in
+comments and tests only). (OpenCode is different: Fridae's own copy, see the next section.)
 
-- **Who is signed in** (`signin::check`, `Known`): `claude auth status --json` (`loggedIn`, `email`; exit code 1 when
-  signed out, the answer is read all the same), `cursor-agent status --format json` (`isAuthenticated`,
-  `userInfo.email`), and for Gemini `agy models`, which is the model list anyway (`antigravity::ask_models`): signed
-  out it ends with code 1 and "Error: Please sign in to view available models." agy has no command that names the
-  account. An answer the app cannot read is "not known", never "signed out", so no Sign in button shows on a guess.
-  Asked at start, after a sign-in, when a turn fails as signed out (`turn_failed`), and from the page's status only
-  when the last answer is old (`due`: half an hour after "signed in", five minutes otherwise). Each runs with the
-  environment a turn gets (`paths::child_env`) through `paths::Start`.
-- **Sign in** (`login_start`, `/api/signin` with `ai` and `action` login, cancel or check): `claude auth login`,
-  `cursor-agent login`, and for Gemini `agy acp` with `initialize` and then `authenticate` for the method
+- **Who is signed in** (`signin::check`, `Known`, `Answer`): `claude auth status --json` (`loggedIn`, `email`,
+  `authMethod`; exit code 1 when signed out, the answer is read all the same), `cursor-agent status --format json`
+  (`isAuthenticated`, `userInfo.email`), and for Gemini `agy models`, which is the model list anyway
+  (`antigravity::ask_models`): signed out it ends with code 1 and "Error: Please sign in to view available models."
+  agy has no command that names the account. An answer the app cannot read is "not known", never "signed out", so no
+  Sign in button shows on a guess. A key or a gateway reads as signed in too (`authMethod` api_key, oauth_token,
+  api_key_helper, third_party; the reviewer's measurement) and is told apart (`by_key`). Asked at start, after a
+  sign-in or a cancelled one, when a turn fails as signed out (`turn_failed`), on every press of Sign in, and from the
+  page's status only when the last answer is old (`due`: half an hour after "signed in", five minutes otherwise). Each
+  runs with the environment a turn of that AI gets (`tool_env`: `paths::child_env`, and for Cursor the app's own
+  config and data folders, `cursor::environment`; measured: Cursor answers "authenticated" with those too), through
+  `paths::Start`, in a group of its own and in the ledger, and is ended after 30 seconds (`run_limited`).
+- **Sign in** (`login_start`, `/api/signin` with `ai`, `action` login, cancel or check, and `sure`): `claude auth
+  login`, `cursor-agent login`, and for Gemini `agy acp` with `initialize` and then `authenticate` for the method
   `oauth-personal` ("Log in with Google", from the `authMethods` agy lists). Each tool opens the browser itself and
   waits for it to come back (Claude Code and agy give the page a `localhost` address to return to; Cursor's link carries
-  a challenge and an id instead); nothing is typed. Claude Code also prints a link and "Paste code here if prompted" for a browser on another computer: the app
-  has no place to paste one, so that way is not offered. When the tool ends, whatever it said, the app asks who is
-  signed in and goes by that. A sign-in nobody finishes is ended after ten minutes, and when the app quits.
-- **The page**: `status.ai.sign_in` (`offered`, `state`, `who`, `login`). `aiNotice(ai)` shows "Not signed in." with
-  Sign in, "Sign in on the page that opened in your browser." with Cancel, or "The sign-in did not finish. Try again.",
-  in the picker and in the AI's row in Setup, Connections, whose own line adds "Signed in as <account>." A turn that
-  failed as signed out says "<AI> is not signed in. Sign in, then send your message again." with the same button
-  (`Agent::put_failure`, the error event's `sign_in`; `signed_out_line` replaces Claude Code's own "Not logged in ·
-  Please run /login").
+  a challenge and an id instead); nothing is typed. Claude Code also prints a link and "Paste code here if prompted"
+  for a browser on another computer: the app has no place to paste one and shows no link (a link's query is a secret
+  of that sign-in), so that way is not offered; the waiting line says to cancel and try again if no page opened.
+  When the tool ends, whatever it said, the app asks who is signed in and goes by that. A sign-in nobody finishes is
+  ended after ten minutes, and when the app quits. A press while one waits ends it and starts afresh (two presses
+  within three seconds are one).
+- **Never over a sign-in that is there without a second press.** These sign-ins are the user's own, also outside
+  Fridae, and finishing a new one replaces the old. So a press first asks the tool who is signed in. Only "nobody"
+  starts the sign-in; any other answer comes back as `confirm` with a line that says so ("Claude says it is signed in
+  as ... Signing in again replaces that sign-in, also outside Fridae. Press again to go on."), and the second press
+  sends `sure`. Not measured: whether a tool keeps the old sign-in when a new one is started and cancelled (it takes
+  a sign-in to lose). It can be measured safely on a second account's folder once the user has signed one in.
+- **The page**: `status.ai.sign_in` (`offered`, `state`, `who`, `kept_key`, `login`). `aiNotice(ai)` shows "Not signed
+  in." with Sign in, "Sign in on the page that opened in your browser. If none opened, cancel and try again." with
+  Cancel (first, whatever the status says), the confirm line with "Sign in anyway", or "The sign-in did not finish.
+  Try again.", in the picker and in the AI's row in Setup, Connections, whose own line adds "Signed in as <account>."
+  With a key on this computer that the switch keeps from the AI, "Not signed in." names the switch.
+- **A failed turn** (`signin::failure`, `Agent::put_failure`, the error event's `sign_in`): only Claude Code's plain
+  "Not logged in" becomes "Claude is not signed in. Sign in, then send your message again." with the button. Its
+  other lines that end in "Please run /login" (a key that is not valid, an account without access) keep the tool's
+  words, and get the button only when the last status was an account's, not a key's or a gateway's. Cursor's and
+  Gemini's signed-out lines are the app's own, with the button.
+- **The button starts one kind of sign-in**: the tool's default (a Claude account, a Cursor account, a Google
+  account). People on an API key, a company gateway or an Enterprise plan sign in in the tool itself; the Guide says so.
 - **Windows**: not offered (`signin::offered`; nothing was measured there). The lines say what they said before.
 - **Measured** (23 November 2026; Claude Code 2.1.319, cursor-agent 2026.11.22, agy 1.5.15): the three status
   commands signed in (for real) and signed out (a scratch home; for Claude Code a scratch `CLAUDE_CONFIG_DIR` alone

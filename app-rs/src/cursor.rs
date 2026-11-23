@@ -246,8 +246,9 @@ fn cursor_home() -> PathBuf {
     home_override().unwrap_or_else(paths::home_dir)
 }
 
-/// Cursor's settings and data folders are the app's (see the top of this file).
-fn environment(cmd: &mut Command) {
+/// Cursor's settings and data folders are the app's (see the top of this file). For a turn, and for asking Cursor who
+/// is signed in and starting its sign-in (`signin`), so those find what a turn finds.
+pub fn environment(cmd: &mut Command) {
     paths::child_env(cmd, "cursor");
     cmd.env("CURSOR_CONFIG_DIR", config_dir()).env("CURSOR_DATA_DIR", data_dir());
     if let Some(h) = home_override() {

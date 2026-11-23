@@ -1,15 +1,17 @@
 //! Signing in to the AIs that run on the user's own sign-in: Claude Code, Cursor and Gemini (Antigravity).
 //!
-//! These three are the user's own tools: their sign-in is the one the user has outside Fridae too (Claude Code's in
-//! the login keychain, Cursor's and Antigravity's under the home folder). So the app only ever asks a tool who is
-//! signed in, and starts the tool's own sign-in when the user presses Sign in. It never signs anyone out: nothing
-//! here runs a tool's logout, and there is no button for it. (OpenCode is different: Fridae keeps a copy of its own,
-//! with a sign-in of its own, see `opencode.rs`.)
+//! These three are the user's own tools: their sign-in is the one the user has outside Fridae too (in the login
+//! keychain on a Mac). So the app only ever asks a tool who is signed in, and starts the tool's own sign-in when the
+//! user presses Sign in. It never signs anyone out: nothing in the app runs a tool's own command for that, and there
+//! is no button for it (a test reads every source file to keep it so). (OpenCode is different: Fridae keeps a copy of
+//! its own, with a sign-in of its own, see `opencode.rs`.)
 //!
 //! Who is signed in (asked at start, after a sign-in, when a turn fails as signed out, and otherwise every few
-//! minutes at most, `due`), with the environment a turn gets (`paths::child_env`):
+//! minutes at most, `due`), with the environment a turn of that AI gets and a time limit (`run_limited`):
 //!
-//!   claude auth status --json          {"loggedIn": true, "email": ...}, or {"loggedIn": false} with exit code 1
+//!   claude auth status --json          {"loggedIn": true, "authMethod": ..., "email": ...}, or {"loggedIn": false}
+//!                                      with exit code 1. A key or a gateway also reads as `loggedIn` (measured by
+//!                                      the reviewer: `authMethod` api_key, oauth_token, api_key_helper, third_party)
 //!   cursor-agent status --format json  {"isAuthenticated": true, "userInfo": {"email": ...}}, or false
 //!   agy models                         the model list; signed out: exit code 1 and "Error: Please sign in ..."
 //!                                      (the one `antigravity::ask_models` runs for the model menu anyway; agy has
@@ -22,6 +24,11 @@
 //!   agy acp                 `initialize`, then `authenticate` with the method "oauth-personal" ("Log in with
 //!                           Google"): agy opens Google's page and answers the request when it is done
 //!
+//! A sign-in is never started over one that is there without the user saying so twice: the button first asks the tool
+//! again, and when the answer is not "signed out" it only says what pressing again will do (`login_start`, `sure`).
+//! Whether a tool keeps the sign-in that was there when a new one is started and then cancelled is not measured (it
+//! would take a sign-in to lose); it can be measured safely on a second account's folder once one is signed in.
+//!
 //! Measured on 23 November 2026 with Claude Code 2.1.319, cursor-agent 2026.11.22 and agy 1.5.15: the status
 //! commands for real (signed in) and in a scratch home (signed out); the start of each sign-in in a scratch home, where
 //! it cannot see the user's own sign-in, with a stand-in for the browser, ended before anything was done on the page.
@@ -31,7 +38,7 @@
 
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
     sync::Mutex,
     time::{Duration, Instant},
@@ -54,6 +61,11 @@ const AGAIN_SIGNED_IN: Duration = Duration::from_secs(30 * 60);
 const AGAIN_OTHERWISE: Duration = Duration::from_secs(5 * 60);
 /// A sign-in nobody finishes in the browser is ended after this long.
 const LOGIN_WAIT: Duration = Duration::from_secs(10 * 60);
+/// A tool that does not answer "who is signed in" within this is ended (offline, a question from the keychain).
+pub const CHECK_WAIT: Duration = Duration::from_secs(30);
+/// A press of Sign in while one waits: within this it is the same click twice; later the waiting one is ended and a
+/// new one started, so a page that was closed opens again.
+const SAME_CLICK: Duration = Duration::from_secs(3);
 
 /// What a tool says about its sign-in.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -66,17 +78,27 @@ pub enum Known {
     Out,
 }
 
+/// A tool's answer: who is signed in, and whether that is a key or a gateway rather than an account (Claude Code's
+/// `authMethod`): the app's sign-in, which is an account's, is then not what a failed turn needs.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Answer {
+    pub known: Known,
+    pub by_key: bool,
+}
+
 /// A sign-in the user started with the button: "" none, "waiting" for the browser, "done", "failed".
 #[derive(Default)]
 struct Login {
     pid: Option<u32>,
     state: &'static str,
     message: String,
+    since: Option<Instant>,
 }
 
 #[derive(Default)]
 struct Entry {
     known: Known,
+    by_key: bool,
     asked: Option<Instant>,
     asking: bool,
     /// asked for again while an answer was on its way (a sign-in ended meanwhile): that answer is not taken, and the
@@ -114,36 +136,43 @@ fn account(name: &str) -> Option<String> {
     (!shown.is_empty()).then_some(shown)
 }
 
+/// Claude Code's ways of being "logged in" that are a key or a gateway, not an account (its `authMethod`).
+const CLAUDE_KEY_METHODS: [&str; 4] = ["api_key", "oauth_token", "api_key_helper", "third_party"];
+
 /// `claude auth status --json`.
-pub fn parse_claude(stdout: &str) -> Known {
-    let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else { return Known::Unknown };
-    match v["loggedIn"].as_bool() {
+pub fn parse_claude(stdout: &str) -> Answer {
+    let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else { return Answer::default() };
+    let by_key = v["authMethod"].as_str().is_some_and(|m| CLAUDE_KEY_METHODS.contains(&m));
+    let known = match v["loggedIn"].as_bool() {
         Some(true) => Known::In(v["email"].as_str().and_then(account)),
         Some(false) => Known::Out,
         None => Known::Unknown,
-    }
+    };
+    Answer { by_key: by_key && matches!(known, Known::In(_)), known }
 }
 
 /// `cursor-agent status --format json`.
-pub fn parse_cursor(stdout: &str) -> Known {
-    let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else { return Known::Unknown };
-    match v["isAuthenticated"].as_bool() {
+pub fn parse_cursor(stdout: &str) -> Answer {
+    let Ok(v) = serde_json::from_str::<Value>(stdout.trim()) else { return Answer::default() };
+    let known = match v["isAuthenticated"].as_bool() {
         Some(true) => Known::In(v["userInfo"]["email"].as_str().and_then(account)),
         Some(false) => Known::Out,
         None => Known::Unknown,
-    }
+    };
+    Answer { known, by_key: false }
 }
 
 /// `agy models`: a list means signed in (agy does not say as whom); its own "Please sign in" means signed out;
 /// anything else (offline, say) is no answer.
-pub fn parse_agy(stdout: &str, stderr: &str, ok: bool) -> Known {
-    if ok && stdout.lines().any(|l| l.split_once('\t').is_some_and(|(id, name)| !id.trim().is_empty() && !name.trim().is_empty())) {
+pub fn parse_agy(stdout: &str, stderr: &str, ok: bool) -> Answer {
+    let known = if ok && stdout.lines().any(|l| l.split_once('\t').is_some_and(|(id, name)| !id.trim().is_empty() && !name.trim().is_empty())) {
         Known::In(None)
     } else if !ok && stderr.to_lowercase().contains("please sign in") {
         Known::Out
     } else {
         Known::Unknown
-    }
+    };
+    Answer { known, by_key: false }
 }
 
 /// Whether the tool should be asked again now: never while it is being asked or a sign-in waits for the browser; the
@@ -179,8 +208,8 @@ pub fn check(ai: &str, now: bool) {
     }
     std::thread::spawn(move || {
         loop {
-            let known = ask(ai);
-            if with(ai, |e| take_answer(e, known)) != Some(true) {
+            let answer = ask(ai);
+            if with(ai, |e| take_answer(e, answer)) != Some(true) {
                 break;
             }
         }
@@ -188,39 +217,102 @@ pub fn check(ai: &str, now: bool) {
 }
 
 /// An answer has come: kept, unless the tool was asked for again meanwhile (then it is asked once more: true).
-fn take_answer(e: &mut Entry, known: Known) -> bool {
+fn take_answer(e: &mut Entry, answer: Answer) -> bool {
     if std::mem::take(&mut e.again) {
         e.asked = Some(Instant::now());
         return true;
     }
-    e.known = known;
+    e.known = answer.known;
+    e.by_key = answer.by_key;
     e.asking = false;
     false
 }
 
-/// The tool's answer. Tests never run the tools, whatever is installed on the computer running them.
-fn ask(ai: &str) -> Known {
-    if cfg!(test) {
-        return Known::Unknown;
-    }
-    if ai == "gemini" {
-        // the model list is the question, and fills the model menu when it comes (on Windows too, where the answer
-        // about the sign-in is not shown)
-        return antigravity::ask_models().map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
-    }
-    if !offered(ai) {
-        return Known::Unknown;
-    }
-    let Some(exe) = paths::find_ai(ai) else { return Known::Unknown };
-    let mut cmd = Command::new(exe);
-    cmd.args(if ai == "claude" { &["auth", "status", "--json"][..] } else { &["status", "--format", "json"][..] });
-    cmd.stdin(Stdio::null()).stderr(Stdio::null());
+/// A command run to its end, but no longer than `limit`: what it printed (output, error output) and whether it ended
+/// well. In a group of its own and in the ledger while it runs, so one that hangs is ended, here or by the next start
+/// of the app. None when it could not be started or was ended for taking too long.
+pub fn run_limited(mut cmd: Command, limit: Duration) -> Option<(String, String, bool)> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
-    paths::child_env(&mut cmd, ai);
-    // (Claude Code ends with code 1 when nobody is signed in: its answer is read either way)
-    let Ok(out) = cmd.run_output() else { return Known::Unknown };
-    let text = String::from_utf8_lossy(&out.stdout);
-    if ai == "claude" { parse_claude(&text) } else { parse_cursor(&text) }
+    paths::own_group(&mut cmd);
+    let mut child = cmd.start().ok()?;
+    let pid = child.id();
+    procs::record("signin", pid);
+    fn read(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut all = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut all);
+            }
+            String::from_utf8_lossy(&all).to_string()
+        })
+    }
+    let (out, err) = (read(child.stdout.take()), read(child.stderr.take()));
+    let until = Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                paths::end_trees(&[pid]);
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    procs::forget(pid);
+    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    status.map(|s| (out, err, s.success()))
+}
+
+/// For tests: what each tool answers and the program a sign-in starts, in place of the real tools (tests never run
+/// them, whatever is installed on the computer running the tests). Held with `TEST_LOCK`.
+#[cfg(test)]
+#[derive(Default)]
+pub struct StandIn {
+    pub status: HashMap<&'static str, Answer>,
+    /// a shell script to run as the tool's sign-in; None: no sign-in can be started
+    pub login: Option<String>,
+}
+#[cfg(test)]
+pub static STAND_IN: Mutex<Option<StandIn>> = Mutex::new(None);
+#[cfg(test)]
+pub static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// The tool's answer, asked now (it takes a moment: never on a thread the page waits for longer than a press).
+fn ask(ai: &str) -> Answer {
+    #[cfg(test)]
+    return STAND_IN.lock().unwrap().as_ref().and_then(|s| s.status.get(ai).cloned()).unwrap_or_default();
+    #[allow(unreachable_code)]
+    {
+        if ai == "gemini" {
+            // the model list is the question, and fills the model menu when it comes (on Windows too, where the answer
+            // about the sign-in is not shown)
+            return antigravity::ask_models().map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
+        }
+        if !offered(ai) {
+            return Answer::default();
+        }
+        let Some(exe) = paths::find_ai(ai) else { return Answer::default() };
+        let mut cmd = Command::new(exe);
+        cmd.args(if ai == "claude" { &["auth", "status", "--json"][..] } else { &["status", "--format", "json"][..] });
+        tool_env(&mut cmd, ai);
+        // (Claude Code ends with code 1 when nobody is signed in: its answer is read either way)
+        let Some((out, _, _)) = run_limited(cmd, CHECK_WAIT) else { return Answer::default() };
+        if ai == "claude" { parse_claude(&out) } else { parse_cursor(&out) }
+    }
+}
+
+/// The environment a turn of this AI gets, for its status and its sign-in: the same keys kept or passed
+/// (`paths::child_env`), and for Cursor the app's own config and data folders a Cursor turn runs with.
+fn tool_env(cmd: &mut Command, ai: &str) {
+    match ai {
+        "cursor" => crate::cursor::environment(cmd),
+        _ => paths::child_env(cmd, ai),
+    }
+    if ai == "gemini" && let Some(h) = antigravity::home_override() {
+        cmd.env("HOME", h);
+    }
 }
 
 /// At start: every tool is asked once.
@@ -239,20 +331,41 @@ pub fn refresh() {
 
 // -------------------------------------------------------- a turn that failed
 
-/// What the chat is told when a turn failed because nobody is signed in: the app's own line, for the Sign in button
-/// beside it. For Claude Code that replaces the tool's own words ("Not logged in · Please run /login"); for Cursor
-/// and Gemini the line is already the app's (`cursor::SIGNED_OUT`, `antigravity::SIGNED_OUT`). None when the words
-/// are not about signing in, or where the app offers no sign-in (the words then stay as they are).
-pub fn signed_out_line(ai: &str, said: &str) -> Option<&'static str> {
-    if !offered(ai) {
-        return None;
+/// What the chat is told when a turn failed: the words, and whether the Sign in button goes beside them.
+#[derive(Debug, PartialEq)]
+pub struct Failure {
+    pub text: String,
+    pub sign_in: bool,
+}
+
+/// Claude Code's line for "nobody is signed in", in the app's words.
+const CLAUDE_SIGNED_OUT: &str = "Claude is not signed in. Sign in, then send your message again.";
+
+/// A failed turn's words as the chat shows them. Only Claude Code's plain "Not logged in" becomes the app's own line.
+/// Its other lines that end in "Please run /login" (a key that is not valid, an account without access, a gateway's
+/// refusal) keep the tool's words, which say why; the button goes beside them only when the last status was an
+/// account's, not a key's or a gateway's (`by_key`): the app's sign-in is an account's, and would change how the
+/// user's own Claude Code signs in. Cursor's and Gemini's signed-out lines are already the app's
+/// (`cursor::SIGNED_OUT`, `antigravity::SIGNED_OUT`). Where no sign-in is offered, nothing changes.
+fn failure_of(ai: &str, said: &str, by_key: bool, offered: bool) -> Failure {
+    let as_said = |sign_in: bool| Failure { text: said.to_string(), sign_in };
+    if !offered {
+        return as_said(false);
     }
-    let low = said.to_lowercase();
+    let low = said.trim().to_lowercase();
     match ai {
-        "claude" => (low.contains("not logged in") || low.contains("please run /login")).then_some("Claude is not signed in. Sign in, then send your message again."),
-        "cursor" => (said == crate::cursor::SIGNED_OUT).then_some(crate::cursor::SIGNED_OUT),
-        _ => (said == antigravity::SIGNED_OUT).then_some(antigravity::SIGNED_OUT),
+        "claude" if low.starts_with("not logged in") => Failure { text: CLAUDE_SIGNED_OUT.to_string(), sign_in: true },
+        "claude" if low.contains("please run /login") => as_said(!by_key),
+        "cursor" => as_said(said == crate::cursor::SIGNED_OUT),
+        "gemini" => as_said(said == antigravity::SIGNED_OUT),
+        _ => as_said(false),
     }
+}
+
+/// See `failure_of`, with what the tool last said about its sign-in.
+pub fn failure(ai: &str, said: &str) -> Failure {
+    let by_key = with(ai, |e| e.by_key).unwrap_or(false);
+    failure_of(ai, said, by_key, offered(ai))
 }
 
 /// A turn of this AI failed as signed out: the tool is asked again now, so the page says so too.
@@ -277,12 +390,16 @@ enum Acp {
     Authenticate(String),
     /// the sign-in is over: done, or why not
     Ended(Result<(), String>),
-    /// nothing for the sign-in (a notification, something else)
+    /// nothing for the sign-in (a notification, a request of agy's own, something else)
     Other,
 }
 
 fn acp_line(line: &str) -> Acp {
     let Ok(v) = serde_json::from_str::<Value>(line.trim()) else { return Acp::Other };
+    // a request or a notification from agy is not an answer, whatever id it carries
+    if !v["method"].is_null() {
+        return Acp::Other;
+    }
     let failed = |v: &Value| v["error"]["data"]["message"].as_str().or(v["error"]["message"].as_str()).unwrap_or("agy gave no reason").chars().take(200).collect::<String>();
     match v["id"].as_i64() {
         Some(1) if v["error"].is_object() => Acp::Ended(Err(failed(&v))),
@@ -310,39 +427,94 @@ fn reason(line: &str) -> Option<String> {
     (wrong && !low.contains("http://") && !low.contains("https://")).then(|| plain.chars().take(200).collect())
 }
 
+/// The tool's own sign-in, as a command. Tests get the stand-in program, or none.
+fn login_command(ai: &str) -> Result<Command, String> {
+    #[cfg(test)]
+    return match STAND_IN.lock().unwrap().as_ref().and_then(|s| s.login.clone()) {
+        Some(script) => {
+            let mut cmd = Command::new("/bin/sh");
+            cmd.arg("-c").arg(script).env("FRIDAE_SIGNIN_AI", ai);
+            Ok(cmd)
+        }
+        None => Err("Tests start no sign-in.".to_string()),
+    };
+    #[allow(unreachable_code)]
+    {
+        let exe = paths::find_ai(ai).ok_or_else(|| format!("{} is not installed.", crate::expert_ai::ai_name(ai)))?;
+        let mut cmd = Command::new(exe);
+        cmd.args(match ai {
+            "claude" => &["auth", "login"][..],
+            "cursor" => &["login"][..],
+            _ => &["acp"][..],
+        });
+        tool_env(&mut cmd, ai);
+        Ok(cmd)
+    }
+}
+
+/// What the button says instead of starting, when the tool does not say plainly that nobody is signed in: a sign-in
+/// that is there is the user's own, also outside Fridae, and finishing a new one replaces it.
+fn confirm_line(ai: &str, known: &Known) -> String {
+    let name = crate::expert_ai::ai_name(ai);
+    match known {
+        Known::In(Some(who)) => format!("{name} says it is signed in as {who}. Signing in again replaces that sign-in, also outside Fridae. Press again to go on."),
+        Known::In(None) => format!("{name} says it is signed in. Signing in again replaces that sign-in, also outside Fridae. Press again to go on."),
+        _ => format!("Fridae could not tell whether {name} is signed in. Signing in replaces a sign-in that is there, also outside Fridae. Press again to go on."),
+    }
+}
+
 /// Start the tool's own sign-in. The tool opens the browser; the app waits for the tool to end, then asks who is
-/// signed in. Answers where it stands (`login_state`), or why it could not start.
-pub fn login_start(ai: &str) -> Value {
+/// signed in. Answers where it stands (`login_state`), or why it did not start.
+///
+/// It first asks the tool who is signed in, and starts at once only when the answer is "nobody". Otherwise it
+/// answers `confirm` with a line that says what a new sign-in does, and starts only when pressed again (`sure`): the
+/// button beside a failed message is there while the tool may still say "signed in". A press while a sign-in waits
+/// ends that one and starts afresh, so a page that was closed opens again (two clicks in quick succession are one).
+pub fn login_start(ai: &str, sure: bool) -> Value {
     let Some(ai) = AIS.iter().copied().find(|a| *a == ai).filter(|a| offered(a)) else { return json!({"ok": false, "error": "Fridae cannot start that sign-in here."}) };
-    let Some(exe) = paths::find_ai(ai) else { return json!({"ok": false, "error": format!("{} is not installed.", crate::expert_ai::ai_name(ai))}) };
+    match with(ai, |e| (e.login.state == "waiting").then(|| e.login.since.map(|t| t.elapsed()).unwrap_or_default())).flatten() {
+        Some(age) if age < SAME_CLICK => return login_state(ai),
+        Some(_) => end_login(ai),
+        None => {}
+    }
+    if !sure {
+        let answer = ask(ai);
+        let known = answer.known.clone();
+        with(ai, |e| {
+            e.known = answer.known;
+            e.by_key = answer.by_key;
+            e.asked = Some(Instant::now());
+        });
+        if known != Known::Out {
+            let mut v = login_state(ai);
+            v["ok"] = json!(false);
+            v["confirm"] = json!(true);
+            v["error"] = json!(confirm_line(ai, &known));
+            return v;
+        }
+    }
     let mut child = {
-        // checked and started under one lock, so two quick clicks start one sign-in
+        // checked and started under one lock, so two presses that both got this far start one sign-in
         let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
         let e = g.get_or_insert_with(HashMap::new).entry(ai).or_default();
         if e.login.state == "waiting" {
             drop(g);
             return login_state(ai);
         }
-        let mut cmd = Command::new(&exe);
-        cmd.args(match ai {
-            "claude" => &["auth", "login"][..],
-            "cursor" => &["login"][..],
-            _ => &["acp"][..],
-        });
+        let mut cmd = match login_command(ai) {
+            Ok(c) => c,
+            Err(why) => return json!({"ok": false, "error": why}),
+        };
         // agy takes its requests on its input; the others are given none (nothing is typed into them)
         cmd.stdin(if ai == "gemini" { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd);
-        paths::child_env(&mut cmd, ai);
-        if ai == "gemini" && let Some(h) = antigravity::home_override() {
-            cmd.env("HOME", h);
-        }
         let child = match cmd.start() {
             Ok(c) => c,
             Err(err) => return json!({"ok": false, "error": format!("Could not start {}: {err}", crate::expert_ai::ai_name(ai))}),
         };
         procs::record("signin", child.id());
-        e.login = Login { pid: Some(child.id()), state: "waiting", message: String::new() };
+        e.login = Login { pid: Some(child.id()), state: "waiting", message: String::new(), since: Some(Instant::now()) };
         child
     };
     let pid = child.id();
@@ -402,11 +574,11 @@ pub fn login_start(ai: &str) -> Value {
             ("gemini", None) => (false, String::new()),
             _ => (exited, last),
         };
+        // only the sign-in this thread reads: one that was cancelled, or replaced by a newer one, is not touched
         let mine = with(ai, |e| {
             let mine = e.login.pid == Some(pid);
             if mine {
                 e.login.pid = None;
-                // (cancelled: its state was cleared already, and stays so)
                 if e.login.state == "waiting" {
                     e.login.state = if ok { "done" } else { "failed" };
                     e.login.message = if ok { String::new() } else { why };
@@ -423,8 +595,8 @@ pub fn login_start(ai: &str) -> Value {
     login_state(ai)
 }
 
-/// End a sign-in that is still waiting for the browser (Cancel, or the app quitting).
-pub fn login_cancel(ai: &str) {
+/// End the sign-in that waits, if one does, and its process.
+fn end_login(ai: &str) {
     let pid = with(ai, |e| {
         if e.login.state == "waiting" {
             e.login.state = "";
@@ -438,35 +610,49 @@ pub fn login_cancel(ai: &str) {
     }
 }
 
+/// End a sign-in that is still waiting for the browser (Cancel, or nobody finished it in time), then ask the tool
+/// who is signed in: it may have been finished in the browser a moment before.
+pub fn login_cancel(ai: &str) {
+    end_login(ai);
+    check(ai, true);
+}
+
 /// When the app quits: no sign-in is left waiting.
 pub fn shut_down() {
     for ai in AIS {
-        login_cancel(ai);
+        end_login(ai);
     }
 }
 
-fn state_of(e: &Entry, offered: bool) -> Value {
+fn state_of(e: &Entry, offered: bool, kept_key: bool) -> Value {
     let (state, who) = match &e.known {
         Known::In(who) => ("in", who.clone()),
         Known::Out => ("out", None),
         Known::Unknown => ("unknown", None),
     };
-    json!({"offered": offered, "state": state, "who": who, "login": {"state": e.login.state, "message": e.login.message}})
+    json!({"offered": offered, "state": state, "who": who, "kept_key": kept_key, "login": {"state": e.login.state, "message": e.login.message}})
+}
+
+/// Whether a key for this AI is set on this computer and kept from it (the Setup switch "Use API keys from my
+/// environment" is off): then "not signed in" may only want that switch.
+fn kept_key(ai: &str) -> bool {
+    offered(ai) && !paths::env_keys_on() && !paths::env_keys_present(ai).is_empty()
 }
 
 /// Where one AI's sign-in stands, for the page.
 pub fn login_state(ai: &str) -> Value {
-    let mut v = with(ai, |e| state_of(e, offered(ai))).unwrap_or_else(|| json!({"offered": false}));
+    let mut v = with(ai, |e| state_of(e, offered(ai), kept_key(ai))).unwrap_or_else(|| json!({"offered": false}));
     v["ok"] = json!(true);
     v
 }
 
 /// Where each AI's sign-in stands, for the page's status: `offered`, `state` ("in", "out", "unknown"), `who` (the
-/// account, when the tool names it) and `login` (the sign-in started here: its `state` and, failed, its `message`).
+/// account, when the tool names it), `kept_key` and `login` (the sign-in started here: its `state` and, failed, its
+/// `message`).
 pub fn state() -> Value {
     let mut out = serde_json::Map::new();
     for ai in AIS {
-        out.insert(ai.to_string(), with(ai, |e| state_of(e, offered(ai))).unwrap_or(Value::Null));
+        out.insert(ai.to_string(), with(ai, |e| state_of(e, offered(ai), kept_key(ai))).unwrap_or(Value::Null));
     }
     Value::Object(out)
 }
@@ -530,25 +716,30 @@ mod tests {
 
     #[test]
     fn each_tools_own_answer_says_who_is_signed_in() {
-        assert_eq!(parse_claude(CLAUDE_IN), Known::In(Some("someone@example.com".into())));
-        assert_eq!(parse_claude(CLAUDE_OUT), Known::Out, "its exit code is 1 then; the answer is read all the same");
-        assert_eq!(parse_cursor(CURSOR_IN), Known::In(Some("someone@example.com".into())));
-        assert_eq!(parse_cursor(CURSOR_OUT), Known::Out);
-        assert_eq!(parse_agy(AGY_IN, "Fetching available models...\n", true), Known::In(None), "agy does not say as whom");
-        assert_eq!(parse_agy("", AGY_OUT_ERR, false), Known::Out);
+        assert_eq!(parse_claude(CLAUDE_IN), Answer { known: Known::In(Some("someone@example.com".into())), by_key: false });
+        assert_eq!(parse_claude(CLAUDE_OUT).known, Known::Out, "its exit code is 1 then; the answer is read all the same");
+        assert_eq!(parse_cursor(CURSOR_IN).known, Known::In(Some("someone@example.com".into())));
+        assert_eq!(parse_cursor(CURSOR_OUT).known, Known::Out);
+        assert_eq!(parse_agy(AGY_IN, "Fetching available models...\n", true).known, Known::In(None), "agy does not say as whom");
+        assert_eq!(parse_agy("", AGY_OUT_ERR, false).known, Known::Out);
         // no answer the app can read is "not known", never "signed out": the Sign in button is not shown on a guess
         for nothing in ["", "not json", "{}", r#"{"loggedIn": "yes"}"#, "Error: connect ETIMEDOUT"] {
-            assert_eq!(parse_claude(nothing), Known::Unknown, "{nothing}");
-            assert_eq!(parse_cursor(nothing), Known::Unknown, "{nothing}");
+            assert_eq!(parse_claude(nothing).known, Known::Unknown, "{nothing}");
+            assert_eq!(parse_cursor(nothing).known, Known::Unknown, "{nothing}");
         }
-        assert_eq!(parse_agy("", "Fetching available models...\nError: could not reach the server\n", false), Known::Unknown);
-        assert_eq!(parse_agy("", "", true), Known::Unknown, "ended well with no list");
-        assert_eq!(parse_agy(AGY_IN, AGY_OUT_ERR, false), Known::Out);
-        // signed in with a key: no account to name
-        assert_eq!(parse_claude(r#"{"loggedIn": true, "authMethod": "api_key"}"#), Known::In(None));
+        assert_eq!(parse_agy("", "Fetching available models...\nError: could not reach the server\n", false).known, Known::Unknown);
+        assert_eq!(parse_agy("", "", true).known, Known::Unknown, "ended well with no list");
+        assert_eq!(parse_agy(AGY_IN, AGY_OUT_ERR, false).known, Known::Out);
+        // a key or a gateway reads as signed in, with no account, and is told apart (the reviewer's measurements of
+        // Claude Code 2.1.319: `authMethod` with ANTHROPIC_API_KEY, with a base URL and token, with a key helper,
+        // with Bedrock)
+        for method in ["api_key", "oauth_token", "api_key_helper", "third_party"] {
+            assert_eq!(parse_claude(&json!({"loggedIn": true, "authMethod": method}).to_string()), Answer { known: Known::In(None), by_key: true }, "{method}");
+        }
+        assert!(!parse_claude(r#"{"loggedIn": false, "authMethod": "none"}"#).by_key);
         // an account is shown as text: nothing that would not show as itself, and not without end
         let odd = parse_cursor(&json!({"isAuthenticated": true, "userInfo": {"email": format!("a\u{202e}b{}@x.io", "c".repeat(200))}}).to_string());
-        assert!(matches!(&odd, Known::In(Some(w)) if w.chars().count() == 80 && !w.contains('\u{202e}')), "{odd:?}");
+        assert!(matches!(&odd.known, Known::In(Some(w)) if w.chars().count() == 80 && !w.contains('\u{202e}')), "{odd:?}");
     }
 
     #[test]
@@ -568,43 +759,50 @@ mod tests {
     fn an_answer_that_was_on_its_way_when_a_sign_in_ended_is_not_taken() {
         // asked at start; the user signs in meanwhile; the sign-in's end asks again while the first answer is out
         let mut e = Entry { asking: true, again: true, known: Known::Unknown, ..Default::default() };
-        assert!(take_answer(&mut e, Known::Out), "the old answer is dropped and the tool asked once more");
+        assert!(take_answer(&mut e, Answer { known: Known::Out, by_key: false }), "the old answer is dropped and the tool asked once more");
         assert_eq!((e.known.clone(), e.asking, e.again), (Known::Unknown, true, false));
-        assert!(!take_answer(&mut e, Known::In(None)));
-        assert_eq!((e.known.clone(), e.asking), (Known::In(None), false));
+        assert!(!take_answer(&mut e, Answer { known: Known::In(None), by_key: true }));
+        assert_eq!((e.known.clone(), e.asking, e.by_key), (Known::In(None), false, true));
     }
 
     #[test]
-    fn a_turn_that_failed_as_signed_out_says_so_in_the_apps_words() {
-        if cfg!(windows) {
-            return; // no sign-in is offered there: the lines stay as they were
-        }
-        // Claude Code's own words, as a signed-out turn in the app ended on 23 November 2026
-        assert_eq!(signed_out_line("claude", "Not logged in \u{b7} Please run /login"), Some("Claude is not signed in. Sign in, then send your message again."));
-        assert_eq!(signed_out_line("claude", "Invalid API key \u{b7} Please run /login"), Some("Claude is not signed in. Sign in, then send your message again."));
-        assert_eq!(signed_out_line("claude", "You've hit your usage limit"), None);
+    fn a_turn_that_failed_says_not_signed_in_only_when_that_is_what_the_tool_said() {
+        let app = |text: &str| Failure { text: text.to_string(), sign_in: true };
+        let as_said = |text: &str, sign_in: bool| Failure { text: text.to_string(), sign_in };
+        // Claude Code's own words, as a signed-out turn in the app ended on 23 November 2026: the app's line, with the button
+        assert_eq!(failure_of("claude", "Not logged in \u{b7} Please run /login", false, true), app("Claude is not signed in. Sign in, then send your message again."));
+        assert_eq!(failure_of("claude", "Not logged in", false, true), app("Claude is not signed in. Sign in, then send your message again."));
+        // its other lines that end the same way mean other things: the tool's words stay, since they say why
+        let key = "Invalid API key \u{b7} Please run /login";
+        assert_eq!(failure_of("claude", key, false, true), as_said(key, true), "an account's sign-in: the button may help");
+        assert_eq!(failure_of("claude", key, true, true), as_said(key, false), "a key or a gateway: the app's sign-in is not the way, so no button");
+        let access = "Your account does not have access to Claude Code. Please run /login";
+        assert_eq!(failure_of("claude", access, true, true), as_said(access, false));
+        assert_eq!(failure_of("claude", "You've hit your usage limit", false, true), as_said("You've hit your usage limit", false));
         // Cursor's and Gemini's are the app's own lines already: the same line, now with the button
-        assert_eq!(signed_out_line("cursor", crate::cursor::SIGNED_OUT), Some("Cursor is not signed in. Sign in, then send your message again."));
-        assert_eq!(signed_out_line("gemini", antigravity::SIGNED_OUT), Some("Gemini is not signed in. Sign in, then send your message again."));
-        assert_eq!(signed_out_line("cursor", "Cursor could not run this message."), None);
-        // OpenCode has its own sign-in and its own lines; ChatGPT is not offered
-        assert_eq!(signed_out_line("opencode", "Not logged in"), None);
-        assert_eq!(signed_out_line("chatgpt", "Not logged in"), None);
-        // each line is one the page can put a button beside: short, and it never sends the user to a terminal
-        for line in [crate::cursor::SIGNED_OUT, antigravity::SIGNED_OUT] {
-            assert!(!line.contains("terminal") && !line.contains('`') && line.matches(". ").count() == 1, "{line}");
+        assert_eq!(failure_of("cursor", crate::cursor::SIGNED_OUT, false, true), app(crate::cursor::SIGNED_OUT));
+        assert_eq!(failure_of("gemini", antigravity::SIGNED_OUT, false, true), app(antigravity::SIGNED_OUT));
+        assert_eq!(failure_of("cursor", "Cursor could not run this message.", false, true), as_said("Cursor could not run this message.", false));
+        // OpenCode has its own sign-in and its own lines; ChatGPT is not offered; nor is anything on Windows
+        assert_eq!(failure_of("opencode", "Not logged in", false, false), as_said("Not logged in", false));
+        assert_eq!(failure_of("claude", "Not logged in \u{b7} Please run /login", false, false), as_said("Not logged in \u{b7} Please run /login", false));
+        if !cfg!(windows) {
+            // each of the app's lines is one the page can put a button beside: short, and it never sends the user to a terminal
+            for line in [CLAUDE_SIGNED_OUT, crate::cursor::SIGNED_OUT, antigravity::SIGNED_OUT] {
+                assert!(!line.contains("terminal") && !line.contains('`') && line.matches(". ").count() == 1, "{line}");
+            }
         }
     }
 
     #[test]
     fn agys_sign_in_is_asked_for_over_acp_and_its_answer_ends_it() {
         // agy 1.5.15's answer to `initialize` in a scratch home (measured; the capabilities left out)
-        let init = r#"{"jsonrpc":"2.0","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"auth":{"logout":{}}},"agentInfo":{"name":"Antigravity ACP Server","version":"1.5.15"},"authMethods":[{"id":"oauth-personal","name":"Log in with Google","description":"Log in with your Google account"},{"id":"oauth-business","name":"Log in with Gemini Enterprise","description":"Log in with your Gemini Enterprise account"},{"id":"gemini-api-key","name":"Gemini API key","description":"Use an API key with Gemini Developer API"},{"id":"agent-platform","name":"Gemini Enterprise Agent Platform","description":"Use Gemini Enterprise Agent Platform (formerly Vertex AI) with Application Default Credentials"}]},"id":1}"#;
+        let init = r#"{"jsonrpc":"2.0","result":{"protocolVersion":1,"agentCapabilities":{"loadSession":true},"agentInfo":{"name":"Antigravity ACP Server","version":"1.5.15"},"authMethods":[{"id":"oauth-personal","name":"Log in with Google","description":"Log in with your Google account"},{"id":"oauth-business","name":"Log in with Gemini Enterprise","description":"Log in with your Gemini Enterprise account"},{"id":"gemini-api-key","name":"Gemini API key","description":"Use an API key with Gemini Developer API"},{"id":"agent-platform","name":"Gemini Enterprise Agent Platform","description":"Use Gemini Enterprise Agent Platform (formerly Vertex AI) with Application Default Credentials"}]},"id":1}"#;
         let Acp::Authenticate(request) = acp_line(init) else { panic!("the Google sign-in is offered") };
         let request: Value = serde_json::from_str(&request).unwrap();
         assert_eq!((request["method"].as_str(), request["params"]["methodId"].as_str(), request["id"].as_i64()), (Some("authenticate"), Some("oauth-personal"), Some(2)));
-        // the app only ever asks to sign in: never the "logout" agy also lists
-        assert!(!acp_initialize().contains("logout") && !request.to_string().contains("logout"));
+        // the two requests are the only ones the app ever sends agy for a sign-in
+        assert_eq!(serde_json::from_str::<Value>(&acp_initialize()).unwrap()["method"], "initialize");
         // its answer to that request ends the sign-in: well, or with its reason (stand-ins: no sign-in was completed)
         assert_eq!(acp_line(r#"{"jsonrpc":"2.0","result":{},"id":2}"#), Acp::Ended(Ok(())));
         assert_eq!(acp_line(r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Authentication required"},"id":2}"#), Acp::Ended(Err("Authentication required".into())));
@@ -612,14 +810,21 @@ mod tests {
         // an agy that lists no Google sign-in: said, with the way that still works
         let Acp::Ended(Err(why)) = acp_line(r#"{"jsonrpc":"2.0","result":{"protocolVersion":1,"authMethods":[{"id":"gemini-api-key"}]},"id":1}"#) else { panic!() };
         assert!(why.contains("Run agy once in a terminal"), "{why}");
-        // anything else is not about the sign-in
-        for other in ["", "not json", r#"{"jsonrpc":"2.0","method":"session/update","params":{}}"#, r#"{"jsonrpc":"2.0","result":{},"id":7}"#] {
+        // a request of agy's own with the same id is not an answer, and anything else is not about the sign-in
+        for other in [
+            r#"{"jsonrpc":"2.0","id":1,"method":"fs/read_text_file","params":{"path":"/x"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"session/request_permission","params":{}}"#,
+            "",
+            "not json",
+            r#"{"jsonrpc":"2.0","method":"session/update","params":{}}"#,
+            r#"{"jsonrpc":"2.0","result":{},"id":7}"#,
+        ] {
             assert_eq!(acp_line(other), Acp::Other, "{other}");
         }
     }
 
     #[test]
-    fn what_a_sign_in_printed_is_a_reason_only_when_it_is_plain_words() {
+    fn what_a_sign_in_printed_is_a_reason_only_when_it_says_what_went_wrong() {
         // stdout of `claude auth login` and `cursor-agent login`, started in a scratch home on 23 November 2026 and
         // ended before anyone signed in (the links' queries left out)
         let claude = ["Opening browser to sign in\u{2026}", "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=x", "Paste code here if prompted > "];
@@ -636,29 +841,148 @@ mod tests {
     #[test]
     fn the_page_is_told_where_each_sign_in_stands() {
         let e = Entry { known: Known::In(Some("someone@example.com".into())), ..Default::default() };
-        assert_eq!(state_of(&e, true), json!({"offered": true, "state": "in", "who": "someone@example.com", "login": {"state": "", "message": ""}}));
-        let e = Entry { known: Known::Out, login: Login { pid: Some(1), state: "waiting", message: String::new() }, ..Default::default() };
-        assert_eq!(state_of(&e, true), json!({"offered": true, "state": "out", "who": null, "login": {"state": "waiting", "message": ""}}));
-        assert_eq!(state_of(&Entry::default(), false)["state"], "unknown");
+        assert_eq!(state_of(&e, true, false), json!({"offered": true, "state": "in", "who": "someone@example.com", "kept_key": false, "login": {"state": "", "message": ""}}));
+        let e = Entry { known: Known::Out, login: Login { pid: Some(1), state: "waiting", message: String::new(), since: None }, ..Default::default() };
+        assert_eq!(state_of(&e, true, true), json!({"offered": true, "state": "out", "who": null, "kept_key": true, "login": {"state": "waiting", "message": ""}}));
+        assert_eq!(state_of(&Entry::default(), false, false)["state"], "unknown");
         // every one of the three is in the status, and nothing else
         let all = state();
         assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "cursor", "gemini"]);
         assert!(offered("claude") == !cfg!(windows) && !offered("opencode") && !offered("chatgpt"));
         // a sign-in for anything else is never started
-        assert_eq!(login_start("opencode")["ok"], false);
-        assert_eq!(login_start("../x")["ok"], false);
+        assert_eq!(login_start("opencode", true)["ok"], false);
+        assert_eq!(login_start("../x", true)["ok"], false);
+    }
+
+    /// A stand-in tool for the tests below, and the state as a fresh app has it.
+    #[cfg(unix)]
+    fn stand_in(status: Known, login: Option<&str>) {
+        *STAND_IN.lock().unwrap() = Some(StandIn { status: AIS.iter().map(|a| (*a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
+        *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    #[cfg(unix)]
+    fn wait_for(what: &str, done: impl Fn() -> bool) {
+        let until = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < until, "never: {what}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        !paths::leader_exited(pid, Duration::ZERO)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sign_in_starts_once_is_ended_by_cancel_and_leaves_nothing_behind() {
+        let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // the tool says nobody is signed in: one press starts its sign-in (a stand-in that waits, as the tools do)
+        stand_in(Known::Out, Some("echo 'Waiting for browser authentication...'; sleep 60"));
+        let first = login_start("cursor", false);
+        assert_eq!((first["ok"].as_bool(), first["login"]["state"].as_str()), (Some(true), Some("waiting")), "{first}");
+        let pid = with("cursor", |e| e.login.pid).flatten().expect("a process");
+        assert!(alive(pid) && procs::recorded(pid), "running, and in the ledger for a crash to find");
+        // a second click straight away is the same click: no second process
+        assert_eq!(login_start("cursor", false)["login"]["state"], "waiting");
+        assert_eq!(with("cursor", |e| e.login.pid).flatten(), Some(pid));
+        // Cancel ends it and clears the ledger, and the tool is asked again who is signed in
+        with("cursor", |e| e.known = Known::Unknown);
+        login_cancel("cursor");
+        assert!(!alive(pid) && !procs::recorded(pid));
+        assert_eq!(login_state("cursor")["login"]["state"], "");
+        wait_for("the status asked again after Cancel", || with("cursor", |e| e.known == Known::Out) == Some(true));
+        // a press long after one began waiting (its page was closed) ends that one and starts afresh
+        login_start("claude", false);
+        let old = with("claude", |e| e.login.pid).flatten().unwrap();
+        with("claude", |e| e.login.since = Some(Instant::now() - Duration::from_secs(60)));
+        login_start("claude", false);
+        let new = with("claude", |e| e.login.pid).flatten().unwrap();
+        assert!(old != new && !alive(old) && alive(new), "the old one is ended, a new one waits");
+        // the old one's late end does not touch the newer one
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!((with("claude", |e| e.login.pid).flatten(), login_state("claude")["login"]["state"].as_str()), (Some(new), Some("waiting")));
+        // quitting leaves none
+        shut_down();
+        assert!(!alive(new) && !procs::recorded(new));
+        *STAND_IN.lock().unwrap() = None;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sign_in_is_never_started_over_one_that_is_there_without_a_second_press() {
+        let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // the page's last answer was "signed out" (five minutes old, say), the user has signed in from a terminal since
+        stand_in(Known::In(Some("someone@example.com".into())), Some("sleep 60"));
+        with("claude", |e| e.known = Known::Out);
+        let asked = login_start("claude", false);
+        assert_eq!((asked["ok"].as_bool(), asked["confirm"].as_bool(), asked["login"]["state"].as_str()), (Some(false), Some(true), Some("")), "{asked}");
+        assert_eq!(asked["error"], "Claude says it is signed in as someone@example.com. Signing in again replaces that sign-in, also outside Fridae. Press again to go on.");
+        assert_eq!(with("claude", |e| e.login.pid).flatten(), None, "nothing was started");
+        assert_eq!(asked["state"], "in", "and the page has the fresh answer");
+        // the tool gives no answer the app can read: the same care
+        stand_in(Known::Unknown, Some("sleep 60"));
+        let asked = login_start("gemini", false);
+        assert_eq!((asked["confirm"].as_bool(), with("gemini", |e| e.login.pid).flatten()), (Some(true), None));
+        assert!(asked["error"].as_str().unwrap().starts_with("Fridae could not tell whether Gemini is signed in."), "{asked}");
+        // pressed again: the user said so, and it starts
+        let sure = login_start("gemini", true);
+        assert_eq!((sure["ok"].as_bool(), sure["login"]["state"].as_str()), (Some(true), Some("waiting")));
+        shut_down();
+        // a sign-in that ends: well (the tool is asked, and says who), or not (said, with its own reason when it gave one)
+        stand_in(Known::In(Some("someone@example.com".into())), Some("echo 'Opening browser to sign in'; exit 0"));
+        login_start("claude", true);
+        wait_for("the sign-in's end", || login_state("claude")["login"]["state"] == "done");
+        wait_for("the status after it", || login_state("claude")["state"] == "in");
+        assert_eq!(login_state("claude")["who"], "someone@example.com");
+        stand_in(Known::Out, Some("echo 'Error: the sign-in was denied'; exit 1"));
+        login_start("cursor", true);
+        wait_for("the failed sign-in's end", || login_state("cursor")["login"]["state"] == "failed");
+        assert_eq!(login_state("cursor")["login"]["message"], "Error: the sign-in was denied");
+        // with no stand-in a test can start no sign-in at all
+        stand_in(Known::Out, None);
+        assert_eq!(login_start("claude", true), json!({"ok": false, "error": "Tests start no sign-in."}));
+        *STAND_IN.lock().unwrap() = None;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_status_command_that_hangs_is_ended() {
+        let mut slow = Command::new("/bin/sh");
+        slow.args(["-c", "echo started; sleep 60"]);
+        let began = Instant::now();
+        assert_eq!(run_limited(slow, Duration::from_millis(300)), None, "no answer: not known");
+        assert!(began.elapsed() < Duration::from_secs(8), "ended, not waited for");
+        let mut quick = Command::new("/bin/sh");
+        quick.args(["-c", "echo out; echo err >&2; exit 1"]);
+        assert_eq!(run_limited(quick, Duration::from_secs(10)), Some(("out\n".to_string(), "err\n".to_string(), false)));
     }
 
     #[test]
-    fn nothing_here_can_sign_anyone_out() {
-        // the whole of this file, but for this test: no tool is ever started with "logout", in any spelling
-        let source = include_str!("signin.rs");
-        let code = source.split("fn nothing_here_can_sign_anyone_out").next().unwrap();
-        let args: Vec<&str> = code.lines().filter(|l| l.contains("cmd.args(") || l.contains("=> &[")).collect();
-        assert!(!args.is_empty());
-        for line in args {
-            assert!(!line.to_lowercase().contains("logout") && !line.to_lowercase().contains("signout"), "{line}");
+    fn nothing_in_the_app_can_sign_anyone_out() {
+        // every source file of the app, the page and the Python tools: the word for a tool's own "sign out" command
+        // appears in no line of code, only in comments and in tests (this one, and the ones that say what agy lists)
+        let word = ["log", "out"].concat();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("src")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rs")).collect();
+        files.push(root.join("..").join("ui").join("index.html"));
+        files.extend(std::fs::read_dir(root.join("..")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "py")));
+        assert!(files.len() > 30, "the app's sources were found: {}", files.len());
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap_or_default();
+            let name = file.file_name().unwrap().to_string_lossy().to_string();
+            // test files, and the tests at the end of a file, are not the app
+            if name.ends_with("_tests.rs") || name.ends_with("_replay.rs") {
+                continue;
+            }
+            let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or("");
+            for (n, line) in code.lines().enumerate() {
+                let t = line.trim_start();
+                let comment = t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with('#');
+                assert!(comment || !line.to_lowercase().contains(&word), "{name}:{}: {line}", n + 1);
+            }
         }
-        assert!(!code.contains("\"method\": \"logout\"") && !code.contains("auth/logout"));
     }
 }

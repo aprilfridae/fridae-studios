@@ -318,7 +318,8 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/signin" => {
             let ai = text_of("ai");
             match text_of("action").as_str() {
-                "login" => send_json(crate::signin::login_start(&ai)),
+                // `sure`: pressed again on the line that says what a new sign-in does to one that is there
+                "login" => send_json(crate::signin::login_start(&ai, body["sure"] == true)),
                 "cancel" => {
                     crate::signin::login_cancel(&ai);
                     send_json(crate::signin::login_state(&ai))
