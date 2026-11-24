@@ -387,6 +387,69 @@ def _front_set(text, pairs):
     return "---\n" + "\n".join(lines) + "\n---\n" + rest
 
 
+def _front_unset(text, keys):
+    """text without these front matter keys (and their block lists or folded lines), other lines kept."""
+    m = re.match(r"^\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
+    if not m:
+        return text
+    lines, out, skipping = m.group(1).splitlines(), [], False
+    for line in lines:
+        if skipping and re.match(r"^[ \t]+-|^[ \t]+\S", line):
+            continue
+        skipping = any(re.match(r"^%s[ \t]*:" % re.escape(k), line) for k in keys)
+        if not skipping:
+            out.append(line)
+    return "---\n" + "\n".join(out) + ("\n" if out else "") + "---\n" + text[m.end():]
+
+
+def unmark_superseded(text, new_title, scope, project=None):
+    """Take away the marks a note (its text, titled new_title, filed in scope) made when it was filed: superseded_by
+    on the notes its front matter supersedes, where they still name it, and its entries in the scope's
+    superseded.json. Returns the titles unmarked."""
+    import rbxvault
+    want = " ".join(new_title.split()).casefold()
+    olds = {" ".join(t.split()).casefold() for t in rbxvault.supersession(text)[0]}
+    done = []
+    roots = [folder(scope, project)]
+    other = "all" if scope == "game" else ("game" if project else None)
+    if other:
+        try:
+            roots.append(folder(other, project))
+        except KitError:  # a notes folder that leads somewhere else is never written
+            pass
+    for root in roots:
+        for t, path in note_files(root):
+            if t.casefold() not in olds:
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    old = f.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            by = rbxvault.supersession(old)[1]
+            if by and " ".join(by.split()).casefold() == want:
+                _atomic_write(path, _front_unset(old, ("superseded_by", "superseded_on")))
+                done.append(t)
+    root = folder(scope, project)
+    path = _note_path(root, SIDECAR)
+    if os.path.isfile(path):
+        with _locked(root):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError, UnicodeDecodeError):
+                data = None
+            if isinstance(data, dict):
+                gone = [k for k, v in data.items() if isinstance(v, dict) and
+                        " ".join(str(v.get("by") or "").split()).casefold() == want]
+                if gone:
+                    for k in gone:
+                        del data[k]
+                    _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
+                    done += gone
+    return done
+
+
 def mark_superseded(targets, new_title, scope, project=None):
     """Mark each old note as replaced by new_title: its front matter for the user's own notes, the scope's
     superseded.json for a shipped one, and the game's superseded.json for a note for every game that a game's note
@@ -514,7 +577,8 @@ def rule_edit(old, new, scope, project=None):
 
 
 def forget(title, scope, project=None):
-    """Move a note into the folder's .trash (never deleted)."""
+    """Move a note into the folder's .trash (never deleted), and take away the marks it made on the notes it
+    replaced (unmark_superseded): with it gone, they are current again."""
     want = " ".join((title or "").split()).casefold()
     if not want:
         raise KitError("forget needs the note's 'title' (action 'notes' lists them).")
@@ -536,7 +600,13 @@ def forget(title, scope, project=None):
         dest, n = os.path.join(trash, "%s %d.md" % (base, n)), n + 1
     if not (_inside(root, src) and _inside(root, dest)):
         raise KitError("That note is not in the notes folder.")
+    try:
+        with open(src, encoding="utf-8") as f:
+            text = f.read()
+    except (OSError, UnicodeDecodeError):
+        text = ""
     os.replace(src, dest)
+    unmark_superseded(text, base, scope, project)
     return base
 
 

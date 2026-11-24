@@ -176,6 +176,40 @@ class SupersedeFilingTests(UpkeepCase):
         self.assertEqual(side[title]["by"], "Our way")
         self.assertEqual(rbxnotes.sidecars(None), {title.casefold(): "Our way"})
 
+    def test_forgetting_the_replacement_takes_its_marks_away(self):
+        # review finding 5: the old note stayed marked and ranked down, pointing at a note in the trash
+        self.vault("note", title="Throw meter position", scope="all",
+                   text="The throw meter sits at the bottom centre of the HUD, 24 px above the safe area.")
+        self.vault("note", title="Throw meter v2", scope="all", force=True, supersedes="Throw meter position",
+                   text="The throw meter sits on the left edge of the screen now.")
+        vault_title = os.path.basename(rbxvault.note_files()[0])[:-3]
+        self.vault("note", title="Our way", scope="all", text="Our own way of doing this, measured in 2026.",
+                   supersedes=vault_title)
+        self.vault("note", title="Keep me", scope="all", text="Kept marks stay.", supersedes="Our way", force=True)
+        self.vault("forget", title="Throw meter v2", scope="all")
+        old = self.front(os.path.join(self.notes, "Throw meter position.md"))
+        self.assertNotIn("superseded_by", old)
+        self.assertNotIn("superseded_on", old)
+        self.assertEqual(old["title"], "Throw meter position", "the rest of its front matter is kept")
+        self.assertIn("24 px above", rbxvault.read(os.path.join(self.notes, "Throw meter position.md")))
+        out = self.vault("search", query="throw meter position HUD", shelf="yours", k=5)
+        self.assertNotIn("replaced by", out)
+        self.vault("forget", title="Our way", scope="all")
+        with open(os.path.join(self.notes, rbxnotes.SIDECAR), encoding="utf-8") as f:
+            self.assertNotIn(vault_title, json.load(f))
+        self.assertEqual(self.front(os.path.join(self.notes, ".trash", "Our way.md"))["superseded_by"], "Keep me",
+                         "a mark on the note forgotten is not another note's")
+        # a game's note that replaced a general note: its entry in the game's sidecar goes with it
+        self.vault("note", text="Buttons are square and outlined.", title="Button shape", scope="all")
+        with self.in_project():
+            self.vault("note", text="Round lantern buttons.", title="Lantern buttons", scope="game",
+                       supersedes="Button shape")
+            self.vault("forget", title="Lantern buttons", scope="game")
+            out = self.vault("search", query="buttons square outlined", shelf="yours", k=5)
+        self.assertNotIn("replaced by", out)
+        with open(os.path.join(self.game_notes, rbxnotes.SIDECAR), encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {})
+
     def test_unknown_or_own_title_is_refused_before_writing(self):
         with self.assertRaises(KitError) as cm:
             self.vault("note", text="x y z", title="New", scope="all", supersedes="No such note anywhere")
