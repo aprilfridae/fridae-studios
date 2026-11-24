@@ -554,6 +554,17 @@ fn pick_from(have: &Have, chosen: Option<&str>) -> Option<String> {
     }
 }
 
+/// The strongest model of the user's OpenCode Go plan for a run's Lead (`swarm::strongest`): on the plan, so never
+/// free and never billed per use, and never DeepSeek or GLM. None when the plan lists no such model.
+pub fn strong_model() -> Option<String> {
+    with_have(strong_of)
+}
+
+fn strong_of(have: &Have) -> Option<String> {
+    let plan: Vec<String> = have.list.iter().map(|(id, _)| id).filter(|id| have.on_plan(id)).cloned().collect();
+    crate::swarm::strongest(&plan)
+}
+
 /// Whether a model Fridae's OpenCode lists is billed per use (`Have::per_use`): one the app never chooses, and never
 /// runs because a Lead asked for it (`expert_ai::resolve`).
 pub fn billed_per_use(id: &str) -> bool {
@@ -3125,6 +3136,23 @@ mod tests {
         // neither a plan model nor a free one listed: the app chooses nothing (OpenCode then picks)
         let only: &'static [(String, String)] = Box::leak(parse_models("anthropic/claude-opus-5-5\n").into_boxed_slice());
         assert_eq!(default_of(&Have { list: only, priced: true, ..Default::default() }), None);
+    }
+
+    #[test]
+    fn a_leads_strong_model_is_on_the_plan_never_cheap_free_or_billed_per_use() {
+        // the plan's strongest: not DeepSeek or GLM, not a light model, and not opencode/claude-opus-5-5 (billed per use)
+        let have = Have { list: listed(SIGNED_IN_LIST), ..Default::default() };
+        assert_eq!(strong_of(&have).as_deref(), Some("opencode-go/gpt-6-luna"));
+        // only cheap, light or per-use models besides: none
+        let thin: &'static [(String, String)] = listed("opencode-go/deepseek-v4.1-flash\nopencode-go/glm-5.3\nopencode-go/claude-haiku-5-5\nopencode-go/beam-free\nopencode/claude-opus-5-5\nanthropic/claude-opus-5-5\n");
+        assert_eq!(strong_of(&Have { list: thin, ..Default::default() }), None);
+        // without a plan (signed in to nothing, or the plan lapsed): none either, never a model billed per use
+        assert_eq!(strong_of(&Have { list: no_plan(), ..Default::default() }), None);
+        assert_eq!(strong_of(&Have { list: listed(UNSIGNED_LIST), all_free: true, ..Default::default() }), None);
+        // a plan model OpenCode gives away for now is not on the plan
+        let kimi: &'static [(String, String)] = listed("opencode-go/kimi-k3\nopencode-go/glm-5.3\n");
+        assert_eq!(strong_of(&Have { list: kimi, ..Default::default() }).as_deref(), Some("opencode-go/kimi-k3"));
+        assert_eq!(strong_of(&Have { list: kimi, priced: true, free: priced(&["opencode-go/kimi-k3"]), ..Default::default() }), None);
     }
 
     #[test]

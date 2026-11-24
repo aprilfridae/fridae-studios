@@ -305,6 +305,95 @@ pub fn verifier_model(lead_ai: &str, lead_model: Option<&str>, default_model: Op
     (lead_ai.to_string(), lead_model.map(str::to_string))
 }
 
+// ------------------------------------------------------------ a strong Lead
+
+/// The guarded setting "Keep the Lead on a strong model" (`paths::strong_lead_on`): on unless the user turns it off.
+pub const STRONG_LEAD_KEY: &str = "strong_lead";
+
+/// A light model (fast and small): never what a Lead is moved to. Whole parts of the name, so "gemini" is not "mini".
+const LIGHT: [&str; 7] = ["flash", "haiku", "mini", "nano", "lite", "small", "free"];
+
+/// The families a Lead is moved to, the strongest first (the start of a model's name, after its provider). A family not
+/// named here comes after these.
+const STRONG: [&str; 8] = ["claude-opus", "gpt", "gemini", "kimi", "qwen", "grok", "minimax", "claude-sonnet"];
+
+/// How strong a model is for a Lead, lower first: None for a cheap one (`cheap`) or a light one (`LIGHT`). Within a
+/// family a "pro" or "max" model comes first, then the newer (the first version number in its name).
+fn lead_rank(id: &str) -> Option<(usize, bool, std::cmp::Reverse<(u32, u32)>)> {
+    if cheap(Some(id)) {
+        return None;
+    }
+    let name = id.rsplit_once('/').map_or(id, |(_, m)| m).to_lowercase();
+    let parts = || name.split(['-', '_', '.']);
+    if parts().any(|part| LIGHT.contains(&part)) {
+        return None;
+    }
+    let family = STRONG.iter().position(|f| name.starts_with(f)).unwrap_or(STRONG.len());
+    let big = parts().any(|part| part == "pro" || part == "max");
+    // "gpt-5.6-luna" is 5.6, "kimi-k3" is 3
+    let version: String = name.chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let mut v = version.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    Some((family, !big, std::cmp::Reverse((v.next().unwrap_or(0), v.next().unwrap_or(0)))))
+}
+
+/// The strongest of `ids` for a Lead (`lead_rank`), the first listed among equals; None when every one is cheap or light.
+pub fn strongest(ids: &[String]) -> Option<String> {
+    ids.iter().filter_map(|id| lead_rank(id).map(|r| (r, id))).min_by_key(|(r, _)| *r).map(|(_, id)| id.clone())
+}
+
+/// What a Lead's model is chosen from (`lead_world` for the real computer).
+pub struct LeadWorld<'a> {
+    /// the AI's own strong model, if it has one (OpenCode: on the user's plan, never billed per use)
+    pub strong_of: &'a dyn Fn(&str) -> Option<String>,
+    /// the AI is set up on this computer
+    pub installed: &'a dyn Fn(&str) -> bool,
+    /// Gemini's default model
+    pub gemini_default: Option<String>,
+}
+
+/// The AI and model a turn of a run's Lead runs on instead, when the one it would run on is cheap (`cheap`): the same
+/// AI's strong model; else Claude's Opus when Claude is set up; else Gemini's default when Gemini is. None: it runs as
+/// it would (not a Lead, the setting is off, the model is not cheap, or nothing stronger is there).
+pub fn lead_model(leads: bool, on: bool, ai: &str, model: Option<&str>, world: &LeadWorld) -> Option<(String, Option<String>)> {
+    if !leads || !on || !cheap(model) {
+        return None;
+    }
+    if let Some(m) = (world.strong_of)(ai).filter(|m| !cheap(Some(m))) {
+        return Some((ai.to_string(), Some(m)));
+    }
+    if ai != "claude" && (world.installed)("claude") {
+        return Some(("claude".into(), Some("opus".into())));
+    }
+    if ai != "gemini" && (world.installed)("gemini") && !cheap(world.gemini_default.as_deref()) {
+        return Some(("gemini".into(), world.gemini_default.clone()));
+    }
+    None
+}
+
+/// The real computer for `lead_model`: OpenCode's strongest plan model (`opencode::strong_model`); another AI's
+/// default when it is not cheap, else its strongest listed model.
+pub fn lead_world() -> LeadWorld<'static> {
+    LeadWorld {
+        strong_of: &|ai| match ai {
+            "opencode" => crate::opencode::strong_model(),
+            "claude" => Some("opus".into()),
+            _ => crate::expert_ai::default_of(ai).filter(|m| !cheap(Some(m))).or_else(|| strongest(&crate::expert_ai::models_of(ai))),
+        },
+        installed: &|ai| paths::find_ai(ai).is_some(),
+        gemini_default: crate::expert_ai::default_of("gemini"),
+    }
+}
+
+/// "DeepSeek" or "GLM": the cheap model a Lead was moved off, as the user names it.
+pub fn cheap_name(model: &str) -> &'static str {
+    if model.to_lowercase().contains("deepseek") { "DeepSeek" } else { "GLM" }
+}
+
+/// Whether this chat leads a swarm (its experts' board, `Run::lead`).
+pub fn leads(agent_id: &str) -> bool {
+    !agent_id.is_empty() && runs().iter().any(|r| r.lead == agent_id)
+}
+
 /// The checks a verifier runs, by what the copy holds.
 pub fn checks_for(tree: &Path) -> Vec<String> {
     let has = |f: &str| tree.join(f).exists();

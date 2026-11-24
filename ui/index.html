@@ -1237,6 +1237,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <details class="moreinfo"><summary>More</summary><p>Now and then the Lead may start an expert on another AI or model; your rows here always win. An expert on Same as the Lead uses the Lead's model, so a Lead on a big model uses up that plan faster. Once you pick an AI, the expert uses that AI's default model unless you pick one. Only AIs installed on this computer are offered.</p></details>
       <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
       <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your game, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
+      <label class="sub check-row"><input type="checkbox" id="xp-strong-lead"> Keep the Lead on a strong model</label>
+      <p class="sub">A run's Lead plans and splits the work, so it never runs on DeepSeek or GLM. Turn off to let it.</p>
       <div id="xp-table" style="margin-top: 12px"></div>
       <h3 id="sw-cap-title">Most experts working at once</h3>
       <p class="sub">1 means one at a time; more get it done sooner and use up your plan's usage faster.</p>
@@ -5487,9 +5489,10 @@ $("b-update").onclick = async () => {
 $("upd-check").onclick = async () => { await api("/api/update", { action: "check" }); setTimeout(refresh, 600); };
 $("upd-auto").onclick = async () => { const on = $("upd-auto").getAttribute("aria-checked") !== "true"; await api("/api/update", { action: "auto", value: on }); refresh(); };
 function paintGemini() { $("gem-state").textContent = ((status.ai || {}).installed || {}).gemini ? "Made through Antigravity on your own Google account, at no extra cost. If that fails, " + (status.gemini_api ? "your API key is used." : "you get the prompt to run in Gemini yourself.") : status.gemini_api ? "Made automatically with your API key. Google charges for each one." : "Made through your own Gemini chat, at no extra cost." + (status.gemini ? " A key is saved but switched off." : "");
-  $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; $("gem-images").checked = status.gemini_images !== false; $("xp-summaries").checked = status.expert_summaries !== false; }
+  $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; $("gem-images").checked = status.gemini_images !== false; $("xp-summaries").checked = status.expert_summaries !== false; $("xp-strong-lead").checked = status.strong_lead !== false; }
 $("gem-images").onchange = async (e) => { await api("/api/gemini", { images: e.target.checked }); refresh(); };
 $("xp-summaries").onchange = async (e) => { await api("/api/expert-summaries", { on: e.target.checked }); refresh(); };
+$("xp-strong-lead").onchange = async (e) => { await api("/api/strong-lead", { on: e.target.checked }); refresh(); };
 $("gem-save").onclick = async () => { const k = $("gem-key").value.trim(); if (!k) return; await api("/api/gemini", { key: k }); $("gem-key").value = ""; refresh(); };
 $("env-keys").onchange = async (e) => { await api("/api/env-keys", { on: e.target.checked }); refresh(); };
 $("gem-api").onclick = async () => { await api("/api/gemini", { use_api: $("gem-api").getAttribute("aria-checked") !== "true" }); refresh(); };
