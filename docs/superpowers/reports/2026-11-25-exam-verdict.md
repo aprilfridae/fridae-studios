@@ -23,11 +23,20 @@ Plain-English verdict on the full exam of Fridae's knowledge system (search plus
      - 74% at 10x.
    - Given those passages, the Librarian's cheap writer gets the whole answer right only 25–33% of the time. Sonnet, reading the same passages, gets 38–48%.
    - The commonest failure, by far, is the writer leaving facts out (199 of 323 failed answers).
-2. **One cause of that was built in, and is now fixed in the repo.**
-   - The writer was allowed at most 2 claims per part of a question.
-   - Every exam question was one part. Not one question that needs 3 facts was ever answered fully: 0 of 17, in every Librarian setup.
-   - A one-part question may now get 4 claims; a two-part question gets 3; more parts keep 2. The answer still stays under 250 words.
-   - Not yet measured: I'll re-run the answers when part 2 is done.
+2. **Allowing more claims did not help, so it was undone.**
+   - The writer was allowed at most 2 claims per part of a question, and no Librarian setup answered any question needing 3 facts fully (0 of 17).
+   - I let a one-part question get 4 claims and re-ran all 61 questions in 4 setups.
+   - The writer did use the room: 2.7 claims an answer instead of 1.7. But the extra claims were not the missing facts:
+
+     | | Light 1x | Light 10x | Heavy 1x | Keyword 10x |
+     |---|---|---|---|---|
+     | Correct, before | 28% | 30% | 25% | 33% |
+     | Correct, after | 28% | 26% | 28% | 23% |
+     | Wrong facts, before | 6% | 2% | 4% | 8% |
+     | Wrong facts, after | 8% | 6% | 9% | 8% |
+
+   - Three-fact questions stayed at 0–1 of 17. So the limit was not the cause; reverted (361caf0).
+   - Sonnet also gets only 1 of 17 three-fact questions, which suggests the 3 passages of about 600 characters each often don't hold every fact. That idea is untested.
 3. **A speed bug, fixed in the repo.**
    - At 10x, every Light search took about 3.2 s, although the index answered in 0.09 s.
    - The cause: after the index answered, Fridae also ran the full keyword search over every note, just to find the matching "symptom" lines.
@@ -79,7 +88,8 @@ Plain-English verdict on the full exam of Fridae's knowledge system (search plus
 
 - **The writer.** This is the biggest loss.
   - The cheap writer gets about 15 points fewer answers right than Sonnet on identical passages.
-  - Part of that was the 2-claim cap (now fixed). The rest is the writer picking weaker facts: on two-fact questions it gets about 0.9 facts per answer, against Sonnet's 1.2.
+  - It picks weaker facts: on two-fact questions it gets about 0.9 facts per answer, against Sonnet's 1.2.
+  - Letting it say more did not fix this (point 2).
 - **Slow tails.**
   - A typical Librarian answer takes about 5.5 s, but the slowest 1 in 20 takes 15–33 s. Sonnet's slowest take 6 s.
   - 2–6 of 61 answers fell back to "could not be checked" or "no writer answered in time".
@@ -100,7 +110,6 @@ Plain-English verdict on the full exam of Fridae's knowledge system (search plus
 
 1. **Keep Light as the default.**
    - Ship the symptom-line speed fix (in the repo).
-   - Ship the claims-per-part fix (in the repo, to be measured).
 2. **Build a "not in the knowledge base" gate before the writer.**
    - When the best passage covers too little of the question's wording, answer "not in the knowledge base" without calling the writer. This is also faster.
    - Measure the threshold on the exam's questions, so it doesn't start refusing answerable ones.
