@@ -1,0 +1,17 @@
+# Overnight: accurate knowledge at scale (2026-11-24 night)
+
+The user, going to sleep: "just work on this all night dont ask me for shit ... implement everything you thought of, and then run your tests". Quick dev mode by day; long runs overnight (memory: quick-dev-mode-tests-overnight, rag-judged-on-scale). Nothing merges to main. Pushes go to `feature/ui-overhaul` as all day. Install only when the app is idle.
+
+## Work, as separate branches (worktrees), then merged into feature/ui-overhaul
+
+| # | What | Branch / worktree | Owner files |
+|---|------|-------------------|-------------|
+| A | Fast Librarian: the app searches every part at once, one cheap one-shot call writes the answer | feature/fast-librarian, /Users/angela/fridae-librarian | swarm.rs, compact.rs, a small rbx search subcommand |
+| A2 | Quote-backed answers: each claim quotes its passage; a support check drops unsupported claims; the asker gets the quotes | same branch, after A | the same |
+| B | Index quality: (1) a context line for each passage (title, section path, game, note gist, with a cached cheap-model one-liner per note); (2) note labels (game or all, kind, date, source) and search filters; (5) follow `[[links]]` from matching passages | feature/rag-quality, /Users/angela/fridae-rag-quality | rbxrag/*, rbxvault.py search |
+| C | Lead on a strong model: a run's Lead never plans on DeepSeek/GLM (Setup switch, on by default, visible line) | feature/strong-lead, /Users/angela/fridae-strong-lead | agents.rs turn model, ui |
+| D | Vault upkeep, after B: on filing, flag contradictions, merge near-duplicates, mark replaced notes; a nightly sweep report | feature/vault-upkeep | rbxvault.py note filing, Librarian |
+| E | The exam, after merge: the scale bench (feature/rag-scale-bench, 4500875) plus an answer-accuracy exam; full 1x and 10x runs overnight; results to docs/superpowers/reports/2026-11-25-knowledge-bench.md | feature/rag-scale-bench | tests/scale_bench |
+
+## Ledger
+- (entries appended as work lands)
