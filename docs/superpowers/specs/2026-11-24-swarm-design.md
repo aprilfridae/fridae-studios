@@ -73,6 +73,33 @@ change, stalls are not watched, and finished experts end instead of parking.
   parts and strong ones for plans, hard parts and UI. Rollover keeps members going.
 - **Plain-English summaries** carry on per member when it finishes or its branch merges.
 
+## The Librarian: a knowledge expert on the board (user idea, 2026-11-24)
+
+The user: "having an llm agent that indexes the rag and then if the swarm has questions that arent related to
+individual agents it can ask the rag trained expert".
+
+- Every swarm has a standing member, **`@librarian`**. Any member, or the Lead, asks it knowledge questions on the
+  board: "how do we stop exploiters firing this remote?", "what does the user mean by softer?", "what did we learn
+  last time the shop UI broke?".
+- The Librarian searches the knowledge index (RAG, or keyword search when RAG is off) over the Fridae Studios vault,
+  the user's taste notes, house rules and the game's own notes. It reads the best few passages and answers in a few
+  lines, citing each source note so the asker can open it.
+- **Why it saves tokens:** today every worker searches and reads whole notes into its own context. With the
+  Librarian, one cheap member does the reading and each worker gets a short answer back. Repeat questions in a run
+  are answered from its own memory.
+- **It answers only from what it found.** When the vault has nothing, it says so ("not in the knowledge base") and
+  never makes an answer up. Exact API lookups can still go straight to `rbx_vault`.
+- **Model:** a cheap OpenCode model (DeepSeek/GLM), because reading retrieved notes and summarising them is the kind
+  of simple job the user's cheap-model rule allows. It escalates to a stronger model only when a question needs real
+  judgement.
+- **It is also the curator** (with the vault design, `2026-11-24-unified-knowledge-vault-design.md`):
+  - When a member discovers something worth keeping, or the user steers taste, it posts `@librarian remember: ...`.
+  - The Librarian files it into the vault by topic, updates an existing note instead of duplicating, and links it.
+  - This makes the Librarian the one place knowledge goes in and comes out.
+- It is parked (free) whenever nobody is asking, and wakes on a mention.
+- It isn't "trained": nothing is fine-tuned. It is an agent with the knowledge index as its tool, so it is always as
+  current as the vault.
+
 ## UI
 
 - **Sidebar tree (exists):** members under the Lead, each with a status (working, parked, verifying, merged, stopped)
