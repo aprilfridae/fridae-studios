@@ -225,7 +225,11 @@ log names in `helper_started`, the saved chats with it as `parent` from `/api/hi
 first). An arrow beside the chat shows or hides them, kept per chat in `localStorage` under `experts-shown`. Only
 experts at work, or at work within the last half hour (`xpRecent`; `xpWhen` holds when: a saved chat's `updated` as
 first heard, or a turn seen starting or ending), are listed outright; the rest are behind an "N earlier" line. The
-lists ease open and shut (`easeList`, not with reduced motion), and the sidebar is one list that scrolls as a whole
+lists ease open and shut (`easeList`, not with reduced motion): the page takes its final shape at once and the ease
+is only moves and a fade (the list is a window `.s-kids` over its rows `.s-in`, sliding opposite ways; what follows
+rides on the window's edge), so nothing is laid out while it runs. An expert's row is `.s-row.sx` in a plain block
+`.s-x` that draws its piece of the guide line (not `.xp`: that is the researcher's line, with a border and margins
+that put the line out of place). The sidebar is one list that scrolls as a whole
 and draws no scrollbar. A helper
 (an agent with `parent`) is a chat of its own, read only (`paintExpertBar` takes the message box's place): pressing
 its row opens it (`openChatById`, which reopens a saved one with `/api/open-chat`). In its parent's conversation it is
