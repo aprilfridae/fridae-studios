@@ -11,6 +11,7 @@ the user starts, never while answering a query. Importing this module imports no
 import json
 import math
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -200,6 +201,18 @@ class OllamaError(RuntimeError):
     pass
 
 
+OLLAMA_BATCH = 64  # inputs per /api/embed call: Ollama embeds them one by one, so a dropped call loses little
+OLLAMA_TRIES = 4  # a call that fails on a dropped connection inside Ollama is sent again, after 0.5, 1 and 2 s
+
+
+def _is_transient(msg):
+    """Whether an Ollama error is a hiccup worth sending again: its own worker dropping a connection (Ollama reports
+    'Post "http://127.0.0.1:<port>/tokenize": EOF'), a reset, or Ollama restarting the model."""
+    m = (msg or "").lower()
+    return any(w in m for w in ("eof", "connection reset", "broken pipe", "connection refused", "not answering",
+                                "server busy", "loading model", "timed out", "timeout", "unexpected server status"))
+
+
 def _is_context_error(msg):
     m = (msg or "").lower()
     return "context" in m and ("length" in m or "exceed" in m or "window" in m) or "too long" in m
@@ -235,12 +248,23 @@ class OllamaDense:
             raise OllamaError(data.get("error") or "Ollama gave no embeddings.")
         return [_floats(v) for v in embs]
 
+    def _post_retrying(self, inputs):
+        for attempt in range(OLLAMA_TRIES):
+            try:
+                return self._post(inputs)
+            except OllamaError as e:
+                if attempt == OLLAMA_TRIES - 1 or not _is_transient(str(e)):
+                    raise
+                time.sleep(0.5 * (2 ** attempt))
+
     def embed(self, texts):
         texts = list(texts)
         if not texts:
             return []
+        if len(texts) > OLLAMA_BATCH:
+            return [v for i in range(0, len(texts), OLLAMA_BATCH) for v in self.embed(texts[i:i + OLLAMA_BATCH])]
         try:
-            return self._post(texts)
+            return self._post_retrying(texts)
         except OllamaError as e:
             if not _is_context_error(str(e)):
                 raise

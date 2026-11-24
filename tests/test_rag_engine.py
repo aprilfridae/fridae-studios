@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest import mock
 import zlib
 
 from rbxrag import chunks
@@ -528,3 +529,48 @@ class StoreEquivalenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OllamaHiccupTest(unittest.TestCase):
+    """Ollama's own worker can drop a connection mid-build ('Post .../tokenize: EOF'); one hiccup must not end it."""
+
+    def _dense(self, replies):
+        from rbxrag import models
+        d = models.OllamaDense("http://127.0.0.1:9")
+        calls = []
+
+        def post(inputs):
+            calls.append(len(inputs))
+            r = replies.pop(0) if replies else None
+            if isinstance(r, Exception):
+                raise r
+            return [[1.0, 0.0] for _ in inputs]
+        d._post = post
+        return d, calls
+
+    def test_a_dropped_connection_is_sent_again(self):
+        from rbxrag import models
+        d, calls = self._dense([models.OllamaError('Post "http://127.0.0.1:64738/tokenize": EOF')])
+        with mock.patch.object(models.time, "sleep"):
+            self.assertEqual(len(d.embed(["a", "b"])), 2)
+        self.assertEqual(calls, [2, 2])
+
+    def test_a_real_error_is_not_retried(self):
+        from rbxrag import models
+        d, calls = self._dense([models.OllamaError('model "mxbai-embed-large" not found, try pulling it first')])
+        with mock.patch.object(models.time, "sleep"), self.assertRaises(models.OllamaError):
+            d.embed(["a"])
+        self.assertEqual(calls, [1])
+
+    def test_it_gives_up_after_a_few_tries(self):
+        from rbxrag import models
+        d, calls = self._dense([models.OllamaError("EOF")] * 10)
+        with mock.patch.object(models.time, "sleep"), self.assertRaises(models.OllamaError):
+            d.embed(["a"])
+        self.assertEqual(len(calls), models.OLLAMA_TRIES)
+
+    def test_big_batches_go_in_small_calls(self):
+        from rbxrag import models
+        d, calls = self._dense([])
+        self.assertEqual(len(d.embed(["x"] * 150)), 150)
+        self.assertEqual(calls, [64, 64, 22])
