@@ -686,7 +686,7 @@ done
         // one line about it, the app's; the tool's own words are not said beside it
         assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
         let line = c.a.st.lock().unwrap().log.iter().find(|e| e["kind"] == "rollover").unwrap()["text"].as_str().unwrap().to_string();
-        assert!(line.starts_with("Your Claude account ran out of usage (back in about ") && line.ends_with("). Carrying on with the second account."), "{line}");
+        assert!(line.starts_with("Your Claude account ran out of usage (back in about ") && line.ends_with("). Carrying on with account 2."), "{line}");
         assert_eq!(c.a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "done").count(), 1, "the first message's: this turn is not over");
         // the first account's process is not kept for it: the message goes to one started with the second's folder
         let until = std::time::Instant::now() + Duration::from_secs(10);

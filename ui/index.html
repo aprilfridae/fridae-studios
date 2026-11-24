@@ -1125,7 +1125,7 @@ const CONTROLS = [
   ["The game's name", "Press it for the game's folder, notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
   ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (or, for a chat going to Claude, by Claude's smallest model when OpenCode cannot). Common keys and passwords are masked where recognised, and the summary runs on your own plan either way. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
-  ["A second account", "Setup, Connections: a second account for Claude or for Gemini.", "", "When your account runs out of usage, the chat carries on with the second one by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. New chats use your own account again once it is back. Add signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in with another account than your own (sign out of yours in the browser first), or it adds no usage. On Gemini's second account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there."],
+  ["More accounts", "Setup, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Setup, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
@@ -2572,42 +2572,53 @@ function aiNotice(ai) {
   return n;
 }
 let noticePresses = 0;
-/* A second account for an AI (status.ai.accounts: Claude and Gemini): a sign-in of Fridae's own for the same tool, which a
-   chat moves to when the first account runs out of usage. In a chat, a few words say which account it is on, only
-   while there is a second one. */
+/* More accounts for an AI (status.ai.accounts, for Claude and for Gemini): each is a sign-in of Fridae's own for the
+   same tool, in a folder of Fridae's own. A chat moves to the next one that has usage left when its account runs
+   out, in the order of this list (your own account first). In a chat, a few words say which account it is on, only
+   while there is more than one. */
 function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }
-function accountWords(ai, p) { return accountOf(ai).exists && p ? " · account " + (p.account || 1) : ""; }
-/* Its line in Setup, under the AI's own: Add; then its sign-in (the same line and buttons as any sign-in) or who is
-   signed in, and Remove. Your own account is never changed from here. */
-function secondAccountRow(ai) {
-  const id = ai + "2", acc = accountOf(ai), s = signInOf(id), line = signInLine(id), waiting = ((s.login || {}).state === "waiting");
+function accountsOf(ai) { return accountOf(ai).accounts || []; }
+function accountWords(ai, p) { return accountsOf(ai).length && p ? " · account " + (p.account || 1) : ""; }
+/* Their lines in Setup, under the AI's own (which is account 1): one line per added account with its sign-in (the
+   same line and buttons as any sign-in) or who is signed in, and Remove; then one line to add another. Your own
+   account is never changed from here. */
+function accountRows(ai) {
+  const acc = accountOf(ai), rows = accountsOf(ai).map((a) => accountRow(ai, a));
+  const add = el("div", "g-row oc-row");
+  add.innerHTML = "<b></b><small></small><div class=\"act\"></div>";
+  add.querySelector("b").textContent = rows.length ? "Another account" : "More accounts";
+  const left = (acc.left || []).length ? "A removed account's folder could not be deleted and may still hold its sign-in. Delete it yourself: " + acc.left.join(", ") + " " : "";
+  add.querySelector("small").textContent = accError[ai] || left + (rows.length ? "Add as many as you have. They are used in this order, your own first." : "None. Add one to carry on when your account runs out of usage.");
+  if (rows.length < (acc.most || 20)) add.querySelector(".act").appendChild(accountButton(ai, "Add account", "add", ""));
+  return rows.concat([add]);
+}
+function accountRow(ai, a) {
+  const id = a.id, s = signInOf(id), line = signInLine(id), waiting = ((s.login || {}).state === "waiting");
   const row = el("div", "g-row oc-row");
-  row.innerHTML = "<b>Second account</b><small></small><div class=\"act\"></div>";
-  row.querySelector("small").textContent = !acc.exists ? (sgError[id] || (acc.left ? "Removed, but its folder could not be deleted and may still hold its sign-in. Delete it yourself: " + acc.left : "None. Add one to carry on when the first runs out of usage."))
-    : acc.broken ? "Fridae does not use this account: its folder was changed from outside (it is a link now, or a keychain has appeared in it). Remove it and add it again."
+  row.innerHTML = "<b></b><small></small><div class=\"act\"></div>";
+  row.querySelector("b").textContent = "Account " + a.n;
+  row.querySelector("small").textContent = a.broken ? "Fridae does not use this account: its folder was changed from outside (it is a link now, or a keychain has appeared in it). Remove it and add it again."
     : line.text ? line.text
-    : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as your own, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
+    : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as one above it, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
     : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
-    : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + ((acc.used || [])[1] ? " Out of usage for now." : "")
+    : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + (a.used ? " Out of usage for now." : "")
     : "Checking the sign-in...";
   const act = row.querySelector(".act");
-  if (!acc.exists) act.appendChild(accountButton(ai, "Add", "add"));
-  else {
-    /* (an account the app will not use offers no sign-in: only Remove) */
-    if (!acc.broken) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
-    if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove"));
-  }
+  /* (an account the app will not use offers no sign-in: only Remove) */
+  if (!a.broken) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
+  if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove", a.name));
   return row;
 }
-/* Add makes the app's folder for the second account and starts the tool's sign-in for it (its page opens in your
-   browser); Remove deletes that folder. */
-function accountButton(ai, label, action) {
-  const b = el("button", "pill sm", esc(label)), id = ai + "2";
+/* Add account makes the app's folder for one more account and starts the tool's sign-in for it (its page opens in
+   your browser); Remove deletes that account's folder. */
+const accError = {};
+function accountButton(ai, label, action, name) {
+  const b = el("button", "pill sm", esc(label));
   b.onclick = async () => {
     b.disabled = true; noticePresses++;
-    let r = null; try { r = await api("/api/accounts", { ai, action }); } catch (e) {}
-    sgConfirm[id] = null;
-    sgError[id] = !r ? "Could not reach the app. Try again." : r.ok === false && action === "add" ? (r.error || "The second account could not be added.") + " Try again." : "";
+    let r = null; try { r = await api("/api/accounts", { ai, action, name }); } catch (e) {}
+    if (r && r.id) sgConfirm[r.id] = null;
+    accError[ai] = !r ? "Could not reach the app. Try again." : r.ok === false && action === "add" && !r.id ? (r.error || "The account could not be added.") + " Try again." : "";
     await refresh(); watchOpenCode();
   };
   return b;
@@ -3937,7 +3948,7 @@ function paintAi() {
     paintNotice(row.querySelector(".notice"), id);
     $("ai-list").appendChild(row);
     if (id === "opencode" && have[id]) $("ai-list").appendChild(openCodeRow());
-    if (have[id] && accountOf(id).offered) $("ai-list").appendChild(secondAccountRow(id));
+    if (have[id] && accountOf(id).offered) accountRows(id).forEach((row) => $("ai-list").appendChild(row));
   });
 }
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in

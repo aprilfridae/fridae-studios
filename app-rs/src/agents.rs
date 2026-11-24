@@ -598,28 +598,17 @@ fn told_from_log(log: &[Value]) -> (Option<String>, Vec<String>) {
     (swap, told)
 }
 
-/// Where a chat goes when the account `from` has just hit its limit: the other account when it can take the chat
-/// (`accounts::other`), but never for a message that was moved before (no bouncing between two used-up accounts)
-/// and never without a message to send again.
-fn rolls_to(have: crate::accounts::Have, from: u8, rolled: bool, has_message: bool) -> Option<u8> {
-    if rolled || !has_message {
-        return None;
-    }
-    crate::accounts::other(have, from)
-}
-
 /// Added to the hand-over when the turn that hit the limit had already used tools: its steps are not in the chat so far.
 const CUT_OFF_NOTE: &str = "[The message that follows was begun once already and cut off part-way, when the account ran out of usage. Some of its work may be done: look before you do it again.]\n\n";
 
-/// The chat's line at a rollover: which account ran out, when it is back if the tool said, which one carries on.
-fn rollover_line(kind: &str, from: u8, back: Option<&str>) -> String {
+/// The chat's line at a rollover: which account ran out, when it is back if the tool said, which one carries on
+/// (the user's own is "your account", an added one goes by its place in Setup's list).
+fn rollover_line(kind: &str, from: u8, to: u8, back: Option<&str>) -> String {
     let name = ai_label(kind);
     let back = back.map(|b| format!(" (back {b})")).unwrap_or_default();
-    if from == 2 {
-        format!("The second {name} account ran out of usage{back}. Carrying on with your own account.")
-    } else {
-        format!("Your {name} account ran out of usage{back}. Carrying on with the second account.")
-    }
+    let ran_out = if from >= 2 { format!("{name} account {from}") } else { format!("Your {name} account") };
+    let carries = if to >= 2 { format!("account {to}") } else { "your own account".to_string() };
+    format!("{ran_out} ran out of usage{back}. Carrying on with {carries}.")
 }
 
 /// A process per message that ended without a result, saying in its error output that the account's quota is
@@ -645,12 +634,12 @@ fn limit_in_error_output(kind: &str, t: &mut TurnEnd, err: &str) {
 /// the user's own account from their next message (`turn_account`).
 /// Waits, but not for long (`REMOVE_WAIT`), until those turns have ended: a tool still running in the folder would
 /// write its files back after it was deleted.
-pub fn account_removed(ai: &str) {
+pub fn account_removed(ai: &str, name: &str) {
     let mut stopped: Vec<Arc<Agent>> = Vec::new();
     for a in agents() {
         let (on_it, working, live) = {
             let mut st = a.st.lock().unwrap();
-            let on_it = st.account == 2 && st.ai.as_deref().unwrap_or("claude") == ai;
+            let on_it = st.account_name.as_deref() == Some(name) && st.ai.as_deref().unwrap_or("claude") == ai;
             (on_it, working(&st), if on_it && !st.running { st.live.take() } else { None })
         };
         if on_it && working {
@@ -671,17 +660,18 @@ pub fn account_removed(ai: &str) {
 /// How long Remove waits for the turns it stopped: a little longer than a turn gets to end when asked.
 const REMOVE_WAIT: Duration = if cfg!(test) { Duration::from_millis(300) } else { Duration::from_secs(8) };
 
-/// The account a turn runs on. A chat that has an account keeps it: there is no switching back mid-chat (only a limit
-/// moves it, `rolled`), unless its second account is gone. A chat from before there were accounts, which has a
-/// conversation, is on the user's own. A new chat starts on the first account that is not used up (`accounts::pick`).
-fn account_for(current: u8, has_conversation: bool, second_exists: bool, have: crate::accounts::Have) -> u8 {
-    // (`second_exists`, for a chat on the second account: it is there for this chat still, `turn_account`)
-    match current {
-        2 if second_exists => 2,
-        2 => 1,
-        1 => 1,
+/// The account a turn runs on, by its place (1: the user's own; 2 and up: the added ones in their order). A chat
+/// that has an account keeps it: there is no switching back mid-chat (only a limit moves it, `roll_over`), unless
+/// its added account is no longer there for it (`mine`: `turn_account` says whether it is, and where it is now).
+/// A chat from before there were accounts, which has a conversation, is on the user's own. A new chat starts on
+/// the first account that can take one (`accounts::pick`).
+fn account_for(was: u8, at: Option<u8>, has_conversation: bool, slots: &[bool]) -> u8 {
+    match (was, at) {
+        (2.., Some(now)) => now,
+        (2.., None) => 1,
+        (1, _) => 1,
         _ if has_conversation => 1,
-        _ => crate::accounts::pick(have),
+        _ => crate::accounts::pick(slots),
     }
 }
 
@@ -822,11 +812,14 @@ struct State {
     /// kick-off and Studio's note, before the chat so far and the standing instructions), and its settings. Sent
     /// again as it is when the account's usage limit ends the turn and the other account takes over (`roll_over`).
     sent: Option<(String, String, Ask)>,
-    /// The message under way was already sent again on the other account: it is not moved a second time, so two
-    /// used-up accounts never pass a chat back and forth.
-    rolled: bool,
-    /// The folder's name of the second account this chat runs on, while it is on one (`accounts::name`): a second
-    /// account removed and added again is another account, with none of this chat's conversations.
+    /// The accounts the message under way was already sent on and ran out on, by name ("" for the user's own): it
+    /// is never sent on one of them again, so used-up accounts never pass a chat back and forth, however many
+    /// there are. Empty again with the next message that is not a resend.
+    tried: Vec<String>,
+    /// The folder's name of the added account this chat runs on, while it is on one (`accounts::name_at`): what the
+    /// account is. `account` is only its place in the order today (for the tag beside the model and the usage
+    /// record), read again from this name before every turn; an account removed and added again is another
+    /// account, with none of this chat's conversations.
     account_name: Option<String>,
     /// The turn ended on the usage limit and may move to the other account: the chat was kept counting as working
     /// (`sending`) from the moment the turn stopped counting as running (`turn_over_at`), so no message gets in
@@ -3123,7 +3116,7 @@ impl Agent {
         let text: &str = resent.as_ref().map(|(raw, _)| raw.as_str()).unwrap_or(text);
         let raw = text.to_string();
         if !resend {
-            self.st.lock().unwrap().rolled = false; // a new message may move once again
+            self.st.lock().unwrap().tried.clear(); // a new message may go to every account once again
         }
         if !resend && let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
             return self.make_texture(&c[1].to_lowercase(), c[2].trim());
@@ -3309,8 +3302,8 @@ impl Agent {
         };
         // the second account's folder, read once for the turn. Gone in this very moment (Remove was pressed): the
         // turn runs on the user's own account, and the chat says so
-        let second_dir = (account == 2).then(|| crate::accounts::prepare(&kind)).flatten();
-        if account == 2 && second_dir.is_none() {
+        let second_dir = (account >= 2).then(|| crate::accounts::prepare_at(&kind, account)).flatten();
+        if account >= 2 && second_dir.is_none() {
             // (as `turn_account` does for an account that was removed: the conversation was the second account's,
             // so this message starts a new one on the user's own, with the chat so far)
             {
@@ -3922,8 +3915,9 @@ impl Agent {
         t.ended = live.is_some();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
         // (a Gemini turn on the second account: agy's data folder is in that account's home)
-        if kind == "gemini" && self.st.lock().unwrap().account == 2 {
-            gemini.data = crate::accounts::folder("gemini").map(|h| h.join(".gemini").join("antigravity-cli"));
+        if kind == "gemini" {
+            let account = self.st.lock().unwrap().account;
+            gemini.data = crate::accounts::folder_at("gemini", account).map(|h| h.join(".gemini").join("antigravity-cli"));
         }
         let mut first = true;
         // the conversation this turn asked to go on with: an AI that reports another one started afresh
@@ -4091,7 +4085,7 @@ impl Agent {
                                     // the account's limit, with a second account there: the chat may carry on with
                                     // it and then says so in one line of its own, so the tool's line waits for
                                     // `after_turn`, which puts it when the chat does not move
-                                    if account_limit(msg) && crate::accounts::folder("claude").is_some() {
+                                    if account_limit(msg) && crate::accounts::any("claude") {
                                         t.held_back = true;
                                     } else {
                                         self.put_failure("claude", msg);
@@ -4245,7 +4239,7 @@ impl Agent {
                 t.result_text = text.clone();
                 // the account's limit, with a second account there: said in `after_turn`, in one line (as Claude's)
                 let kind = self.ai();
-                if account_limit_of(&kind, &text) && crate::accounts::AIS.contains(&kind.as_str()) && crate::accounts::folder(&kind).is_some() {
+                if account_limit_of(&kind, &text) && crate::accounts::any(&kind) {
                     t.held_back = true;
                 } else {
                     self.put_failure(&kind, &text);
@@ -4298,27 +4292,30 @@ impl Agent {
         self.st.lock().unwrap().model_note.clone()
     }
 
-    /// The account this turn runs on (`account_for`), kept for the chat. A chat on a second account that is not
-    /// there for it any more carries on with the user's own, in a new conversation handed the chat so far: the
-    /// account was removed (or removed and added again: another folder, which has none of its conversations), or
-    /// its sign-in is known to be gone while the user's own account is not used up.
+    /// The account this turn runs on (`account_for`), kept for the chat, by its place today. A chat on an added
+    /// account that is not there for it any more carries on with the user's own, in a new conversation handed the
+    /// chat so far: the account was removed (or removed and added again: another folder, which has none of its
+    /// conversations), or its sign-in is known to be gone while the user's own account is not used up.
     fn turn_account(&self, kind: &str) -> u8 {
         if !crate::accounts::AIS.contains(&kind) {
             return 1;
         }
-        let have = crate::accounts::have(kind, paths::now_secs(), crate::accounts::second_signed_in(kind));
-        let name = crate::accounts::name(kind);
-        let exists = name.is_some();
-        let signed_out = crate::accounts::second_signed_out(kind);
+        let list = crate::accounts::list(kind);
+        let slots = crate::accounts::slots(kind, paths::now_secs());
         let (account, was) = {
             let mut st = self.st.lock().unwrap();
             let was = st.account;
-            // (a chat saved before names were kept has none: it is taken to be on the account that is there)
-            let same = st.account_name.is_none() || st.account_name == name;
-            let mine = exists && same && !(signed_out && !have.first_used);
-            let account = account_for(was, st.session.is_some(), mine, have);
-            if was == 2 && account == 1 {
-                // its conversation was the second account's: this message starts a new one, with the chat so far
+            // where the chat's account is now: by its name (a chat saved before names were kept: by its place)
+            let at = match (&st.account_name, was) {
+                (Some(name), 2..) => list.iter().position(|n| n == name).map(|i| i as u8 + 2),
+                (None, 2..) => ((was as usize - 2) < list.len()).then_some(was),
+                _ => None,
+            }
+            // (known to be signed out while the user's own account has usage: not this chat's any more)
+            .filter(|n| !(crate::accounts::signed_out_at(kind, *n) && slots[0]));
+            let account = account_for(was, at, st.session.is_some(), &slots);
+            if was >= 2 && account == 1 {
+                // its conversation was the added account's: this message starts a new one, with the chat so far
                 let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
                 if st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text") {
                     hand_over(&mut st, upto, ai_label(kind), true);
@@ -4326,10 +4323,10 @@ impl Agent {
                 st.session = None;
             }
             st.account = account;
-            st.account_name = if account == 2 { name } else { None };
+            st.account_name = (account >= 2).then(|| list.get(account as usize - 2).cloned()).flatten();
             (account, was)
         };
-        if account != was && (exists || account == 2 || was == 2) {
+        if account != was && (!list.is_empty() || account >= 2 || was >= 2) {
             self.put("account", json!({"account": account}));
         }
         account
@@ -4449,21 +4446,32 @@ impl Agent {
             return false;
         }
         let now = paths::now_secs();
-        let from = self.st.lock().unwrap().account.max(1);
+        // the account that ran out, by its place today (its name is what the chat keeps)
+        let (from, from_name) = {
+            let st = self.st.lock().unwrap();
+            match &st.account_name {
+                Some(name) => (crate::accounts::position(kind, name), name.clone()),
+                None => (Some(1), String::new()),
+            }
+        };
         let (until, told) = crate::accounts::back_at(said, event_reset, now, crate::accounts::day_secs(now));
-        crate::accounts::mark_used(kind, from, until);
-        let have = crate::accounts::have(kind, now, crate::accounts::second_signed_in(kind));
-        let name = crate::accounts::name(kind);
+        if let Some(from) = from {
+            crate::accounts::mark_used(kind, from, until);
+        }
+        let from = from.unwrap_or(0); // (0: it was removed meanwhile, so any account that can take the chat is another one)
+        let slots = crate::accounts::slots(kind, now);
         // decided, and the chat taken for the message that goes again, under one lock
         let (to, ask) = {
             let mut st = self.st.lock().unwrap();
             // a message that got in after the turn ended is on its way (the chat was not held for this one,
-            // `turn_over_at`): nothing is sent over it, and this turn ends as it would without a second account
+            // `turn_over_at`): nothing is sent over it, and this turn ends as it would with one account
             if !held && working(&st) {
                 return false;
             }
-            let Some(to) = rolls_to(have, st.account.max(1), st.rolled, st.sent.is_some()) else { return false };
             let Some((raw, body, ask)) = st.sent.clone() else { return false };
+            // the next account in the order that can take the chat, and that this message has not been on
+            let tried: Vec<u8> = st.tried.iter().filter_map(|name| if name.is_empty() { Some(1) } else { crate::accounts::position(kind, name) }).collect();
+            let Some(to) = crate::accounts::next(&slots, from, &tried) else { return false };
             // the chat so far, without the message that goes out again. A chat whose conversation had not begun (its
             // first message, or the first after a switch of AI) keeps what it was to be handed, or nothing
             let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
@@ -4482,9 +4490,9 @@ impl Agent {
                 }
             }
             st.session = None;
+            st.tried.push(from_name);
             st.account = to;
-            st.account_name = if to == 2 { name } else { None };
-            st.rolled = true;
+            st.account_name = crate::accounts::name_at(kind, to);
             // working from here until the message is under way again: what the user types now is held behind it
             st.sending = true;
             st.resend_due = true;
@@ -4492,7 +4500,7 @@ impl Agent {
             (to, Ask { resend: Some((raw, body)), ..ask })
         };
         self.put("account", json!({"account": to}));
-        self.put("rollover", json!({"text": rollover_line(kind, from, told.then(|| crate::accounts::in_words(until, now)).as_deref()), "from": from, "to": to}));
+        self.put("rollover", json!({"text": rollover_line(kind, from, to, told.then(|| crate::accounts::in_words(until, now)).as_deref()), "from": from, "to": to}));
         #[cfg(test)]
         self.st.lock().unwrap().resent_for_test.push(ask);
         #[cfg(not(test))]
@@ -4532,7 +4540,8 @@ impl Agent {
 
     /// The sign-in a failed turn of this chat is about: its AI's own, or the second account's when it runs on that.
     fn sign_in_id(&self, kind: &str) -> String {
-        if crate::accounts::AIS.contains(&kind) && self.st.lock().unwrap().account == 2 { format!("{kind}2") } else { kind.to_string() }
+        let account = self.st.lock().unwrap().account;
+        crate::accounts::id_at(kind, account).unwrap_or_else(|| kind.to_string())
     }
 
     /// Why a turn failed, in the chat (`signin::failure`). When the reason is that nobody is signed in to the chat's
@@ -6848,19 +6857,21 @@ mod tests {
 
     #[test]
     fn a_chat_keeps_its_account_and_a_new_one_starts_on_the_first_that_is_not_used_up() {
-        use crate::accounts::Have;
-        let (free, first_out) = (Have { first_used: false, second_ready: true }, Have { first_used: true, second_ready: true });
-        // a new chat or a new expert: the user's own account, or the second while the first is used up
-        assert_eq!(account_for(0, false, true, free), 1);
-        assert_eq!(account_for(0, false, true, first_out), 2);
-        assert_eq!(account_for(0, false, false, Have { first_used: true, second_ready: false }), 1, "no second account: as before");
+        let (free, first_out) = ([true, true], [false, true]);
+        // a new chat or a new expert: the user's own account, or an added one while the user's own is used up
+        assert_eq!(account_for(0, None, false, &free), 1);
+        assert_eq!(account_for(0, None, false, &first_out), 2);
+        assert_eq!(account_for(0, None, false, &[false, false, true]), 3, "the first that can take a chat");
+        assert_eq!(account_for(0, None, false, &[false]), 1, "no added account: as before");
         // a chat from before there were accounts has a conversation on the user's own
-        assert_eq!(account_for(0, true, true, first_out), 1);
+        assert_eq!(account_for(0, None, true, &first_out), 1);
         // a running chat stays where it is: no switching back when the first account has reset, none away on a guess
-        assert_eq!(account_for(2, true, true, free), 2);
-        assert_eq!(account_for(1, true, true, first_out), 1, "only a limit it hits itself moves it (`rolled`)");
-        // its second account was removed in Setup: back to the user's own
-        assert_eq!(account_for(2, true, false, free), 1);
+        assert_eq!(account_for(2, Some(2), true, &free), 2);
+        assert_eq!(account_for(1, None, true, &first_out), 1, "only a limit it hits itself moves it");
+        // its account has moved up a place (one before it was removed): the same account, at its new place
+        assert_eq!(account_for(3, Some(2), true, &free), 2);
+        // its added account was removed in Setup: back to the user's own
+        assert_eq!(account_for(2, None, true, &free), 1);
         // the launch: the second account's folder is given to the tool, and is part of the kept process's key
         let servers = json!({});
         let with = |dir: Option<&'static str>| ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, config_dir: dir.map(std::path::Path::new) });
@@ -6912,11 +6923,11 @@ mod tests {
         assert_eq!(crate::accounts::used_until("claude", 1, now), Some(now + 7_200.0));
         assert_eq!(kinds_after(&a, at), ["account", "rollover"], "the turn is not over: no \"done\", nothing for a waiting Lead");
         let line = a.st.lock().unwrap().log.last().cloned().unwrap();
-        assert_eq!(line["text"], "Your Claude account ran out of usage (back in about 2 hours). Carrying on with the second account.");
+        assert_eq!(line["text"], "Your Claude account ran out of usage (back in about 2 hours). Carrying on with account 2.");
         assert_eq!((line["from"].as_u64(), line["to"].as_u64()), (Some(1), Some(2)));
         {
             let st = a.st.lock().unwrap();
-            assert_eq!((st.account, st.session.clone(), st.rolled), (2, None, true), "a new conversation on the second account");
+            assert_eq!((st.account, st.session.clone(), st.tried.clone()), (2, None, vec![String::new()]), "a new conversation on the second account");
             let chat = st.handover.clone().unwrap();
             assert!(chat.starts_with("[This chat carries on here in a new conversation") && chat.contains("User: Make a door") && chat.contains("Claude: Done: the door opens."), "{chat}");
             assert!(!chat.contains("Now add a lock"), "the message itself is not in the chat so far: it follows it");
@@ -6962,7 +6973,7 @@ mod tests {
         let st = a.st.lock().unwrap();
         assert_eq!(st.account, 1);
         let line = st.log.last().unwrap()["text"].as_str().unwrap();
-        assert!(line.starts_with("The second Claude account ran out of usage (back in about ") && line.ends_with("). Carrying on with your own account."), "the tool's clock time, read by this computer's clock: {line}");
+        assert!(line.starts_with("Claude account 2 ran out of usage (back in about ") && line.ends_with("). Carrying on with your own account."), "the tool's clock time, read by this computer's clock: {line}");
     }
 
     #[test]
@@ -7059,7 +7070,7 @@ mod tests {
         // the next message is the user's own: it goes to the second account, with the chat so far
         a.send("Go on then", &Ask::default());
         let st = a.st.lock().unwrap();
-        assert!(st.went_for_test[1].ends_with("Go on then") && st.went_for_test[1].contains("User: Make a door") && !st.rolled);
+        assert!(st.went_for_test[1].ends_with("Go on then") && st.went_for_test[1].contains("User: Make a door") && st.tried.is_empty());
         assert_eq!(st.account, 2);
     }
 
@@ -7113,13 +7124,83 @@ mod tests {
         let allowed = json!({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "resetsAt": 1_795_633_200u64, "rateLimitType": "five_hour"}});
         assert_eq!(crate::accounts::event_reset(&rejected), Some(1_795_633_200.0));
         assert_eq!(crate::accounts::event_reset(&allowed), None);
-        assert_eq!(rollover_line("claude", 1, None), "Your Claude account ran out of usage. Carrying on with the second account.");
-        assert_eq!(rollover_line("claude", 2, Some("in about 40 minutes")), "The second Claude account ran out of usage (back in about 40 minutes). Carrying on with your own account.");
-        // where a chat goes: never for a message moved before, never without a message to send again
-        use crate::accounts::Have;
-        let ready = Have { first_used: true, second_ready: true };
-        assert_eq!((rolls_to(ready, 1, false, true), rolls_to(ready, 1, true, true), rolls_to(ready, 1, false, false)), (Some(2), None, None));
-        assert_eq!(rolls_to(Have { first_used: true, second_ready: false }, 2, false, true), None, "both used up");
+        assert_eq!(rollover_line("claude", 1, 2, None), "Your Claude account ran out of usage. Carrying on with account 2.");
+        assert_eq!(rollover_line("claude", 2, 3, Some("in about 40 minutes")), "Claude account 2 ran out of usage (back in about 40 minutes). Carrying on with account 3.");
+        assert_eq!(rollover_line("gemini", 3, 1, Some("in about 2 hours")), "Gemini account 3 ran out of usage (back in about 2 hours). Carrying on with your own account.");
+    }
+
+    #[test]
+    fn with_three_accounts_a_chat_goes_through_them_in_order_once_each_and_never_back() {
+        // the user's own and two added ones, all signed in
+        crate::accounts::stand_in_many(&[("b", true), ("c", true)]);
+        let now = paths::now_secs();
+        let a = chat_on_first("c-roll-three");
+        a.send("Now add a lock", &Ask::default());
+        let again = |a: &Arc<Agent>| {
+            let ask = a.st.lock().unwrap().resent_for_test.last().cloned().unwrap();
+            a.resend(&ask);
+        };
+        let state = |a: &Arc<Agent>| {
+            let st = a.st.lock().unwrap();
+            (st.account, st.account_name.clone(), st.resent_for_test.len(), st.went_for_test.len())
+        };
+        // the user's own runs out: on to the first added account
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(state(&a), (2, Some("claude-2-b".to_string()), 1, 1));
+        assert!(a.st.lock().unwrap().log.last().unwrap()["text"].as_str().unwrap().ends_with("Carrying on with account 2."));
+        again(&a);
+        // that one runs out on the same message: on to the next, not back
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(state(&a), (3, Some("claude-2-c".to_string()), 2, 2));
+        let line = a.st.lock().unwrap().log.last().unwrap()["text"].as_str().unwrap().to_string();
+        assert!(line.starts_with("Claude account 2 ran out of usage") && line.ends_with("Carrying on with account 3."), "{line}");
+        again(&a);
+        // the last runs out too, and the first two are even back by then: the message has been on each of them, so
+        // it stays, and the turn ends as it does with one account
+        crate::accounts::mark_used("claude", 1, 0.0);
+        crate::accounts::mark_used("claude", 2, 0.0);
+        let at = a.st.lock().unwrap().log.len();
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(state(&a), (3, Some("claude-2-c".to_string()), 2, 3), "sent once on each account, never twice on one");
+        assert!(kinds_after(&a, at).contains(&"done".to_string()) && !kinds_after(&a, at).contains(&"rollover".to_string()));
+        assert_eq!(a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "user" && e["text"] == "Now add a lock").count(), 1);
+        assert!(crate::accounts::used_until("claude", 3, now).is_some());
+        // the user's next message stays on the chat's account; when that runs out again it goes to the first in the
+        // order that can take it, which is the user's own again
+        a.send("Try again", &Ask::default());
+        assert_eq!(state(&a).0, 3);
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(state(&a).0, 1);
+        assert!(a.st.lock().unwrap().log.last().unwrap()["text"].as_str().unwrap().ends_with("Carrying on with your own account."));
+        // a used-up or signed-out account in between is passed over
+        crate::accounts::stand_in_many(&[("b", false), ("c", true), ("d", true)]);
+        crate::accounts::mark_used("claude", 3, paths::now_secs() + 600.0);
+        let b = chat_on_first("c-roll-three-skip");
+        b.send("Now add a lock", &Ask::default());
+        b.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(state(&b).0, 4, "the second is not signed in, the third is used up");
+        // new chats: the first that can take one, and the user's own again after its reset
+        let new = |id: &str| Agent::detached_for_test(id, None).turn_account("claude");
+        assert_eq!(new("c-new-three-1"), 4);
+        crate::accounts::mark_used("claude", 1, 0.0);
+        assert_eq!(new("c-new-three-2"), 1);
+        // an account before the chat's is removed: the chat is still on its own account, one place up, in its
+        // conversation, and its sign-in is that account's
+        let c = chat_on_first("c-roll-three-removed");
+        {
+            let mut st = c.st.lock().unwrap();
+            st.account = 4;
+            st.account_name = Some("claude-2-d".into());
+            st.session = Some("on d".into());
+        }
+        crate::accounts::stand_in_many(&[("b", true), ("d", true)]);
+        c.send("Carry on", &Ask::default());
+        {
+            let st = c.st.lock().unwrap();
+            assert_eq!((st.account, st.account_name.as_deref(), st.session.as_deref()), (3, Some("claude-2-d"), Some("on d")));
+            assert_eq!(st.went_for_test.last().map(String::as_str), Some("Carry on"), "no hand-over: it is the same account");
+        }
+        assert_eq!(c.sign_in_id("claude"), "claude:claude-2-d");
     }
 
     /// A chat too long to hand over whole: 120 questions and answers of some 200 characters each.
@@ -7665,7 +7746,7 @@ mod tests {
         let again = {
             let st = a.st.lock().unwrap();
             assert_eq!((st.account, st.session.clone(), st.account_name.as_deref()), (2, None, Some("gemini-2-standin")));
-            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with the second account.");
+            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with account 2.");
             assert!(!st.log.iter().any(|e| e["kind"] == "error" && e["text"] == quota), "one line, the app's");
             st.resent_for_test[0].clone()
         };
@@ -7683,7 +7764,7 @@ mod tests {
         a.put_failure("gemini", antigravity::SIGNED_OUT);
         let last = a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").cloned().unwrap();
         if !cfg!(windows) {
-            assert_eq!((last["text"].as_str(), last["sign_in"].as_str()), (Some(antigravity::SIGNED_OUT_SECOND), Some("gemini2")));
+            assert_eq!((last["text"].as_str(), last["sign_in"].as_str()), (Some("Gemini account 2 is not signed in. Sign in, then send your message again."), Some("gemini:gemini-2-standin")));
         }
         // the second runs out on the same message: no bounce, and the tool's own line is said
         let at = a.st.lock().unwrap().log.len();
@@ -7784,7 +7865,7 @@ mod tests {
         let _ = fs::remove_file(&dir);
         fs::create_dir_all(crate::accounts::base()).unwrap();
         std::os::unix::fs::symlink(paths::test_dir("accounts-swapped-target"), &dir).unwrap();
-        assert_eq!(crate::accounts::state()["claude"]["broken"], true, "Setup is told that the app will not use it");
+        assert_eq!(crate::accounts::state()["claude"]["accounts"][0]["broken"], true, "Setup is told that the app will not use it");
         let a = chat_on_first("c-launch-swapped");
         {
             let mut st = a.st.lock().unwrap();
@@ -7836,9 +7917,10 @@ mod tests {
         for (a, account) in [(&on_it, 2), (&other, 1)] {
             let mut st = a.st.lock().unwrap();
             st.account = account;
+            st.account_name = (account == 2).then(|| "claude-2-goes".to_string());
             st.running = true;
         }
-        account_removed("claude");
+        account_removed("claude", "claude-2-goes");
         assert!(on_it.st.lock().unwrap().stopped, "its turn is asked to stop before the folder goes");
         assert!(!other.st.lock().unwrap().stopped, "a chat on the user's own account is left alone");
         for a in [&on_it, &other] {

@@ -161,8 +161,8 @@ fn line(ai: &str, account: u8, chat: &str, project: Option<&str>, turn: &Turn, s
     line["t"] = json!(t);
     line["ai"] = json!(ai);
     // which of the AI's accounts paid, when it was not the user's own (`accounts`)
-    if account == 2 {
-        line["account"] = json!(2);
+    if account >= 2 {
+        line["account"] = json!(account);
     }
     line["chat"] = json!(chat);
     if let Some(p) = project.filter(|p| !p.is_empty()) {

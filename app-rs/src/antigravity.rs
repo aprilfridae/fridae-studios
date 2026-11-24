@@ -46,15 +46,15 @@ pub fn ask_models() -> Option<(String, String, bool)> {
     ask_models_of(1)
 }
 
-/// The same question asked of an account: the user's own (1), whose answer fills the model menu, or the second
-/// (2: in its own home, `accounts::env`; None when it has no folder, and then nothing is run).
+/// The same question asked of an account: the user's own (1), whose answer fills the model menu, or an added one
+/// (by its place: in its own home, `accounts::env`; None when it has no folder, and then nothing is run).
 pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
     let exe = paths::find_antigravity()?;
     let mut cmd = Command::new(exe);
     cmd.arg("models");
     paths::child_env(&mut cmd, "gemini");
-    if account == 2 {
-        if !crate::accounts::env(&mut cmd, "gemini", 2) {
+    if account >= 2 {
+        if !crate::accounts::env(&mut cmd, "gemini", account) {
             return None;
         }
     } else if let Some(h) = home_override() {
@@ -63,7 +63,7 @@ pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
     // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
     let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
     let list = model_lines(&stdout);
-    if !list.is_empty() && account != 2 {
+    if !list.is_empty() && account < 2 {
         let _ = MODELS.set(list);
     }
     Some((stdout, stderr, ok))
@@ -553,9 +553,6 @@ pub fn quota_line(error_output: &str) -> Option<String> {
 
 /// What the chat is told when nobody is signed in to Antigravity: with the Sign in button beside it
 /// (`signin::signed_out_line`), or on Windows, where the app offers no sign-in, with the way through a terminal.
-/// The same for Gemini's second account (`accounts`).
-pub const SIGNED_OUT_SECOND: &str = "Gemini's second account is not signed in. Sign in, then send your message again.";
-
 pub const SIGNED_OUT: &str = if cfg!(windows) {
     "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again."
 } else {

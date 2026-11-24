@@ -402,7 +402,7 @@ fn a_gemini_process_per_message_that_hits_its_quota_carries_on_with_the_second_a
             let st = a.st.lock().unwrap();
             assert_eq!((st.account, st.session.clone(), st.resent_for_test.len()), (2, None, 1), "{shape}: {:?}", st.log);
             assert_eq!(st.resent_for_test[0].resend, Some(("Make the icon".to_string(), "Make the icon".to_string())), "{shape}");
-            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with the second account.", "{shape}");
+            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with account 2.", "{shape}");
             assert!(!st.log.iter().any(|e| e["kind"] == "error"), "{shape}: {:?}", said(&st.log, "error"));
             assert_eq!(st.log.iter().filter(|e| e["kind"] == "done").count(), 1, "{shape}: the earlier message's; this turn is not over");
             assert!(working(&st), "{shape}: held for the message that goes again");

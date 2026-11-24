@@ -55,30 +55,49 @@ use crate::{
 /// The AIs whose sign-in is the user's own.
 pub const AIS: [&str; 3] = ["claude", "cursor", "gemini"];
 
-/// A second account's sign-in (`accounts`): the same tool, asked and signed in the same way, in the app's own folder
-/// for it. The one sign-in here that is not the user's own outside Fridae.
-pub const SECOND: [&str; 2] = ["claude2", "gemini2"];
-
-/// Every sign-in the app knows: the three AIs' own, then the second accounts'.
-fn ids() -> impl Iterator<Item = &'static str> {
-    AIS.into_iter().chain(SECOND)
+/// An added account's sign-in (`accounts`) is named "<ai>:<its folder's name>": the same tool, asked and signed in the
+/// same way, in the app's own folder for that account. These are the sign-ins here that are not the user's own
+/// outside Fridae. The AI and the folder's name, when `id` is one (whether or not the account still exists).
+pub fn extra(id: &str) -> Option<(&str, &str)> {
+    id.split_once(':').filter(|(ai, name)| crate::accounts::name_ok(ai, name))
 }
 
-/// The AI a sign-in belongs to ("claude2" is Claude's second account, "gemini2" Gemini's).
-pub fn tool(id: &str) -> &str {
-    match id {
-        "claude2" => "claude",
-        "gemini2" => "gemini",
-        other => other,
+/// Every sign-in the app knows now: the three AIs' own, then each added account's.
+fn ids() -> Vec<&'static str> {
+    AIS.into_iter().chain(crate::accounts::ids().iter().filter_map(|id| valid(id))).collect()
+}
+
+/// A sign-in's name as the app keeps it for as long as it runs: one of the AIs' own, or an added account's (kept
+/// once: there are only ever as many as accounts were added in this run).
+fn valid(id: &str) -> Option<&'static str> {
+    if let Some(ai) = AIS.into_iter().find(|a| *a == id) {
+        return Some(ai);
     }
+    extra(id)?;
+    static KEPT: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(have) = kept.iter().find(|k| **k == id) {
+        return Some(have);
+    }
+    let new: &'static str = Box::leak(id.to_string().into_boxed_str());
+    kept.push(new);
+    Some(new)
 }
 
-/// A sign-in's name in a line the user reads.
+/// The AI a sign-in belongs to ("claude:claude-2-0a1b2c" is one of Claude's added accounts).
+pub fn tool(id: &str) -> &str {
+    id.split_once(':').map(|(ai, _)| ai).unwrap_or(id)
+}
+
+/// A sign-in's name in a line the user reads: the AI's, or "Claude account 2" for an added account (by its place
+/// in Setup's list).
 fn name(id: &str) -> String {
-    match id {
-        "claude2" => "Claude's second account".to_string(),
-        "gemini2" => "Gemini's second account".to_string(),
-        other => crate::expert_ai::ai_name(other).to_string(),
+    match extra(id) {
+        Some((ai, account)) => match crate::accounts::position(ai, account) {
+            Some(n) => format!("{} account {n}", crate::expert_ai::ai_name(ai)),
+            None => format!("That {} account", crate::expert_ai::ai_name(ai)),
+        },
+        None => crate::expert_ai::ai_name(id).to_string(),
     }
 }
 
@@ -137,7 +156,7 @@ struct Entry {
 static STATE: Mutex<Option<HashMap<&'static str, Entry>>> = Mutex::new(None);
 
 fn with<R>(ai: &str, f: impl FnOnce(&mut Entry) -> R) -> Option<R> {
-    let key = ids().find(|a| *a == ai)?;
+    let key = valid(ai)?;
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
     Some(f(g.get_or_insert_with(HashMap::new).entry(key).or_default()))
 }
@@ -148,23 +167,24 @@ pub fn offered(id: &str) -> bool {
     if cfg!(windows) {
         return false;
     }
-    AIS.contains(&id) || (SECOND.contains(&id) && crate::accounts::folder(tool(id)).is_some())
+    AIS.contains(&id) || extra(id).is_some_and(|(ai, name)| crate::accounts::folder_of(ai, name).is_some())
 }
 
-/// Whether a second account can take a chat as far as its sign-in goes: an account is signed in there (not a key
-/// or a token from the environment, which signs both accounts in alike), and it is not the account the first is
-/// signed in to (the browser was still signed in as the user's own when the second was added).
+/// Whether an added account can take a chat as far as its sign-in goes: an account is signed in there (not a key
+/// or a token from the environment, which signs every account in alike), and it is not an account the user's own
+/// sign-in, or an account added before it, is signed in to (the browser was still signed in as that one when this
+/// one was added).
 pub fn second_ready(id: &str) -> bool {
     with(id, |e| matches!(e.known, Known::In(_)) && !e.by_key).unwrap_or(false) && !same_as_first(id)
 }
 
-/// Whether a second account's sign-in names the same account as the first's.
+/// Whether an added account's sign-in names the same account as the user's own, or as one added before it.
 pub fn same_as_first(id: &str) -> bool {
-    if !SECOND.contains(&id) {
-        return false;
-    }
+    let Some((ai, name)) = extra(id) else { return false };
     let who = |id: &str| with(id, |e| if let Known::In(Some(w)) = &e.known { Some(w.trim().to_lowercase()) } else { None }).flatten();
-    matches!((who(id), who(tool(id))), (Some(a), Some(b)) if a == b)
+    let Some(mine) = who(id) else { return false };
+    let earlier: Vec<String> = crate::accounts::list(ai).into_iter().take_while(|n| n != name).map(|n| crate::accounts::id_of(ai, &n)).collect();
+    who(ai).is_some_and(|w| w == mine) || earlier.iter().any(|e| who(e).is_some_and(|w| w == mine))
 }
 
 /// Whether the tool said that nobody is signed in (not merely that the app does not know yet).
@@ -247,7 +267,7 @@ fn due(known: &Known, asked_ago: Option<Duration>, asking: bool, logging_in: boo
 /// Ask a tool who is signed in, in the background. `now`: whatever the age of the last answer (at start, after a
 /// sign-in, after a turn that failed as signed out); otherwise only when `due`.
 pub fn check(ai: &str, now: bool) {
-    let Some(ai) = ids().find(|a| *a == ai) else { return };
+    let Some(ai) = valid(ai) else { return };
     let go = with(ai, |e| {
         if now && e.asking {
             e.again = true;
@@ -367,9 +387,10 @@ fn ask(ai: &str) -> Answer {
         if !offered(ai) {
             return Answer::default();
         }
-        if ai == "gemini2" {
-            // the same question in the second account's own home (not asked at all when its folder is not there)
-            return antigravity::ask_models_of(2).map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
+        if let Some(("gemini", name)) = extra(ai) {
+            // the same question in the added account's own home (not asked at all when its folder is not there)
+            let account = crate::accounts::position("gemini", name);
+            return account.and_then(antigravity::ask_models_of).map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
         }
         let Some(exe) = paths::find_ai(tool(ai)) else { return Answer::default() };
         let mut cmd = Command::new(exe);
@@ -395,7 +416,10 @@ fn tool_env(cmd: &mut Command, id: &str) -> bool {
     if id == "gemini" && let Some(h) = antigravity::home_override() {
         cmd.env("HOME", h);
     }
-    !SECOND.contains(&id) || crate::accounts::env(cmd, tool(id), 2)
+    match extra(id) {
+        Some((ai, name)) => crate::accounts::position(ai, name).is_some_and(|account| crate::accounts::env(cmd, ai, account)),
+        None => true,
+    }
 }
 
 /// At start: every tool is asked once.
@@ -424,7 +448,6 @@ pub struct Failure {
 /// Claude Code's line for "nobody is signed in", in the app's words: for the user's own account, and for a chat that
 /// runs on the second one.
 const CLAUDE_SIGNED_OUT: &str = "Claude is not signed in. Sign in, then send your message again.";
-const CLAUDE2_SIGNED_OUT: &str = "Claude's second account is not signed in. Sign in, then send your message again.";
 
 /// A failed turn's words as the chat shows them. Only Claude Code's plain "Not logged in" becomes the app's own line.
 /// Its other lines that end in "Please run /login" (a key that is not valid, an account without access, a gateway's
@@ -439,14 +462,19 @@ fn failure_of(ai: &str, said: &str, by_key: bool, offered: bool) -> Failure {
     }
     let low = said.trim().to_lowercase();
     match tool(ai) {
-        "claude" if low.starts_with("not logged in") => Failure { text: if ai == "claude2" { CLAUDE2_SIGNED_OUT } else { CLAUDE_SIGNED_OUT }.to_string(), sign_in: true },
+        "claude" if low.starts_with("not logged in") => Failure { text: if extra(ai).is_some() { signed_out_line(ai) } else { CLAUDE_SIGNED_OUT.to_string() }, sign_in: true },
         "claude" if low.contains("please run /login") => as_said(!by_key),
         "cursor" => as_said(said == crate::cursor::SIGNED_OUT),
         // (a turn says the first account's line whichever account it ran on: for the second, the app's line names it)
-        "gemini" if ai == "gemini2" && said == antigravity::SIGNED_OUT => Failure { text: antigravity::SIGNED_OUT_SECOND.to_string(), sign_in: true },
+        "gemini" if extra(ai).is_some() && said == antigravity::SIGNED_OUT => Failure { text: signed_out_line(ai), sign_in: true },
         "gemini" => as_said(said == antigravity::SIGNED_OUT),
         _ => as_said(false),
     }
+}
+
+/// The chat's line when a turn on an added account found nobody signed in there: it names the account.
+fn signed_out_line(id: &str) -> String {
+    format!("{} is not signed in. Sign in, then send your message again.", name(id))
 }
 
 /// See `failure_of`, with what the tool last said about its sign-in.
@@ -535,7 +563,7 @@ fn login_command(ai: &str) -> Result<Command, String> {
             _ => &["acp"][..],
         });
         if !tool_env(&mut cmd, ai) {
-            return Err("Fridae cannot use the second account's folder as it is. Remove it in Setup and add it again.".to_string());
+            return Err("Fridae cannot use this account's folder as it is. Remove it in Setup and add it again.".to_string());
         }
         Ok(cmd)
     }
@@ -546,7 +574,7 @@ fn login_command(ai: &str) -> Result<Command, String> {
 fn confirm_line(ai: &str, known: &Known) -> String {
     let name = name(ai);
     // a second account's sign-in is the app's own: it is replaced here only
-    let also = if SECOND.contains(&ai) { "" } else { ", also outside Fridae" };
+    let also = if extra(ai).is_some() { "" } else { ", also outside Fridae" };
     match known {
         Known::In(Some(who)) => format!("{name} says it is signed in as {who}. Signing in again replaces that sign-in{also}. Press again to go on."),
         Known::In(None) => format!("{name} says it is signed in. Signing in again replaces that sign-in{also}. Press again to go on."),
@@ -562,7 +590,7 @@ fn confirm_line(ai: &str, known: &Known) -> String {
 /// button beside a failed message is there while the tool may still say "signed in". A press while a sign-in waits
 /// ends that one and starts afresh, so a page that was closed opens again (two clicks in quick succession are one).
 pub fn login_start(ai: &str, sure: bool) -> Value {
-    let Some(ai) = ids().find(|a| *a == ai).filter(|a| offered(a)) else { return json!({"ok": false, "error": "Fridae cannot start that sign-in here."}) };
+    let Some(ai) = valid(ai).filter(|a| offered(a)) else { return json!({"ok": false, "error": "Fridae cannot start that sign-in here."}) };
     match with(ai, |e| (e.login.state == "waiting").then(|| e.login.since.map(|t| t.elapsed()).unwrap_or_default())).flatten() {
         Some(age) if age < SAME_CLICK => return login_state(ai),
         Some(_) => end_login(ai),
@@ -748,13 +776,13 @@ pub fn login_state(ai: &str) -> Value {
 fn state_for(ai: &str) -> Value {
     let mut v = with(ai, |e| {
         let mut v = state_of(e, offered(ai), kept_key(ai));
-        if SECOND.contains(&ai) {
+        if extra(ai).is_some() {
             v["by_key"] = json!(e.by_key && matches!(e.known, Known::In(_)));
         }
         v
     })
     .unwrap_or_else(|| json!({"offered": false}));
-    if SECOND.contains(&ai) {
+    if extra(ai).is_some() {
         v["same"] = json!(same_as_first(ai));
     }
     v
@@ -898,8 +926,11 @@ mod tests {
         assert_eq!(failure_of("gemini", antigravity::SIGNED_OUT, false, true), app(antigravity::SIGNED_OUT));
         assert_eq!(failure_of("cursor", "Cursor could not run this message.", false, true), as_said("Cursor could not run this message.", false));
         // a chat on Claude's second account: the same words mean that account, and the button signs that one in
-        assert_eq!(failure_of("claude2", "Not logged in \u{b7} Please run /login", false, true), app("Claude's second account is not signed in. Sign in, then send your message again."));
-        assert_eq!(confirm_line("claude2", &Known::In(None)), "Claude's second account says it is signed in. Signing in again replaces that sign-in. Press again to go on.");
+        crate::accounts::stand_in_many(&[("first", true), ("standin", true)]);
+        assert_eq!(failure_of("claude:claude-2-standin", "Not logged in \u{b7} Please run /login", false, true), app("Claude account 3 is not signed in. Sign in, then send your message again."));
+        assert_eq!(confirm_line("claude:claude-2-standin", &Known::In(None)), "Claude account 3 says it is signed in. Signing in again replaces that sign-in. Press again to go on.");
+        assert_eq!(failure_of("claude:claude-2-first", "Not logged in", false, true), app("Claude account 2 is not signed in. Sign in, then send your message again."));
+        crate::accounts::stand_in(false, false);
         assert_eq!(confirm_line("claude", &Known::In(None)), "Claude says it is signed in. Signing in again replaces that sign-in, also outside Fridae. Press again to go on.");
         // OpenCode has its own sign-in and its own lines; ChatGPT is not offered; nor is anything on Windows
         assert_eq!(failure_of("opencode", "Not logged in", false, false), as_said("Not logged in", false));
@@ -965,13 +996,21 @@ mod tests {
         assert_eq!(state_of(&Entry::default(), false, false)["state"], "unknown");
         // every one of the three is in the status, and nothing else
         let all = state();
-        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude2", "cursor", "gemini", "gemini2"]);
+        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "cursor", "gemini"]);
         assert!(offered("claude") == !cfg!(windows) && !offered("opencode") && !offered("chatgpt"));
         // a second account's sign-in is offered only once that account exists, and is Claude's own tool
-        assert!(!offered("claude2") && all["claude2"]["offered"] == false && tool("claude2") == "claude" && tool("cursor") == "cursor");
-        assert_eq!(login_start("claude2", true)["ok"], false, "no second account: nothing to sign in");
-        assert!(!offered("gemini2") && all["gemini2"]["offered"] == false && tool("gemini2") == "gemini");
-        assert_eq!(login_start("gemini2", true)["ok"], false);
+        assert!(!offered("claude:claude-2-standin") && all.get("claude:claude-2-standin").is_none() && tool("claude:claude-2-standin") == "claude" && tool("cursor") == "cursor");
+        assert_eq!(login_state("claude:claude-2-standin")["offered"], false);
+        assert_eq!(login_start("claude:claude-2-standin", true)["ok"], false, "no second account: nothing to sign in");
+        assert!(!offered("gemini:gemini-2-standin") && tool("gemini:gemini-2-standin") == "gemini");
+        // each added account's sign-in is in the status once it exists, under its own name, however many there are
+        crate::accounts::stand_in_many(&[("standin", true), ("third", false)]);
+        let with_three = state();
+        assert_eq!(with_three.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude:claude-2-standin", "claude:claude-2-third", "cursor", "gemini", "gemini:gemini-2-standin", "gemini:gemini-2-third"]);
+        assert!(offered("claude:claude-2-third") == !cfg!(windows) && with_three["claude:claude-2-third"]["offered"] == !cfg!(windows));
+        assert!(extra("claude:claude-2-third") == Some(("claude", "claude-2-third")) && extra("claude").is_none() && extra("claude:../../x").is_none() && extra("cursor:cursor-2-abcdef").is_none());
+        crate::accounts::stand_in(false, false);
+        assert_eq!(login_start("gemini:gemini-2-standin", true)["ok"], false);
         // a sign-in for anything else is never started
         assert_eq!(login_start("opencode", true)["ok"], false);
         assert_eq!(login_start("../x", true)["ok"], false);
@@ -980,7 +1019,7 @@ mod tests {
     /// A stand-in tool for the tests below, and the state as a fresh app has it.
     #[cfg(unix)]
     fn stand_in(status: Known, login: Option<&str>) {
-        *STAND_IN.lock().unwrap() = Some(StandIn { status: ids().map(|a| (a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
+        *STAND_IN.lock().unwrap() = Some(StandIn { status: ids().into_iter().map(|a| (a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
@@ -1086,6 +1125,7 @@ mod tests {
     #[test]
     fn a_second_account_takes_chats_only_with_an_account_of_its_own() {
         let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::accounts::stand_in_many(&[("standin", true), ("third", true)]);
         let set = |id: &str, known: Known, by_key: bool| {
             with(id, |e| {
                 e.known = known;
@@ -1095,30 +1135,37 @@ mod tests {
         let me = || Known::In(Some("me@example.com".to_string()));
         set("claude", me(), false);
         // another account, signed in there: ready
-        set("claude2", Known::In(Some("other@example.com".to_string())), false);
-        assert!(second_ready("claude2") && !same_as_first("claude2") && !known_out("claude2"));
-        assert_eq!((state()["claude2"]["same"].clone(), state()["claude2"]["by_key"].clone()), (json!(false), json!(false)));
+        set("claude:claude-2-standin", Known::In(Some("other@example.com".to_string())), false);
+        assert!(second_ready("claude:claude-2-standin") && !same_as_first("claude:claude-2-standin") && !known_out("claude:claude-2-standin"));
+        assert_eq!((state()["claude:claude-2-standin"]["same"].clone(), state()["claude:claude-2-standin"]["by_key"].clone()), (json!(false), json!(false)));
         // "signed in" by a key or a token on this computer: the same for both accounts, so no account of its own
-        set("claude2", Known::In(None), true);
-        assert!(!second_ready("claude2"));
-        assert_eq!(state()["claude2"]["by_key"], true);
+        set("claude:claude-2-standin", Known::In(None), true);
+        assert!(!second_ready("claude:claude-2-standin"));
+        assert_eq!(state()["claude:claude-2-standin"]["by_key"], true);
         // the very account the first is signed in to (the browser was still signed in as it): said, and not ready
-        set("claude2", Known::In(Some("Me@Example.com ".to_string())), false);
-        assert!(same_as_first("claude2") && !second_ready("claude2"));
-        assert_eq!(state()["claude2"]["same"], true);
+        set("claude:claude-2-standin", Known::In(Some("Me@Example.com ".to_string())), false);
+        assert!(same_as_first("claude:claude-2-standin") && !second_ready("claude:claude-2-standin"));
+        assert_eq!(state()["claude:claude-2-standin"]["same"], true);
         assert!(!same_as_first("claude") && state()["claude"].get("same").is_none(), "only a second account is compared");
         // signed out, and not known: neither is ready; only the first is "known to be signed out"
-        set("claude2", Known::Out, false);
-        assert!(!second_ready("claude2") && known_out("claude2"));
-        set("claude2", Known::Unknown, false);
-        assert!(!second_ready("claude2") && !known_out("claude2"));
-        forget("claude2");
+        set("claude:claude-2-standin", Known::Out, false);
+        assert!(!second_ready("claude:claude-2-standin") && known_out("claude:claude-2-standin"));
+        set("claude:claude-2-standin", Known::Unknown, false);
+        assert!(!second_ready("claude:claude-2-standin") && !known_out("claude:claude-2-standin"));
+        // with more than one added: one that is the same account as an earlier added one adds nothing either
+        set("claude:claude-2-standin", Known::In(Some("other@example.com".to_string())), false);
+        set("claude:claude-2-third", Known::In(Some("other@example.com".to_string())), false);
+        assert!(second_ready("claude:claude-2-standin") && same_as_first("claude:claude-2-third") && !second_ready("claude:claude-2-third"));
+        set("claude:claude-2-third", Known::In(Some("third@example.com".to_string())), false);
+        assert!(second_ready("claude:claude-2-third") && !same_as_first("claude:claude-2-third"));
+        forget("claude:claude-2-third");
+        forget("claude:claude-2-standin");
         set("claude", Known::Unknown, false);
         // its status and its sign-in run with its own folder for the config and for where the sign-in is stored,
         // whatever the app inherited; with no folder they are not run at all
         crate::accounts::stand_in(true, true);
         let mut cmd = Command::new("claude");
-        assert!(tool_env(&mut cmd, "claude2"));
+        assert!(tool_env(&mut cmd, "claude:claude-2-standin"));
         let get = |cmd: &Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
         let dir = get(&cmd, "CLAUDE_CONFIG_DIR").expect("its folder");
         assert!(dir.ends_with("claude-2-standin"));
@@ -1127,20 +1174,20 @@ mod tests {
         assert!(tool_env(&mut first, "claude"));
         assert!(first.get_envs().all(|(k, _)| k != "CLAUDE_CONFIG_DIR" && k != "CLAUDE_SECURESTORAGE_CONFIG_DIR"), "the user's own account: nothing set");
         crate::accounts::stand_in(false, false);
-        assert!(!tool_env(&mut Command::new("claude"), "claude2"));
+        assert!(!tool_env(&mut Command::new("claude"), "claude:claude-2-standin"));
         // Gemini's second account: its commands run in its own home, and not at all without it
         crate::accounts::stand_in(true, true);
         let mut agy = Command::new("agy");
-        assert!(tool_env(&mut agy, "gemini2"));
+        assert!(tool_env(&mut agy, "gemini:gemini-2-standin"));
         assert!(get(&agy, "HOME").is_some_and(|h| h.ends_with("gemini-2-standin")));
         crate::accounts::stand_in(false, false);
-        assert!(!tool_env(&mut Command::new("agy"), "gemini2"));
+        assert!(!tool_env(&mut Command::new("agy"), "gemini:gemini-2-standin"));
         // a turn on it that failed as signed out says so in the second account's name, with its button
-        assert_eq!(failure_of("gemini2", antigravity::SIGNED_OUT, false, true), Failure { text: "Gemini's second account is not signed in. Sign in, then send your message again.".to_string(), sign_in: true });
+        assert_eq!(failure_of("gemini:gemini-2-standin", antigravity::SIGNED_OUT, false, true), Failure { text: "That Gemini account is not signed in. Sign in, then send your message again.".to_string(), sign_in: true }, "an account that is no longer in the list");
         assert_eq!(failure_of("gemini", antigravity::SIGNED_OUT, false, true).text, antigravity::SIGNED_OUT);
-        assert!(!confirm_line("gemini2", &Known::In(None)).contains("outside Fridae") && confirm_line("gemini2", &Known::In(None)).starts_with("Gemini's second account says it is signed in."));
+        assert!(!confirm_line("gemini:gemini-2-standin", &Known::In(None)).contains("outside Fridae") && confirm_line("gemini:gemini-2-standin", &Known::In(None)).starts_with("That Gemini account says it is signed in."));
         // the line before a second press: a second account's sign-in is the app's own, replaced here only
-        assert!(!confirm_line("claude2", &me()).contains("outside Fridae") && confirm_line("claude", &me()).contains(", also outside Fridae"));
+        assert!(!confirm_line("claude:claude-2-standin", &me()).contains("outside Fridae") && confirm_line("claude", &me()).contains(", also outside Fridae"));
     }
 
     #[test]
