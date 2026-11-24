@@ -33,6 +33,7 @@ mod procs;
 mod projects;
 mod promo;
 mod promo_tab;
+mod rag;
 mod research;
 mod server;
 mod splash;
@@ -164,6 +165,9 @@ fn main() {
         return self_test(&message);
     }
     agents::restore_open();
+    // the knowledge index chosen in Setup (Off / Light / Heavy): its service starts in the background, and is ended
+    // on quit (`agents::shut_down` -> `rag::shut_down`)
+    rag::start_on_launch();
 
     // an update that finished downloading last time goes in before the window opens
     if paths::packaged() {
