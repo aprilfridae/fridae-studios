@@ -19,7 +19,7 @@ use std::{
     collections::HashMap,
     fs,
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -30,6 +30,14 @@ use crate::{
     agents::{self, Agent},
     expert_ai, paths, studio_run,
 };
+
+/// How long an expert's result waits for its plain-English summary before it goes back to the Lead. A short, hard
+/// cap: if the summary is not ready by then, the result goes with the expert's one-liner and the summary attaches
+/// late (`Agent::start_plain_summary`), so the run is never held past this. Matches the writer's own `PLAIN_LIMITS`.
+#[cfg(not(test))]
+const SUMMARY_WAIT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const SUMMARY_WAIT: Duration = Duration::from_millis(300);
 
 fn write_result(id: &str, value: Value) {
     let dir = paths::work("team-results");
@@ -294,18 +302,49 @@ pub fn with_model_note(text: String, note: Option<String>) -> String {
     }
 }
 
+/// The expert's own one-line summary: the first non-empty line of its report, trimmed. Stands in for a written
+/// plain-English summary when that is switched off or could not be written (never blocks or fails the run).
+pub fn one_liner(report: &str) -> String {
+    report.lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.chars().take(200).collect::<String>()).unwrap_or_default()
+}
+
+/// An expert's result with a plain-English line for the user appended, when there is one. Marked as Fridae's own
+/// words (not the expert's), so the Lead can tell it apart and weave it into the progress it reports (see lead.md).
+pub fn with_plain(text: String, plain: Option<&str>) -> String {
+    match plain.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => format!("{text}\n\nIn plain words (for the user, from Fridae Studios): {p}"),
+        None => text,
+    }
+}
+
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
-pub fn finished(agent: &Agent, stopped: bool) {
+pub fn finished(agent: &Arc<Agent>, stopped: bool) {
     release(agent);
     agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
 
     if let Some((id, role)) = agent.team() {
-        let text = with_lost_work(result_text(&agent.last_reply(), stopped), agent.take_jobs_lost());
+        let report = agent.last_reply();
+        let text = with_lost_work(result_text(&report, stopped), agent.take_jobs_lost());
         let text = with_model_note(text, agent.model_note());
+        // a plain-English line for the user, for an expert that finished its task (not one the user stopped): the app
+        // starts writing it on the user's OpenCode plan and waits at most SUMMARY_WAIT for it. If it is not ready by
+        // then, the result goes with the expert's own one-liner now and the summary attaches to the chat, its row and
+        // the Review item when it finishes (`start_plain_summary`): the run is never held, and a slow summary is late,
+        // not lost. Off or nothing written → the one-liner (or nothing when the report is empty too).
+        let plain = (agent.expert().is_some() && !stopped)
+            .then(|| {
+                let written = agent.start_plain_summary(report.clone()).and_then(|rx| rx.recv_timeout(SUMMARY_WAIT).ok().flatten());
+                written.unwrap_or_else(|| one_liner(&report))
+            })
+            .filter(|s| !s.is_empty());
+        let text = with_plain(text, plain.as_deref());
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
         if let Some(e) = agent.expert() {
             result["expert"] = json!(e);
+        }
+        if let Some(p) = &plain {
+            result["plain"] = json!(p); // also structured, for the review item filed for this work
         }
         write_result(&id, result);
         agent.mark_result(); // its slot is free once it stops working (the chat stays open to read)
@@ -646,4 +685,93 @@ mod tests {
         assert!(NO_STUDIO.contains("under needs") && NO_STUDIO.contains("start this expert again"));
     }
 
+    #[test]
+    fn a_one_liner_is_the_first_line_and_a_plain_line_is_marked_as_fridaes() {
+        assert_eq!(one_liner("  Built the shop.\nMore details here."), "Built the shop.");
+        assert_eq!(one_liner("   \n   "), "");
+        assert_eq!(one_liner(&"word ".repeat(100)).chars().count(), 200);
+        assert_eq!(with_plain("report".into(), None), "report");
+        assert_eq!(with_plain("report".into(), Some("  ")), "report", "an empty plain line is not appended");
+        let out = with_plain("the full report".into(), Some("Added a shop."));
+        assert_eq!(out, "the full report\n\nIn plain words (for the user, from Fridae Studios): Added a shop.");
+    }
+
+    #[test]
+    fn a_finished_expert_gets_a_plain_english_line_for_the_user_in_its_result() {
+        let d = game("plain");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        // the expert's report carries a marker the stand-in OpenCode writer is keyed to (it never asks a real model)
+        let marker = "ZZmarkerShopZZ";
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": format!("Implemented ShopService + GUI. {marker}")}));
+        crate::compact::STAND_IN_FOR.lock().unwrap().push((marker.to_string(), crate::compact::writes("Added a shop where players spend coins on hats.")));
+        finished(&x, false);
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain.json")).unwrap()).unwrap();
+        // the summary was ready within the wait: it is on the result, structured and woven into the text the Lead reads
+        assert_eq!(res["plain"], "Added a shop where players spend coins on hats.");
+        assert!(res["text"].as_str().unwrap().contains("In plain words (for the user, from Fridae Studios): Added a shop where players spend coins on hats."), "{}", res["text"]);
+        // and it is stored on the expert's own chat (the chat's "In plain words:" line, and its sidebar row)
+        assert_eq!(x.stored_plain().as_deref(), Some("Added a shop where players spend coins on hats."));
+        // and reaches the Review item for this work through the expert chat
+        assert_eq!(agents::plain_for(&p, "coder", &lead.id).as_deref(), Some("Added a shop where players spend coins on hats."));
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn a_slow_summary_does_not_hold_the_result_and_attaches_late() {
+        let d = game("plain-late");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain late", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain-late", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        let marker = "ZZmarkerLateZZ";
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": format!("Built the shop. {marker}")}));
+        // the writer takes longer than SUMMARY_WAIT (300ms in tests): the result must not wait for it
+        crate::compact::STAND_IN_FOR.lock().unwrap().push((marker.to_string(), crate::compact::writes_after(Duration::from_millis(600), "Added a shop where players buy hats.")));
+        let began = std::time::Instant::now();
+        finished(&x, false);
+        assert!(began.elapsed() < Duration::from_secs(2), "the result was not held for the slow summary: {:?}", began.elapsed());
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain-late.json")).unwrap()).unwrap();
+        // the result went back at once with the expert's own one-liner, not the (not-yet-written) summary
+        assert_eq!(res["plain"], "Built the shop. ZZmarkerLateZZ");
+        // when the writer finishes, the summary attaches to the expert's chat, its row and the Review item (late, not lost)
+        let mut attached = None;
+        for _ in 0..40 {
+            if let Some(s) = x.stored_plain() {
+                attached = Some(s);
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(attached.as_deref(), Some("Added a shop where players buy hats."));
+        assert_eq!(agents::plain_for(&p, "coder", &lead.id).as_deref(), Some("Added a shop where players buy hats."));
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn a_stopped_expert_gets_no_plain_line_and_the_run_is_never_blocked() {
+        let d = game("plain-stopped");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain stop", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain-stop", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": "Half the shop is built."}));
+        // stopped: no writer is asked (no stand-in registered), the result still goes back at once
+        finished(&x, true);
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain-stop.json")).unwrap()).unwrap();
+        assert!(res.get("plain").is_none());
+        assert!(res["text"].as_str().unwrap().starts_with("Stopped:"));
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
 }

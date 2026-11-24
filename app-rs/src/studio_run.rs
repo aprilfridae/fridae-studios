@@ -92,6 +92,16 @@ pub(crate) fn item_files(project: &Path) -> Vec<(String, PathBuf)> {
 pub fn items(project: &Path) -> Vec<Value> {
     let mut out: Vec<Value> =
         item_files(project).into_iter().filter_map(|(_, p)| read_obj(&p)).filter(|i| i["id"].is_string() && i["status"] != "superseded").collect();
+    // the plain-English "In plain words:" line comes from the expert chat that did the work, so a summary written
+    // after the Lead collected the result (the late-attach path) still reaches the item, not only the one it filed with
+    let project_str = project.to_string_lossy().to_string();
+    for item in &mut out {
+        if let (Some(expert), Some(lead)) = (item["expert"].as_str().filter(|s| !s.is_empty()), item["by_chat"].as_str().filter(|s| !s.is_empty())) {
+            if let Some(plain) = crate::agents::plain_for(&project_str, expert, lead) {
+                item["plain"] = json!(plain);
+            }
+        }
+    }
     out.sort_by(|a, b| b["created"].as_f64().unwrap_or(0.0).total_cmp(&a["created"].as_f64().unwrap_or(0.0)));
     out
 }
@@ -746,6 +756,27 @@ mod tests {
         fs::write(d.join(".fridae").join("review").join("half.json"), "{\"id\": \"half\", ").unwrap();
         let ids: Vec<String> = items(&d).iter().map(|i| i["id"].as_str().unwrap().to_string()).collect();
         assert_eq!(ids, ["bb", "aa", "dd"]);
+    }
+
+    #[test]
+    fn items_carry_the_experts_plain_english_line() {
+        let d = game("plain");
+        let p = d.to_str().unwrap().to_string();
+        let lead = crate::agents::new_background_chat("Lead: plain items", Some(p.clone())).unwrap();
+        let x = crate::agents::spawn_expert("w-si-plain", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            crate::agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        x.set_plain("Added a shop where players spend coins on hats.");
+        // an item of this expert, filed by this Lead: it gets the plain line from the expert's chat
+        put_item(&d, "aa", json!({"expert": "coder", "by_chat": lead.id, "plain": "Built the shop."}));
+        // an item of another expert the run has no open chat for: its own plain is left as filed
+        put_item(&d, "bb", json!({"expert": "ui", "by_chat": lead.id, "plain": "A one-liner."}));
+        let got = items(&d);
+        let by_id = |id: &str| got.iter().find(|i| i["id"] == id).unwrap().clone();
+        assert_eq!(by_id("aa")["plain"], "Added a shop where players spend coins on hats.");
+        assert_eq!(by_id("bb")["plain"], "A one-liner.");
+        for a in [&lead, &x] {
+            crate::agents::remove_agent(&a.id);
+        }
     }
 
     #[test]

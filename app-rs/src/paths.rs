@@ -688,13 +688,15 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `projects`: the games, whose folders the AIs are given
 /// - `plugin_token`: the Studio plugin's secret
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
+/// - `expert_summaries`: the app writes a plain-English summary of each expert's work (`expert_summaries_on`); on
+///   unless set to false. It is a small call on the user's OpenCode plan, so a guard keeps it the user's choice.
 /// - `second_accounts`: whether an AI has a second account, and the name of the app's folder for it (`accounts`):
 ///   which account pays for a turn
 /// - `opencode_model`, `opencode_model_signed_in`: the model every OpenCode chat and expert runs on when none is
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -708,6 +710,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "plugin_token" => "Studio plugin link",
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
+        "expert_summaries" => "Plain-English summary of each expert's work",
         "second_accounts" => "Second accounts",
         // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
         "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
@@ -890,7 +893,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
                 .collect();
             Some(Value::Array(list))
         }
-        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
+        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "expert_summaries" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
@@ -1897,6 +1900,12 @@ pub fn gemini_api_on() -> bool {
 /// it off in Setup.
 pub fn gemini_images_on() -> bool {
     setting("gemini_images").as_bool().unwrap_or(true)
+}
+
+/// Whether the app writes a plain-English, non-technical summary of each expert's work when it finishes (a small
+/// call on the user's OpenCode plan): yes unless the user switched it off in Setup.
+pub fn expert_summaries_on() -> bool {
+    setting("expert_summaries").as_bool().unwrap_or(true)
 }
 
 /// A file name with any folder part removed, so requests cannot reach outside a folder.
