@@ -70,6 +70,46 @@ own."
   the download when online. The first-run move (above) treats the user's existing copy as both base and local, so
   nothing they have is overwritten.
 
+## Community vault: everyone's notes come back as submissions the maintainer reviews (user, 2026-11-24)
+
+The user, who maintains Fridae: "everyones notes are uploaded, and sumbitted as requests that i then go over and see
+if its worth adding, i will incrimentally add them if i think they are good additions. this needs to work communally."
+They chose GitHub over a hosted server.
+
+- **The official vault gets its own public GitHub repo** (proposed `aprilfridae/fridae-vault`), separate from the code
+  repo so submissions don't flood it. Vault releases and the update manifest (above) are published from it.
+  Creating the repo is the user's yes at build time.
+- **Contributing is each user's choice.** At setup and in Setup: "Share what Fridae learns with the community?" with
+  Off / Review each batch first / Send automatically. The default is Off until the user answers. Asked once, changeable
+  any time.
+- **What gets sent:** general knowledge notes the AIs saved or updated in `Knowledge/`, including `Taste/` notes and
+  "Learned in Fridae" additions. **Never sent:** game-only notes (`<game>/.fridae/notes`), GAME.md or anything in
+  `Games/`, `House rules.md`, chats, settings, or anything outside `Knowledge/`.
+- **Before anything leaves the Mac:**
+  - Secrets are masked with the existing masker (`compact::mask_with`): keys, tokens, emails, and home-folder paths
+    with the username.
+  - Notes are checked against the official vault so unchanged shipped notes are not re-sent.
+  - In "Review each batch first", the user sees exactly what will be sent and can drop notes.
+- **How it reaches the maintainer:** each contributor signs in to GitHub once (a one-click device sign-in like the AI
+  sign-ins; Fridae keeps only what GitHub's sign-in gives, in the app's own folder). A batch is sent as a pull request
+  from their fork: one branch per batch, each note a file at its topic path, and a PR description listing each note's
+  topic and why it is useful (one line each, written by a cheap OpenCode model). Batches are at most daily and at
+  most 20 notes, to keep the inbox sane.
+- **The maintainer's inbox:** in the maintainer's copy of Fridae (their GitHub login owns the vault repo), a
+  **Submissions** screen lists open PRs and each note in them, with a preview and a diff against the vault's current
+  note. Each note gets **Add**, **Edit then add**, or **Reject**. Accepted notes are committed to the vault repo's main
+  branch, and accepting part of a PR is fine. The PR is closed with a thank-you when every note is decided. GitHub's
+  own PR page works too.
+- **Credit:** each accepted note records its contributor's GitHub name in the commit (and in the note's credit line if
+  the contributor allows it). LihFolk keeps his credit on his notes.
+- **Distribution:** what the maintainer accepts goes out in the next vault release and reaches everyone through the
+  update that fetches only changes and never overrides their own notes (above).
+- **Abuse:** submissions only become official through the maintainer's review. Fridae never applies a submission to
+  anyone's vault by itself.
+
+Open for the build: the GitHub OAuth app (the user registers it once; a device-flow client id is public), the
+fork/PR scopes needed, and how the inbox signs in as the maintainer.
+
 ## Anti-goals
 
 - Losing or overwriting a single user note during the move or on any update.
