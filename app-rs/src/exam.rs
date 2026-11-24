@@ -186,6 +186,7 @@ fn one(job: &Value) -> Value {
         }
         None => (None, None, 0),
     };
+    let declined = raw.as_deref().map(|r| librarian::declined(r, parts.len())).unwrap_or_else(|| vec![false; parts.len()]);
     let check = checked.lock().unwrap().clone();
     let given_parts: Vec<String> = given.iter().map(|p| p.question.clone()).collect();
     json!({
@@ -196,7 +197,8 @@ fn one(job: &Value) -> Value {
         "answer": posted,
         "secs": secs,
         "writer_raw": raw,
-        "format_ok": claims.is_some(),
+        "format_ok": claims.is_some() || declined.iter().any(|d| *d),
+        "declined": declined,
         "claims_raw": claims.as_deref().map(claims_json),
         "claims_quoted": kept.as_deref().map(claims_json),
         "dropped_by_quote": dropped,
@@ -230,5 +232,15 @@ mod tests {
         assert!(r["answer"].as_str().unwrap().contains("Prompts go off."), "{r}");
         assert_eq!(r["claims_quoted"].as_array().unwrap().len(), 1);
         assert_eq!(r["calls"][0]["what"], "write");
+    }
+
+    #[test]
+    fn a_writer_that_declines_is_no_format_failure() {
+        crate::compact::STAND_IN.with(|s| *s.borrow_mut() = Some((crate::compact::writes("{\"part\": 1, \"not_found\": true}"), crate::compact::LIMITS)));
+        let job = json!({"id": "N01", "question": "how do I turn on Nanite in Unreal Engine 5?", "parts": [{"question": "how do I turn on Nanite in Unreal Engine 5", "hits": [{"shelf": "vault", "title": "Foliage", "heading": "", "text": "Kits over one-offs."}]}]});
+        let r = one(&job);
+        assert_eq!(r["format_ok"], true, "{r}");
+        assert_eq!(r["declined"], json!([true]), "{r}");
+        assert!(r["answer"].as_str().unwrap().contains(librarian::NOT_FOUND), "{r}");
     }
 }

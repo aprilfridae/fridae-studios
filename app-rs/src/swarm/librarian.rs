@@ -370,7 +370,7 @@ fn is_denial(claim: &str) -> bool {
 
 /// The parts the writer declined: a {"part": N, "not_found": true} line, a claim and quote both left empty, a claim that only says
 /// what the passages lack (`is_denial`), or no line at all but the words "not in the knowledge base" (every part).
-fn declined(text: &str, parts: usize) -> Vec<bool> {
+pub fn declined(text: &str, parts: usize) -> Vec<bool> {
     let mut out = vec![false; parts];
     let objects = json_objects(text);
     if objects.is_empty() {
