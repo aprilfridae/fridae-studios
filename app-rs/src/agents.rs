@@ -2827,6 +2827,14 @@ impl Agent {
             hand_over(&mut st, all, ai_label(&from), false);
             st.session = None;
             st.ai = Some(kind.to_string());
+            // the last message's model and effort were the old AI's: the app's own messages (a run's wakes, board
+            // news) would ask the new AI for them and land on its default. The window sends the new pick (`set_pick`).
+            st.last_ask.model = None;
+            st.last_ask.effort = None;
+            for (_, _, a) in st.queue.iter_mut() {
+                a.model = None;
+                a.effort = None;
+            }
             from
         };
         self.put("ai", json!({"ai": kind, "from": from}));
@@ -2838,6 +2846,20 @@ impl Agent {
             thread::spawn(move || l.close());
         }
         Ok(true)
+    }
+
+    /// The model and effort picked for this chat in the window: what the app's own messages to it (a run's wakes, board
+    /// news, carry-ons) and its waiting messages run on from now, so a pick (or a switch of AI) counts at once.
+    pub fn set_pick(&self, model: Option<&str>, effort: Option<&str>) {
+        let mut st = self.st.lock().unwrap();
+        let model = model.filter(|m| !m.is_empty()).map(str::to_string);
+        let effort = effort.filter(|e| EFFORTS.contains(e)).map(str::to_string);
+        st.last_ask.model = model.clone();
+        st.last_ask.effort = effort.clone();
+        for (_, _, a) in st.queue.iter_mut() {
+            a.model = model.clone();
+            a.effort = effort.clone();
+        }
     }
 
     /// Choose this chat's AI. Only possible before its conversation has started.
@@ -5893,6 +5915,33 @@ mod tests {
         assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "ai" && e["from"] == "gemini" && e["ai"] == "claude"));
         // switching to the AI it is already on changes nothing
         assert_eq!(a.switch_ai("claude"), Ok(false));
+    }
+
+    #[test]
+    fn a_switch_drops_the_old_ais_model_and_a_pick_counts_at_once() {
+        // the user's case: a run's Lead on OpenCode's DeepSeek, switched to Gemini with Neon (High) picked, kept
+        // waking on "deepseek", which Gemini does not offer, so it ran on Gemini's default (Carbon)
+        let a = Agent::detached_for_test("switch-model", None);
+        assert_eq!(a.switch_ai("opencode"), Ok(false));
+        {
+            let mut st = a.st.lock().unwrap();
+            st.log.push(json!({"kind": "user", "text": "Build the beach"}));
+            st.last_ask.model = Some("opencode-go/deepseek-v4.1-flash".into());
+            st.last_ask.effort = Some("high".into());
+            st.queue.push(("q1".into(), "and the dock".into(), Ask { model: Some("opencode-go/deepseek-v4.1-flash".into()), ..Default::default() }));
+        }
+        assert_eq!(a.switch_ai("gemini"), Ok(true));
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.last_ask.model.as_deref(), st.last_ask.effort.as_deref()), (None, None));
+            assert_eq!(st.queue[0].2.model, None);
+        }
+        assert_eq!(a.model(), None, "no other AI's model is asked for");
+        a.set_pick(Some("gemini-4-neon-high"), Some("bogus"));
+        let st = a.st.lock().unwrap();
+        assert_eq!(st.last_ask.model.as_deref(), Some("gemini-4-neon-high"));
+        assert_eq!(st.last_ask.effort, None, "an effort the app does not know is not kept");
+        assert_eq!(st.queue[0].2.model.as_deref(), Some("gemini-4-neon-high"), "a waiting message goes on the pick");
     }
 
     #[test]

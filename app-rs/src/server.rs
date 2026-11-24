@@ -319,6 +319,14 @@ fn post(path: &str, body: Value) -> Reply {
             "ideas" => send_json(research::find_ideas(&text_of("focus"), body["ai"].as_str(), body["model"].as_str())),
             _ => send_json(json!({"ok": false})),
         },
+        // the model and effort picked for a chat in the window (`Agent::set_pick`)
+        "/api/chat-model" => match &target {
+            Some(agent) => {
+                agent.set_pick(body["model"].as_str(), body["effort"].as_str());
+                send_json(json!({"ok": true}))
+            }
+            None => send_json(json!({"ok": false, "error": "That chat is gone."})),
+        },
         "/api/ai" => {
             // with a chat named: that chat's AI (a started chat carries on with the other AI, handed the chat so far);
             // without: the one new chats start on

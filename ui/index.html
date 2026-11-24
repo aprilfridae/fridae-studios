@@ -3269,6 +3269,9 @@ async function moveOpenCodePick() {
   if (sent) refresh();
 }
 function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
+/* the app is told the chat in front's model and effort when either is picked or its AI is switched, so the app's own
+   messages to it (a run's wakes, board news) and its waiting messages use them at once (/api/chat-model) */
+function tellPick(p) { p = p || agents.get(current); if (!p || !p.started) return; api("/api/chat-model", { agent: p.id, model: modelOf(p) || null, effort: effortOf(p) }).catch(() => {}); }
 /* no effort to set: the AI's models carry their own, or this model names its level (Gemini's "gemini-4-neon-high") */
 function ownLevel(ai, model) { return caps(ai).effort === false || (ai === "gemini" && /-(low|medium|high|xhigh|max)$/.test(model || "")); }
 /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
@@ -3449,7 +3452,7 @@ function paintPicker() {
       if (g && g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
       const o = el("button", "opt", TICK + "<span><b>" + esc(rest) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
       o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
-      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
+      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id).then(() => tellPick(p)); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); tellPick(p); };
       lst.appendChild(o);
     });
     lst.scrollTop = top;
@@ -3464,7 +3467,7 @@ function paintPicker() {
     const b = el("button", id === effort ? "on" : "", esc(name));
     b.setAttribute("aria-pressed", id === effort ? "true" : "false");
     b.title = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" }[id];
-    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); };
+    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); tellPick(); };
     seg.appendChild(b);
   });
 }
@@ -5527,7 +5530,7 @@ async function switchAi(id) {
   if (p.busy) { refuse("Wait until it finishes, or stop it, then switch."); return; }
   let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   if (!r.ok) { refuse(r.error || "Could not switch."); return; }
-  p.ai = id; paintComposer(); paintSwitch(); paintNeeds();
+  p.ai = id; paintComposer(); paintSwitch(); paintNeeds(); tellPick(p);
 }
 /* Setup: the AI new chats start on (General), and each AI with whether it is found on this computer (Connections).
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
