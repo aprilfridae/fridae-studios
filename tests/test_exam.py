@@ -245,6 +245,14 @@ class TheQuestions(unittest.TestCase):
         self.assertEqual({e["expect"] for e in quick}, {"answer", "not_found", "guide"})
         self.assertTrue(any(e.get("stale_old") for e in quick))
 
+    def test_vault_conflicts_are_listed_and_the_judge_is_told_the_rules(self):
+        import exam
+        import exam_report as R
+        _, ex = exam.load_sets()
+        self.assertIn("P11", [qid for qid, _ in R.vault_conflicts(ex)])
+        self.assertIn("either one counts", L.JUDGE_PROMPT)
+        self.assertIn("mark that wrong fact true as well", L.JUDGE_PROMPT)
+
     def test_the_reader_prompt_numbers_every_passage(self):
         import exam
         p = exam.reader_prompt("q?", [{"hits": [{"shelf": "vault", "title": "A", "heading": "H", "text": "x"}]},

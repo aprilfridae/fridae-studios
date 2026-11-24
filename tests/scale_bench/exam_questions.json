@@ -577,13 +577,14 @@
    "id": "P11",
    "expect": "answer",
    "facts": [
+    "A heavy hit freezes for about 66 ms (the tuning note) or for 80 to 150 ms (Combat Animation Craft); either one counts",
     "Each hit has one strength value from which stop, trauma and kick are derived",
-    "Light hits get no hit-stop and no shake",
     "Important stops should be 66 ms or more because 50 ms is only 1-2 frames at 30 fps"
    ],
    "wrong": [
-    "Every hit, including light hits, should freeze and shake"
-   ]
+    "Freeze a heavy hit for half a second or longer"
+   ],
+   "vault_conflict": "How long hits freeze: Combat Animation Craft gives light hits 30-60 ms and heavy hits 80-150 ms; Hit-Stop and Screen Shake Tuning by Numbers gives light hits no hit-stop and a heavy hit 66 ms."
   },
   {
    "id": "P12",

@@ -215,8 +215,13 @@ For each item:
 match),
   "contradicted" if the answer states something that conflicts with it (for example a different number),
   "absent" otherwise.
+- A key fact may give alternatives ("X or Y; either one counts"): it is "present" when the answer states any one of \
+them, and stating one alternative never contradicts another.
 - "wrong": one true/false per wrong fact, in the order given: true if the answer asserts it (or something with the \
 same meaning), false otherwise. Mentioning it only to reject it counts as false.
+- Keep the two lists consistent: when a key fact is "contradicted" because the answer asserts one of the listed wrong \
+facts, mark that wrong fact true as well. Mark a wrong fact true only when it is listed and the answer asserts it; a \
+contradiction that matches no listed wrong fact leaves every wrong flag false.
 - "abstained": true if the answer's main message is that the knowledge base does not contain the answer (for example \
 "not in the knowledge base"), even if it adds side remarks; false if it gives an answer.
 - "guide_pointer": true if the answer directs the reader to one of the guides listed in "guide" (by its name or an \

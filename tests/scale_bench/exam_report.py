@@ -204,6 +204,11 @@ def answer_summary(rows):
     }
 
 
+def vault_conflicts(exam):
+    """[(answer id, what the vault's notes disagree on)] from the answer keys marked vault_conflict."""
+    return [(a["id"], a["vault_conflict"]) for a in exam.get("answers") or [] if a.get("vault_conflict")]
+
+
 def config_scale(name):
     return int(name.split("-")[2].rstrip("x"))
 
@@ -543,6 +548,17 @@ def build(ex):
             w("- %s, %s: \"%s\" Missing: %s. Answer: %s" % (e["id"], n, _clip(e["question"], 120),
                                                             "; ".join(_clip(f, 80) for f in miss) or "–",
                                                             _clip(rec.get("answer"), 220)))
+        w("")
+
+    conflicts = vault_conflicts(ex.exam)
+    if conflicts:
+        w("### The vault disagrees with itself")
+        w("")
+        w("Answer keys where two notes in the vault give different answers. Either note's claim is graded as "
+          "correct; these are findings for vault upkeep, not exam noise.")
+        w("")
+        for qid, text in conflicts:
+            w("- **%s**: %s" % (qid, text))
         w("")
 
     # ---------------------------------------------------------- verdicts in plain words
