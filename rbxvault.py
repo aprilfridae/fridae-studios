@@ -322,35 +322,51 @@ def query_terms(q):
     return terms
 
 
-def search(q, k=3, idx=None):
-    idx = idx or load_index()
-    docs, terms = idx["docs"], query_terms(q)
-    scores = bm25f(terms, docs)
-    by_title = {d["title"]: i for i, d in enumerate(docs)}
+def _symptom_hits(terms, symptoms):
+    """[(score, symptom line)] best first: BM25 over the symptom lines alone."""
     hits = []
-    if idx["symptoms"]:
-        sdf = Counter(t for s in idx["symptoms"] for t in set(s["toks"]))
-        ns = len(idx["symptoms"])
-        avg = sum(len(s["toks"]) for s in idx["symptoms"]) / ns
-        for s in idx["symptoms"]:
+    if symptoms:
+        sdf = Counter(t for s in symptoms for t in set(s["toks"]))
+        ns = len(symptoms)
+        avg = sum(len(s["toks"]) for s in symptoms) / ns
+        for s in symptoms:
             c = Counter(s["toks"])
             sc = sum(qw * math.log(1 + (ns - sdf[t] + 0.5) / (sdf[t] + 0.5)) * c[t] * (K1 + 1)
                      / (c[t] + K1 * (1 - B + B * len(s["toks"]) / avg)) for t, qw in terms.items() if t in c)
             if sc > 0:
                 hits.append((sc, s))
         hits.sort(key=lambda x: -x[0])
-        top = hits[0][0] if hits else 0
-        for sc, s in hits[:8]:
-            for t in s["links"]:
-                if t in by_title and sc >= 0.5 * top:
-                    scores[by_title[t]] += SYMPTOM_WEIGHT * sc
+    return hits
+
+
+def _top_symptoms(hits):
+    best = hits[0][0] if hits else 0
+    return [s for sc, s in hits[:3] if sc >= 0.6 * best]
+
+
+def symptom_matches(q, idx=None):
+    """The symptom lines search() would show for q, without ranking the notes (cheap at any vault size)."""
+    idx = idx or load_index()
+    return _top_symptoms(_symptom_hits(query_terms(q), idx["symptoms"]))
+
+
+def search(q, k=3, idx=None):
+    idx = idx or load_index()
+    docs, terms = idx["docs"], query_terms(q)
+    scores = bm25f(terms, docs)
+    by_title = {d["title"]: i for i, d in enumerate(docs)}
+    hits = _symptom_hits(terms, idx["symptoms"])
+    top = hits[0][0] if hits else 0
+    for sc, s in hits[:8]:
+        for t in s["links"]:
+            if t in by_title and sc >= 0.5 * top:
+                scores[by_title[t]] += SYMPTOM_WEIGHT * sc
     for i, d in enumerate(docs):
         for prefix, mult in DAMP:
             if d["path"].startswith(prefix) or d["title"].endswith(prefix):
                 scores[i] *= mult
     order = sorted(range(len(docs)), key=lambda i: -scores[i])[:k]
-    best = hits[0][0] if hits else 0
-    return [(scores[i], docs[i]) for i in order if scores[i] > 0], [s for sc, s in hits[:3] if sc >= 0.6 * best]
+    return [(scores[i], docs[i]) for i in order if scores[i] > 0], _top_symptoms(hits)
 
 
 def find_note(title, idx):
@@ -2034,7 +2050,7 @@ def rag_search(q, shelves, k, filters=None):
                     left -= min(budget, sum(len(x) - 3 for x in lines[1:-1]))
         if not rank:
             return None
-        symptoms = search(q, k, load_index())[1] if "vault" in shelves and os.path.isdir(KB) else []
+        symptoms = symptom_matches(q) if "vault" in shelves and os.path.isdir(KB) else []
         return _results_tail(out, q, shelves, symptoms).replace(
             "\nNext: rbx_vault action 'read' with the arguments shown, for ONE section at a time.",
             "\nThe lines under each result are its matching passage.\nNext: rbx_vault action 'read' with the "

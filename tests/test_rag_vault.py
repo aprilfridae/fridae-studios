@@ -176,6 +176,22 @@ class RagVaultTests(unittest.TestCase):
         self.assertEqual(read["shelf"], "vault")
         self.assertIn(secs[0]["heading"].lower()[:10], rbxvault.run("read", read).lower())
 
+    def test_index_search_never_ranks_every_note_by_keyword(self):
+        # The index answers in milliseconds; scoring every note by keyword just for the symptom lines cost about 3 s a
+        # search on a vault ten times bigger (the knowledge exam, Light at 10x). Symptoms are scored on their own.
+        note = next(p for p in rbxvault.note_files() if "Teleport" in os.path.basename(p))
+        title = os.path.basename(note)[:-3]
+        secs = [s for s in rbxvault.parse_sections(rbxvault.read(note))["sections"] if s["level"] == 2]
+        stub = StubRag(self, [hit_for("vault", title, note, secs[0]["heading"])])
+        q = "TeleportService.TeleportPartyAsync between places"
+        want = [s["line"] for s in rbxvault.search(q, 5, rbxvault.load_index())[1]]
+        self.assertTrue(want)
+        with env(stub.url, "tok"), mock.patch.object(rbxvault, "bm25f", side_effect=AssertionError("ranked notes")):
+            out = rbxvault.run("search", {"query": q, "shelf": "vault"})
+        self.assertIn("1. [vault] %s" % title, out)
+        tail = out.split("Symptoms (symptom | cause | fix | note):\n", 1)[1].splitlines()
+        self.assertEqual(tail[:len(want)], ["- " + w for w in want])
+
     def test_search_falls_back_when_service_down(self):
         for shelf in ("all", "vault", "guides"):
             a = {"query": "datastore session lock", "shelf": shelf}
