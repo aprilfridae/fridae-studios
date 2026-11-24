@@ -54,8 +54,18 @@ small passages instead of loading whole guides cuts the context tokens an agent 
 goal. It is an option: a user who does not set it up runs on the keyword fallback below, so the heavy stack is never
 forced.
 
-A lighter embedded fallback (FastEmbed CPU + Qdrant local mode, no Ollama/daemon) may be added later for users who want
-RAG without the setup, but it is secondary; the primary, user-chosen build is the Ollama + Qdrant stack above.
+### Both stacks ship; the user picks in Setup
+
+The user wants **both** offered as options, chosen in Setup, with a clear setup flow for the heavy one:
+
+- **Light** — bundled and embedded: FastEmbed CPU dense + sparse + a small ONNX reranker, and Qdrant in local
+  no-server mode (or sqlite-vec/hnswlib). No Ollama, no daemons, (almost) nothing to install — works out of the box
+  for anyone. Lower ceiling, still hybrid + rerank.
+- **Heavy** — Ollama + Qdrant service + cross-encoder reranker, as above: more speed and quality, a real setup.
+- **Off** — today's keyword lookup.
+
+Both are real builds behind one `rbx_vault`/RAG interface, so the agent side does not care which is on; only retrieval
+quality and setup differ. The index is rebuilt when the chosen stack changes.
 
 ## Behaviour
 
@@ -74,13 +84,24 @@ RAG without the setup, but it is secondary; the primary, user-chosen build is th
 - Indexing a user's whole disk or anything outside Fridae's vault, notes and game folders.
 - Sending any of this knowledge to an external service (all local — Ollama and Qdrant run on the user's machine).
 
-## Setup and management (an option, like the other connections)
-- Setup > Connections gets a RAG/"Knowledge index" row: install Ollama and Qdrant (Fridae runs the installers), pull
-  the embedding model, build the index, and start/stop the services — the same shape as the OpenCode and promo-engine
-  rows. Off until the user turns it on.
+## Setup UI (both options, with a guided heavy setup)
+- Setup > Connections gets a "Knowledge index (RAG)" section with the three choices as a clear control: **Off**,
+  **Light** (works now), **Heavy (Ollama + Qdrant)**. Each with one plain line on what it gives and costs (Light: works
+  out of the box; Heavy: fastest, needs Ollama + Qdrant, all local).
+- **Light**: pick it and Fridae builds the index — no external install, a progress bar and a chunk count when done.
+- **Heavy — a decently easy, step-by-step setup** the UI walks through, each step with a state dot, Fridae doing what
+  it can and showing the exact command/next step for anything it cannot:
+  1. Install Ollama (Fridae runs the official installer; if it can't, shows the one command/link).
+  2. Pull the embedding model (`mxbai-embed-large`) — progress shown.
+  3. Install/locate Qdrant (Fridae installs the native binary and starts it as a managed service; shows status).
+  4. Start the reranker.
+  5. Build the index — progress and a chunk count; a "test query" button to confirm it works.
+  Each step says done/needs-you/failed with a plain fix, re-runnable, idempotent (the reference doc's bootstrap +
+  verify, as in-app steps instead of a shell script).
 - Fridae manages the Qdrant and reranker processes under its process ledger (start on enable, stop on quit), stored in
-  the app's data folder; it does not touch a user's own separate Ollama/Qdrant if they run one.
-- When the index is off or a service is down, agents fall back to today's keyword lookup, never error.
+  the app's data folder; it does not touch a user's own separate Ollama/Qdrant if they already run one.
+- Switching Off / Light / Heavy is a control the user can change any time; changing it rebuilds the index for the new
+  stack. When the index is off or a service is down, agents fall back to the keyword lookup, never error.
 
 ## Open for the build
 - The exact models (the user named Ollama + `mxbai-embed-large`-class dense and a `bge-reranker` cross-encoder from the
