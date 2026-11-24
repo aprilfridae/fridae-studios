@@ -256,6 +256,32 @@ class RagVaultTests(unittest.TestCase):
         self.assertIn("1. [guides] %s" % hits[1]["title"], out)
 
 
+class PassageTests(unittest.TestCase):
+    """An answer from the knowledge index shows the matched passage of each hit, within a cap per hit and per
+    answer, instead of a snippet that sends the agent off to read the whole note."""
+
+    def test_hits_show_their_passages_within_the_caps(self):
+        hits = guide_hits()
+        long_text = "Title › Heading\n" + "\n".join("Line %d says something about the zorblat caves." % i for i in range(80))
+        hits = [dict(h, text=long_text) for h in hits]
+        stub = StubRag(self, hits)
+        with env(stub.url, "tok"):
+            out = rbxvault.run("search", {"query": "zorblat caves", "shelf": "guides", "k": 2})
+        self.assertIn("Line 0 says something about the zorblat caves.", out)
+        self.assertNotIn("Title › Heading", out)  # the index's own first line is not part of the passage
+        self.assertNotIn("Line 79", out)
+        passages = [l for l in out.splitlines() if l.startswith("   Line")]
+        self.assertLessEqual(sum(len(l) - 3 for l in passages), 2 * rbxvault.PASSAGE_CHARS)
+        self.assertIn('"action": "read"', out)  # still the arguments to read more
+
+    def test_passage_cap(self):
+        lines = rbxvault.passage("T › H\n" + "word " * 1000, 200)
+        self.assertLessEqual(sum(len(x) for x in lines), 200)
+        self.assertTrue(lines[-1].endswith("…"))
+        self.assertEqual(rbxvault.passage("T › H\n```lua\nlocal x = 1\n```\n\nPlain words.", 500),
+                         ["local x = 1", "Plain words."])
+
+
 class KeywordRankingTests(unittest.TestCase):
     """rbxvault.keyword_ranking is the keyword search's own order, which the knowledge index fuses."""
 

@@ -1128,14 +1128,17 @@ def _vault_note_lines(rank, d):
     return out
 
 
-def _section_lines(rank, shelf, d, p, s, terms, args=None):
-    """One section: rank, shelf, title › heading, size, a snippet and the arguments that read exactly it."""
+def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
+    """One section: rank, shelf, title › heading, size, a snippet (or the given passage lines) and the arguments
+    that read exactly it."""
     out = []
     where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
     label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
     kind = " [lesson]" if d.get("lesson") else ""
     out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
-    if s:
+    if lines is not None:
+        out += ["   " + x for x in lines]
+    elif s:
         text = p["body"][s["start"]:s["own_end"]]
         if not s["level"] and p["description"]:
             text = p["description"] + "\n" + text
@@ -1186,8 +1189,36 @@ def rag_endpoint():
     return url, token
 
 
-def _rag_hit_lines(rank, hit, terms):
-    """The lines for one hit of the knowledge index, or None when the file or section is no longer there."""
+PASSAGE_CHARS = 700  # one hit's passage at most (about 175 tokens)
+ANSWER_CHARS = 3200  # every passage of one answer together at most (about 800 tokens); the rest show a snippet
+
+
+def passage(text, budget):
+    """The lines of a matched chunk (its own text, without the title › heading line the index puts first), up to
+    budget characters: the passage an agent reads instead of the whole note."""
+    body = text.split("\n", 1)[1] if "\n" in text else text
+    out, used, fence = [], 0, False
+    for line in body.split("\n"):
+        st = line.strip()
+        if _FENCE.match(st):
+            fence = not fence
+            continue
+        if not st or st.startswith("<!--") or re.match(r"^\|?[\s:|-]+\|?$", st):
+            continue
+        st = " ".join(st.strip("|").replace(" | ", " · ").split()) if not fence else st
+        if used + len(st) > budget:
+            room = budget - used
+            if room > 40:
+                out.append(st[:room - 1].rsplit(" ", 1)[0] + "…")
+            break
+        out.append(st)
+        used += len(st)
+    return out
+
+
+def _rag_hit_lines(rank, hit, terms, budget=0):
+    """The lines for one hit of the knowledge index, or None when the file or section is no longer there. With a
+    budget (characters) and the hit's chunk text, the matched passage is shown instead of a snippet."""
     shelf, title, path = hit.get("shelf"), hit.get("title"), hit.get("path")
     if shelf not in SHELVES or not title or not isinstance(path, str) or not path.endswith(".md"):
         return None
@@ -1211,7 +1242,10 @@ def _rag_hit_lines(rank, hit, terms):
         args = {"action": "read", "shelf": "vault", "title": title}
         if s["level"] >= 2:
             args["heading"] = s["heading"]
-    return _section_lines(rank, shelf, d, p, s, terms, args)
+    lines = None
+    if budget > 0 and isinstance(hit.get("text"), str) and hit["text"].strip():
+        lines = passage(hit["text"], budget) or None
+    return _section_lines(rank, shelf, d, p, s, terms, args, lines)
 
 
 def rag_search(q, shelves, k):
@@ -1234,16 +1268,22 @@ def rag_search(q, shelves, k):
             return None
         terms = query_terms(q)
         out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
-        rank = 0
+        rank, left = 0, ANSWER_CHARS
         for hit in hits[:k]:
-            lines = _rag_hit_lines(rank + 1, hit, terms) if isinstance(hit, dict) else None
+            budget = min(PASSAGE_CHARS, left)
+            lines = _rag_hit_lines(rank + 1, hit, terms, budget if budget > 80 else 0) if isinstance(hit, dict) else None
             if lines:
                 rank += 1
                 out += lines
+                if budget > 80 and isinstance(hit.get("text"), str):
+                    left -= min(budget, sum(len(x) - 3 for x in lines[1:-1]))
         if not rank:
             return None
         symptoms = search(q, k, load_index())[1] if "vault" in shelves and os.path.isdir(KB) else []
-        return _results_tail(out, q, shelves, symptoms)
+        return _results_tail(out, q, shelves, symptoms).replace(
+            "\nNext: rbx_vault action 'read' with the arguments shown, for ONE section at a time.",
+            "\nThe lines under each result are its matching passage.\nNext: rbx_vault action 'read' with the "
+            "arguments shown, only if you need more, for ONE section at a time.")
     except Exception as e:  # never an error from here: the keyword search is the answer
         if hasattr(e, "close"):  # an HTTP error answer holds its connection open
             try:
