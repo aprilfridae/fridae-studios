@@ -93,7 +93,8 @@ class LightEmbedders(_FastembedParts):
     dim = LIGHT["dim"]
 
     def __init__(self, cache_dir=None, dense=None, sparse=None, reranker=None):
-        self.model = "light:%s+%s" % (LIGHT["dense"], LIGHT["sparse"])
+        # "light2": the in-memory store (an index from Qdrant's local mode is rebuilt once)
+        self.model = "light2:%s+%s" % (LIGHT["dense"], LIGHT["sparse"])
         self._dense = dense or load_fastembed("dense", LIGHT["dense"], cache_dir)
         self._sparse = sparse or load_fastembed("sparse", LIGHT["sparse"], cache_dir)
         self._reranker = reranker or load_fastembed("rerank", LIGHT["rerank"], cache_dir)

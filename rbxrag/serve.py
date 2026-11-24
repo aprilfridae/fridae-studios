@@ -203,9 +203,9 @@ def read_token(path):
 
 def light_factory(data):
     def make():
-        from qdrant_client import QdrantClient
         from rbxrag.engine import Engine
         from rbxrag.models import LightEmbedders
+        from rbxrag.stores import MemStore
         from rbxrag.setup import missing_models, models_dir
         missing = missing_models("light", data)
         if missing:
@@ -214,7 +214,7 @@ def light_factory(data):
         emb = LightEmbedders(models_dir(data))
         folder = os.path.join(data, "light")
         os.makedirs(folder, exist_ok=True)
-        return Engine(QdrantClient(path=folder), emb, os.path.join(folder, "manifest.json"))
+        return Engine(MemStore(folder), emb, os.path.join(folder, "manifest.json"))
     return make
 
 

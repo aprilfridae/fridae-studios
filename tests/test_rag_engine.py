@@ -11,6 +11,7 @@ import zlib
 
 from rbxrag import chunks
 from rbxrag.engine import Engine
+from rbxrag.stores import MemStore, QdrantStore
 
 try:
     from qdrant_client import QdrantClient, models
@@ -70,9 +71,6 @@ class ConstantDense(FakeEmbedders):
     def _dense(self, text):
         return [1.0] + [0.0] * (self.dim - 1)
 
-    def rerank(self, query, texts):
-        return [0.0 for _ in texts]  # no help from the reranker either: the fused order stands
-
 
 def write(path, text, bump=0):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -84,8 +82,9 @@ def write(path, text, bump=0):
     return path
 
 
-@unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
-class EngineTests(unittest.TestCase):
+class EngineCases:
+    """Run against both stores (QdrantEngineTests, MemEngineTests below)."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="rag engine é ")
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -95,8 +94,8 @@ class EngineTests(unittest.TestCase):
         self.b = write(os.path.join(self.tmp, "kit", "Bravo.md"), "# Bravo\n\n## Lanterns\n\nA haunted forest where a lantern keeps ghosts away.\n")
         self.c = write(os.path.join(self.tmp, "kit", "Charlie.md"), "# Charlie\n\n## Rockets\n\nBuild a rocket from scrap metal and fuel.\n")
         self.files = [("guides", "Alpha", self.a), ("vault", "Bravo", self.b), ("yours", "Charlie", self.c)]
-        self.client = QdrantClient(":memory:")
         self.manifest = os.path.join(self.tmp, "rag", "manifest.json")
+        self.setup_store()
 
     def corpus(self, project):
         return list(self.files) + [("game", t, p) for t, p in self.game.get(project, [])]
@@ -105,7 +104,8 @@ class EngineTests(unittest.TestCase):
         return {p for _, p in self.game.get(project, [])}
 
     def engine(self, emb=None):
-        return Engine(self.client, emb or FakeEmbedders(), self.manifest, corpus=self.corpus,
+        """A new engine on the same manifest and saved index, as after a restart of the service."""
+        return Engine(self.new_store(), emb or FakeEmbedders(), self.manifest, corpus=self.corpus,
                       project_files=self.project_files)
 
     def manifest_text(self):
@@ -113,8 +113,7 @@ class EngineTests(unittest.TestCase):
             return f.read()
 
     def count_path(self, eng, path):
-        f = models.Filter(must=[models.FieldCondition(key="path", match=models.MatchValue(value=path))])
-        return self.client.count(eng.collection, count_filter=f, exact=True).count
+        return eng.store.count_path(path)
 
     def test_sync_then_query_finds_note(self):
         eng = self.engine()
@@ -172,8 +171,13 @@ class EngineTests(unittest.TestCase):
         target = write(os.path.join(self.tmp, "kit", "Signals.md"),
                        "# Signals\n\n## Watching one property\n\nUse GetPropertyChangedSignal for one property.\n")
         self.files.append(("vault", "Signals", target))
-        eng = self.engine(ConstantDense())
+        emb = ConstantDense()
+        eng = self.engine(emb)
         eng.sync()
+        # the dense list (40 of 61 equal scores) may well miss it: the sparse list brings it to the reranker
+        cands = eng.store.search(emb.dense_query("x"), emb.sparse_query("GetPropertyChangedSignal"),
+                                 eng._filter(["vault"], None))
+        self.assertIn("Signals", [c["title"] for c in cands])
         hits = eng.query("GetPropertyChangedSignal", ["vault"], 3, None)
         self.assertEqual(hits[0]["title"], "Signals")
 
@@ -254,6 +258,82 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             broken.sync()
         self.assertEqual(self.manifest_text(), before)
+
+
+@unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
+class QdrantEngineTests(EngineCases, unittest.TestCase):
+    def setup_store(self):
+        self.client = QdrantClient(":memory:")
+
+    def new_store(self):
+        return QdrantStore(self.client)
+
+
+class MemEngineTests(EngineCases, unittest.TestCase):
+    def setup_store(self):
+        self.folder = os.path.join(self.tmp, "rag", "light")
+
+    def new_store(self):
+        return MemStore(self.folder)
+
+    def test_saved_index_reloads_and_mismatch_rebuilds(self):
+        eng = self.engine()
+        first = eng.sync()
+        again = self.engine()
+        self.assertEqual(again.sync()["embedded"], 0)  # loaded from index.npz + payloads.jsonl
+        self.assertEqual(again.query("haunted forest lantern", ["vault"], 1, None)[0]["title"], "Bravo")
+        with open(self.manifest, encoding="utf-8") as f:
+            man = json.load(f)
+        man["generation"] = "not-the-saved-one"
+        with open(self.manifest, "w", encoding="utf-8") as f:
+            json.dump(man, f)
+        self.assertEqual(self.engine().sync()["embedded"], first["chunks"])
+        os.remove(os.path.join(self.folder, "payloads.jsonl"))
+        self.assertEqual(self.engine().sync()["embedded"], first["chunks"])
+
+
+@unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
+class StoreEquivalenceTests(unittest.TestCase):
+    """MemStore ranks like Qdrant: the same fused candidates for the same points and query."""
+
+    def test_mem_matches_qdrant(self):
+        tmp = tempfile.mkdtemp(prefix="rag eq ")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        topics = ["coins meadow shiny collect", "lantern haunted forest ghosts", "rocket scrap metal fuel",
+                  "datastore session lock profile", "sword combat hitbox damage", "shop gamepass purchase robux",
+                  "pets eggs hatch rarity", "leaderboard ordered datastore top", "teleport reserved server party",
+                  "mobile buttons touch phone ui", "particles vfx beam trail", "npc pathfinding enemy chase",
+                  "round timer intermission lobby", "music sound volume audio", "map terrain water level"]
+        files = []
+        for i, t in enumerate(topics):
+            words_ = t.split()
+            body = "## %s\n\n%s and more %s with %s.\n\n## Notes %d\n\n%s %s tips.\n" % (
+                words_[0].title(), t, words_[1], words_[-1], i, words_[2], words_[0])
+            files.append(("vault" if i % 3 else "guides", "Note %d" % i,
+                          write(os.path.join(tmp, "Note %d.md" % i), "# Note %d\n\n" % i + body)))
+        corpus = lambda project: list(files)
+        q_eng = Engine(QdrantStore(QdrantClient(":memory:")), FakeEmbedders(), os.path.join(tmp, "q.json"),
+                       corpus=corpus, project_files=lambda p: set())
+        m_eng = Engine(MemStore(os.path.join(tmp, "light")), FakeEmbedders(), os.path.join(tmp, "m.json"),
+                       corpus=corpus, project_files=lambda p: set())
+        q_eng.sync()
+        m_eng.sync()
+        emb = FakeEmbedders()
+        for q in ["shiny coins", "haunted lantern", "session lock datastore", "phone touch buttons", "zzz unknown",
+                  "leaderboard top datastore", "pets"]:
+            for shelves in (["vault", "guides"], ["guides"]):
+                flt = q_eng._filter(shelves, None)
+                args = ([float(x) for x in emb.dense_query(q)], emb.sparse_query(q), flt)
+                # points sharing no word with the query all score 0 and their order among themselves is arbitrary
+                # in both stores; the points that match must come out the same, in the same order
+                qw = set(words(q))
+                a = [p["id"] for p in q_eng.store.search(*args) if qw & set(words(p["text"]))]
+                b = [p["id"] for p in m_eng.store.search(*args) if qw & set(words(p["text"]))]
+                self.assertEqual(a, b, q)
+                self.assertEqual(len(q_eng.store.search(*args)), len(m_eng.store.search(*args)), q)
+                ha = [h["id"] for h in q_eng.query(q, shelves, 3, None) if h["score"] > 0]
+                hb = [h["id"] for h in m_eng.query(q, shelves, 3, None) if h["score"] > 0]
+                self.assertEqual(ha[:1], hb[:1], q)
 
 
 if __name__ == "__main__":
