@@ -1091,7 +1091,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       </div>
       <ul class="rag-modes" id="rag-modes">
         <li data-m="off"><b>Off:</b> <span id="rag-d-off">Simple word search (what Fridae does today).</span></li>
-        <li data-m="light"><b>Light:</b> <span id="rag-d-light">Works out of the box. Downloads about 200 MB of small models once.</span></li>
+        <li data-m="light"><b>Light:</b> <span id="rag-d-light">Works out of the box. Downloads one small model (about 65 MB) once.</span></li>
         <li data-m="heavy"><b>Heavy:</b> <span id="rag-d-heavy">Fastest and smartest. Needs Ollama and Qdrant, which Fridae can set up for you.</span></li>
       </ul>
       <div class="rag-light" id="rag-light" hidden><p class="sub" id="rag-l-state"></p><div class="eng-bar" id="rag-l-bar" hidden><i></i></div><div class="act"><button class="pill" id="rag-l-go" hidden>Set up</button></div></div>
@@ -3448,8 +3448,8 @@ const RAG_STEPS = [
   { id: "ollama-install", name: "Install Ollama", go: "Install", doing: "Installing...", what: "Ollama runs the AI model that reads your docs. Fridae downloads the free app from ollama.com into your Applications folder.", done: "Ollama is running." },
   { id: "ollama-pull", name: "Download the embedding model", go: "Download", doing: "Downloading...", what: "The model Ollama uses to find text by meaning. A one-time download.", done: "Downloaded.", after: [0], wait: "Needs Ollama running first (step 1)." },
   { id: "qdrant-install", name: "Install Qdrant", go: "Install", doing: "Installing...", what: "Qdrant keeps the index on your Mac. It goes in Fridae's own folder; nothing is installed system-wide.", done: "Installed." },
-  { id: "models", name: "Start the reranker", go: "Start", doing: "Starting...", what: "Downloads the small model that puts the best matches first. A one-time download.", done: "Ready." },
-  { id: "build", name: "Build the index", go: "Build", doing: "Building...", what: "Reads your notes, guides and project docs and builds the index. The first time takes a few minutes.", after: [0, 1, 2, 3], wait: "Needs steps 1 to 4 first." },
+  { id: "models", name: "Start the reranker", go: "Start", doing: "Starting...", what: "Downloads the model that puts the best matches first (about 1.1 GB). A one-time download.", done: "Ready." },
+  { id: "build", name: "Build the index", go: "Build", doing: "Building...", what: "Reads your notes, guides and project docs and builds the index. The first build can take 10 minutes or more on a big vault; after that only changed notes are read again.", after: [0, 1, 2, 3], wait: "Needs steps 1 to 4 first." },
 ];
 function ragVisible() { return document.body.classList.contains("setup") && !!document.querySelector('.su-body section[data-s="connections"].on'); }
 const ragPct = (f) => Math.max(0, Math.min(100, Math.round((Number(f) || 0) * 100)));
@@ -3529,9 +3529,9 @@ function paintRagLight() {
   if (su.running && mine) { text = ragDoing(su) + " This happens once."; bar = ragPct(su.fraction); go = "Setting up..."; }
   else if (mine && su.error && !ck.models) { text = "The setup did not finish: " + ragSentence(su.error); go = "Try again"; act = () => ragSetup("models"); }
   else if (ck.error) text = "Could not check what is set up.";
-  else if (!ck.models) { text = "Not set up yet. Set up downloads about 200 MB of small models, once."; go = "Set up"; act = () => ragSetup("models"); }
+  else if (!ck.models) { text = "Not set up yet. Set up downloads one small model (about 65 MB), once."; go = "Set up"; act = () => ragSetup("models"); }
   else if (s && s.ready) { text = "Ready, " + ragPieces(s.chunks) + " indexed."; go = "Build again"; act = ragRebuild; }
-  else if (s && s.building) { text = ragBuilding(s) + " The first time takes a few minutes."; bar = ragPct((s.progress || {}).fraction); }
+  else if (s && s.building) { text = ragBuilding(s) + " The first build can take 10 minutes or more on a big vault; after that only changed notes are read again."; bar = ragPct((s.progress || {}).fraction); }
   else if (ragStopped()) { text = ragGaveUp() ? "Fridae stopped trying to start the index." : "The index stopped with a problem."; go = "Try again"; act = ragRebuild; }
   else text = p.restarting ? "Starting again..." : "Starting...";
   $("rag-l-state").textContent = text;

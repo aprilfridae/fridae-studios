@@ -111,9 +111,8 @@ package's metadata):
 Downloaded at setup, only when the user presses that step's button, not bundled:
 
 - **Models** from Hugging Face into the app's own `rag/models` folder: `BAAI/bge-small-en-v1.5` (MIT; FastEmbed
-  fetches Qdrant's quantized ONNX copy, `Qdrant/bge-small-en-v1.5-onnx-Q`),
-  `Qdrant/bm25` (Apache-2.0), `Xenova/ms-marco-MiniLM-L-6-v2` (Apache-2.0, an ONNX build of
-  `cross-encoder/ms-marco-MiniLM-L-6-v2`) for Light; `BAAI/bge-reranker-base` (MIT) for Heavy.
+  fetches Qdrant's quantized ONNX copy, `Qdrant/bge-small-en-v1.5-onnx-Q`) for Light; `Qdrant/bm25` (Apache-2.0) and
+  `BAAI/bge-reranker-base` (MIT) for Heavy.
 - **Qdrant** (Apache-2.0, https://github.com/qdrant/qdrant): the release binary, pinned with its SHA-256, into the
   app's own `rag/bin` folder (Heavy).
 - **Ollama** (MIT, https://github.com/ollama/ollama): the user's own app in `~/Applications`, installed only when
