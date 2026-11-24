@@ -32,6 +32,14 @@ class Embedders(Protocol):
     def count_tokens(self, text: str) -> int: ...
 
 
+class NeedsRebuild(Exception):
+    """A quick sync found the index unusable (it never rebuilds itself)."""
+
+
+class TooBig(Exception):
+    """A quick sync found more to embed than a query should wait for."""
+
+
 def _is_store(x):
     return all(hasattr(x, a) for a in ("reset", "open", "commit", "search", "count_path"))
 
@@ -83,11 +91,18 @@ class Engine:
                 and man.get("model") == self.model)
 
     # ------------------------------------------------------------ sync
-    def sync(self, project=None, progress: Callable[[str, float], None] = None):
+    def sync(self, project=None, progress: Callable[[str, float], None] = None, full=False, quick=False,
+             max_embed=None, blocking=True):
         """Bring the index in step with the files: the shared ones, plus the game's when a project is given. Returns
-        {"chunks", "files", "embedded", "removed"} (removed counts files)."""
-        with self._sync_lock:
-            stats = self._sync(project, progress or (lambda step, fraction: None))
+        {"chunks", "files", "embedded", "removed"} (removed counts files), or None when blocking is False and another
+        sync is running. full rebuilds everything (decided inside the sync lock). quick (the refresh a query runs)
+        never rebuilds: it raises NeedsRebuild instead, and TooBig before embedding more than max_embed chunks."""
+        if not self._sync_lock.acquire(blocking=blocking):
+            return None
+        try:
+            stats = self._sync(project, progress or (lambda step, fraction: None), full, quick, max_embed)
+        finally:
+            self._sync_lock.release()
         self.ready = True
         if project:
             self.synced_projects.add(project)
@@ -109,9 +124,11 @@ class Engine:
         self._write_manifest(man)
         return man
 
-    def _sync(self, project, progress):
+    def _sync(self, project, progress, full=False, quick=False, max_embed=None):
         man = self._load_manifest()
-        rebuilt = not (self._compatible(man) and self.store.open(man))
+        rebuilt = full or not (self._compatible(man) and self.store.open(man))
+        if rebuilt and quick:
+            raise NeedsRebuild("the index does not match its manifest")
         if rebuilt:
             man = self._invalidate()
             self.store.reset(self.emb.dim)
@@ -147,6 +164,8 @@ class Engine:
         # a file is gone when it was indexed for the shared shelves or for this project and is no longer listed
         gone = [p for p, e in old.items() if p not in new_entries and e.get("project", "") in ("", project or "")]
         stale = {p: sorted(set(old[p].get("ids", [])) - set(new_entries[p]["ids"])) for p, _ in changed if p in old}
+        if quick and max_embed is not None and len(todo) > max_embed:
+            raise TooBig("%d chunks to embed" % len(todo))
         if not todo and not gone and not any(stale.values()) and not rebuilt:
             # nothing changed: the manifest and the store stay as they are
             self.chunks = sum(len(e["ids"]) for e in old.values())

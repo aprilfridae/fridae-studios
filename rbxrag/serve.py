@@ -18,8 +18,10 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rbxvault
+from rbxrag.engine import NeedsRebuild, TooBig
 
 THROTTLE = 10.0  # seconds between the quick (mtime, size) syncs a query runs
+BIG_CHANGE = 200  # chunks: a refresh embedding more than this runs in the background
 MAX_BODY = 1 << 20
 
 
@@ -28,46 +30,45 @@ class NotReady(Exception):
 
 
 class Service:
-    def __init__(self, mode, factory, clock=time.monotonic, throttle=THROTTLE):
+    def __init__(self, mode, factory, clock=time.monotonic, throttle=THROTTLE, big=BIG_CHANGE):
         self.mode = mode
         self.factory = factory  # () -> rbxrag.engine.Engine; loads the models and opens the index
         self.clock = clock
         self.throttle = throttle
+        self.big = big  # a refresh with more chunks to embed than this runs in the background
         self.engine = None
         self.ready = False
         self.building = False
         self.progress = {"step": "", "fraction": 0.0}
         self.chunks = 0
         self.error = ""
+        self.last_stats = None
         self._last_sync = None
         self._state = threading.Lock()
         self._quick = threading.Lock()
+        self._bg = False
 
     # ------------------------------------------------------------ building
-    def start(self, rebuild=False):
-        """Build (or sync) in the background; False when a build is already running."""
+    def start(self, full=False):
+        """Build (or sync) in the background, not ready until it ends; False when a build is already running."""
         with self._state:
             if self.building:
                 return False
             self.building = True
             self.ready = False
-        threading.Thread(target=self._build, args=(rebuild,), daemon=True, name="rag-build").start()
+        threading.Thread(target=self._build, args=(full,), daemon=True, name="rag-build").start()
         return True
 
     def _on_progress(self, step, fraction):
         self.progress = {"step": step, "fraction": round(float(fraction), 4)}
 
-    def _build(self, rebuild):
+    def _build(self, full):
         try:
             if self.engine is None:
                 self._on_progress("load", 0.0)
                 self.engine = self.factory()
-            if rebuild:
-                try:
-                    os.remove(self.engine.manifest_path)
-                except OSError:
-                    pass
-            stats = self.engine.sync(None, self._on_progress)
+            stats = self.engine.sync(None, self._on_progress, full=full)
+            self.last_stats = stats
             self.chunks = stats["chunks"]
             self.error = ""
             self._last_sync = self.clock()
@@ -78,31 +79,58 @@ class Service:
         finally:
             self.building = False
 
+    def _background(self, project):
+        """A big refresh, run while searches keep using the index as it is."""
+        with self._state:
+            if self._bg:
+                return
+            self._bg = True
+
+        def run():
+            try:
+                stats = self.engine.sync(project, self._on_progress)
+                self.last_stats = stats
+                self.chunks = stats["chunks"]
+            except Exception as e:
+                self.error = "refresh failed: %s" % (str(e) or type(e).__name__)
+            finally:
+                self._bg = False
+        threading.Thread(target=run, daemon=True, name="rag-refresh").start()
+
     def status(self):
         return {"mode": self.mode, "ready": self.ready, "building": self.building, "progress": dict(self.progress),
                 "chunks": self.chunks, "error": self.error}
 
     # ------------------------------------------------------------ querying
+    def _refresh(self, project):
+        """The quick refresh before a search: small changes inline, big ones in the background, never a rebuild."""
+        if not self._quick.acquire(blocking=False):  # another query is already refreshing: do not wait for it
+            return
+        try:
+            self._last_sync = self.clock()
+            stats = self.engine.sync(project, quick=True, max_embed=self.big, blocking=False)
+            if stats is not None:  # None: a build or background refresh holds the index; try again later
+                self.last_stats = stats
+                self.chunks = stats["chunks"]
+        except NeedsRebuild:
+            with self._state:
+                self.ready = False
+            self.start()  # the build notices the mismatch and rebuilds; searches get 503 (keyword) meanwhile
+            raise NotReady()
+        except TooBig:
+            self._background(project)
+        except Exception as e:  # a failed refresh never stops a search of what is indexed
+            self.error = "refresh failed: %s" % (str(e) or type(e).__name__)
+        finally:
+            self._quick.release()
+
     def query(self, q, shelves, k, project):
         if not self.ready or self.engine is None:
             raise NotReady()
         eng = self.engine
-        try:
-            if project and project not in eng.synced_projects:
-                with self._quick:  # a game is indexed on its first query
-                    if project not in eng.synced_projects:
-                        self.chunks = eng.sync(project)["chunks"]
-                        self._last_sync = self.clock()
-            now = self.clock()
-            if self._last_sync is None or now - self._last_sync >= self.throttle:
-                if self._quick.acquire(blocking=False):  # another query is already syncing: do not wait for it
-                    try:
-                        self._last_sync = now
-                        self.chunks = eng.sync(project)["chunks"]
-                    finally:
-                        self._quick.release()
-        except Exception as e:  # a failed refresh never stops a search of what is indexed
-            self.error = "refresh failed: %s" % (str(e) or type(e).__name__)
+        due = self._last_sync is None or self.clock() - self._last_sync >= self.throttle
+        if due or (project and project not in eng.synced_projects):  # a game is indexed on its first query
+            self._refresh(project)
         return eng.query(q, shelves, k, project)
 
 
@@ -162,7 +190,7 @@ def make_handler(service, token):
             except (ValueError, UnicodeDecodeError) as e:
                 return self._send(400, {"error": str(e)})
             if path == "/rebuild":
-                return self._send(200, {"started": service.start(rebuild=True)})
+                return self._send(200, {"started": service.start(full=True)})
             if path != "/query":
                 return self._send(404, {"error": "not found"})
             q = str(data.get("q") or "").strip()

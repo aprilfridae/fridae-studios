@@ -149,6 +149,67 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(body["hits"][0]["heading"], "Landing")
         self.assertIn("purple", body["hits"][0]["text"])
 
+    def test_quick_sync_never_rebuilds(self):
+        kit = Kit(self)
+        clock = [100.0]
+        svc = serve.Service("light", kit.engine, clock=lambda: clock[0])
+        base = self.start(svc)
+        svc.start()
+        self.assertTrue(wait_for(lambda: svc.ready))
+        man_path = os.path.join(kit.tmp, "rag", "manifest.json")
+        with open(man_path, encoding="utf-8") as f:
+            man = json.load(f)
+        man["model"] = "something-else"  # the index no longer matches its manifest
+        with open(man_path, "w", encoding="utf-8") as f:
+            json.dump(man, f)
+        kit.gate = threading.Event()  # hold the rebuild so its not-ready state can be seen
+        clock[0] += 11
+        self.assertEqual(call(base, "/query", {"q": "rocket"})[0], 503)
+        self.assertFalse(call(base, "/status")[1]["ready"])
+        kit.gate.set()
+        self.assertTrue(wait_for(lambda: svc.ready))
+        self.assertEqual(svc.last_stats["embedded"], svc.last_stats["chunks"])  # rebuilt in the background build
+        self.assertEqual(call(base, "/query", {"q": "rocket scrap"})[1]["hits"][0]["title"], "Moon")
+
+    def test_big_refresh_runs_in_background(self):
+        kit = Kit(self)
+        clock = [100.0]
+        hold = threading.Event()
+        hold.set()
+
+        class Slow(FakeEmbedders):
+            def dense(self, texts):
+                hold.wait(10)
+                return super().dense(texts)
+        svc = serve.Service("light", lambda: kit.engine(emb=Slow()), clock=lambda: clock[0], big=1)
+        base = self.start(svc)
+        svc.start()
+        self.assertTrue(wait_for(lambda: svc.ready))
+        write(kit.moon, "# Moon\n\n## Rockets\n\nBuild a rocket.\n\n## Landing\n\nLand on the purple moon.\n\n"
+                        "## Orbit\n\nCircle the purple moon twice.\n", bump=10 ** 9)
+        hold.clear()  # the background embedding waits
+        clock[0] += 11
+        t = time.monotonic()
+        code, body = call(base, "/query", {"q": "purple moon", "shelves": ["yours"], "k": 3})
+        self.assertLess(time.monotonic() - t, 2.0)  # answered from the current index, not after the re-embed
+        self.assertEqual(code, 200)
+        self.assertNotIn("purple", json.dumps(body))
+        hold.set()
+        self.assertTrue(wait_for(lambda: "purple" in json.dumps(
+            call(base, "/query", {"q": "purple moon", "shelves": ["yours"], "k": 3})[1])))
+
+    def test_rebuild_is_full_inside_the_sync(self):
+        kit = Kit(self)
+        svc = serve.Service("light", kit.engine)
+        base = self.start(svc)
+        svc.start()
+        self.assertTrue(wait_for(lambda: svc.ready))
+        man_path = os.path.join(kit.tmp, "rag", "manifest.json")
+        self.assertEqual(call(base, "/rebuild", {}), (200, {"started": True}))
+        self.assertTrue(wait_for(lambda: svc.ready and not svc.building))
+        self.assertEqual(svc.last_stats["embedded"], svc.last_stats["chunks"])
+        self.assertTrue(os.path.exists(man_path))
+
     def test_missing_models_reported_not_ready(self):
         def factory():
             raise RuntimeError("The Light models are not downloaded yet (missing: BAAI/bge-small-en-v1.5).")
