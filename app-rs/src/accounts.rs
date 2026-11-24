@@ -72,23 +72,43 @@ pub fn folder(ai: &str) -> Option<PathBuf> {
     folder_in(&paths::guarded_settings(), ai)
 }
 
-/// Whether the AI's second account can take a chat as far as its sign-in goes: what its tool last said (`signin`).
+/// Whether the AI's second account can take a chat as far as its sign-in goes: its tool last said that an account
+/// is signed in there, one of its own (not a key or token from the environment, which is the same for both
+/// accounts, and not the very account the first is signed in to: `signin::second_ready`).
 pub fn second_signed_in(ai: &str) -> bool {
     #[cfg(test)]
     if let Some(yes) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.signed_in)) {
         return yes;
     }
-    crate::signin::signed_in(&format!("{ai}2"))
+    crate::signin::second_ready(&format!("{ai}2"))
+}
+
+/// Whether the AI's second account is known to be signed out (its tool said so; not merely "not known yet").
+pub fn second_signed_out(ai: &str) -> bool {
+    #[cfg(test)]
+    if let Some(out) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.out)) {
+        return out;
+    }
+    crate::signin::known_out(&format!("{ai}2"))
+}
+
+/// The name of the second account's folder: what a chat on that account keeps, so a chat is never taken to a
+/// second account that was removed and added again (another folder, another sign-in, none of its conversations).
+pub fn name(ai: &str) -> Option<String> {
+    folder(ai).and_then(|d| d.file_name().map(|n| n.to_string_lossy().to_string()))
 }
 
 /// Tests: one test's own accounts in place of the app's one copy (tests run side by side, each on its own thread):
 /// whether there is a second account, whether it is signed in, and which accounts are used up until when.
 #[cfg(test)]
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StandIn {
     pub second: bool,
     pub signed_in: bool,
-    pub used: HashMap<(String, u8), f64>,
+    /// the second account's tool said that nobody is signed in
+    pub out: bool,
+    /// shared by every thread the test's chat works on (`stand_in_here`)
+    pub used: std::sync::Arc<Mutex<HashMap<(String, u8), f64>>>,
 }
 
 #[cfg(test)]
@@ -99,7 +119,30 @@ thread_local! {
 /// Tests: this test's accounts from here on (`StandIn`).
 #[cfg(test)]
 pub fn stand_in(second: bool, signed_in: bool) {
-    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second, signed_in, used: HashMap::new() }));
+    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second, signed_in, out: false, used: Default::default() }));
+}
+
+/// Tests: the second account's tool says that nobody is signed in (or not known, again).
+#[cfg(test)]
+pub fn stand_in_out(out: bool) {
+    STAND_IN.with(|s| {
+        if let Some(s) = s.borrow_mut().as_mut() {
+            s.out = out;
+            s.signed_in = s.signed_in && !out;
+        }
+    });
+}
+
+/// Tests: this thread's stand-in, to hand to another thread of the same test (a kept process's reader).
+#[cfg(test)]
+pub fn stand_in_now() -> Option<StandIn> {
+    STAND_IN.with(|s| s.borrow().clone())
+}
+
+/// Tests: the stand-in another thread of the test handed over, for this thread from here on.
+#[cfg(test)]
+pub fn stand_in_here(given: &StandIn) {
+    STAND_IN.with(|s| *s.borrow_mut() = Some(given.clone()));
 }
 
 /// A new second account: a new folder under a new name (never a name used before: on a Mac the tool's sign-in for a
@@ -143,8 +186,20 @@ pub fn remove(ai: &str) {
     }
 }
 
+/// Whether a path is a folder itself: there, a directory, and not a link to one. An account's folder that has been
+/// swapped for a link (nothing of the app's does that) is never followed: not for a sign-in, a status, a turn or a
+/// removal, since everything done "in the second account's folder" would then be done wherever the link leads.
+fn real_folder(dir: &Path) -> bool {
+    fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir())
+}
+
 /// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the rest.
+/// A folder that has been swapped for a link: the link is removed and nothing else, never what it leads to.
 fn remove_folder(dir: &Path) {
+    if !real_folder(dir) {
+        let _ = fs::remove_file(dir);
+        return;
+    }
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         if entry.file_type().is_ok_and(|t| t.is_symlink()) {
             let _ = fs::remove_file(entry.path());
@@ -166,10 +221,21 @@ fn users_claude() -> PathBuf {
 /// The second account's folder, ready for the tool: made (the user's alone), with the user's own setup linked in.
 /// Called before every command that runs there, so what the user adds later is linked too, and before the tool's
 /// first command there, so the tool never makes a folder of its own where a link belongs. None: no second account.
+/// None as well when the folder, or the folder of all second accounts, is not a folder of its own but a link
+/// (`real_folder`): nothing is then run or written for the second account at all.
 pub fn prepare(ai: &str) -> Option<PathBuf> {
     let dir = folder(ai)?;
-    link_into(&dir, &users_claude(), &CLAUDE_LINKED);
-    Some(dir)
+    prepare_in(&dir, &users_claude())
+}
+
+fn prepare_in(dir: &Path, users: &Path) -> Option<PathBuf> {
+    let base = dir.parent()?;
+    let _ = fs::create_dir_all(base);
+    if !real_folder(base) || (fs::symlink_metadata(dir).is_ok() && !real_folder(dir)) {
+        return None;
+    }
+    link_into(dir, users, &CLAUDE_LINKED);
+    real_folder(dir).then(|| dir.to_path_buf())
 }
 
 /// See `prepare`. A name that is already there, as a link or as the tool's own, is left as it is; a link whose target
@@ -195,19 +261,31 @@ fn link_into(dir: &Path, users: &Path, names: &[&str]) {
     let _ = (users, names);
 }
 
-/// The environment that makes a tool's process run on an account: nothing for the first (the user's own), the
-/// second's folder for Claude Code. False when the account is the second and there is none (the caller falls back).
+/// The environment that makes a tool's process run on an account: nothing for the first (the user's own: nothing
+/// of its environment is touched), the second's folder for Claude Code (`point`). False when the account is the
+/// second and there is none (the caller falls back).
 pub fn env(cmd: &mut std::process::Command, ai: &str, account: u8) -> bool {
     if account != 2 {
         return true;
     }
     match (ai, prepare(ai)) {
         ("claude", Some(dir)) => {
-            cmd.env("CLAUDE_CONFIG_DIR", dir);
+            point(cmd, &dir);
             true
         }
         _ => false,
     }
+}
+
+/// Claude Code told to keep everything of an account in `dir`: its config folder, and the folder its sign-in is
+/// stored under. Claude Code names the keychain entry (and finds the plain credentials file) by
+/// `CLAUDE_SECURESTORAGE_CONFIG_DIR` when that is set, over `CLAUDE_CONFIG_DIR` (read in the program's text,
+/// 2.1.319; it sets the variable for sessions it starts itself): inherited from the app's environment it would send
+/// the second account's sign-in to another folder's entry, or, empty, to the user's own. So both are always set, to
+/// the same folder, for every command of a second account, and never for the first.
+pub fn point(cmd: &mut std::process::Command, dir: &Path) {
+    cmd.env("CLAUDE_CONFIG_DIR", dir);
+    cmd.env("CLAUDE_SECURESTORAGE_CONFIG_DIR", dir);
 }
 
 // ------------------------------------------------------------------ used up
@@ -222,7 +300,7 @@ pub const TRY_AGAIN: f64 = 3600.0;
 /// An account hit its usage limit: used up until `until`.
 pub fn mark_used(ai: &str, account: u8, until: f64) {
     #[cfg(test)]
-    if STAND_IN.with(|s| s.borrow_mut().as_mut().map(|s| s.used.insert((ai.to_string(), account), until)).is_some()) {
+    if STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.lock().unwrap().insert((ai.to_string(), account), until)).is_some()) {
         return;
     }
     USED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert((ai.to_string(), account), until);
@@ -231,7 +309,7 @@ pub fn mark_used(ai: &str, account: u8, until: f64) {
 /// When the account is back, if it is used up now.
 pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
     #[cfg(test)]
-    if let Some(until) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.get(&(ai.to_string(), account)).copied())) {
+    if let Some(until) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.lock().unwrap().get(&(ai.to_string(), account)).copied())) {
         return until.filter(|until| *until > now);
     }
     USED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&(ai.to_string(), account)).copied()).filter(|until| *until > now)
@@ -300,6 +378,11 @@ pub fn resets_at_clock(said: &str, day_secs: f64) -> Option<f64> {
     static CLOCK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\breset(?:s)?(?: at)? (\d{1,2})(?::(\d{2}))?\s?(am|pm)\b").unwrap());
     let low = said.to_lowercase();
     let c = CLOCK.captures(&low)?;
+    // "resets at 9am on Nov 28": a day follows, so it is no time of today or tomorrow
+    let after = low[c.get(0)?.end()..].trim_start();
+    if after.starts_with("on ") || after.starts_with(", ") {
+        return None;
+    }
     let (hour, min): (u32, u32) = (c[1].parse().ok()?, c.get(2).map_or(Some(0), |m| m.as_str().parse().ok())?);
     if !(1..=12).contains(&hour) || min > 59 {
         return None;
@@ -432,6 +515,70 @@ mod tests {
         assert_eq!(other(Have { first_used: true, second_ready: false }, 2), None, "both used up: no bounce");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_accounts_folder_swapped_for_a_link_is_never_followed() {
+        let root = paths::test_dir("accounts-swapped");
+        let _ = fs::remove_dir_all(&root);
+        // the user's own Claude folder, with a file and two links of its own (dotfiles kept in a repository)
+        let (users, repo, base) = (root.join("users"), root.join("dotfiles"), root.join("accounts"));
+        fs::create_dir_all(users.join("projects")).unwrap();
+        fs::create_dir_all(repo.join("skills")).unwrap();
+        fs::write(repo.join("settings.json"), "{}").unwrap();
+        fs::write(users.join(".credentials.json"), "the user's own sign-in").unwrap();
+        std::os::unix::fs::symlink(repo.join("skills"), users.join("skills")).unwrap();
+        std::os::unix::fs::symlink(repo.join("settings.json"), users.join("settings.json")).unwrap();
+        fs::create_dir_all(&base).unwrap();
+        // the second account's folder has been replaced by a link to the user's own folder
+        let dir = base.join("claude-2-abcdef");
+        std::os::unix::fs::symlink(&users, &dir).unwrap();
+        // nothing is prepared, so nothing runs there: no sign-in, no status, no turn
+        assert_eq!(prepare_in(&dir, &users), None);
+        let listed = |d: &Path| {
+            let mut names: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+            names.sort();
+            names
+        };
+        assert_eq!(listed(&users), [".credentials.json", "projects", "settings.json", "skills"], "nothing was linked into the user's folder");
+        // Remove takes the link away and nothing of what it led to, not even that folder's own links
+        remove_folder(&dir);
+        assert!(fs::symlink_metadata(&dir).is_err(), "the link is gone");
+        assert_eq!(listed(&users), [".credentials.json", "projects", "settings.json", "skills"]);
+        assert!(fs::symlink_metadata(users.join("skills")).unwrap().file_type().is_symlink() && repo.join("settings.json").exists());
+        assert_eq!(fs::read_to_string(users.join(".credentials.json")).unwrap(), "the user's own sign-in");
+        // the folder of all second accounts swapped for a link: no account in it is used either
+        let linked_base = root.join("accounts-link");
+        std::os::unix::fs::symlink(&users, &linked_base).unwrap();
+        assert_eq!(prepare_in(&linked_base.join("claude-2-abcdef"), &users), None);
+        assert!(!users.join("claude-2-abcdef").exists());
+        // a folder of its own is prepared as before
+        let real = base.join("claude-2-fedcba");
+        assert_eq!(prepare_in(&real, &users), Some(real.clone()));
+        assert!(fs::symlink_metadata(real.join("skills")).unwrap().file_type().is_symlink());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_second_accounts_commands_keep_its_sign_in_in_its_own_folder_whatever_the_app_inherited() {
+        stand_in(true, true);
+        let get = |cmd: &std::process::Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        // the second account: the config folder and the folder its sign-in is stored under are both its own, set
+        // explicitly, so a `CLAUDE_SECURESTORAGE_CONFIG_DIR` the app inherited (empty: the user's own keychain
+        // entry) can never decide
+        let mut second = std::process::Command::new("claude");
+        assert!(env(&mut second, "claude", 2));
+        let dir = base().join("claude-2-standin").to_string_lossy().to_string();
+        assert_eq!(get(&second, "CLAUDE_CONFIG_DIR"), Some(Some(dir.clone())));
+        assert_eq!(get(&second, "CLAUDE_SECURESTORAGE_CONFIG_DIR"), Some(Some(dir)));
+        // the first account: nothing of its environment is set or removed by the app
+        let mut first = std::process::Command::new("claude");
+        assert!(env(&mut first, "claude", 1));
+        assert_eq!(first.get_envs().count(), 0);
+        // no second account: the command is not to be run at all
+        stand_in(false, false);
+        assert!(!env(&mut std::process::Command::new("claude"), "claude", 2));
+    }
+
     #[test]
     fn used_up_lasts_until_the_reset_time_and_no_longer() {
         let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -471,7 +618,7 @@ mod tests {
         assert_eq!(resets_at_clock("resets 12pm", 11.0 * 3600.0), Some(3600.0));
         assert_eq!(resets_at_clock("resets 12:05am", 0.0), Some(300.0));
         // a day is never guessed, nor a time that is none
-        for other in ["You've hit your weekly limit \u{b7} resets Nov 28 at 9am", "resets 13pm", "resets 9:75am", "resets soon", "resets 9", "it presets 9am"] {
+        for other in ["You've hit your weekly limit \u{b7} resets Nov 28 at 9am", "resets at 9am on Nov 28", "resets 9am, Nov 28", "resets 13pm", "resets 9:75am", "resets soon", "resets 9", "it presets 9am"] {
             assert_eq!(resets_at_clock(other, 0.0), None, "{other}");
         }
         assert!(day_secs(1_795_000_000.0).is_some_and(|d| (0.0..86_400.0).contains(&d)) || cfg!(windows));

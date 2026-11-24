@@ -232,7 +232,7 @@ fn post(path: &str, body: Value) -> Reply {
                 // Studio mode implies full auto and overnight's loop
                 let studio = body["studio"].as_bool().unwrap_or(false);
                 let overnight = studio || body["overnight"].as_bool().unwrap_or(false);
-                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff, studio, wake: false, app: body["app"].as_bool().unwrap_or(false), typed: None, resend: false };
+                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff, studio, wake: false, app: body["app"].as_bool().unwrap_or(false), typed: None, resend: None };
                 thread::spawn(move || agent.ask(&text, &ask));
             }
             send_json(json!({"ok": target.is_some()}))
@@ -325,7 +325,10 @@ fn post(path: &str, body: Value) -> Reply {
                     Err(why) => send_json(json!({"ok": false, "error": why})),
                 },
                 "remove" if crate::accounts::AIS.contains(&ai.as_str()) => {
+                    // nothing is left running in the folder that is about to go: a waiting sign-in, a turn on that
+                    // account, a process kept for one
                     crate::signin::forget(&id);
+                    agents::account_removed(&ai);
                     crate::accounts::remove(&ai);
                     send_json(json!({"ok": true}))
                 }

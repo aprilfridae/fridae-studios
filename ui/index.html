@@ -2575,7 +2575,7 @@ let noticePresses = 0;
    chat moves to when the first account runs out of usage. In a chat, a few words say which account it is on, only
    while there is a second one. */
 function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }
-function accountWords(ai, p) { return accountOf(ai).exists && p && p.account ? " · account " + p.account : ""; }
+function accountWords(ai, p) { return accountOf(ai).exists && p ? " · account " + (p.account || 1) : ""; }
 /* Its line in Setup, under the AI's own: Add; then its sign-in (the same line and buttons as any sign-in) or who is
    signed in, and Remove. Your own account is never changed from here. */
 function secondAccountRow(ai) {
@@ -2584,6 +2584,8 @@ function secondAccountRow(ai) {
   row.innerHTML = "<b>Second account</b><small></small><div class=\"act\"></div>";
   row.querySelector("small").textContent = !acc.exists ? (sgError[id] || "None. Add one to carry on when the first runs out of usage.")
     : line.text ? line.text
+    : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as your own, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
+    : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
     : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + ((acc.used || [])[1] ? " Out of usage for now." : "")
     : "Checking the sign-in...";
   const act = row.querySelector(".act");

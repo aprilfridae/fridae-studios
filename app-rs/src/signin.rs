@@ -149,9 +149,25 @@ pub fn offered(id: &str) -> bool {
     AIS.contains(&id) || (SECOND.contains(&id) && crate::accounts::folder(tool(id)).is_some())
 }
 
-/// Whether the tool last said that somebody is signed in (for a second account: whether it can take a chat).
-pub fn signed_in(id: &str) -> bool {
-    with(id, |e| matches!(e.known, Known::In(_))).unwrap_or(false)
+/// Whether a second account can take a chat as far as its sign-in goes: an account is signed in there (not a key
+/// or a token from the environment, which signs both accounts in alike), and it is not the account the first is
+/// signed in to (the browser was still signed in as the user's own when the second was added).
+pub fn second_ready(id: &str) -> bool {
+    with(id, |e| matches!(e.known, Known::In(_)) && !e.by_key).unwrap_or(false) && !same_as_first(id)
+}
+
+/// Whether a second account's sign-in names the same account as the first's.
+pub fn same_as_first(id: &str) -> bool {
+    if !SECOND.contains(&id) {
+        return false;
+    }
+    let who = |id: &str| with(id, |e| if let Known::In(Some(w)) = &e.known { Some(w.trim().to_lowercase()) } else { None }).flatten();
+    matches!((who(id), who(tool(id))), (Some(a), Some(b)) if a == b)
+}
+
+/// Whether the tool said that nobody is signed in (not merely that the app does not know yet).
+pub fn known_out(id: &str) -> bool {
+    with(id, |e| e.known == Known::Out).unwrap_or(false)
 }
 
 /// A sign-in is gone (a second account was removed): one that waits is ended, and what was known is forgotten.
@@ -714,8 +730,25 @@ fn kept_key(ai: &str) -> bool {
 
 /// Where one AI's sign-in stands, for the page.
 pub fn login_state(ai: &str) -> Value {
-    let mut v = with(ai, |e| state_of(e, offered(ai), kept_key(ai))).unwrap_or_else(|| json!({"offered": false}));
+    let mut v = state_for(ai);
     v["ok"] = json!(true);
+    v
+}
+
+/// One sign-in for the page; a second account's also says when it adds nothing: `by_key` (a key or token on this
+/// computer signs it in, as it does the first) and `same` (it is the account the first is signed in to).
+fn state_for(ai: &str) -> Value {
+    let mut v = with(ai, |e| {
+        let mut v = state_of(e, offered(ai), kept_key(ai));
+        if SECOND.contains(&ai) {
+            v["by_key"] = json!(e.by_key && matches!(e.known, Known::In(_)));
+        }
+        v
+    })
+    .unwrap_or_else(|| json!({"offered": false}));
+    if SECOND.contains(&ai) {
+        v["same"] = json!(same_as_first(ai));
+    }
     v
 }
 
@@ -725,7 +758,7 @@ pub fn login_state(ai: &str) -> Value {
 pub fn state() -> Value {
     let mut out = serde_json::Map::new();
     for ai in ids() {
-        out.insert(ai.to_string(), with(ai, |e| state_of(e, offered(ai), kept_key(ai))).unwrap_or(Value::Null));
+        out.insert(ai.to_string(), state_for(ai));
     }
     Value::Object(out)
 }
@@ -1041,15 +1074,76 @@ mod tests {
     }
 
     #[test]
+    fn a_second_account_takes_chats_only_with_an_account_of_its_own() {
+        let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let set = |id: &str, known: Known, by_key: bool| {
+            with(id, |e| {
+                e.known = known;
+                e.by_key = by_key;
+            });
+        };
+        let me = || Known::In(Some("me@example.com".to_string()));
+        set("claude", me(), false);
+        // another account, signed in there: ready
+        set("claude2", Known::In(Some("other@example.com".to_string())), false);
+        assert!(second_ready("claude2") && !same_as_first("claude2") && !known_out("claude2"));
+        assert_eq!((state()["claude2"]["same"].clone(), state()["claude2"]["by_key"].clone()), (json!(false), json!(false)));
+        // "signed in" by a key or a token on this computer: the same for both accounts, so no account of its own
+        set("claude2", Known::In(None), true);
+        assert!(!second_ready("claude2"));
+        assert_eq!(state()["claude2"]["by_key"], true);
+        // the very account the first is signed in to (the browser was still signed in as it): said, and not ready
+        set("claude2", Known::In(Some("Me@Example.com ".to_string())), false);
+        assert!(same_as_first("claude2") && !second_ready("claude2"));
+        assert_eq!(state()["claude2"]["same"], true);
+        assert!(!same_as_first("claude") && state()["claude"].get("same").is_none(), "only a second account is compared");
+        // signed out, and not known: neither is ready; only the first is "known to be signed out"
+        set("claude2", Known::Out, false);
+        assert!(!second_ready("claude2") && known_out("claude2"));
+        set("claude2", Known::Unknown, false);
+        assert!(!second_ready("claude2") && !known_out("claude2"));
+        forget("claude2");
+        set("claude", Known::Unknown, false);
+        // its status and its sign-in run with its own folder for the config and for where the sign-in is stored,
+        // whatever the app inherited; with no folder they are not run at all
+        crate::accounts::stand_in(true, true);
+        let mut cmd = Command::new("claude");
+        assert!(tool_env(&mut cmd, "claude2"));
+        let get = |cmd: &Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        let dir = get(&cmd, "CLAUDE_CONFIG_DIR").expect("its folder");
+        assert!(dir.ends_with("claude-2-standin"));
+        assert_eq!(get(&cmd, "CLAUDE_SECURESTORAGE_CONFIG_DIR").as_deref(), Some(dir.as_str()));
+        let mut first = Command::new("claude");
+        assert!(tool_env(&mut first, "claude"));
+        assert!(first.get_envs().all(|(k, _)| k != "CLAUDE_CONFIG_DIR" && k != "CLAUDE_SECURESTORAGE_CONFIG_DIR"), "the user's own account: nothing set");
+        crate::accounts::stand_in(false, false);
+        assert!(!tool_env(&mut Command::new("claude"), "claude2"));
+        // the line before a second press: a second account's sign-in is the app's own, replaced here only
+        assert!(!confirm_line("claude2", &me()).contains("outside Fridae") && confirm_line("claude", &me()).contains(", also outside Fridae"));
+    }
+
+    #[test]
     fn nothing_in_the_app_can_sign_anyone_out() {
         // every source file of the app, the page and the Python tools: the word for a tool's own "sign out" command
         // appears in no line of code, only in comments and in tests (this one, and the ones that say what agy lists)
         let word = ["log", "out"].concat();
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("src")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rs")).collect();
-        files.push(root.join("..").join("ui").join("index.html"));
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else if p.extension().and_then(|x| x.to_str()).is_some_and(|x| ["rs", "txt", "md", "html", "js", "css", "py", "json"].contains(&x)) {
+                    out.push(p);
+                }
+            }
+        }
+        // every folder under the app's sources and the page's, and the Python tools at the root
+        let mut files = Vec::new();
+        walk(&root.join("src"), &mut files);
+        walk(&root.join("..").join("ui"), &mut files);
         files.extend(std::fs::read_dir(root.join("..")).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "py")));
-        assert!(files.len() > 30, "the app's sources were found: {}", files.len());
+        assert!(files.len() > 30 && files.iter().any(|f| f.parent().is_some_and(|d| d.ends_with("text"))), "the app's sources were found, sub-folders too: {}", files.len());
         for file in files {
             let text = std::fs::read_to_string(&file).unwrap_or_default();
             let name = file.file_name().unwrap().to_string_lossy().to_string();
@@ -1059,8 +1153,10 @@ mod tests {
             }
             let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or("");
             for (n, line) in code.lines().enumerate() {
+                // only what is plainly a comment is let off: a line that begins `*` or `#` may be code (`*x = ...`,
+                // an attribute, a Python decorator's neighbour) and is read as code
                 let t = line.trim_start();
-                let comment = t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with('#');
+                let comment = t.starts_with("//") || t.starts_with("/*") || t.starts_with("<!--");
                 assert!(comment || !line.to_lowercase().contains(&word), "{name}:{}: {line}", n + 1);
             }
         }

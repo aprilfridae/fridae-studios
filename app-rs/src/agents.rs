@@ -117,9 +117,9 @@ pub struct Ask {
     /// When typed messages and app messages go out as one turn: the typed part only, for the chat handed to another AI.
     pub typed: Option<String>,
     /// The app sends the chat's last message again, as it went out, because the turn it started was ended by the
-    /// account's usage limit and the AI's other account takes over (`Agent::roll_over`). Nothing about it is shown or
-    /// counted a second time.
-    pub resend: bool,
+    /// account's usage limit and the AI's other account takes over (`Agent::roll_over`): what was typed, and what
+    /// the AI was sent. Nothing about it is shown or counted a second time.
+    pub resend: Option<(String, String)>,
 }
 
 /// Messages that go out as one turn: when typed ones and the app's own are mixed, the typed part (see `Ask::typed`).
@@ -207,7 +207,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
     st.halted = false;
     let waiting = st.studio_waiting;
     // (a message sent again after a rollover is the same message: its allowance and its clock are not started anew)
-    if !auto && !ask.resend {
+    if !auto && ask.resend.is_none() {
         st.pause_told = false;
         st.autopilot_left = if ask.autopilot || ask.full { AUTOPILOT_TURNS } else { 0 };
         if !waiting {
@@ -216,7 +216,7 @@ fn begin_send(st: &mut State, ask: &Ask, auto: bool, now: f64) -> Option<bool> {
         st.overnight_fails = 0;
         st.overnight_done = 0;
     }
-    st.last_ask = Ask { attachments: Vec::new(), kickoff: None, resend: false, ..ask.clone() };
+    st.last_ask = Ask { attachments: Vec::new(), kickoff: None, resend: None, ..ask.clone() };
     st.turn_auto = auto;
     st.turn_tools = 0;
     st.job_polls = None;
@@ -265,7 +265,22 @@ const TURN_FAILED: &str = "The last turn failed. Find out what went wrong, fix o
 /// 12:50am"): trying again at once only fails again, so a studio run pauses instead.
 fn usage_limit(msg: &str) -> bool {
     let low = msg.to_lowercase();
-    low.contains("limit") && (low.contains("hit your") || low.contains("usage limit") || low.contains("rate limit") || low.contains("resets"))
+    (low.contains("limit") && (low.contains("hit your") || low.contains("usage limit") || low.contains("rate limit") || low.contains("resets"))) || account_limit(msg)
+}
+
+/// Whether a failed Claude turn's message says that the account's own usage is used up, so the chat may carry on
+/// with the AI's other account: Claude Code's lines for a plan's limit ("You've hit your 5-hour limit · resets
+/// 12:50am", "You've hit your weekly limit", "You've reached your Fable limit.", "Claude usage limit reached",
+/// "You're out of extra usage"). Narrower than `usage_limit`: not a passing "rate limit" from the API (a 429,
+/// "overloaded": trying again is enough, and the other account would not help), and not a spend limit the user set
+/// for extra usage (theirs to raise; the plan itself may have usage left).
+fn account_limit(msg: &str) -> bool {
+    let low = msg.to_lowercase();
+    if low.contains("rate limit") || low.contains("rate_limit") || low.contains("429") || low.contains("overloaded") || low.contains("spend limit") || low.contains("spending limit") {
+        return false;
+    }
+    (low.contains("limit") && (low.contains("you've hit your") || low.contains("you have hit your") || low.contains("you've reached your") || low.contains("you have reached your") || low.contains("usage limit reached")))
+        || low.contains("out of extra usage")
 }
 
 const LIMIT_END: &str = "Studio run paused: the AI's usage limit was reached. Press Resume in Review once it is back.";
@@ -592,10 +607,31 @@ fn rollover_line(kind: &str, from: u8, back: Option<&str>) -> String {
     }
 }
 
+/// A second account is about to be removed (Setup): every turn running on it is stopped and every process kept for
+/// it closed, so nothing of the tool's writes its folder back after it is gone. The chats stay, and carry on with
+/// the user's own account from their next message (`turn_account`).
+pub fn account_removed(ai: &str) {
+    for a in agents() {
+        let (on_it, working, live) = {
+            let mut st = a.st.lock().unwrap();
+            let on_it = st.account == 2 && st.ai.as_deref().unwrap_or("claude") == ai;
+            (on_it, working(&st), if on_it && !st.running { st.live.take() } else { None })
+        };
+        if on_it && working {
+            a.stop();
+        }
+        if let Some(l) = live {
+            retire(&mut a.st.lock().unwrap(), &l);
+            l.close();
+        }
+    }
+}
+
 /// The account a turn runs on. A chat that has an account keeps it: there is no switching back mid-chat (only a limit
 /// moves it, `rolled`), unless its second account is gone. A chat from before there were accounts, which has a
 /// conversation, is on the user's own. A new chat starts on the first account that is not used up (`accounts::pick`).
 fn account_for(current: u8, has_conversation: bool, second_exists: bool, have: crate::accounts::Have) -> u8 {
+    // (`second_exists`, for a chat on the second account: it is there for this chat still, `turn_account`)
     match current {
         2 if second_exists => 2,
         2 => 1,
@@ -745,6 +781,16 @@ struct State {
     /// The message under way was already sent again on the other account: it is not moved a second time, so two
     /// used-up accounts never pass a chat back and forth.
     rolled: bool,
+    /// The folder's name of the second account this chat runs on, while it is on one (`accounts::name`): a second
+    /// account removed and added again is another account, with none of this chat's conversations.
+    account_name: Option<String>,
+    /// The turn ended on the usage limit and may move to the other account: the chat was kept counting as working
+    /// (`sending`) from the moment the turn stopped counting as running (`turn_over_at`), so no message gets in
+    /// before `roll_over` has decided. Taken by `after_turn`.
+    roll_hold: bool,
+    /// Tests: this chat's stand-in accounts, for the other threads its turns run on (`accounts_here`).
+    #[cfg(test)]
+    accounts_for_test: Option<crate::accounts::StandIn>,
     /// A rollover has decided to send the message again and the sending has not begun (`resend`): the chat counts as
     /// working meanwhile (`sending` is set), so what the user types is held and cannot get in before it.
     resend_due: bool,
@@ -1190,6 +1236,8 @@ struct TurnEnd {
     got_result: bool,
     /// when the usage limit that ended the turn resets, if the AI's own data said (Claude Code's `rate_limit_event`)
     limit_reset: Option<f64>,
+    /// the tool's own line about the limit has not been put in the chat yet (a rollover says it in one line)
+    held_back: bool,
     /// the AI answered, but its result says the turn failed (signed out, out of turns...)
     result_error: bool,
     /// what that failed result said
@@ -1648,8 +1696,9 @@ impl ClaudeLaunch {
             cmd.env("HOME", h);
         }
         // the second account: its own config folder, where its sign-in and its conversations are
+        // (and the folder its sign-in is stored under: `accounts::point`)
         if let Some(dir) = &self.config_dir {
-            cmd.env("CLAUDE_CONFIG_DIR", dir);
+            crate::accounts::point(&mut cmd, dir);
         }
         cmd
     }
@@ -2687,7 +2736,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "account": st.account, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "account": st.account, "account_name": st.account_name, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -2943,8 +2992,20 @@ impl Agent {
     }
 
     pub fn send(self: &Arc<Self>, text: &str, ask: &Ask) {
-        // (a message sent again after a rollover is the turn the chat is already busy with: see `roll_over`)
-        if (self.busy() && !ask.resend) || shutting() {
+        #[cfg(test)]
+        self.accounts_here();
+        if shutting() {
+            return;
+        }
+        // a message sent again after a rollover is the turn the chat is already busy with (`roll_over` holds the chat
+        // for it): it goes only while that is still so, once, and never beside a running turn
+        let resend = ask.resend.is_some();
+        if resend {
+            let st = self.st.lock().unwrap();
+            if st.running || !st.resend_due {
+                return;
+            }
+        } else if self.busy() {
             return;
         }
         // before anything of the turn reads a setting: one changed behind the app's back is put back first
@@ -2984,7 +3045,7 @@ impl Agent {
         // a carry-on decided before the run was paused (or undone) does not run as it was: see paused_carry_on
         let text: &str = if auto && self.studio_lead() && self.paused_run() {
             // (a carry-on that was to go again after a rollover is not sent into a paused run: `resend` ends the turn)
-            if ask.resend {
+            if resend {
                 return;
             }
             match paused_carry_on(text, &mut self.st.lock().unwrap().pause_told) {
@@ -2999,18 +3060,15 @@ impl Agent {
         };
         let _sending = Sending(self);
         // a message sent again on the AI's other account (`roll_over`): the same words, as they went out the first time
-        let resent: Option<(String, String)> = if ask.resend { self.st.lock().unwrap().sent.as_ref().map(|(raw, body, _)| (raw.clone(), body.clone())) } else { None };
-        if ask.resend && resent.is_none() {
-            return;
-        }
+        let resent: Option<(String, String)> = ask.resend.clone();
         // from here the turn starts or says why it did not, as for any message
         self.st.lock().unwrap().resend_due = false;
         let text: &str = resent.as_ref().map(|(raw, _)| raw.as_str()).unwrap_or(text);
         let raw = text.to_string();
-        if !ask.resend {
+        if !resend {
             self.st.lock().unwrap().rolled = false; // a new message may move once again
         }
-        if !ask.resend && let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
+        if !resend && let Some(c) = TEXTURE_COMMAND.captures(text.trim()) {
             return self.make_texture(&c[1].to_lowercase(), c[2].trim());
         }
         // a turn starts here, so a Studio run waiting at a gate goes on (put back below if no AI can be found)
@@ -3023,10 +3081,10 @@ impl Agent {
             gemini = true;
             BUS.put("mode", json!({"gemini": true})); // flip the switch in the window too
         }
-        if !ask.resend {
+        if !resend {
             self.name_from(text.split_whitespace().collect::<Vec<_>>().join(" "));
         }
-        if let Some(p) = self.project().filter(|_| !ask.resend) {
+        if let Some(p) = self.project().filter(|_| !resend) {
             let task = if auto { None } else { Some(board::gist(text, 90)) };
             board::track(&p, &self.id, &self.name(), "doing", task.as_deref(), if auto { None } else { Some("") });
         }
@@ -3072,7 +3130,7 @@ impl Agent {
         let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort).filter(|_| !(self.ai() == "gemini" && model.is_some_and(antigravity::names_its_level)));
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
         // (a message sent again is in the chat already)
-        if !ask.resend {
+        if !resend {
             self.put(
             "user",
             json!({
@@ -3091,12 +3149,12 @@ impl Agent {
         if let Some((_, body)) = &resent {
             text = body.clone();
         }
-        if !infos.is_empty() && !ask.resend {
+        if !infos.is_empty() && !resend {
             text += &format!("\n\n[The user attached {} file(s). Read each one with the Read tool before answering:\n", infos.len());
             text += &infos.iter().map(|i| format!("- {}  ({})", i.read, i.note)).collect::<Vec<_>>().join("\n");
             text += "]";
         }
-        match kickoff.filter(|_| !ask.resend) {
+        match kickoff.filter(|_| !resend) {
             Some("new") => text += KICKOFF_NEW,
             Some("existing") => text += KICKOFF_EXISTING,
             Some("studio") => text += KICKOFF_STUDIO,
@@ -3105,16 +3163,20 @@ impl Agent {
         // what is selected in Studio and any new errors there, when the Studio plugin is connected
         {
             let seen = self.st.lock().unwrap().log_seq;
-            let (note, newest) = if ask.resend { (String::new(), seen) } else { plugin::context_note(seen) };
+            let (note, newest) = if resend { (String::new(), seen) } else { plugin::context_note(seen) };
             text += &note;
             let mut st = self.st.lock().unwrap();
             st.log_seq = newest;
-            st.turn_started = paths::now_secs();
-            plugin::begin(st.turn_started);
+            // a message sent again is the same message: it keeps the time it began, so the Studio steps from before
+            // the limit still count as this turn's (an expert's reach its Lead, and Undo covers the whole message)
+            if !resend {
+                st.turn_started = paths::now_secs();
+                plugin::begin(st.turn_started);
+            }
         }
         // an overnight run starts with a checkpoint, so the whole night can be undone in the morning
         // (a Studio run going on after a gate is the same run, so it keeps its first checkpoint)
-        if !ask.resend && takes_night_checkpoint(ask, auto, resumed, run.started) {
+        if !resend && takes_night_checkpoint(ask, auto, resumed, run.started) {
             let start = self.turn_started();
             plugin::pin(start);
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
@@ -3131,12 +3193,12 @@ impl Agent {
                 studio_undo::record_start(p, &self.id, &saved);
             }
         }
-        let notes = if ask.resend { Vec::new() } else { std::mem::take(&mut self.st.lock().unwrap().notes) };
+        let notes = if resend { Vec::new() } else { std::mem::take(&mut self.st.lock().unwrap().notes) };
         if !notes.is_empty() {
             text += &format!("\n\n[{}]", notes.join("\n"));
         }
         // kept for the turn: should the account's usage limit end it, this goes out again on the other account
-        if !ask.resend {
+        if !resend {
             self.st.lock().unwrap().sent = Some((raw, text.clone(), ask.clone()));
         }
         self.put("busy", json!({"value": true}));
@@ -3184,6 +3246,13 @@ impl Agent {
         let Some(account) = self.before_it_goes(&kind) else {
             return self.stopped_before_start();
         };
+        // the second account's folder, read once for the turn. Gone in this very moment (Remove was pressed): the
+        // turn runs on the user's own account, and the chat says so
+        let second_dir = (account == 2).then(|| crate::accounts::prepare(&kind)).flatten();
+        if account == 2 && second_dir.is_none() {
+            self.st.lock().unwrap().account = 1;
+            self.put("account", json!({"account": 1}));
+        }
         // the message without the chat so far or the standing instructions, for an AI whose fallback starts a new
         // conversation and hands the chat over itself (`CursorLaunch::fall_back`)
         let body = text.clone();
@@ -3357,7 +3426,7 @@ impl Agent {
                     effort,
                     work: &PATHS.work,
                     keys_on: paths::env_keys_on(),
-                    config_dir: (account == 2).then(|| crate::accounts::prepare("claude")).flatten().as_deref(),
+                    config_dir: second_dir.as_deref(),
                 });
                 return self.claude_turn(&launch, &text);
             }
@@ -3608,7 +3677,7 @@ impl Agent {
                 }
                 drop_it
             };
-            let stopped = self.turn_over();
+            let stopped = self.turn_over_at(kind, &t);
             if killed {
                 self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
             }
@@ -3665,7 +3734,7 @@ impl Agent {
                 return;
             }
         }
-        let stopped = self.turn_over();
+        let stopped = self.turn_over_at(kind, &t);
         if killed {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
@@ -3751,6 +3820,8 @@ impl Agent {
     /// good result read from a process that has run a turn before belongs to that earlier turn. A failed result ends
     /// the turn either way, so a process that fails before it marks anything never leaves the chat waiting.
     fn consume_lines(self: &Arc<Self>, lines: &mut dyn Iterator<Item = claude_live::Line>, kind: &str, last: &Mutex<(std::time::Instant, bool, bool)>, mut on_first: impl FnMut(), live: Option<LiveTurn>) -> TurnEnd {
+        #[cfg(test)]
+        self.accounts_here();
         let mut t = TurnEnd::default();
         let mut mine = live.as_ref().is_none_or(|l| l.first || !l.marks.load(Ordering::SeqCst));
         t.ended = live.is_some();
@@ -3918,7 +3989,14 @@ impl Agent {
                                 Some(msg) => {
                                     t.result_text = msg.to_string();
                                     t.result_said = true;
-                                    self.put_failure("claude", msg);
+                                    // the account's limit, with a second account there: the chat may carry on with
+                                    // it and then says so in one line of its own, so the tool's line waits for
+                                    // `after_turn`, which puts it when the chat does not move
+                                    if account_limit(msg) && crate::accounts::folder("claude").is_some() {
+                                        t.held_back = true;
+                                    } else {
+                                        self.put_failure("claude", msg);
+                                    }
                                 }
                                 None => t.result_text = e["subtype"].as_str().unwrap_or("error").to_string(),
                             }
@@ -3972,7 +4050,7 @@ impl Agent {
         crate::procs::forget(child.id());
         self.check_settings();
         self.put_list_back();
-        let stopped = self.turn_over();
+        let stopped = self.turn_over_at(kind, &t);
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
         }
@@ -3986,6 +4064,23 @@ impl Agent {
         if !back.is_empty() {
             self.put("error", json!({"text": paths::put_back_line(&back)}));
         }
+    }
+
+    /// `turn_over` for a turn whose end is known: when it ended on the account's usage limit and may move to the
+    /// other account, the chat goes on counting as working (`roll_hold`) in the same breath in which the turn stops
+    /// counting as running, so a message arriving now is held behind the one that goes again, not sent before it.
+    fn turn_over_at(&self, kind: &str, t: &TurnEnd) -> bool {
+        let mut st = self.st.lock().unwrap();
+        st.running = false;
+        st.pid = None;
+        st.proc_ = None;
+        st.turned = true;
+        let stopped = std::mem::take(&mut st.stopped);
+        if !stopped && !shutting() && t.result_error && account_limit(&t.result_text) && crate::accounts::AIS.contains(&kind) {
+            st.sending = true;
+            st.roll_hold = true;
+        }
+        stopped
     }
 
     /// The chat's turn has ended: it is no longer running. Returns whether Stop ended it.
@@ -4096,31 +4191,50 @@ impl Agent {
         self.st.lock().unwrap().model_note.clone()
     }
 
-    /// The account this turn runs on (`account_for`), kept for the chat. A chat that was on a second account which
-    /// has since been removed carries on with the user's own, in a new conversation handed the chat so far.
+    /// The account this turn runs on (`account_for`), kept for the chat. A chat on a second account that is not
+    /// there for it any more carries on with the user's own, in a new conversation handed the chat so far: the
+    /// account was removed (or removed and added again: another folder, which has none of its conversations), or
+    /// its sign-in is known to be gone while the user's own account is not used up.
     fn turn_account(&self, kind: &str) -> u8 {
         if !crate::accounts::AIS.contains(&kind) {
             return 1;
         }
         let have = crate::accounts::have(kind, paths::now_secs(), crate::accounts::second_signed_in(kind));
-        let exists = crate::accounts::folder(kind).is_some();
+        let name = crate::accounts::name(kind);
+        let exists = name.is_some();
+        let signed_out = crate::accounts::second_signed_out(kind);
         let (account, was) = {
             let mut st = self.st.lock().unwrap();
             let was = st.account;
-            let account = account_for(was, st.session.is_some(), exists, have);
+            // (a chat saved before names were kept has none: it is taken to be on the account that is there)
+            let same = st.account_name.is_none() || st.account_name == name;
+            let mine = exists && same && !(signed_out && !have.first_used);
+            let account = account_for(was, st.session.is_some(), mine, have);
             if was == 2 && account == 1 {
                 // its conversation was the second account's: this message starts a new one, with the chat so far
                 let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-                hand_over(&mut st, upto, ai_label(kind), true);
+                if st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text") {
+                    hand_over(&mut st, upto, ai_label(kind), true);
+                }
                 st.session = None;
             }
             st.account = account;
+            st.account_name = if account == 2 { name } else { None };
             (account, was)
         };
         if account != was && (exists || account == 2 || was == 2) {
             self.put("account", json!({"account": account}));
         }
         account
+    }
+
+    /// Tests: this chat's stand-in accounts (`accounts::stand_in`) on the thread a turn of it runs on.
+    #[cfg(test)]
+    fn accounts_here(&self) {
+        let given = self.st.lock().unwrap().accounts_for_test.clone();
+        if let Some(given) = given {
+            crate::accounts::stand_in_here(&given);
+        }
     }
 
     /// The hand-over that waits to go with this message gets a summary in place of the older part it left out
@@ -4177,8 +4291,13 @@ impl Agent {
         self.put("error", json!({"text": "Stopped."}));
         team::finished(self, true);
         self.st.lock().unwrap().jobs_lost = None;
+        research::finished(self);
         self.put("done", json!({}));
         let held = std::mem::take(&mut self.st.lock().unwrap().queue);
+        if let Some(p) = self.project() {
+            let (column, note) = if held.is_empty() { ("todo", Some("Stopped before it finished.")) } else { ("doing", None) };
+            board::track(&p, &self.id, &self.name(), column, None, note);
+        }
         if held.is_empty() {
             return;
         }
@@ -4218,22 +4337,26 @@ impl Agent {
     /// (the tool's own, else an hour). When the AI's other account is signed in and not used up, and this message has
     /// not been moved before, the chat moves to it: a new conversation there, handed the chat so far, and the same
     /// message sent again, once. True when it moved (the caller then ends nothing).
-    fn roll_over(self: &Arc<Self>, kind: &str, said: &str, event_reset: Option<f64>) -> bool {
+    fn roll_over(self: &Arc<Self>, kind: &str, said: &str, event_reset: Option<f64>, held: bool) -> bool {
         if !crate::accounts::AIS.contains(&kind) {
             return false;
         }
         let now = paths::now_secs();
-        let (from, rolled, has_message) = {
-            let st = self.st.lock().unwrap();
-            (st.account.max(1), st.rolled, st.sent.is_some())
-        };
+        let from = self.st.lock().unwrap().account.max(1);
         let (until, told) = crate::accounts::back_at(said, event_reset, now, crate::accounts::day_secs(now));
         crate::accounts::mark_used(kind, from, until);
         let have = crate::accounts::have(kind, now, crate::accounts::second_signed_in(kind));
-        let Some(to) = rolls_to(have, from, rolled, has_message) else { return false };
-        let ask = {
+        let name = crate::accounts::name(kind);
+        // decided, and the chat taken for the message that goes again, under one lock
+        let (to, ask) = {
             let mut st = self.st.lock().unwrap();
-            let Some((_, _, ask)) = st.sent.clone() else { return false };
+            // a message that got in after the turn ended is on its way (the chat was not held for this one,
+            // `turn_over_at`): nothing is sent over it, and this turn ends as it would without a second account
+            if !held && working(&st) {
+                return false;
+            }
+            let Some(to) = rolls_to(have, st.account.max(1), st.rolled, st.sent.is_some()) else { return false };
+            let Some((raw, body, ask)) = st.sent.clone() else { return false };
             // the chat so far, without the message that goes out again. A chat whose conversation had not begun (its
             // first message, or the first after a switch of AI) keeps what it was to be handed, or nothing
             let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
@@ -4253,11 +4376,13 @@ impl Agent {
             }
             st.session = None;
             st.account = to;
+            st.account_name = if to == 2 { name } else { None };
             st.rolled = true;
             // working from here until the message is under way again: what the user types now is held behind it
             st.sending = true;
             st.resend_due = true;
-            Ask { resend: true, ..ask }
+            // the message goes with the rollover's decision: what a later message leaves in `sent` cannot change it
+            (to, Ask { resend: Some((raw, body)), ..ask })
         };
         self.put("account", json!({"account": to}));
         self.put("rollover", json!({"text": rollover_line(kind, from, told.then(|| crate::accounts::in_words(until, now)).as_deref()), "from": from, "to": to}));
@@ -4276,8 +4401,11 @@ impl Agent {
 
     /// The chat's last message, sent again as it went out. When it cannot go after all (Stop was pressed in the
     /// moment before, the app is closing, the run it carried on was ended), the turn ends here as a stopped one,
-    /// since `roll_over` kept `after_turn` from ending it.
+    /// since `roll_over` kept `after_turn` from ending it: said, an expert's Lead told, and what the user typed
+    /// meanwhile sent next (`stopped_before_start`).
     fn resend(self: &Arc<Self>, ask: &Ask) {
+        #[cfg(test)]
+        self.accounts_here();
         let halted = std::mem::take(&mut self.st.lock().unwrap().halted);
         if !halted {
             self.send("", ask);
@@ -4291,10 +4419,7 @@ impl Agent {
             never
         };
         if never {
-            self.put("error", json!({"text": "Stopped."}));
-            team::finished(self, true);
-            self.st.lock().unwrap().jobs_lost = None;
-            self.put("done", json!({}));
+            self.stopped_before_start();
         }
     }
 
@@ -4320,15 +4445,27 @@ impl Agent {
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
-        let TurnEnd { got_result, result_error, result_text, result_said, limit_reset, .. } = t;
+        let TurnEnd { got_result, result_error, result_text, result_said, limit_reset, held_back, .. } = t;
+        #[cfg(test)]
+        self.accounts_here();
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         // a process per message took its tool server, and so its jobs, with it (a kept turn has said so already)
         self.drop_jobs(Some(&crate::jobs::file(&self.id)), false);
         // the account's usage limit ended the turn: it is used up until its reset time, and when the AI's other account
         // can take the chat, the same message goes out again there. The turn is then not over for anyone: no result
         // for a waiting Lead, no pause of the studio run, no carry-on, no "done"
-        if !stopped && result_error && usage_limit(&result_text) && self.roll_over(kind, &result_text, limit_reset) {
+        let held = std::mem::take(&mut self.st.lock().unwrap().roll_hold);
+        if !stopped && result_error && account_limit(&result_text) && self.roll_over(kind, &result_text, limit_reset, held) {
+            // what waits behind the message that goes again still ends a Lead's wait early
+            self.nudge();
             return;
+        }
+        // it does not move: the chat is no longer held for it, and the tool's own line is said now
+        if held {
+            self.st.lock().unwrap().sending = false;
+        }
+        if held_back {
+            self.put_failure(kind, &result_text);
         }
         if err == STALLED && !stopped {
             self.put("error", json!({"text": paths::stall_message()}));
@@ -4834,6 +4971,7 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.ai = Some(d["ai"].as_str().unwrap_or("claude").to_string());
         st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
+        st.account_name = d["account_name"].as_str().map(str::to_string);
         st.account = d["account"].as_u64().filter(|a| *a <= 2).unwrap_or(0) as u8;
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
         (st.swap_told, st.told) = told_from_log(&st.log);
@@ -6674,7 +6812,7 @@ mod tests {
             assert!(chat.starts_with("[This chat carries on here in a new conversation") && chat.contains("User: Make a door") && chat.contains("Claude: Done: the door opens."), "{chat}");
             assert!(!chat.contains("Now add a lock"), "the message itself is not in the chat so far: it follows it");
             assert_eq!(st.resent_for_test.len(), 1);
-            assert!(st.resent_for_test[0].resend && st.resent_for_test[0].model.as_deref() == Some("opus"), "sent again with its own settings");
+            assert!(st.resent_for_test[0].resend.is_some() && st.resent_for_test[0].model.as_deref() == Some("opus"), "sent again with its own settings");
         }
         // until it is under way again the chat is working: what the user types now is held behind it, not sent before it
         assert!(a.busy());
@@ -7209,6 +7347,211 @@ mod tests {
         d.put("tool", json!({"label": STEP, "app": true}));
         d.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
         assert!(!d.st.lock().unwrap().handover.clone().unwrap().ends_with(CUT_OFF_NOTE));
+    }
+
+    /// Waits (a few seconds at most) until `what` holds for the chat.
+    fn until(a: &Arc<Agent>, what: impl Fn(&State) -> bool) {
+        let end = std::time::Instant::now() + Duration::from_secs(8);
+        while !what(&a.st.lock().unwrap()) {
+            assert!(std::time::Instant::now() < end, "it never came");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn a_message_arriving_as_the_limited_turn_ends_is_held_behind_the_one_that_goes_again() {
+        crate::accounts::stand_in(true, true);
+        let a = chat_on_first("c-roll-gap");
+        a.st.lock().unwrap().accounts_for_test = crate::accounts::stand_in_now();
+        a.send("Now add a lock", &Ask::default());
+        // the turn stops counting as running and the chat goes on counting as working in one breath
+        a.st.lock().unwrap().running = true;
+        assert!(!a.turn_over_at("claude", &limit_end(None)));
+        assert!(a.busy() && !a.st.lock().unwrap().running);
+        // a message arriving in that moment (typed, a Review decision, an expert's wake) is held, not sent
+        a.ask("And paint it red", &Ask::default());
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.queue.len(), st.went_for_test.len()), (1, 1));
+        }
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        let again = a.st.lock().unwrap().resent_for_test[0].clone();
+        assert_eq!(again.resend, Some(("Now add a lock".to_string(), "Now add a lock".to_string())), "the message goes with the decision");
+        // whatever a later message leaves behind, it is this message that goes, once
+        a.st.lock().unwrap().sent = None;
+        a.resend(&again);
+        a.resend(&again);
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!(st.went_for_test.len(), 2, "never twice");
+            assert!(st.went_for_test[1].ends_with("Now add a lock") && st.went_for_test[1].contains("User: Make a door"));
+            assert_eq!(st.queue.len(), 1, "still waiting behind it");
+        }
+        // when the turn that went again has ended, what was held goes next, once
+        a.after_turn("claude", TurnEnd { got_result: true, ..TurnEnd::default() }, "", Some((true, 0)), false);
+        until(&a, |st| st.went_for_test.len() == 3);
+        {
+            let st = a.st.lock().unwrap();
+            assert!(st.went_for_test[2].ends_with("And paint it red") && st.queue.is_empty());
+            assert_eq!(st.log.iter().filter(|e| e["kind"] == "user" && e["text"] == "And paint it red").count(), 1);
+            assert_eq!(st.log.iter().filter(|e| e["kind"] == "user" && e["text"] == "Now add a lock").count(), 1);
+            assert_eq!(st.account, 2);
+        }
+        // a turn whose end was not held, and a message got in first: nothing is sent over it, the turn ends as before
+        let b = chat_on_first("c-roll-gap-2");
+        b.send("Now add a lock", &Ask::default());
+        b.st.lock().unwrap().sending = true;
+        b.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        {
+            let mut st = b.st.lock().unwrap();
+            assert!(st.resent_for_test.is_empty() && st.account == 1 && !st.resend_due);
+            st.sending = false;
+        }
+        assert!(crate::accounts::used_until("claude", 1, paths::now_secs()).is_some(), "the account is marked all the same");
+        // a held end that does not move after all (the other account cannot take it) lets the chat go
+        crate::accounts::stand_in(true, false);
+        let c = chat_on_first("c-roll-gap-3");
+        c.send("Now add a lock", &Ask::default());
+        c.st.lock().unwrap().running = true;
+        c.turn_over_at("claude", &limit_end(None));
+        assert!(c.busy());
+        c.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert!(!c.busy() && c.st.lock().unwrap().resent_for_test.is_empty());
+        // only the account's limit holds a chat: any other end, and any other AI, does not
+        let d = chat_on_first("c-roll-gap-4");
+        d.st.lock().unwrap().running = true;
+        d.turn_over_at("claude", &TurnEnd { got_result: true, result_error: true, result_text: "API Error: 429 rate limit exceeded".into(), ..TurnEnd::default() });
+        assert!(!d.busy());
+        d.st.lock().unwrap().running = true;
+        d.turn_over_at("cursor", &limit_end(None));
+        assert!(!d.busy());
+    }
+
+    #[test]
+    fn a_message_sent_again_is_the_same_turn_for_studio_steps_and_undo() {
+        crate::accounts::stand_in(true, true);
+        let a = chat_on_first("c-roll-started");
+        a.send("Build the gate", &Ask::default());
+        let began = a.st.lock().unwrap().turn_started;
+        assert!(began > 0.0);
+        thread::sleep(Duration::from_millis(30));
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        let again = a.st.lock().unwrap().resent_for_test[0].clone();
+        a.resend(&again);
+        assert_eq!(a.st.lock().unwrap().turn_started, began, "what the first half did in Studio is still this turn's: an expert's Lead gets all of it, and Undo covers it");
+        // the next message is a new turn
+        thread::sleep(Duration::from_millis(30));
+        a.send("And a fence", &Ask::default());
+        assert!(a.st.lock().unwrap().turn_started > began);
+    }
+
+    #[test]
+    fn a_chat_whose_second_account_is_gone_for_it_carries_on_with_the_users_own() {
+        crate::accounts::stand_in(true, true);
+        let on_second = |id: &str, name: Option<&str>| {
+            let a = chat_on_first(id);
+            let mut st = a.st.lock().unwrap();
+            st.account = 2;
+            st.account_name = name.map(str::to_string);
+            st.session = Some("on the second".into());
+            drop(st);
+            a
+        };
+        let state = |a: &Arc<Agent>| {
+            let st = a.st.lock().unwrap();
+            (st.account, st.session.clone(), st.account_name.clone(), st.went_for_test.last().cloned().unwrap())
+        };
+        // removed and added again: another folder, which has none of this chat's conversations
+        let a = on_second("c-acct-readded", Some("claude-2-anolderone"));
+        a.send("Carry on", &Ask::default());
+        let (account, session, name, went) = state(&a);
+        assert_eq!((account, session, name), (1, None, None));
+        assert!(went.starts_with("[This chat carries on here in a new conversation") && went.contains("User: Make a door") && went.ends_with("Carry on"), "{went}");
+        assert_eq!(a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "account").map(|e| e["account"].clone()), Some(json!(1)));
+        // still the same folder: it stays, in its conversation
+        let b = on_second("c-acct-same", Some("claude-2-standin"));
+        b.send("Carry on", &Ask::default());
+        assert_eq!(state(&b), (2, Some("on the second".to_string()), Some("claude-2-standin".to_string()), "Carry on".to_string()));
+        // a chat saved before names were kept: taken to be on the account that is there, named from then on
+        let c = on_second("c-acct-unnamed", None);
+        c.send("Carry on", &Ask::default());
+        assert_eq!(state(&c).2.as_deref(), Some("claude-2-standin"));
+        // its sign-in is gone, and the user's own account has usage: back to the first, with the chat so far
+        crate::accounts::stand_in_out(true);
+        let d = on_second("c-acct-signed-out", Some("claude-2-standin"));
+        d.send("Carry on", &Ask::default());
+        let (account, session, _, went) = state(&d);
+        assert_eq!((account, session), (1, None));
+        assert!(went.contains("User: Make a door") && went.ends_with("Carry on"));
+        // its sign-in is gone but the user's own account is used up: it stays, and the message says to sign in
+        crate::accounts::mark_used("claude", 1, paths::now_secs() + 600.0);
+        let e = on_second("c-acct-both-out", Some("claude-2-standin"));
+        e.send("Carry on", &Ask::default());
+        assert_eq!(state(&e).0, 2);
+        // not known yet (just after the app started) is not "signed out": the chat stays
+        crate::accounts::stand_in(true, false);
+        let f = on_second("c-acct-unknown", Some("claude-2-standin"));
+        f.send("Carry on", &Ask::default());
+        assert_eq!(state(&f).0, 2);
+    }
+
+    #[test]
+    fn what_counts_as_the_accounts_limit_and_the_tools_line_is_said_once() {
+        for yes in [
+            "You've hit your 5-hour limit \u{b7} resets 12:50am (America/Los_Angeles)",
+            "You've hit your weekly limit \u{b7} resets Nov 28 at 9am",
+            "You've hit your session limit",
+            "You've reached your Fable limit.",
+            "Claude usage limit reached. Your limit will reset at 3pm.",
+            "You're out of extra usage",
+        ] {
+            assert!(account_limit(yes) && usage_limit(yes), "{yes}");
+        }
+        // what passes, and what is the user's own to raise, moves no chat and marks no account
+        for no in ["API Error: 429 rate limit exceeded", "Rate limit reached for requests, try again in a moment", "API Error: 529 Overloaded", "You've hit your monthly spend limit", "Not logged in", "The agent stopped with an error"] {
+            assert!(!account_limit(no), "{no}");
+        }
+        assert!(usage_limit("API Error: 429 rate limit exceeded") && usage_limit("You've hit your monthly spend limit"), "a studio run pauses on these as before");
+        let words = "You've hit your 5-hour limit \u{b7} resets 12:50am (America/Los_Angeles)";
+        let said = |a: &Arc<Agent>| a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error" && e["text"] == words).count();
+        // the chat moves: one line, the app's (the tool's own line was held back for it)
+        crate::accounts::stand_in(true, true);
+        let a = chat_on_first("c-roll-one-line");
+        a.send("Now add a lock", &Ask::default());
+        a.after_turn("claude", TurnEnd { held_back: true, ..limit_end(None) }, "", Some((false, 1)), false);
+        assert_eq!(said(&a), 0);
+        assert_eq!(a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "rollover").count(), 1);
+        // it does not move: the tool's line, once, as before
+        crate::accounts::stand_in(true, false);
+        let b = chat_on_first("c-roll-tools-line");
+        b.send("Now add a lock", &Ask::default());
+        b.after_turn("claude", TurnEnd { held_back: true, ..limit_end(None) }, "", Some((false, 1)), false);
+        assert_eq!(said(&b), 1);
+        // a passing rate limit moves nothing, though a second account is ready
+        crate::accounts::stand_in(true, true);
+        let c = chat_on_first("c-roll-429");
+        c.send("Now add a lock", &Ask::default());
+        c.after_turn("claude", TurnEnd { result_text: "API Error: 429 rate limit exceeded".into(), ..limit_end(None) }, "", Some((false, 1)), false);
+        assert!(c.st.lock().unwrap().resent_for_test.is_empty() && crate::accounts::used_until("claude", 1, paths::now_secs()).is_none());
+    }
+
+    #[test]
+    fn removing_a_second_account_stops_what_runs_on_it() {
+        let on_it = new_agent(Some("claude")).unwrap();
+        let other = new_agent(Some("claude")).unwrap();
+        for (a, account) in [(&on_it, 2), (&other, 1)] {
+            let mut st = a.st.lock().unwrap();
+            st.account = account;
+            st.running = true;
+        }
+        account_removed("claude");
+        assert!(on_it.st.lock().unwrap().stopped, "its turn is asked to stop before the folder goes");
+        assert!(!other.st.lock().unwrap().stopped, "a chat on the user's own account is left alone");
+        for a in [&on_it, &other] {
+            let mut st = a.st.lock().unwrap();
+            st.running = false;
+            st.stopped = false;
+        }
     }
 
     #[test]
