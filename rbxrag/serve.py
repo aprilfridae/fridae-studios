@@ -235,6 +235,14 @@ def heavy_factory(data, qdrant_url, qdrant_key, ollama_url=None):
         with warnings.catch_warnings():  # an API key over plain http is fine on 127.0.0.1
             warnings.simplefilter("ignore")
             client = QdrantClient(url=qdrant_url, api_key=qdrant_key or None, check_compatibility=False, timeout=30)
+        for attempt in range(30):  # the app starts Qdrant just before this process: give it a moment to listen
+            try:
+                client.get_collections()
+                break
+            except Exception as e:
+                if attempt == 29:
+                    raise RuntimeError("Qdrant is not answering at %s (%s)." % (qdrant_url, type(e).__name__))
+                time.sleep(1.0)
         folder = os.path.join(data, "heavy")
         os.makedirs(folder, exist_ok=True)
         return Engine(client, emb, os.path.join(folder, "manifest.json"))
