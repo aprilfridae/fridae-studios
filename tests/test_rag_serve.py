@@ -17,10 +17,24 @@ from unittest import mock
 
 import numpy as np
 
+import rbxpaths
 from rbxrag import models, serve, setup
 from rbxrag.engine import Engine
 from rbxrag.stores import MemStore
 from tests.test_rag_engine import FakeEmbedders, write
+
+
+def setUpModule():
+    # a query reads the notes home's superseded.json: never the real one
+    global _HOME, _PATCH
+    _HOME = tempfile.mkdtemp(prefix="rag serve home ")
+    _PATCH = mock.patch.object(rbxpaths, "HOME_DIR", _HOME)
+    _PATCH.start()
+
+
+def tearDownModule():
+    _PATCH.stop()
+    shutil.rmtree(_HOME, True)
 
 try:
     from qdrant_client import QdrantClient

@@ -7,6 +7,7 @@ They are searched as rbx_vault shelves `yours` and `game` (indexed fresh each ti
 rules files to every agent's instructions. Nothing here reads or writes outside those two folders.
 """
 import contextlib
+import json
 import os
 import re
 import tempfile
@@ -26,6 +27,7 @@ TITLE_MAX = 80
 _RESERVED = ({"con", "prn", "aux", "nul"} | {"com%s" % i for i in "123456789¹²³"} |
              {"lpt%s" % i for i in "123456789¹²³"})
 LOCK_WAIT, LOCK_STALE = 5.0, 10.0
+SIDECAR = "superseded.json"  # {old title: {"by": new title, "date": YYYY-MM-DD}} for shipped notes (read only)
 _KEPT_NAMES = {RULES_NAME[:-3].casefold(), LESSONS_NAME[:-3].casefold()}
 
 
@@ -243,13 +245,178 @@ def yours_files():
     return files
 
 
+# ------------------------------------------------------------------ superseded notes
+# A note that replaces others names them (front matter `supersedes`); the old ones are kept and marked
+# (`superseded_by`, `superseded_on`), and search ranks them well below (rbxvault.SUPERSEDED_SCALE). The shipped
+# notes (vault/Roblox, vault/Fridae) are never written: their marks go to the notes folder's superseded.json.
+_SIDE_CACHE = {}  # path -> ((mtime_ns, size), entries)
+
+
+def sidecar_read(root):
+    """{old title: {"by", "date"}} from a notes folder's superseded.json ({} when there is none or it does not read)."""
+    path = os.path.join(root, SIDECAR)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    sig = (st.st_mtime_ns, st.st_size)
+    hit = _SIDE_CACHE.get(path)
+    if hit and hit[0] == sig:
+        return hit[1]
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, UnicodeDecodeError):
+        data = {}
+    data = {str(k): v for k, v in data.items() if isinstance(v, dict) and str(v.get("by") or "").strip()} \
+        if isinstance(data, dict) else {}
+    _SIDE_CACHE[path] = (sig, data)
+    return data
+
+
+def sidecars(project=None):
+    """{old title casefolded: new title} from the for-everything notes folder's superseded.json and, with a project,
+    the game's (which wins)."""
+    roots = [home_notes()] + ([game_notes(project)] if project else [])
+    out = {}
+    for root in roots:
+        for old, v in sidecar_read(root).items():
+            out[" ".join(old.split()).casefold()] = " ".join(str(v["by"]).split())
+    return out
+
+
+def supersedes_arg(v):
+    """The titles a 'note' call supersedes: one title, a list, or several separated by ' | '."""
+    if v in (None, "", []):
+        return []
+    vals = v if isinstance(v, list) else str(v).split("|")
+    out = []
+    for x in vals:
+        t = " ".join(str(x).split())
+        if t.casefold().endswith(".md"):
+            t = t[:-3]
+        if t and t.casefold() not in {o.casefold() for o in out}:
+            out.append(t)
+    return out
+
+
+def _shipped_titles():
+    """{title casefolded: title} of the shipped notes: the LihFolk vault notes, Fridae's guides and team files."""
+    import rbxvault
+    out = {}
+    try:
+        files = [os.path.basename(p)[:-3] for p in rbxvault.note_files()] if os.path.isdir(rbxvault.KB) else []
+        files += [t for t, _ in rbxvault.guide_files()] + [t for t, _ in rbxvault.team_files(rbxvault.kit_team_dir())]
+    except Exception:  # the guide list needs the tool server; a missing part only narrows the lookup
+        files = []
+    for t in files:
+        out.setdefault(t.casefold(), t)
+    return out
+
+
+def supersede_targets(olds, new_title, scope, project=None):
+    """[(old title, path or None for a shipped note)] for the titles a new note supersedes; refuses (before anything
+    is written) an unknown title, the note's own title, and, for an expert, a note for every game."""
+    roots = [(scope, folder(scope, project))]
+    other = "all" if scope == "game" else ("game" if project else None)
+    if other:
+        roots.append((other, folder(other, project)))
+    shipped = None
+    out = []
+    for old in olds:
+        want = old.casefold()
+        if want == new_title.casefold():
+            raise KitError("A note cannot supersede itself ('%s'). Name the older note it replaces." % old)
+        hit = None
+        for sc, root in roots:
+            found = [(t, p) for t, p in note_files(root) if t.casefold() == want]
+            if found:
+                hit = (sc, found[0])
+                break
+        if hit:
+            sc, (t, p) = hit
+            if sc == "all" and is_helper():
+                raise KitError("'%s' is a note for every game: an expert marks only this game's notes. Tell your "
+                               "Lead it is out of date instead." % t)
+            out.append((t, p))
+            continue
+        shipped = _shipped_titles() if shipped is None else shipped
+        if want in shipped:
+            out.append((shipped[want], None))
+            continue
+        near = sorted({t for _, root in roots for t, _ in note_files(root) if want in t.casefold()})[:12]
+        raise KitError("No note called '%s' to supersede.%s Give the old note's exact title (action 'notes' lists "
+                       "them)." % (old, " Did you mean: %s?" % "; ".join(near) if near else ""))
+    return out
+
+
+def _front_set(text, pairs):
+    """text with these front matter keys set (each value written as a JSON string), other lines kept."""
+    m = re.match(r"^\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
+    lines = m.group(1).splitlines() if m else []
+    rest = text[m.end():] if m else text
+    for key, val in pairs:
+        line = "%s: %s" % (key, json.dumps(val, ensure_ascii=False))
+        at = next((i for i, l in enumerate(lines) if re.match(r"^%s[ \t]*:" % re.escape(key), l)), None)
+        if at is None:
+            lines.append(line)
+            continue
+        end = at + 1
+        while end < len(lines) and re.match(r"^[ \t]+-|^[ \t]+\S", lines[end]):  # its block list or folded lines
+            end += 1
+        lines[at:end] = [line]
+    return "---\n" + "\n".join(lines) + "\n---\n" + rest
+
+
+def mark_superseded(targets, new_title, scope, project=None):
+    """Mark each old note as replaced by new_title: its front matter for the user's own notes, the scope's
+    superseded.json for a shipped one. Returns the titles marked."""
+    day = time.strftime("%Y-%m-%d")
+    side = []
+    for t, path in targets:
+        if path is None:
+            side.append(t)
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                old = f.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        _atomic_write(path, _front_set(old, [("superseded_by", new_title), ("superseded_on", day)]))
+    if side:
+        root = folder(scope, project)
+        with _locked(root):
+            path = _note_path(root, SIDECAR)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                data = data if isinstance(data, dict) else {}
+            except (OSError, ValueError, UnicodeDecodeError):
+                data = {}
+            for t in side:
+                data[t] = {"by": new_title, "date": day}
+            _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
+    return [t for t, _ in targets]
+
+
 # ------------------------------------------------------------------ writing
 def _by():
     return " ".join((os.environ.get("RBXKIT_AGENT_NAME") or "agent").split())[:60]
 
 
-def write_note(text, title=None, scope="all", project=None, by=None, kind="note", replace=False):
-    """Save one note; returns (title, path). `replace`: a note with exactly this title is updated, not duplicated."""
+def target_title(text, title, scope, project=None, replace=False):
+    """(the title a note will be saved under, the path of the note it updates or None)."""
+    want = safe_title(title or title_from((text or "").strip()))
+    if replace and title:
+        hit = [(t, p) for t, p in note_files(folder(scope, project)) if t.casefold() == want.casefold()]
+        if len(hit) == 1 and os.path.basename(hit[0][1]) not in (RULES_NAME, LESSONS_NAME):
+            return hit[0]
+    return want, None
+
+
+def write_note(text, title=None, scope="all", project=None, by=None, kind="note", replace=False, supersedes=None):
+    """Save one note; returns (title, path). `replace`: a note with exactly this title is updated, not duplicated.
+    `supersedes`: titles of older notes this one replaces (checked before anything is written, then marked)."""
     text = (text or "").strip()
     if not text:
         raise KitError("Give the note in 'text': what you were doing, what the user wants instead and why.")
@@ -257,15 +424,22 @@ def write_note(text, title=None, scope="all", project=None, by=None, kind="note"
         raise KitError("A note holds at most %d characters (this one has %d). Keep the point and the user's words; "
                        "drop the rest." % (NOTE_CAP, len(text)))
     root = folder(scope, project)
-    want = safe_title(title or title_from(text))
-    hit = [(t, p) for t, p in note_files(root) if t.casefold() == want.casefold()] if replace and title else []
-    if len(hit) == 1 and os.path.basename(hit[0][1]) not in (RULES_NAME, LESSONS_NAME):
-        title, path = hit[0]
+    want, path = target_title(text, title, scope, project, replace)
+    olds = supersedes_arg(supersedes)
+    targets = supersede_targets(olds, want, scope, project) if olds else []
+    if path:
+        title = want
     else:
         title, path = _reserve(root, want)
-    body = ("---\ntitle: %s\nwhen: %s\nscope: %s\nby: %s\nkind: %s\n---\n\n# %s\n\n%s\n" % (
-        title, time.strftime("%Y-%m-%d %H:%M"), scope, by or _by(), kind, title, text))
+    sup = ""
+    if targets:
+        names = [t for t, _ in targets]
+        sup = "supersedes: %s\n" % json.dumps(names[0] if len(names) == 1 else names, ensure_ascii=False)
+    body = ("---\ntitle: %s\nwhen: %s\nscope: %s\nby: %s\nkind: %s\n%s---\n\n# %s\n\n%s\n" % (
+        title, time.strftime("%Y-%m-%d %H:%M"), scope, by or _by(), kind, sup, title, text))
     _atomic_write(path, body)
+    if targets:
+        mark_superseded([(t, p) for t, p in targets if p != path], title, scope, project)
     return title, path
 
 
@@ -389,6 +563,10 @@ def check_helper(scope, rule=False):
                        "is the user's to say, through the Lead or their own chat.")
 
 
+def _flag(v):
+    return v is True or str(v).lower() == "true"
+
+
 def run(action, a):
     project = project_dir()
     if action == "note":
@@ -399,10 +577,22 @@ def run(action, a):
             add_rule(a.get("text"), scope, project)
             return ("House rule saved (%s). Every agent gets it from the next turn on." %
                     ("this game" if scope == "game" else "everything"))
-        replace = a.get("replace") is True or str(a.get("replace")).lower() == "true"
-        title, _ = write_note(a.get("text"), a.get("title"), scope, project, replace=replace)
-        return ("Note saved as '%s' (%s). Search finds it: rbx_vault action 'search' with shelf '%s'." %
-                (title, "this game" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
+        replace = _flag(a.get("replace"))
+        olds = supersedes_arg(a.get("supersedes"))
+        import rbxupkeep  # the checks when a note is filed: no model, only the notes' words
+        want, updating = target_title(a.get("text"), a.get("title"), scope, project, replace)
+        if not _flag(a.get("force")) and (a.get("text") or "").strip():
+            dup = rbxupkeep.find_duplicate(a.get("text"), want, scope, project, skip=olds, exclude=updating)
+            if dup:
+                return rbxupkeep.duplicate_text(dup, scope)
+        title, path = write_note(a.get("text"), a.get("title"), scope, project, replace=replace, supersedes=olds)
+        out = ("Note saved as '%s' (%s). Search finds it: rbx_vault action 'search' with shelf '%s'." %
+               (title, "this game" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
+        if olds:
+            out += " It replaces %s: kept, marked superseded, and ranked below it in search." % ", ".join(
+                "'%s'" % t for t in olds)
+        found = rbxupkeep.find_conflicts(a.get("text"), title, scope, project, skip=olds, exclude=path)
+        return out + rbxupkeep.conflicts_text(found, title) if found else out
     if action == "notes":
         rows = list_notes(scope_arg(a, project, default=False), project)
         if not rows:
@@ -413,6 +603,9 @@ def run(action, a):
         check_helper(scope)
         name = forget(a.get("title"), scope, project)
         return "Moved '%s' to the notes folder's .trash (not deleted)." % name
+    if action == "upkeep":
+        import rbxupkeep
+        return rbxupkeep.summary_text(rbxupkeep.sweep(projects=[project] if project else []))
     if action == "rule_edit":
         scope = scope_arg(a, project)
         check_helper(scope, rule=True)
