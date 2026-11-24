@@ -24,7 +24,8 @@ KEYWORD_DEPTH = 20  # how many of the keyword search's results join the fusion
 # the dense ranking by RRF (k=60) beat both the keyword search alone and dense + sparse + rerank. The bm25 sparse
 # ranking only repeated the keyword search less well, and a reranker that reorders the fused list lost more at the
 # top than it gained. Heavy's bigger reranker helps as one more vote in the fusion, over a bounded number of
-# candidates cut to a bounded length so a query stays under about 1.5 s on a laptop CPU.
+# candidates (12) cut to a bounded length (256 tokens) so a query stays well inside rbx_vault's 3 s timeout on a
+# laptop CPU (about 1.3 s at the 95th percentile on an M2 Pro).
 #   keyword: fuse the keyword ranking (when the engine has one); sparse: fuse the sparse ranking; rrf_k: RRF's
 #   constant; rerank_depth: how many fused candidates the reranker reads (0: no reranker); rerank_tokens: each cut to
 #   this many tokens (0: the model's own limit); rerank: "vote" (its order is one more RRF ranking) or "reorder"
@@ -33,10 +34,10 @@ DEFAULT_PLAN = {"keyword": True, "sparse": True, "rrf_k": 2, "rerank_depth": FUS
                 "rerank": "reorder"}
 PLANS = {
     "light": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 0, "rerank_tokens": 0, "rerank": "vote"},
-    "heavy": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 15, "rerank_tokens": 192, "rerank": "vote"},
+    "heavy": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 12, "rerank_tokens": 256, "rerank": "vote"},
 }
-BATCH = 256  # chunks embedded and upserted together (Light sorts each batch by length: far less padding)
-CHECKPOINT_BATCHES = 8  # save the manifest (and Light's new rows) every 2,048 embedded chunks
+BATCH = 1024  # chunks embedded and upserted together (Light sorts each batch by length: far less padding)
+CHECKPOINT_BATCHES = 4  # save the manifest (and Light's new rows) every 4,096 embedded chunks
 RELEASE_AFTER = 1000  # after embedding more than this many chunks, the embedders may give back their working memory
 
 
@@ -176,6 +177,26 @@ class KeywordRanker:
         return rbxvault.keyword_ranking(q, shelves, depth, idx, docs)
 
 
+def _entry(e):
+    """A file's manifest entry: when it was indexed (stat and content hash), its point ids, its project."""
+    out = {"mtime_ns": e["mtime_ns"], "size": e["size"], "ids": e["ids"], "project": e.get("project", "")}
+    if e.get("sha1"):
+        out["sha1"] = e["sha1"]
+    return out
+
+
+def _sha1(path):
+    import hashlib
+    h = hashlib.sha1()
+    try:
+        with open(path, "rb") as f:
+            for block in iter(lambda: f.read(1 << 20), b""):
+                h.update(block)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
 def _rrf(rankings, k0):
     """Payloads fused by reciprocal rank (a hit at 0-based position p of a ranking adds 1 / (p + k0)), best first, with
     their fused scores. Points are told apart by their id."""
@@ -280,9 +301,7 @@ class Engine:
         man["generation"] = self.store.commit()
         self._write_manifest({"format": FORMAT, "dim": self.emb.dim, "model": self.model,
                               "generation": man["generation"],
-                              "files": {p: {"mtime_ns": e["mtime_ns"], "size": e["size"], "ids": e["ids"],
-                                            "project": e.get("project", "")}
-                                        for p, e in man["files"].items()}})
+                              "files": {p: _entry(e) for p, e in man["files"].items()}})
 
     def _invalidate(self):
         """Before the store is emptied: a manifest naming no files, so a build stopped half way is never read as a
@@ -311,7 +330,8 @@ class Engine:
         for shelf, title, path in listed:
             files.setdefault(path, (shelf, title))
         progress("scan", 0.0)
-        new_entries, work = {}, []  # work: the files to embed again, (path, shelf, title, project, size)
+        new_entries, work = {}, []  # work: the files to embed again, (path, shelf, title, project, stat, sha1)
+        restamped = False
         for path, (shelf, title) in files.items():
             try:
                 st = os.stat(path)
@@ -323,7 +343,13 @@ class Engine:
                     and prev.get("project", "") == proj):
                 new_entries[path] = prev
                 continue
-            work.append((path, shelf, title, proj, st))
+            digest = _sha1(path)
+            if prev and digest and prev.get("sha1") == digest and prev.get("project", "") == proj:
+                # touched but not changed (a sync tool, a checkout, an editor's save): nothing to embed
+                new_entries[path] = dict(prev, mtime_ns=st.st_mtime_ns, size=st.st_size)
+                restamped = True
+                continue
+            work.append((path, shelf, title, proj, st, digest))
         listed_now = set(new_entries) | {w[0] for w in work}
         # a file is gone when it was indexed for the shared shelves or for this project and is no longer listed
         gone = [p for p, e in old.items() if p not in listed_now and e.get("project", "") in ("", project or "")]
@@ -331,13 +357,17 @@ class Engine:
         pre = None
         if quick:  # a query's refresh: chunk first, so a big change is refused before anything is embedded
             pre, n = {}, 0
-            for path, shelf, title, proj, st in work:
+            for path, shelf, title, proj, st, _ in work:
                 pre[path] = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj)
                 n += len(pre[path])
                 if max_embed is not None and n > max_embed:
                     raise TooBig("more than %d chunks to embed" % max_embed)
         if not work and not gone and not rebuilt:
-            # nothing changed: the manifest and the store stay as they are
+            # nothing changed: the store stays as it is (and the manifest too, unless files were only touched)
+            if restamped:
+                self._write_manifest({"format": FORMAT, "dim": self.emb.dim, "model": self.model,
+                                      "generation": man.get("generation"),
+                                      "files": {p: _entry(e) for p, e in dict(keep, **new_entries).items()}})
             self.chunks = sum(len(e["ids"]) for e in old.values())
             return {"chunks": self.chunks, "files": len(new_entries), "embedded": 0, "removed": 0}
         # Each file is chunked when its turn comes (a big build never holds every chunk's text at once) and its
@@ -375,11 +405,12 @@ class Engine:
                 self._checkpoint(man, keep, old, new_entries, gone, work_paths, finished)
 
         queued = 0
-        for path, shelf, title, proj, st in work:
+        for path, shelf, title, proj, st, digest in work:
             cs = pre.pop(path) if pre is not None else chunks.chunks_for_file(shelf, title, path,
                                                                                  self.emb.count_tokens, project=proj)
             ids = [c["id"] for c in cs]
-            new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": ids, "project": proj}
+            new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": ids, "project": proj,
+                                 "sha1": digest}
             if path in old:
                 stale[path] = sorted(set(old[path].get("ids", [])) - set(ids))
             batch += cs

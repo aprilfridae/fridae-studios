@@ -23,7 +23,7 @@ LIGHT = {"dense": "BAAI/bge-small-en-v1.5", "dim": 384, "sparse": "Qdrant/bm25",
          # the dense model reads each chunk's first 256 tokens (a chunk holds up to 480): the build is CPU-bound by
          # tokens, and this is about a third faster with less working memory (measured; the integration report)
          "dense_tokens": 256}
-DENSE_BATCH = 16  # texts per ONNX run: bigger batches of long texts only grow the working memory, not the speed
+DENSE_BATCH = 32  # texts per ONNX run (length-sorted, so little padding); bigger ones only grow the working memory
 HEAVY = {"dense": "mxbai-embed-large", "dim": 1024, "sparse": "Qdrant/bm25", "rerank": "BAAI/bge-reranker-base"}
 KEEP_ALIVE = "30m"
 MXBAI_QUERY = "Represent this sentence for searching relevant passages: "

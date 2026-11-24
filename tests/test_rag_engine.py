@@ -194,7 +194,7 @@ class EngineCases:
         self.assertEqual(man["dim"], 64)
         self.assertEqual(man["model"], "fake-64")
         self.assertIn(self.b, man["files"])
-        self.assertEqual(set(man["files"][self.b]), {"mtime_ns", "size", "ids", "project"})
+        self.assertEqual(set(man["files"][self.b]), {"mtime_ns", "size", "ids", "project", "sha1"})
 
     def test_sync_reembeds_only_changed(self):
         eng = self.engine()
@@ -332,6 +332,18 @@ class EngineCases:
         self.assertEqual(stats["embedded"], total - 6)  # three batches of two were in before it died
         self.assertEqual(sum(self.count_path(fresh, p) for _, _, p in self.files), total)
         self.assertEqual(fresh.query("words number 7", ["vault"], 1, None)[0]["title"], "More 7")
+
+    def test_touched_but_unchanged_file_is_not_embedded(self):
+        eng = self.engine()
+        eng.sync()
+        with open(self.b, encoding="utf-8") as f:
+            text = f.read()
+        write(self.b, text, bump=10 ** 9)  # saved again, same content
+        stats = eng.sync()
+        self.assertEqual(stats["embedded"], 0)
+        with open(self.manifest, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["files"][self.b]["mtime_ns"], os.stat(self.b).st_mtime_ns)
+        self.assertEqual(eng.sync()["embedded"], 0)
 
     def test_nothing_changed_writes_nothing(self):
         eng = self.engine()
