@@ -36,7 +36,7 @@ PLANS = {
     "heavy": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 15, "rerank_tokens": 192, "rerank": "vote"},
 }
 BATCH = 256  # chunks embedded and upserted together (Light sorts each batch by length: far less padding)
-CHECKPOINT_BATCHES = 8  # save the manifest (and Light's arrays) every 2,048 embedded chunks
+CHECKPOINT_BATCHES = 8  # save the manifest (and Light's new rows) every 2,048 embedded chunks
 RELEASE_AFTER = 1000  # after embedding more than this many chunks, the embedders may give back their working memory
 
 
@@ -53,28 +53,126 @@ class Embedders(Protocol):
 
 
 class KeywordRanker:
-    """rbxvault's keyword ranking for the fusion (rbxvault.keyword_ranking), with the vault index and the kit's
-    section docs kept loaded and looked at again at most every `every` seconds (as a query's refresh looks at the
-    files)."""
+    """rbxvault's keyword ranking for the fusion (rbxvault.keyword_ranking), with the vault index and the section
+    entries kept loaded as rbxvault.Docs (their BM25F statistics are worked out once, not on every search). They are
+    looked at again at most every `every` seconds, in a background thread: a query never waits for the files to be
+    walked (at ten times today's notes that walk alone takes seconds), it uses what was loaded last. The first call
+    loads synchronously."""
 
-    def __init__(self, every=10.0, clock=None):
+    def __init__(self, every=10.0, clock=None, background=True):
         import time
         self.every = every
         self.clock = clock or time.monotonic
+        self.background = background
         self._lock = threading.Lock()
         self._at = None
+        self._refreshing = False
         self._idx = self._kit = None
+        self._sig = None
+        self._docs = {}  # project -> (signature of its own files, rbxvault.Docs)
+
+    def _vault(self):
+        import rbxvault
+        if not os.path.isdir(rbxvault.KB):
+            return None, {"docs": rbxvault.Docs(), "symptoms": []}
+        sig = rbxvault.signature(rbxvault.note_files())
+        if self._idx is not None and sig == self._sig:
+            return sig, self._idx
+        idx = rbxvault.load_index()
+        return idx.get("sig", sig), dict(idx, docs=rbxvault.Docs(idx["docs"]))
+
+    def _own_files(self, project):
+        import rbxvault
+        files = [p for _, p in rbxvault.yours_files()]
+        if project:
+            files += [p for _, p in rbxvault.team_files(os.path.join(project, ".fridae", "team", "experts"))]
+            files += [p for _, p in rbxvault.game_files(project)]
+        out = []
+        for p in files:
+            try:
+                st = os.stat(p)
+                out.append((p, st.st_mtime_ns, st.st_size))
+            except OSError:
+                pass
+        return tuple(out)
+
+    def _sections(self, project, kit, old=None):
+        import rbxvault
+        sig = (id(kit), self._own_files(project))
+        if old is not None and old[0] == sig:
+            return old
+        return sig, rbxvault.Docs(rbxvault.section_corpus(project or "", kit))
+
+    def _refresh(self):
+        """Load everything again where the files changed (the work of a refresh, off the query path)."""
+        import rbxvault
+        try:
+            sig, idx = self._vault()
+            kit = rbxvault.load_sections()
+            if self._kit is not None and kit == self._kit:
+                kit = self._kit  # the same entries: keep the object, so the sections built on it stay valid
+            docs = {}
+            for project, old in list(self._docs.items())[-4:]:
+                docs[project] = self._sections(project, kit, old)
+            if self.background and idx is not self._idx:
+                self._warm(idx, docs)  # a new index is made ready before searches use it
+            with self._lock:
+                self._sig, self._idx, self._kit, self._docs = sig, idx, kit, docs
+        finally:
+            with self._lock:
+                self._refreshing = False
+                self._at = self.clock()
+
+    @staticmethod
+    def _warm(idx, docs):
+        import rbxvault
+        try:
+            idx["docs"].warm(rbxvault.FIELDS)
+            for _, d in docs.values():
+                for group in (False, True):
+                    d.part(("personal", group), lambda x, g=group: (x["shelf"] in rbxvault.PERSONAL) == g).warm(
+                        rbxvault.SECTION_FIELDS)
+        except Exception:
+            pass  # only a head start: a search works the terms out itself
+
+    def warm(self):
+        """Load now (when nothing is loaded yet) and work out the common terms in a background thread: the first
+        searches then need not."""
+        if self._idx is None:
+            self("warm", ["vault", "guides", "team", "yours"], 1, "")
+        with self._lock:
+            idx, docs = self._idx, dict(self._docs)
+        if self.background and idx is not None:
+            threading.Thread(target=self._warm, args=(idx, docs), name="keyword-warm", daemon=True).start()
 
     def __call__(self, q, shelves, depth, project):
         import rbxvault
+        project = project or ""
+        start = False
         with self._lock:
-            now = self.clock()
-            if self._at is None or now - self._at >= self.every:
-                self._idx = rbxvault.load_index() if os.path.isdir(rbxvault.KB) else {"docs": [], "symptoms": []}
-                self._kit = rbxvault.load_sections()
-                self._at = now
+            first = self._idx is None
+            if not first and not self._refreshing and self.clock() - self._at >= self.every:
+                self._refreshing = start = True
+        if first:
+            with self._lock:
+                self._refreshing = True
+            self._refresh()
+        elif start:
+            if self.background:
+                threading.Thread(target=self._refresh, name="keyword-refresh", daemon=True).start()
+            else:
+                self._refresh()
+        with self._lock:
             idx, kit = self._idx, self._kit
-        docs = rbxvault.section_corpus(project or "", kit) if any(s != "vault" for s in shelves) else None
+            entry = self._docs.get(project)
+        docs = None
+        if any(s != "vault" for s in shelves):
+            if entry is None:
+                entry = self._sections(project, kit)
+                with self._lock:
+                    if kit is self._kit:
+                        self._docs[project] = entry
+            docs = entry[1]
         return rbxvault.keyword_ranking(q, shelves, depth, idx, docs)
 
 
@@ -167,6 +265,11 @@ class Engine:
             stats = self._sync(project, progress or (lambda step, fraction: None), full, quick, max_embed)
         finally:
             self._sync_lock.release()
+        if not quick and not self.ready and hasattr(self.keyword, "warm"):
+            try:  # the keyword side loads before the first search, not during it
+                self.keyword.warm()
+            except Exception:
+                pass
         self.ready = True
         if project:
             self.synced_projects.add(project)
@@ -208,7 +311,7 @@ class Engine:
         for shelf, title, path in listed:
             files.setdefault(path, (shelf, title))
         progress("scan", 0.0)
-        todo, new_entries, changed = [], {}, []  # changed: [(path, index in todo after its last chunk)]
+        new_entries, work = {}, []  # work: the files to embed again, (path, shelf, title, project, size)
         for path, (shelf, title) in files.items():
             try:
                 st = os.stat(path)
@@ -220,63 +323,99 @@ class Engine:
                     and prev.get("project", "") == proj):
                 new_entries[path] = prev
                 continue
-            cs = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj)
-            todo += cs
-            changed.append((path, len(todo)))
-            new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": [c["id"] for c in cs],
-                                 "project": proj}
+            work.append((path, shelf, title, proj, st))
+        listed_now = set(new_entries) | {w[0] for w in work}
         # a file is gone when it was indexed for the shared shelves or for this project and is no longer listed
-        gone = [p for p, e in old.items() if p not in new_entries and e.get("project", "") in ("", project or "")]
-        stale = {p: sorted(set(old[p].get("ids", [])) - set(new_entries[p]["ids"])) for p, _ in changed if p in old}
-        if quick and max_embed is not None and len(todo) > max_embed:
-            raise TooBig("%d chunks to embed" % len(todo))
-        if not todo and not gone and not any(stale.values()) and not rebuilt:
+        gone = [p for p, e in old.items() if p not in listed_now and e.get("project", "") in ("", project or "")]
+        keep = {p: e for p, e in old.items() if p not in listed_now and p not in gone}  # other projects' files
+        pre = None
+        if quick:  # a query's refresh: chunk first, so a big change is refused before anything is embedded
+            pre, n = {}, 0
+            for path, shelf, title, proj, st in work:
+                pre[path] = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj)
+                n += len(pre[path])
+                if max_embed is not None and n > max_embed:
+                    raise TooBig("more than %d chunks to embed" % max_embed)
+        if not work and not gone and not rebuilt:
             # nothing changed: the manifest and the store stay as they are
             self.chunks = sum(len(e["ids"]) for e in old.values())
             return {"chunks": self.chunks, "files": len(new_entries), "embedded": 0, "removed": 0}
-        keep = {p: e for p, e in old.items() if p not in new_entries and p not in gone}  # other projects' files
-        total = len(todo)
-        complete = 0  # changed[:complete] are fully upserted
-        batches = 0
-        for n in range(0, total, self.batch):
-            batch = todo[n:n + self.batch]
-            texts = [c["text"] for c in batch]
-            dense = self.emb.dense(texts)
-            sparse = self.emb.sparse(texts)
-            self.store.upsert([(c["id"], dv, sv, c) for c, dv, sv in zip(batch, dense, sparse)])
-            done = n + len(batch)
-            while complete < len(changed) and changed[complete][1] <= done:
-                path = changed[complete][0]
+        # Each file is chunked when its turn comes (a big build never holds every chunk's text at once) and its
+        # chunks go to the models in batches. A file is finished once its last chunk is in; its points that the new
+        # version no longer has are deleted then.
+        work_paths = {w[0] for w in work}
+        units = {w[0]: (len(pre[w[0]]) if pre is not None else max(1, w[4].st_size)) for w in work}
+        total_units = sum(units.values()) or 1
+        state = {"embedded": 0, "flushed": 0, "batches": 0, "done_units": 0}
+        batch, ends, stale, finished = [], [], {}, set()  # ends: (path, chunks queued once its last one was)
+        sparse_on = bool(self.plan["sparse"] or getattr(self.store, "needs_sparse", True))
+
+        def finish_ready():
+            while ends and ends[0][1] <= state["flushed"]:
+                path = ends.pop(0)[0]
                 if stale.get(path):  # this file's points that its new version no longer has
                     self.store.delete(stale.pop(path))
-                complete += 1
-            batches += 1
-            progress("index", min(1.0, done / total))
-            if self.checkpoint_batches and batches % self.checkpoint_batches == 0 and done < total:
-                self._checkpoint(man, keep, old, new_entries, gone, changed, complete)
+                finished.add(path)
+                state["done_units"] += units[path]
+
+        def flush(n):
+            b = batch[:n]
+            del batch[:n]
+            texts = [c["text"] for c in b]
+            dense = self.emb.dense(texts)
+            sparse = self.emb.sparse(texts) if sparse_on else [([], [])] * len(b)
+            self.store.upsert([(c["id"], dv, sv, c) for c, dv, sv in zip(b, dense, sparse)])
+            state["flushed"] += len(b)
+            state["embedded"] += len(b)
+            finish_ready()
+            state["batches"] += 1
+            progress("index", min(1.0, state["done_units"] / total_units))
+            if (self.checkpoint_batches and state["batches"] % self.checkpoint_batches == 0
+                    and len(finished) < len(work_paths)):
+                self._checkpoint(man, keep, old, new_entries, gone, work_paths, finished)
+
+        queued = 0
+        for path, shelf, title, proj, st in work:
+            cs = pre.pop(path) if pre is not None else chunks.chunks_for_file(shelf, title, path,
+                                                                                 self.emb.count_tokens, project=proj)
+            ids = [c["id"] for c in cs]
+            new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": ids, "project": proj}
+            if path in old:
+                stale[path] = sorted(set(old[path].get("ids", [])) - set(ids))
+            batch += cs
+            queued += len(cs)
+            ends.append((path, queued))
+            while len(batch) >= self.batch:
+                flush(self.batch)
+        if batch:
+            flush(len(batch))
+        finish_ready()
         rest = [i for ids in stale.values() for i in ids] + [i for p in gone for i in old[p].get("ids", [])]
         if rest:
             self.store.delete(rest)
         man["files"] = dict(keep, **new_entries)
         self._commit(man)
-        if total > RELEASE_AFTER and hasattr(self.emb, "release"):
+        if state["embedded"] > RELEASE_AFTER and hasattr(self.emb, "release"):
             self.emb.release()  # a big build's model working memory is not kept for the queries
         self.chunks = sum(len(e["ids"]) for e in man["files"].values())
         progress("index", 1.0)
-        return {"chunks": self.chunks, "files": len(new_entries), "embedded": total, "removed": len(gone)}
+        return {"chunks": self.chunks, "files": len(new_entries), "embedded": state["embedded"], "removed": len(gone)}
 
-    def _checkpoint(self, man, keep, old, new_entries, gone, changed, complete):
-        """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (their
-        ids kept, so any of their points already in are cleaned up next time), gone files still listed."""
+    def _checkpoint(self, man, keep, old, new_entries, gone, work_paths, finished):
+        """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (the
+        old ids and any new ones kept, so their points already in are cleaned up next time), gone files still
+        listed."""
         files = dict(keep)
         files.update({p: old[p] for p in gone})
-        pending = {p for p, _ in changed[complete:]}
         for p, e in new_entries.items():
-            if p in pending:
+            if p in work_paths and p not in finished:
                 ids = sorted(set(old.get(p, {}).get("ids", [])) | set(e["ids"]))
                 files[p] = {"mtime_ns": -1, "size": -1, "ids": ids, "project": e.get("project", "")}
             else:
                 files[p] = e
+        for p in work_paths:
+            if p not in new_entries and p in old:  # not reached yet: its old points are still in
+                files[p] = dict(old[p], mtime_ns=-1, size=-1)
         self._commit(dict(man, files=files))
 
     # ------------------------------------------------------------ query

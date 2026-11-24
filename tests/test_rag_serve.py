@@ -320,7 +320,7 @@ class LightDenseTests(unittest.TestCase):
         self.assertEqual(bs, models.DENSE_BATCH)
         self.assertEqual(sent, sorted(sent, key=len), "shortest first: less padding")
         self.assertLessEqual(max(len(t.encode()) for t in sent), 3 * emb.dense_tokens, "cut to the dense token budget")
-        self.assertIn("/%d+" % emb.dense_tokens, emb.model, "the cut is part of the model name: an old index rebuilds")
+        self.assertTrue(emb.model.endswith("/%d" % emb.dense_tokens), "the cut is part of the model name: an old index rebuilds")
 
 
 @unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
@@ -479,10 +479,10 @@ class SetupTests(unittest.TestCase):
         done = setup.run_cli("models", "light", self.data, out=lines.append, downloader=downloader, present=present)
         rows = [json.loads(l) for l in lines]
         self.assertTrue(all(set(r) == {"step", "fraction"} for r in rows[:-1]))
-        self.assertGreaterEqual(len(rows), 5)  # 0 and 1 for each of the two models (Light has no reranker), then the end
+        self.assertGreaterEqual(len(rows), 3)  # 0 and 1 for the dense model (Light's only one), then the end
         self.assertEqual(rows[-1], {"ready": True, "missing": [], "error": ""})
         self.assertEqual(done["ready"], True)
-        self.assertEqual(have, {models.LIGHT["dense"], models.LIGHT["sparse"]})
+        self.assertEqual(have, {models.LIGHT["dense"]})
         # idempotent: everything is there, so it ends ready at once
         lines = []
         setup.run_cli("models", "light", self.data, out=lines.append, downloader=downloader, present=present)

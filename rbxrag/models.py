@@ -1,7 +1,8 @@
 """The embedders behind the knowledge index.
 
-Light: fastembed (ONNX, CPU) for everything: dense BAAI/bge-small-en-v1.5 and sparse Qdrant/bm25, no reranker
-(engine.PLANS; Xenova/ms-marco-MiniLM-L-6-v2 stays named for a plan that wants one). Heavy: dense mxbai-embed-large through the local Ollama, sparse Qdrant/bm25 and rerank
+Light: fastembed (ONNX, CPU): dense BAAI/bge-small-en-v1.5 only. Its plan (engine.PLANS) fuses the keyword search
+instead of a sparse ranking and reads no reranker; Qdrant/bm25 and Xenova/ms-marco-MiniLM-L-6-v2 stay named for a
+plan that wants them and load only then. Heavy: dense mxbai-embed-large through the local Ollama, sparse Qdrant/bm25 and rerank
 BAAI/bge-reranker-base through fastembed, kept loaded in the RAG process.
 
 The fastembed models are read from <data>/models only (local_files_only): they are downloaded once, by the setup step
@@ -29,10 +30,10 @@ MXBAI_QUERY = "Represent this sentence for searching relevant passages: "
 
 
 def fastembed_models(mode):
-    """[(kind, model name)] of the fastembed models a mode needs on disk. Light answers without a reranker
-    (engine.PLANS), so it downloads none."""
+    """[(kind, model name)] of the fastembed models a mode needs on disk. Light's plan ranks with neither a sparse
+    model nor a reranker (engine.PLANS), so it downloads the dense model only."""
     if mode == "light":
-        return [("dense", LIGHT["dense"]), ("sparse", LIGHT["sparse"])]
+        return [("dense", LIGHT["dense"])]
     return [("sparse", HEAVY["sparse"]), ("rerank", HEAVY["rerank"])]
 
 
@@ -44,7 +45,21 @@ def _quiet_fastembed():
         pass
 
 
-def load_fastembed(kind, name, cache_dir, local_only=True, lazy=False):
+def onnx_threads():
+    """Threads for a model run: the performance cores on a Mac with two kinds (on an M2 Pro, 8 threads embed about
+    15% faster than onnxruntime's default and 12 three times slower, as the efficiency cores hold the rest back);
+    elsewhere None (onnxruntime's default)."""
+    try:
+        import subprocess
+        out = subprocess.run(["sysctl", "-n", "hw.perflevel0.physicalcpu", "hw.perflevel1.physicalcpu"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+        perf, eff = int(out[0]), int(out[1])
+        return perf if perf > 0 and eff > 0 else None
+    except Exception:
+        return None
+
+
+def load_fastembed(kind, name, cache_dir, local_only=True, lazy=False, threads=None):
     """One fastembed model object. local_only never touches the network: a model that is not on disk raises."""
     _quiet_fastembed()
     if kind == "dense":
@@ -53,7 +68,7 @@ def load_fastembed(kind, name, cache_dir, local_only=True, lazy=False):
         from fastembed import SparseTextEmbedding as cls
     else:
         from fastembed.rerank.cross_encoder import TextCrossEncoder as cls
-    return cls(name, cache_dir=cache_dir, local_files_only=local_only, lazy_load=lazy)
+    return cls(name, cache_dir=cache_dir, local_files_only=local_only, lazy_load=lazy, threads=threads)
 
 
 def model_present(kind, name, cache_dir):
@@ -128,24 +143,29 @@ class LightEmbedders(_FastembedParts):
     dim = LIGHT["dim"]
 
     def __init__(self, cache_dir=None, dense=None, sparse=None, reranker=None):
-        # "light2": the in-memory store (an index from Qdrant's local mode is rebuilt once)
-        self.model = "light2:%s+%s" % (LIGHT["dense"], LIGHT["sparse"])
-        self._dense_obj = dense or load_fastembed("dense", LIGHT["dense"], cache_dir)
-        self._sparse = sparse or load_fastembed("sparse", LIGHT["sparse"], cache_dir)
+        self._threads = onnx_threads() if dense is None else None
+        self._dense_obj = dense or load_fastembed("dense", LIGHT["dense"], cache_dir, threads=self._threads)
+        self._sparse_obj = sparse  # Light's plan uses none (engine.PLANS); loaded only if a plan asks for one
         self._cache_dir = cache_dir
         self._reranker_obj = reranker  # Light's plan uses none (engine.PLANS); loaded only if a plan asks for one
         tj = _tokenizer_json(self._dense_obj)
         self.count_tokens = make_token_counter(tj)
         self.dense_tokens = LIGHT["dense_tokens"]
         self._dense_cut = make_cutter(tj)
-        if self.dense_tokens:
-            self.model = "light3:%s/%d+%s" % (LIGHT["dense"], self.dense_tokens, LIGHT["sparse"])
+        # the version names the index format: "light4" is the store of rbxrag.stores.MemStore with dense vectors only
+        self.model = "light4:%s/%d" % (LIGHT["dense"], self.dense_tokens or 512)
 
     @property
     def _dense(self):
         if self._dense_obj is None:  # given back after a big build (release); loaded again on use
-            self._dense_obj = load_fastembed("dense", LIGHT["dense"], self._cache_dir)
+            self._dense_obj = load_fastembed("dense", LIGHT["dense"], self._cache_dir, threads=self._threads)
         return self._dense_obj
+
+    @property
+    def _sparse(self):
+        if self._sparse_obj is None:
+            self._sparse_obj = load_fastembed("sparse", LIGHT["sparse"], self._cache_dir)
+        return self._sparse_obj
 
     def release(self):
         """Give back the dense model's working memory (onnxruntime keeps its peak); the next use loads it again."""

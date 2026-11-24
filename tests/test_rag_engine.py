@@ -393,7 +393,7 @@ class MemEngineTests(EngineCases, unittest.TestCase):
         eng = self.engine()
         first = eng.sync()
         again = self.engine()
-        self.assertEqual(again.sync()["embedded"], 0)  # loaded from index.npz + payloads.jsonl
+        self.assertEqual(again.sync()["embedded"], 0)  # loaded from its base and deltas
         self.assertEqual(again.query("haunted forest lantern", ["vault"], 1, None)[0]["title"], "Bravo")
         with open(self.manifest, encoding="utf-8") as f:
             man = json.load(f)
@@ -401,8 +401,72 @@ class MemEngineTests(EngineCases, unittest.TestCase):
         with open(self.manifest, "w", encoding="utf-8") as f:
             json.dump(man, f)
         self.assertEqual(self.engine().sync()["embedded"], first["chunks"])
-        os.remove(os.path.join(self.folder, "payloads.jsonl"))
+        for f in os.listdir(self.folder):
+            if f.startswith("base-") and f.endswith(".jsonl"):
+                os.remove(os.path.join(self.folder, f))
         self.assertEqual(self.engine().sync()["embedded"], first["chunks"])
+
+    def store_files(self, prefix):
+        return sorted(f for f in os.listdir(self.folder) if f.startswith(prefix))
+
+    def test_one_changed_note_writes_a_delta_and_reloads(self):
+        self.fillers(20)
+        eng = self.engine(plan=PLANS["light"])
+        eng.sync()
+        base, deltas = self.store_files("base-"), self.store_files("delta-")
+        write(self.b, "# Bravo\n\n## Lanterns\n\nA sunken temple where a lantern shows the way.\n", bump=10 ** 9)
+        stats = eng.sync()
+        self.assertEqual(stats["embedded"], 1)  # the changed note's one chunk, nothing else
+        self.assertEqual(self.store_files("base-"), base)  # the base is not written again
+        self.assertEqual(len(self.store_files("delta-")), len(deltas) + 2)  # one delta: .npz and .jsonl
+        again = self.engine(plan=PLANS["light"])  # a restart reads the base and the delta
+        self.assertEqual(again.sync()["embedded"], 0)
+        hit = again.query("sunken temple", ["vault"], 1, None)[0]
+        self.assertEqual(hit["title"], "Bravo")
+        self.assertIn("sunken temple", hit["text"])  # read back from the texts file
+        self.assertEqual(sum(self.count_path(again, p) for _, _, p in self.files), stats["chunks"])
+
+    def test_many_commits_compact_into_a_new_base(self):
+        from rbxrag import stores
+        eng = self.engine(plan=PLANS["light"])
+        eng.sync()
+        old = self.store_files("base-")
+        for n in range(stores.MAX_DELTAS + 2):
+            write(self.b, "# Bravo\n\n## Lanterns\n\nVersion %d of the lantern note.\n" % n, bump=(n + 1) * 10 ** 9)
+            eng.sync()
+        self.assertNotEqual(self.store_files("base-"), old)
+        self.assertLessEqual(len(self.store_files("delta-")), 2 * (stores.MAX_DELTAS + 1))
+        self.assertEqual(eng.store.n - eng.store.dead, eng.chunks)
+        again = self.engine(plan=PLANS["light"])
+        self.assertEqual(again.sync()["embedded"], 0)
+        self.assertIn("Version %d" % (stores.MAX_DELTAS + 1), again.query("lantern note", ["vault"], 1, None)[0]["text"])
+
+    def test_commit_without_its_manifest_rolls_back(self):
+        eng = self.engine()
+        eng.sync()
+        before, deltas = self.manifest_text(), self.store_files("delta-")
+        write(self.b, "# Bravo\n\n## Lanterns\n\nA sunken temple where a lantern shows the way.\n", bump=10 ** 9)
+        eng.sync()
+        with open(self.manifest, "w", encoding="utf-8") as f:  # as if it died between the commit and the manifest
+            f.write(before)
+        again = self.engine()
+        self.assertEqual(again.sync()["embedded"], 1)  # back at the manifest's generation, then the change again
+        self.assertEqual(again.query("sunken temple", ["vault"], 1, None)[0]["title"], "Bravo")
+        # the orphan delta is gone, the redone change is one new delta
+        self.assertEqual(len(self.store_files("delta-")), len(deltas) + 2)
+
+
+    def test_light_plan_stores_no_sparse_vectors(self):
+        class Counting(FakeEmbedders):
+            sparse_calls = 0
+
+            def sparse(self, texts):
+                Counting.sparse_calls += len(texts)
+                return super().sparse(texts)
+        self.engine(Counting(), plan=PLANS["light"]).sync()
+        self.assertEqual(Counting.sparse_calls, 0)
+        self.engine(Counting()).sync(full=True)  # the default plan ranks with them
+        self.assertGreater(Counting.sparse_calls, 0)
 
 
 @unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
@@ -427,7 +491,8 @@ class StoreEquivalenceTests(unittest.TestCase):
         corpus = lambda project: list(files)
         q_eng = Engine(QdrantStore(QdrantClient(":memory:")), FakeEmbedders(), os.path.join(tmp, "q.json"),
                        corpus=corpus, project_files=lambda p: set())
-        m_eng = Engine(MemStore(os.path.join(tmp, "light")), FakeEmbedders(), os.path.join(tmp, "m.json"),
+        # 32-bit vectors here: the stores must rank alike exactly (Light's 16-bit ones may swap near ties)
+        m_eng = Engine(MemStore(os.path.join(tmp, "light"), dtype="float32"), FakeEmbedders(), os.path.join(tmp, "m.json"),
                        corpus=corpus, project_files=lambda p: set())
         q_eng.sync()
         m_eng.sync()
