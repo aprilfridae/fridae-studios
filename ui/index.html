@@ -810,6 +810,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .drawer pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
 #pd-changes:empty, #pd-out:empty, #pd-log:empty { display: none; }
 #pd-path { word-break: break-all; }
+.pill.danger { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 #pd-out.warn { color: var(--text); }
 .light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 32px; }
 .light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
@@ -1150,6 +1151,13 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/game.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
     <div class="act"><button class="pill" id="pd-push" title="Uploads this project's files to the online copy">Push</button><button class="pill" id="pd-pull">Pull</button></div>
   </div>
+  <h3>Delete</h3>
+  <div class="act" id="pd-del-start"><button class="pill" id="pd-del">Delete project…</button></div>
+  <div id="pd-del-ask" hidden>
+    <p class="sub">Remove it from Fridae and keep its files, or also move its folder to the Trash (you can put it back from there). Its chats stay in your history.</p>
+    <div class="act"><button class="pill" id="pd-del-list">Remove from Fridae</button><button class="pill danger" id="pd-del-trash">Move folder to Trash</button><button class="pill" id="pd-del-no">Cancel</button></div>
+  </div>
+  <p class="sub" id="pd-del-out" hidden></p>
 </div></aside>
 <div class="light" id="light"><img alt=""></div>
 
@@ -2120,6 +2128,22 @@ $("pd-ident-save").onclick = () => git("identity", { name: $("pd-uname").value, 
 $("pd-remote-save").onclick = () => git("remote", { url: $("pd-remote").value });
 $("pd-push").onclick = async () => { $("pd-out").textContent = "Pushing..."; git("push"); };
 $("pd-pull").onclick = async () => { $("pd-out").textContent = "Pulling..."; git("pull"); };
+/* Delete: two steps (Delete project…, then which kind), so one stray click never removes anything */
+function delAsk(on) { $("pd-del-start").hidden = on; $("pd-del-ask").hidden = !on; if (on) $("pd-del-no").focus(); }
+$("pd-del").onclick = () => { $("pd-del-out").hidden = true; delAsk(true); };
+$("pd-del-no").onclick = () => { delAsk(false); $("pd-del").focus(); };
+async function delProject(trash) {
+  const pr = frontProj(); if (!pr) return;
+  $("pd-del-list").disabled = $("pd-del-trash").disabled = true;
+  let r; try { r = await api("/api/project", { action: "delete", path: pr.path, trash }); } catch (e) { r = { ok: false, error: "The app did not answer." }; }
+  $("pd-del-list").disabled = $("pd-del-trash").disabled = false;
+  if (!r.ok) { const o = $("pd-del-out"); o.textContent = r.error || "That did not work."; o.hidden = false; return; }
+  delAsk(false); closeProject();
+  projects = await api("/api/projects"); showAll();
+  say((pr.name || "The project") + (trash ? " is in the Trash." : " is no longer in Fridae. Its folder is untouched."));
+}
+$("pd-del-list").onclick = () => delProject(false);
+$("pd-del-trash").onclick = () => delProject(true);
 
 /* ---------- GitHub: Setup, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
    GitHub, Push now). Fridae keeps the sign-in to itself: agents never get it, and nothing is sent to GitHub unless you

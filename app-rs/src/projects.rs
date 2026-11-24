@@ -93,6 +93,79 @@ pub fn forget(path: &str) {
     save(saved().into_iter().filter(|p| !same(p["path"].as_str().unwrap_or(""), path)).collect());
 }
 
+/// Why a folder may not go to the Trash, if it may not: it is (or holds) the user's home, the app's own folders or
+/// the folder new games go in, or it holds another of the user's projects.
+fn trash_refusal(dir: &Path, protected: &[PathBuf], others: &[PathBuf]) -> Option<String> {
+    if dir.parent().is_none() || dir.components().count() < 3 {
+        return Some("That folder is too close to the top of the disk to move to the Trash.".into());
+    }
+    if protected.iter().any(|p| p.starts_with(dir)) {
+        return Some("That folder holds your home folder or Fridae's own folders, so it stays. Remove it from Fridae instead.".into());
+    }
+    if others.iter().any(|p| p != dir && p.starts_with(dir)) {
+        return Some("That folder holds another of your projects, so it stays. Remove it from Fridae instead.".into());
+    }
+    None
+}
+
+/// Take a project off Fridae's list. With `trash`, its folder first goes to the Trash (macOS) or Recycle Bin
+/// (Windows), where the user can put it back: nothing is ever deleted outright. The list is only changed once the
+/// folder is gone, so a failed move leaves everything as it was.
+pub fn delete(path: &str, trash: bool) -> Result<(), String> {
+    if !known(path) {
+        return Err("That is not one of your projects.".into());
+    }
+    if trash {
+        let dir = fs::canonicalize(path).map_err(|_| "That folder is no longer there. Remove it from Fridae instead.".to_string())?;
+        let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut protected = vec![canon(&PATHS.home), canon(&PATHS.kit), canon(&PATHS.work), canon(&PATHS.install), canon(&default_parent())];
+        if let Some(h) = std::env::var_os("HOME") {
+            protected.push(canon(Path::new(&h)));
+        }
+        let others: Vec<PathBuf> = saved().iter().filter_map(|p| p["path"].as_str()).filter(|p| !same(p, path)).map(|p| canon(Path::new(p))).collect();
+        if let Some(why) = trash_refusal(&dir, &protected, &others) {
+            return Err(why);
+        }
+        to_trash(&dir)?;
+    }
+    forget(path);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn to_trash(dir: &Path) -> Result<(), String> {
+    let tool = Path::new("/usr/bin/trash");
+    if !tool.exists() {
+        return Err("This Mac has no trash command. Remove the project from Fridae, then drag its folder to the Trash in Finder.".into());
+    }
+    let mut cmd = Command::new(tool);
+    cmd.arg("--").arg(dir).stdin(Stdio::null());
+    match cmd.run_output() {
+        Ok(o) if o.status.success() && !dir.exists() => Ok(()),
+        Ok(o) => Err(format!("The folder could not go to the Trash: {}", String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => Err(format!("The folder could not go to the Trash: {e}")),
+    }
+}
+
+#[cfg(windows)]
+fn to_trash(dir: &Path) -> Result<(), String> {
+    // the path goes in through the environment, never into the script's text
+    let script = "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($env:FRIDAE_TRASH, 'OnlyErrorDialogs', 'SendToRecycleBin')";
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]).env("FRIDAE_TRASH", dir).stdin(Stdio::null());
+    paths::quiet(&mut cmd);
+    match cmd.run_output() {
+        Ok(o) if o.status.success() && !dir.exists() => Ok(()),
+        Ok(o) => Err(format!("The folder could not go to the Recycle Bin: {}", String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => Err(format!("The folder could not go to the Recycle Bin: {e}")),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn to_trash(_dir: &Path) -> Result<(), String> {
+    Err("Fridae cannot move folders to the Trash here. Remove the project from Fridae, then delete its folder yourself.".into())
+}
+
 /// Make a new folder for a game, optionally as a git repository.
 pub fn create(name: &str, parent: Option<&str>, git: bool) -> Result<Value, String> {
     let name = name.trim();
@@ -323,4 +396,33 @@ pub fn git(path: &str, action: &str, body: &Value) -> Value {
         text
     };
     json!({"ok": ok, "text": text, "state": git_state(path)})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_game_folder_may_go_to_the_trash() {
+        let home = PathBuf::from("/Users/me");
+        let protected = [home.clone(), home.join("Documents/Fridae Studios/games")];
+        assert_eq!(trash_refusal(&home.join("Documents/Fridae Studios/games/Lake"), &protected, &[]), None);
+        assert_eq!(trash_refusal(&home.join("Desktop/My Game"), &protected, &[home.join("Desktop/Other")]), None);
+    }
+
+    #[test]
+    fn home_app_and_games_folders_and_their_parents_stay() {
+        let home = PathBuf::from("/Users/me");
+        let protected = [home.clone(), home.join("Documents/Fridae Studios/games")];
+        for dir in ["/", "/Users", "/Users/me", "/Users/me/Documents", "/Users/me/Documents/Fridae Studios/games"] {
+            assert!(trash_refusal(Path::new(dir), &protected, &[]).is_some(), "{dir} should stay");
+        }
+    }
+
+    #[test]
+    fn a_folder_holding_another_project_stays() {
+        let protected = [PathBuf::from("/Users/me")];
+        let why = trash_refusal(Path::new("/Users/me/Desktop/Games"), &protected, &[PathBuf::from("/Users/me/Desktop/Games/Lake")]);
+        assert!(why.is_some_and(|w| w.contains("another of your projects")));
+    }
 }

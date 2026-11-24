@@ -275,6 +275,19 @@ fn post(path: &str, body: Value) -> Reply {
                     projects::forget(&path);
                     send_json(json!({"ok": true}))
                 }
+                // Delete in Project details: off the list, and with `trash` the folder to the Trash. Never while one of
+                // its chats is working.
+                "delete" => {
+                    let working = agents::agents().iter().any(|a| a.busy() && a.project().is_some_and(|p| projects::same(&p, &path)));
+                    if working {
+                        send_json(json!({"ok": false, "error": "A chat is working in this project. Stop it first."}))
+                    } else {
+                        match projects::delete(&path, body["trash"].as_bool().unwrap_or(false)) {
+                            Ok(()) => send_json(json!({"ok": true})),
+                            Err(e) => send_json(json!({"ok": false, "error": e})),
+                        }
+                    }
+                }
                 _ => send_json(json!({"ok": false, "error": "Unknown action."})),
             }
         }
