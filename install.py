@@ -14,7 +14,9 @@ import argparse, json, os, shutil, subprocess, sys
 KIT = os.path.dirname(os.path.abspath(__file__))
 HOME = os.path.expanduser("~")
 SERVER = os.path.join(KIT, "rbxkit_mcp.py")
-LIBS = (("numpy", "numpy"), ("PIL", "pillow"), ("cv2", "opencv-python"))
+LIBS = (("numpy", "numpy"), ("PIL", "pillow"), ("cv2", "opencv-python"),
+        # the knowledge index (rbxrag): local embeddings, sparse vectors and reranking, and the vector store
+        ("fastembed", "fastembed==0.9.*"), ("qdrant_client", "qdrant-client==1.20.*"))
 
 
 def say(msg=""):
