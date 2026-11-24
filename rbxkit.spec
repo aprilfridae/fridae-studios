@@ -26,7 +26,8 @@ hidden = ["rbx", "rbxtex", "rbximg", "rbximage", "rbxvideo", "rbxpack", "rbxgen"
 # the knowledge index (rbxrag): fastembed's models run on onnxruntime, count tokens with tokenizers, stem with
 # py_rust_stemmers and hash with mmh3 (bm25), and Heavy talks to Qdrant through qdrant_client. Each is imported only
 # inside a function, so PyInstaller would not see them: their modules, native libraries and data go in whole.
-# fastembed and qdrant_client read their own version from their package metadata, so that goes in too.
+# fastembed and qdrant_client read their own version from their package metadata, and huggingface_hub finds hf_xet
+# (fast model downloads) by its metadata, so that goes in too.
 from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs, copy_metadata
 binaries = []
 for pkg in ("fastembed", "qdrant_client", "tokenizers", "py_rust_stemmers"):
@@ -38,7 +39,7 @@ for pkg in ("fastembed", "qdrant_client", "tokenizers", "py_rust_stemmers"):
 # training, quantization and transformers tools (which pull in onnx, sympy and torch when present)
 binaries += collect_dynamic_libs("onnxruntime")
 hidden += ["onnxruntime", "onnxruntime.capi._pybind_state", "mmh3", "loguru", "huggingface_hub"]
-for dist in ("fastembed", "qdrant-client", "onnxruntime", "tokenizers", "huggingface-hub", "py-rust-stemmers"):
+for dist in ("fastembed", "qdrant-client", "onnxruntime", "tokenizers", "huggingface-hub", "hf-xet", "py-rust-stemmers"):
     datas += copy_metadata(dist)
 
 a = Analysis(["cli_main.py"], pathex=[HERE], datas=datas, binaries=binaries, hiddenimports=hidden,
