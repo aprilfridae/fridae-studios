@@ -389,11 +389,12 @@ def _front_set(text, pairs):
 
 def mark_superseded(targets, new_title, scope, project=None):
     """Mark each old note as replaced by new_title: its front matter for the user's own notes, the scope's
-    superseded.json for a shipped one. Returns the titles marked."""
+    superseded.json for a shipped one, and the game's superseded.json for a note for every game that a game's note
+    replaces (it still holds in every other game). Returns the titles marked."""
     day = time.strftime("%Y-%m-%d")
     side = []
     for t, path, shelf in targets:
-        if path is None:
+        if path is None or (scope == "game" and shelf == "yours"):
             side.append((t, shelf))
             continue
         try:

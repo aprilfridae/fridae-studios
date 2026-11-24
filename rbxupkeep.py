@@ -271,14 +271,27 @@ def _candidates(scope, project, skip=(), exclude=None):
     return out
 
 
+def _replaced_here(scope, project):
+    """The titles (casefolded) of the notes for every game that this game's notes replace (its superseded.json)."""
+    if scope != "game" or not project:
+        return set()
+    return {" ".join(old.split()).casefold() for old, v in rbxnotes.sidecar_read(rbxnotes.game_notes(project)).items()
+            if v.get("shelf") == "yours"}
+
+
+def _current(n, replaced):
+    return not n.superseded_by and not (n.scope == "all" and n.title.casefold() in replaced)
+
+
 def find_duplicate(text, title, scope, project=None, skip=(), exclude=None, titled=True):
     """(the existing note a new one would duplicate, how alike, whether by its title, whether its text is a near-copy)
     or None. skip: titles the new note supersedes; exclude: the path of the note it updates; titled False: the title
     was made from the text's first words, so only the texts are compared (two notes may start alike)."""
     new = make_note(title, (text or "").strip(), scope)
     best = None
+    replaced = _replaced_here(scope, project)
     for n in _candidates(scope, project, skip, exclude):
-        if n.superseded_by:
+        if not _current(n, replaced):
             continue
         j = is_duplicate(new, n, titled)
         if j is not None and (best is None or j > best[1] or (j == best[1] and n.scope == scope != best[0].scope)):
@@ -293,8 +306,9 @@ def find_conflicts(text, title, scope, project=None, skip=(), exclude=None):
     """[(note, [(new sentence, its sentence, why)])] for the current notes a new one may contradict, most first."""
     new = make_note(title, (text or "").strip(), scope)
     found = []
+    replaced = _replaced_here(scope, project)
     for n in _candidates(scope, project, skip, exclude):
-        if n.superseded_by or _related(new, n):
+        if not _current(n, replaced) or _related(new, n):
             continue
         pairs = conflicting_pairs(new, n)
         if pairs:

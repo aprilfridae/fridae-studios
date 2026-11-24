@@ -138,8 +138,23 @@ class SupersedeFilingTests(UpkeepCase):
                        scope="game", supersedes=["Button shape", "Button colour"])
         new = os.path.join(self.game_notes, "Lantern buttons.md")
         self.assertEqual(rbxvault.front_titles(rbxvault.read(new), "supersedes"), ["Button shape", "Button colour"])
+        # the general notes hold for every other game: the mark is this game's, in its own sidecar (finding 6)
+        with open(os.path.join(self.game_notes, rbxnotes.SIDECAR), encoding="utf-8") as f:
+            side = json.load(f)
         for t in ("Button shape", "Button colour"):
-            self.assertEqual(self.front(os.path.join(self.notes, t + ".md"))["superseded_by"], "Lantern buttons")
+            self.assertNotIn("superseded_by", self.front(os.path.join(self.notes, t + ".md")))
+            self.assertEqual((side[t]["by"], side[t]["shelf"]), ("Lantern buttons", "yours"))
+        self.assertFalse(os.path.exists(os.path.join(self.notes, rbxnotes.SIDECAR)))
+        with self.in_project():
+            out = self.vault("search", query="buttons square", shelf="yours", k=5)
+        self.assertIn("(replaced by Lantern buttons)", out)
+        other = os.path.join(self.tmp, "Other game")
+        os.makedirs(os.path.join(other, ".fridae"))
+        for project in (other, ""):
+            with mock.patch.dict(os.environ, {"RBXKIT_PROJECT": project}):
+                out = self.vault("search", query="buttons square", shelf="yours", k=5)
+            self.assertIn("[yours] Button shape", out)
+            self.assertNotIn("replaced by", out)
 
     def test_an_expert_cannot_mark_a_general_note(self):
         self.vault("note", text="Buttons are square.", title="Button shape", scope="all")
