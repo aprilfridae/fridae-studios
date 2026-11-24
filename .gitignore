@@ -15,3 +15,6 @@ vault/.obsidian/
 vault/.trash/
 # the user's notes when running from source (home is the repo folder then)
 /notes/
+
+# the scale bench's generated corpora, indexes and vector cache
+tests/scale_bench/.cache/
