@@ -91,6 +91,34 @@ not included.
   (Apache-2.0, https://huggingface.co/hexgrad/Kokoro-82M; the ONNX build `onnx-community/Kokoro-82M-v1.0-ONNX`):
   the local voice-over.
 
+## Knowledge index (`rbxrag/`)
+
+Bundled in the app's tools (each keeps its own licence; the licence files ship inside the bundle with each
+package's metadata):
+
+- **FastEmbed** by Qdrant (Apache-2.0, https://github.com/qdrant/fastembed): dense, sparse (bm25) and reranking
+  models run locally.
+- **qdrant-client** (Apache-2.0, https://github.com/qdrant/qdrant-client): talks to the Qdrant service in Heavy.
+  It brings **grpcio** (Apache-2.0), **protobuf** (BSD-3-Clause), **pydantic** (MIT), **httpx** (BSD-3-Clause),
+  **h2** (MIT) and **portalocker** (BSD-3-Clause).
+- **ONNX Runtime** by Microsoft (MIT, https://github.com/microsoft/onnxruntime): runs the models on the CPU. Its
+  third-party notices ship beside it (`onnxruntime/ThirdPartyNotices.txt`).
+- **Tokenizers** by Hugging Face (Apache-2.0, https://github.com/huggingface/tokenizers) and **huggingface_hub**
+  (Apache-2.0) with **hf-xet** (Apache-2.0): counting tokens, and fetching the models at setup.
+- **py-rust-stemmers** by Qdrant (MIT, https://github.com/qdrant/py-rust-stemmers), **mmh3** (MIT),
+  **loguru** (MIT) and **tqdm** (MPL-2.0 and MIT): used by FastEmbed's bm25 and its logging.
+
+Downloaded at setup, only when the user presses that step's button, not bundled:
+
+- **Models** from Hugging Face into the app's own `rag/models` folder: `BAAI/bge-small-en-v1.5` (MIT),
+  `Qdrant/bm25` (Apache-2.0), `Xenova/ms-marco-MiniLM-L-6-v2` (Apache-2.0, an ONNX build of
+  `cross-encoder/ms-marco-MiniLM-L-6-v2`) for Light; `BAAI/bge-reranker-base` (MIT) for Heavy.
+- **Qdrant** (Apache-2.0, https://github.com/qdrant/qdrant): the release binary, pinned with its SHA-256, into the
+  app's own `rag/bin` folder (Heavy).
+- **Ollama** (MIT, https://github.com/ollama/ollama): the user's own app in `~/Applications`, installed only when
+  none is there (Heavy). Fridae never stops, updates or removes it. Its `mxbai-embed-large` model (Apache-2.0,
+  by Mixedbread) is pulled through Ollama.
+
 ## Ideas
 
 The promo maker borrows ideas, not code, from **OpenMotion** by nexu-io (Apache-2.0,
