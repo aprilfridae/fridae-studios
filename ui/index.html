@@ -3516,11 +3516,13 @@ function paintRag() {
   if (mode === "heavy") paintRagSteps();
   /* one plain line under the section: a press that failed, the service's or its process's error */
   const p = (rag && rag.process) || {}, s = ragService(), ck = (rag && rag.check) || {}, errs = [ragFail, ragNote];
-  if (mode === "light" || mode === "heavy") errs.push(ck.error ? "Could not check what is set up: " + ck.error : "", p.error, s && s.error);
+  if (mode === "light" || mode === "heavy") errs.push(ck.error ? "Could not check what is set up: " + ck.error : "", p.error || (ragGaveUp() ? "Fridae stopped trying to start the index after 5 tries in a row. Press Try again." : ""), s && s.error);
   $("rag-err").textContent = [...new Set(errs.map(ragSentence).filter(Boolean))].join(" ");
 }
 /* the problem the service or its process stopped with (shown in the line under the section) */
-function ragStopped() { const s = ragService(), p = rag.process || {}; return !!((s && s.error && !s.building) || (p.error && !p.running)); }
+function ragStopped() { const s = ragService(), p = rag.process || {}; return !!((s && s.error && !s.building) || (p.error && !p.running) || (p.gave_up && !p.running)); }
+/* the app stopped restarting the index by itself (5 failed tries in a row): only a press starts it again */
+function ragGaveUp() { const p = (rag && rag.process) || {}; return !!(p.gave_up && !p.running); }
 function paintRagLight() {
   const su = rag.setup || {}, ck = rag.check || {}, s = ragService(), p = rag.process || {}, mine = su.step === "models";
   let text, bar = -1, go = "", act = null;
@@ -3530,7 +3532,7 @@ function paintRagLight() {
   else if (!ck.models) { text = "Not set up yet. Set up downloads about 200 MB of small models, once."; go = "Set up"; act = () => ragSetup("models"); }
   else if (s && s.ready) { text = "Ready, " + ragPieces(s.chunks) + " indexed."; go = "Build again"; act = ragRebuild; }
   else if (s && s.building) { text = ragBuilding(s) + " The first time takes a few minutes."; bar = ragPct((s.progress || {}).fraction); }
-  else if (ragStopped()) { text = "The index stopped with a problem."; go = "Try again"; act = ragRebuild; }
+  else if (ragStopped()) { text = ragGaveUp() ? "Fridae stopped trying to start the index." : "The index stopped with a problem."; go = "Try again"; act = ragRebuild; }
   else text = p.restarting ? "Starting again..." : "Starting...";
   $("rag-l-state").textContent = text;
   const b = $("rag-l-bar"); b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
@@ -3547,7 +3549,7 @@ function paintRagSteps() {
       if (s && s.building) { dot = " live"; line = ragBuilding(s); bar = ragPct((s.progress || {}).fraction); live = true; }
       else if (done[i]) { dot = " ok"; line = "Ready, " + ragPieces(s.chunks) + " indexed."; }
       else if (blocked) line = st.wait;
-      else if (ragStopped()) { dot = " bad"; line = "Could not build the index. What went wrong is just below."; go = "Try again"; }
+      else if (ragStopped()) { dot = " bad"; line = (ragGaveUp() ? "Fridae stopped trying to start the index." : "Could not build the index.") + " What went wrong is just below."; go = "Try again"; }
       else if (p.starting || p.restarting || (p.running && !s)) { dot = " live"; line = p.restarting ? "Starting again..." : "Starting..."; live = true; }
     } else if (su.running && su.step === st.id) { dot = " live"; line = ragDoing(su); bar = ragPct(su.fraction); live = true; }
     else if (done[i]) { dot = " ok"; line = st.done; }
