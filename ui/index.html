@@ -160,8 +160,9 @@ div.g-row { cursor: default; }
    brightens. */
 .proj.in { background: transparent; }
 .proj.in:hover { background: var(--hover); }
-.s-chat { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; padding-left: 4px; }
-.s-tw { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
+.s-chat { display: grid; grid-template-columns: 21px minmax(0, 1fr); align-items: center; padding-left: 4px; }
+/* the arrow is 21px wide, so its point is on the half px that the 1px guide line under it is centred on */
+.s-tw { width: 21px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
 .s-tw:hover { background: var(--hover); color: var(--text); }
 .s-tw svg { transition: transform 160ms var(--ease); }
 .s-tw[aria-expanded="true"] svg { transform: rotate(90deg); }
@@ -174,26 +175,29 @@ div.g-row { cursor: default; }
 .s-row.on b, .s-row:hover b { color: var(--text); }
 .s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
 .s-row.on .s-n { color: var(--dim); }
-.s-row.xp { position: relative; grid-template-columns: 8px minmax(0, 1fr); width: calc(100% - 32px); margin-left: 32px; min-height: var(--h-l); }
-.s-row.xp::before, .s-more::before { content: ""; position: absolute; left: -18px; top: -1px; bottom: -1px; width: 1px; background: var(--line-strong); }
-/* a chat's experts are one list, which eases open and shut as a whole (easeList); its earlier experts are a list
-   inside it, behind one line */
-.s-kids { display: grid; gap: 2px; }
-.s-kids.easing { overflow: hidden; }
-.s-more { position: relative; display: flex; align-items: center; gap: 8px; width: calc(100% - 32px); min-height: var(--h-s); margin-left: 32px; padding: 4px 8px; border-radius: var(--r-s); text-align: left; font-size: 12px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
+/* (an expert's row is .sx: .xp is the researcher's line on the New project page, with a border and margins of its own) */
+.s-row.sx { grid-template-columns: 8px minmax(0, 1fr); min-height: var(--h-l); }
+/* A chat's experts are one list: a window (.s-kids) over its rows (.s-in), which eases open and shut as a whole
+   (easeList). Its earlier experts are a list inside it, behind one line. Each row is a button in a plain block
+   (.s-x) that draws its piece of the guide line as its own background, 1px wide at the same place under the arrow's
+   point, the 2px between rows included: the pieces are one straight line, and each moves with its row. */
+.s-x { padding: 0 0 2px 32px; background: linear-gradient(var(--line-strong), var(--line-strong)) 14px 0 / 1px 100% no-repeat; }
+.s-x.lone { padding: 0 0 0 24px; background: none; }
+.s-kids.tree { margin-bottom: -2px; }   /* the 2px under its last row are the list's own gap to what follows */
+.s-kids.easing { overflow: hidden; will-change: transform; }
+.s-kids.easing > .s-in { will-change: transform, opacity; }
+.s-more { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 4px 8px; border-radius: var(--r-s); text-align: left; font-size: 12px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
 .s-more:hover { background: var(--hover); color: var(--text); }
 .s-more:focus-visible { outline-offset: -2px; }
 .s-more svg { flex: none; transition: transform 160ms var(--ease); }
 .s-more[aria-expanded="true"] svg { transform: rotate(90deg); }
-.s-row.xp.lone { width: calc(100% - 24px); margin-left: 24px; }
-.s-row.xp.lone::before { content: none; }
-.s-row.xp .s-t { display: block; min-width: 0; }
-.s-row.xp b, .s-row.xp small { display: block; line-height: 1.4; }
-.s-row.xp b em { font-style: normal; font-weight: 500; color: var(--text); }
-.s-row.xp b span { color: inherit; }
-.s-row.xp small { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.s-row.xp.on small { color: var(--dim); }
-.s-row.xp.busy small { color: var(--text); }
+.s-row.sx .s-t { display: block; min-width: 0; }
+.s-row.sx b, .s-row.sx small { display: block; line-height: 1.4; }
+.s-row.sx b em { font-style: normal; font-weight: 500; color: var(--text); }
+.s-row.sx b span { color: inherit; }
+.s-row.sx small { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-row.sx.on small { color: var(--dim); }
+.s-row.sx.busy small { color: var(--text); }
 .side-foot { border-top: 1px solid var(--line); padding: 8px; display: grid; gap: 8px; }
 .foot-row { display: flex; align-items: center; gap: 4px; }
 .upd { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--text); color: var(--ink); font-weight: 500; }
@@ -1476,45 +1480,86 @@ function setRows(host, rows) {
   }
   while (at) { const next = at.nextSibling; at.remove(); at = next; }
 }
-/* A list opens and closes with a short ease of its height, its rows fading with it. Only the list itself moves, and
-   only over the part of it that can be seen (a long list eases down to the foot of the sidebar; the rest is below
-   it already). With less motion it is simply there, or gone. */
+/* A list opens and shuts with a short ease, and nothing is laid out again while it runs: the page takes its final
+   shape at once, and the ease is only moves and a fade, which the browser does without the page's help. The list is
+   a window (`.s-kids`) over its rows (`.s-in`): the window slides one way and the rows the other, so the rows stay
+   where they are and the window's lower edge uncovers them; what follows the list rides on that edge. A list longer
+   than what can be seen is held to that length for the ease (the rest is under the sidebar's foot already), and New
+   project, which is pinned, goes from where it was to where it is. With less motion the list is simply there, or
+   gone. */
 const sideCalm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-function easeList(box, open, then) {
-  box.getAnimations().forEach((a) => a.cancel());
-  if (sideCalm() || !box.animate) { if (then) then(); return; }
-  const list = $("proj-list"), seen = list.clientHeight - (box.offsetTop - list.offsetTop - list.scrollTop);
-  const tall = Math.min(box.offsetHeight, Math.max(48, Math.min(list.clientHeight, seen))) + "px";
-  const shut = { height: "0px", opacity: 0 }, full = { height: tall, opacity: 1 };
+let sideEase = null;   /* the ease going on: { anims, tidy } */
+function endEase() {
+  const e = sideEase; if (!e) return;
+  sideEase = null; e.anims.forEach((a) => { a.onfinish = null; a.cancel(); }); e.tidy();
+}
+function easeList(box, open, addWas) {
+  endEase();
+  const list = $("proj-list"), inner = box.firstElementChild;
+  const drop = () => { for (const [k, n] of sideShrink) if (n === box) sideShrink.delete(k); };
+  if (sideCalm() || !box.animate || !inner) { if (!open) { drop(); paintSide(); } return; }
+  /* px of the page per px of the window (the text-size setting scales the page; engines differ on what a
+     rectangle is measured in) */
+  const lr = list.getBoundingClientRect(), s = (typeof scale === "number" && scale > 0 ? scale : 100) / 100, ratio = list.offsetWidth ? lr.width / list.offsetWidth : 1, z = Math.abs(ratio - s) <= Math.abs(ratio - 1) ? s : 1;
+  const top = (n) => n.getBoundingClientRect().top / z, br = box.getBoundingClientRect(), seen = (lr.bottom - br.top) / z;
+  if (seen <= 0) { if (!open) { drop(); paintSide(); } return; }   /* all of it is under the foot: nothing to see */
+  /* what follows the list, down to the end of the sidebar: it rides on the list's lower edge; New project is pinned */
+  const after = []; for (let n = box; n && n !== list; n = n.parentNode) for (let f = n.nextElementSibling; f; f = f.nextElementSibling) after.push(f);
+  const add = after.find((f) => f.matches(".proj.add")), rest = after.filter((f) => f !== add);
+  let tall = br.height / z, held = false, moved, addMoved = 0;
+  if (tall > seen + 1) { tall = Math.ceil(seen); box.style.height = tall + "px"; held = true; }
+  if (open) {
+    moved = tall + (parseFloat(getComputedStyle(box.parentNode).rowGap) || 0) + (parseFloat(getComputedStyle(box).marginBottom) || 0);
+    if (add && typeof addWas === "number") addMoved = top(add) - addWas / z;
+  } else {
+    /* where things will be once the list is gone: looked at with the list taken out for a moment */
+    const keep = list.scrollTop, now = rest.length ? top(rest[0]) : 0, addNow = add ? top(add) : 0;
+    box.style.display = "none";
+    moved = rest.length ? now - top(rest[0]) : tall; addMoved = add ? addNow - top(add) : 0;
+    box.style.display = ""; list.scrollTop = keep;
+  }
+  const y = (px) => "translateY(" + px.toFixed(2) + "px)", path = (a, b) => open ? [{ transform: y(a) }, { transform: y(b) }] : [{ transform: y(b) }, { transform: y(a) }];
+  const timing = { duration: Math.round(Math.max(200, Math.min(360, 150 + tall * 0.35))), easing: "cubic-bezier(0.33, 1, 0.68, 1)", fill: open ? "none" : "forwards" };
+  const hidden = { transform: y(tall), opacity: 0 }, shown = { transform: y(0), opacity: 1 };
   box.classList.add("easing");
-  const a = box.animate(open ? [shut, { opacity: 1, offset: 0.7 }, full] : [full, { opacity: 0, offset: 0.7 }, shut], { duration: open ? 200 : 180, easing: "cubic-bezier(0.3, 0.1, 0.2, 1)", fill: open ? "none" : "forwards" });
-  a.onfinish = () => { if (open) box.classList.remove("easing"); if (then) then(); };
-  a.oncancel = () => box.classList.remove("easing");
+  const riders = rest.concat(add ? [add] : []); riders.forEach((f) => { f.style.willChange = "transform"; });
+  const anims = [box.animate(path(-tall, 0), timing), inner.animate(open ? [hidden, { opacity: 1, offset: 0.7 }, shown] : [shown, { opacity: 0, offset: 0.7 }, hidden], timing)]
+    .concat(rest.map((f) => f.animate(path(-moved, 0), timing)), add && addMoved ? [add.animate(path(-addMoved, 0), timing)] : []);
+  const tidy = () => { box.classList.remove("easing"); if (held) box.style.height = ""; riders.forEach((f) => { f.style.willChange = ""; }); if (!open) drop(); };
+  sideEase = { anims, tidy };
+  anims[0].onfinish = () => {
+    if (sideEase && sideEase.anims === anims) sideEase = null;
+    /* shut: the list goes and what rode on it lets go in the same moment, so nothing is seen to jump */
+    if (!open) { drop(); paintSide(); anims.forEach((a) => a.cancel()); }
+    tidy();
+  };
 }
 /* show or hide a list in the sidebar: `flip` changes what is kept, then the list eases in, or eases out and goes */
 function foldSide(key, shown, flip) {
+  endEase();
   const c = sideRows.get(key), node = c && c.node;
   flip();
-  if (shown && node && node.isConnected && !sideCalm()) { sideShrink.set(key, node); node.inert = true; easeList(node, false, () => { if (sideShrink.get(key) === node) sideShrink.delete(key); paintSide(); }); }
-  else if (!shown) sideGrow.add(key);
+  if (shown && node && node.isConnected && !sideCalm()) { sideShrink.set(key, node); node.inert = true; paintSide(); easeList(node, false); return; }
+  if (!shown) sideGrow.add(key);
   paintSide();
 }
 /* Of a chat's experts one row takes the Tab key (the one the keyboard was last on, else the one in front, else the
    first); the arrow keys go through the rest. chat id -> row key */
 const xpTab = new Map();
-/* one expert's row: who and what for, then its state and its AI */
+/* One expert's row: who and what for, then its state and its AI. The row is a button in a plain block (.s-x), and
+   the block draws its piece of the guide line: a line drawn from inside a button does not land where it is put. */
 function sideExpert(used, x, lead, tab) {
   const key = "x:" + x.id;
   return sideRow(used, key, lead ? lead.id : "", () => {
-    const b = el("button", "s-row xp", '<span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span>');
+    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span></button>'), b = w.firstChild;
     b.dataset.k = key; if (lead) b.dataset.of = "c:" + lead.id;
     b.onclick = () => openChatById(x.id);
-    return b;
-  }, (b) => {
-    const h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
+    return w;
+  }, (w) => {
+    const b = w.firstChild, h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
     const state = h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
     const ai = x.runsOn || aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead)));
-    putClass(b, "s-row xp" + (lead ? "" : " lone") + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
+    putClass(b, "s-row sx" + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
     putClass(b.firstChild, "dot" + state[1]);
     putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
     putText(b.querySelector("small"), state[0] + " · " + ai);   /* the state first: the end is what a narrow sidebar cuts */
@@ -1559,24 +1604,25 @@ function sideChats(used, key, rows) {
     const inside = recent.map((x) => sideExpert(used, x, p, tab));
     if (old.length) {
       inside.push(sideRow(used, "m:" + p.id, "", () => {
-        const m = el("button", "s-more", CHEVRON + "<span></span>");
+        const w = el("div", "s-x", '<button class="s-more">' + CHEVRON + "<span></span></button>"), m = w.firstChild;
         m.dataset.k = "m:" + p.id; m.dataset.of = "c:" + p.id; m.setAttribute("aria-controls", "old-" + p.id);
         m.onclick = () => foldSide(olds, xpOld.has(p.id), () => { if (!xpOld.delete(p.id)) xpOld.add(p.id); });
-        return m;
-      }, (m) => {
+        return w;
+      }, (w) => {
+        const m = w.firstChild;
         putText(m.lastChild, old.length + (recent.length ? " earlier" : old.length === 1 ? " earlier expert" : " earlier experts"));
         putAttr(m, "aria-expanded", showOld ? "true" : "false");
         putTitle(m, (old.length === 1 ? "One expert that has" : old.length + " experts that have") + " not worked for half an hour or more. Press to " + (showOld ? "hide" : "show") + (old.length === 1 ? " it." : " them."));
       }));
       if (showOld) {
         sideShrink.delete(olds);
-        const box = sideRow(used, olds, "", () => { const d = el("div", "s-kids"); d.id = "old-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Earlier experts of " + p.name));
-        setRows(box, old.map((x) => sideExpert(used, x, p, tab)));
+        const box = sideRow(used, olds, "", () => { const d = el("div", "s-kids", '<div class="s-in"></div>'); d.id = "old-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Earlier experts of " + p.name));
+        setRows(box.firstChild, old.map((x) => sideExpert(used, x, p, tab)));
         inside.push(box);
       } else if (sideShrink.has(olds)) inside.push(sideShrink.get(olds));
     }
-    const box = sideRow(used, kids, "", () => { const d = el("div", "s-kids"); d.id = "kids-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Experts of " + p.name));
-    setRows(box, inside);
+    const box = sideRow(used, kids, "", () => { const d = el("div", "s-kids tree", '<div class="s-in"></div>'); d.id = "kids-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Experts of " + p.name));
+    setRows(box.firstChild, inside);
     rows.push(box);
   }
   /* an expert that is open while the chat that started it is closed */
@@ -1586,6 +1632,10 @@ let sideFront = null;   /* the chat last marked in the sidebar: a newly marked o
 function paintSide() {
   const list = $("proj-list"); if (!list) return;
   const rows = [], used = new Set();
+  /* a list is about to open: an ease still going ends first, and where New project is now is noted (it is pinned,
+     so it goes its own way) */
+  let addWas = null;
+  if (sideGrow.size) { endEase(); const add = !sideCalm() && list.querySelector(".proj.add"); if (add) addWas = add.getBoundingClientRect().top; }
   /* the row the keyboard is on, noted before anything moves (an expert's row may change lists) */
   const had = list.contains(document.activeElement) ? document.activeElement.dataset.k : "";
   const inFront = (key) => curProj === key && !isPage(view);
@@ -1641,7 +1691,7 @@ function paintSide() {
     const again = [...list.querySelectorAll("[data-k]")].find((n) => n.dataset.k === had);
     if (again) again.focus({ preventScroll: true });
   }
-  for (const key of sideGrow) { const c = sideRows.get(key); if (c && c.node.isConnected) easeList(c.node, true); }
+  for (const key of sideGrow) { const c = sideRows.get(key); if (c && c.node.isConnected) easeList(c.node, true, addWas); }
   sideGrow.clear();
   const front = view === "chat" && !isPage(view) ? current : null;
   if (front !== sideFront) { sideFront = front; const n = list.querySelector(".s-row.on"); if (n) n.scrollIntoView({ block: "nearest" }); }
@@ -1670,10 +1720,10 @@ $("proj-list").addEventListener("keydown", (ev) => {
 });
 /* the expert the keyboard is on is the one Tab comes back to */
 $("proj-list").addEventListener("focusin", (ev) => {
-  const b = ev.target; if (!b.matches || !b.matches(".s-row.xp") || !b.dataset.of) return;
+  const b = ev.target; if (!b.matches || !b.matches(".s-row.sx") || !b.dataset.of) return;
   xpTab.set(b.dataset.of.slice(2), b.dataset.k);
   const group = b.closest(".s-kids[id^='kids-']");
-  if (group) for (const r of group.querySelectorAll(".s-row.xp")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
+  if (group) for (const r of group.querySelectorAll(".s-row.sx")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
 });
 /* the bar over the tabs: the game's name and its three tabs */
 function paintView() {
