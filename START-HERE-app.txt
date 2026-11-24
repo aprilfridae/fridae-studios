@@ -32,8 +32,10 @@ can do and how the app works.
 The left side lists your games. "Overview" shows every game, its chats and
 its experts as a live graph, with a card per game beside it. Pick a game
 for its Chat (where you talk to its agent), Review (what is happening and
-what needs you) and Promos (promo videos from your clips). "New project"
-makes a new game folder or finds ideas from Roblox's charts.
+what needs you) and Promos (promo videos from your clips). The game in
+front lists its chats under it; a chat that started experts has an arrow
+that shows them, each a chat you can open and read. "New project" makes a
+new game folder or finds ideas from Roblox's charts.
 
 Things to try
 -------------

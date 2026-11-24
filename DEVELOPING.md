@@ -163,7 +163,7 @@ collects (`team::with_model_note`). What a chat was told is read back from its s
 agent's file tools may write, `paths::app_protected`). The
 expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
 `agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
-the expert line and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
+the expert's row in the sidebar and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
 `/api/experts` lists the kit's roster (not the Lead), the table, and for Claude, Gemini, Cursor and OpenCode whether each is
 installed, its models and its default; with `expert`, `ai`, `model` it saves one row ("" is Same as the Lead). Beside
 Cursor the table shows `cursor::EXPERT_GAP` (experts run with Ask me's rules: Cursor may also write into temp
@@ -219,10 +219,22 @@ from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio
 front (`""` for No project, `null` on the Overview and New project pages) and `view` is `chat`, `review`,
 `promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start Overview opens when a
 game has a run going or something waiting for the user (`needsOf`: blocking review items and needs cards, the one
-count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. A helper
-(an agent with `parent`) never gets a row: it is one collapsible line in its parent's chat, placed where the parent's
-log has the `helper_started` event (`{helper, name, expert}`, sent by `spawn_named`). Restored agents carry `role`,
-`parent`, `team` and `expert` in `agent_new`. Overview (`view` `all`) is the graph beside a column of cards. The cards, one per game and a New project card
+count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. The game
+in front shows its open chats under it (`sideChats`), and under a chat the experts it started (`expertsOf`: those its
+log names in `helper_started`, the saved chats with it as `parent` from `/api/history`, and the open ones; newest
+first). An arrow beside the chat shows or hides them, kept per chat in `localStorage` under `experts-shown`. Only
+experts at work, or at work within the last half hour (`xpRecent`; `xpWhen` holds when: a saved chat's `updated` as
+first heard, or a turn seen starting or ending), are listed outright; the rest are behind an "N earlier" line. The
+lists ease open and shut (`easeList`, not with reduced motion), and the sidebar is one list that scrolls as a whole
+and draws no scrollbar. A helper
+(an agent with `parent`) is a chat of its own, read only (`paintExpertBar` takes the message box's place): pressing
+its row opens it (`openChatById`, which reopens a saved one with `/api/open-chat`). In its parent's conversation it is
+one line (`xpLink`), placed where the parent's log has the `helper_started` event (`{helper, name, expert}`, sent by
+`spawn_named`), which opens the same chat. A sidebar row stays the same element from one repaint to the next and
+its dot, words and mark are changed in place (`sideRow`), so a press is never lost to a repaint; after an event the
+sidebar is painted at most once a frame (`paintSideSoon`). A card in a helper's chat that asks to allow a program is
+live only while the helper is stopped on it (`approvalCard`). Restored agents carry `role`, `parent`, `team` and
+`expert` in `agent_new`. Overview (`view` `all`) is the graph beside a column of cards. The cards, one per game and a New project card
 (`apCard`, `paintAll`), open the game's Review when something needs the user, else its Chat. The graph (`og`,
 `overviewWanted`, `overviewSync`, `overviewStep`, `overviewDraw`) draws games, their open and saved chats, experts
 tied to their Lead and a working chat's last steps (`overviewNote`, called from `poll` beside `onEvent`). It asks
@@ -244,7 +256,8 @@ spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
   once its first turn has run (`holds_slot`). Closing a chat closes the experts it started (`remove_agent`), End this
   run closes the run's experts, the researcher closes itself once its ideas are stored, and Find ideas closes an
   earlier idle researcher. Helpers are not listed in `_open.txt`, so a restart does not reopen them; the page reopens
-  one (`/api/open-chat`) only to read its log when its line is opened.
+  one (`/api/open-chat`) only to read its chat, when its row in the sidebar or its line in the chat that started it
+  is pressed.
 - The page makes no chat just for looking: a game with no chat shows an empty page (`showDraft`), and the chat is
   made (`/api/new` with the chosen AI, then `/api/project use`) when its first message is sent.
 - Usage lines carry `project` (the chat's game) so Review and Overview can show what a game has cost.

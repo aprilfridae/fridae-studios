@@ -136,7 +136,9 @@ div.g-row { cursor: default; }
 .side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
-.side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; }
+.side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
+/* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
+.side-list::-webkit-scrollbar { display: none; }
 .proj { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
 .proj:hover { background: var(--hover); }
 .proj.on { background: var(--press); }
@@ -149,6 +151,49 @@ div.g-row { cursor: default; }
 .proj.add { grid-template-columns: 12px minmax(0, 1fr); color: var(--dim); }
 .proj.all { grid-template-columns: 12px minmax(0, 1fr) auto; color: var(--dim); }
 .proj.add:hover { color: var(--text); }
+/* New project stays in reach under a long list of chats */
+.proj.add { position: sticky; bottom: 0; background: var(--panel); box-shadow: 0 12px 0 var(--panel); }
+.proj.add:hover { background: linear-gradient(var(--hover), var(--hover)) var(--panel); }
+.proj.add.on { background: linear-gradient(var(--press), var(--press)) var(--panel); }
+/* The game in front shows its chats under it, and under a chat the experts it started, each a chat of its own (an
+   arrow beside the chat shows or hides them). With a chat in front, its row carries the mark and the game's only
+   brightens. */
+.proj.in { background: transparent; }
+.proj.in:hover { background: var(--hover); }
+.s-chat { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; padding-left: 4px; }
+.s-tw { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
+.s-tw:hover { background: var(--hover); color: var(--text); }
+.s-tw svg { transition: transform 160ms var(--ease); }
+.s-tw[aria-expanded="true"] svg { transform: rotate(90deg); }
+.s-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: var(--h-m); padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
+.s-chat .s-row { grid-column: 2; }
+.s-row:hover { background: var(--hover); }
+.s-row.on { background: var(--press); }
+.s-row:focus-visible, .s-tw:focus-visible, .side-list .proj:focus-visible { outline-offset: -2px; }
+.s-row b { font-weight: 400; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-row.on b, .s-row:hover b { color: var(--text); }
+.s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
+.s-row.on .s-n { color: var(--dim); }
+.s-row.xp { position: relative; grid-template-columns: 8px minmax(0, 1fr); width: calc(100% - 32px); margin-left: 32px; min-height: var(--h-l); }
+.s-row.xp::before, .s-more::before { content: ""; position: absolute; left: -18px; top: -1px; bottom: -1px; width: 1px; background: var(--line-strong); }
+/* a chat's experts are one list, which eases open and shut as a whole (easeList); its earlier experts are a list
+   inside it, behind one line */
+.s-kids { display: grid; gap: 2px; }
+.s-kids.easing { overflow: hidden; }
+.s-more { position: relative; display: flex; align-items: center; gap: 8px; width: calc(100% - 32px); min-height: var(--h-s); margin-left: 32px; padding: 4px 8px; border-radius: var(--r-s); text-align: left; font-size: 12px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
+.s-more:hover { background: var(--hover); color: var(--text); }
+.s-more:focus-visible { outline-offset: -2px; }
+.s-more svg { flex: none; transition: transform 160ms var(--ease); }
+.s-more[aria-expanded="true"] svg { transform: rotate(90deg); }
+.s-row.xp.lone { width: calc(100% - 24px); margin-left: 24px; }
+.s-row.xp.lone::before { content: none; }
+.s-row.xp .s-t { display: block; min-width: 0; }
+.s-row.xp b, .s-row.xp small { display: block; line-height: 1.4; }
+.s-row.xp b em { font-style: normal; font-weight: 500; color: var(--text); }
+.s-row.xp b span { color: inherit; }
+.s-row.xp small { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-row.xp.on small { color: var(--dim); }
+.s-row.xp.busy small { color: var(--text); }
 .side-foot { border-top: 1px solid var(--line); padding: 8px; display: grid; gap: 8px; }
 .foot-row { display: flex; align-items: center; gap: 4px; }
 .upd { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--text); color: var(--ink); font-weight: 500; }
@@ -287,6 +332,8 @@ button.pname:hover { background: var(--hover); }
 .ask p { margin: 0 0 8px; color: var(--dim); font-size: 14px; line-height: 1.5; }
 .ask pre { margin: 0 0 12px; padding: 8px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 132px; overflow-y: auto; }
 .ask .act { margin: 0; }
+/* a button with a long list in it ("Allow cd, find, ... and carry on") wraps instead of running out of the card */
+.ask .act .pill { max-width: 100%; height: auto; min-height: var(--h-m); padding: 4px 16px; border-radius: 16px; white-space: normal; text-align: left; }
 .ask pre.whole { max-height: none; overflow: visible; word-break: break-all; }
 .settings-note { position: fixed; top: 56px; right: 16px; z-index: 60; width: min(520px, calc(100vw - 32px)); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18); margin: 0; max-height: calc(100vh - 72px); overflow-y: auto; }
 .settings-note ul { margin: 0 0 12px; padding-left: 16px; color: var(--dim); font-size: 13px; line-height: 1.5; }
@@ -310,7 +357,18 @@ button.pname:hover { background: var(--hover); }
 .undo-turn:hover { color: var(--text); }
 .undo-turn.said { text-decoration: none; cursor: default; }
 
-/* an expert the chat started: one compact line (expert, job, AI, state) that opens to its own log, read-only */
+/* An expert the chat started: one line where it was started (who, and what for), which opens the expert's own chat.
+   The expert itself is listed under this chat in the sidebar. */
+.xp-link { display: grid; grid-template-columns: 8px auto minmax(0, auto) auto; justify-content: start; align-items: center; gap: 8px; width: fit-content; max-width: min(70ch, 100%); min-height: var(--h-s); padding: 2px 8px; margin: 2px 0 2px -8px; text-align: left; border-radius: var(--r-s); font-size: 13px; }
+.xp-link:hover { background: var(--hover); }
+.xp-link b { font-weight: 500; white-space: nowrap; }
+.xp-link .xp-job { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.xp-link .xp-go { font-size: 12px; color: var(--faint); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.xp-link:hover .xp-go, .xp-link:focus-visible .xp-go { color: var(--text); }
+/* an expert's chat is its own log, read only: this line takes the message box's place */
+.xp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; max-width: 800px; min-height: var(--h-l); margin: 0 auto; padding: 8px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); font-size: 13px; color: var(--dim); }
+.xp-bar > span { flex: 1; min-width: 16ch; }
+/* the researcher on the New project page: one compact line that opens to its own log, read-only */
 .xp { margin: 2px 0; max-width: 70ch; border-radius: var(--r-s); border: 1px solid transparent; transition: border-color 140ms ease; }
 .xp.open { max-width: none; margin: 8px 0 12px; border-color: var(--line-strong); background: var(--panel); border-radius: var(--r-m); }
 .xp-row { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto auto 8px; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 2px 8px; margin-left: -8px; text-align: left; border-radius: var(--r-s); font-size: 13px; }
@@ -793,6 +851,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       </div>
       <div class="scroll" id="scroll"></div>
       <div class="dock">
+        <div class="xp-bar" id="xp-bar" hidden><span id="xp-bar-text"></span><button class="pill sm" id="xp-stop" hidden>Stop</button><button class="pill sm" id="xp-lead">Open its Lead's chat</button><button class="linkish" id="xp-close" hidden title="Close this expert. Its chat stays saved, and it stays in the list to open again.">Close</button></div>
         <div class="composer">
           <div class="atts" id="atts"></div>
           <input type="file" id="file" multiple hidden>
@@ -1152,8 +1211,8 @@ const CONTROLS = [
   ["More accounts", "Setup, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Setup, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
-  ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
-  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert.", "", "Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its line says so (\"on Cursor · Auto\")."],
+  ["Experts in a chat", "Each expert is a chat of its own, listed under the chat that started it in the sidebar.", "", "The arrow beside that chat shows or hides its experts; each row says who it is, what for, whether it is working and its AI. Those that have not worked for half an hour are behind one line (\"12 earlier\"); press it to see them. Press an expert to read its chat (read only; Stop is there while it works). In the chat that started it, one line marks where it began and opens it too. You never need to talk to them: the agent you talk to does."],
+  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert.", "", "Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its row says so (\"Cursor · Auto\")."],
   ["The amber dot (bottom left)", "Something is not connected. Press it to see what, in Setup."],
   ["Selected in Studio", "With the Studio plugin connected, the agent is told what you have selected.", "", "The message box shows it, so \"this\" means that."],
   ["Text size", "Ctrl (Cmd on a Mac) and + or - makes everything bigger or smaller; 0 resets it."],
@@ -1232,25 +1291,23 @@ function md(src) {
 const agents = new Map();
 let current = null;
 /* experts and helpers waiting for the chat that started them to open: helper id -> pane */
-const orphans = new Map();
-const parked = el("div"); parked.hidden = true;   /* where an expert's log waits while its chat is not shown anywhere */
+const parked = el("div"); parked.hidden = true;   /* where the researcher's log waits while its page is not shown */
 function pane(id) {
   let p = agents.get(id);
   if (p) return p;
+  /* xps: the experts this chat's conversation says it started (see xpLink) */
   p = { id, name: "New chat", col: el("div", "col"), turn: null, busy: false, now: "", last: "Idle", scroll: 0, xps: {} };
   p.col.hidden = true;
   scroller.appendChild(p.col);
   grow.observe(p.col);
   agents.set(id, p);
   hello(p);
-  /* experts this chat started that opened before it did */
-  for (const h of [...orphans.values()]) if (h.parent === id) attachHelper(h);
   return p;
 }
-/* where a chat belongs: its game's folder, or "" for no game */
-const projKey = (p) => (p && p.project && p.project.path) || "";
-/* an expert or helper another chat started: shown folded in that chat, never as a chat of its own */
+/* an expert or helper another chat started: a chat of its own, read only, listed under that chat in the sidebar */
 const isHelper = (p) => !!(p && (p.parent || p.team));
+/* where a chat belongs: its game's folder, or "" for no game; an expert belongs where the chat that started it does */
+const projKey = (p) => { const of = p && p.parent && agents.get(p.parent); return (of && of.project && of.project.path) || (p && p.project && p.project.path) || ""; };
 /* the user's own chats (not helpers, not the researcher) */
 const isChat = (p) => !!p && !isHelper(p) && p.role !== "research";
 /* the chats listed for a project: started ones, plus the one in front */
@@ -1259,13 +1316,13 @@ function projectChats(key) {
 }
 function select(id) {
   const p = agents.get(id); if (!p) return;
-  if (isHelper(p)) { openHelper(p); return; }
   const old = agents.get(current);
   if (old && old !== p) { old.scroll = scroller.scrollTop; old.col.hidden = true; }
   current = id; calm(p.col); p.col.hidden = false; draftCol.hidden = true;
-  const key = p.project ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
+  const key = p.project || isHelper(p) ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
   if (curProj !== key) curProj = key;
-  lastChat[key] = id;
+  /* an expert in front is shown in the sidebar, under its chat; coming back to the game opens the chat, not it */
+  if (isHelper(p)) { if (p.parent) setXpOpen(p.parent, true); } else lastChat[key] = id;
   if (isPage(view) || (view === "review" && !key)) view = "chat";   /* a chat with no game has no Review */
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
@@ -1347,50 +1404,277 @@ function kickoffChat(p, kind) {
   api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
   p.seed = null;
 }
-/* the sidebar: each game with one state mark, No project when such chats exist, and New project */
+/* The sidebar: each game with one state mark, No project when such chats exist, and New project. The game in front
+   shows its chats under it, and under a chat the experts it started, each a chat of its own. */
 function projState(path) {
   const r = rvAll[path], n = needsOf(r).length;
   const working = [...agents.values()].some((p) => p.busy && projKey(p) === path);
   return { n, working, strong: rvNeeds(r).some((c) => !rvDone.has(c.id)) || rvWaiting(r).some((i) => i.blocking) };
 }
+const CHEVRON = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>';
+/* Lists in the sidebar that were just shown (they open with a short ease once they are in the page) and lists on
+   their way out (kept in the page until their ease ends). Both by the list's row key. */
+const sideGrow = new Set(), sideShrink = new Map();
+/* whether a chat's experts are shown under it: shown until the arrow hides them, and the choice is kept per chat */
+let xpFold = {};
+try { const f = JSON.parse(localStorage.getItem("experts-shown") || "{}"); if (f && typeof f === "object") xpFold = f; } catch (e) {}
+const xpOpen = (id) => xpFold[id] !== false;
+function setXpOpen(id, on) {
+  if (xpOpen(id) === !!on) return;
+  if (on) { delete xpFold[id]; sideGrow.add("k:" + id); } else xpFold[id] = false;
+  try { localStorage.setItem("experts-shown", JSON.stringify(xpFold)); } catch (e) {}
+}
+/* when a chat was made, from its id ("c<milliseconds>-<n>"): the order experts are listed in */
+const bornAt = (id) => { const m = /^c(\d+)-(\d+)/.exec(id || ""); return m ? +m[1] + +m[2] / 1e6 : 0; };
+/* When each expert was last at work (ms). A saved one: when its chat was last saved, as first heard (opening an old
+   expert to read it, and closing it again, saves it anew, and that is not work). An open one: its last start or end
+   of a turn seen here (onEvent). An expert idle for longer than XP_IDLE is listed under "earlier", out of the way. */
+const xpWhen = new Map(), XP_IDLE = 30 * 60 * 1000, pageStart = Date.now();
+const xpOld = new Set();   /* the chats whose earlier experts are shown */
+/* The experts a chat started, newest first: those its conversation names, those saved and those open now. */
+function expertsOf(p) {
+  const all = new Map();
+  const put = (id, more) => { const x = all.get(id) || { id }; for (const k in more) if (more[k] !== undefined && more[k] !== null && more[k] !== "") x[k] = more[k]; all.set(id, x); };
+  for (const x of Object.values(p.xps)) put(x.id, { name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at });
+  for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai }); }
+  for (const h of agents.values()) if (h.parent === p.id) put(h.id, { name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h });
+  /* an open expert nothing is known of was open when the page loaded: it counts from then; one put back from a
+     saved chat that the list of saved chats never named counts as old */
+  for (const x of all.values()) x.when = xpWhen.get(x.id) || (x.pane && !x.pane.replay ? pageStart : 0);
+  return [...all.values()].sort((a, b) => (bornAt(b.id) - bornAt(a.id)) || ((b.at || 0) - (a.at || 0)));
+}
+/* at work now, at work within the last half hour, or the chat in front */
+const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || x.id === current || now - x.when < XP_IDLE;
+/* an expert's state in a few words, and the class of its dot */
+function xpState(h) {
+  const words = h.busy ? "working · " + (h.now || "starting") : h.last === "Stopped" ? "stopped" : h.last === "Needs attention" ? "stopped with an error" : h.last === "Needs you" ? "waiting for an answer" : h.started ? "finished" : "starting";
+  return [words, h.busy ? " live" : h.started && h.last !== "Stopped" && h.last !== "Needs attention" ? " ok" : ""];
+}
+/* A row stays the same element from one repaint to the next, and what changes on it (its dot, its words, its mark)
+   is changed in place: a press that is down while a step arrives still lands, and the keyboard stays where it was.
+   A row is made again only when `sig` (what it is built of) changes. key -> { sig, node } */
+const sideRows = new Map();
+function sideRow(used, key, sig, make, paint) {
+  let c = sideRows.get(key);
+  if (!c || c.sig !== sig) { c = { sig, node: make() }; sideRows.set(key, c); }
+  used.add(key);
+  if (paint) paint(c.node);
+  return c.node;
+}
+/* write only what differs, so an unchanged row is not touched at all */
+const putText = (n, t) => { if (n.textContent !== t) n.textContent = t; };
+const putClass = (n, c) => { if (n.className !== c) n.className = c; };
+const putAttr = (n, k, v) => { if (v === null) { if (n.hasAttribute(k)) n.removeAttribute(k); } else if (n.getAttribute(k) !== v) n.setAttribute(k, v); };
+const putTitle = (n, t) => { if (n.title !== t) n.title = t; };
+/* the children of `host` become `rows`, touching only what changed: a row that stays is never taken out */
+function setRows(host, rows) {
+  const keep = new Set(rows);
+  let at = host.firstChild;
+  for (const r of rows) {
+    while (at && !keep.has(at)) { const next = at.nextSibling; at.remove(); at = next; }   /* a row that is gone, or was made again */
+    if (r === at) at = at.nextSibling; else host.insertBefore(r, at);
+  }
+  while (at) { const next = at.nextSibling; at.remove(); at = next; }
+}
+/* A list opens and closes with a short ease of its height, its rows fading with it. Only the list itself moves, and
+   only over the part of it that can be seen (a long list eases down to the foot of the sidebar; the rest is below
+   it already). With less motion it is simply there, or gone. */
+const sideCalm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function easeList(box, open, then) {
+  box.getAnimations().forEach((a) => a.cancel());
+  if (sideCalm() || !box.animate) { if (then) then(); return; }
+  const list = $("proj-list"), seen = list.clientHeight - (box.offsetTop - list.offsetTop - list.scrollTop);
+  const tall = Math.min(box.offsetHeight, Math.max(48, Math.min(list.clientHeight, seen))) + "px";
+  const shut = { height: "0px", opacity: 0 }, full = { height: tall, opacity: 1 };
+  box.classList.add("easing");
+  const a = box.animate(open ? [shut, { opacity: 1, offset: 0.7 }, full] : [full, { opacity: 0, offset: 0.7 }, shut], { duration: open ? 200 : 180, easing: "cubic-bezier(0.3, 0.1, 0.2, 1)", fill: open ? "none" : "forwards" });
+  a.onfinish = () => { if (open) box.classList.remove("easing"); if (then) then(); };
+  a.oncancel = () => box.classList.remove("easing");
+}
+/* show or hide a list in the sidebar: `flip` changes what is kept, then the list eases in, or eases out and goes */
+function foldSide(key, shown, flip) {
+  const c = sideRows.get(key), node = c && c.node;
+  flip();
+  if (shown && node && node.isConnected && !sideCalm()) { sideShrink.set(key, node); node.inert = true; easeList(node, false, () => { if (sideShrink.get(key) === node) sideShrink.delete(key); paintSide(); }); }
+  else if (!shown) sideGrow.add(key);
+  paintSide();
+}
+/* Of a chat's experts one row takes the Tab key (the one the keyboard was last on, else the one in front, else the
+   first); the arrow keys go through the rest. chat id -> row key */
+const xpTab = new Map();
+/* one expert's row: who and what for, then its state and its AI */
+function sideExpert(used, x, lead, tab) {
+  const key = "x:" + x.id;
+  return sideRow(used, key, lead ? lead.id : "", () => {
+    const b = el("button", "s-row xp", '<span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span>');
+    b.dataset.k = key; if (lead) b.dataset.of = "c:" + lead.id;
+    b.onclick = () => openChatById(x.id);
+    return b;
+  }, (b) => {
+    const h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
+    const state = h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
+    const ai = x.runsOn || aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead)));
+    putClass(b, "s-row xp" + (lead ? "" : " lone") + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
+    putClass(b.firstChild, "dot" + state[1]);
+    putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
+    putText(b.querySelector("small"), state[0] + " · " + ai);   /* the state first: the end is what a narrow sidebar cuts */
+    putTitle(b, [who, job, state[0], ai].filter(Boolean).join(" · ") + (lead ? "" : ". The chat that started it is closed."));
+    putAttr(b, "aria-current", on ? "true" : null);
+    const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
+  });
+}
+/* the chats of the game in front, each with its experts under it */
+function sideChats(used, key, rows) {
+  const front = view === "chat" ? current : null, now = Date.now();
+  for (const p of projectChats(key)) {
+    const xs = expertsOf(p), open = xs.length > 0 && xpOpen(p.id), at = xs.filter((x) => x.pane && x.pane.busy).length, on = p.id === front;
+    const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id;
+    rows.push(sideRow(used, "c:" + p.id, xs.length ? "arrow" : "", () => {
+      const row = el("div", "s-chat");
+      if (xs.length) {
+        const tw = el("button", "s-tw", CHEVRON);
+        tw.dataset.k = "t:" + p.id; tw.setAttribute("aria-controls", "kids-" + p.id);
+        tw.onclick = () => foldSide(kids, xpOpen(p.id), () => setXpOpen(p.id, !xpOpen(p.id)));
+        row.appendChild(tw);
+      }
+      const b = el("button", "s-row", '<span class="dot"></span><b></b><span class="s-n"></span>');
+      b.dataset.k = "c:" + p.id;
+      b.onclick = () => { select(p.id); setView("chat"); };
+      row.appendChild(b);
+      return row;
+    }, (row) => {
+      const tw = row.querySelector(".s-tw"), b = row.querySelector(".s-row"), many = xs.length === 1 ? "expert" : xs.length + " experts";
+      if (tw) { putAttr(tw, "aria-expanded", open ? "true" : "false"); putAttr(tw, "aria-label", (open ? "Hide the " : "Show the ") + many + " of " + p.name); putTitle(tw, (open ? "Hide" : "Show") + " the experts this chat started"); }
+      putClass(b, "s-row" + (on ? " on" : "")); putClass(b.firstChild, "dot" + (p.busy || at ? " live" : ""));
+      putText(b.querySelector("b"), p.name); putText(b.querySelector(".s-n"), xs.length ? String(xs.length) : "");
+      putTitle(b, [p.name, aiName(chatAi(p)), state, xs.length ? (xs.length === 1 ? "1 expert" : many) + (at ? ", " + at + " working" : "") : ""].filter(Boolean).join(" · "));
+      putAttr(b, "aria-current", on ? "true" : null);
+    }));
+    if (!open) { if (sideShrink.has(kids)) rows.push(sideShrink.get(kids)); continue; }
+    sideShrink.delete(kids);
+    /* those at work or lately at work, then one line for the rest, which opens to them */
+    const recent = xs.filter((x) => xpRecent(x, now)), old = xs.filter((x) => !xpRecent(x, now)), olds = "o:" + p.id, showOld = old.length > 0 && xpOld.has(p.id);
+    const shown = recent.concat(showOld ? old : []).map((x) => "x:" + x.id);
+    const tab = shown.includes(xpTab.get(p.id)) ? xpTab.get(p.id) : shown.includes("x:" + current) ? "x:" + current : shown[0];
+    const inside = recent.map((x) => sideExpert(used, x, p, tab));
+    if (old.length) {
+      inside.push(sideRow(used, "m:" + p.id, "", () => {
+        const m = el("button", "s-more", CHEVRON + "<span></span>");
+        m.dataset.k = "m:" + p.id; m.dataset.of = "c:" + p.id; m.setAttribute("aria-controls", "old-" + p.id);
+        m.onclick = () => foldSide(olds, xpOld.has(p.id), () => { if (!xpOld.delete(p.id)) xpOld.add(p.id); });
+        return m;
+      }, (m) => {
+        putText(m.lastChild, old.length + (recent.length ? " earlier" : old.length === 1 ? " earlier expert" : " earlier experts"));
+        putAttr(m, "aria-expanded", showOld ? "true" : "false");
+        putTitle(m, (old.length === 1 ? "One expert that has" : old.length + " experts that have") + " not worked for half an hour or more. Press to " + (showOld ? "hide" : "show") + (old.length === 1 ? " it." : " them."));
+      }));
+      if (showOld) {
+        sideShrink.delete(olds);
+        const box = sideRow(used, olds, "", () => { const d = el("div", "s-kids"); d.id = "old-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Earlier experts of " + p.name));
+        setRows(box, old.map((x) => sideExpert(used, x, p, tab)));
+        inside.push(box);
+      } else if (sideShrink.has(olds)) inside.push(sideShrink.get(olds));
+    }
+    const box = sideRow(used, kids, "", () => { const d = el("div", "s-kids"); d.id = "kids-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Experts of " + p.name));
+    setRows(box, inside);
+    rows.push(box);
+  }
+  /* an expert that is open while the chat that started it is closed */
+  for (const h of agents.values()) if (isHelper(h) && !agents.has(h.parent) && projKey(h) === key) rows.push(sideExpert(used, { id: h.id, name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h }, null, ""));
+}
+let sideFront = null;   /* the chat last marked in the sidebar: a newly marked one is brought into sight */
 function paintSide() {
   const list = $("proj-list"); if (!list) return;
-  const rows = [];
-  const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
-  if ([...agents.values()].some((p) => p.busy)) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
-  all.title = "Every game, its chats and its experts, and what needs you";
-  all.onclick = showAll;
-  rows.push(all);
+  const rows = [], used = new Set();
+  /* the row the keyboard is on, noted before anything moves (an expert's row may change lists) */
+  const had = list.contains(document.activeElement) ? document.activeElement.dataset.k : "";
+  const inFront = (key) => curProj === key && !isPage(view);
+  /* with one of its chats in front the game's row only brightens: the chat's row carries the mark */
+  const marked = (key) => inFront(key) ? (view === "chat" && agents.has(current) ? " on in" : " on") : "";
+  const anyBusy = [...agents.values()].some((p) => p.busy);
+  rows.push(sideRow(used, "all", [view === "all", anyBusy].join("\n"), () => {
+    const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
+    if (anyBusy) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
+    all.title = "Every game, its chats and its experts, and what needs you";
+    all.dataset.k = "all"; all.onclick = showAll;
+    return all;
+  }));
   for (const x of projects.projects || []) {
-    const st = projState(x.path), on = curProj === x.path && !isPage(view);
-    const b = el("button", "proj" + (on ? " on" : ""), "<b></b><span class=\"state\"></span>");
-    b.querySelector("b").textContent = x.name; b.title = x.path;
-    const mark = b.querySelector(".state");
-    if (st.n) {
-      const c = el("span", "count", String(st.n)); c.setAttribute("role", "button"); c.tabIndex = 0;
-      c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to open Review.";
-      c.onclick = (ev) => { ev.stopPropagation(); showProject(x.path, "review"); };
-      c.onkeydown = (ev) => { if (ev.key === "Enter") c.onclick(ev); };
-      mark.appendChild(c);
-    } else if (st.working) { mark.appendChild(el("span", "dot live")); mark.title = "Agents are working on it"; }
-    else { mark.appendChild(el("span", "dot")); mark.title = "Nothing is working on it"; }
-    b.onclick = () => showProject(x.path);
-    rows.push(b);
+    const st = projState(x.path), cls = marked(x.path);
+    rows.push(sideRow(used, "p:" + x.path, [x.name, st.n, st.strong, st.working].join("\n"), () => {
+      const b = el("button", "proj", "<b></b><span class=\"state\"></span>");
+      b.querySelector("b").textContent = x.name; b.title = x.path; b.dataset.k = "p:" + x.path;
+      const mark = b.querySelector(".state");
+      if (st.n) {
+        const c = el("span", "count", String(st.n)); c.setAttribute("role", "button"); c.tabIndex = 0;
+        c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to open Review.";
+        c.onclick = (ev) => { ev.stopPropagation(); showProject(x.path, "review"); };
+        c.onkeydown = (ev) => { if (ev.key === "Enter") c.onclick(ev); };
+        mark.appendChild(c);
+      } else if (st.working) { mark.appendChild(el("span", "dot live")); mark.title = "Agents are working on it"; }
+      else { mark.appendChild(el("span", "dot")); mark.title = "Nothing is working on it"; }
+      b.onclick = () => showProject(x.path);
+      return b;
+    }, (b) => putClass(b, "proj" + cls)));
+    if (inFront(x.path)) sideChats(used, x.path, rows);
   }
   const loose = [...agents.values()].filter((p) => isChat(p) && !p.project && !wantProj[p.id] && (p.started || p.busy));
   if (loose.length || curProj === "") {
-    const b = el("button", "proj none" + (curProj === "" && !isPage(view) ? " on" : ""), "<b>No project</b><span class=\"state\"></span>");
-    b.querySelector(".state").appendChild(el("span", "dot" + (loose.some((p) => p.busy) ? " live" : "")));
-    b.title = "Chats that belong to no game";
-    b.onclick = () => showProject("");
-    rows.push(b);
+    const cls = marked(""), busy = loose.some((p) => p.busy);
+    rows.push(sideRow(used, "none", "", () => {
+      const b = el("button", "proj none", "<b>No project</b><span class=\"state\"><span class=\"dot\"></span></span>");
+      b.title = "Chats that belong to no game"; b.dataset.k = "none";
+      b.onclick = () => showProject("");
+      return b;
+    }, (b) => { putClass(b, "proj none" + cls); putClass(b.querySelector(".dot"), "dot" + (busy ? " live" : "")); }));
+    if (inFront("")) sideChats(used, "", rows);
   }
-  const add = el("button", "proj add" + (view === "newproj" ? " on" : ""), '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg><b>New project</b>');
-  add.onclick = showNewProject;
-  rows.push(add);
-  list.replaceChildren(...rows);
+  rows.push(sideRow(used, "add", "", () => {
+    const add = el("button", "proj add", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg><b>New project</b>');
+    add.dataset.k = "add"; add.onclick = showNewProject;
+    return add;
+  }, (add) => putClass(add, "proj add" + (view === "newproj" ? " on" : ""))));
+  for (const key of [...sideRows.keys()]) if (!used.has(key)) sideRows.delete(key);
+  /* only what changed is touched; the keyboard stays on the row it was on, also when that row moved or was made again */
+  setRows(list, rows);
+  if (had && (!list.contains(document.activeElement) || document.activeElement.dataset.k !== had)) {
+    const again = [...list.querySelectorAll("[data-k]")].find((n) => n.dataset.k === had);
+    if (again) again.focus({ preventScroll: true });
+  }
+  for (const key of sideGrow) { const c = sideRows.get(key); if (c && c.node.isConnected) easeList(c.node, true); }
+  sideGrow.clear();
+  const front = view === "chat" && !isPage(view) ? current : null;
+  if (front !== sideFront) { sideFront = front; const n = list.querySelector(".s-row.on"); if (n) n.scrollIntoView({ block: "nearest" }); }
   paintHead();
 }
+/* The sidebar after an event: nothing until the first batch of events is in (the page is painted once then), and
+   after that at most once a frame, however many steps arrive. */
+let sideSoon = false;
+function paintSideSoon() {
+  if ((bootMark === Infinity && !ONCE) || sideSoon) return;
+  sideSoon = true;
+  requestAnimationFrame(() => { sideSoon = false; paintSide(); });
+}
+/* an expert leaves the list half an hour after its last work, with nothing else happening: looked at twice a minute */
+setInterval(() => { if (!document.hidden) paintSide(); }, 30000);
+/* in the sidebar the arrow keys go from row to row; right and left show and hide a chat's experts (and its earlier
+   ones), and left on an expert goes to its chat */
+$("proj-list").addEventListener("keydown", (ev) => {
+  if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(ev.key) || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+  const list = $("proj-list"), rows = [...list.querySelectorAll("button")].filter((b) => !b.closest("[inert]")), me = document.activeElement, i = rows.indexOf(me);
+  if (i < 0) return;
+  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { const to = rows[i + (ev.key === "ArrowDown" ? 1 : -1)]; if (to) { ev.preventDefault(); to.focus(); } return; }
+  const chat = me.closest(".s-chat"), tw = me.matches(".s-more") ? me : chat && chat.querySelector(".s-tw");
+  if (tw && (tw.getAttribute("aria-expanded") === "true") !== (ev.key === "ArrowRight")) { ev.preventDefault(); tw.click(); }
+  else if (ev.key === "ArrowLeft" && me.dataset.of) { const to = rows.find((n) => n.dataset.k === me.dataset.of); if (to) { ev.preventDefault(); to.focus(); } }
+});
+/* the expert the keyboard is on is the one Tab comes back to */
+$("proj-list").addEventListener("focusin", (ev) => {
+  const b = ev.target; if (!b.matches || !b.matches(".s-row.xp") || !b.dataset.of) return;
+  xpTab.set(b.dataset.of.slice(2), b.dataset.k);
+  const group = b.closest(".s-kids[id^='kids-']");
+  if (group) for (const r of group.querySelectorAll(".s-row.xp")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
+});
 /* the bar over the tabs: the game's name and its three tabs */
 function paintView() {
   for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
@@ -1412,6 +1696,8 @@ function selectionHint() {
 let startingRun = "";   /* the chat a studio run is being started from, until its first event or an error */
 function paintComposer() {
   const p = agents.get(current); const b = !!(p && p.busy);
+  paintExpertBar(p);
+  if (isHelper(p)) return;   /* an expert's chat is read only: there is no message box to paint */
   paintModel();
   const something = !!box.value.trim() || (typeof pending !== "undefined" && pending.some((a) => a.name));
   const stop = b && !something;   /* while it works: with text the button sends (it waits its turn), without it stops */
@@ -1436,6 +1722,7 @@ function paintHead() {
   const live = p && p.overnight && p.overnight > Date.now() / 1000;
   let text = "", review = false;
   if (!p) text = "";
+  else if (isHelper(p)) text = [p.runsOn || aiName(chatAi(p)), xpState(p)[0]].join(" · ");
   else if (leadsRun(p)) { text = runState(r, run)[0]; review = true; }
   else if (p.studio && p.studioWaiting) { text = "Waiting for you"; review = true; }
   else if (p.busy) text = "Working";
@@ -1478,6 +1765,7 @@ let histTimer = null;
 let saved = { chats: [], deleted: [] };
 function loadHistory() { clearTimeout(histTimer); histTimer = setTimeout(async () => {
   try { saved = await api("/api/history"); } catch (e) { return; }
+  paintSide();   /* the experts listed under a chat include the saved ones */
   if ($("conv-menu").classList.contains("on")) paintConv();
   if (document.body.classList.contains("setup")) paintSaved();
 }, 120); }
@@ -1545,7 +1833,7 @@ function paintConv() {
     m.appendChild(d);
   }
   const foot = el("div", "cv-foot");
-  if (agents.get(current)) { const rn = el("button", "linkish", "Rename this chat"); rn.onclick = renameChat; foot.appendChild(rn); }
+  if (agents.get(current) && !isHelper(agents.get(current))) { const rn = el("button", "linkish", "Rename this chat"); rn.onclick = renameChat; foot.appendChild(rn); }
   if (foot.children.length) m.appendChild(foot);
 }
 function closeConv() { $("conv-menu").classList.remove("on"); $("chat-title").setAttribute("aria-expanded", "false"); }
@@ -1557,73 +1845,59 @@ $("chat-title").onclick = (ev) => {
 };
 document.addEventListener("click", (ev) => { if (!ev.target.closest(".conv")) closeConv(); });
 
-/* ---------- experts: one line in the chat that started them, opening to their own log ---------- */
-const CHEVRON = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>';
-/* the line for helper `hid` in chat `p`, made where the chat's log says it was started (or at the end) */
-function xpLine(p, hid, name, expert, runsOn) {
-  if (p.xps[hid]) { if (runsOn) setRunsOn(p.xps[hid], runsOn); return p.xps[hid]; }
-  const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-on"></span><span class="xp-state">starting</span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill sm" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
-  const split = splitExpert(name, expert);
-  line.querySelector(".xp-name").textContent = split[0]; line.querySelector(".xp-job").textContent = split[1];
-  setRunsOn(line, runsOn);
-  const row = line.querySelector(".xp-row");
-  row.onclick = async () => {
-    const open = !line.classList.contains("open");
-    /* a closed expert is reopened from its saved chat, so its log can be read again */
-    if (open && !agents.has(hid)) { const r = await api("/api/open-chat", { id: hid }); if (!r.ok) { line.querySelector(".xp-state").textContent = "closed, and its log could not be opened"; return; } }
-    if (open) calm(line);
-    line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false");
-  };
-  line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: hid });
-  line.querySelector(".xp-remove").onclick = () => api("/api/remove", { agent: hid });
-  /* a chat reopened later replays where its experts started: one that is not open says so */
-  if (bootMark !== Infinity && !agents.has(hid)) line.querySelector(".xp-state").textContent = "closed";
-  p.xps[hid] = line;
-  (p.turn || p.col).appendChild(line);
-  if (p.turn) p.turn._steps = null;
-  return line;
+/* ---------- experts: each is a chat of its own, listed under the chat that started it in the sidebar ---------- */
+/* The line for expert `hid` in chat `p`'s conversation, put where the chat's log says the expert was started: who it
+   is and what for, and the way to its own chat. The experts a chat started are kept with it (p.xps), in order. */
+function xpLink(p, hid, name, expert, runsOn) {
+  let x = p.xps[hid];
+  if (!x) {
+    x = p.xps[hid] = { id: hid, name: "", expert: "", runsOn: "", at: Object.keys(p.xps).length, link: el("button", "xp-link", '<span class="dot"></span><b></b><span class="xp-job"></span><span class="xp-go">Open its chat</span>') };
+    x.link.onclick = () => openChatById(hid);
+  }
+  if (name) x.name = name;
+  if (expert) x.expert = expert;
+  if (runsOn) x.runsOn = runsOn;   /* "Cursor · Auto": only when it runs on another AI or model than the chat that started it */
+  const [who, job] = splitExpert(x.name, x.expert);
+  x.link.querySelector("b").textContent = who; x.link.querySelector(".xp-job").textContent = job;
+  x.link.title = [who, job, x.runsOn ? "on " + x.runsOn : ""].filter(Boolean).join(" · ") + ". Opens its own chat.";
+  return x;
 }
-/* "on Cursor · Auto": shown only when the expert runs on another AI or model than the chat that started it */
-function setRunsOn(line, runsOn) { const o = line.querySelector(".xp-on"); if (o) { o.textContent = runsOn ? "on " + runsOn : ""; } }
 /* "UI builder: Shop menu" -> ["UI builder", "Shop menu"]; an expert's name comes first */
 function splitExpert(name, expert) {
   const n = String(name || ""), i = n.indexOf(":");
   if (expert) return [expert, i >= 0 && n.slice(0, i).trim() === expert ? n.slice(i + 1).trim() : n === expert ? "" : n];
   return i >= 0 ? [n.slice(0, i).trim(), n.slice(i + 1).trim()] : ["Helper", n];
 }
-/* put a helper's own log inside its line in the chat that started it; with that chat not open, it waits */
-function attachHelper(h) {
-  const parent = agents.get(h.parent);
-  if (!parent) { orphans.set(h.id, h); parked.appendChild(h.col); return; }
-  orphans.delete(h.id);
-  const line = xpLine(parent, h.id, h.name, h.expert, h.runsOn);
-  h.line = line; h.col.hidden = false;
-  line.querySelector(".xp-body").appendChild(h.col);
-  paintExpert(h);
-}
+/* an expert's state changed: the dot on its line in the chat that started it (its row in the sidebar is paintSide's) */
 function paintExpert(h) {
-  const line = h.line; if (!line) return;
-  const [name, job] = splitExpert(h.name, h.expert);
-  line.querySelector(".xp-name").textContent = name; line.querySelector(".xp-job").textContent = job;
-  const state = h.busy ? "working · " + (h.now || "starting") : h.last === "Stopped" ? "stopped" : h.last === "Needs attention" ? "stopped with an error" : h.last === "Needs you" ? "needs its chat's answer" : h.started ? "finished" : "starting";
-  line.querySelector(".xp-state").textContent = state;
-  line.querySelector(".dot").className = "dot" + (h.busy ? " live" : h.started && h.last !== "Stopped" && h.last !== "Needs attention" ? " ok" : "");
-  line.classList.toggle("busy", !!h.busy);
-  const stop = line.querySelector(".xp-act .pill"); stop.hidden = !h.busy;
-  line.querySelector(".xp-remove").hidden = !!h.busy || !agents.has(h.id);
-  line.querySelector(".xp-act span").textContent = "Its own log, read only.";
-  line.querySelector(".xp-row").title = [name, job, line.querySelector(".xp-on").textContent, state].filter(Boolean).join(" · ");
+  const of = agents.get(h.parent), x = of && of.xps[h.id];
+  if (x) x.link.querySelector(".dot").className = "dot" + (agents.has(h.id) ? xpState(h)[1] : "");
 }
-/* open an expert where it lives: the chat that started it, with its line open */
-function openHelper(h) {
-  const parent = agents.get(h.parent);
-  if (!parent) { note("The chat that started this expert is closed. Its work shows in Review."); return; }
-  if (view !== "chat") view = "chat";
-  select(parent.id); setView("chat");
-  const line = h.line; if (!line) return;
-  if (!line.classList.contains("open")) line.querySelector(".xp-row").click();
-  line.scrollIntoView({ block: "center" });
+/* An expert's chat is its own log, read only: where the message box would be, one line says so, with Stop while it
+   works, the way to the chat that started it, and Close. */
+function paintExpertBar(h) {
+  const bar = $("xp-bar"), on = isHelper(h);
+  bar.hidden = !on; bar.nextElementSibling.hidden = on;
+  if (!on) return;
+  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert);
+  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
+  $("xp-stop").hidden = !h.busy; $("xp-stop").onclick = () => api("/api/stop", { agent: h.id });
+  $("xp-lead").hidden = !(of || chatKnown(h.parent)); $("xp-lead").textContent = of && leadsRun(of) ? "Open the Lead's chat" : "Open the chat that started it";
+  $("xp-lead").onclick = () => openChatById(h.parent);
+  $("xp-close").hidden = !!h.busy; $("xp-close").onclick = () => api("/api/remove", { agent: h.id });
 }
+/* A card in an expert's chat that asks to allow a program, or to run a command once, is live only while the expert
+   is stopped on it. In a log put back from a saved chat, or once the expert has gone on, has stopped or has handed
+   its result back, the card stays as what was asked, without its buttons: pressing one would wake an expert behind
+   the back of the chat that started it. */
+function approvalCard(p, card) {
+  if (!isHelper(p)) return card;
+  card.dataset.approval = "1";
+  if (p.replay || p.handedBack) shutApproval(card);
+  return card;
+}
+function shutApproval(card) { const act = card.querySelector(".act"); if (act) { act.remove(); card.classList.add("done"); } }
+function pastApprovals(p) { if (isHelper(p)) p.col.querySelectorAll(".ask[data-approval]").forEach(shutApproval); }
 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
@@ -2003,31 +2277,31 @@ function onEvent(e) {
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
-    grow.unobserve(p.col); p.col.remove(); agents.delete(e.agent); orphans.delete(e.agent);
-    /* a closed expert keeps its line in the chat that started it: opening the line reopens it */
-    if (p.line) { p.line.classList.remove("busy", "open"); p.line.querySelector(".xp-body").hidden = true; p.line.querySelector(".xp-state").textContent = "closed"; p.line.querySelector(".dot").className = "dot"; }
-    /* the experts of a closed chat wait, unseen, until it is opened again */
-    for (const h of agents.values()) if (h.parent === e.agent) { h.line = null; orphans.set(h.id, h); parked.appendChild(h.col); }
+    grow.unobserve(p.col); p.col.remove(); agents.delete(e.agent);
+    /* a closed expert keeps its line in the chat that started it, and its row in the sidebar: either opens it again */
+    if (isHelper(p)) paintExpert(p);
     if (current === e.agent) { current = null; if (bootMark !== Infinity && view === "chat" && curProj !== null) showProject(curProj, "chat"); }
     /* the researcher closes itself once its ideas are stored: the ideas show, its line goes */
     if (p === researchPane) { researchPane = null; paintResearchJob(); loadResearch(); }
     paintSide(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
   }
-  const p = pane(e.agent);
+  const p = pane(e.agent), wasBusy = p.busy;
   if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
   if (e.kind === "agent_new") {
+    if (e.restored) p.replay = true;   /* put back from a saved chat: what follows is its log, until it works again */
     p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert; if (e.team) p.team = e.team; if (e.runs_on) p.runsOn = e.runs_on;
     if (isHelper(p) || p.role === "research") {
       const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
-      if (isHelper(p)) attachHelper(p); else { researchPane = p; parked.appendChild(p.col); paintResearch(); }
+      if (!isHelper(p)) { researchPane = p; parked.appendChild(p.col); paintResearch(); }
     }   /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
     if (pendingSelect && pendingSelect.id === p.id) { const t = pendingSelect.tab; pendingSelect = null; select(p.id); if (t) setView(t); }
     loadHistory();
   } else if (e.kind === "helper_started") {
-    /* this chat started an expert here: its line goes at this point of the conversation */
-    const line = xpLine(p, e.helper, e.name, e.expert, e.runs_on);
-    (p.turn || p.col).appendChild(line); if (p.turn) p.turn._steps = null;   /* where it was started, also after a restart */
-    const h = agents.get(e.helper); if (h && isHelper(h) && !h.line) attachHelper(h);
+    /* this chat started an expert here: one line at this point of the conversation leads to the expert's own chat */
+    const x = xpLink(p, e.helper, e.name, e.expert, e.runs_on);
+    (p.turn || p.col).appendChild(x.link); if (p.turn) p.turn._steps = null;   /* where it was started, also after a restart */
+    const h = agents.get(e.helper); if (h && isHelper(h)) paintExpert(h);
+    paintSideSoon();
   } else if (e.kind === "ai") {
     p.ai = e.ai;
     if (e.from) {
@@ -2156,11 +2430,11 @@ function onEvent(e) {
     p.turn.appendChild(g); p.turn._steps = null;
   } else if (e.kind === "blocked") {
     if (!p.turn) newTurn(p);
-    p.turn.appendChild(blockedCard(p, e.commands || [])); p.turn._steps = null;
+    p.turn.appendChild(approvalCard(p, blockedCard(p, e.commands || []))); p.turn._steps = null;
     p.last = "Needs you";
   } else if (e.kind === "refused") {
     if (!p.turn) newTurn(p);
-    p.turn.appendChild(refusedCard(p, e.commands || [])); p.turn._steps = null;
+    p.turn.appendChild(approvalCard(p, refusedCard(p, e.commands || []))); p.turn._steps = null;
     p.last = "Needs you";
   } else if (e.kind === "error") {
     if (!p.turn) newTurn(p);
@@ -2169,11 +2443,14 @@ function onEvent(e) {
        line (not on lines from before the app was opened: they are history) */
     if (e.sign_in && e.id > bootMark) line.appendChild(signInButton(e.sign_in, "Sign in", "login", true));
     p.last = e.text === "Stopped." ? "Stopped" : "Needs attention";
+    pastApprovals(p);
   } else if (e.kind === "handed_back") {
     /* a helper's result went back to the chat that started it: it is finished, whatever it last asked for */
     p.last = p.last === "Stopped" ? "Stopped" : "Done";
+    p.handedBack = true; pastApprovals(p);
   } else if (e.kind === "busy") {
     p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); if (e.id > bootMark) loadUsage(); }
+    if (p.busy) { p.replay = false; p.handedBack = false; pastApprovals(p); }   /* it has gone on: what it asked before is history */
   } else if (e.kind === "done") {
     const finished = p.turn;
     if (finished && !isHelper(p) && e.id > bootMark && status.plugin && status.plugin.connected && finished.querySelector(".step")) {
@@ -2187,10 +2464,14 @@ function onEvent(e) {
     if (p.project && projKey(p) === curProj && document.body.classList.contains("pd-open")) git("status");
   }
   if (p.qbox && p.qbox.childElementCount && p.col.lastElementChild !== p.qbox) p.col.appendChild(p.qbox);   /* waiting messages stay last */
-  if (isHelper(p)) { paintExpert(p); if (p.parent === current) stick(); }
+  /* an expert: the dot on its line in the chat that started it, and its row in the sidebar when its words change */
+  const xpWords = isHelper(p) ? xpState(p)[0] : "";
+  if (xpWords) paintExpert(p);
+  /* when it was last at work: a turn that starts or ends now (not one read back from a log), or its own start */
+  if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (p === researchPane) paintResearchJob();
-  if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind)) paintSide();
+  if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
   if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
@@ -2258,6 +2539,7 @@ function fit() { box.style.height = "auto"; box.style.height = Math.min(box.scro
 function send() {
   const p = agents.get(current);
   if (!p) { sendFromDraft(); return; }
+  if (isHelper(p)) return;   /* an expert's chat is read only */
   const text = box.value.trim();
   if (p.busy && !text && !pending.some((a) => a.name)) { api("/api/stop", { agent: p.id }); return; }
   const ready = pending.filter((a) => a.name);
@@ -2456,6 +2738,7 @@ function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ?
 function note(text) { say(text); }
 function addFile(file) {
   if (!file) return;
+  if (view === "chat" && isHelper(agents.get(current))) { note("An expert's chat is read only. Open the chat that started it to send it a file."); return; }
   if (/^(video|audio)\//.test(file.type || "")) { note("For videos and music, press + and pick Video clips: they are used where they are, not copied."); return; }
   const image = isImage(file);
   const ask = image ? waitingAsk() : null;
@@ -2920,7 +3203,15 @@ function paintResearchJob() {
   }
   if (h.line.parentNode !== host) host.replaceChildren(h.line);
   h.expert = "Researcher";
-  paintExpert(h);
+  const line = h.line, [name, job] = splitExpert(h.name, h.expert), [state, dot] = xpState(h);
+  line.querySelector(".xp-name").textContent = name; line.querySelector(".xp-job").textContent = job;
+  line.querySelector(".xp-state").textContent = state;
+  line.querySelector(".dot").className = "dot" + dot;
+  line.classList.toggle("busy", !!h.busy);
+  line.querySelector(".xp-act .pill").hidden = !h.busy;
+  line.querySelector(".xp-remove").hidden = !!h.busy;
+  line.querySelector(".xp-act span").textContent = "Its own log, read only.";
+  line.querySelector(".xp-row").title = [name, job, state].filter(Boolean).join(" · ");
 }
 async function loadResearch() {
   try { const note0 = research.note; research = await api("/api/research"); research.note = note0; } catch (e) { return; }
@@ -3647,7 +3938,7 @@ function nowRows(path, still) {
   const row = (p, who, what, when) => {
     const b = el(still ? "div" : "button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
     b.querySelector("b").textContent = who; b.querySelector("b + span").textContent = what; b.querySelector("em").textContent = when || "";
-    if (!still) { b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert in its Lead's chat" : "Open this chat"; }
+    if (!still) { b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert's chat" : "Open this chat"; }
     return b;
   };
   const since = (p) => p.busy && p.since ? elapsed(Date.now() - p.since) : "";
@@ -4505,11 +4796,10 @@ document.addEventListener("keydown", (e) => {
 });
 window.addEventListener("wheel", (e) => { if (e.ctrlKey) { e.preventDefault(); setScale(scale + (e.deltaY < 0 ? 5 : -5)); } }, { passive: false });
 
-/* After the first batch of events: closed experts' lines say so. Then Overview opens when a game has a run going
-   or something waiting for the user; else the project last in front (or the newest game with a started chat, or the
-   first game) opens, on its last tab. */
+/* After the first batch of events: Overview opens when a game has a run going or something waiting for the user;
+   else the project last in front (or the newest game with a started chat, or the first game) opens, on its last
+   tab. */
 function boot() {
-  for (const p of agents.values()) for (const [hid, line] of Object.entries(p.xps)) if (!agents.has(hid)) { line.querySelector(".xp-state").textContent = "closed"; }
   const list = projects.projects || [];
   const known = (k) => k === "" ? [...agents.values()].some((p) => isChat(p) && !p.project && p.started) : list.some((x) => x.path === k);
   let key = curProj !== null && known(curProj) ? curProj : null;
