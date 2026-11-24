@@ -4310,9 +4310,13 @@ function overviewWanted() {
   const want = new Map(), links = [];
   const add = (id, kind, label, extra) => { want.set(id, Object.assign({ id, kind, label }, extra || {})); };
   const link = (a, b) => { if (want.has(a) && want.has(b)) links.push([a, b]); };
-  const open = [...agents.values()].filter((p) => p.started || p.busy);
+  /* an expert idle for longer than XP_IDLE is left out, as in the side list (xpRecent), unless the side list shows its
+     chat's earlier experts */
+  const now = Date.now();
+  const xpShown = (id, parent, busy, when) => !parent || busy || id === current || now - when < XP_IDLE || xpOld.has(parent);
+  const open = [...agents.values()].filter((p) => (p.started || p.busy) && (!isHelper(p) || xpShown(p.id, p.parent || p.id, p.busy, xpWhen.get(p.id) || (p.replay ? 0 : pageStart))));
   const openIds = new Set(open.map((p) => p.id));
-  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id)).slice(0, 60);
+  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id) && xpShown(c.id, c.parent, false, xpWhen.get(c.id) || (c.updated || 0) * 1000)).slice(0, 60);
   for (const x of projects.projects || []) add("proj:" + x.path, "project", x.name, { path: x.path, busy: open.some((p) => p.busy && projKey(p) === x.path) });
   if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
   for (const p of open) {
