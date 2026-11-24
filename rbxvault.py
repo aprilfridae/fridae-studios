@@ -11,6 +11,7 @@ import math
 import os
 import re
 import sys
+import urllib.request
 from collections import Counter, defaultdict
 
 import rbxpaths
@@ -959,15 +960,7 @@ def combined_search(q, shelves, k):
     files = {}
     for rank, (_, shelf, d) in enumerate(pool, 1):
         if shelf == "vault":
-            bullets, _ = tldr_parts(d)
-            hints = _vault_section_hint(d)
-            out.append("%d. [vault] %s  (note, %d KB)" % (rank, d["title"], d["kb"]))
-            out += ["   " + b for b in bullets[:2]]
-            if hints:
-                out.append("   Sections: " + " · ".join(hints))
-            args = {"action": "read", "shelf": "vault", "title": d["title"], "heading": hints[0] if hints else "<heading>"}
-            if not hints:
-                out.append('   sections: {"action": "sections", "shelf": "vault", "title": %s}' % json.dumps(d["title"], ensure_ascii=False))
+            out += _vault_note_lines(rank, d)
         else:
             key = (shelf, d["title"])
             if key not in files:
@@ -977,17 +970,46 @@ def combined_search(q, shelves, k):
                     files[key] = None
             p = files[key]
             s = p["sections"][d["i"]] if p and d["i"] < len(p["sections"]) else None
-            where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
-            label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
-            kind = " [lesson]" if d.get("lesson") else ""
-            out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
-            if s:
-                text = p["body"][s["start"]:s["own_end"]]
-                if not s["level"] and p["description"]:
-                    text = p["description"] + "\n" + text
-                out += ["   " + x for x in snippet(text, terms)]
-            args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
-        out.append("   read: " + json.dumps(args, ensure_ascii=False))
+            out += _section_lines(rank, shelf, d, p, s, terms)
+    return _results_tail(out, q, shelves, symptoms)
+
+
+# ------------------------------------------------------------------ the lines of one search result (both searches)
+def _vault_note_lines(rank, d):
+    """A vault note found by the keyword search: its TL;DR bullets, its sections and the arguments to read one."""
+    out = []
+    bullets, _ = tldr_parts(d)
+    hints = _vault_section_hint(d)
+    out.append("%d. [vault] %s  (note, %d KB)" % (rank, d["title"], d["kb"]))
+    out += ["   " + b for b in bullets[:2]]
+    if hints:
+        out.append("   Sections: " + " · ".join(hints))
+    args = {"action": "read", "shelf": "vault", "title": d["title"], "heading": hints[0] if hints else "<heading>"}
+    if not hints:
+        out.append('   sections: {"action": "sections", "shelf": "vault", "title": %s}' % json.dumps(d["title"], ensure_ascii=False))
+    out.append("   read: " + json.dumps(args, ensure_ascii=False))
+    return out
+
+
+def _section_lines(rank, shelf, d, p, s, terms, args=None):
+    """One section: rank, shelf, title › heading, size, a snippet and the arguments that read exactly it."""
+    out = []
+    where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
+    label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
+    kind = " [lesson]" if d.get("lesson") else ""
+    out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
+    if s:
+        text = p["body"][s["start"]:s["own_end"]]
+        if not s["level"] and p["description"]:
+            text = p["description"] + "\n" + text
+        out += ["   " + x for x in snippet(text, terms)]
+    if args is None:
+        args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
+    out.append("   read: " + json.dumps(args, ensure_ascii=False))
+    return out
+
+
+def _results_tail(out, q, shelves, symptoms):
     if "vault" in shelves:
         notes = api_notes(q)
         if notes:
@@ -998,6 +1020,100 @@ def combined_search(q, shelves, k):
             out += ["- " + s["line"] for s in symptoms]
     out.append("\nNext: rbx_vault action 'read' with the arguments shown, for ONE section at a time.")
     return "\n".join(out)
+
+
+# ------------------------------------------------------------------ search through the knowledge index (RAG)
+RAG_TIMEOUT = 3.0  # seconds; a slower answer is not waited for (the keyword search answers instead)
+# calls to the knowledge index stay on this Mac: never through an HTTP proxy (the environment's or the system's),
+# which would otherwise receive the token and the query
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def rag_endpoint():
+    """(url, token) from the endpoint file the app writes while the knowledge index is ready (its path is in
+    FRIDAE_RAG_FILE), read fresh on every search; None when there is none or it does not read."""
+    path = (os.environ.get("FRIDAE_RAG_FILE") or "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        url = str(data.get("url") or "").strip().rstrip("/")
+        token = str(data.get("token") or "").strip()
+    except (OSError, ValueError, AttributeError, UnicodeDecodeError):
+        return None
+    host = url[len("http://"):].split("/", 1)[0].rsplit(":", 1)[0] if url.startswith("http://") else ""
+    if not token or host not in _LOOPBACK_HOSTS:
+        return None
+    return url, token
+
+
+def _rag_hit_lines(rank, hit, terms):
+    """The lines for one hit of the knowledge index, or None when the file or section is no longer there."""
+    shelf, title, path = hit.get("shelf"), hit.get("title"), hit.get("path")
+    if shelf not in SHELVES or not title or not isinstance(path, str) or not path.endswith(".md"):
+        return None
+    try:
+        p = parse_sections(_reader_text({"shelf": shelf, "path": path}))
+    except (OSError, UnicodeDecodeError):
+        return None
+    i, heading = hit.get("i"), hit.get("heading")
+    secs = p["sections"]
+    s = secs[i] if isinstance(i, int) and 0 <= i < len(secs) and secs[i]["heading"] == heading else None
+    if s is None:  # the file changed since it was indexed: the same heading elsewhere, else nothing
+        s = next((x for x in secs if x["heading"] == heading), None)
+    if s is None:
+        return None
+    label = _team_label(title) if shelf == "team" else (p["label"] or title)
+    lesson = shelf in PERSONAL and (p["fm"].get("kind") == "lesson" or title in ("lessons.md", "studio-lessons"))
+    d = {"title": title, "label": label, "heading": s["heading"], "parents": s["parents"], "size": s_size(p, s),
+         "lesson": lesson}
+    args = None
+    if shelf == "vault":  # a vault read takes heading words of a ## or ### heading; without one it lists the sections
+        args = {"action": "read", "shelf": "vault", "title": title}
+        if s["level"] >= 2:
+            args["heading"] = s["heading"]
+    return _section_lines(rank, shelf, d, p, s, terms, args)
+
+
+def rag_search(q, shelves, k):
+    """Search text from the knowledge index service (its endpoint file, see rag_endpoint), in the same format as the
+    keyword search, or None on any failure (not running, slower than 3 s, an error, a bad answer, no hits) so the
+    caller answers with the keyword search instead."""
+    end = rag_endpoint()
+    if not end:
+        return None
+    url, token = end
+    try:
+        body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
+        req = urllib.request.Request(url + "/query", data=body, headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + token})
+        with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
+            if r.status != 200:
+                return None
+            hits = json.load(r).get("hits")
+        if not isinstance(hits, list) or not hits:
+            return None
+        terms = query_terms(q)
+        out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
+        rank = 0
+        for hit in hits[:k]:
+            lines = _rag_hit_lines(rank + 1, hit, terms) if isinstance(hit, dict) else None
+            if lines:
+                rank += 1
+                out += lines
+        if not rank:
+            return None
+        symptoms = search(q, k, load_index())[1] if "vault" in shelves and os.path.isdir(KB) else []
+        return _results_tail(out, q, shelves, symptoms)
+    except Exception as e:  # never an error from here: the keyword search is the answer
+        if hasattr(e, "close"):  # an HTTP error answer holds its connection open
+            try:
+                e.close()
+            except Exception:
+                pass
+        return None
 
 
 def _list(folder):
@@ -1072,15 +1188,18 @@ def run(action, a):
         k = max(1, min(int(kk), 8)) if kk else (3 if shelf == "vault" else 5)
     except (TypeError, ValueError):
         raise KitError("k must be a whole number from 1 to 8.")
+    shelves = list(SHELVES) if shelf == "all" else [shelf]
+    if shelf == "game" and not project_dir():
+        raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
+    if shelf == "all" and not project_dir():
+        shelves.remove("game")
+    text = rag_search(q, shelves, k)  # the knowledge index, when the app runs it; None means the keyword search
+    if text is not None:
+        return text
     if shelf == "vault":  # the vault on its own answers exactly as it always has
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
             main()
         text = _vault_call(vault_search) or "No match. Try other words, or action 'list' to browse the sections."
         return text + "\n\nNext: rbx_vault action 'read' with a title and heading words for one section (not the whole note)."
-    shelves = list(SHELVES) if shelf == "all" else [shelf]
-    if shelf == "game" and not project_dir():
-        raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
-    if shelf == "all" and not project_dir():
-        shelves.remove("game")
     return combined_search(q, shelves, k)
