@@ -1506,8 +1506,9 @@ def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False,
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    if sup:  # already scaled: the replacement wins a tie and comes first (interleave keeps this order)
-        pool = [x for _, x in demote(pool, lambda x: x[0], lambda x: old(x[2]), lambda x: x[2]["title"], 1.0)]
+    if sup:  # already scaled: the replacement wins a tie; the scores demote returns keep it after (interleave sorts)
+        pool = [(s,) + tuple(x[1:]) for s, x in demote(pool, lambda x: x[0], lambda x: old(x[2]),
+                                                       lambda x: x[2]["title"], 1.0)]
     pool = interleave(pool, k, lambda item: (item[1] not in PERSONAL or personal_match(q, item[2]))
                       and not (sup and old(item[2])))
     if links:

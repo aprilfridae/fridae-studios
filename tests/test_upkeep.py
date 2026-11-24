@@ -184,6 +184,19 @@ class KeywordSearchTests(UpkeepCase):
         new_line = next(l for l in out.splitlines() if "[yours] Coin cap raised" in l)
         self.assertNotIn("replaced by", new_line)
 
+    def test_superseded_ranks_below_even_when_it_matches_the_words_better(self):
+        # the old note holds more of the query's words than its replacement (review finding 1)
+        self.mine("Throw meter position", "The throw meter sits at the bottom centre of the HUD, 24 px above the safe "
+                  "area.")
+        self.mine("Throw meter v2", "The throw meter sits on the left edge of the screen now.",
+                  supersedes='"Throw meter position"')
+        for q in ("throw meter position HUD", "HUD throw meter safe area"):
+            out = self.vault("search", query=q, shelf="yours", k=5)
+            self.assertLess(out.index("[yours] Throw meter v2"), out.index("[yours] Throw meter position"), out)
+            hits = rbxvault._keyword_passages(q, ["yours"], 3, None, None)  # the Librarian's keyword lookup
+            titles = [h["title"] for h in hits]
+            self.assertLess(titles.index("Throw meter v2"), titles.index("Throw meter position"), q)
+
     def test_superseded_by_on_the_old_note_alone_is_enough(self):
         self.mine("Spawn rule", "Players spawn at the lantern shrine.", superseded_by='"Spawn rule two"')
         self.mine("Spawn rule two", "Players spawn at the village gate.")
