@@ -151,7 +151,8 @@ def parse_symptoms():
     return out
 
 
-VAULT_INDEX_FORMAT = 2  # rbxkit: bump when parse() adds or changes a field (2: labels, links, supersedes)
+VAULT_INDEX_FORMAT = 3  # rbxkit: bump when parse() adds or changes a field (2: labels, links, supersedes; 3: a
+# note's date only from its front matter)
 
 
 def signature(files):
@@ -554,7 +555,8 @@ PERSONAL = ("game", "yours")  # the user's own shelves: short notes are fine the
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
 GUIDES_CACHE_NAME = "knowledge-sections-index.json"
-INDEX_FORMAT = 3  # bump when the section index's shape changes (2: labels, links and the gist; 3: supersedes)
+INDEX_FORMAT = 4  # bump when the section index's shape changes (2: labels, links and the gist; 3: supersedes; 4: a
+# note's date only from its front matter)
 OPENING, WHOLE = "(opening)", "(whole file)"
 _FENCE = re.compile(r"^[ \t]{0,3}(```+|~~~+)")
 _NAV = re.compile(r"^(related|see also|connected notes|files|sources|references|further reading)\b", re.I)
@@ -586,7 +588,7 @@ def split_front(text):
 #   game    the game's name for a game's own notes (GAME.md, .fridae/notes, its team overrides), else "all"
 #   kind    rule | lesson | taste | reference | guide
 #   source  lihfolk | user | agent | community | game | fridae (Fridae's own guides and team files)
-#   date    YYYY-MM-DD: the front matter's date, else the file's modification day
+#   date    YYYY-MM-DD: the front matter's date (updated, date, when, created, verified), else none ("")
 # A "Learned in Fridae" section is a lesson an agent added, whatever the note around it is.
 KINDS = ("rule", "lesson", "taste", "reference", "guide")
 SOURCES = ("lihfolk", "user", "agent", "community", "game", "fridae")
@@ -632,14 +634,6 @@ def _in_kb(path):
         return os.path.commonpath([kb, os.path.abspath(path)]) == kb
     except ValueError:
         return False
-
-
-def _file_day(path):
-    import time
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(os.stat(path).st_mtime))
-    except (OSError, OverflowError, ValueError):
-        return ""
 
 
 def note_labels(shelf, title, path, fm=None, body="", project=""):
@@ -695,8 +689,8 @@ def note_labels(shelf, title, path, fm=None, body="", project=""):
         if m:
             day = "%s-%s-%s" % (m.group(1), m.group(2), m.group(3) or "01")
             break
-    return {"game": game_name(project) if project else "all", "kind": kind, "source": source,
-            "date": day or _file_day(path)}
+    # only a date the note states: a file's change day is when it was installed, checked out or touched
+    return {"game": game_name(project) if project else "all", "kind": kind, "source": source, "date": day}
 
 
 def section_labels(labels, heading, parents=()):

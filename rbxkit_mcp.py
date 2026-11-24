@@ -1363,7 +1363,7 @@ TOOLS = [
              "source": {"type": "string", "description": "search: only these sources (comma-separated): lihfolk, "
                         "user, agent, community, game, fridae"},
              "since": {"type": "string", "description": "search: only notes dated on or after this (YYYY, YYYY-MM or "
-                       "YYYY-MM-DD)"},
+                       "YYYY-MM-DD); only notes with a date in their front matter match, undated notes are left out"},
              "count": {"type": "integer", "description": "search: same as k (older name)"},
              "title": {"type": "string", "description": "read/sections: the title from a search result; note: optional "
                        "title; forget: the note's title"},
