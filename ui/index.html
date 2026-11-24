@@ -147,6 +147,9 @@ div.g-row { cursor: default; }
 .side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
+@keyframes logo-turn { to { transform: rotate(360deg); } }
+body.working .mark img, body.working .sigil { animation: logo-turn 10s linear infinite; }
+@media (prefers-reduced-motion: reduce) { body.working .mark img, body.working .sigil { animation: none; } }
 .side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
 /* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
 .side-list::-webkit-scrollbar { display: none; }
@@ -1660,6 +1663,7 @@ function paintSide() {
   /* with one of its chats in front the game's row only brightens: the chat's row carries the mark */
   const marked = (key) => inFront(key) ? (view === "chat" && agents.has(current) ? " on in" : " on") : "";
   const anyBusy = [...agents.values()].some((p) => p.busy);
+  document.body.classList.toggle("working", anyBusy);   /* the logo turns while anything works */
   rows.push(sideRow(used, "all", [view === "all", anyBusy].join("\n"), () => {
     const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
     if (anyBusy) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
@@ -4308,8 +4312,9 @@ function overviewNote(e) {
 }
 function overviewWanted() {
   const want = new Map(), links = [];
-  const add = (id, kind, label, extra) => { want.set(id, Object.assign({ id, kind, label }, extra || {})); };
-  const link = (a, b) => { if (want.has(a) && want.has(b)) links.push([a, b]); };
+  const as = (id) => alias.get(id) || id;
+  const add = (id, kind, label, extra) => { if (alias.has(id)) return; want.set(id, Object.assign({ id, kind, label }, extra || {})); };
+  const link = (a, b) => { a = as(a); b = as(b); if (a !== b && want.has(a) && want.has(b)) links.push([a, b]); };
   /* an expert idle for longer than XP_IDLE is left out, as in the side list (xpRecent), unless the side list shows its
      chat's earlier experts */
   const now = Date.now();
@@ -4317,7 +4322,24 @@ function overviewWanted() {
   const open = [...agents.values()].filter((p) => (p.started || p.busy) && (!isHelper(p) || xpShown(p.id, p.parent || p.id, p.busy, xpWhen.get(p.id) || (p.replay ? 0 : pageStart))));
   const openIds = new Set(open.map((p) => p.id));
   const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id) && xpShown(c.id, c.parent, false, xpWhen.get(c.id) || (c.updated || 0) * 1000)).slice(0, 60);
-  for (const x of projects.projects || []) add("proj:" + x.path, "project", x.name, { path: x.path, busy: open.some((p) => p.busy && projKey(p) === x.path) });
+  /* A game's Lead is the game itself in the graph: one node, drawn as the logo, that opens the Lead's chat. The Lead
+     is the chat leading the game's run, else its newest chat named "Lead: ...". `alias` sends the Lead's own node,
+     and every tie to it, to the game's. */
+  const alias = new Map(), leadOf = new Map();
+  const isLeadName = (name) => /^lead\b/i.test(name || "");
+  for (const x of projects.projects || []) {
+    const r = rvAll[x.path], run = r && r.run && r.run.lead;
+    const cands = open.filter((p) => !isHelper(p) && projKey(p) === x.path).map((p) => ({ id: p.id, name: p.name, at: bornAt(p.id) }))
+      .concat(savedChats.filter((c) => !c.parent && (c.project || "") === x.path).map((c) => ({ id: c.id, name: c.name, at: bornAt(c.id) })));
+    const lead = cands.find((c) => c.id === run) || cands.filter((c) => isLeadName(c.name)).sort((a, b) => b.at - a.at)[0];
+    if (!lead) continue;
+    leadOf.set(x.path, lead.id);
+    alias.set("chat:" + lead.id, "proj:" + x.path); alias.set("saved:" + lead.id, "proj:" + x.path);
+  }
+  for (const x of projects.projects || []) {
+    const lid = leadOf.get(x.path), lp = lid && agents.get(lid);
+    add("proj:" + x.path, "project", x.name, { path: x.path, lead: lid || null, busy: open.some((p) => p.busy && projKey(p) === x.path), weight: lp ? Math.min(6, (lp.steps || 0) / 3) : 0 });
+  }
   if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
   for (const p of open) {
     const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name;
@@ -4325,12 +4347,12 @@ function overviewWanted() {
   }
   for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
   for (const p of open) {
-    if (isHelper(p) && want.has("chat:" + p.parent)) link("chat:" + p.parent, "chat:" + p.id);
+    if (isHelper(p) && want.has(as("chat:" + p.parent))) link("chat:" + p.parent, "chat:" + p.id);
     else link("proj:" + projKey(p), "chat:" + p.id);
-    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: "chat:" + p.id, newest: i === all.length - 1 }); links.push(["chat:" + p.id, id]); });
+    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: as("chat:" + p.id), newest: i === all.length - 1 }); links.push([as("chat:" + p.id), id]); });
   }
   for (const c of savedChats) {
-    if (c.parent && (openIds.has(c.parent) || want.has("saved:" + c.parent))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
+    if (c.parent && (openIds.has(c.parent) || want.has(as("saved:" + c.parent)))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
     else link("proj:" + (c.project || ""), "saved:" + c.id);
   }
   /* a saved chat of no game, with no square to hang from, is left out */
@@ -4365,7 +4387,9 @@ function overviewSync() {
   $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "game"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
   return kind;
 }
-const NODE = { project: 8, chat: 6, expert: 4, saved: 3, step: 2.5 };
+const NODE = { project: 10, chat: 6, expert: 4, saved: 3, step: 2.5 };
+/* a game is drawn as the Fridae logo, turning while anything in it works */
+const ogLogo = new Image(); ogLogo.onload = () => { if (typeof overviewPoke === "function") overviewPoke(); }; ogLogo.src = "/logo.png";
 /* the furthest out the graph goes, by the fit or by the wheel: in a small space (large text, a narrow window) the
    whole of it is still inside */
 const ZOOM_MIN = 0.15;
@@ -4452,9 +4476,16 @@ function overviewDraw(now) {
     const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85;
     if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
     c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
-    c.beginPath();
-    if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
-    c.fill();
+    if (n.kind === "project" && ogLogo.complete && ogLogo.naturalWidth) {
+      const s = r * 2.6;
+      c.save(); c.globalAlpha = (n.busy ? 1 : 0.9) * dim; c.translate(n.x, n.y);
+      if (n.busy && !og.still) c.rotate((now / 1600) % 6.2832);   /* one turn every ten seconds */
+      c.drawImage(ogLogo, -s / 2, -s / 2, s, s); c.restore();
+    } else {
+      c.beginPath();
+      if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
+      c.fill();
+    }
     /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
        step, the one its chat is on now (all of its last steps under the pointer or zoomed in). They are drawn after
        the dots, the more important first. */
@@ -4556,7 +4587,7 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
     if (!d.node) return;
     const n = d.node;
     /* a game opens its Review; a chat opens in Chat; an expert opens its Lead's chat with its line open */
-    if (n.kind === "project") showProject(n.path, n.path ? "review" : "chat");
+    if (n.kind === "project") { if (n.lead) openChatById(n.lead); else showProject(n.path, n.path ? "review" : "chat"); }
     else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
     else if (n.kind === "saved") openChatById(n.chat);
   });
