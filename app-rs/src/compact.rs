@@ -55,9 +55,12 @@ pub struct Limits {
     pub all: Duration,
     /// one try, so that one that hangs leaves time for the next
     pub one: Duration,
+    /// kept back for the fall-back when there is one: OpenCode's models share what is left before it, so three
+    /// that accept the text and then say nothing cannot use up the fall-back's time
+    pub reserve: Duration,
 }
 
-pub const LIMITS: Limits = Limits { all: Duration::from_secs(120), one: Duration::from_secs(45) };
+pub const LIMITS: Limits = Limits { all: Duration::from_secs(120), one: Duration::from_secs(45), reserve: Duration::from_secs(30) };
 
 /// How long a summary may be, in characters (about 400 words): with its labels it takes the room the newest part
 /// gives up, so a hand-over with a summary is no longer than one without (`agents::SUMMARY_ROOM`).
@@ -115,11 +118,22 @@ pub fn older_text(lines: &[String]) -> String {
     parts.join("\n\n")
 }
 
-/// Text with anything that looks like a key, a token or a password's value replaced by "[masked]", before it goes
-/// to any writer: the secrets this app itself holds (its Gemini key, the plugin's token, the provider keys in its
-/// environment) wherever they stand, PEM blocks, "Bearer ...", the well-known key shapes (`sk-...`, `ghp_...`,
-/// `AKIA...`, `AIza...`, `xox?-...`, a JWT), and long runs of hex or base64. A run that only looks like one (a long
-/// hash, an asset's long id) is masked too: the summary loses nothing it needs by that.
+/// Text with the common kinds of key, token and password replaced by "[masked]" before it goes to any writer. Best
+/// effort, and said so to the user: what is recognised is masked, and a secret written in a way no rule knows (a
+/// password in a sentence, one made of plain words) is not. What is recognised:
+/// - the secrets this app itself holds (its Gemini key, the plugin's token, the provider keys in its environment),
+///   wherever they stand;
+/// - a PEM block (`-----BEGIN ...-----` to its `-----END ...-----`; a lone BEGIN line is left as it is);
+/// - the Roblox cookie (from `_|WARNING:-DO-NOT-SHARE-THIS` to the next space, whatever follows it);
+/// - the well-known key shapes: `sk-...`, Stripe's `sk_live_...`, `ghp_...`, `AKIA...`, `AIza...`, `xox?-...`, a JWT;
+/// - what follows `Bearer` or `Basic`, and what is given to a name that says it is a secret (`token`, `secret`,
+///   `password`, `key`, `cookie`, `auth`, alone or inside a longer name: `ACCESS_TOKEN=`, `client_secret =`,
+///   `"access_token": "..."`, `accessToken: '...'`), but only when the value itself looks like one (`looks_secret`):
+///   never merely because the word stands before it;
+/// - 32 or more hex digits, and 40 or more characters of base64 that look like a key.
+///
+/// Ordinary text stays as written: words after "basic", a long path or name with a digit in it, code after
+/// `token =`.
 pub fn mask(text: &str) -> String {
     mask_with(text, &known_secrets())
 }
@@ -138,37 +152,94 @@ fn known_secrets() -> Vec<String> {
     out
 }
 
+const MASK: &str = "[masked]";
+
 fn mask_with(text: &str, secrets: &[String]) -> String {
-    const MASK: &str = "[masked]";
-    static PEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-----BEGIN [A-Z0-9 ]+-----[\s\S]*?(?:-----END [A-Z0-9 ]+-----|\z)").unwrap());
-    static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{12,}").unwrap());
+    static PEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----").unwrap());
+    static COOKIE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"_\|WARNING:-DO-NOT-SHARE-THIS[^\s"']*"#).unwrap());
     static SHAPES: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[a-z]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})").unwrap()
+        Regex::new(r"\b(?:sk-[A-Za-z0-9_-]{12,}|[sr]k_(?:live|test)_[A-Za-z0-9]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|xox[a-z]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})").unwrap()
     });
-    // what follows a name that says it is a secret: `api_key = ...`, `"token": "..."`, `password: ...`
-    static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?i)\b((?:api[_-]?key|secret|token|password|passwd|pwd)["']?\s*[:=]\s*["']?)([^\s"',;]{8,})"#).unwrap());
-    static RUNS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/_=-]{32,}").unwrap());
+    static BEARER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(bearer|basic)(\s+)([A-Za-z0-9._~+/=-]{12,})").unwrap());
+    // a name with one of the words in it, what joins it to its value (`=`, `:`, with or without quotes), the value
+    static NAMED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"(?i)([A-Za-z0-9_.-]*(?:token|secret|password|passwd|pwd|key|cookie|auth)[A-Za-z0-9_]*)(["']?\s*[:=]\s*["']?)([^\s"',;&]{8,})"#).unwrap());
+    static HEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-fA-F]{32,}").unwrap());
+    static RUNS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/_-]{40,}={0,2}").unwrap());
     let mut out = text.to_string();
     for s in secrets {
         out = out.replace(s.trim(), MASK);
     }
     let out = PEM.replace_all(&out, MASK);
-    let out = BEARER.replace_all(&out, |c: &regex::Captures| format!("{} {MASK}", &c[1]));
+    let out = COOKIE.replace_all(&out, MASK);
     let out = SHAPES.replace_all(&out, MASK);
-    let out = NAMED.replace_all(&out, |c: &regex::Captures| format!("{}{MASK}", &c[1]));
-    RUNS.replace_all(&out, |c: &regex::Captures| if key_like(&c[0]) { MASK.to_string() } else { c[0].to_string() }).to_string()
+    let out = BEARER.replace_all(&out, |c: &regex::Captures| if looks_secret(&c[3], 12) { format!("{}{}{MASK}", &c[1], &c[2]) } else { c[0].to_string() });
+    let out = NAMED.replace_all(&out, |c: &regex::Captures| match secret_name(&c[1]) {
+        Some(password) if looks_secret(&c[3], if password { 8 } else { 12 }) => format!("{}{}{MASK}", &c[1], &c[2]),
+        _ => c[0].to_string(),
+    });
+    // a run of hex that is a thing of its own (not the middle of a longer word)
+    let text = out.to_string();
+    let out = HEX.replace_all(&text, |c: &regex::Captures| {
+        let m = c.get(0).unwrap();
+        let joined = |ch: Option<char>| ch.is_some_and(|ch| ch.is_ascii_alphanumeric());
+        let alone = !joined(text[..m.start()].chars().next_back()) && !joined(text[m.end()..].chars().next());
+        if alone && m.as_str().bytes().any(|b| b.is_ascii_digit()) { MASK.to_string() } else { m.as_str().to_string() }
+    });
+    RUNS.replace_all(&out, |c: &regex::Captures| if looks_secret(&c[0], 40) { MASK.to_string() } else { c[0].to_string() }).to_string()
 }
 
-/// Whether a long unbroken run of letters, digits and base64's signs reads as a key and not as a word or a path:
-/// 32 or more hex digits; or 40 or more characters with digits, capitals and small letters all in it, and no more
-/// slashes than base64 has by chance (a path has one every few letters).
-fn key_like(run: &str) -> bool {
-    let n = run.len();
-    if run.bytes().all(|b| b.is_ascii_hexdigit()) && run.bytes().any(|b| b.is_ascii_digit()) {
-        return true;
+/// Whether a name says that what it is given is a secret: one of the words stands in it as a word of its own (at
+/// its start, after `_`, `-`, `.` or a digit, or as the next word of a camel-case name; and not running on into
+/// more small letters: `monkey`, `keyframe`, `author` and `tokenizer` are no such names). Some(true): a password,
+/// which may be short and plain.
+fn secret_name(name: &str) -> Option<bool> {
+    const WORDS: [&str; 9] = ["password", "passwd", "pwd", "token", "secret", "apikey", "key", "cookie", "auth"];
+    let low = name.to_ascii_lowercase();
+    for w in WORDS {
+        for (at, _) in low.match_indices(w) {
+            let before = name[..at].chars().next_back();
+            let first = name[at..].chars().next().unwrap_or(' ');
+            let mut rest = name[at + w.len()..].chars();
+            let (after, then) = (rest.next(), rest.next());
+            let starts = match before {
+                None => true,
+                Some(c) if !c.is_ascii_alphabetic() => true,
+                Some(c) => c.is_ascii_lowercase() && first.is_ascii_uppercase(),
+            };
+            let ends = match after {
+                None => true,
+                Some('s') => !then.is_some_and(|c| c.is_ascii_lowercase()),
+                Some(c) => !c.is_ascii_lowercase(),
+            };
+            if starts && ends {
+                return Some(w.starts_with("pass") || w == "pwd");
+            }
+        }
     }
-    let has = |f: fn(&u8) -> bool| run.as_bytes().iter().any(f);
-    n >= 40 && has(u8::is_ascii_digit) && has(u8::is_ascii_uppercase) && has(u8::is_ascii_lowercase) && run.matches('/').count() * 24 <= n
+    None
+}
+
+/// Whether a value reads as a key and not as a word, a name, a path or a piece of code: at least `min` characters
+/// once the signs at its ends are off; nothing that code or an address has (`(`, `{`, `[`, `<`, `:`); at least two
+/// of small letters, capitals and digits; and not word-like (`wordlike`).
+fn looks_secret(value: &str, min: usize) -> bool {
+    let v = value.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    if v.chars().count() < min || v.contains(['(', ')', '{', '}', '[', ']', '<', '>', ':']) {
+        return false;
+    }
+    let has = |f: fn(&u8) -> bool| v.as_bytes().iter().any(f);
+    let kinds = [has(u8::is_ascii_lowercase), has(u8::is_ascii_uppercase), has(u8::is_ascii_digit)].iter().filter(|k| **k).count();
+    kinds >= 2 && !wordlike(v)
+}
+
+/// Whether a run of characters reads as words (a camel-case name, a path, a hyphenated title): few digits (under a
+/// tenth of it) and the share of vowels among its letters that words have (over a quarter; random letters have
+/// under a fifth). `PlayerDataStoreManagerV2` is word-like; `Zx9kQ2mP7vL4nR8t` and `hunter2hunter2` are not.
+fn wordlike(v: &str) -> bool {
+    let letters = v.bytes().filter(u8::is_ascii_alphabetic).count();
+    let digits = v.bytes().filter(u8::is_ascii_digit).count();
+    let vowels = v.bytes().filter(|b| b"aeiouAEIOU".contains(b)).count();
+    letters > 0 && digits * 10 < v.len() && vowels * 100 >= letters * 27
 }
 
 /// What the writer is sent. The chat's text is material, never instructions: it stands between two lines made up
@@ -303,6 +374,8 @@ pub fn first_written(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, 
     let mut out = Outcome::default();
     let began_all = Instant::now();
     let mut server_down = false;
+    // with a fall-back among the tries, OpenCode's models get the time before its share
+    let for_plan = if tries.iter().any(|t| t.ai != "opencode") { limits.all.saturating_sub(limits.reserve) } else { limits.all };
     for t in tries {
         if stop() {
             out.stopped = true;
@@ -312,7 +385,8 @@ pub fn first_written(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, 
             out.failed.push((t.model, "Not tried: OpenCode's server could not be used.".to_string()));
             continue;
         }
-        let wait = limits.one.min(limits.all.saturating_sub(began_all.elapsed()));
+        let share = if t.ai == "opencode" { for_plan } else { limits.all };
+        let wait = limits.one.min(share.saturating_sub(began_all.elapsed()));
         if wait.is_zero() {
             out.failed.push((t.model, "No time was left for it.".to_string()));
             continue;
@@ -483,11 +557,11 @@ const CLAUDE_SYSTEM: &str = "You write summaries of conversations for another AI
 /// Claude Code asked once for text: no tools, no tool servers, and none of the user's customisations. `--safe-mode`
 /// is the flag whose help says so (2.1.319: "all customizations (CLAUDE.md, skills, installed plugins, hooks, MCP
 /// servers, custom commands and agents, output styles, ...) disabled", while the sign-in and the choice of model
-/// work as usual; `--bare` would refuse the plan's sign-in). No conversation is saved. In a folder of the app's own,
-/// on the given account.
+/// work as usual; `--bare` would refuse the plan's sign-in), and `--setting-sources ""` with it, so no settings
+/// file is read for anything either. No conversation is saved. In a folder of the app's own, on the given account.
 fn claude_command(exe: &Path, account: u8, folder: &Path) -> Option<Command> {
     let mut cmd = Command::new(exe);
-    cmd.args(["-p", "--safe-mode", "--model", CLAUDE_MODEL, "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--output-format", "json", "--system-prompt", CLAUDE_SYSTEM]);
+    cmd.args(["-p", "--safe-mode", "--model", CLAUDE_MODEL, "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "", "--output-format", "json", "--system-prompt", CLAUDE_SYSTEM]);
     cmd.current_dir(folder);
     paths::child_env(&mut cmd, "claude");
     if let Some(home) = crate::agents::claude_home() {
@@ -559,7 +633,7 @@ mod tests {
         }
     }
 
-    const QUICK: Limits = Limits { all: Duration::from_millis(500), one: Duration::from_millis(200) };
+    const QUICK: Limits = Limits { all: Duration::from_millis(500), one: Duration::from_millis(200), reserve: Duration::from_millis(150) };
     const NOW: Duration = Duration::ZERO;
     const NEVER: fn() -> bool = || false;
     const QUIET: fn(&Try) = |_| {};
@@ -570,7 +644,7 @@ mod tests {
 
     #[test]
     fn the_first_writer_that_can_writes_and_each_fall_back_is_taken() {
-        assert_eq!((LIMITS.all, LIMITS.one), (Duration::from_secs(120), Duration::from_secs(45)), "two minutes in all");
+        assert_eq!((LIMITS.all, LIMITS.one, LIMITS.reserve), (Duration::from_secs(120), Duration::from_secs(45), Duration::from_secs(30)), "two minutes in all, half a minute of it the fall-back's");
         let all = |answers: [Result<&'static str, Failed>; 4], asked: &Asked| {
             vec![writer("opencode", MODELS[0], NOW, answers[0].clone(), asked), writer("opencode", MODELS[1], NOW, answers[1].clone(), asked), writer("opencode", MODELS[2], NOW, answers[2].clone(), asked), writer("claude", "haiku", NOW, answers[3].clone(), asked)]
         };
@@ -620,7 +694,8 @@ mod tests {
         assert_eq!(out.summary.map(|s| s.text), Some("in time".to_string()));
         assert_eq!(out.failed, [(MODELS[0].to_string(), "It took too long.".to_string())]);
         assert!(began.elapsed() >= QUICK.one && began.elapsed() < Duration::from_secs(5), "{:?}", began.elapsed());
-        // everybody hangs: the wall clock ends it for all of them together, the fall-back included
+        // everybody hangs: the wall clock ends it for all of them together. OpenCode's models share the time before
+        // the fall-back's share, so the fall-back is still asked
         let asked = Asked::default();
         let began = Instant::now();
         let out = first_written(
@@ -632,14 +707,29 @@ mod tests {
         assert!(out.summary.is_none(), "everybody was too slow: the hand-over goes without a summary");
         let spent = began.elapsed();
         assert!(spent >= QUICK.all && spent < QUICK.all + Duration::from_secs(3), "never longer than the one limit: {spent:?}");
-        assert_eq!(out.failed.iter().map(|(m, w)| (m.as_str(), w.as_str())).collect::<Vec<_>>(), [(MODELS[0], "It took too long."), (MODELS[1], "It took too long."), (MODELS[2], "It took too long."), ("haiku", "No time was left for it.")]);
+        assert_eq!(out.failed.iter().map(|(m, w)| (m.as_str(), w.as_str())).collect::<Vec<_>>(), [(MODELS[0], "It took too long."), (MODELS[1], "It took too long."), (MODELS[2], "No time was left for it."), ("haiku", "It took too long.")]);
         // each that was given up on was told so (it ends its own work: a session interrupted and removed)
         std::thread::sleep(Duration::from_millis(100));
         let seen = asked.lock().unwrap().clone();
-        for m in MODELS {
+        for m in [MODELS[0], MODELS[1], "haiku"] {
             assert!(seen.contains(&format!("{m} gave up")), "{seen:?}");
         }
-        assert!(!seen.contains(&"haiku".to_string()), "not started at all: {seen:?}");
+        assert!(!seen.contains(&MODELS[2].to_string()), "not started at all: {seen:?}");
+        // three of OpenCode's that say nothing do not starve the fall-back: it writes in its own share
+        let asked = Asked::default();
+        let began = Instant::now();
+        let out = first_written(
+            vec![writer("opencode", MODELS[0], slow, Ok("x"), &asked), writer("opencode", MODELS[1], slow, Ok("x"), &asked), writer("opencode", MODELS[2], slow, Ok("x"), &asked), writer("claude", "haiku", Duration::from_millis(20), Ok("from the fall-back"), &asked)],
+            &QUICK,
+            &NEVER,
+            &QUIET,
+        );
+        assert_eq!(out.summary.map(|s| (s.text, s.ai)), Some(("from the fall-back".to_string(), "claude")));
+        assert!(began.elapsed() < QUICK.all, "{:?}", began.elapsed());
+        // with no fall-back there is nothing to keep time back for: OpenCode's models have all of it
+        let asked = Asked::default();
+        let out = first_written(vec![writer("opencode", MODELS[0], slow, Ok("x"), &asked), writer("opencode", MODELS[1], slow, Ok("x"), &asked), writer("opencode", MODELS[2], Duration::from_millis(20), Ok("third"), &asked)], &QUICK, &NEVER, &QUIET);
+        assert_eq!(out.summary.map(|s| s.text), Some("third".to_string()));
         // Stop ends the waiting at once, the try is told to give up, and nothing more is tried
         let asked = Asked::default();
         let began = Instant::now();
@@ -733,40 +823,106 @@ mod tests {
     }
 
     #[test]
-    fn what_looks_like_a_key_is_masked_before_the_text_goes_to_a_writer() {
+    fn the_common_kinds_of_key_are_masked_before_the_text_goes_to_a_writer() {
         let secrets = vec!["my-gemini-key-123".to_string()];
         let masked = |t: &str| mask_with(t, &secrets);
+        // each line: the text, and what of it must be gone
         for (text, gone) in [
+            // the well-known shapes
             ("my key is sk-ant-REDACTED ok", "sk-ant"),
-            ("Authorization: Bearer abcdef123456.ghijkl-789", "abcdef123456"),
+            ("stripe sk_live_SCRUBBED here", "EXAMPLEkeyNOTreal0000abc"),
+            ("stripe rk_test_SCRUBBED here", "EXAMPLEkeyNOTreal0000abc"),
             ("AWS AKIAIOSFODNN7EXAMPLE here", "AKIAIOSFODNN7EXAMPLE"),
             ("token ghp_SCRUBBED for git", "ghp_"),
             ("google AIza_SCRUBBED", "AIzaSy"),
             ("jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "eyJhbGci"),
-            ("hash 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "9f86d081"),
-            ("blob QWxhZGRpbjpvcGVuIHNlc2FtZQ1234567890abcdefGHIJKLMNOP==", "QWxhZGRpbjpv"),
             ("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\nkqhkiG9w0BAQ\n-----END PRIVATE KEY-----", "MIIEvQIBADANBg"),
+            // after Bearer and Basic
+            ("Authorization: Bearer abcdef123456.ghijkl-789", "abcdef123456"),
+            ("Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==", "dXNlcjpwYXNz"),
+            // a name that says so, alone or inside a longer one, in every way a value is given to it
             ("api_key = hunter2hunter2", "hunter2hunter2"),
-            ("\"password\": \"correct-horse\"", "correct-horse"),
+            ("x-api-key: abcd1234efgh5678", "abcd1234efgh5678"),
+            ("ACCESS_TOKEN=a8f3k2j5h7g9d1s4q2w3", "a8f3k2j5h7g9d1s4q2w3"),
+            ("\"access_token\": \"a8f3k2j5h7g9d1s4q2w3\"", "a8f3k2j5h7g9d1s4q2w3"),
+            ("client_secret = Zx9kQ2mP7vL4nR8t", "Zx9kQ2mP7vL4nR8t"),
+            ("GITHUB_TOKEN=abc123def456ghi789", "abc123def456ghi789"),
+            ("DB_PASSWORD=hunter2hunter2", "hunter2hunter2"),
+            ("accessToken: 'a8f3k2j5h7g9d1s4q2w3'", "a8f3k2j5h7g9d1s4q2w3"),
+            ("key: 'Zx9kQ2mP7vL4nR8t'", "Zx9kQ2mP7vL4nR8t"),
+            ("local API_KEY = \"rbx-1a2b3c4d5e6f7a8b\"", "1a2b3c4d5e6f7a8b"),
+            ("DISCORD_TOKEN=DISCORD_SCRUBBED", "MTIzNDU2Nzg5"),
+            ("Cookie: session=4f8a1c2e9b7d3a6f", "4f8a1c2e9b7d3a6f"),
+            ("https://example.com/hook?token=a8f3k2j5h7g9d1s4q2w3&x=1", "a8f3k2j5h7g9d1s4q2w3"),
+            ("password = Summer2024", "Summer2024"),
+            // the Roblox cookie, in the form that is capitals and digits after its warning, and the newer one
+            (".ROBLOSECURITY=_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items.|_A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F60718293A4B5C6D7E8F9 and", "A1B2C3D4E5F6"),
+            ("cookie _|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you-and-to-steal-your-ROBUX-and-items.|_CAEaAhAB.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789 end", "CAEaAhAB"),
+            // long runs with no name: hex (also when it touches a sign), and base64
+            ("hash 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", "9f86d081"),
+            ("sig=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08-", "9f86d081"),
+            ("blob QWxhZGRpbjpvcGVuIHNlc2FtZQ1234567890abcdefGHIJKLMNOP==", "QWxhZGRpbjpv"),
+            ("base32 JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", "JBSWY3DPEHPK3PXP"),
+            // and the secrets the app itself holds, wherever they stand
             ("the app's own: my-gemini-key-123", "my-gemini-key-123"),
         ] {
             let out = masked(text);
             assert!(out.contains("[masked]") && !out.contains(gone), "{text} -> {out}");
         }
-        // what is no key stays as written: words, paths, a game's names, an asset id, a short hex colour
+        // what stands around a masked value stays
+        assert_eq!(masked("Bearer abcdef123456ghijkl done"), "Bearer [masked] done");
+        assert_eq!(masked("api_key = hunter2hunter2;"), "api_key = [masked];");
+        assert_eq!(masked("\"access_token\": \"a8f3k2j5h7g9d1s4q2w3\", \"expires\": 3600"), "\"access_token\": \"[masked]\", \"expires\": 3600");
+        assert_eq!(masked("hook?token=a8f3k2j5h7g9d1s4q2w3&x=1"), "hook?token=[masked]&x=1");
+    }
+
+    #[test]
+    fn ordinary_text_is_not_masked_for_a_word_that_stands_before_it() {
+        let masked = |t: &str| mask_with(t, &[]);
         for plain in [
+            // words, also after "basic" and after a name that could hold a secret
             "User: Make a door in the lobby that opens when a player walks up",
-            "ServerScriptService/Systems/Doors/DoorController2/init.luau",
-            "ReplicatedStorage/Shared/Modules/Inventory/ItemDefinitions/Weapons",
-            "rbxassetid://1234567890 and colour #ff8800",
-            "a_very_long_snake_case_function_name_without_any_digits_in_it_at_all",
+            "a basic implementation of the shop, with basic authentication later",
             "The password field should be at least 8 characters long",
+            "password: required",
+            "token = nil",
+            "auth: required_for_all_2_endpoints",
+            "local token = HttpService:GenerateGUID(false)",
+            "local key = Enum.KeyCode.LeftShift",
+            "keys = {\"alpha\", \"beta\"}",
+            "max_tokens: 4096 and tokens_used = 123456789012",
+            // names that only have such a word inside another
+            "monkey = bananas1234 and keyframe = Sequence12AB34",
+            "author = Shakespeare1564 and tokenizer = Sentence2Words",
+            // paths, names and titles as they are written, long parts and digits and all
+            "ServerScriptService/Systems/Doors/DoorController2/init.luau",
+            "ServerScriptService/PlayerDataStoreManagerV2",
+            "ReplicatedStorage/Shared/InventoryItemDefinitionsV2Controller",
+            "ReplicatedStorage/Shared/Modules/Inventory/ItemDefinitions/Weapons",
+            "Fridae-Studios-Game-Design-Document-v2-final",
+            "a_very_long_snake_case_function_name_without_any_digits_in_it_at_all",
+            "key = PlayerDataStoreManagerV2",
+            "rbxassetid://1234567890 and colour #ff8800",
             "https://create.roblox.com/docs/reference/engine/classes/TweenService",
+            "id 3f2a9c1e-7b4d-4e8a-9c2f-1a2b3c4d5e6f in the log",
         ] {
             assert_eq!(masked(plain), plain);
         }
-        assert_eq!(masked("Bearer abcdef123456ghijkl done"), "Bearer [masked] done");
-        assert_eq!(masked("api_key = hunter2hunter2;"), "api_key = [masked];");
+        // a lone BEGIN line (quoted from an error, with no END) masks nothing: not the line, and not what follows
+        let quoted = "curl said: -----BEGIN CERTIFICATE----- could not be read\nUser: so what now?\nClaude: Check the proxy.";
+        assert_eq!(masked(quoted), quoted);
+        // best effort, and said so: a password that is plain words, or one in a sentence, is not recognised
+        for missed in ["\"password\": \"correct-horse\"", "my password is tr0ub4dor"] {
+            assert_eq!(masked(missed), missed, "no rule knows this; the Guide does not promise it");
+        }
+        // which names say that their value is a secret
+        for name in ["token", "ACCESS_TOKEN", "access_token", "accessToken", "client_secret", "DB_PASSWORD", "x-api-key", "apikey", "API_KEY", "Cookie", "auth", "AUTH_TOKEN", "passwords", "session.token"] {
+            assert!(secret_name(name).is_some(), "{name}");
+        }
+        for name in ["monkey", "keyframe", "author", "tokenizer", "Keybind", "authentication", "secretary", "cookies_enabled_flag_name".trim_end_matches("_enabled_flag_name")] {
+            assert_eq!(secret_name(name).is_some(), name == "cookies", "{name}");
+        }
+        assert_eq!((secret_name("DB_PASSWORD"), secret_name("pwd"), secret_name("api_key")), (Some(true), Some(true), Some(false)));
     }
 
     #[test]
@@ -793,6 +949,7 @@ mod tests {
         for flag in ["-p", "--safe-mode", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"] {
             assert!(args.iter().any(|a| a == flag), "{flag}");
         }
+        assert_eq!(after("--setting-sources").as_deref(), Some(""), "and no settings file, beside safe mode");
         assert!(!args.iter().any(|a| a == "--bare"), "it would refuse the plan's sign-in");
         assert!(!args.iter().any(|a| a.contains("BEGIN")), "the chat's text goes in by the pipe, not on the command line");
         assert_eq!(cmd.get_current_dir(), Some(Path::new("/app/writers")));

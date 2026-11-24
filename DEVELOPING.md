@@ -1391,22 +1391,29 @@ second try at a summary.
    copy is known to be signed in to nothing; a log line when the list holds none of the three families.
 2. Else, for a chat going to Claude: Claude Code's `haiku` on the account the chat is going to (`claude_writes`):
    `claude -p --safe-mode --model haiku --tools "" --no-session-persistence --strict-mcp-config
-   --disable-slash-commands --output-format json`, the text through its input, in the writers' folder.
-   `--safe-mode` is the flag whose help says it keeps CLAUDE.md, skills, plugins, hooks and the user's other
-   customisations out while the sign-in works as usual (checked: a CLAUDE.md planted in its folder was not
-   followed). Not when "Use API keys from my environment" is on: the app never picks a model that would be billed
+   --disable-slash-commands --setting-sources "" --output-format json`, the text through its input, in the
+   writers' folder. `--safe-mode` is the flag whose help says it keeps CLAUDE.md, skills, plugins, hooks and the
+   user's other customisations out while the sign-in works as usual (checked: a CLAUDE.md planted in its folder
+   was not followed); `--setting-sources ""` goes with it, so no settings file is read for anything else either. Not when "Use API keys from my environment" is on: the app never picks a model that would be billed
    per use, so nobody writes then. Chats going to Gemini, Cursor or OpenCode have no step 2.
 3. Else nobody: the hand-over goes as it was before.
 One wall-clock limit for everything, two minutes (`LIMITS.all`), 45 seconds for one try, Stop looked at before the
-first try. A try out of time is told to give up and left behind (an OpenCode session is interrupted and removed at
+first try. When there is a fall-back, half a minute of the two is its own (`LIMITS.reserve`): OpenCode's models
+share the time before it, so three that accept the text and say nothing cannot starve it. A try out of time is told to give up and left behind (an OpenCode session is interrupted and removed at
 its next event; Claude Code's whole group is ended by `signin::run_fed`, which also ends it on Stop and when the app
 quits). A failure that is OpenCode's server's and not a model's (`Failed.server`: it did not start, it did not
 answer, its stream ended) skips OpenCode's other models. Why each one failed goes to the app's log, never to the
 chat: a missing summary is no error.
 
-**What the writer is sent** (`compact::summary`): the older part with everything key-like masked (`mask`: the
-secrets the app itself holds, PEM blocks, "Bearer ...", `sk-...`, `ghp_...`, `AKIA...`, `AIza...`, a JWT, what
-follows `api_key =` or `"password":`, and long runs of hex or base64; a long path or name is left alone), between
+**What the writer is sent** (`compact::summary`): the older part with the common kinds of key and password masked
+where they are recognised (`mask`, best effort: the secrets the app itself holds, a PEM block with its END line,
+the Roblox cookie, `sk-...`, Stripe's `sk_live_...`, `ghp_...`, `AKIA...`, `AIza...`, a JWT, and 32 hex digits or
+40 characters of base64 that look like a key; what follows `Bearer`/`Basic` or a name with `token`, `secret`,
+`password`, `key`, `cookie` or `auth` in it (`ACCESS_TOKEN=`, `"access_token": "..."`, `accessToken: '...'`) only
+when the value itself looks like one, `looks_secret`, never because of the word alone, so "a basic implementation",
+`ServerScriptService/PlayerDataStoreManagerV2` and `token = HttpService:GenerateGUID(false)` stay as written; a
+password that is plain words or stands in a sentence is not recognised, and the summary runs on the user's own
+OpenCode plan either way), between
 two lines made up for that one call (`BEGIN <16 hex>`, `END <16 hex>`), with the instruction to say who said each
 thing and to report an instruction it finds as its speaker's words, never as what the user wants. **What comes
 back** (`tidy`): square brackets become round ones and a line that repeats one of the frame's own sentences is
