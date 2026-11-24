@@ -17,6 +17,7 @@
   promo     vertical promo videos: probe clips, render, check (needs the promo engine)
   rag       the knowledge index: its local search service, setup steps and check
   where     print the paths the kit uses
+  lookup    search the knowledge for several questions at once (JSON in and out; the app's Librarian)
 """
 import argparse, glob, importlib, json, os, shutil, subprocess, sys
 
@@ -165,6 +166,23 @@ def cmd_where(a):
     print(json.dumps({"version": VERSION, "kit": KIT, "work": WORK, "blender": find_blender(required=False)}, indent=1))
 
 
+def cmd_lookup(a):
+    """Passages for several questions at once (the app's Librarian): {"queries": [...], "k": 3} as JSON on stdin,
+    {"parts": [{query, via, hits: [{shelf, title, heading, text}]}]} as JSON on stdout."""
+    import rbxvault
+    if hasattr(sys.stdin, "reconfigure"):
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    try:
+        req = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        sys.exit("lookup reads {\"queries\": [...]} as JSON on stdin.")
+    queries = req.get("queries") if isinstance(req, dict) else None
+    if not isinstance(queries, list):
+        sys.exit("lookup reads {\"queries\": [...]} as JSON on stdin.")
+    parts = rbxvault.lookup(queries, req.get("k") or rbxvault.LOOKUP_K)
+    sys.stdout.write(json.dumps({"parts": parts}, ensure_ascii=False))
+
+
 def cmd_doctor(a):
     """Check requirements and print what is missing, in plain words."""
     ok = True
@@ -260,6 +278,9 @@ def main(argv=None):
 
     w = sub.add_parser("where", help="print kit paths")
     w.set_defaults(fn=cmd_where)
+
+    lk = sub.add_parser("lookup", help="search the knowledge for several questions at once (JSON on stdin and stdout)")
+    lk.set_defaults(fn=cmd_lookup)
 
     names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen", "rbximage": "image",
              "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",

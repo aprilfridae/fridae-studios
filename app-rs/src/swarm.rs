@@ -105,6 +105,8 @@ struct Member {
     verdict: Option<(bool, String)>,
     /// A writer that posted done and waits for a verifier (a free place under the ceiling).
     verify_wanted: bool,
+    /// The Librarian: questions the app is answering for it now (`librarian`), shown as working.
+    answering: usize,
 }
 
 impl Member {
@@ -125,6 +127,7 @@ impl Member {
             verifies: None,
             verdict: None,
             verify_wanted: false,
+            answering: 0,
         }
     }
 }
@@ -384,6 +387,7 @@ fn post_in(run: &mut Run, from: &str, to: &[String], kind: &str, text: &str) -> 
     run.posts += 1;
     agents::BUS.put("swarm", json!({"lead": run.lead}));
     let line = format!("@{from} ({kind}): {text}");
+    let mut ask_librarian = false;
     for m in run.members.iter_mut() {
         // (the app's news to a merged member is not worth waking it for; a question from anyone is)
         if m.name != from && mentions(&to, &m.name, &m.role) && m.state != "stopped" && !(from == "system" && m.state == "merged") {
@@ -392,8 +396,18 @@ fn post_in(run: &mut Run, from: &str, to: &[String], kind: &str, text: &str) -> 
             if broadcast_only && (m.role == "librarian" || m.role == "verifier") {
                 continue;
             }
+            // a question to the Librarian is answered by the app at once, with no agent ("remember: ..." still goes
+            // to its agent, and so does the app's own news)
+            if m.role == "librarian" && from != "system" && !librarian::is_remember(&text) {
+                m.answering += 1;
+                ask_librarian = true;
+                continue;
+            }
             m.pending.push(line.clone());
         }
+    }
+    if ask_librarian {
+        librarian_asked(run, from, &text);
     }
     if from != "lead" && from != "system" && to.iter().any(|t| t == "@lead") {
         if let Some(lead) = agents::get(&run.lead) {
@@ -463,7 +477,7 @@ fn shown_status(m: &Member) -> &'static str {
     match m.state {
         "stopped" => "stopped",
         "verifying" => "verifying",
-        _ if busy(m) => "working",
+        _ if busy(m) || m.answering > 0 => "working",
         "merged" => "merged",
         "failed" => "failed",
         _ => "parked",
@@ -899,6 +913,43 @@ fn pump(run: &mut Run) {
     }
 }
 
+// ------------------------------------------------------------------ the Librarian's quick answers
+
+/// Tests: the questions put to the Librarian, as (run, asker, text); the test answers them (`librarian_answered`).
+#[cfg(test)]
+pub static LIBRARIAN_ASKED: Mutex<Vec<(String, String, String)>> = Mutex::new(Vec::new());
+
+/// A question to the Librarian: answered off this thread (search, one cheap model, see `librarian`), then posted on
+/// the board by the Librarian to the asker. The Librarian shows as working meanwhile (`Member::answering`).
+fn librarian_asked(run: &Run, asker: &str, text: &str) {
+    #[cfg(test)]
+    LIBRARIAN_ASKED.lock().unwrap().push((run.id.clone(), asker.to_string(), text.to_string()));
+    #[cfg(not(test))]
+    {
+        let (run_id, asker, text, project) = (run.id.clone(), asker.to_string(), text.to_string(), run.project.clone());
+        thread::spawn(move || {
+            let began = std::time::Instant::now();
+            let said = librarian::answer(&text, &|parts| librarian::search_cli(&project, parts), &librarian::write);
+            eprintln!("librarian: answered @{asker} in {:.1} s", began.elapsed().as_secs_f64());
+            librarian_answered(&run_id, &asker, &said);
+        });
+    }
+}
+
+/// The Librarian's answer goes on the board to the asker, as the Librarian's own posts do (wakes and mentions follow).
+fn librarian_answered(run_id: &str, asker: &str, said: &str) {
+    let mut all = runs();
+    let Some(run) = all.iter_mut().find(|r| r.id == run_id) else { return };
+    let Some(m) = run.members.iter_mut().find(|m| m.role == "librarian") else { return };
+    m.answering = m.answering.saturating_sub(1);
+    let name = m.name.clone();
+    // an @ in a passage never wakes anyone: only the asker is told
+    let said = said.replace('@', "\u{FF20}");
+    post_in(run, &name, &[format!("@{asker}")], "msg", &said);
+    pump(run);
+    write_index(&all);
+}
+
 fn start_librarian(run: &mut Run, i: usize, text: &str) -> bool {
     let (ai, model) = (run.members[i].ai.clone(), run.members[i].model.clone());
     let team_id = format!("l{}{}", (paths::now_secs() * 1000.0) as u64, &paths::random_hex(1)[..4]);
@@ -971,7 +1022,7 @@ fn watch_run(run: &mut Run, now: f64) {
     pump(run);
     // everyone parked or idle, but work unfinished: the Lead is woken once per quiet spell
     let lead_busy = agents::get(&run.lead).is_some_and(|a| a.busy());
-    let anyone = run.members.iter().any(|m| busy(m) || !m.pending.is_empty() || m.verify_wanted || m.state == "verifying");
+    let anyone = run.members.iter().any(|m| busy(m) || m.answering > 0 || !m.pending.is_empty() || m.verify_wanted || m.state == "verifying");
     let open: Vec<String> = run.members.iter().filter(|m| m.writer && matches!(m.state, "active" | "failed")).map(|m| format!("@{}", m.name)).collect();
     if !lead_busy && !anyone && !open.is_empty() && run.posts > run.woke_at {
         let text = format!("Everyone is parked or idle, but {} not finished. Decide what happens next: post to a member, or start what is missing.", if open.len() == 1 { format!("{} has", open[0]) } else { format!("{} have", open.join(", ")) });
@@ -1065,6 +1116,8 @@ pub fn api_post(body: &Value) -> Value {
         _ => json!({"ok": false, "error": "Unknown action."}),
     }
 }
+
+mod librarian;
 
 #[cfg(test)]
 pub(crate) mod tests;

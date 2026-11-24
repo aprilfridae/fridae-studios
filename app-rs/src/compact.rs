@@ -680,6 +680,28 @@ pub fn plain_summary(report: &str, changes: &str, stop: &dyn Fn() -> bool, start
     out
 }
 
+// ------------------------------------------------------- the swarm Librarian's answers
+
+/// The budget for the swarm Librarian's answer (`swarm::librarian`): about 45 seconds in all, one model at most 25 of
+/// them, so a model that hangs leaves time for the next. A member waits for it on the board.
+#[cfg_attr(test, allow(dead_code))]
+pub const LIBRARIAN_LIMITS: Limits = Limits { all: Duration::from_secs(45), one: Duration::from_secs(25), reserve: Duration::from_secs(0) };
+
+/// One answer to a swarm member's knowledge question, from `prompt` (made and masked by `swarm::librarian`), written
+/// once with no tools on the user's OpenCode plan only, never Claude or Gemini (as `plain_summary`).
+pub fn librarian_answer(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
+    #[cfg(test)]
+    let (means, limits) = STAND_IN.with(|s| s.borrow_mut().take()).unwrap_or_else(|| (Means::none(), LIMITS));
+    #[cfg(not(test))]
+    let (means, limits) = (means(), LIBRARIAN_LIMITS);
+    let tries = tries("opencode", (1, None), prompt, &means, &limits);
+    let out = first_written(tries, &limits, stop, &|_| {});
+    for (model, why) in &out.failed {
+        eprintln!("librarian: {model} did not answer: {}", why.chars().take(300).collect::<String>());
+    }
+    out
+}
+
 // ------------------------------------------------------- Claude's fall-back
 
 /// The cheapest of Claude Code's models.

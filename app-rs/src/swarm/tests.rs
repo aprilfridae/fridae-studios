@@ -238,10 +238,27 @@ fn board_mentions_wake_parked_members_and_only_those() {
     turn_ended(&c, false);
     assert!(sent_to(&c.id).iter().any(|t| t.contains("@alpha (msg): @gamma which folder")));
     assert!(sent_to(&b.id).len() == 1);
-    // the Librarian is started on its first question, on a cheap OpenCode model
+    // a question to the Librarian is answered by the app, with no agent, while the Librarian shows as working
+    let run = run_of(&lead.id);
     post_from(&a.id, &["@librarian".into()], "msg", "how do we stop exploiters firing this remote?").unwrap();
+    assert!(member_id(&lead.id, "librarian").is_empty(), "no agent for a question");
+    let asked: Vec<_> = LIBRARIAN_ASKED.lock().unwrap().iter().filter(|q| q.0 == run).cloned().collect();
+    assert_eq!(asked, vec![(run.clone(), "alpha".to_string(), "how do we stop exploiters firing this remote?".to_string())]);
+    let lib_status = |lead: &str| api_get(lead, None)["members"].as_array().unwrap().iter().find(|m| m["name"] == "librarian").unwrap()["status"].clone();
+    assert_eq!(lib_status(&lead.id), "working");
+    librarian_answered(&run, "alpha", "1. Validate on the server (Roblox security). Ask @gamma too.");
+    assert_eq!(lib_status(&lead.id), "parked");
+    let answer = read_board(&run).into_iter().last().unwrap();
+    assert_eq!((answer["from"].as_str(), answer["kind"].as_str()), (Some("librarian"), Some("msg")));
+    assert_eq!(answer["to"], json!(["@alpha"]), "to the asker only: an @ in the answer wakes nobody");
+    assert!(sent_to(&a.id).iter().any(|t| t.contains("@librarian (msg): 1. Validate on the server")), "the asker is woken with it");
+    assert_eq!(sent_to(&c.id).len(), 1);
+    // "remember: ..." still starts the Librarian's agent, on a cheap OpenCode model
+    post_from(&a.id, &["@librarian".into()], "msg", "remember: remotes are validated on the server").unwrap();
+    assert_eq!(LIBRARIAN_ASKED.lock().unwrap().iter().filter(|q| q.0 == run).count(), 1, "not answered by the app");
     let lib = member_id(&lead.id, "librarian");
     assert!(!lib.is_empty());
+    assert!(sent_to(&lib)[0].contains("remember: remotes are validated"));
     assert_eq!(agents::get(&lib).unwrap().ai(), "opencode");
     assert!(cheap(agents::get(&lib).unwrap().model().as_deref()));
     assert!(member_prompt(&lib).contains("not in the knowledge base"));
