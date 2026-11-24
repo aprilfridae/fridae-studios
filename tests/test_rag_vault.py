@@ -256,5 +256,82 @@ class RagVaultTests(unittest.TestCase):
         self.assertIn("1. [guides] %s" % hits[1]["title"], out)
 
 
+class PassageTests(unittest.TestCase):
+    """An answer from the knowledge index shows the matched passage of each hit, within a cap per hit and per
+    answer, instead of a snippet that sends the agent off to read the whole note."""
+
+    def test_hits_show_their_passages_within_the_caps(self):
+        hits = guide_hits()
+        long_text = "Title › Heading\n" + "\n".join("Line %d says something about the zorblat caves." % i for i in range(80))
+        hits = [dict(h, text=long_text) for h in hits]
+        stub = StubRag(self, hits)
+        with env(stub.url, "tok"):
+            out = rbxvault.run("search", {"query": "zorblat caves", "shelf": "guides", "k": 2})
+        self.assertIn("Line 0 says something about the zorblat caves.", out)
+        self.assertNotIn("Title › Heading", out)  # the index's own first line is not part of the passage
+        self.assertNotIn("Line 79", out)
+        passages = [l for l in out.splitlines() if l.startswith("   Line")]
+        self.assertLessEqual(sum(len(l) - 3 for l in passages), 2 * rbxvault.PASSAGE_CHARS)
+        self.assertIn('"action": "read"', out)  # still the arguments to read more
+
+    def test_passage_cap(self):
+        lines = rbxvault.passage("T › H\n" + "word " * 1000, 200)
+        self.assertLessEqual(sum(len(x) for x in lines), 200)
+        self.assertTrue(lines[-1].endswith("…"))
+        self.assertEqual(rbxvault.passage("T › H\n```lua\nlocal x = 1\n```\n\nPlain words.", 500),
+                         ["local x = 1", "Plain words."])
+
+
+class KeywordRankingTests(unittest.TestCase):
+    """rbxvault.keyword_ranking is the keyword search's own order, which the knowledge index fuses."""
+
+    def test_same_order_as_the_search_shows(self):
+        with mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": ""}):
+            for q in ("save player coins between sessions", "the zombie keeps walking into the wall"):
+                out = rbxvault.run("search", {"query": q, "shelf": "all", "k": 5})
+                shown = [json.loads(l.split("read: ", 1)[1])["title"] for l in out.splitlines() if l.strip().startswith("read: ")]
+                ranked = rbxvault.keyword_ranking(q, [s for s in rbxvault.SHELVES if s != "game"], 5)
+                self.assertEqual([t for _, t, _ in ranked], shown)
+                self.assertTrue(all((i is None) == (shelf == "vault") for shelf, _, i in ranked))
+                vault = rbxvault.keyword_ranking(q, ["vault"], 4)
+                self.assertEqual([t for _, t, _ in vault], [d["title"] for _, d in rbxvault.search(q, 4)[0]])
+
+    def test_kept_statistics_rank_exactly_as_the_plain_search(self):
+        idx = rbxvault.load_index()
+        kept = dict(idx, docs=rbxvault.Docs(idx["docs"]))
+        docs = rbxvault.section_corpus("")
+        kept_docs = rbxvault.Docs(docs)
+        shelves = [s for s in rbxvault.SHELVES if s != "game"]
+        for q in ("save player coins between sessions", "the zombie keeps walking into the wall", "GetPropertyChangedSignal",
+                  "make it feel softer", "price the first three upgrades", "remote event exploit"):
+            self.assertEqual(rbxvault.search(q, 10, kept), rbxvault.search(q, 10, idx), q)
+            for sh in (shelves, ["guides", "team"], ["vault", "guides"]):
+                self.assertEqual(rbxvault.keyword_ranking(q, sh, 20, kept, kept_docs),
+                                 rbxvault.keyword_ranking(q, sh, 20, idx, docs), (q, sh))
+                self.assertEqual(rbxvault.search_sections(q, sh, 20, kept_docs), rbxvault.search_sections(q, sh, 20, docs))
+
+    def test_the_service_ranker_keeps_its_indexes_and_takes_a_project(self):
+        from rbxrag.engine import KeywordRanker
+        now = [0.0]
+        kr = KeywordRanker(every=10.0, clock=lambda: now[0], background=False)
+        with mock.patch.object(rbxvault, "load_index", wraps=rbxvault.load_index) as li, \
+                mock.patch.object(rbxvault, "note_files", wraps=rbxvault.note_files) as nf:
+            a = kr("datastore session lock", ["vault", "guides"], 5, "")
+            walks = nf.call_count
+            kr("datastore session lock", ["vault", "guides"], 5, "")
+            self.assertEqual((li.call_count, nf.call_count), (1, walks))  # within 10 s: not even a look
+            now[0] = 11.0
+            kr("datastore session lock", ["vault", "guides"], 5, "")
+            self.assertEqual(nf.call_count, walks + 1)  # looked at the files again...
+            self.assertEqual(li.call_count, 1)  # ...and kept the loaded index: nothing changed
+        self.assertEqual(a, rbxvault.keyword_ranking("datastore session lock", ["vault", "guides"], 5))
+        proj = tempfile.mkdtemp(prefix="kw game ")
+        self.addCleanup(shutil.rmtree, proj, True)
+        with open(os.path.join(proj, "GAME.md"), "w", encoding="utf-8") as f:
+            f.write("# Glimmer\n\n## Pitch\n\nCollect glimmerstones in the zorblat caves.\n")
+        self.assertEqual(kr("zorblat glimmerstones", ["game"], 3, proj)[0][:2], ("game", "GAME.md"))
+        self.assertEqual(kr("zorblat glimmerstones", ["game"], 3, ""), [])
+
+
 if __name__ == "__main__":
     unittest.main()

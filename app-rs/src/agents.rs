@@ -813,6 +813,8 @@ struct State {
     expert: Option<String>,
     expert_text: Option<String>,
     writer_of: Option<String>,
+    /// When this chat last put an event out (any output): the swarm's watchdog finds a silent member by it.
+    last_event: f64,
     /// The chat that started this helper (a studio run's Lead, for its experts).
     parent: Option<String>,
     /// A paused studio run's Lead has been told to wind down (see `pause_step`).
@@ -1934,6 +1936,8 @@ impl GeminiLaunch {
             // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
             protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
             hidden_in: s.hidden_in.to_vec(),
+            // the places that hold a sign-in or a key: never read or written, in any mode
+            secrets: paths::app_secrets(),
             agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
             // Setup's switch, from the settings this launch was given (the app's memory): on unless switched off
             images: s.guarded.get("gemini_images").and_then(Value::as_bool).unwrap_or(true),
@@ -2205,6 +2209,7 @@ impl CursorLaunch {
             reads: Vec::new(),
             protected: Vec::new(),
             hidden_in: Vec::new(),
+            secrets: Vec::new(),
             agent_dir: std::path::PathBuf::new(),
             images: true,
         };
@@ -2688,6 +2693,16 @@ impl Agent {
         self.st.lock().unwrap().writer_of = Some(project.to_string());
     }
 
+    /// The project whose Studio turn this helper holds now, if any (it keeps holding it).
+    pub fn writer(&self) -> Option<String> {
+        self.st.lock().unwrap().writer_of.clone()
+    }
+
+    /// When this chat last put out any event (0 when never): see `swarm` (the watchdog).
+    pub fn last_activity(&self) -> f64 {
+        self.st.lock().unwrap().last_event
+    }
+
     /// Give up the writer place: the project it was held for, once, then nothing (so a second release cannot free another helper's).
     pub fn take_writer(&self) -> Option<String> {
         self.st.lock().unwrap().writer_of.take()
@@ -2812,6 +2827,14 @@ impl Agent {
             hand_over(&mut st, all, ai_label(&from), false);
             st.session = None;
             st.ai = Some(kind.to_string());
+            // the last message's model and effort were the old AI's: the app's own messages (a run's wakes, board
+            // news) would ask the new AI for them and land on its default. The window sends the new pick (`set_pick`).
+            st.last_ask.model = None;
+            st.last_ask.effort = None;
+            for (_, _, a) in st.queue.iter_mut() {
+                a.model = None;
+                a.effort = None;
+            }
             from
         };
         self.put("ai", json!({"ai": kind, "from": from}));
@@ -2823,6 +2846,20 @@ impl Agent {
             thread::spawn(move || l.close());
         }
         Ok(true)
+    }
+
+    /// The model and effort picked for this chat in the window: what the app's own messages to it (a run's wakes, board
+    /// news, carry-ons) and its waiting messages run on from now, so a pick (or a switch of AI) counts at once.
+    pub fn set_pick(&self, model: Option<&str>, effort: Option<&str>) {
+        let mut st = self.st.lock().unwrap();
+        let model = model.filter(|m| !m.is_empty()).map(str::to_string);
+        let effort = effort.filter(|e| EFFORTS.contains(e)).map(str::to_string);
+        st.last_ask.model = model.clone();
+        st.last_ask.effort = effort.clone();
+        for (_, _, a) in st.queue.iter_mut() {
+            a.model = model.clone();
+            a.effort = effort.clone();
+        }
     }
 
     /// Choose this chat's AI. Only possible before its conversation has started.
@@ -2857,6 +2894,7 @@ impl Agent {
         BUS.put(kind, Value::Object(shown));
         let stale = {
             let mut st = self.st.lock().unwrap();
+            st.last_event = paths::now_secs();
             if !matches!(kind, "agent_new" | "agent_removed" | "busy" | "model" | "queued") {
                 ev.insert("kind".into(), json!(kind));
                 st.log.push(Value::Object(ev));
@@ -3455,6 +3493,8 @@ impl Agent {
             prompt += &format!("\n\n{}", text.trim());
         }
         prompt += &team_prompt(self);
+        // a member of a swarm: its name, its own copy, the board, the Studio turn, parking (`swarm::member_prompt`)
+        prompt += &crate::swarm::member_prompt(&self.id);
         // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
         prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);
@@ -5535,9 +5575,16 @@ pub fn test_servers(no_studio: bool) -> Value {
 }
 
 /// Claude Code's deny rules for the app's own files (`paths::app_protected`): `Edit(//<path>)`, with `/**` for a
-/// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool).
+/// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool); and for the places that
+/// hold a sign-in or a key (`paths::app_secrets`) `Read(//<path>)` and `Read(//<path>/**)` too (Read rules cover every
+/// file-reading tool). Deny rules hold in bypass mode.
 fn claude_denied() -> Vec<String> {
-    paths::app_protected().into_iter().map(|(p, dir)| claude_edit_rule(&p.display().to_string(), dir, cfg!(windows))).collect()
+    let mut out: Vec<String> = paths::app_protected().into_iter().map(|(p, dir)| claude_edit_rule(&p.display().to_string(), dir, cfg!(windows))).collect();
+    for p in paths::app_secrets() {
+        let p = p.display().to_string();
+        out.extend([claude_rule("Read", &p, false, cfg!(windows)), claude_rule("Read", &p, true, cfg!(windows))]);
+    }
+    out
 }
 
 /// Claude Code's deny rule for an absolute path, by its documented syntax (code.claude.com/docs/en/permissions, "Read
@@ -5545,6 +5592,11 @@ fn claude_denied() -> Vec<String> {
 /// `C:\Users\a` is `//c/Users/a`. A folder gets `/**`. (Matching ignores case: measured, Claude Code in bypass mode
 /// refused `CONFIG.JSON` under a rule for `config.json`, in a folder with a space.)
 fn claude_edit_rule(path: &str, dir: bool, windows: bool) -> String {
+    claude_rule("Edit", path, dir, windows)
+}
+
+/// The same rule for another of Claude Code's path tools (`Read`).
+fn claude_rule(tool: &str, path: &str, dir: bool, windows: bool) -> String {
     let posix = if windows {
         let p = path.replace('\\', "/");
         let b = p.as_bytes();
@@ -5552,7 +5604,7 @@ fn claude_edit_rule(path: &str, dir: bool, windows: bool) -> String {
     } else {
         path.to_string()
     };
-    format!("Edit(/{posix}{})", if dir { "/**" } else { "" })
+    format!("{tool}(/{posix}{})", if dir { "/**" } else { "" })
 }
 
 fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
@@ -5863,6 +5915,33 @@ mod tests {
         assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "ai" && e["from"] == "gemini" && e["ai"] == "claude"));
         // switching to the AI it is already on changes nothing
         assert_eq!(a.switch_ai("claude"), Ok(false));
+    }
+
+    #[test]
+    fn a_switch_drops_the_old_ais_model_and_a_pick_counts_at_once() {
+        // the user's case: a run's Lead on OpenCode's DeepSeek, switched to Gemini with Neon (High) picked, kept
+        // waking on "deepseek", which Gemini does not offer, so it ran on Gemini's default (Carbon)
+        let a = Agent::detached_for_test("switch-model", None);
+        assert_eq!(a.switch_ai("opencode"), Ok(false));
+        {
+            let mut st = a.st.lock().unwrap();
+            st.log.push(json!({"kind": "user", "text": "Build the beach"}));
+            st.last_ask.model = Some("opencode-go/deepseek-v4.1-flash".into());
+            st.last_ask.effort = Some("high".into());
+            st.queue.push(("q1".into(), "and the dock".into(), Ask { model: Some("opencode-go/deepseek-v4.1-flash".into()), ..Default::default() }));
+        }
+        assert_eq!(a.switch_ai("gemini"), Ok(true));
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.last_ask.model.as_deref(), st.last_ask.effort.as_deref()), (None, None));
+            assert_eq!(st.queue[0].2.model, None);
+        }
+        assert_eq!(a.model(), None, "no other AI's model is asked for");
+        a.set_pick(Some("gemini-4-neon-high"), Some("bogus"));
+        let st = a.st.lock().unwrap();
+        assert_eq!(st.last_ask.model.as_deref(), Some("gemini-4-neon-high"));
+        assert_eq!(st.last_ask.effort, None, "an effort the app does not know is not kept");
+        assert_eq!(st.queue[0].2.model.as_deref(), Some("gemini-4-neon-high"), "a waiting message goes on the pick");
     }
 
     #[test]
@@ -6212,7 +6291,66 @@ mod tests {
         assert_eq!(claude_edit_rule(r"C:\Users\a\Documents\Fridae Studios\config.json", false, true), "Edit(//c/Users/a/Documents/Fridae Studios/config.json)");
         assert_eq!(claude_edit_rule(r"D:\Fridae\work\processes", true, true), "Edit(//d/Fridae/work/processes/**)");
         for r in claude_denied() {
-            assert!(r.starts_with("Edit(//"), "{r}");
+            assert!(r.starts_with("Edit(//") || r.starts_with("Read(//"), "{r}");
+        }
+    }
+
+    #[test]
+    fn claude_may_not_read_where_a_sign_in_or_a_key_is_kept() {
+        let denied = claude_denied();
+        // the GitHub sign-in, the settings (the Gemini key), the second accounts and Fridae's OpenCode sign-in
+        for p in paths::app_secrets() {
+            let p = p.display().to_string();
+            assert!(denied.contains(&format!("Read(/{p})")) && denied.contains(&format!("Read(/{p}/**)")), "{p}: {denied:?}");
+        }
+        for must in [crate::github::folder(), paths::config_file()] {
+            assert!(paths::app_secrets().contains(&must), "{}", must.display());
+        }
+        assert_eq!(claude_rule("Read", r"C:\Users\a\AppData\Fridae Studios\github", true, true), "Read(//c/Users/a/AppData/Fridae Studios/github/**)");
+        // and they reach Claude Code as deny rules (held in bypass mode too)
+        let servers = json!({});
+        let s = ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &denied, full: true, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false };
+        let args: Vec<String> = ClaudeLaunch::new(&s).args.iter().map(|a| a.to_string_lossy().to_string()).collect();
+        let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert!(args[at..].contains(&format!("Read(/{}/**)", crate::github::folder().display())));
+    }
+
+    #[test]
+    fn a_second_account_reads_its_own_working_files_but_never_its_sign_in() {
+        crate::accounts::stand_in_tagged("rd");
+        let denied = claude_denied();
+        let blocked = |path: &std::path::Path| {
+            let path = path.display().to_string();
+            denied.iter().filter_map(|r| r.strip_prefix("Read(/").and_then(|r| r.strip_suffix(')'))).any(|p| match p.strip_suffix("/**") {
+                Some(dir) => path.starts_with(&format!("{dir}/")),
+                None => path == p,
+            })
+        };
+        // Claude Code on a second account has CLAUDE_CONFIG_DIR in its folder, spills big tool outputs, plans and
+        // memory there and tells the model to read them: a deny rule would beat even bypass
+        let config = crate::accounts::base().join("claude-2-rd");
+        for own in [config.join("projects/-work/0b1c/tool-results/toolu_1.txt"), config.join("plans/a-plan.md"), config.join("projects/-work/memory/MEMORY.md"), config.join("todos/t.json")] {
+            assert!(!blocked(&own), "{}", own.display());
+        }
+        // OpenCode's data folder: cut-off tool output it tells the agent to read
+        let data = crate::opencode::own_store().join("data/opencode");
+        assert!(!blocked(&data.join("tool-output/tool_1")) && !blocked(&data.join("storage/session/x.json")));
+        // while every sign-in file is
+        let gemini = crate::accounts::base().join("gemini-2-rd");
+        for secret in [
+            config.join(".credentials.json"),
+            config.join(".claude.json"),
+            gemini.join(".gemini/oauth_creds.json"),
+            gemini.join(".gemini/google_accounts.json"),
+            gemini.join("Library/Keychains/fridae.keychain-db"),
+            gemini.join(".fridae-keychain-key"),
+            data.join("auth.json"),
+            data.join("mcp-auth.json"),
+            crate::github::folder().join("token"),
+            paths::config_file(),
+            paths::guard_copy(),
+        ] {
+            assert!(blocked(&secret), "{}", secret.display());
         }
     }
 
@@ -8008,7 +8146,12 @@ mod tests {
         let b = chat("c-launch-claude-1", "claude", 1);
         let l = launches(&b, "Carry on");
         assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
-        assert!(!l[0].0.contains("claude-2-standin"));
+        // (the account's sign-in files are named, in the read rules every turn gets, and nothing else of it)
+        let mut key = l[0].0.clone();
+        for f in crate::accounts::SIGN_IN_FILES {
+            key = key.replace(&format!("{}/{f}", folder("claude")), "");
+        }
+        assert!(!key.contains("claude-2-standin"));
         // Gemini on the second account: agy's HOME is the account's own home, no key reaches it, and the app's tool
         // server has the app's own HOME back
         let c = chat("c-launch-gemini-2", "gemini", 2);

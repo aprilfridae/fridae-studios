@@ -272,7 +272,7 @@ class FakeDenseModel:
     def __init__(self):
         self.fake = FakeEmbedders()
 
-    def embed(self, texts):
+    def embed(self, texts, batch_size=None):
         for t in texts:
             yield np.array(self.fake.dense_query(t), dtype=np.float32)
 
@@ -301,6 +301,26 @@ class FakeReranker:
     def rerank(self, query, docs):
         for s in FakeEmbedders().rerank(query, list(docs)):
             yield np.float32(s)
+
+
+class LightDenseTests(unittest.TestCase):
+    def test_dense_sorts_cuts_and_keeps_the_order(self):
+        seen = []
+
+        class Recording(FakeDenseModel):
+            def embed(self, texts, batch_size=None):
+                seen.append((list(texts), batch_size))
+                return super().embed(texts)
+        emb = models.LightEmbedders(dense=Recording(), sparse=FakeSparseModel(), reranker=FakeReranker())
+        texts = ["a much longer text about lanterns and ghosts " * 40, "short coins", "middle text about rockets"]
+        got = emb.dense(texts)
+        want = [FakeDenseModel().fake.dense_query(emb._dense_cut(t, emb.dense_tokens)) for t in texts]
+        self.assertEqual(got, [[float(x) for x in np.array(v, dtype=np.float32)] for v in want])
+        sent, bs = seen[0]
+        self.assertEqual(bs, models.DENSE_BATCH)
+        self.assertEqual(sent, sorted(sent, key=len), "shortest first: less padding")
+        self.assertLessEqual(max(len(t.encode()) for t in sent), 3 * emb.dense_tokens, "cut to the dense token budget")
+        self.assertTrue(emb.model.endswith("/%d" % emb.dense_tokens), "the cut is part of the model name: an old index rebuilds")
 
 
 @unittest.skipIf(QdrantClient is None, "qdrant-client not installed")
@@ -459,10 +479,10 @@ class SetupTests(unittest.TestCase):
         done = setup.run_cli("models", "light", self.data, out=lines.append, downloader=downloader, present=present)
         rows = [json.loads(l) for l in lines]
         self.assertTrue(all(set(r) == {"step", "fraction"} for r in rows[:-1]))
-        self.assertGreaterEqual(len(rows), 7)  # 0 and 1 for each of the three models, then the end
+        self.assertGreaterEqual(len(rows), 3)  # 0 and 1 for the dense model (Light's only one), then the end
         self.assertEqual(rows[-1], {"ready": True, "missing": [], "error": ""})
         self.assertEqual(done["ready"], True)
-        self.assertEqual(have, {models.LIGHT["dense"], models.LIGHT["sparse"], models.LIGHT["rerank"]})
+        self.assertEqual(have, {models.LIGHT["dense"]})
         # idempotent: everything is there, so it ends ready at once
         lines = []
         setup.run_cli("models", "light", self.data, out=lines.append, downloader=downloader, present=present)

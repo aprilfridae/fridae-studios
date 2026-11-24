@@ -248,8 +248,8 @@ def _by():
     return " ".join((os.environ.get("RBXKIT_AGENT_NAME") or "agent").split())[:60]
 
 
-def write_note(text, title=None, scope="all", project=None, by=None, kind="note"):
-    """Save one note; returns (title, path)."""
+def write_note(text, title=None, scope="all", project=None, by=None, kind="note", replace=False):
+    """Save one note; returns (title, path). `replace`: a note with exactly this title is updated, not duplicated."""
     text = (text or "").strip()
     if not text:
         raise KitError("Give the note in 'text': what you were doing, what the user wants instead and why.")
@@ -257,7 +257,12 @@ def write_note(text, title=None, scope="all", project=None, by=None, kind="note"
         raise KitError("A note holds at most %d characters (this one has %d). Keep the point and the user's words; "
                        "drop the rest." % (NOTE_CAP, len(text)))
     root = folder(scope, project)
-    title, path = _reserve(root, safe_title(title or title_from(text)))
+    want = safe_title(title or title_from(text))
+    hit = [(t, p) for t, p in note_files(root) if t.casefold() == want.casefold()] if replace and title else []
+    if len(hit) == 1 and os.path.basename(hit[0][1]) not in (RULES_NAME, LESSONS_NAME):
+        title, path = hit[0]
+    else:
+        title, path = _reserve(root, want)
     body = ("---\ntitle: %s\nwhen: %s\nscope: %s\nby: %s\nkind: %s\n---\n\n# %s\n\n%s\n" % (
         title, time.strftime("%Y-%m-%d %H:%M"), scope, by or _by(), kind, title, text))
     _atomic_write(path, body)
@@ -394,7 +399,8 @@ def run(action, a):
             add_rule(a.get("text"), scope, project)
             return ("House rule saved (%s). Every agent gets it from the next turn on." %
                     ("this game" if scope == "game" else "everything"))
-        title, _ = write_note(a.get("text"), a.get("title"), scope, project)
+        replace = a.get("replace") is True or str(a.get("replace")).lower() == "true"
+        title, _ = write_note(a.get("text"), a.get("title"), scope, project, replace=replace)
         return ("Note saved as '%s' (%s). Search finds it: rbx_vault action 'search' with shelf '%s'." %
                 (title, "this game" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
     if action == "notes":

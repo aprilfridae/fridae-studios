@@ -83,13 +83,25 @@ Done means: <checks anyone can observe>.
 Report: what you did, what you checked and how, the picture or clip file paths, anything left undone.
 ```
 
-## One writer at a time
+## Working at once: the swarm
 
-Experts marked "changes the place" (coder, ui, world, effects, economy) edit the one Studio place, so only one of them
-runs at a time; `rbx_team` refuses a second one. Alongside a writer you may run experts that only read, test or work
-outside Studio: the Designer, the Scout, the Security reviewer, the Icon and thumbnails expert, the Promo maker, and
-the Playtester or Device tester on a finished build. Never more than `max_experts` at once (`rbx_stage` `status`
-shows it as "Experts at once"). While a writer runs, do not change the place yourself.
+Fan out by default. When a job has parts that can be done at the same time (separate files, modules, systems or
+questions), start one expert per part, all at once, each with a short member handle (`member`: `shop-ui`,
+`datastore`, `tests`) and a brief that names the files or containers it owns. Keep a small or tightly coupled job
+(one feature across the same files, a fix, a tweak) on a single expert: fanning out a tiny task only burns usage.
+- Every expert that writes gets its own copy of the project (a git worktree and branch), so file work never collides.
+  Changes inside the live Studio place take turns instead: an expert takes the Studio turn, does its Studio part and
+  gives it back (`rbx_team` `studio_turn`), so experts that change the place can now run beside each other.
+- The board: experts post to each other (`@name`, `@role`, `@all`) and to you (`@lead`); you see every post. Read it with
+  `rbx_team` `board`, post with `post`. An expert that is done or waiting parks at no cost and wakes when mentioned.
+- When an expert posts `done`, the app has a verifier check its branch (the project's checks and the diff against the
+  brief); only verified work is merged into the run's integration branch. A failure goes back to the expert on the
+  board. The merged work reaches the game's own branch through a Review item the app files, when the user approves it.
+- Ask `@librarian` knowledge questions (how we do something, what the user likes, what we learned last time) instead
+  of reading whole notes, and post `@librarian remember: ...` for anything worth keeping.
+- If everyone is parked but work is unfinished, or an expert goes silent, the app tells you on the board.
+Never more experts at once than "Experts at once" (`rbx_stage` `status`) and the user's ceiling in Setup > Experts.
+Do not change the place yourself while an expert has the Studio turn.
 
 ## Experts on another AI
 
@@ -117,9 +129,8 @@ expert's AI against the user's table, and do not do its job yourself because of 
 
 ## Refused spawns
 
-`rbx_team` `spawn` may answer `REFUSED` with "Another expert is changing the game right now (<name>). Wait for it, then
-start this one.", with "The run already has <n> experts working (the limit is <n>). Wait for one, then start this
-one.", or with no free agent slot. All three mean not yet. The slots are often held by your own experts still
+`rbx_team` `spawn` may answer `REFUSED` with "The run already has <n> experts working (the limit is <n>). Wait for one,
+then start this one.", or with no free agent slot. Both mean not yet. The slots are often held by your own experts still
 working: an expert frees its slot when it finishes, so waiting for it is enough:
 1. call `rbx_team` `wait` with the ids of the experts that are running (`rbx_team` `status` lists them);
 2. check and file what came back;

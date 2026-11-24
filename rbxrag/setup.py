@@ -1,6 +1,6 @@
 """The knowledge index's setup steps, run one at a time by the app (or `rbx rag setup <step>`), each idempotent:
 
-  models          the fastembed models into <data>/models (Light: dense, sparse, rerank; Heavy: sparse, rerank)
+  models          the fastembed models into <data>/models (Light: dense; Heavy: sparse, rerank)
   ollama-install  Ollama, only when it is not already answering: Ollama.app into ~/Applications, then opened
   ollama-pull     the embedding model (mxbai-embed-large) through the Ollama API, with progress
   qdrant-install  the Qdrant binary (a pinned release) into <data>/bin/qdrant

@@ -136,12 +136,22 @@ div.g-row { cursor: default; }
 .c-row .notice { margin: 8px 0 0; }
 .oc-row { padding-left: 24px; border-top: 0; }
 .oc-row .act { grid-column: 1 / -1; margin: 8px 0 0; }
+/* GitHub (Setup, Connections; Project details): the code to enter on GitHub, the account's picture */
+.gh-code { margin: 8px 0 0; font-family: var(--mono); font-size: 20px; letter-spacing: 0.12em; color: var(--text); user-select: all; }
+.c-row small.gh-note { margin-top: 4px; }
+.gh-avatar { width: 18px; height: 18px; border-radius: 50%; vertical-align: -4px; margin-right: 6px; }
+#pd-gh { margin: 0 0 16px; }
+#pd-gh .act { margin: 8px 0 0; }
+#pd-gh .check-row { margin: 4px 0 0; }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
 .side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
+@keyframes logo-turn { to { transform: rotate(360deg); } }
+body.working .mark img, body.working .sigil { animation: logo-turn 10s linear infinite; }
+@media (prefers-reduced-motion: reduce) { body.working .mark img, body.working .sigil { animation: none; } }
 .side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
 /* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
 .side-list::-webkit-scrollbar { display: none; }
@@ -250,7 +260,7 @@ button.pname:hover { background: var(--hover); }
 
 /* ---------- the Chat tab ---------- */
 .body { display: grid; min-height: 0; min-width: 0; }
-.main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; }
 .chathead { display: flex; align-items: center; gap: 12px; padding: 4px 24px; min-height: 44px; border-bottom: 1px solid var(--line); }
 .title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 46ch; font-size: 14px; font-weight: 500; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); text-align: left; }
 .title span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -504,6 +514,98 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .saytip .linkish { margin-left: 8px; }
 .saytip.free { left: 24px; bottom: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
 
+/* ---------- the team board: beside a Lead's chat while its team works at the same time ----------
+   One ordered log of what the members say to each other, the Lead and the user. Each member keeps one soft colour
+   (its name, its mentions, its chip), so a busy board reads at a glance; everything else stays in the greyscale.
+   Collapsed it is a slim rail; in a narrow space it lies over the chat and folds to one small pill. */
+.body { position: relative; }
+.body.with-board { grid-template-columns: minmax(0, 1fr) auto; }
+.board { display: flex; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
+.bd-panel { width: 340px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; }
+.board.shut .bd-panel, .board:not(.shut) .bd-rail { display: none; }
+.bd-rail { position: relative; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.bd-rail:hover { background: var(--hover); color: var(--text); }
+.bd-rail:focus-visible { outline-offset: -2px; }
+.bd-rail-t { writing-mode: vertical-rl; font-size: 12px; letter-spacing: 0.02em; }
+.bd-unread { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; display: grid; place-items: center; font: 600 12px/1 var(--mono); background: var(--text); color: var(--ink); }
+.bd-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 8px; min-height: 44px; padding: 4px 8px 4px 16px; border-bottom: 1px solid var(--line); }
+.bd-head b { font-size: 14px; font-weight: 600; }
+.bd-head small { grid-column: 1; display: block; font-size: 12px; color: var(--faint); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-head small .linkish { font-size: 12px; color: var(--dim); }
+.bd-head small .linkish:hover { color: var(--text); }
+.bd-head .icon { grid-column: 2; grid-row: 1 / span 2; }
+/* the roster: one chip per member, which shows only what it said and what was said to it */
+.bd-tools { display: grid; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.bd-who { display: flex; flex-wrap: wrap; gap: 4px; }
+.bd-who:empty { display: none; }
+.bd-m { display: inline-flex; align-items: center; gap: 6px; height: 24px; max-width: 100%; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); font: 12px/1 var(--mono); color: var(--c, var(--text)); transition: background-color 140ms ease, border-color 140ms ease; }
+.bd-m > span:not(.dot) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-m:hover { background: var(--hover); }
+.bd-m[aria-pressed="true"] { background: var(--press); border-color: color-mix(in srgb, var(--c, #fff) 55%, transparent); }
+.bd-m .dot { width: 6px; height: 6px; }
+.bd-m.dim { opacity: 0.6; }
+.bd-turn { font: 500 12px/1 var(--sans); font-style: normal; color: var(--text); padding: 2px 6px; margin-right: -4px; border-radius: 999px; background: var(--press); }
+.bd-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.bd-filter .seg button .n { margin-left: 6px; font: 500 12px/1 var(--mono); color: var(--text); }
+.bd-only { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.bd-only b { font: 500 12px var(--mono); color: var(--c, var(--text)); }
+.bd-only .linkish { font-size: 12px; margin-left: 4px; }
+/* the log: who, to whom, when; a short run of lines from one member reads as one block */
+.bd-log { overflow-y: auto; min-height: 0; padding: 8px 8px 16px; -webkit-user-select: text; user-select: text; overscroll-behavior: contain; }
+.bd-l { padding: 6px 8px; border-radius: var(--r-s); }
+.bd-l:not(.cont) { margin-top: 6px; }
+.bd-l.cont { padding-top: 0; }
+.bd-l.cont .bd-meta { display: none; }
+.bd-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; color: var(--faint); line-height: 1.6; }
+.bd-from { flex: none; font: 500 12px var(--mono); color: var(--c, var(--text)); }
+.bd-to { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-meta time { margin-left: auto; flex: none; font: 12px var(--mono); color: var(--faint); }
+.bd-k { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font: 12px/1 var(--mono); color: var(--dim); }
+.bd-k:empty { display: none; }
+.bd-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.bd-at { font-weight: 500; color: var(--c, var(--text)); }
+.bd-at.me { color: var(--text); background: var(--press); border-radius: 4px; padding: 0 3px; }
+.bd-l.tome { background: var(--hover); box-shadow: inset 2px 0 0 var(--text); }
+.bd-l.mine .bd-text { color: var(--dim); }
+.k-done .bd-k, .k-merged .bd-k { color: var(--text); }
+.k-merged .bd-k { background: var(--press); }
+.k-verify .bd-k { border-style: dashed; }
+.k-failed .bd-k { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.bd-l.k-failed { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--bad) 70%, transparent); }
+.bd-l.k-system { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; padding: 0 4px; font: 12px/1.5 var(--mono); color: var(--faint); text-align: center; }
+.bd-l.k-system::before, .bd-l.k-system::after { content: ""; flex: 1; min-width: 16px; height: 1px; background: var(--line); }
+.bd-l.k-system span { max-width: 85%; }
+.bd-empty { margin: 16px 8px; font-size: 13px; color: var(--faint); line-height: 1.5; }
+/* the box to post in, with @-names offered as you type */
+.bd-post { position: relative; padding: 8px 12px 12px; border-top: 1px solid var(--line); }
+.bd-box { display: flex; align-items: flex-end; gap: 8px; padding: 4px 4px 4px 12px; border-radius: var(--r-l); background: var(--bg); border: 1px solid var(--line-strong); transition: border-color 160ms ease; }
+.bd-box:focus-within { border-color: rgba(255, 255, 255, 0.4); }
+.bd-box textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: none; padding: 4px 0; min-height: var(--h-m); max-height: 120px; font-size: 13px; line-height: 1.5; -webkit-user-select: text; user-select: text; }
+.bd-box .send { width: var(--h-s); height: var(--h-s); }
+.bd-hint { margin: 6px 4px 0; font-size: 12px; color: var(--faint); line-height: 1.4; }
+.bd-hint.bad { color: var(--text); }
+.bd-ac { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px); z-index: 5; max-height: 240px; overflow-y: auto; padding: 4px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); display: none; }
+.bd-ac.on { display: block; }
+.bd-opt { display: grid; grid-template-columns: 8px auto minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: var(--r-s); text-align: left; }
+.bd-opt:hover, .bd-opt.sel { background: var(--hover); }
+.bd-opt b { font: 500 13px var(--mono); color: var(--c, var(--text)); }
+.bd-opt small { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-opt .dot { width: 6px; height: 6px; }
+/* a narrow space: the board still sits beside the chat (never over it, the user, 2026-11-24), only slimmer, and it
+   starts folded to its rail */
+.board.narrow .bd-panel { width: clamp(240px, 42vw, 300px); }
+/* opening: the panel slides in from the right edge */
+@keyframes bd-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+.board:not(.shut) .bd-panel { animation: bd-in 280ms cubic-bezier(0.32, 0.72, 0, 1); }
+@media (prefers-reduced-motion: reduce) { .board:not(.shut) .bd-panel { animation: none; } }
+/* a member's state, as a dot: being checked is a ring, parked is quieter still */
+.dot.verify { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text), 0 0 0 2.5px rgba(255, 255, 255, 0.12); }
+.dot.park { opacity: 0.6; }
+/* the member that holds the Studio turn: the only one changing the live place right now */
+.s-turn { display: none; }
+.s-row.sx.st-turn { grid-template-columns: 8px minmax(0, 1fr) auto; }
+.s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
+
 /* ---------- the other pages take the whole space under the project's bar ---------- */
 #review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
 body.review #review, body.promos #promos, body.newproj #newproj, body.all #allproj { display: block; }
@@ -664,7 +766,8 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-why .linkish { margin-left: 4px; white-space: nowrap; }
 .rv-err, .rv-item .rv-err { margin: 8px 0 0; font-size: 14px; color: var(--text); }
 .rv-err:empty { display: none; }
-.rv-prog { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; margin-top: 12px; }
+/* the stage strip is not shown (the user, 2026-11-24: it named a stage the game was nowhere near); the cost sits right */
+.rv-prog { display: flex; justify-content: flex-end; margin-top: 12px; }
 .rv-cost { display: inline-flex; align-items: flex-end; gap: 8px; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rv-cost:empty { display: none; }
 .rv-cost .spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
@@ -823,6 +926,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .drawer pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
 #pd-changes:empty, #pd-out:empty, #pd-log:empty { display: none; }
 #pd-path { word-break: break-all; }
+.pill.danger { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 #pd-out.warn { color: var(--text); }
 .light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 32px; }
 .light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
@@ -926,12 +1030,28 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <p class="aigap" id="ai-gap" hidden></p>
       </div>
     </div>
+    <aside class="board" id="board" hidden aria-label="Team board">
+      <button class="bd-rail" id="bd-rail" aria-expanded="false" aria-controls="bd-panel" title="Show the team board"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg><span class="bd-unread" id="bd-unread" hidden></span><span class="bd-rail-t">Team board</span></button>
+      <div class="bd-panel" id="bd-panel">
+        <header class="bd-head"><b>Team board</b><button class="icon" id="bd-shut" aria-label="Hide the team board" title="Hide the team board"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></button><small id="bd-sum"></small></header>
+        <div class="bd-tools">
+          <div class="bd-who" id="bd-who" role="group" aria-label="Members: press one to see only its lines"></div>
+          <div class="bd-filter"><div class="seg" id="bd-seg"><button data-f="all">All</button><button data-f="me">To you</button></div><span class="bd-only" id="bd-only" hidden></span></div>
+        </div>
+        <div class="bd-log" id="bd-log" role="log" aria-label="What the team says"></div>
+        <div class="bd-post">
+          <div class="bd-ac" id="bd-ac" role="listbox" aria-label="Who to write to"></div>
+          <div class="bd-box"><textarea id="bd-say" rows="1" placeholder="@name or @all, then your message" aria-label="A message for the team" autocomplete="off" spellcheck="true"></textarea><button class="send" id="bd-send" aria-label="Post" title="Post" disabled><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></button></div>
+          <p class="bd-hint" id="bd-hint" role="status"></p>
+        </div>
+      </div>
+    </aside>
     </div>
 
     <div id="allproj"><div class="ov">
       <div class="o-graph">
         <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
-        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
+        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
         <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
@@ -948,7 +1068,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         </div>
         <div id="rv-live" hidden>
           <div class="rv-state"><span class="dot" id="rv-dot"></span><b id="rv-state"></b><span class="rv-why" id="rv-why"></span><button class="pill" id="rv-toggle" hidden></button></div>
-          <div class="rv-prog"><div class="rv-stages" id="rv-stages"></div><span class="rv-cost"></span></div>
+          <div class="rv-prog"><div class="rv-stages" id="rv-stages" hidden></div><span class="rv-cost"></span></div>
           <details class="rv-set" id="rv-set">
             <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
             <span class="pr-label">Wait for my approval after</span>
@@ -1075,6 +1195,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div id="ai-list"></div>
       <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment</label>
       <details class="moreinfo"><summary>More</summary><p>Off: an AI signed in with your plan is never billed to an API key set on this computer, such as ANTHROPIC_API_KEY. Turn it on if you sign in with a key or a company gateway. It covers Claude, Cursor and ChatGPT; OpenCode never gets these keys, since each one would add a provider billed to it.</p></details>
+      <h3>GitHub</h3>
+      <div id="gh-row"></div>
       <h3>Roblox Studio</h3>
       <div id="needs"></div>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove plugin</button></div>
@@ -1091,7 +1213,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       </div>
       <ul class="rag-modes" id="rag-modes">
         <li data-m="off"><b>Off:</b> <span id="rag-d-off">Simple word search (what Fridae does today).</span></li>
-        <li data-m="light"><b>Light:</b> <span id="rag-d-light">Works out of the box. Downloads about 200 MB of small models once.</span></li>
+        <li data-m="light"><b>Light:</b> <span id="rag-d-light">Works out of the box. Downloads one small model (about 65 MB) once.</span></li>
         <li data-m="heavy"><b>Heavy:</b> <span id="rag-d-heavy">Fastest and smartest. Needs Ollama and Qdrant, which Fridae can set up for you.</span></li>
       </ul>
       <div class="rag-light" id="rag-light" hidden><p class="sub" id="rag-l-state"></p><div class="eng-bar" id="rag-l-bar" hidden><i></i></div><div class="act"><button class="pill" id="rag-l-go" hidden>Set up</button></div></div>
@@ -1116,6 +1238,10 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
       <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your game, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
       <div id="xp-table" style="margin-top: 12px"></div>
+      <h3 id="sw-cap-title">Most experts working at once</h3>
+      <p class="sub">1 means one at a time; more get it done sooner and use up your plan's usage faster.</p>
+      <div class="seg" id="sw-cap" style="margin-top: 12px; max-width: 100%" role="group" aria-labelledby="sw-cap-title"></div>
+      <p class="sub" id="sw-cap-note" role="status" hidden></p>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -1177,10 +1303,18 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <pre id="pd-log"></pre>
     <p class="sub" id="pd-nolog" hidden>Nothing committed yet.</p>
     <h3>Online copy</h3>
+    <div id="pd-gh"></div>
     <p class="sub">Paste a repository's address (an empty one on GitHub, say) to keep a copy online.</p>
     <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/game.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
     <div class="act"><button class="pill" id="pd-push" title="Uploads this project's files to the online copy">Push</button><button class="pill" id="pd-pull">Pull</button></div>
   </div>
+  <h3>Delete</h3>
+  <div class="act" id="pd-del-start"><button class="pill" id="pd-del">Delete project…</button></div>
+  <div id="pd-del-ask" hidden>
+    <p class="sub">Remove it from Fridae and keep its files, or also move its folder to the Trash (you can put it back from there). Its chats stay in your history.</p>
+    <div class="act"><button class="pill" id="pd-del-list">Remove from Fridae</button><button class="pill danger" id="pd-del-trash">Move folder to Trash</button><button class="pill" id="pd-del-no">Cancel</button></div>
+  </div>
+  <p class="sub" id="pd-del-out" hidden></p>
 </div></aside>
 <div class="light" id="light"><img alt=""></div>
 
@@ -1381,7 +1515,7 @@ function select(id) {
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
   following = atBottom();
-  paintSide(); paintComposer(); paintProject(); if (view === "chat") box.focus();
+  paintSide(); paintComposer(); paintProject(); swarmFocus(p); if (view === "chat") box.focus();
 }
 /* a project chosen in the sidebar: its last tab, and in Chat its last conversation (or a new one) */
 function showProject(key, tab) {
@@ -1447,7 +1581,7 @@ function showDraft(key) {
   const wrap = helloEl(proxy);
   if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = pr.bible ? "ready" : "kind"; proxy.start.paint(); }
   draftCol.replaceChildren(wrap); draftCol.hidden = false;
-  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide();
+  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide(); paintBoard();
 }
 /* the first message of a game's chat: a new game is talked through first, an existing one is read */
 function kickoffChat(p, kind) {
@@ -1489,6 +1623,9 @@ const xpOld = new Set();   /* the chats whose earlier experts are shown */
 function expertsOf(p) {
   const all = new Map();
   const put = (id, more) => { const x = all.get(id) || { id }; for (const k in more) if (more[k] !== undefined && more[k] !== null && more[k] !== "") x[k] = more[k]; all.set(id, x); };
+  /* the members of its team's run, if it leads one: first, so what the chat itself knows of each wins */
+  const team = swarmOf(p.id);
+  if (team && team.run) for (const m of team.members || []) if (m && m.id) put(m.id, { name: m.name, expert: m.role, member: m });
   for (const x of Object.values(p.xps)) put(x.id, { name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at });
   for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai, plain: c.plain }); }
   for (const h of agents.values()) if (h.parent === p.id) put(h.id, { name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h });
@@ -1497,8 +1634,8 @@ function expertsOf(p) {
   for (const x of all.values()) x.when = xpWhen.get(x.id) || (x.pane && !x.pane.replay ? pageStart : 0);
   return [...all.values()].sort((a, b) => (bornAt(b.id) - bornAt(a.id)) || ((b.at || 0) - (a.at || 0)));
 }
-/* at work now, at work within the last half hour, or the chat in front */
-const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || x.id === current || now - x.when < XP_IDLE;
+/* at work now, at work within the last half hour, the chat in front, or a member of a team's run that is going */
+const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || !!x.member || x.id === current || now - x.when < XP_IDLE;
 /* an expert's state in a few words, and the class of its dot */
 function xpState(h) {
   const words = h.busy ? "working · " + (h.now || "starting") : h.last === "Stopped" ? "stopped" : h.last === "Needs attention" ? "stopped with an error" : h.last === "Needs you" ? "waiting for an answer" : h.started ? "finished" : "starting";
@@ -1601,21 +1738,26 @@ const xpTab = new Map();
 function sideExpert(used, x, lead, tab) {
   const key = "x:" + x.id;
   return sideRow(used, key, lead ? lead.id : "", () => {
-    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span></button>'), b = w.firstChild;
+    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span><span class="s-turn">Studio</span></button>'), b = w.firstChild;
     b.dataset.k = key; if (lead) b.dataset.of = "c:" + lead.id;
     b.onclick = () => openChatById(x.id);
     return w;
   }, (w) => {
     const b = w.firstChild, h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
-    const state = h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
-    const ai = x.runsOn || aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead)));
-    const plain = (h && h.plain) || x.plain || "";
-    putClass(b, "s-row sx" + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
+    /* a member of a team's run says its state in the run (parked, being checked, merged...); while it works, what it
+       is doing, as any expert does */
+    const m = x.member || memberOf(x.id), sw = m && SW[m.status], doing = !!(h && h.busy && (!m || m.status === "working"));
+    const state = sw && !doing ? [sw.word, sw.dot] : h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
+    const ai = x.runsOn || (m && m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead))));
+    const plain = (h && h.plain) || x.plain || "", still = !!(m && (m.status === "working" || m.status === "parked" || m.status === "verifying"));
+    const turn = !!(m && m.studio_turn), thing = thingOf(lead ? projKey(lead) : curProj);
+    putClass(b, "s-row sx" + (on ? " on" : "") + (doing ? " busy" : "") + (turn ? " st-turn" : ""));
     putClass(b.firstChild, "dot" + state[1]);
     putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
     /* once the expert has finished, its row shows the plain-English line of what it did; while it works, its state */
-    putText(b.querySelector("small"), plain && !(h && h.busy) ? "In plain words: " + plain : state[0] + " · " + ai);
-    putTitle(b, [who, job, state[0], ai].filter(Boolean).join(" · ") + (plain ? ". In plain words: " + plain : "") + (lead ? "" : ". The chat that started it is closed."));
+    putText(b.querySelector("small"), plain && !(h && h.busy) && !still ? "In plain words: " + plain : state[0] + " · " + ai);
+    putTitle(b.lastChild, turn ? "It has the Studio turn: the only one changing the live place right now. The others carry on with their own copies." : "");
+    putTitle(b, [[who, job, state[0], ai].filter(Boolean).join(" · ") + ".", sw ? swTip(m.status, thing) : "", turn ? "It has the Studio turn." : "", plain ? "In plain words: " + plain : "", lead ? "" : "The chat that started it is closed."].filter(Boolean).join(" "));
     putAttr(b, "aria-current", on ? "true" : null);
     const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
   });
@@ -1694,6 +1836,7 @@ function paintSide() {
   /* with one of its chats in front the game's row only brightens: the chat's row carries the mark */
   const marked = (key) => inFront(key) ? (view === "chat" && agents.has(current) ? " on in" : " on") : "";
   const anyBusy = [...agents.values()].some((p) => p.busy);
+  document.body.classList.toggle("working", anyBusy);   /* the logo turns while anything works */
   rows.push(sideRow(used, "all", [view === "all", anyBusy].join("\n"), () => {
     const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
     if (anyBusy) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
@@ -1824,7 +1967,7 @@ function paintHead() {
   const live = p && p.overnight && p.overnight > Date.now() / 1000;
   let text = "", review = false;
   if (!p) text = "";
-  else if (isHelper(p)) text = [p.runsOn || aiName(chatAi(p)), xpState(p)[0]].join(" · ");
+  else if (isHelper(p)) { const m = memberOf(p.id), sw = m && SW[m.status]; text = [p.runsOn || aiName(chatAi(p)), sw && !(p.busy && m.status === "working") ? sw.word : xpState(p)[0]].join(" · "); }
   else if (leadsRun(p)) { text = runState(r, run)[0]; review = true; }
   else if (p.studio && p.studioWaiting) { text = "Waiting for you"; review = true; }
   else if (p.busy) text = "Working";
@@ -1981,8 +2124,9 @@ function paintExpertBar(h) {
   const bar = $("xp-bar"), on = isHelper(h);
   bar.hidden = !on; bar.nextElementSibling.hidden = on;
   if (!on) return;
-  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert);
-  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
+  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert), m = memberOf(h.id);
+  /* a member of a team's run can be written to on its Lead's team board */
+  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (m && of ? "To tell it something, write @" + bdName(m.name) + " on the team board beside “" + of.name + "”." : of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
   $("xp-stop").hidden = !h.busy; $("xp-stop").onclick = () => api("/api/stop", { agent: h.id });
   $("xp-lead").hidden = !(of || chatKnown(h.parent)); $("xp-lead").textContent = of && leadsRun(of) ? "Open the Lead's chat" : "Open the chat that started it";
   $("xp-lead").onclick = () => openChatById(h.parent);
@@ -2123,6 +2267,7 @@ function paintGit(state, r) {
   $("pd-ident").hidden = !!state.identity;
   if (document.activeElement !== $("pd-remote")) $("pd-remote").value = state.remote || "";
   $("pd-push").disabled = $("pd-pull").disabled = !state.remote;
+  githubProject(state);
 }
 async function git(action, extra) {
   const pr = frontProj(); if (!pr) return null;
@@ -2149,7 +2294,164 @@ $("pd-ident-save").onclick = () => git("identity", { name: $("pd-uname").value, 
 $("pd-remote-save").onclick = () => git("remote", { url: $("pd-remote").value });
 $("pd-push").onclick = async () => { $("pd-out").textContent = "Pushing..."; git("push"); };
 $("pd-pull").onclick = async () => { $("pd-out").textContent = "Pulling..."; git("pull"); };
+/* Delete: two steps (Delete project…, then which kind), so one stray click never removes anything */
+function delAsk(on) { $("pd-del-start").hidden = on; $("pd-del-ask").hidden = !on; if (on) $("pd-del-no").focus(); }
+$("pd-del").onclick = () => { $("pd-del-out").hidden = true; delAsk(true); };
+$("pd-del-no").onclick = () => { delAsk(false); $("pd-del").focus(); };
+async function delProject(trash) {
+  const pr = frontProj(); if (!pr) return;
+  $("pd-del-list").disabled = $("pd-del-trash").disabled = true;
+  let r; try { r = await api("/api/project", { action: "delete", path: pr.path, trash }); } catch (e) { r = { ok: false, error: "The app did not answer." }; }
+  $("pd-del-list").disabled = $("pd-del-trash").disabled = false;
+  if (!r.ok) { const o = $("pd-del-out"); o.textContent = r.error || "That did not work."; o.hidden = false; return; }
+  delAsk(false); closeProject();
+  projects = await api("/api/projects"); showAll();
+  say((pr.name || "The project") + (trash ? " is in the Trash." : " is no longer in Fridae. Its folder is untouched."));
+}
+$("pd-del-list").onclick = () => delProject(false);
+$("pd-del-trash").onclick = () => delProject(true);
 
+/* ---------- GitHub: Setup, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
+   GitHub, Push now). Fridae keeps the sign-in to itself: agents never get it, and nothing is sent to GitHub unless you
+   press one of these buttons. Put on GitHub and Push now run in the background: the page follows the project's
+   last_push ("running", "ok", "error") and keeps the buttons greyed while one runs. ---------- */
+let gh = {}, ghProj = { path: "", info: null }, ghState = null, ghPoll = 0, ghBusy = false, ghNote = "";
+const ghLine = {}, ghName = {};
+const ghRunning = () => !!(ghProj.info && ghProj.info.last_push && ghProj.info.last_push.state === "running");
+async function loadGithub(project) {
+  const pr = document.body.classList.contains("pd-open") && frontProj() ? frontProj().path : "";
+  project = project || pr;
+  let r = null;
+  try { r = await api("/api/github/status" + (project ? "?project=" + encodeURIComponent(project) : "")); } catch (e) { return; }
+  if (!r) return;
+  gh = r;
+  if (project) ghProj = { path: project, info: r.project || null };
+  paintGithub(); paintGithubProject();
+  clearTimeout(ghPoll);
+  /* while a code waits for you on GitHub, or a project is being sent there, the page follows it */
+  if (gh.pending || (project && ghRunning())) ghPoll = setTimeout(() => loadGithub(project), gh.pending ? 2000 : 1500);
+}
+function ghButton(label, onclick, cls) {
+  const b = el("button", cls || "pill sm", esc(label));
+  b.onclick = onclick;
+  return b;
+}
+/* One press at a time. A press while another is on its way is simply dropped ({busy}), never shown as a failure. */
+async function ghAct(action, body) {
+  if (ghBusy) return { busy: true };
+  ghBusy = true;
+  document.querySelectorAll("#gh-row button, #pd-gh button").forEach((x) => { x.disabled = true; });
+  let r = null; try { r = await api("/api/github/" + action, body || {}); } catch (e) {}
+  ghBusy = false;
+  ghNote = r ? "" : "Could not reach the app. Try again.";
+  paintGithub.sig = paintGithubProject.sig = "";
+  await loadGithub();
+  return r;
+}
+/* Setup, Connections: GitHub's row, laid out like the AIs' rows */
+function paintGithub() {
+  const box = $("gh-row"); if (!box) return;
+  const p = gh.pending, sig = JSON.stringify([gh.configured, gh.connected, gh.login, gh.avatar_url, p, gh.error, gh.forgot, ghNote]);
+  if (paintGithub.sig === sig) return;
+  paintGithub.sig = sig;
+  const row = el("div", "c-row", '<span class="dot' + (gh.connected ? " ok" : p ? " live" : "") + '"></span><div><b>GitHub</b><small></small><div class="gh-code" hidden></div><small class="gh-note"></small><div class="notice"></div><div class="act"></div></div>');
+  const small = row.querySelector("small"), act = row.querySelector(".act"), code = row.querySelector(".gh-code"), notice = row.querySelector(".notice");
+  if (gh.connected) {
+    if (gh.avatar_url && /^https:\/\//.test(gh.avatar_url)) { const img = el("img", "gh-avatar"); img.alt = ""; img.src = gh.avatar_url; small.appendChild(img); }
+    small.appendChild(document.createTextNode("Connected as " + (gh.login || "your GitHub account") + ". Fridae only uses it when you press Put on GitHub or Push now in a project."));
+    act.appendChild(ghButton("Disconnect", () => ghAct("disconnect")));
+  } else if (p) {
+    small.textContent = "Enter this code on GitHub's page, then press Authorize. Fridae carries on by itself once you have.";
+    code.hidden = false; code.textContent = p.user_code;
+    const copy = ghButton("Copy", async () => {
+      let ok = false; try { ok = !!(await api("/api/copy", { text: p.user_code })).ok; } catch (e) {}
+      copy.textContent = ok ? "Copied" : "Could not copy";
+      setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+    });
+    act.appendChild(copy);
+    act.appendChild(ghButton("Open GitHub", () => api("/api/github/open", { what: "device" })));
+    act.appendChild(ghButton("Cancel", () => ghAct("cancel")));
+  } else if (gh.configured === false) {
+    small.textContent = "GitHub sign-in isn't set up in this copy of Fridae yet.";
+    const b = ghButton("Connect", () => {}); b.disabled = true; act.appendChild(b);
+  } else {
+    small.textContent = "Not connected. Connect to put your projects on GitHub and send your work there when you press a button. Fridae asks GitHub to let it make and update your repositories (private ones too) and to see your username.";
+    act.appendChild(ghButton("Connect", () => ghAct("connect")));
+  }
+  /* what an AI could do with it, said plainly: in Full auto an AI runs commands as you */
+  if (gh.configured !== false) row.querySelector(".gh-note").textContent = "In Full auto, an AI runs commands as you and could read this sign-in.";
+  if (ghNote || gh.error) notice.textContent = ghNote || gh.error;
+  else if (gh.forgot) {
+    notice.appendChild(el("span", "", esc("Fridae forgot your sign-in. To fully remove access, revoke Fridae Studios on GitHub.")));
+    notice.appendChild(ghButton("Open GitHub settings", () => api("/api/github/open", { what: "settings" })));
+  }
+  box.replaceChildren(row);
+}
+/* Project details: Put on GitHub (a new repository under your account, private unless you untick it), or once the
+   project is on GitHub, Push now and how the last push went. The paste-an-address box below stays for other places. */
+function githubProject(state) {
+  ghState = state;
+  const pr = frontProj();
+  if (pr) loadGithub(pr.path);
+}
+function ghRepoName(name) { return (name || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-game"; }
+function ghWhen(at) {
+  const d = new Date(at * 1000), today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+/* a press of Put on GitHub or Push now: started (the page follows it), refused at once (said under the buttons), or
+   dropped because another press is on its way (nothing said) */
+async function ghStart(path, action, body) {
+  delete ghLine[path];
+  const r = await ghAct(action, Object.assign({ project: path }, body || {}));
+  if (r && r.busy) return;
+  if (!r) ghLine[path] = { ok: false, text: "Could not reach the app. Try again." };
+  else if (!r.ok) ghLine[path] = { ok: false, text: r.text };
+  paintGithubProject.sig = ""; paintGithubProject();
+  if (r && r.ok) git("status");
+}
+function paintGithubProject() {
+  const box = $("pd-gh"), pr = frontProj(); if (!box) return;
+  const st = ghState, info = pr && ghProj.path === pr.path ? ghProj.info : null;
+  const show = !!(pr && st && st.repo && gh.configured !== undefined && gh.configured !== false);
+  const last = info && info.last_push, running = !!(last && last.state === "running");
+  const sig = JSON.stringify([show, pr && pr.path, gh.connected, gh.login, info, st && st.commits && st.commits.length, pr && ghLine[pr.path]]);
+  if (paintGithubProject.sig === sig) return;
+  paintGithubProject.sig = sig;
+  if (!show) { box.replaceChildren(); return; }
+  const path = pr.path, out = el("p", "sub"), said = ghLine[path], parts = [];
+  if (!gh.connected) {
+    const act = el("div", "act"); act.appendChild(ghButton("Open Setup", () => openSetup("connections"), "pill"));
+    parts.push(el("p", "sub", "Connect GitHub in Setup, Connections, and this project can go on GitHub with one press."), act);
+  } else if (info && info.repo) {
+    const p = el("p", "sub");
+    p.textContent = "This project is on GitHub at " + info.repo + ". Push now sends your latest commits there.";
+    const act = el("div", "act");
+    const pushB = ghButton("Push now to " + info.repo, () => ghStart(path, "push"), "pill");
+    pushB.disabled = running;
+    act.appendChild(pushB);
+    act.appendChild(ghButton("Open on GitHub", () => api("/api/github/open", { what: "repo", project: path }), "pill"));
+    parts.push(p, act);
+  } else if (!(st.commits || []).length) {
+    parts.push(el("p", "sub", "Commit your files first, then you can put this project on GitHub."));
+  } else {
+    const p = el("p", "sub");
+    p.textContent = "Make a new repository under your GitHub account" + (gh.login ? " (" + gh.login + ")" : "") + " and send this project there. Nothing goes to GitHub until you press the button.";
+    const row = el("div", "keyrow", '<input type="text" id="pd-gh-name" autocomplete="off" spellcheck="false" aria-label="Name on GitHub"><button class="pill" id="pd-gh-put">Put on GitHub</button>');
+    const name = row.querySelector("input"); name.value = ghName[path] || ghRepoName(pr.name);
+    name.oninput = () => { ghName[path] = name.value; };
+    const priv = el("label", "sub check-row", '<input type="checkbox" checked> Private: only you can see it');
+    const putB = row.querySelector("button");
+    putB.disabled = running;
+    putB.onclick = () => ghStart(path, "put", { name: name.value.trim(), private: priv.querySelector("input").checked });
+    parts.push(p, row, priv);
+  }
+  /* under the buttons: a refusal from the last press, else what the app says about the last Put on GitHub or push */
+  if (said) { out.textContent = said.text; out.classList.add("warn"); }
+  else if (running) out.textContent = last.text;
+  else if (last) { out.textContent = "Last push " + ghWhen(last.at) + ": " + last.text; out.classList.toggle("warn", !last.ok); }
+  box.replaceChildren(...parts, out);
+}
 /* What is connected, as rows: [ok, name, one line]. The AIs first, then Studio, its plugin and Blender. */
 function needRows() {
   const have = (status.ai || {}).installed || {}, pl = status.plugin || {};
@@ -2377,6 +2679,7 @@ function onEvent(e) {
   if (e.kind === "promo") { onPromo(e); return; }
   if (e.kind === "review") { onReviewItem(e); return; }
   if (e.kind === "studio_run") { onStudioRun(e); return; }
+  if (e.kind === "swarm") { swarmSoon(e.lead); return; }   /* a Lead's team board changed: its newer lines are asked for */
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
@@ -2966,6 +3269,9 @@ async function moveOpenCodePick() {
   if (sent) refresh();
 }
 function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
+/* the app is told the chat in front's model and effort when either is picked or its AI is switched, so the app's own
+   messages to it (a run's wakes, board news) and its waiting messages use them at once (/api/chat-model) */
+function tellPick(p) { p = p || agents.get(current); if (!p || !p.started) return; api("/api/chat-model", { agent: p.id, model: modelOf(p) || null, effort: effortOf(p) }).catch(() => {}); }
 /* no effort to set: the AI's models carry their own, or this model names its level (Gemini's "gemini-4-neon-high") */
 function ownLevel(ai, model) { return caps(ai).effort === false || (ai === "gemini" && /-(low|medium|high|xhigh|max)$/.test(model || "")); }
 /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
@@ -3146,7 +3452,7 @@ function paintPicker() {
       if (g && g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
       const o = el("button", "opt", TICK + "<span><b>" + esc(rest) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
       o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
-      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); };
+      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id).then(() => tellPick(p)); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); tellPick(p); };
       lst.appendChild(o);
     });
     lst.scrollTop = top;
@@ -3161,7 +3467,7 @@ function paintPicker() {
     const b = el("button", id === effort ? "on" : "", esc(name));
     b.setAttribute("aria-pressed", id === effort ? "true" : "false");
     b.title = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" }[id];
-    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); };
+    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); tellPick(); };
     seg.appendChild(b);
   });
 }
@@ -3192,7 +3498,7 @@ let research = {}, researchPane = null;
 function setView(v) {
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
   if (v === "review" && !curProj) v = "chat";
-  view = v; savePlace(); paintView(); paintSide();
+  view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
   if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
@@ -3448,8 +3754,8 @@ const RAG_STEPS = [
   { id: "ollama-install", name: "Install Ollama", go: "Install", doing: "Installing...", what: "Ollama runs the AI model that reads your docs. Fridae downloads the free app from ollama.com into your Applications folder.", done: "Ollama is running." },
   { id: "ollama-pull", name: "Download the embedding model", go: "Download", doing: "Downloading...", what: "The model Ollama uses to find text by meaning. A one-time download.", done: "Downloaded.", after: [0], wait: "Needs Ollama running first (step 1)." },
   { id: "qdrant-install", name: "Install Qdrant", go: "Install", doing: "Installing...", what: "Qdrant keeps the index on your Mac. It goes in Fridae's own folder; nothing is installed system-wide.", done: "Installed." },
-  { id: "models", name: "Start the reranker", go: "Start", doing: "Starting...", what: "Downloads the small model that puts the best matches first. A one-time download.", done: "Ready." },
-  { id: "build", name: "Build the index", go: "Build", doing: "Building...", what: "Reads your notes, guides and project docs and builds the index. The first time takes a few minutes.", after: [0, 1, 2, 3], wait: "Needs steps 1 to 4 first." },
+  { id: "models", name: "Start the reranker", go: "Start", doing: "Starting...", what: "Downloads the model that puts the best matches first (about 1.1 GB). A one-time download.", done: "Ready." },
+  { id: "build", name: "Build the index", go: "Build", doing: "Building...", what: "Reads your notes, guides and project docs and builds the index. The first build can take 10 minutes or more on a big vault; after that only changed notes are read again.", after: [0, 1, 2, 3], wait: "Needs steps 1 to 4 first." },
 ];
 function ragVisible() { return document.body.classList.contains("setup") && !!document.querySelector('.su-body section[data-s="connections"].on'); }
 const ragPct = (f) => Math.max(0, Math.min(100, Math.round((Number(f) || 0) * 100)));
@@ -3529,9 +3835,9 @@ function paintRagLight() {
   if (su.running && mine) { text = ragDoing(su) + " This happens once."; bar = ragPct(su.fraction); go = "Setting up..."; }
   else if (mine && su.error && !ck.models) { text = "The setup did not finish: " + ragSentence(su.error); go = "Try again"; act = () => ragSetup("models"); }
   else if (ck.error) text = "Could not check what is set up.";
-  else if (!ck.models) { text = "Not set up yet. Set up downloads about 200 MB of small models, once."; go = "Set up"; act = () => ragSetup("models"); }
+  else if (!ck.models) { text = "Not set up yet. Set up downloads one small model (about 65 MB), once."; go = "Set up"; act = () => ragSetup("models"); }
   else if (s && s.ready) { text = "Ready, " + ragPieces(s.chunks) + " indexed."; go = "Build again"; act = ragRebuild; }
-  else if (s && s.building) { text = ragBuilding(s) + " The first time takes a few minutes."; bar = ragPct((s.progress || {}).fraction); }
+  else if (s && s.building) { text = ragBuilding(s) + " The first build can take 10 minutes or more on a big vault; after that only changed notes are read again."; bar = ragPct((s.progress || {}).fraction); }
   else if (ragStopped()) { text = ragGaveUp() ? "Fridae stopped trying to start the index." : "The index stopped with a problem."; go = "Try again"; act = ragRebuild; }
   else text = p.restarting ? "Starting again..." : "Starting...";
   $("rag-l-state").textContent = text;
@@ -4007,11 +4313,6 @@ function paintStage(s, run, id) {
   s.querySelector("small").textContent = gate && st.status !== "done" ? "asks you" : "";
   s.title = stageName(id) + ": " + (st.status === "done" ? "done" : now ? "working on it now" : "to do") + (gate ? ". Waits for your approval before it is done." : ".");
 }
-function stageStrip(run) {
-  const strip = el("div", "rv-stages");
-  STAGE_NAMES.forEach(([id, name]) => { const s = el("div", "rv-stage", "<i></i><span></span><small></small>"); s.querySelector("span").textContent = name; paintStage(s, run, id); strip.appendChild(s); });
-  return strip;
-}
 const runDot = (state) => "dot" + (state === "Working" ? " live" : state === "Finished" || state === "Waiting for you" ? " ok" : "");
 function paintRun(r) {
   const run = r && r.run && r.run.on ? r.run : null;
@@ -4315,7 +4616,6 @@ function apCard(x) {
   const state = run ? runState(r, run)[0] : st.working ? "Chats at work" : ended ? "Last run ended " + ago(ended) : "No studio run";
   const [dot, words] = c.querySelectorAll(".ap-state span");
   dot.className = run ? runDot(state) : "dot" + (st.working ? " live" : ""); words.textContent = state;
-  if (run) c.appendChild(stageStrip(run));
   const rows = nowRows(x.path, true);
   if (rows.length) { const d = el("div", "rv-now"); d.append(...rows); c.appendChild(d); }
   const needs = needsOf(r);
@@ -4369,25 +4669,48 @@ function overviewNote(e) {
 }
 function overviewWanted() {
   const want = new Map(), links = [];
-  const add = (id, kind, label, extra) => { want.set(id, Object.assign({ id, kind, label }, extra || {})); };
-  const link = (a, b) => { if (want.has(a) && want.has(b)) links.push([a, b]); };
-  const open = [...agents.values()].filter((p) => p.started || p.busy);
+  const as = (id) => alias.get(id) || id;
+  const add = (id, kind, label, extra) => { if (alias.has(id)) return; want.set(id, Object.assign({ id, kind, label }, extra || {})); };
+  const link = (a, b) => { a = as(a); b = as(b); if (a !== b && want.has(a) && want.has(b)) links.push([a, b]); };
+  /* an expert idle for longer than XP_IDLE is left out, as in the side list (xpRecent), unless the side list shows its
+     chat's earlier experts */
+  const now = Date.now();
+  const xpShown = (id, parent, busy, when) => !parent || busy || id === current || now - when < XP_IDLE || xpOld.has(parent);
+  const open = [...agents.values()].filter((p) => (p.started || p.busy) && (!isHelper(p) || xpShown(p.id, p.parent || p.id, p.busy, xpWhen.get(p.id) || (p.replay ? 0 : pageStart))));
   const openIds = new Set(open.map((p) => p.id));
-  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id)).slice(0, 60);
-  for (const x of projects.projects || []) add("proj:" + x.path, "project", x.name, { path: x.path, busy: open.some((p) => p.busy && projKey(p) === x.path) });
+  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id) && xpShown(c.id, c.parent, false, xpWhen.get(c.id) || (c.updated || 0) * 1000)).slice(0, 60);
+  /* A game's Lead is the game itself in the graph: one node, drawn as the logo, that opens the Lead's chat. The Lead
+     is the chat leading the game's run, else its newest chat named "Lead: ...". `alias` sends the Lead's own node,
+     and every tie to it, to the game's. */
+  const alias = new Map(), leadOf = new Map();
+  const isLeadName = (name) => /^lead\b/i.test(name || "");
+  for (const x of projects.projects || []) {
+    const r = rvAll[x.path], run = r && r.run && r.run.lead;
+    const cands = open.filter((p) => !isHelper(p) && projKey(p) === x.path).map((p) => ({ id: p.id, name: p.name, at: bornAt(p.id) }))
+      .concat(savedChats.filter((c) => !c.parent && (c.project || "") === x.path).map((c) => ({ id: c.id, name: c.name, at: bornAt(c.id) })));
+    const lead = cands.find((c) => c.id === run) || cands.filter((c) => isLeadName(c.name)).sort((a, b) => b.at - a.at)[0];
+    if (!lead) continue;
+    leadOf.set(x.path, lead.id);
+    alias.set("chat:" + lead.id, "proj:" + x.path); alias.set("saved:" + lead.id, "proj:" + x.path);
+  }
+  for (const x of projects.projects || []) {
+    const lid = leadOf.get(x.path), lp = lid && agents.get(lid);
+    add("proj:" + x.path, "project", x.name, { path: x.path, lead: lid || null, busy: open.some((p) => p.busy && projKey(p) === x.path), weight: lp ? Math.min(6, (lp.steps || 0) / 3) : 0 });
+  }
   if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
   for (const p of open) {
-    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name;
-    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
+    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name, m = helper && memberOf(p.id);
+    /* a member of a team's run: `swarm` is its state there (parked is drawn dimmer, being checked with a ring) */
+    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, swarm: (m && m.status) || "", weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
   }
   for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
   for (const p of open) {
-    if (isHelper(p) && want.has("chat:" + p.parent)) link("chat:" + p.parent, "chat:" + p.id);
+    if (isHelper(p) && want.has(as("chat:" + p.parent))) link("chat:" + p.parent, "chat:" + p.id);
     else link("proj:" + projKey(p), "chat:" + p.id);
-    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: "chat:" + p.id, newest: i === all.length - 1 }); links.push(["chat:" + p.id, id]); });
+    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: as("chat:" + p.id), newest: i === all.length - 1 }); links.push([as("chat:" + p.id), id]); });
   }
   for (const c of savedChats) {
-    if (c.parent && (openIds.has(c.parent) || want.has("saved:" + c.parent))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
+    if (c.parent && (openIds.has(c.parent) || want.has(as("saved:" + c.parent)))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
     else link("proj:" + (c.project || ""), "saved:" + c.id);
   }
   /* a saved chat of no game, with no square to hang from, is left out */
@@ -4411,7 +4734,7 @@ function overviewSync() {
     }
   }
   og.links = links.filter((l) => og.nodes.has(l[0]) && og.nodes.has(l[1]));
-  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1)).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
+  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1) + "|" + (n.swarm || "")).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
   if (sig === og.sig) return false;
   og.sig = sig;
   const shape = [...want.values()].filter((n) => n.kind !== "step").map((n) => n.id).join("\n") + "\n" + og.links.filter((l) => !l[1].startsWith("step:")).map((l) => l[0] + ">" + l[1]).join("\n");
@@ -4422,7 +4745,9 @@ function overviewSync() {
   $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "game"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
   return kind;
 }
-const NODE = { project: 8, chat: 6, expert: 4, saved: 3, step: 2.5 };
+const NODE = { project: 10, chat: 6, expert: 4, saved: 3, step: 2.5 };
+/* a game is drawn as the Fridae logo, turning while anything in it works */
+const ogLogo = new Image(); ogLogo.onload = () => { if (typeof overviewPoke === "function") overviewPoke(); }; ogLogo.src = "/logo.png";
 /* the furthest out the graph goes, by the fit or by the wheel: in a small space (large text, a narrow window) the
    whole of it is still inside */
 const ZOOM_MIN = 0.15;
@@ -4506,18 +4831,28 @@ function overviewDraw(now) {
   const names = [];
   for (const n of og.nodes.values()) {
     const r = Math.max(radius(n), 1.5 / og.zoom), dim = lit(n.id) ? 1 : 0.18;   /* never under 1.5px on the screen */
-    const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85;
+    const parked = n.swarm === "parked" && !n.busy;   /* a parked member rests: drawn dimmer, its name too */
+    const shade = (n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85) * (parked ? 0.5 : 1);
     if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
     c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
-    c.beginPath();
-    if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
-    c.fill();
+    if (n.kind === "project" && ogLogo.complete && ogLogo.naturalWidth) {
+      const s = r * 2.6;
+      c.save(); c.globalAlpha = (n.busy ? 1 : 0.9) * dim; c.translate(n.x, n.y);
+      if (n.busy && !og.still) c.rotate((now / 1600) % 6.2832);   /* one turn every ten seconds */
+      c.drawImage(ogLogo, -s / 2, -s / 2, s, s); c.restore();
+    } else {
+      c.beginPath();
+      if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
+      c.fill();
+    }
+    /* a member whose work is being checked: one thin, still ring around it */
+    if (n.swarm === "verifying") { c.strokeStyle = "rgba(236,236,238," + 0.5 * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 3.5, 0, 6.283); c.stroke(); }
     /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
        step, the one its chat is on now (all of its last steps under the pointer or zoomed in). They are drawn after
        the dots, the more important first. */
     const wordy = named(n) || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id) && (n.newest || !!og.hover || og.zoom >= 1));
     if (!wordy) continue;
-    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : 0.62) * dim + ")",
+    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : parked ? 0.4 : 0.62) * dim + ")",
       rank: n === og.hover ? 0 : n.kind === "project" ? 1 : n.kind === "chat" ? (n.busy ? 2 : 3) : n.kind === "expert" ? 4 : n.kind === "step" ? (n.newest ? 5 : 6) : 7 };
     const chat = n.kind === "step" && og.nodes.get(n.of);
     if (chat) {
@@ -4569,6 +4904,7 @@ function overviewTick() {
 function overviewOpen() {
   /* the first time, the layout starts from scratch at full strength; coming back to it, only what changed stirs it */
   const first = !og.nodes.size;
+  swarmPrime();   /* parked and checked experts are drawn so: what each Lead's team is doing */
   if (overviewSync()) { if (first) { og.heat = 1; og.age = 0; og.asleep = false; og.calm = 0; } else overviewWake(); }
   og.last = 0; overviewPoke();
   if (!og.timer) og.timer = setInterval(overviewTick, 900);
@@ -4613,7 +4949,7 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
     if (!d.node) return;
     const n = d.node;
     /* a game opens its Review; a chat opens in Chat; an expert opens its Lead's chat with its line open */
-    if (n.kind === "project") showProject(n.path, n.path ? "review" : "chat");
+    if (n.kind === "project") { if (n.lead) openChatById(n.lead); else showProject(n.path, n.path ? "review" : "chat"); }
     else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
     else if (n.kind === "saved") openChatById(n.chat);
   });
@@ -4655,6 +4991,373 @@ function onReviewItem(e) {
   p.turn.appendChild(line); p.turn._steps = null;
   if (p.id === current) stick();
 }
+/* ---------- a Lead's team: members working at the same time, and the board they talk on ---------- */
+/* What the app knows of each Lead's team (GET /api/swarm), by the Lead's chat id: its run (null when none is going),
+   its members and the board's lines so far. A change comes as one "swarm" event on the bus, and then only the lines
+   newer than the last one here are asked for (`since`). */
+const swarm = new Map();
+const swarmOf = (lead) => (lead && swarm.get(lead)) || null;
+/* the member a chat is, in any Lead's run that is going */
+function memberOf(id) {
+  if (!id) return null;
+  for (const s of swarm.values()) if (s.run) { const m = (s.members || []).find((x) => x && x.id === id); if (m) return m; }
+  return null;
+}
+/* a member's state, in a word or two, with its dot */
+const SW = {
+  working: { word: "working", dot: " live" },
+  parked: { word: "parked", dot: " park" },
+  verifying: { word: "being checked", dot: " verify" },
+  merged: { word: "merged", dot: " ok" },
+  stopped: { word: "stopped", dot: "" },
+  failed: { word: "failed", dot: " bad" },
+};
+/* and in one sentence, for its tooltip */
+function swTip(status, thing) {
+  return status === "working" ? "Working on its part now, in its own copy of the " + thing + "."
+    : status === "parked" ? "Done for now, or waiting on someone. Parked costs nothing; a mention on the board wakes it."
+    : status === "verifying" ? "Its part is being checked before it goes into the " + thing + "."
+    : status === "merged" ? "Checked and added to the run's copy of the " + thing + ". It reaches your " + thing + " only with your yes."
+    : status === "stopped" ? "Stopped. Its copy of the " + thing + " was let go."
+    : status === "failed" ? "Its check did not pass. The board says what failed, and it is asked to fix it."
+    : "";
+}
+/* Game wording for a game, plain words for anything else (the plain projects spec): a project of another type says
+   "project". An older project with no type is a game; chats with no project say "project". */
+function kindOf(path) {
+  if (!path) return "plain";
+  const pr = (projects.projects || []).find((x) => x.path === path), t = pr && (pr.type || pr.kind);
+  return !t || t === "game" || t === "roblox" ? "game" : "plain";
+}
+const thingOf = (path) => (kindOf(path) === "game" ? "game" : "project");
+
+/* asked for soon (once, however many events say so), and never twice at the same time */
+const swTimers = new Map(), swBusy = new Map();
+function swarmSoon(lead) {
+  if (!lead || swTimers.has(lead)) return;
+  swTimers.set(lead, setTimeout(() => { swTimers.delete(lead); loadSwarm(lead); }, 120));
+}
+async function loadSwarm(lead) {
+  if (swBusy.has(lead)) { swBusy.set(lead, "again"); return; }
+  swBusy.set(lead, true);
+  let again = false;
+  try {
+    const had = swarm.get(lead), last = had && had.run && had.board.length ? had.board[had.board.length - 1].t : 0;
+    const r = await api("/api/swarm?lead=" + encodeURIComponent(lead) + (last ? "&since=" + last : ""));
+    if (!r || typeof r !== "object" || !("run" in r)) return;
+    /* a new run under the same Lead: its board is read from the start */
+    if (last && r.run !== had.run) { swarm.delete(lead); again = true; return; }
+    const s = had && had.run === r.run ? had : { board: [], seen: 0, gen: 0 };
+    s.run = r.run || null; s.ceiling = r.ceiling; s.members = Array.isArray(r.members) ? r.members.filter((m) => m && m.id) : [];
+    if (!s.run) { s.board = []; s.seen = 0; }
+    for (const l of (s.run && r.board) || []) {
+      if (!l || typeof l.t !== "number") continue;
+      if (l.t < last || (l.t === last && s.board.some((x) => x.t === l.t && x.from === l.from && x.text === l.text))) continue;
+      s.board.push(l);
+    }
+    if (s !== had) s.seen = s.board.length;   /* what was there when first read is not new; what comes after is */
+    /* the board keeps its newest 600 lines here */
+    if (s.board.length > 600) { const cut = s.board.length - 600; s.board.splice(0, cut); s.seen = Math.max(0, s.seen - cut); s.gen++; }
+    swarm.set(lead, s);
+    paintSideSoon(); if (bdLead() === lead) paintBoard();
+    if (view === "all") overviewTick();
+  } catch (e) {
+  } finally {
+    const more = swBusy.get(lead) === "again"; swBusy.delete(lead);
+    if (again || more) swarmSoon(lead);
+  }
+}
+/* the teams worth knowing now: each game's run Lead, every chat that started experts, and the chat in front */
+function swarmPrime() {
+  const leads = new Set();
+  for (const r of Object.values(rvAll)) if (r && r.run && r.run.lead) leads.add(r.run.lead);
+  for (const h of agents.values()) if (isHelper(h) && h.parent) leads.add(h.parent);
+  const p = agents.get(current); if (p) leads.add(isHelper(p) ? p.parent : p.id);
+  leads.forEach(swarmSoon);
+}
+/* a chat came to the front: its team (or, for a member, its Lead's) is asked for, and the board follows it */
+function swarmFocus(p) { if (p) swarmSoon(isHelper(p) ? p.parent : p.id); paintBoard(); }
+
+/* ---------- the team board ---------- */
+/* Open or folded: kept on this computer for a wide window; in a narrow space it lies over the chat, so it starts
+   folded there and is opened for a look. */
+let bdShut = false, bdNarrow = false, bdNarrowOpen = false;
+try { bdShut = localStorage.getItem("board-shut") === "1"; } catch (e) {}
+let bdFilter = { f: "all", name: "" };
+const bdDrawn = { sig: "", n: 0, prev: null, lead: "" };
+/* one soft colour per member, in the order the team lists them (a name it does not list gets one by its letters) */
+const BD_HUES = ["#8db4ff", "#f3a6c8", "#93dcae", "#f2c27a", "#bfa4ff", "#7fd3d6", "#ff9e86", "#d3d67c"];
+const bdName = (s) => String(s || "").trim().replace(/^@/, "").toLowerCase();
+const bdIsMe = (s) => ["you", "user", "me"].includes(bdName(s));
+const bdReEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function bdHue(s, name) {
+  const n = bdName(name); if (!n || bdIsMe(n) || ["all", "lead", "system", "app"].includes(n)) return "";
+  const i = ((s && s.members) || []).findIndex((m) => bdName(m.name) === n);
+  if (i >= 0) return BD_HUES[i % BD_HUES.length];
+  let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return BD_HUES[h % BD_HUES.length];
+}
+const bdStyle = (c) => (c ? ' style="--c:' + c + '"' : "");
+/* the chat whose board shows: the Lead in front */
+function bdLead() { const p = agents.get(current); return p && !isHelper(p) ? p.id : null; }
+/* a line written to the user, or naming them */
+const bdToMe = (l) => (l.to || []).some(bdIsMe) || /(^|[^\w-])@(you|user|me)\b/i.test(l.text || "");
+/* a line from a member, to it, or naming it */
+function bdHas(l, name) {
+  if (bdName(l.from) === name || (l.to || []).some((t) => bdName(t) === name)) return true;
+  return new RegExp("(^|[^\\w-])@" + (l.kind === "system" ? "?" : "") + bdReEsc(name) + "(?![\\w-])", "i").test(l.text || "");
+}
+const bdKeep = (l) => (bdFilter.f === "me" ? bdToMe(l) : bdFilter.f === "one" ? bdHas(l, bdFilter.name) : true);
+/* t is in seconds (milliseconds are taken too) */
+const bdTime = (t, long) => { const d = new Date(t > 1e12 ? t : t * 1000); return long ? d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit", second: "2-digit" }) : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+/* who wrote it, and to whom, in words */
+function bdWho(s, name) { const n = bdName(name); return bdIsMe(n) ? "You" : n === "lead" ? "Lead" : n === "all" ? "everyone" : n === "system" || n === "app" || !n ? "Fridae" : n; }
+function bdTo(s, l) {
+  const to = [...new Set((l.to || []).map(bdName).filter(Boolean))];
+  if (!to.length) return "";
+  if (to.includes("all")) return "to everyone";
+  return "to " + to.map((t) => (bdIsMe(t) ? "you" : t === "lead" ? "the Lead" : "@" + t)).join(", ");
+}
+/* the words of a line, escaped, with each @name in its member's colour (and @you marked) */
+function bdMarkup(s, text) {
+  return esc(String(text || "")).replace(/(^|[^\w-])@([\w][\w.-]*[\w]|[\w])/g, (all, pre, n) =>
+    pre + '<span class="bd-at' + (bdIsMe(n) ? " me" : "") + '"' + bdStyle(bdHue(s, n)) + ">@" + n + "</span>");
+}
+const BD_KINDS = { done: "done", verify: "checked", merged: "merged", failed: "failed" };
+function bdKindTip(kind, thing) {
+  return kind === "done" ? "It says its part is done. It is checked next."
+    : kind === "verify" ? "A checker's verdict: it ran the " + thing + "'s checks and read the change against the brief."
+    : kind === "merged" ? "Checked and added to the run's copy of the " + thing + "."
+    : kind === "failed" ? "A check did not pass. It goes back to the member with what failed."
+    : "";
+}
+function bdLine(s, l, prev, thing) {
+  const kind = l.kind === "system" || BD_KINDS[l.kind] ? l.kind : "msg";
+  if (kind === "system") {
+    const d = el("div", "bd-l k-system", "<span></span>"); d.firstChild.textContent = l.text || ""; d.title = bdTime(l.t, true);
+    return d;
+  }
+  const mine = bdIsMe(l.from);
+  const d = el("div", "bd-l k-" + kind + (mine ? " mine" : bdToMe(l) ? " tome" : ""));
+  /* a short run of plain lines from one member, to the same people, reads as one block */
+  const same = prev && prev.kind !== "system" && kind === "msg" && (prev.kind || "msg") === "msg" && bdName(prev.from) === bdName(l.from)
+    && (prev.to || []).map(bdName).join() === (l.to || []).map(bdName).join() && l.t - prev.t < 120;
+  if (same) d.classList.add("cont");
+  const meta = el("div", "bd-meta", '<b class="bd-from"' + bdStyle(bdHue(s, l.from)) + "></b><span class=\"bd-to\"></span><span class=\"bd-k\"></span><time></time>");
+  meta.querySelector(".bd-from").textContent = bdWho(s, l.from);
+  const to = bdTo(s, l); meta.querySelector(".bd-to").textContent = to; meta.querySelector(".bd-to").title = to;
+  const k = meta.querySelector(".bd-k");
+  if (BD_KINDS[kind]) {
+    k.innerHTML = kind === "done" || kind === "merged" ? '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="' + (kind === "done" ? "M1.5 4.8 3.6 6.8 7.5 2.2" : "M2.5 1.5v6M2.5 4.5c2.5 0 4-1 4-3") + '"/></svg>' : "";
+    k.append(BD_KINDS[kind]); k.title = bdKindTip(kind, thing);
+  }
+  const time = meta.querySelector("time"); time.textContent = bdTime(l.t); time.title = bdTime(l.t, true);
+  d.appendChild(meta);
+  d.appendChild(el("div", "bd-text", bdMarkup(s, l.text)));
+  return d;
+}
+/* Paint the board for the Lead in front: shown only while its team has a run going. New lines are added at the foot;
+   the whole log is drawn again only when the Lead, the run or the filter changes. */
+function paintBoard() {
+  const board = $("board"); if (!board) return;
+  const lead = bdLead(), s = swarmOf(lead), on = !!(s && s.run);
+  board.hidden = !on;
+  board.parentNode.classList.toggle("with-board", on);
+  if (!on) { $("bd-ac").classList.remove("on"); return; }
+  if (bdDrawn.lead !== lead) { bdDrawn.lead = lead; bdFilter = { f: "all", name: "" }; $("bd-say").value = ""; bdFit(); bdHint(""); }
+  const open = bdNarrow ? bdNarrowOpen : !bdShut, thing = thingOf(projKey(agents.get(lead)));
+  board.classList.toggle("narrow", bdNarrow); board.classList.toggle("shut", !open);
+  putAttr($("bd-rail"), "aria-expanded", open ? "true" : "false");
+  const members = s.members || [];
+  if (bdFilter.f === "one" && !members.some((m) => bdName(m.name) === bdFilter.name)) bdFilter = { f: "all", name: "" };
+  /* the line under the title: how many are at what, and how many may work at once */
+  const count = {}; members.forEach((m) => { count[m.status] = (count[m.status] || 0) + 1; });
+  const parts = ["working", "verifying", "parked", "merged", "failed", "stopped"].filter((k) => count[k]).map((k) => count[k] + " " + SW[k].word);
+  const cap = typeof s.ceiling === "number" ? s.ceiling : status.swarm_ceiling;
+  const sum = $("bd-sum"), ssig = parts.join() + "|" + cap;
+  if (sum.dataset.sig !== ssig) {
+    sum.dataset.sig = ssig;
+    sum.textContent = (parts.length ? parts.join(" · ") : "The team is getting ready") + (cap ? " · " : "");
+    if (cap) { const b = el("button", "linkish"); b.textContent = "up to " + cap + " at once"; b.title = "How many experts may work at the same time: Setup, Experts"; b.onclick = () => openSetup("experts"); sum.appendChild(b); }
+    sum.title = sum.textContent;
+  }
+  /* the roster: one chip per member; pressing one shows only its lines */
+  const who = $("bd-who"), wsig = members.map((m) => [m.id, m.name, m.role, m.status, m.ai, m.model, m.studio_turn ? 1 : 0].join("|")).join("\n") + "\n" + bdFilter.f + bdFilter.name;
+  if (who.dataset.sig !== wsig) {
+    who.dataset.sig = wsig;
+    who.replaceChildren(...members.map((m) => {
+      const n = bdName(m.name), sw = SW[m.status] || { word: m.status || "", dot: "" };
+      const c = el("button", "bd-m" + (m.status === "parked" || m.status === "stopped" ? " dim" : ""), '<span class="dot' + sw.dot + '"></span><span></span>');
+      c.style.setProperty("--c", bdHue(s, n)); c.lastChild.textContent = n;
+      if (m.studio_turn) c.appendChild(el("i", "bd-turn", "Studio"));
+      const ai = m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : "";
+      c.title = [["@" + n, m.role, sw.word, ai].filter(Boolean).join(" · ") + ".", swTip(m.status, thing), m.studio_turn ? "It has the Studio turn." : "", "Press to see only its lines."].filter(Boolean).join(" ");
+      const pressed = bdFilter.f === "one" && bdFilter.name === n;
+      c.setAttribute("aria-pressed", pressed ? "true" : "false");
+      c.onclick = () => { bdFilter = pressed ? { f: "all", name: "" } : { f: "one", name: n }; paintBoard(); };
+      return c;
+    }));
+  }
+  /* All, To you (with how many), and which member is picked */
+  const toMe = s.board.filter((l) => !bdIsMe(l.from) && bdToMe(l)).length;
+  $("bd-seg").querySelectorAll("button").forEach((b) => {
+    const isOn = bdFilter.f === b.dataset.f; b.classList.toggle("on", isOn); putAttr(b, "aria-pressed", isOn ? "true" : "false");
+    if (b.dataset.f === "me") { const t = "To you" + (toMe ? '<span class="n">' + toMe + "</span>" : ""); if (b.innerHTML !== t) b.innerHTML = t; b.title = "Only what the team wrote to you"; }
+  });
+  const only = $("bd-only"), m1 = bdFilter.f === "one" && members.find((m) => bdName(m.name) === bdFilter.name);
+  only.hidden = !m1;
+  if (m1 && only.dataset.sig !== m1.id + bdFilter.name) {
+    only.dataset.sig = m1.id + bdFilter.name;
+    only.innerHTML = "Only <b" + bdStyle(bdHue(s, bdFilter.name)) + ">@" + esc(bdFilter.name) + "</b>";
+    const go = el("button", "linkish", "Open its chat"); go.onclick = () => openChatById(m1.id); only.appendChild(go);
+  } else if (!m1) only.dataset.sig = "";
+  /* the log */
+  const log = $("bd-log"), fsig = lead + "|" + s.run + "|" + s.gen + "|" + bdFilter.f + "|" + bdFilter.name;
+  const wasDown = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  let fresh = false;
+  if (bdDrawn.sig !== fsig || s.board.length < bdDrawn.n) { log.replaceChildren(); bdDrawn.sig = fsig; bdDrawn.n = 0; bdDrawn.prev = null; fresh = true; }
+  const add = [];
+  for (let i = bdDrawn.n; i < s.board.length; i++) { const l = s.board[i]; if (!bdKeep(l)) continue; add.push(bdLine(s, l, bdDrawn.prev, thing)); bdDrawn.prev = l; }
+  bdDrawn.n = s.board.length;
+  if (add.length) { const e0 = log.querySelector(".bd-empty"); if (e0) e0.remove(); if (!fresh && open) add.forEach((n) => n.classList.add("enter")); log.append(...add); }
+  if (!log.querySelector(".bd-l")) {
+    const say0 = bdFilter.f === "me" ? "Nothing written to you yet. When a member needs you, it shows here."
+      : bdFilter.f === "one" ? "Nothing from or to @" + bdFilter.name + " yet."
+      : "Nothing on the board yet. The team writes here as it works on your " + thing + ": who is doing what, questions for each other, and every check.";
+    let e0 = log.querySelector(".bd-empty"); if (!e0) { e0 = el("p", "bd-empty"); log.appendChild(e0); } putText(e0, say0);
+  }
+  if (fresh || wasDown) log.scrollTop = log.scrollHeight;
+  /* what came while it was folded: the count on the rail */
+  if (open && !document.hidden && view === "chat") s.seen = s.board.length;
+  const unread = Math.max(0, s.board.length - s.seen), u = $("bd-unread");
+  u.hidden = !unread || open; putText(u, unread > 99 ? "99+" : String(unread));
+  putTitle($("bd-rail"), "Show the team board" + (unread ? " (" + unread + " new " + (unread === 1 ? "line" : "lines") + ")" : ""));
+  paintPost();
+}
+function bdOpen(on) {
+  if (bdNarrow) bdNarrowOpen = on;
+  else { bdShut = !on; try { localStorage.setItem("board-shut", on ? "0" : "1"); } catch (e) {} }
+  paintBoard();
+  if (on) { const log = $("bd-log"); log.scrollTop = log.scrollHeight; $("bd-say").focus({ preventScroll: true }); } else $("bd-rail").focus({ preventScroll: true });
+}
+$("bd-rail").onclick = () => bdOpen(true);
+$("bd-shut").onclick = () => bdOpen(false);
+$("bd-seg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; bdFilter = { f: b.dataset.f, name: "" }; paintBoard(); };
+/* Escape folds it (in a narrow space, where it squeezes the chat most) */
+$("board").addEventListener("keydown", (e) => { if (e.key === "Escape" && bdNarrow && bdNarrowOpen && !$("bd-ac").classList.contains("on")) { e.preventDefault(); bdOpen(false); } });
+/* narrow: under 760 px of the page's own space for the chat and the board together */
+new ResizeObserver(() => {
+  const w = document.querySelector(".body").offsetWidth, n = w > 0 && w < 760;
+  if (n !== bdNarrow) { bdNarrow = n; if (n) bdNarrowOpen = false; paintBoard(); }
+}).observe(document.querySelector(".body"));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) paintBoard(); });
+
+/* The box to post in. Who it goes to is in the words themselves: each @name of a member, or @all (and @lead). A post
+   with no one named, or only names nobody here has, is not sent: it says why. */
+function bdTargets(s, text) {
+  const valid = new Set(["all", "lead"].concat((s.members || []).map((m) => bdName(m.name))));
+  const got = [], unknown = [];
+  for (const m of String(text).matchAll(/(^|[^\w-])@([\w][\w.-]*[\w]|[\w])/g)) { const n = bdName(m[2]); (valid.has(n) ? got : unknown).push(n); }
+  return { to: got.includes("all") ? ["all"] : [...new Set(got)], unknown };
+}
+function bdHint(text, bad) { const h = $("bd-hint"); h.dataset.said = text ? "1" : ""; h.textContent = text || ""; h.classList.toggle("bad", !!bad); paintPost(); }
+function paintPost() {
+  const s = swarmOf(bdLead()), ta = $("bd-say"), text = ta.value.trim(), h = $("bd-hint");
+  if (!s) return;
+  const t = bdTargets(s, text);
+  $("bd-send").disabled = !text || !t.to.length || !!$("bd-send").dataset.busy;
+  if (h.dataset.said) return;   /* an answer from the app stays until the words change */
+  h.classList.remove("bad");
+  const naming = /(^|[^\w-])@[\w.-]*$/.test(ta.value.slice(0, ta.selectionStart));   /* a name still being typed */
+  h.textContent = text && !t.to.length && naming ? "Pick a name, or keep typing."
+    : text && !t.to.length ? (t.unknown.length ? "No one on this team is called @" + t.unknown[0] + ". Type @ to pick a name." : "Start with @ and a name, or @all, so it reaches someone.")
+    : t.to.includes("all") ? "Goes to everyone on the team. Enter posts."
+    : t.to.length ? "Goes to " + t.to.map((n) => (n === "lead" ? "the Lead" : "@" + n)).join(", ") + ", and wakes " + (t.to.length === 1 ? "it" : "them") + " if parked. Enter posts."
+    : "@name wakes one member, @all reaches everyone. The Lead reads it all.";
+}
+function bdFit() { const ta = $("bd-say"); ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; }
+async function bdPost() {
+  const lead = bdLead(), s = swarmOf(lead), ta = $("bd-say"), text = ta.value.trim(), send = $("bd-send");
+  if (!s || !text || send.dataset.busy) return;
+  const { to } = bdTargets(s, text); if (!to.length) { paintPost(); return; }
+  send.dataset.busy = "1"; paintPost();
+  let r; try { r = await api("/api/swarm", { action: "post", lead, to, text }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  delete send.dataset.busy;
+  if (r && r.ok) { ta.value = ""; bdFit(); bdHint(""); if (bdFilter.f === "me") bdFilter = { f: "all", name: "" }; loadSwarm(lead); }
+  else bdHint((r && r.error) || "That did not post. Try again.", true);
+}
+$("bd-send").onclick = bdPost;
+/* @-names offered as they are typed: the team's members, @all and @lead */
+let bdAc = { items: [], at: 0, from: 0, q: null };
+function bdAcPaint() {
+  const ta = $("bd-say"), list = $("bd-ac"), s = swarmOf(bdLead());
+  const upto = ta.value.slice(0, ta.selectionStart), m = /(^|[^\w-])@([\w.-]*)$/.exec(upto);
+  const shut = () => { list.classList.remove("on"); bdAc.items = []; ta.removeAttribute("aria-activedescendant"); };
+  if (!s || !m || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return shut();
+  const q = m[2].toLowerCase(), members = s.members || [];
+  const all = [{ n: "all", what: "Everyone on the team", dot: "" }]
+    .concat(members.some((x) => bdName(x.name) === "lead") ? [] : [{ n: "lead", what: "The Lead, who sees everything", dot: "" }])
+    .concat(members.map((x) => ({ n: bdName(x.name), what: [x.role, (SW[x.status] || {}).word].filter(Boolean).join(" · "), dot: (SW[x.status] || {}).dot || "", c: bdHue(s, x.name) })));
+  const hits = all.filter((c) => c.n.startsWith(q)).concat(all.filter((c) => !c.n.startsWith(q) && c.n.includes(q)));
+  if (!hits.length || (hits.length === 1 && hits[0].n === q)) return shut();
+  bdAc = { items: hits, at: bdAc.q === q ? Math.min(bdAc.at, hits.length - 1) : 0, from: upto.length - m[2].length - 1, q };
+  list.replaceChildren(...hits.map((c, i) => {
+    const b = el("button", "bd-opt" + (i === bdAc.at ? " sel" : ""), '<span class="dot' + c.dot + '"' + (c.dot ? "" : ' style="visibility:hidden"') + "></span><b" + bdStyle(c.c) + ">@" + esc(c.n) + "</b><small></small>");
+    b.id = "bd-opt-" + i; b.setAttribute("role", "option"); b.setAttribute("aria-selected", i === bdAc.at ? "true" : "false"); b.tabIndex = -1;
+    b.querySelector("small").textContent = c.what;
+    b.onmousedown = (e) => { e.preventDefault(); bdPick(i); };
+    return b;
+  }));
+  list.classList.add("on"); ta.setAttribute("aria-activedescendant", "bd-opt-" + bdAc.at);
+  const sel = list.children[bdAc.at]; if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function bdPick(i) {
+  const ta = $("bd-say"), it = bdAc.items[i]; if (!it) return;
+  const end = ta.selectionStart, rest = ta.value.slice(end).replace(/^[\w.-]*/, "");
+  ta.value = ta.value.slice(0, bdAc.from) + "@" + it.n + " " + rest.replace(/^\s+/, "");
+  const at = bdAc.from + it.n.length + 2; ta.setSelectionRange(at, at);
+  $("bd-ac").classList.remove("on"); bdAc.items = [];
+  bdFit(); bdHint(""); ta.focus();
+}
+{
+  const ta = $("bd-say");
+  ta.setAttribute("aria-autocomplete", "list"); ta.setAttribute("aria-controls", "bd-ac");
+  ta.addEventListener("input", () => { bdFit(); bdHint(""); bdAcPaint(); });
+  ta.addEventListener("click", bdAcPaint);
+  ta.addEventListener("blur", () => setTimeout(bdAcPaint, 0));
+  ta.addEventListener("keyup", (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") bdAcPaint(); });
+  ta.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if ($("bd-ac").classList.contains("on") && bdAc.items.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); bdAc.at = (bdAc.at + (e.key === "ArrowDown" ? 1 : -1) + bdAc.items.length) % bdAc.items.length; bdAcPaint(); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); bdPick(bdAc.at); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("bd-ac").classList.remove("on"); bdAc.items = []; return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); bdPost(); }
+  });
+}
+
+/* Setup, Experts: Most experts working at once, 1 to 8 (4 unless changed). The app's agent limit is 8. */
+let capWant = 0;
+{
+  const box0 = $("sw-cap");
+  for (let n = 1; n <= 8; n++) { const b = el("button"); b.textContent = n; b.dataset.n = n; b.setAttribute("aria-label", n === 1 ? "One at a time" : n + " at once"); box0.appendChild(b); }
+  box0.onclick = async (e) => {
+    const b = e.target.closest("button"); if (!b || capWant) return;
+    capWant = +b.dataset.n; paintCap();
+    let r; try { r = await api("/api/swarm", { action: "ceiling", value: capWant }); } catch (err) { r = { ok: false, error: "Could not reach the app." }; }
+    capWant = 0;
+    const note0 = $("sw-cap-note");
+    if (r && r.ok) { if (typeof r.ceiling === "number") status.swarm_ceiling = r.ceiling; note0.hidden = true; for (const s of swarm.values()) if (typeof r.ceiling === "number") s.ceiling = r.ceiling; paintBoard(); }
+    else { note0.textContent = (r && r.error) || "Could not change it."; note0.hidden = false; }
+    paintCap();
+  };
+}
+function paintCap() {
+  const v = capWant || (typeof status.swarm_ceiling === "number" ? status.swarm_ceiling : 4);
+  $("sw-cap").querySelectorAll("button").forEach((b) => { const on = +b.dataset.n === v; b.classList.toggle("on", on); putAttr(b, "aria-pressed", on ? "true" : "false"); });
+  $("sw-cap").setAttribute("aria-busy", capWant ? "true" : "false");
+}
 function onStudioRun(e) {
   if (rvAll[e.project]) { rvAll[e.project].run = e.run; if (view === "review" && e.project === rvPathNow()) paintReview(); }
   reloadReview();
@@ -4677,7 +5380,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadRag(); }
+function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); }
 /* Setup, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
@@ -4827,7 +5530,7 @@ async function switchAi(id) {
   if (p.busy) { refuse("Wait until it finishes, or stop it, then switch."); return; }
   let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   if (!r.ok) { refuse(r.error || "Could not switch."); return; }
-  p.ai = id; paintComposer(); paintSwitch(); paintNeeds();
+  p.ai = id; paintComposer(); paintSwitch(); paintNeeds(); tellPick(p);
 }
 /* Setup: the AI new chats start on (General), and each AI with whether it is found on this computer (Connections).
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
@@ -5060,7 +5763,7 @@ async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintLimits();
   paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys;
-  paintSettingsNote(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintSwitch(); paintComposer(); } catch (e) {} }
+  paintSettingsNote(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintSwitch(); paintComposer(); paintCap(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
@@ -5098,14 +5801,14 @@ const ONCE = new URLSearchParams(location.search).has("once");
 const SHOW = new URLSearchParams(location.search).get("show");
 let bootMark = Infinity;  /* agents created after the first batch get selected; replayed ones do not */
 async function poll() {
-  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
+  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); swarmPrime(); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
   for (;;) {
     try {
       const r = await api("/api/events?after=" + after);
       const first = after === 0;
       for (const e of r.events) { after = e.id; onEvent(e); overviewNote(e); }
       if (r.events.length > 40) calm(scroller);   /* a chat put back from its log is simply there: nothing fades in */
-      if (first) { bootMark = after; boot(); stick(true); }
+      if (first) { bootMark = after; boot(); stick(true); swarmPrime(); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
 }

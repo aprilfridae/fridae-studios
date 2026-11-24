@@ -169,7 +169,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "swarm_ceiling": crate::swarm::ceiling(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -202,8 +202,14 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(promo_tab::list())
     } else if path == "/api/notes" {
         send_json(crate::notes::info(&unescape(&query(url, "path").unwrap_or_default())))
+    } else if path == "/api/github/status" {
+        send_json(crate::github::status(query(url, "project").map(|p| unescape(&p)).as_deref()))
     } else if path == "/api/review" {
         send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
+    } else if path == "/api/swarm" {
+        // the swarm of a Lead's chat: its members and its board (the last 200 posts, or those after `since`)
+        let since = query(url, "since").and_then(|v| v.parse::<f64>().ok());
+        send_json(crate::swarm::api_get(&unescape(&query(url, "lead").unwrap_or_default()), since))
     } else if path == "/api/rag/status" {
         // Setup's knowledge index: the mode, `rag check` (for ?mode=, else the chosen one), the service, the setup step
         send_json(crate::rag::status(query(url, "mode").as_deref()))
@@ -276,6 +282,19 @@ fn post(path: &str, body: Value) -> Reply {
                     projects::forget(&path);
                     send_json(json!({"ok": true}))
                 }
+                // Delete in Project details: off the list, and with `trash` the folder to the Trash. Never while one of
+                // its chats is working.
+                "delete" => {
+                    let working = agents::agents().iter().any(|a| a.busy() && a.project().is_some_and(|p| projects::same(&p, &path)));
+                    if working {
+                        send_json(json!({"ok": false, "error": "A chat is working in this project. Stop it first."}))
+                    } else {
+                        match projects::delete(&path, body["trash"].as_bool().unwrap_or(false)) {
+                            Ok(()) => send_json(json!({"ok": true})),
+                            Err(e) => send_json(json!({"ok": false, "error": e})),
+                        }
+                    }
+                }
                 _ => send_json(json!({"ok": false, "error": "Unknown action."})),
             }
         }
@@ -299,6 +318,14 @@ fn post(path: &str, body: Value) -> Reply {
             }
             "ideas" => send_json(research::find_ideas(&text_of("focus"), body["ai"].as_str(), body["model"].as_str())),
             _ => send_json(json!({"ok": false})),
+        },
+        // the model and effort picked for a chat in the window (`Agent::set_pick`)
+        "/api/chat-model" => match &target {
+            Some(agent) => {
+                agent.set_pick(body["model"].as_str(), body["effort"].as_str());
+                send_json(json!({"ok": true}))
+            }
+            None => send_json(json!({"ok": false, "error": "That chat is gone."})),
         },
         "/api/ai" => {
             // with a chat named: that chat's AI (a started chat carries on with the other AI, handed the chat so far);
@@ -377,6 +404,8 @@ fn post(path: &str, body: Value) -> Reply {
             },
             _ => send_json(opencode::login_state()),
         },
+        // Setup > Connections > GitHub, and Project details' Put on GitHub and Push now (github.rs)
+        p if p.starts_with("/api/github/") => send_json(crate::github::post(p, &body)),
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
         "/api/unqueue" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.unqueue(&text_of("qid")))})),
         "/api/board" => {
@@ -384,6 +413,7 @@ fn post(path: &str, body: Value) -> Reply {
             let project = text_of("path");
             if body["action"].is_string() { send_json(board::act(&project, &body)) } else { send_json(board::get(&project)) }
         }
+        "/api/swarm" => send_json(crate::swarm::api_post(&body)),
         "/api/experts" => {
             // Setup > Experts: with an expert, save its row (AI "" or "lead" for Same as the Lead); always the listing
             if body["expert"].is_string() {

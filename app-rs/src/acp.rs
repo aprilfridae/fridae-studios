@@ -86,6 +86,9 @@ pub struct Rules {
     /// Folders whose hidden files and folders are never written either (the home folder: shell start-up files,
     /// other tools' settings).
     pub hidden_in: Vec<PathBuf>,
+    /// Places that hold a sign-in or a key (`paths::app_secrets`): never read or written by a file tool, in any mode
+    /// (a tool that names one is refused, whatever it is).
+    pub secrets: Vec<PathBuf>,
     /// The agent's own data folder (`~/.gemini/antigravity-cli`): it keeps a scratch folder per conversation there.
     pub agent_dir: PathBuf,
     /// Agents may generate images on the user's Gemini plan (Setup's switch, `paths::gemini_images_on`). Off: the
@@ -367,6 +370,18 @@ pub fn decide(tool: &Value, rules: &Rules, session: &str, allowed: &[String]) ->
     let own_scratch = |p: &Path| !session.is_empty() && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') && inside(p, &scratch);
     let own = |p: &Path| !own_scratch(p) && never_written(p, rules, true);
     let own_file = "which no AI's file tools may change (Fridae's own files, hidden files in your home folder)";
+    // a place that holds a sign-in or a key: refused in every mode, for any tool that names it, and a search over a
+    // folder that holds one (the agent's own scratch folder for this conversation excepted: a second account's lies
+    // inside one)
+    let secret = |p: &Path| {
+        let lp = low(p);
+        !own_scratch(p) && rules.secrets.iter().map(|q| low(&paths::real_as_far_as_exists(q))).any(|q| under(&lp, &q) || (kind == "search" && under(&q, &lp)))
+    };
+    if let Ok(found) = &named
+        && let Some(p) = found.iter().find(|p| secret(p))
+    {
+        return refuse(format!("Gemini tried to use {}, where Fridae keeps a sign-in or a key, which no AI may read or change, so it was refused. {STOPPED_THERE}", p.display()));
+    }
     if rules.full {
         if is_command {
             return allow();
@@ -1242,6 +1257,7 @@ mod tests {
             reads: vec![root.join("kit"), root.join("attachments")],
             protected: vec![root.join("kit/config.json"), root.join("work/chats"), root.join("work/usage.jsonl"), root.join("ws/.agents/mcp_config.json")],
             hidden_in: vec![root.join("home")],
+            secrets: vec![root.join("support/github"), root.join("support/settings.json")],
             agent_dir: root.join("gemini/antigravity-cli"),
             images: true,
         };
@@ -1275,6 +1291,29 @@ mod tests {
             Out::Refused(c) => format!("refused {}", Value::Array(c.clone())),
             _ => String::new(),
         }).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn a_place_that_holds_a_sign_in_is_never_read_in_any_mode() {
+        for full in [false, true] {
+            let (mut r, root) = rules(full);
+            std::fs::create_dir_all(root.join("support/github")).unwrap();
+            std::fs::write(root.join("support/github/token"), "gho_x").unwrap();
+            // the gate is the same whatever the chat's folders: even one that holds the sign-in's folder
+            r.reads.push(root.join("support"));
+            let token = root.join("support/github/token");
+            for tool in [read(&token), call("grep_search", "search", json!({"SearchPath": root.join("support/github")}), &[]), write(&token), call("view_file", "other", json!({"AbsolutePath": token}), &[])] {
+                let v = decide(&tool, &r, "s-1", &[]);
+                assert!(!v.allow && said(&v).contains("sign-in or a key"), "full {full}: {tool}: {}", said(&v));
+            }
+            // in any case of letters, and a secret file (as the settings with the Gemini key) too
+            let upper = PathBuf::from(token.display().to_string().replace("github/token", "GITHUB/TOKEN"));
+            assert!(!decide(&read(&upper), &r, "s-1", &[]).allow);
+            assert!(!decide(&read(&root.join("support/settings.json")), &r, "s-1", &[]).allow);
+            // a search over a folder that holds it, and a neighbour that is no secret
+            assert!(!decide(&call("grep_search", "search", json!({"SearchPath": root.join("support")}), &[]), &r, "s-1", &[]).allow);
+            assert!(decide(&read(&root.join("kit/readme.md")), &r, "s-1", &[]).allow, "full {full}");
+        }
     }
 
     #[test]

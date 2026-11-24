@@ -1183,7 +1183,7 @@ def _run_tool(fn, args):
 def _team_in_time(fn, args, deadline):
     """rbx_team under a budget. Its `wait` is already a wait: it returns inside the budget saying who is still
     working and to wait again; no job."""
-    if (args.get("action") or "").lower() == "wait":
+    if (args.get("action") or "").lower() in ("wait", "wait_board"):
         left = int(deadline - time.monotonic() - BUDGET_SLACK)
         args = dict(args, timeout=max(1, min(int(args.get("timeout") or 600), left)))
     return fn(args)
@@ -1344,6 +1344,7 @@ TOOLS = [
                        "game, or everything (default game when the chat has a game project)"},
              "rule": {"type": "boolean", "description": "note: true adds one House rule (only for a standing "
                       "preference: 'always', 'never', 'from now on')"},
+             "replace": {"type": "boolean", "description": "note: true updates the note with exactly this title instead of adding another"},
              "old": {"type": "string", "description": "rule_edit: a few words of the rule to change"},
              "k": {"type": "integer", "description": "search: results to return, default 5 (3 for shelf vault), at most 8"},
              "count": {"type": "integer", "description": "search: same as k (older name)"},
@@ -1511,16 +1512,26 @@ TOOLS = [
      "what to report), because the new agent knows nothing about this chat. Returns an id and status, or says the app did not pick "
      "it up. Optional 'ai' and 'model' run it on another AI (see the studio guide; the user's Setup > Experts table wins); the answer "
      "says which AI and model it runs on, with a note whenever that is not what you asked for. 'models' (optional ai) lists what each "
-     "AI offers: its default model and its model ids. 'status' (optional ids) lists tasks. 'wait' (ids, timeout seconds, default 600, at most 840) blocks until they are done "
+     "AI offers: its default model and its model ids. The swarm: the experts you start work at once, each writer in its own copy "
+     "of the project, on a shared board. 'post' (to: [\"@name\"], [\"@role\"], [\"@all\"] or [\"@lead\"]; text; kind msg, done "
+     "or verify) posts on it; 'board' (optional since, limit) reads the recent posts; 'wait_board' (timeout) waits for a post "
+     "that mentions you; 'studio_turn' (op take, give or status) takes turns with the one Studio place. 'status' (optional ids) lists tasks. 'wait' (ids, timeout seconds, default 600, at most 840) blocks until they are done "
      "or refused and returns each agent's final reply (a studio run's Lead is handed back after 120 seconds at most, or sooner when a "
      "message or decision is waiting or the run was paused or ended; it says why). Agents started this way cannot start more. They share the one Studio: use "
      "rbx_studio_lock around playtests.",
-     schema({"action": {"type": "string", "enum": ["spawn", "status", "wait", "models"]},
+     schema({"action": {"type": "string", "enum": ["spawn", "status", "wait", "models", "post", "board", "wait_board", "studio_turn"]},
+             "member": {"type": "string", "description": "spawn (optional): the member's handle on the board, such as \"shop-ui\" (default: from name)"},
+             "to": {"type": "array", "items": S, "description": "post: who it is for: \"@name\", \"@role\", \"@all\" or \"@lead\""},
+             "text": {"type": "string", "description": "post: the message (for kind done, a one-line summary of your part)"},
+             "kind": {"type": "string", "enum": ["msg", "done", "verify"], "description": "post: msg (default); done when your part is finished; verify for a verifier's PASS or FAIL"},
+             "since": {"type": "number", "description": "board, wait_board: only posts after this time (a [t] from the board)"},
+             "limit": {"type": "integer", "description": "board: posts to show, at most 40"},
+             "op": {"type": "string", "enum": ["take", "give", "status"], "description": "studio_turn"},
              "role": {"type": "string", "enum": ["worker", "critic"], "description": "spawn"},
              "name": {"type": "string", "description": "spawn: short title shown in the app, 34 characters at most"},
              "task": {"type": "string", "description": "spawn: the full instructions for the new agent"},
              "ids": {"type": "array", "items": S, "description": "status (optional) and wait: task ids returned by spawn"},
-             "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840"},
+             "timeout": {"type": "integer", "description": "wait: seconds, default 600, at most 840; wait_board: default 300"},
              "expert": {"type": "string", "description": "spawn (Studio mode): a roster expert id such as coder or security; its role comes from the roster and the task is added to the expert's own instructions"},
              "ai": {"type": "string", "enum": ["claude", "gemini", "cursor", "opencode"], "description": "spawn (optional, use sparingly): run the new agent on this AI instead of your own. The user's Setup > Experts choice for that expert wins over it; an AI that is not installed is refused with the reason. models (optional): list this AI's models in full"},
              "model": {"type": "string", "description": "spawn (optional): a model id of that AI (or of yours when ai is left out), exactly as action 'models' lists it; one it does not offer runs on the nearest it has or on its default, and the result says which and why"}}, ["action"]), t_team),
