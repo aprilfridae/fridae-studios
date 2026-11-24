@@ -15,6 +15,7 @@ are hidden for that game.
 QdrantStore (Heavy): the Qdrant service. MemStore (Light): plain numpy arrays in memory, saved as plain files.
 """
 import json
+import math
 import os
 import tempfile
 import threading
@@ -52,7 +53,7 @@ class QdrantStore:
                 sparse_vectors_config={"sparse": m.SparseVectorParams(modifier=m.Modifier.IDF)})
             with warnings.catch_warnings():  # local mode says payload indexes have no effect there; a server uses them
                 warnings.simplefilter("ignore")
-                for key in ("shelf", "project", "path"):
+                for key in ("shelf", "project", "path", "title"):
                     self.client.create_payload_index(self.collection, key, m.PayloadSchemaType.KEYWORD)
 
     def upsert(self, points):
@@ -107,6 +108,50 @@ class QdrantStore:
                                            limit=FUSED, with_payload=True)
         return [p.payload for p in res.points if p.payload]
 
+    def rankings(self, dense, sparse, flt, keys=(), limit=PREFETCH):
+        """As MemStore.rankings: the dense and sparse rankings and the nearest allowed part of each keyword key."""
+        m = self._m()
+        f = self._filter(flt)
+        dense = [float(x) for x in dense]
+        with self._db:
+            res = self.client.query_points(self.collection, query=dense, using="dense", query_filter=f, limit=limit,
+                                           with_payload=True)
+        dense_top = [p.payload for p in res.points if p.payload]
+        sparse_top = []
+        si, sv = sparse
+        if len(si):
+            sq = m.SparseVector(indices=[int(i) for i in si], values=[float(v) for v in sv])
+            with self._db:
+                res = self.client.query_points(self.collection, query=sq, using="sparse", query_filter=f, limit=limit,
+                                               with_payload=True)
+            sparse_top = [p.payload for p in res.points if p.payload]
+        kw = []
+        titles = sorted({k[1] for k in keys})
+        if titles:
+            kf = m.Filter(must=[f, m.FieldCondition(key="title", match=m.MatchAny(any=titles))])
+            with self._db:
+                pts, _ = self.client.scroll(self.collection, scroll_filter=kf, limit=4096, with_payload=True,
+                                            with_vectors=["dense"])
+            qn = math.sqrt(sum(x * x for x in dense)) or 1.0
+            best = {}  # a note key or a section key -> (similarity, payload)
+            for p in pts:
+                pay, vec = p.payload or {}, p.vector
+                vec = vec.get("dense") if isinstance(vec, dict) else vec
+                if not pay or not vec:
+                    continue
+                vn = math.sqrt(sum(x * x for x in vec)) or 1.0
+                sim = sum(a * b for a, b in zip(dense, vec)) / (qn * vn)
+                for key in ((pay.get("shelf"), pay.get("title"), None), (pay.get("shelf"), pay.get("title"), pay.get("i"))):
+                    if key not in best or sim > best[key][0]:
+                        best[key] = (sim, pay)
+            seen = set()
+            for key in keys:
+                hit = best.get(tuple(key))
+                if hit and hit[1].get("id") not in seen:
+                    seen.add(hit[1].get("id"))
+                    kw.append(hit[1])
+        return dense_top, sparse_top, kw
+
     def count_path(self, path):
         m = self._m()
         f = m.Filter(must=[m.FieldCondition(key="path", match=m.MatchValue(value=path))])
@@ -129,9 +174,12 @@ class _Snapshot:
         self.shelf = np.array([self.shelf_codes.get(p.get("shelf"), -1) for p in self.payloads], dtype=np.int8)
         self.proj = np.array([pcode[p.get("project", "")] for p in self.payloads], dtype=np.int32)
         self.team = {}  # the kit's team experts: title -> rows
+        self.by_note, self.by_section = {}, {}  # (shelf, title) and (shelf, title, i) -> rows, for keyword keys
         for i, p in enumerate(self.payloads):
             if p.get("shelf") == "team" and not p.get("project"):
                 self.team.setdefault(p.get("title"), []).append(i)
+            self.by_note.setdefault((p.get("shelf"), p.get("title")), []).append(i)
+            self.by_section.setdefault((p.get("shelf"), p.get("title"), p.get("i")), []).append(i)
         # sparse vectors term-major: term t's postings are post_rows/post_vals[starts[k]:ends[k]] where terms[k] == t
         if rows:
             lens = np.array([len(r[2][0]) for r in rows], dtype=np.int64)
@@ -327,6 +375,16 @@ class MemStore:
             return []
         q = self._norm(dense)
         dense_top = self._top(s.dense @ q, mask, PREFETCH) if len(q) == s.dense.shape[1] else []
+        sparse_top = self._sparse_top(s, sparse, mask, PREFETCH)
+        fused = {}
+        for ranking in (dense_top, sparse_top):
+            for pos, row in enumerate(ranking):
+                fused[row] = fused.get(row, 0.0) + 1.0 / (pos + RRF_K)
+        best = sorted(fused, key=lambda r: -fused[r])[:FUSED]
+        return [s.payloads[r] for r in best]
+
+    def _sparse_top(self, s, sparse, mask, limit):
+        np = self.np
         acc = np.zeros(s.n, dtype=np.float32)
         touched = np.zeros(s.n, dtype=bool)
         si, sv = sparse
@@ -340,13 +398,32 @@ class MemStore:
             idf = np.log((s.n - df + 0.5) / (df + 0.5) + 1.0)
             np.add.at(acc, rows, np.float32(float(qv) * idf) * s.post_vals[a:b])
             touched[rows] = True
-        sparse_top = self._top(acc, mask & touched, PREFETCH) if touched.any() else []
-        fused = {}
-        for ranking in (dense_top, sparse_top):
-            for pos, row in enumerate(ranking):
-                fused[row] = fused.get(row, 0.0) + 1.0 / (pos + RRF_K)
-        best = sorted(fused, key=lambda r: -fused[r])[:FUSED]
-        return [s.payloads[r] for r in best]
+        return self._top(acc, mask & touched, limit) if touched.any() else []
+
+    def rankings(self, dense, sparse, flt, keys=(), limit=PREFETCH):
+        """For the engine's own fusion: the dense ranking, the sparse ranking (empty when sparse has no terms) and,
+        for each keyword key (shelf, title, section index or None for a whole note) in its order, the allowed part
+        of it nearest the query. Three lists of payloads."""
+        s = self._snap
+        if not s.n:
+            return [], [], []
+        mask = self._mask(s, flt)
+        if not mask.any():
+            return [], [], []
+        q = self._norm(dense)
+        sims = s.dense @ q if len(q) == s.dense.shape[1] else None
+        dense_top = self._top(sims, mask, limit) if sims is not None else []
+        sparse_top = self._sparse_top(s, sparse, mask, limit) if len(sparse[0]) else []
+        kw, seen = [], set()
+        for key in keys:
+            rows = s.by_note.get(tuple(key[:2])) if key[2] is None else s.by_section.get(tuple(key))
+            rows = [r for r in rows or () if mask[r]]
+            if rows:
+                best = max(rows, key=lambda r: sims[r]) if sims is not None else rows[0]
+                if best not in seen:
+                    seen.add(best)
+                    kw.append(best)
+        return [[s.payloads[r] for r in x] for x in (dense_top, sparse_top, kw)]
 
     def count_path(self, path):
         return sum(1 for p in self._snap.payloads if p.get("path") == path)

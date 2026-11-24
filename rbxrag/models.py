@@ -1,7 +1,7 @@
 """The embedders behind the knowledge index.
 
-Light: fastembed (ONNX, CPU) for everything: dense BAAI/bge-small-en-v1.5, sparse Qdrant/bm25, rerank
-Xenova/ms-marco-MiniLM-L-6-v2. Heavy: dense mxbai-embed-large through the local Ollama, sparse Qdrant/bm25 and rerank
+Light: fastembed (ONNX, CPU) for everything: dense BAAI/bge-small-en-v1.5 and sparse Qdrant/bm25, no reranker
+(engine.PLANS; Xenova/ms-marco-MiniLM-L-6-v2 stays named for a plan that wants one). Heavy: dense mxbai-embed-large through the local Ollama, sparse Qdrant/bm25 and rerank
 BAAI/bge-reranker-base through fastembed, kept loaded in the RAG process.
 
 The fastembed models are read from <data>/models only (local_files_only): they are downloaded once, by the setup step
@@ -18,16 +18,21 @@ from rbxrag.net import LOOPBACK
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 LIGHT = {"dense": "BAAI/bge-small-en-v1.5", "dim": 384, "sparse": "Qdrant/bm25",
-         "rerank": "Xenova/ms-marco-MiniLM-L-6-v2"}
+         "rerank": "Xenova/ms-marco-MiniLM-L-6-v2",
+         # the dense model reads each chunk's first 256 tokens (a chunk holds up to 480): the build is CPU-bound by
+         # tokens, and this is about a third faster with less working memory (measured; the integration report)
+         "dense_tokens": 256}
+DENSE_BATCH = 16  # texts per ONNX run: bigger batches of long texts only grow the working memory, not the speed
 HEAVY = {"dense": "mxbai-embed-large", "dim": 1024, "sparse": "Qdrant/bm25", "rerank": "BAAI/bge-reranker-base"}
 KEEP_ALIVE = "30m"
 MXBAI_QUERY = "Represent this sentence for searching relevant passages: "
 
 
 def fastembed_models(mode):
-    """[(kind, model name)] of the fastembed models a mode needs on disk."""
+    """[(kind, model name)] of the fastembed models a mode needs on disk. Light answers without a reranker
+    (engine.PLANS), so it downloads none."""
     if mode == "light":
-        return [("dense", LIGHT["dense"]), ("sparse", LIGHT["sparse"]), ("rerank", LIGHT["rerank"])]
+        return [("dense", LIGHT["dense"]), ("sparse", LIGHT["sparse"])]
     return [("sparse", HEAVY["sparse"]), ("rerank", HEAVY["rerank"])]
 
 
@@ -67,6 +72,24 @@ def _tokenizer_json(model_obj):
     return p if p and os.path.isfile(p) else None
 
 
+def make_cutter(tokenizer_json):
+    """cut(text, n): the text's beginning that holds n tokens of that tokenizer (whole characters, nothing rewritten);
+    without a tokenizer, a pessimistic 3 bytes a token."""
+    if tokenizer_json:
+        from tokenizers import Tokenizer
+        tok = Tokenizer.from_file(tokenizer_json)
+        tok.no_truncation()
+
+        def cut(text, n):
+            enc = tok.encode(text, add_special_tokens=False)
+            return text if len(enc.ids) <= n else text[:enc.offsets[n - 1][1]]
+        return cut
+
+    def cut(text, n):
+        return text if len(text.encode()) <= 3 * n else text.encode()[:3 * n].decode("utf-8", "ignore")
+    return cut
+
+
 def _floats(v):
     return [float(x) for x in v]
 
@@ -84,11 +107,21 @@ class _FastembedParts:
     def sparse_query(self, text):
         return _sparse_pair(next(iter(self._sparse.query_embed(text))))
 
-    def rerank(self, query, texts):
+    def rerank(self, query, texts, max_tokens=None):
+        """The reranker's score for each text; with max_tokens each text is first cut to that many of the reranker's
+        own tokens (engine.PLANS bounds Heavy's this way)."""
         texts = list(texts)
         if not texts:
             return []
+        if max_tokens:
+            cut = self._cutter()
+            texts = [cut(t, int(max_tokens)) for t in texts]
         return [float(s) for s in self._reranker.rerank(query, texts)]
+
+    def _cutter(self):
+        if getattr(self, "_cut", None) is None:
+            self._cut = make_cutter(_tokenizer_json(self._reranker))
+        return self._cut
 
 
 class LightEmbedders(_FastembedParts):
@@ -97,13 +130,47 @@ class LightEmbedders(_FastembedParts):
     def __init__(self, cache_dir=None, dense=None, sparse=None, reranker=None):
         # "light2": the in-memory store (an index from Qdrant's local mode is rebuilt once)
         self.model = "light2:%s+%s" % (LIGHT["dense"], LIGHT["sparse"])
-        self._dense = dense or load_fastembed("dense", LIGHT["dense"], cache_dir)
+        self._dense_obj = dense or load_fastembed("dense", LIGHT["dense"], cache_dir)
         self._sparse = sparse or load_fastembed("sparse", LIGHT["sparse"], cache_dir)
-        self._reranker = reranker or load_fastembed("rerank", LIGHT["rerank"], cache_dir)
-        self.count_tokens = make_token_counter(_tokenizer_json(self._dense))
+        self._cache_dir = cache_dir
+        self._reranker_obj = reranker  # Light's plan uses none (engine.PLANS); loaded only if a plan asks for one
+        tj = _tokenizer_json(self._dense_obj)
+        self.count_tokens = make_token_counter(tj)
+        self.dense_tokens = LIGHT["dense_tokens"]
+        self._dense_cut = make_cutter(tj)
+        if self.dense_tokens:
+            self.model = "light3:%s/%d+%s" % (LIGHT["dense"], self.dense_tokens, LIGHT["sparse"])
+
+    @property
+    def _dense(self):
+        if self._dense_obj is None:  # given back after a big build (release); loaded again on use
+            self._dense_obj = load_fastembed("dense", LIGHT["dense"], self._cache_dir)
+        return self._dense_obj
+
+    def release(self):
+        """Give back the dense model's working memory (onnxruntime keeps its peak); the next use loads it again."""
+        if self._cache_dir is not None:
+            self._dense_obj = None
+            import gc
+            gc.collect()
+
+    @property
+    def _reranker(self):
+        if self._reranker_obj is None:
+            self._reranker_obj = load_fastembed("rerank", LIGHT["rerank"], self._cache_dir)
+        return self._reranker_obj
 
     def dense(self, texts):
-        return [_floats(v) for v in self._dense.embed(list(texts))]
+        """Each text's vector, from its first dense_tokens tokens; embedded shortest first (less padding), returned in
+        the order given."""
+        texts = list(texts)
+        if self.dense_tokens:
+            texts = [self._dense_cut(t, self.dense_tokens) for t in texts]
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        out = [None] * len(texts)
+        for i, v in zip(order, self._dense.embed([texts[i] for i in order], batch_size=DENSE_BATCH)):
+            out[i] = _floats(v)
+        return out
 
     def dense_query(self, text):
         return _floats(next(iter(self._dense.query_embed(text))))

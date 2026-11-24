@@ -10,7 +10,7 @@ import unittest
 import zlib
 
 from rbxrag import chunks
-from rbxrag.engine import Engine
+from rbxrag.engine import PLANS, Engine
 from rbxrag.stores import MemStore, QdrantStore
 
 try:
@@ -60,7 +60,8 @@ class FakeEmbedders:
     def sparse_query(self, text):
         return self._sparse(text)
 
-    def rerank(self, query, texts):
+    def rerank(self, query, texts, max_tokens=None):
+        self.reranked = getattr(self, "reranked", []) + [(len(texts), max_tokens)]
         q = set(words(query))
         return [float(len(q & set(words(t)))) for t in texts]
 
@@ -103,10 +104,70 @@ class EngineCases:
     def project_files(self, project):
         return {p for _, p in self.game.get(project, [])}
 
-    def engine(self, emb=None):
+    def engine(self, emb=None, keyword=None, plan=None):
         """A new engine on the same manifest and saved index, as after a restart of the service."""
         return Engine(self.new_store(), emb or FakeEmbedders(), self.manifest, corpus=self.corpus,
-                      project_files=self.project_files)
+                      project_files=self.project_files, keyword=keyword, plan=plan)
+
+    def fillers(self, n=60):
+        for i in range(n):
+            p = write(os.path.join(self.tmp, "kit", "Filler %d.md" % i),
+                      "# Filler %d\n\n## Events\n\nConnect to an event and react when the property changes.\n" % i)
+            self.files.append(("vault", "Filler %d" % i, p))
+
+    def test_keyword_ranking_joins_the_fusion(self):
+        # a useless dense model and no sparse (Light's plan): the keyword search's first result still comes first
+        self.fillers()
+        target = write(os.path.join(self.tmp, "kit", "Signals.md"),
+                       "# Signals\n\n## Watching one property\n\nUse GetPropertyChangedSignal for one property.\n")
+        self.files.append(("vault", "Signals", target))
+        asked = []
+
+        def keyword(q, shelves, depth, project):
+            asked.append((q, shelves, depth, project))
+            return [("vault", "Signals", None), ("vault", "Not indexed", None)]
+        eng = self.engine(ConstantDense(), keyword, PLANS["light"])
+        eng.sync()
+        hits = eng.query("GetPropertyChangedSignal", ["vault"], 3, None)
+        self.assertEqual(hits[0]["title"], "Signals")
+        self.assertEqual(asked, [("GetPropertyChangedSignal", ["vault"], 20, "")])
+        self.assertFalse(getattr(eng.emb, "reranked", []), "Light's plan reads no reranker")
+
+    def test_keyword_section_key_is_that_section(self):
+        doc = write(os.path.join(self.tmp, "kit", "Delta.md"),
+                    "# Delta\n\n## Boats\n\nSail the boats.\n\n## Trains\n\nRide the trains.\n")
+        self.files.append(("guides", "Delta", doc))
+        eng = self.engine(ConstantDense(), lambda *a: [("guides", "Delta", 1)], PLANS["light"])
+        eng.sync()
+        hits = eng.query("zzz", ["guides"], 1, None)
+        self.assertEqual((hits[0]["title"], hits[0]["heading"]), ("Delta", "Trains"))
+
+    def test_keyword_failure_leaves_dense(self):
+        def broken(*a):
+            raise OSError("vault unreadable")
+        eng = self.engine(None, broken, PLANS["light"])
+        eng.sync()
+        hits = eng.query("haunted forest lantern ghosts", ["guides", "vault", "yours"], 3, None)
+        self.assertEqual(hits[0]["title"], "Bravo")
+
+    def test_keyword_keys_obey_the_filters(self):
+        pa, pb = os.path.join(self.tmp, "A"), os.path.join(self.tmp, "B")
+        ga = write(os.path.join(pa, "GAME.md"), "# A\n\n## Pitch\n\nA lantern game about haunted forests.\n")
+        self.game = {pa: [("GAME.md", ga)]}
+        eng = self.engine(None, lambda *a: [("game", "GAME.md", 1), ("game", "GAME.md", None)], PLANS["light"])
+        eng.sync()
+        eng.sync(pa)
+        self.assertNotIn(ga, [h["path"] for h in eng.query("lantern", ["game", "vault"], 5, pb)])
+        self.assertIn(ga, [h["path"] for h in eng.query("lantern", ["game", "vault"], 5, pa)])
+
+    def test_heavy_plan_bounds_the_reranker(self):
+        self.fillers(40)
+        emb = FakeEmbedders()
+        eng = self.engine(emb, lambda *a: [], PLANS["heavy"])
+        eng.sync()
+        hits = eng.query("react when the property changes", ["vault"], 5, None)
+        self.assertEqual(len(hits), 5)
+        self.assertEqual(emb.reranked, [(PLANS["heavy"]["rerank_depth"], PLANS["heavy"]["rerank_tokens"])])
 
     def manifest_text(self):
         with open(self.manifest, encoding="utf-8") as f:

@@ -238,7 +238,7 @@ def read_token(path):
 
 def light_factory(data):
     def make():
-        from rbxrag.engine import Engine
+        from rbxrag.engine import PLANS, Engine, KeywordRanker
         from rbxrag.models import LightEmbedders
         from rbxrag.stores import MemStore
         from rbxrag.setup import missing_models, models_dir
@@ -249,7 +249,8 @@ def light_factory(data):
         emb = LightEmbedders(models_dir(data))
         folder = os.path.join(data, "light")
         os.makedirs(folder, exist_ok=True)
-        return Engine(MemStore(folder), emb, os.path.join(folder, "manifest.json"))
+        return Engine(MemStore(folder), emb, os.path.join(folder, "manifest.json"), keyword=KeywordRanker(),
+                      plan=PLANS["light"])
     return make
 
 
@@ -257,7 +258,7 @@ def heavy_factory(data, qdrant_url, qdrant_key, ollama_url=None):
     def make():
         import warnings
         from qdrant_client import QdrantClient
-        from rbxrag.engine import Engine
+        from rbxrag.engine import PLANS, Engine, KeywordRanker
         from rbxrag.models import OLLAMA_URL, HeavyEmbedders
         from rbxrag.setup import missing_models, models_dir
         missing = missing_models("heavy", data)
@@ -280,7 +281,7 @@ def heavy_factory(data, qdrant_url, qdrant_key, ollama_url=None):
                 time.sleep(1.0)
         folder = os.path.join(data, "heavy")
         os.makedirs(folder, exist_ok=True)
-        return Engine(client, emb, os.path.join(folder, "manifest.json"))
+        return Engine(client, emb, os.path.join(folder, "manifest.json"), keyword=KeywordRanker(), plan=PLANS["heavy"])
     return make
 
 

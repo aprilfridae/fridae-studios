@@ -1,5 +1,6 @@
 """The knowledge index: chunks with a dense and a sparse vector each, kept in step with the files incrementally, and
-queried hybrid (dense + sparse fused with RRF) and then reranked. The points live in a store (rbxrag.stores):
+queried by fusing rankings with RRF (the keyword search's, the dense one, and per mode the sparse one and a
+reranker's; PLANS). The points live in a store (rbxrag.stores):
 Qdrant for Heavy, plain numpy arrays in memory for Light.
 
 The manifest beside the index records, per file, the (mtime_ns, size) it was indexed at and its point ids, so a sync
@@ -16,8 +17,27 @@ from rbxrag import chunks
 from rbxrag.stores import FUSED, PREFETCH, MemStore, QdrantStore  # noqa: F401 (re-exported)
 
 FORMAT = 1
-BATCH = 64
-CHECKPOINT_BATCHES = 32  # save the manifest (and Light's arrays) every 2,048 embedded chunks
+KEYWORD_DEPTH = 20  # how many of the keyword search's results join the fusion
+
+# How a query is answered, per mode. Measured on the bench of 33 queries (12 vault baseline, 6 knowledge-bench tasks,
+# 15 vague paraphrases; scratchpad ragfuse*.py, the integration report): the keyword search's own ranking fused with
+# the dense ranking by RRF (k=60) beat both the keyword search alone and dense + sparse + rerank. The bm25 sparse
+# ranking only repeated the keyword search less well, and a reranker that reorders the fused list lost more at the
+# top than it gained. Heavy's bigger reranker helps as one more vote in the fusion, over a bounded number of
+# candidates cut to a bounded length so a query stays under about 1.5 s on a laptop CPU.
+#   keyword: fuse the keyword ranking (when the engine has one); sparse: fuse the sparse ranking; rrf_k: RRF's
+#   constant; rerank_depth: how many fused candidates the reranker reads (0: no reranker); rerank_tokens: each cut to
+#   this many tokens (0: the model's own limit); rerank: "vote" (its order is one more RRF ranking) or "reorder"
+#   (its order replaces the top of the fused list)
+DEFAULT_PLAN = {"keyword": True, "sparse": True, "rrf_k": 2, "rerank_depth": FUSED, "rerank_tokens": 0,
+                "rerank": "reorder"}
+PLANS = {
+    "light": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 0, "rerank_tokens": 0, "rerank": "vote"},
+    "heavy": {"keyword": True, "sparse": False, "rrf_k": 60, "rerank_depth": 15, "rerank_tokens": 192, "rerank": "vote"},
+}
+BATCH = 256  # chunks embedded and upserted together (Light sorts each batch by length: far less padding)
+CHECKPOINT_BATCHES = 8  # save the manifest (and Light's arrays) every 2,048 embedded chunks
+RELEASE_AFTER = 1000  # after embedding more than this many chunks, the embedders may give back their working memory
 
 
 class Embedders(Protocol):
@@ -28,8 +48,47 @@ class Embedders(Protocol):
     def dense_query(self, text: str) -> list[float]: ...
     def sparse(self, texts: list[str]) -> list[tuple[list[int], list[float]]]: ...
     def sparse_query(self, text: str) -> tuple[list[int], list[float]]: ...
-    def rerank(self, query: str, texts: list[str]) -> list[float]: ...
+    def rerank(self, query: str, texts: list[str], max_tokens: int | None = None) -> list[float]: ...
     def count_tokens(self, text: str) -> int: ...
+
+
+class KeywordRanker:
+    """rbxvault's keyword ranking for the fusion (rbxvault.keyword_ranking), with the vault index and the kit's
+    section docs kept loaded and looked at again at most every `every` seconds (as a query's refresh looks at the
+    files)."""
+
+    def __init__(self, every=10.0, clock=None):
+        import time
+        self.every = every
+        self.clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._at = None
+        self._idx = self._kit = None
+
+    def __call__(self, q, shelves, depth, project):
+        import rbxvault
+        with self._lock:
+            now = self.clock()
+            if self._at is None or now - self._at >= self.every:
+                self._idx = rbxvault.load_index() if os.path.isdir(rbxvault.KB) else {"docs": [], "symptoms": []}
+                self._kit = rbxvault.load_sections()
+                self._at = now
+            idx, kit = self._idx, self._kit
+        docs = rbxvault.section_corpus(project or "", kit) if any(s != "vault" for s in shelves) else None
+        return rbxvault.keyword_ranking(q, shelves, depth, idx, docs)
+
+
+def _rrf(rankings, k0):
+    """Payloads fused by reciprocal rank (a hit at 0-based position p of a ranking adds 1 / (p + k0)), best first, with
+    their fused scores. Points are told apart by their id."""
+    score, first = {}, {}
+    for ranking in rankings:
+        for pos, c in enumerate(ranking):
+            key = c.get("id") or (c.get("path"), c.get("i"), c.get("part"))
+            score[key] = score.get(key, 0.0) + 1.0 / (pos + k0)
+            first.setdefault(key, c)
+    order = sorted(score, key=lambda key: -score[key])
+    return [first[key] for key in order], [score[key] for key in order]
 
 
 class NeedsRebuild(Exception):
@@ -41,12 +100,17 @@ class TooBig(Exception):
 
 
 def _is_store(x):
-    return all(hasattr(x, a) for a in ("reset", "open", "commit", "search", "count_path"))
+    return all(hasattr(x, a) for a in ("reset", "open", "commit", "rankings", "count_path"))
 
 
 class Engine:
-    def __init__(self, store, emb, manifest_path, collection="fridae", corpus=None, project_files=None):
-        """store: a MemStore or QdrantStore; a QdrantClient is wrapped in a QdrantStore."""
+    def __init__(self, store, emb, manifest_path, collection="fridae", corpus=None, project_files=None, keyword=None,
+                 plan=None):
+        """store: a MemStore or QdrantStore; a QdrantClient is wrapped in a QdrantStore. keyword: a callable
+        (q, shelves, depth, project) -> [(shelf, title, section index or None)] (KeywordRanker), fused when the plan
+        says so. plan: how a query is answered (PLANS; DEFAULT_PLAN when None)."""
+        self.keyword = keyword
+        self.plan = dict(DEFAULT_PLAN, **(plan or {}))
         self.store = store if _is_store(store) else QdrantStore(store, collection)
         self.emb = emb
         self.manifest_path = manifest_path
@@ -195,6 +259,8 @@ class Engine:
             self.store.delete(rest)
         man["files"] = dict(keep, **new_entries)
         self._commit(man)
+        if total > RELEASE_AFTER and hasattr(self.emb, "release"):
+            self.emb.release()  # a big build's model working memory is not kept for the queries
         self.chunks = sum(len(e["ids"]) for e in man["files"].values())
         progress("index", 1.0)
         return {"chunks": self.chunks, "files": len(new_entries), "embedded": total, "removed": len(gone)}
@@ -226,25 +292,46 @@ class Engine:
         return {"shelves": list(shelves) if left_out else None, "project": project or None, "hide_team": hide}
 
     def query(self, q, shelves, k, project):
-        """The k best sections for q on the given shelves (a game's chunks only for its own project): dense and
-        sparse candidates fused with RRF, then reranked. Each hit is a chunk's payload plus its rerank score; parts
-        of the same section count once."""
+        """The k best sections for q on the given shelves (a game's chunks only for its own project), as the plan
+        says: the keyword search's ranking, the dense ranking and (when on) the sparse ranking fused with RRF, then
+        (when on) the reranker over the top candidates, as one more vote or as their new order. Each hit is a chunk's
+        payload plus its score; parts of the same section count once."""
         if not shelves or not q.strip():
             return []
+        plan = self.plan
         dv = [float(x) for x in self.emb.dense_query(q)]
-        si, sv = self.emb.sparse_query(q)
-        cands = self.store.search(dv, (list(si), list(sv)), self._filter(shelves, project))
-        if not cands:
+        si, sv = self.emb.sparse_query(q) if plan["sparse"] else ([], [])
+        keys = []
+        if plan["keyword"] and self.keyword is not None:
+            try:
+                keys = list(self.keyword(q, list(shelves), KEYWORD_DEPTH, project or ""))
+            except Exception:  # the keyword side never fails a query: dense alone answers
+                keys = []
+        dense, sparse, kw = self.store.rankings(dv, (list(si), list(sv)), self._filter(shelves, project), keys)
+        lists = [kw, dense] + ([sparse] if plan["sparse"] else [])
+        fused, scores = _rrf(lists, plan["rrf_k"])
+        fused, scores = fused[:FUSED], scores[:FUSED]
+        if not fused:
             return []
-        scores = list(self.emb.rerank(q, [c["text"] for c in cands]))
-        order = sorted(range(len(cands)), key=lambda i: -scores[i])  # stable: ties keep the fused order
+        depth = min(int(plan["rerank_depth"] or 0), len(fused))
+        if depth:
+            top = fused[:depth]
+            texts = [c["text"] for c in top]
+            n = int(plan["rerank_tokens"] or 0)
+            rs = list(self.emb.rerank(q, texts, max_tokens=n) if n else self.emb.rerank(q, texts))
+            order = sorted(range(depth), key=lambda i: -rs[i])  # stable: ties keep the fused order
+            if plan["rerank"] == "vote":
+                fused, scores = _rrf(lists + [[top[i] for i in order]], plan["rrf_k"])
+            else:
+                fused = [top[i] for i in order] + fused[depth:]
+                scores = [rs[i] for i in order] + scores[depth:]
         out, seen = [], set()
-        for i in order:
-            key = (cands[i]["path"], cands[i]["i"])
+        for c, sc in zip(fused, scores):
+            key = (c["path"], c["i"])
             if key in seen:
                 continue
             seen.add(key)
-            out.append(dict(cands[i], score=float(scores[i])))
+            out.append(dict(c, score=float(sc)))
             if len(out) >= k:
                 break
         return out
