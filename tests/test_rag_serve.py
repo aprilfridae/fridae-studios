@@ -458,26 +458,138 @@ class SetupTests(unittest.TestCase):
         self.assertIn("no internet", end["error"])
         self.assertEqual(end["missing"], [models.HEAVY["sparse"], models.HEAVY["rerank"]])
 
-    def test_qdrant_install_unpacks_binary(self):
+    def test_qdrant_install_checks_sha256_and_version(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            raw = b"#!/bin/sh\necho qdrant\n"
+            info = tarfile.TarInfo("qdrant-dir/qdrant")
+            info.size = len(raw)
+            tar.addfile(info, io.BytesIO(raw))
+        blob = buf.getvalue()
+        good = __import__("hashlib").sha256(blob).hexdigest()
+        urls = []
+
         def fetch(url, dest, on_fraction=None):
-            self.assertTrue(url.startswith("https://github.com/qdrant/qdrant/releases/download/"))
+            urls.append(url)
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            with tarfile.open(dest, "w:gz") as tar:
-                raw = b"#!/bin/sh\necho qdrant\n"
-                info = tarfile.TarInfo("qdrant")
-                info.size = len(raw)
-                tar.addfile(info, io.BytesIO(raw))
+            with open(dest, "wb") as f:
+                f.write(blob)
             if on_fraction:
                 on_fraction(1.0)
+        # the pinned checksum does not match this stand-in archive: refused, deleted, nothing installed
         lines = []
-        setup.run_cli("qdrant-install", "heavy", self.data, out=lines.append, fetch=fetch)
+        setup.run_cli("qdrant-install", "heavy", self.data, out=lines.append, fetch=fetch, arch="arm64")
+        end = json.loads(lines[-1])
+        self.assertFalse(end["ready"])
+        self.assertIn("checksum", end["error"])
+        self.assertEqual(urls, ["https://github.com/qdrant/qdrant/releases/download/v1.20.2/"
+                                "qdrant-aarch64-apple-darwin.tar.gz"])
+        self.assertFalse(os.listdir(os.path.join(self.data, "downloads")))
+        self.assertFalse(os.path.exists(setup.qdrant_binary(self.data)))
+        # with the archive's own checksum it installs, records the version, and is not downloaded again
+        lines = []
+        setup.run_cli("qdrant-install", "heavy", self.data, out=lines.append, fetch=fetch, sha256=good)
         self.assertEqual(json.loads(lines[-1]), {"ready": True, "missing": [], "error": ""})
         self.assertTrue(setup.has_qdrant(self.data))
+        with open(setup.qdrant_version_file(self.data), encoding="utf-8") as f:
+            self.assertEqual(f.read().strip(), "v1.20.2")
         self.assertFalse(os.listdir(os.path.join(self.data, "downloads")))
         lines = []
         setup.run_cli("qdrant-install", "heavy", self.data, out=lines.append,
                       fetch=lambda *a, **k: self.fail("downloaded again"))
         self.assertEqual(len(lines), 1)
+        # a binary of another version counts as not installed
+        with open(setup.qdrant_version_file(self.data), "w", encoding="utf-8") as f:
+            f.write("v1.0.0\n")
+        self.assertFalse(setup.has_qdrant(self.data))
+        self.assertFalse(setup.check("heavy", self.data, get=lambda u: None, present=lambda *a: True)["qdrant_binary"])
+        self.assertEqual(setup.QDRANT_SHA256["x86_64"],
+                         "73a6538ccccb892ec2c6fa3431faf1e73fba7eb2179079adbd0c65ae4c55bf6a")
+
+    def ollama_world(self, codesign_ok=True, complete=True, cli=None, app=None):
+        """Stand-ins for the Ollama install: a fake zip download, ditto, codesign, open and the local API."""
+        state = {"opened": False, "fetched": 0, "calls": []}
+        apps = os.path.join(self.data, "Applications")
+
+        def fetch(url, dest, on_fraction=None):
+            state["fetched"] += 1
+            self.assertEqual(url, setup.OLLAMA_ZIP)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(b"zip")
+
+        def run(cmd, **kw):
+            state["calls"].append(cmd[0])
+            if cmd[0] == "ditto":
+                os.makedirs(os.path.join(cmd[-1], "Ollama.app", "Contents", "MacOS" if complete else "Resources"))
+                return mock.Mock(returncode=0, stderr="")
+            if cmd[0] == "codesign":
+                return mock.Mock(returncode=0 if codesign_ok else 1, stderr="" if codesign_ok else "invalid signature")
+            if cmd[0] == "open":
+                state["opened"] = True
+            return mock.Mock(returncode=0, stderr="")
+        hooks = {"fetch": fetch, "run": run, "apps_dir": apps, "wait": 0,
+                 "get": lambda url: {"version": "x"} if state["opened"] else None,
+                 "which": lambda name: cli if name == "ollama" else "/usr/bin/codesign",
+                 "find_app": lambda: app}
+        return state, apps, hooks
+
+    def test_ollama_install_verifies_then_moves_whole_app(self):
+        state, apps, hooks = self.ollama_world()
+        lines = []
+        setup.run_cli("ollama-install", "heavy", self.data, out=lines.append, **hooks)
+        self.assertEqual(json.loads(lines[-1]), {"ready": True, "missing": [], "error": ""})
+        self.assertEqual(state["calls"], ["ditto", "codesign", "open"])
+        self.assertTrue(os.path.isdir(os.path.join(apps, "Ollama.app", "Contents", "MacOS")))
+        self.assertEqual(os.listdir(apps), ["Ollama.app"])
+        self.assertEqual(os.listdir(os.path.join(self.data, "downloads")), [])
+
+    def test_ollama_install_never_leaves_a_bad_app(self):
+        for kind in ("codesign", "incomplete"):
+            data = tempfile.mkdtemp(prefix="rag ollama ")
+            self.addCleanup(shutil.rmtree, data, True)
+            self.data = data
+            state, apps, hooks = self.ollama_world(codesign_ok=kind != "codesign", complete=kind != "incomplete")
+            lines = []
+            setup.run_cli("ollama-install", "heavy", data, out=lines.append, **hooks)
+            end = json.loads(lines[-1])
+            self.assertFalse(end["ready"], kind)
+            self.assertIn("signature" if kind == "codesign" else "complete", end["error"])
+            self.assertFalse(os.path.exists(os.path.join(apps, "Ollama.app")), kind)
+            self.assertFalse(os.path.exists(os.path.join(apps, ".Ollama.app.partial")), kind)
+            self.assertEqual(os.listdir(os.path.join(data, "downloads")), [], kind)
+            self.assertFalse(state["opened"])
+
+    def test_ollama_install_uses_the_users_own_ollama(self):
+        for cli, app in (("/opt/homebrew/bin/ollama", None), (None, "/Applications/Ollama.app")):
+            state, apps, hooks = self.ollama_world(cli=cli, app=app)
+            lines = []
+            setup.run_cli("ollama-install", "heavy", self.data, out=lines.append, **hooks)
+            end = json.loads(lines[-1])
+            self.assertFalse(end["ready"])
+            self.assertIn("Start your Ollama", end["error"])
+            self.assertIn("ollama serve", end["error"])
+            self.assertEqual((state["fetched"], state["calls"]), (0, []))  # nothing downloaded, installed or opened
+
+    def test_download_short_or_broken_leaves_nothing(self):
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "100000")
+                self.end_headers()
+                self.wfile.write(b"x" * 10)  # then the connection closes early
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        dest = os.path.join(self.data, "downloads", "thing.tar.gz")
+        with mock.patch.dict(os.environ, {"http_proxy": "", "HTTP_PROXY": ""}):
+            with self.assertRaises(setup.SetupError):
+                setup.download("http://127.0.0.1:%d/thing" % srv.server_address[1], dest, timeout=5)
+        self.assertEqual(os.listdir(os.path.dirname(dest)), [])
 
     def test_ollama_pull_progress_and_check(self):
         state = {"models": []}

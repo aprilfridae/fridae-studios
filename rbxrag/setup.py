@@ -8,6 +8,8 @@
 Each reports progress as (step, fraction) and ends with {"ready", "missing", "error"}. A step whose part is already
 there ends ready at once, without a download. Nothing here runs except when the user starts the step.
 """
+import hashlib
+import http.client
 import json
 import os
 import platform
@@ -24,9 +26,12 @@ from rbxrag.net import LOOPBACK
 
 STEPS = ("models", "ollama-install", "ollama-pull", "qdrant-install")
 OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip"
-# Pinned Qdrant release (the native binary, not Docker). Bump deliberately; the asset names are Qdrant's own.
-QDRANT_VERSION = "v1.16.0"
+# Pinned Qdrant release (the native binary, not Docker), with the SHA-256 of each asset from the GitHub release.
+# Bump deliberately, both together; a binary of another version counts as not installed.
+QDRANT_VERSION = "v1.20.2"
 QDRANT_ASSET = {"arm64": "qdrant-aarch64-apple-darwin.tar.gz", "x86_64": "qdrant-x86_64-apple-darwin.tar.gz"}
+QDRANT_SHA256 = {"arm64": "385b244e6283968b2be926358541b5bc19b9ada7ea9586e900684388bc912d5f",
+                 "x86_64": "73a6538ccccb892ec2c6fa3431faf1e73fba7eb2179079adbd0c65ae4c55bf6a"}
 USER_AGENT = "fridae-studios"
 
 
@@ -42,9 +47,24 @@ def qdrant_binary(data):
     return os.path.join(data, "bin", "qdrant")
 
 
-def qdrant_url():
-    arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
-    return "https://github.com/qdrant/qdrant/releases/download/%s/%s" % (QDRANT_VERSION, QDRANT_ASSET[arch])
+def _arch():
+    return "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
+
+
+def qdrant_url(arch=None):
+    return "https://github.com/qdrant/qdrant/releases/download/%s/%s" % (QDRANT_VERSION, QDRANT_ASSET[arch or _arch()])
+
+
+def qdrant_version_file(data):
+    return os.path.join(data, "bin", "qdrant.version")
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 # ------------------------------------------------------------------ small helpers (each one can be replaced in tests)
@@ -60,7 +80,8 @@ def http_json(url, body=None, timeout=2.0):
 
 
 def download(url, dest, on_fraction=None, timeout=60):
-    """Download url to dest (through dest.part, renamed only when complete)."""
+    """Download url to dest (through dest.part, renamed only when complete). A short or broken download raises
+    SetupError and leaves no .part file behind."""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     part = dest + ".part"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -76,13 +97,25 @@ def download(url, dest, on_fraction=None, timeout=60):
                 got += len(chunk)
                 if on_fraction and total:
                     on_fraction(min(1.0, got / total))
-    except (urllib.error.URLError, OSError) as e:
-        try:
-            os.remove(part)
-        except OSError:
-            pass
+        if total and got != total:
+            raise SetupError("The download of %s stopped early (%d of %d bytes). Try again." % (url, got, total))
+        os.replace(part, dest)
+    except SetupError:
+        _remove(part)
+        raise
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as e:
+        _remove(part)
         raise SetupError("Could not download %s: %s. Check the internet connection and try again." % (url, e))
-    os.replace(part, dest)
+    except BaseException:
+        _remove(part)
+        raise
+
+
+def _remove(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def fastembed_download(kind, name, cache_dir):
@@ -114,8 +147,15 @@ def ollama_has_model(url=models.OLLAMA_URL, get=http_json, model=models.HEAVY["d
 
 
 def has_qdrant(data):
+    """The pinned Qdrant is installed (a binary of another version, or of no recorded version, is not)."""
     p = qdrant_binary(data)
-    return os.path.isfile(p) and os.access(p, os.X_OK)
+    if not (os.path.isfile(p) and os.access(p, os.X_OK)):
+        return False
+    try:
+        with open(qdrant_version_file(data), encoding="utf-8") as f:
+            return f.read().strip() == QDRANT_VERSION
+    except OSError:
+        return False
 
 
 def missing_models(mode, data, present=models.model_present):
@@ -150,31 +190,53 @@ def _wait_for_ollama(url, get, wait, sleep=time.sleep):
     return get(url.rstrip("/") + "/api/version") is not None
 
 
+START_YOUR_OLLAMA = ("Ollama is installed but not running. Start your Ollama (open the Ollama app or run "
+                     "`ollama serve`), then press Try again.")
+
+
 def step_ollama_install(mode, data, progress, url=models.OLLAMA_URL, get=http_json, fetch=download,
-                        run=subprocess.run, wait=60):
+                        run=subprocess.run, wait=60, which=shutil.which, find_app=ollama_app, apps_dir=None):
     if get(url.rstrip("/") + "/api/version") is not None:
         return []
     if sys.platform != "darwin":
         raise SetupError("Fridae can install Ollama on a Mac only for now. Install it from ollama.com, then try again.")
-    app = ollama_app()
-    if not app:
-        dest = os.path.join(data, "downloads", "Ollama-darwin.zip")
+    if find_app() or which("ollama"):  # the user's own Ollama (the app, or a command such as Homebrew's): never a second one
+        raise SetupError(START_YOUR_OLLAMA)
+    apps = apps_dir or os.path.expanduser("~/Applications")
+    downloads = os.path.join(data, "downloads")
+    dest = os.path.join(downloads, "Ollama-darwin.zip")
+    tmp = os.path.join(downloads, "tmp")
+    try:
         progress("ollama-install: download", 0.0)
         fetch(OLLAMA_ZIP, dest, lambda f: progress("ollama-install: download", f))
-        apps = os.path.expanduser("~/Applications")
-        os.makedirs(apps, exist_ok=True)
         progress("ollama-install: unpack", 0.0)
-        r = run(["ditto", "-x", "-k", dest, apps], capture_output=True, text=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        r = run(["ditto", "-x", "-k", dest, tmp], capture_output=True, text=True)
         if r.returncode != 0:
             raise SetupError("Could not unpack Ollama: %s" % (r.stderr or "").strip()[:300])
-        try:
-            os.remove(dest)
-        except OSError:
-            pass
+        unpacked = os.path.join(tmp, "Ollama.app")
+        if not os.path.isdir(os.path.join(unpacked, "Contents", "MacOS")):
+            raise SetupError("The Ollama download did not hold a complete Ollama.app.")
+        if which("codesign"):  # Apple's signature check; skipped only where the tool does not exist
+            r = run(["codesign", "--verify", "--deep", "--strict", unpacked], capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SetupError("The downloaded Ollama.app failed Apple's signature check, so it was not installed: "
+                                 "%s" % (r.stderr or "").strip()[:300])
+        os.makedirs(apps, exist_ok=True)
         app = os.path.join(apps, "Ollama.app")
-        if not os.path.isdir(app):
-            raise SetupError("The Ollama download did not hold Ollama.app.")
+        partial = os.path.join(apps, ".Ollama.app.partial")
+        shutil.rmtree(partial, ignore_errors=True)
+        try:  # copied in under a hidden name, then renamed in one step: never a half-copied app in Applications
+            shutil.move(unpacked, partial)
+            os.rename(partial, app)
+        except BaseException:
+            shutil.rmtree(partial, ignore_errors=True)
+            raise
         progress("ollama-install: unpack", 1.0)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        _remove(dest)
     progress("ollama-install: start", 0.0)
     run(["open", "-a", app], capture_output=True, text=True)
     if not _wait_for_ollama(url, get, wait):
@@ -223,33 +285,40 @@ def step_ollama_pull(mode, data, progress, url=models.OLLAMA_URL, get=http_json,
     return []
 
 
-def step_qdrant_install(mode, data, progress, fetch=download, url=None):
+def step_qdrant_install(mode, data, progress, fetch=download, url=None, sha256=None, arch=None):
     if has_qdrant(data):
         return []
-    url = url or qdrant_url()
+    arch = arch or _arch()
+    url = url or qdrant_url(arch)
+    want = (sha256 or QDRANT_SHA256[arch]).lower()
     dest = os.path.join(data, "downloads", os.path.basename(url))
-    progress("qdrant-install: download", 0.0)
-    fetch(url, dest, lambda f: progress("qdrant-install: download", f))
     out = qdrant_binary(data)
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    tmp = out + ".part"
     try:
-        with tarfile.open(dest, "r:gz") as tar:
-            member = next((m for m in tar.getmembers() if m.isfile() and os.path.basename(m.name) == "qdrant"), None)
-            if member is None:
-                raise SetupError("The Qdrant download did not hold the qdrant program.")
-            src = tar.extractfile(member)
-            tmp = out + ".part"
-            with open(tmp, "wb") as f:
-                shutil.copyfileobj(src, f)
+        progress("qdrant-install: download", 0.0)
+        fetch(url, dest, lambda f: progress("qdrant-install: download", f))
+        got = sha256_of(dest)
+        if got != want:
+            raise SetupError("The Qdrant download does not match its published checksum, so it was deleted and not "
+                             "installed. Try again.")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        try:
+            with tarfile.open(dest, "r:gz") as tar:
+                member = next((m for m in tar.getmembers() if m.isfile() and os.path.basename(m.name) == "qdrant"),
+                              None)
+                if member is None:
+                    raise SetupError("The Qdrant download did not hold the qdrant program.")
+                with open(tmp, "wb") as f:
+                    shutil.copyfileobj(tar.extractfile(member), f)
+        except tarfile.TarError as e:
+            raise SetupError("The Qdrant download is damaged (%s). Try again." % e)
         os.chmod(tmp, 0o755)
         os.replace(tmp, out)
-    except tarfile.TarError as e:
-        raise SetupError("The Qdrant download is damaged (%s). Try again." % e)
+        with open(qdrant_version_file(data), "w", encoding="utf-8") as f:
+            f.write(QDRANT_VERSION + "\n")
     finally:
-        try:
-            os.remove(dest)
-        except OSError:
-            pass
+        _remove(dest)
+        _remove(tmp)
     progress("qdrant-install: download", 1.0)
     return []
 
