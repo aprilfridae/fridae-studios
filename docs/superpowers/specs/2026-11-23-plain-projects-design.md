@@ -58,6 +58,26 @@ Promos tab, and the GAME.md bible requirement.
 - The tool server offers a plain project the general tools and the team tools (`rbx_team`, Review/stage, long-call
   jobs), not the Roblox ones.
 
+## Wording adapts to the project type (user request, 2026-11-23)
+
+"add a rewording of all ui functions to be more for generalized projects instead of game dev specifically, but if its
+a game project, make it game oriented." So every user-facing label and line is context-aware: generic for a plain
+project, game-oriented for a game project.
+
+- Centralise the swappable terms in one small per-project vocabulary keyed on the project's type, rather than scattering
+  `if game` through the page — the UI asks that vocabulary for each term and renders it. One place to add a future
+  project type later.
+- Examples (game term → plain-project term): "game" → "project"; "What should we build or test?" → "What should we
+  build?"; "Studio" mode and all Roblox/Studio/GAME.md references → hidden or generic (a plain project has no Studio);
+  the Lead's "takes the game through its stages" → "takes the project through its stages"; the game-specific stage
+  names (idea/launch/promote) → the general ones (plan/build/test/review) per the team section above; expert role names
+  → general ones for a general team; Promos tab → hidden for a plain project. A game project keeps all of today's
+  wording unchanged.
+- This covers tabs, the sidebar, the message box, mode and picker labels, Setup copy, the Guide, Review, and the
+  agent-facing instruction texts (which already split shared vs Roblox-only in "The Lead's instructions and tools"
+  above — the shared parts read generically, the Roblox parts load only for a game).
+- Default when a project's type is unknown/old: game wording (every existing project is a game).
+
 ## Anti-goals
 - A plain project loading Studio, Blender, `rbx_*` tools, Promos, or a game roster.
 - The autonomous team forced on; it is off until the user turns it on.
