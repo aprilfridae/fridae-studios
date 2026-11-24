@@ -11,6 +11,7 @@ import math
 import os
 import re
 import sys
+import urllib.request
 from collections import Counter, defaultdict
 
 import rbxpaths
@@ -1023,6 +1024,29 @@ def _results_tail(out, q, shelves, symptoms):
 
 # ------------------------------------------------------------------ search through the knowledge index (RAG)
 RAG_TIMEOUT = 3.0  # seconds; a slower answer is not waited for (the keyword search answers instead)
+# calls to the knowledge index stay on this Mac: never through an HTTP proxy (the environment's or the system's),
+# which would otherwise receive the token and the query
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def rag_endpoint():
+    """(url, token) from the endpoint file the app writes while the knowledge index is ready (its path is in
+    FRIDAE_RAG_FILE), read fresh on every search; None when there is none or it does not read."""
+    path = (os.environ.get("FRIDAE_RAG_FILE") or "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        url = str(data.get("url") or "").strip().rstrip("/")
+        token = str(data.get("token") or "").strip()
+    except (OSError, ValueError, AttributeError, UnicodeDecodeError):
+        return None
+    host = url[len("http://"):].split("/", 1)[0].rsplit(":", 1)[0] if url.startswith("http://") else ""
+    if not token or host not in _LOOPBACK_HOSTS:
+        return None
+    return url, token
 
 
 def _rag_hit_lines(rank, hit, terms):
@@ -1054,19 +1078,18 @@ def _rag_hit_lines(rank, hit, terms):
 
 
 def rag_search(q, shelves, k):
-    """Search text from the knowledge index service (FRIDAE_RAG_URL, FRIDAE_RAG_TOKEN), in the same format as the
-    keyword search, or None on any failure (not configured, slower than 3 s, an error, a bad answer, no hits) so the
+    """Search text from the knowledge index service (its endpoint file, see rag_endpoint), in the same format as the
+    keyword search, or None on any failure (not running, slower than 3 s, an error, a bad answer, no hits) so the
     caller answers with the keyword search instead."""
-    url = (os.environ.get("FRIDAE_RAG_URL") or "").strip().rstrip("/")
-    token = (os.environ.get("FRIDAE_RAG_TOKEN") or "").strip()
-    if not url or not token:
+    end = rag_endpoint()
+    if not end:
         return None
+    url, token = end
     try:
-        import urllib.request
         body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
         req = urllib.request.Request(url + "/query", data=body, headers={
             "Content-Type": "application/json", "Authorization": "Bearer " + token})
-        with urllib.request.urlopen(req, timeout=RAG_TIMEOUT) as r:
+        with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
             if r.status != 200:
                 return None
             hits = json.load(r).get("hits")

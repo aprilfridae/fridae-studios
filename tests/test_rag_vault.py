@@ -21,7 +21,7 @@ def setUpModule():
                 mock.patch.object(rbxpaths, "HOME_DIR", os.path.join(_WORK, "home"))]
     for p in _PATCHES:
         p.start()
-    with mock.patch.dict(os.environ, {"RBXKIT_PROJECT": "", "FRIDAE_RAG_URL": "", "FRIDAE_RAG_TOKEN": ""}):
+    with mock.patch.dict(os.environ, {"RBXKIT_PROJECT": "", "FRIDAE_RAG_FILE": ""}):
         rbxvault.run("search", {"query": "warm the caches"})  # the timing test measures the fallback, not a cold cache
 
 
@@ -92,8 +92,47 @@ def closed_port():
     return port
 
 
-def env(url="", token="", project=""):
-    return mock.patch.dict(os.environ, {"FRIDAE_RAG_URL": url, "FRIDAE_RAG_TOKEN": token, "RBXKIT_PROJECT": project})
+def env(url="", token="", project="", raw=None):
+    """FRIDAE_RAG_FILE pointing at an endpoint file {"url", "token"} (as the app writes it), or unset when no url."""
+    path = ""
+    if url or raw is not None:
+        fd, path = tempfile.mkstemp(prefix="rag-endpoint-", suffix=".json", dir=_WORK)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(raw if raw is not None else json.dumps({"url": url, "token": token}))
+    return mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": path, "RBXKIT_PROJECT": project})
+
+
+class StubProxy:
+    """An HTTP proxy stand-in that records anything sent to it (nothing should be)."""
+
+    def __init__(self, tc):
+        self.seen = []
+        stub = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def handle_one(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                stub.seen.append({"path": self.path, "headers": dict(self.headers),
+                                  "body": self.rfile.read(n) if n else b""})
+                self.send_response(502)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            do_GET = do_POST = do_CONNECT = handle_one
+
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.srv.daemon_threads = True
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        tc.addCleanup(self.srv.server_close)
+        tc.addCleanup(self.srv.shutdown)
+        self.url = "http://127.0.0.1:%d" % self.srv.server_address[1]
+
+    def env(self):
+        return mock.patch.dict(os.environ, {"http_proxy": self.url, "HTTP_PROXY": self.url, "https_proxy": self.url,
+                                            "HTTPS_PROXY": self.url, "no_proxy": "", "NO_PROXY": ""})
 
 
 class RagVaultTests(unittest.TestCase):
@@ -166,9 +205,38 @@ class RagVaultTests(unittest.TestCase):
         for stub in (StubRag(self, []), StubRag(self, guide_hits(), code=500)):
             with env(stub.url, "tok"):
                 self.assertEqual(rbxvault.run("search", a), want)
-        with env("", "tok"), mock.patch("urllib.request.urlopen") as op:
+        with env(), mock.patch.object(rbxvault, "_LOOPBACK") as op:
             self.assertEqual(rbxvault.run("search", a), want)
-            op.assert_not_called()  # no service configured: no request at all
+            op.open.assert_not_called()  # no service configured: no request at all
+        stub = StubRag(self, guide_hits())
+        for raw in ("not json", json.dumps({"url": stub.url}), json.dumps(["x"]),
+                    json.dumps({"url": "http://example.com:80", "token": "tok"})):  # bad file, or not on this Mac
+            with env(raw=raw):
+                self.assertEqual(rbxvault.run("search", a), want, raw)
+        with mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": os.path.join(_WORK, "missing.json")}):
+            self.assertEqual(rbxvault.run("search", a), want)
+        self.assertEqual(stub.seen, [])
+
+    def test_endpoint_file_read_on_every_search(self):
+        a = {"query": "how do I playtest", "shelf": "guides"}
+        first, second = StubRag(self, guide_hits()), StubRag(self, guide_hits())
+        with env(first.url, "one"):
+            path = os.environ["FRIDAE_RAG_FILE"]
+            self.assertIn("[guides]", rbxvault.run("search", a))
+            with open(path, "w", encoding="utf-8") as f:  # the service restarted on another port with a new token
+                json.dump({"url": second.url, "token": "two"}, f)
+            self.assertIn("[guides]", rbxvault.run("search", a))
+        self.assertEqual([x["auth"] for x in first.seen], ["Bearer one"])
+        self.assertEqual([x["auth"] for x in second.seen], ["Bearer two"])
+
+    def test_loopback_call_ignores_proxy_settings(self):
+        proxy = StubProxy(self)
+        stub = StubRag(self, guide_hits())
+        with env(stub.url, "t0k"), proxy.env():
+            out = rbxvault.run("search", {"query": "how do I playtest", "shelf": "guides"})
+        self.assertIn("[guides]", out)
+        self.assertEqual(len(stub.seen), 1)
+        self.assertEqual(proxy.seen, [])  # neither the token nor the query went to the proxy
 
     def test_token_sent_never_printed(self):
         stub = StubRag(self, guide_hits())
