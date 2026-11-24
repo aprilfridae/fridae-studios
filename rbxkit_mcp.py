@@ -1322,8 +1322,10 @@ TOOLS = [
     ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "
      "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
      "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "
-     "default 5) returns ranked sections labelled by shelf, each with a snippet, its size and the exact arguments to read "
-     "it; vault results add matching symptom lines. When the knowledge index is on, search finds sections by meaning as "
+     "default 5) returns ranked sections labelled by shelf and by kind, source (or 'this game') and month, each with a "
+     "snippet, its size and the exact arguments to read it; up to two may be notes the first results link to, marked "
+     "'linked from'; vault results add matching symptom lines. Optional filters: game ('this' or 'general'), kind, "
+     "source, since (a date). When the knowledge index is on, search finds sections by meaning as "
      "well as by words. 'read' (title, heading words, optional shelf) returns one section in "
      "full (about 12 KB at most). 'sections' (title) lists a file's headings with sizes, 'list' (folder) browses the vault, "
      "'api' (names, e.g. 'BadgeService.AwardBadge') says whether an API is current or deprecated. Use the vault for limits, "
@@ -1347,6 +1349,14 @@ TOOLS = [
              "replace": {"type": "boolean", "description": "note: true updates the note with exactly this title instead of adding another"},
              "old": {"type": "string", "description": "rule_edit: a few words of the rule to change"},
              "k": {"type": "integer", "description": "search: results to return, default 5 (3 for shelf vault), at most 8"},
+             "game": {"type": "string", "enum": ["this", "general", "all"], "description": "search: 'this' = only "
+                      "this game's own notes, 'general' = only notes for every game; default all"},
+             "kind": {"type": "string", "description": "search: only these kinds (comma-separated): rule, lesson, "
+                      "taste, reference, guide"},
+             "source": {"type": "string", "description": "search: only these sources (comma-separated): lihfolk, "
+                        "user, agent, community, game, fridae"},
+             "since": {"type": "string", "description": "search: only notes dated on or after this (YYYY, YYYY-MM or "
+                       "YYYY-MM-DD)"},
              "count": {"type": "integer", "description": "search: same as k (older name)"},
              "title": {"type": "string", "description": "read/sections: the title from a search result; note: optional "
                        "title; forget: the note's title"},

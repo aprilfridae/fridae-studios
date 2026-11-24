@@ -2,7 +2,8 @@
 127.0.0.1. Every request needs `Authorization: Bearer <token>`; the token comes from a file and is never printed.
 
   GET  /status   {"mode", "ready", "building", "progress": {"step", "fraction"}, "chunks", "error"}
-  POST /query    {"q", "shelves", "k", "project"} -> {"hits": [...]}; 503 until the first full sync has finished
+  POST /query    {"q", "shelves", "k", "project", "filters"} -> {"hits": [...]}; 503 until the first full sync has
+                 finished. filters (optional): {"game", "kind", "source", "since"} (rbxvault.normalize_filters)
   POST /rebuild  {"started": bool}
 
 On start it binds, prints {"listening": port}, then loads the models and builds or syncs the index in a background
@@ -124,14 +125,14 @@ class Service:
         finally:
             self._quick.release()
 
-    def query(self, q, shelves, k, project):
+    def query(self, q, shelves, k, project, filters=None):
         if not self.ready or self.engine is None:
             raise NotReady()
         eng = self.engine
         due = self._last_sync is None or self.clock() - self._last_sync >= self.throttle
         if due or (project and project not in eng.synced_projects):  # a game is indexed on its first query
             self._refresh(project)
-        return eng.query(q, shelves, k, project)
+        return eng.query(q, shelves, k, project, filters) if filters else eng.query(q, shelves, k, project)
 
 
 def _project_arg(p):
@@ -208,8 +209,17 @@ def make_handler(service, token):
                 return self._send(400, {"error": "k must be a whole number"}, close=True)
             if not q:
                 return self._send(400, {"error": "q is empty"}, close=True)
+            project = _project_arg(data.get("project"))
+            raw = data.get("filters") or {}
             try:
-                hits = service.query(q, shelves, k, _project_arg(data.get("project")))
+                if not isinstance(raw, dict):
+                    raise rbxvault.KitError("filters must be a JSON object")
+                filters = rbxvault.normalize_filters(raw, project)
+            except rbxvault.KitError as e:
+                return self._send(400, {"error": str(e)}, close=True)
+            try:
+                hits = service.query(q, shelves, k, project, filters) if filters else service.query(q, shelves, k,
+                                                                                                    project)
             except NotReady:
                 return self._send(503, {"error": "the knowledge index is not ready yet", "status": service.status()})
             except Exception as e:

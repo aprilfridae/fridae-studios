@@ -3,6 +3,12 @@
 A retrieval unit is one of rbxvault's sections (parse_sections: the same parser the keyword search and the reads use),
 vault notes included, so a hit maps straight onto rbx_vault's `read` arguments. A section longer than the model's
 window is split by real tokens, on paragraph and then line boundaries, and a single over-long line is cut by tokens.
+
+Every chunk starts with two lines of context, embedded with it (no model writes them; they cost nothing to make):
+  <title> › <heading>
+  Context: [<note H1 > parent > heading> |] <shelf or game> | <kind>, <source>, <YYYY-MM> [| <the note's gist>]
+(the path only when it says more than the first line; the gist not in the opening, which already starts with it)
+and carries the note's labels (rbxvault.note_labels: game, kind, source, date) for the search filters.
 """
 import math
 import os
@@ -14,6 +20,8 @@ from rbxpaths import KIT
 
 LIMIT = 480  # tokens per chunk at most: a 512-token window less a 32-token margin
 SEP = " › "
+GIST_WORDS = 30  # the gist in a chunk's context line, at most (about 40 tokens)
+LABEL_KEYS = ("game", "kind", "source", "date")
 _RELATED = re.compile(r"<!-- related:start -->.*?<!-- related:end -->", re.S)
 _TLDR_MARKS = re.compile(r"<!-- tldr:(start|end) -->")
 
@@ -155,9 +163,34 @@ def split_text(text, prefix, count, limit=LIMIT):
     return out
 
 
-def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project=""):
-    """The chunks of one file: one per section with text, split by tokens when a section is too long for the model.
-    An unreadable or non-UTF-8 file gives no chunks."""
+def context_line(shelf, title, label, section, labels, gist):
+    """A chunk's second line: where it sits in its note (H1 > H2 > H3, when that says more than the first line),
+    which shelf or game, its labels and the note's gist."""
+    path = ""
+    if section["parents"] or (label and label != title):
+        trail = [label or title] + list(section["parents"]) + ([section["heading"]] if section["level"] else [])
+        path = " > ".join(t for n, t in enumerate(trail) if not n or t != trail[n - 1])[:200]
+    where = "game %s" % labels["game"] if labels.get("game") not in (None, "", "all") else shelf
+    tags = ", ".join(x for x in (labels.get("kind"), labels.get("source"), (labels.get("date") or "")[:7]) if x)
+    bits = [path, where, tags] + ([gist] if gist else [])
+    return rbxvault.CONTEXT_MARK + " | ".join(b for b in bits if b) + "\n"
+
+
+def _prefix(shelf, title, label, s, labels, gist, count_tokens, limit):
+    """The two context lines of a section's chunks, shortened (gist first) so they never take more than a quarter of
+    the window."""
+    for g, t, h in ((gist, title, s["heading"]), (" ".join(gist.split()[:12]), title, s["heading"]),
+                    ("", title[:80], s["heading"][:120])):
+        prefix = "%s%s%s\n" % (t, SEP, h) + context_line(shelf, t, label[:80], dict(s, heading=h), labels, g)
+        if count_tokens(prefix) <= limit // 4:
+            return prefix
+    return "%s%s%s\n" % (title[:80], SEP, s["heading"][:120])  # a freak heading must not eat the window
+
+
+def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project="", meta=None):
+    """The chunks of one file: one per section with text, split by tokens when a section is too long for the model,
+    each with its context lines and labels. meta (a dict), when given, gets the file's [[links]] ("links"). An
+    unreadable or non-UTF-8 file gives no chunks."""
     try:
         text = rbxvault.read(path)
     except (OSError, UnicodeDecodeError):
@@ -165,7 +198,13 @@ def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project=""):
     if "\x00" in text:
         return []
     p = rbxvault.parse_sections(text)
+    if meta is not None:
+        meta["links"] = rbxvault.wikilinks(p["body"])
     rel = _rel(shelf, path)
+    labels = rbxvault.note_labels(shelf, title, path, p["fm"], text, project)
+    gist = p["description"] or rbxvault.note_gist(p["fm"], _TLDR_MARKS.sub("", _RELATED.sub("", p["body"])),
+                                                  GIST_WORDS)
+    label = p["label"] or title
     out = []
     for i, s in enumerate(p["sections"]):
         own = p["body"][s["start"]:s["own_end"]]
@@ -177,11 +216,14 @@ def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project=""):
             own = p["description"] + "\n\n" + own
         if not own.strip():
             continue
-        prefix = "%s%s%s\n" % (title, SEP, s["heading"])
-        if count_tokens(prefix) > limit // 4:  # a freak heading must not eat the window
-            prefix = "%s%s%s\n" % (title[:80], SEP, s["heading"][:120])
+        lab = rbxvault.section_labels(labels, s["heading"], s["parents"])
+        # the opening already holds the description or the first sentence the gist is made of
+        g = "" if not s["level"] else gist
+        prefix = _prefix(shelf, title, label, s, lab, g, count_tokens, limit)
         for part, body in enumerate(split_text(own, prefix, count_tokens, limit)):
-            out.append({"id": chunk_id(shelf, path, i, part), "shelf": shelf, "title": title,
-                        "heading": s["heading"], "path": path, "rel": rel, "i": i, "part": part,
-                        "text": prefix + body, "project": project or ""})
+            c = {"id": chunk_id(shelf, path, i, part), "shelf": shelf, "title": title,
+                 "heading": s["heading"], "path": path, "rel": rel, "i": i, "part": part,
+                 "text": prefix + body, "project": project or ""}
+            c.update({k: lab.get(k) or "" for k in LABEL_KEYS})
+            out.append(c)
     return out

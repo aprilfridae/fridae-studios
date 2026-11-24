@@ -3,9 +3,11 @@ queried by fusing rankings with RRF (the keyword search's, the dense one, and pe
 reranker's; PLANS). The points live in a store (rbxrag.stores):
 Qdrant for Heavy, plain numpy arrays in memory for Light.
 
-The manifest beside the index records, per file, the (mtime_ns, size) it was indexed at and its point ids, so a sync
-re-embeds only the files that changed and deletes the points of files that are gone. A changed format, dimension or
-model rebuilds the whole index. The manifest is written (whole, with one rename) only after the points are in.
+The manifest beside the index records, per file, the (mtime_ns, size) it was indexed at, its point ids and its
+[[links]], so a sync re-embeds only the files that changed and deletes the points of files that are gone. A changed
+format, dimension or model rebuilds the whole index. The manifest is written (whole, with one rename) only after the
+points are in. The link graph (which note links to which) is made from it once per sync, never per query: a query
+adds up to two passages from notes its first results link to (Engine._follow_links).
 """
 import json
 import os
@@ -16,7 +18,7 @@ from typing import Callable, Protocol
 from rbxrag import chunks
 from rbxrag.stores import FUSED, PREFETCH, MemStore, QdrantStore  # noqa: F401 (re-exported)
 
-FORMAT = 1
+FORMAT = 2  # 2: every chunk carries its context lines and labels, and the manifest each file's [[links]]
 KEYWORD_DEPTH = 20  # how many of the keyword search's results join the fusion
 
 # How a query is answered, per mode. Measured on the bench of 33 queries (12 vault baseline, 6 knowledge-bench tasks,
@@ -39,6 +41,9 @@ PLANS = {
 BATCH = 1024  # chunks embedded and upserted together (Light sorts each batch by length: far less padding)
 CHECKPOINT_BATCHES = 4  # save the manifest (and Light's new rows) every 4,096 embedded chunks
 RELEASE_AFTER = 1000  # after embedding more than this many chunks, the embedders may give back their working memory
+LINK_CANDIDATES = 24  # linked notes looked at per query at most
+LINK_SIM = 0.9  # a linked passage qualifies when it is at least this close to the query, relative to the best direct
+LINK_COVER = 0.5  # ... or holds at least half of the query's words
 
 
 class Embedders(Protocol):
@@ -182,6 +187,8 @@ def _entry(e):
     out = {"mtime_ns": e["mtime_ns"], "size": e["size"], "ids": e["ids"], "project": e.get("project", "")}
     if e.get("sha1"):
         out["sha1"] = e["sha1"]
+    if e.get("links"):
+        out["links"] = e["links"]
     return out
 
 
@@ -242,6 +249,8 @@ class Engine:
         self.chunks = 0
         self.batch = BATCH
         self.checkpoint_batches = CHECKPOINT_BATCHES  # a killed build resumes from the last checkpoint
+        self._names = {}  # path -> (shelf, title) of every indexed file the syncs listed
+        self._graph = None  # (path -> [link targets], target name -> [(shelf, title, path)]), made by each sync
 
     # ------------------------------------------------------------ manifest
     def _load_manifest(self):
@@ -351,6 +360,7 @@ class Engine:
                 continue
             work.append((path, shelf, title, proj, st, digest))
         listed_now = set(new_entries) | {w[0] for w in work}
+        metas = {}  # path -> {"links": [...]} for the files chunked in this sync
         # a file is gone when it was indexed for the shared shelves or for this project and is no longer listed
         gone = [p for p, e in old.items() if p not in listed_now and e.get("project", "") in ("", project or "")]
         keep = {p: e for p, e in old.items() if p not in listed_now and p not in gone}  # other projects' files
@@ -358,7 +368,9 @@ class Engine:
         if quick:  # a query's refresh: chunk first, so a big change is refused before anything is embedded
             pre, n = {}, 0
             for path, shelf, title, proj, st, _ in work:
-                pre[path] = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj)
+                metas[path] = {}
+                pre[path] = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj,
+                                                   meta=metas[path])
                 n += len(pre[path])
                 if max_embed is not None and n > max_embed:
                     raise TooBig("more than %d chunks to embed" % max_embed)
@@ -368,6 +380,8 @@ class Engine:
                 self._write_manifest({"format": FORMAT, "dim": self.emb.dim, "model": self.model,
                                       "generation": man.get("generation"),
                                       "files": {p: _entry(e) for p, e in dict(keep, **new_entries).items()}})
+            if self._graph is None or not set(new_entries) <= set(self._names):
+                self._link_graph(files, dict(keep, **new_entries))
             self.chunks = sum(len(e["ids"]) for e in old.values())
             return {"chunks": self.chunks, "files": len(new_entries), "embedded": 0, "removed": 0}
         # Each file is chunked when its turn comes (a big build never holds every chunk's text at once) and its
@@ -406,11 +420,14 @@ class Engine:
 
         queued = 0
         for path, shelf, title, proj, st, digest in work:
-            cs = pre.pop(path) if pre is not None else chunks.chunks_for_file(shelf, title, path,
-                                                                                 self.emb.count_tokens, project=proj)
+            meta = metas.setdefault(path, {})
+            cs = pre.pop(path) if pre is not None else chunks.chunks_for_file(
+                shelf, title, path, self.emb.count_tokens, project=proj, meta=meta)
             ids = [c["id"] for c in cs]
             new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": ids, "project": proj,
                                  "sha1": digest}
+            if meta.get("links"):
+                new_entries[path]["links"] = meta["links"]
             if path in old:
                 stale[path] = sorted(set(old[path].get("ids", [])) - set(ids))
             batch += cs
@@ -426,11 +443,27 @@ class Engine:
             self.store.delete(rest)
         man["files"] = dict(keep, **new_entries)
         self._commit(man)
+        self._link_graph(files, man["files"])
         if state["embedded"] > RELEASE_AFTER and hasattr(self.emb, "release"):
             self.emb.release()  # a big build's model working memory is not kept for the queries
         self.chunks = sum(len(e["ids"]) for e in man["files"].values())
         progress("index", 1.0)
         return {"chunks": self.chunks, "files": len(new_entries), "embedded": state["embedded"], "removed": len(gone)}
+
+    def _link_graph(self, files, entries):
+        """Make the link graph from the manifest's entries (every indexed file's [[links]]) and the files' shelves and
+        titles: once per sync, so a query only looks it up."""
+        names = dict(self._names)
+        names.update({p: v for p, v in files.items()})
+        names = {p: v for p, v in names.items() if p in entries}
+        links = {p: e["links"] for p, e in entries.items() if e.get("links")}
+        targets = {}
+        for path, (shelf, title) in names.items():
+            base = os.path.splitext(os.path.basename(path))[0]
+            for name in {title.casefold(), title.rsplit("/", 1)[-1].casefold(), base.casefold()}:
+                targets.setdefault(name, []).append((shelf, title, path))
+        self._names = names
+        self._graph = (links, targets)
 
     def _checkpoint(self, man, keep, old, new_entries, gone, work_paths, finished):
         """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (the
@@ -450,7 +483,7 @@ class Engine:
         self._commit(dict(man, files=files))
 
     # ------------------------------------------------------------ query
-    def _filter(self, shelves, project):
+    def _filter(self, shelves, project, filters=None):
         import rbxvault
         left_out = set(rbxvault.SHELVES) - set(shelves)
         if not project:
@@ -459,13 +492,61 @@ class Engine:
         if project:  # the game's own team files replace the kit's experts of the same id
             hide = [t for t, _ in rbxvault.team_files(os.path.join(project, ".fridae", "team", "experts"))]
         # a shelf condition only when it removes something (in Qdrant's local mode every condition costs a pass)
-        return {"shelves": list(shelves) if left_out else None, "project": project or None, "hide_team": hide}
+        flt = {"shelves": list(shelves) if left_out else None, "project": project or None, "hide_team": hide}
+        for key in ("game", "kind", "source", "since"):
+            if (filters or {}).get(key):
+                flt[key] = filters[key]
+        return flt
 
-    def query(self, q, shelves, k, project):
+    def _follow_links(self, q, dv, flt, out, k, shelves):
+        """Up to two passages from notes the first results link to ([[links]]), each the linked note's part nearest
+        the query, when it is about as close to the query as the best direct result (LINK_SIM) or holds half of the
+        query's words (LINK_COVER). They are marked linked_from (the linking note's title) and placed after the first
+        three direct results, never in place of one."""
+        import rbxvault
+        graph = self._graph
+        if graph is None or k <= rbxvault.DIRECT_KEPT or not out or not hasattr(self.store, "best_parts"):
+            return out
+        links, targets = graph
+        have = {(h["shelf"], h["title"]) for h in out}
+        keys, src = [], {}
+        for h in out[:rbxvault.DIRECT_KEPT]:
+            for t in links.get(h["path"], ()):
+                for shelf, title, _ in targets.get(t, ()):
+                    key = (shelf, title, None)
+                    if shelf in shelves and (shelf, title) not in have and key not in src:
+                        src[key] = h["title"]
+                        keys.append(key)
+            if len(keys) >= LINK_CANDIDATES:
+                break
+        keys = keys[:LINK_CANDIDATES]
+        if not keys:
+            return out
+        direct = [(h["shelf"], h["title"], h["i"]) for h in out[:rbxvault.DIRECT_KEPT]]
+        parts = self.store.best_parts(dv, flt, direct + keys)
+        sims = [parts[d][0] for d in direct if d in parts]
+        bar = LINK_SIM * max(sims) if sims and max(sims) > 0 else None
+        want = set(rbxvault.tokens(q))
+        found = []
+        for key in keys:
+            if key not in parts:
+                continue
+            sim, pay = parts[key]
+            words = set(rbxvault.tokens("\n".join(rbxvault.passage(pay.get("text") or "", 4000))))
+            cover = len(want & words) / len(want) if want else 0.0
+            if cover >= LINK_COVER or (bar is not None and sim >= bar):
+                found.append((sim, cover, pay, src[key]))
+        found.sort(key=lambda f: (-f[0], -f[1]))
+        linked = [dict(pay, score=float(sim), linked_from=frm) for sim, _, pay, frm in found[:rbxvault.LINKED_MAX]]
+        return rbxvault.place_linked(out, linked, k) if linked else out
+
+    def query(self, q, shelves, k, project, filters=None):
         """The k best sections for q on the given shelves (a game's chunks only for its own project), as the plan
         says: the keyword search's ranking, the dense ranking and (when on) the sparse ranking fused with RRF, then
         (when on) the reranker over the top candidates, as one more vote or as their new order. Each hit is a chunk's
-        payload plus its score; parts of the same section count once."""
+        payload plus its score; parts of the same section count once. filters (rbxvault.normalize_filters) keep only
+        the chunks whose labels pass; up to two hits from linked notes may follow the first three
+        (_follow_links)."""
         if not shelves or not q.strip():
             return []
         plan = self.plan
@@ -477,7 +558,8 @@ class Engine:
                 keys = list(self.keyword(q, list(shelves), KEYWORD_DEPTH, project or ""))
             except Exception:  # the keyword side never fails a query: dense alone answers
                 keys = []
-        dense, sparse, kw = self.store.rankings(dv, (list(si), list(sv)), self._filter(shelves, project), keys)
+        flt = self._filter(shelves, project, filters)
+        dense, sparse, kw = self.store.rankings(dv, (list(si), list(sv)), flt, keys)
         lists = [kw, dense] + ([sparse] if plan["sparse"] else [])
         fused, scores = _rrf(lists, plan["rrf_k"])
         fused, scores = fused[:FUSED], scores[:FUSED]
@@ -504,4 +586,8 @@ class Engine:
             out.append(dict(c, score=float(sc)))
             if len(out) >= k:
                 break
+        try:
+            out = self._follow_links(q, dv, flt, out, k, shelves)
+        except Exception:  # link following only adds: a failure leaves the direct results
+            pass
         return out

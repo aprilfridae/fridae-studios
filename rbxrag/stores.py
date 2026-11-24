@@ -11,9 +11,14 @@
   needs_sparse            True when every point must carry a sparse vector (else the engine sends empty ones when
                           its plan does not rank with them)
 
+  best_parts(dense, flt, keys) -> {key: (cosine, payload)}   for each (shelf, title, section index or None) key, its
+                          allowed part nearest the query (the engine's link following)
+
 flt is {"shelves": [..] or None (no shelf condition), "project": str or None, "hide_team": [expert ids]}: shared
 points (project "") always match, a game's points only for that project, and the kit's team experts a game overrides
-are hidden for that game.
+are hidden for that game. The label filters are optional: "game" ("this": the project's own points only; "general":
+the shared ones only), "kind" and "source" (lists of allowed values) and "since" (YYYYMMDD: points dated that day or
+later).
 
 QdrantStore (Heavy): the Qdrant service. MemStore (Light): numpy arrays in memory, the texts on disk, saved as a
 base plus one small delta per commit.
@@ -25,6 +30,14 @@ import tempfile
 import threading
 import uuid
 import warnings
+
+LABEL_FIELDS = ("kind", "source")  # payload labels a filter can ask for by value
+
+
+def day_of(date):
+    """YYYYMMDD as a number for a "YYYY-MM-DD" label (0 when there is none)."""
+    d = str(date or "").replace("-", "")[:8]
+    return int(d) if len(d) == 8 and d.isdigit() else 0
 
 PREFETCH = 40  # candidates from each of the dense and the sparse search
 FUSED = 30  # fused candidates the reranker sees
@@ -59,12 +72,13 @@ class QdrantStore:
                 sparse_vectors_config={"sparse": m.SparseVectorParams(modifier=m.Modifier.IDF)})
             with warnings.catch_warnings():  # local mode says payload indexes have no effect there; a server uses them
                 warnings.simplefilter("ignore")
-                for key in ("shelf", "project", "path", "title"):
+                for key in ("shelf", "project", "path", "title") + LABEL_FIELDS:
                     self.client.create_payload_index(self.collection, key, m.PayloadSchemaType.KEYWORD)
+                self.client.create_payload_index(self.collection, "day", m.PayloadSchemaType.INTEGER)
 
     def upsert(self, points):
         m = self._m()
-        structs = [m.PointStruct(id=pid, payload=payload,
+        structs = [m.PointStruct(id=pid, payload=dict(payload, day=day_of(payload.get("date"))),
                                  vector={"dense": [float(x) for x in dense],
                                          "sparse": m.SparseVector(indices=[int(i) for i in sp[0]],
                                                                   values=[float(v) for v in sp[1]])})
@@ -89,11 +103,21 @@ class QdrantStore:
         if flt.get("shelves") is not None:
             must.append(m.FieldCondition(key="shelf", match=m.MatchAny(any=list(flt["shelves"]))))
         project = flt.get("project")
-        if project:
+        game = flt.get("game")
+        if project and game == "this":
+            must.append(m.FieldCondition(key="project", match=m.MatchValue(value=project)))
+        elif project and game != "general":
             must.append(m.Filter(should=[m.FieldCondition(key="project", match=m.MatchValue(value="")),
                                          m.FieldCondition(key="project", match=m.MatchValue(value=project))]))
+        elif game == "this":  # this game's notes, with no game: nothing
+            must.append(m.FieldCondition(key="project", match=m.MatchValue(value="\x00")))
         else:
             must.append(m.FieldCondition(key="project", match=m.MatchValue(value="")))
+        for key in LABEL_FIELDS:
+            if flt.get(key):
+                must.append(m.FieldCondition(key=key, match=m.MatchAny(any=list(flt[key]))))
+        if flt.get("since"):
+            must.append(m.FieldCondition(key="day", range=m.Range(gte=int(flt["since"]))))
         must_not = []
         if project and flt.get("hide_team"):
             must_not.append(m.Filter(must=[m.FieldCondition(key="shelf", match=m.MatchValue(value="team")),
@@ -132,24 +156,8 @@ class QdrantStore:
                                                with_payload=True)
             sparse_top = [p.payload for p in res.points if p.payload]
         kw = []
-        titles = sorted({k[1] for k in keys})
-        if titles:
-            kf = m.Filter(must=[f, m.FieldCondition(key="title", match=m.MatchAny(any=titles))])
-            with self._db:
-                pts, _ = self.client.scroll(self.collection, scroll_filter=kf, limit=4096, with_payload=True,
-                                            with_vectors=["dense"])
-            qn = math.sqrt(sum(x * x for x in dense)) or 1.0
-            best = {}  # a note key or a section key -> (similarity, payload)
-            for p in pts:
-                pay, vec = p.payload or {}, p.vector
-                vec = vec.get("dense") if isinstance(vec, dict) else vec
-                if not pay or not vec:
-                    continue
-                vn = math.sqrt(sum(x * x for x in vec)) or 1.0
-                sim = sum(a * b for a, b in zip(dense, vec)) / (qn * vn)
-                for key in ((pay.get("shelf"), pay.get("title"), None), (pay.get("shelf"), pay.get("title"), pay.get("i"))):
-                    if key not in best or sim > best[key][0]:
-                        best[key] = (sim, pay)
+        if keys:
+            best = self._best(dense, f, keys)
             seen = set()
             for key in keys:
                 hit = best.get(tuple(key))
@@ -157,6 +165,36 @@ class QdrantStore:
                     seen.add(hit[1].get("id"))
                     kw.append(hit[1])
         return dense_top, sparse_top, kw
+
+    def _best(self, dense, f, keys):
+        """{note key or section key: (cosine, payload)} over the points of the keys' titles that pass the filter f."""
+        m = self._m()
+        titles = sorted({k[1] for k in keys})
+        if not titles:
+            return {}
+        kf = m.Filter(must=[f, m.FieldCondition(key="title", match=m.MatchAny(any=titles))])
+        with self._db:
+            pts, _ = self.client.scroll(self.collection, scroll_filter=kf, limit=4096, with_payload=True,
+                                        with_vectors=["dense"])
+        dense = [float(x) for x in dense]
+        qn = math.sqrt(sum(x * x for x in dense)) or 1.0
+        best = {}  # a note key or a section key -> (similarity, payload)
+        for p in pts:
+            pay, vec = p.payload or {}, p.vector
+            vec = vec.get("dense") if isinstance(vec, dict) else vec
+            if not pay or not vec:
+                continue
+            vn = math.sqrt(sum(x * x for x in vec)) or 1.0
+            sim = sum(a * b for a, b in zip(dense, vec)) / (qn * vn)
+            for key in ((pay.get("shelf"), pay.get("title"), None), (pay.get("shelf"), pay.get("title"), pay.get("i"))):
+                if key not in best or sim > best[key][0]:
+                    best[key] = (sim, pay)
+        return best
+
+    def best_parts(self, dense, flt, keys):
+        """{key: (cosine, payload)}: each key's allowed part nearest the query (keys with none are left out)."""
+        best = self._best(dense, self._filter(flt), keys)
+        return {tuple(k): best[tuple(k)] for k in keys if tuple(k) in best}
 
     def count_path(self, path):
         m = self._m()
@@ -169,7 +207,8 @@ DTYPE = "float16"  # Light keeps its vectors as 16-bit floats: half the memory, 
 BLOCK = 16384  # rows turned back into 32-bit floats at a time when a query is scored
 COMPACT_DEAD = 0.25  # the base is rewritten when this share of the rows are deleted or replaced ones
 MAX_DELTAS = 64  # ... or when this many small commits have piled up on it
-_DOC_KEYS = ("shelf", "title", "path", "rel", "project")
+_DOC_KEYS = ("shelf", "title", "path", "rel", "project", "game", "kind", "source", "date")  # a doc: one note's
+# sections with the same labels (a "Learned in Fridae" section has its own)
 _ROW_KEYS = set(_DOC_KEYS) | {"id", "heading", "i", "part", "text"}
 
 
@@ -201,6 +240,10 @@ class _Snapshot:
         doc_proj = np.array([pcode[d[4]] for d in self.docs] or [0], dtype=np.int32)
         self.shelf = doc_shelf[self.doc_of] if n else np.zeros(0, dtype=np.int8)
         self.proj = doc_proj[self.doc_of] if n else np.zeros(0, dtype=np.int32)
+        # the labels, per doc (rows look theirs up through doc_of when a filter asks)
+        self.doc_label = {key: [d[k] if len(d) > k else "" for d in self.docs]
+                          for k, key in ((6, "kind"), (7, "source"))}
+        self.doc_day = np.array([day_of(d[8] if len(d) > 8 else "") for d in self.docs] or [0], dtype=np.int32)
         # sparse vectors (only when the engine stores them) term-major: term t's postings are
         # post_rows/post_vals[starts[k]:ends[k]] where terms[k] == t
         live_sp = [(r, v) for r, v in st.sparse.items() if r < n and self.alive[r]]
@@ -234,6 +277,7 @@ class _Snapshot:
         d = self.docs[int(self.doc_of[r])]
         p = {"id": self.ids[r], "shelf": d[0], "title": d[1], "heading": self.headings[r], "path": d[2], "rel": d[3],
              "i": int(self.i[r]), "part": int(self.part[r]), "project": d[4], "text": self.text(r)}
+        p.update(zip(_DOC_KEYS[5:], d[5:]))  # the labels
         if r in self.extra:
             p.update(self.extra[r])
         return p
@@ -695,10 +739,23 @@ class MemStore:
             mask &= np.isin(s.shelf, np.array(codes, dtype=np.int8))
         project = flt.get("project")
         shared = s.proj == 0
-        if project and project in s.projects:
-            mask &= shared | (s.proj == s.projects.index(project))
+        game = flt.get("game")
+        mine = (s.proj == s.projects.index(project)) if project and project in s.projects else None
+        if game == "this":
+            mask &= mine if mine is not None else np.zeros(s.n, dtype=bool)
+        elif mine is not None and game != "general":
+            mask &= shared | mine
         else:
             mask &= shared
+        if s.n and any(flt.get(k) for k in LABEL_FIELDS + ("since",)):
+            ok = np.ones(len(s.docs) or 1, dtype=bool)
+            for key in LABEL_FIELDS:
+                if flt.get(key):
+                    want = set(flt[key])
+                    ok &= np.array([v in want for v in s.doc_label[key]] or [False], dtype=bool)
+            if flt.get("since"):
+                ok &= s.doc_day >= int(flt["since"])
+            mask &= ok[s.doc_of]
         if project and flt.get("hide_team"):
             for t in flt["hide_team"]:
                 for d in s.by_title.get(("team", t), ()):
@@ -788,6 +845,26 @@ class MemStore:
                     seen.add(best)
                     kw.append(best)
         return [[s.payload(r) for r in x] for x in (dense_top, sparse_top, kw)]
+
+    def best_parts(self, dense, flt, keys):
+        """{key: (cosine, payload)}: for each (shelf, title, section index or None) key, its allowed part nearest
+        the query (keys with none are left out). Only those rows are scored."""
+        np = self.np
+        s = self._snap
+        if not s.n or not keys:
+            return {}
+        q = self._norm(dense)
+        if len(q) != s.dense.shape[1]:
+            return {}
+        mask = self._mask(s, flt)
+        out = {}
+        for key in keys:
+            rows = [r for r in s.slots_of(key[0], key[1]) if mask[r] and (key[2] is None or s.i[r] == key[2])]
+            if rows:
+                sims = s.dense[rows].astype(np.float32) @ q
+                j = int(np.argmax(sims))
+                out[tuple(key)] = (float(sims[j]), s.payload(rows[j]))
+        return out
 
     def count_path(self, path):
         s = self._snap
