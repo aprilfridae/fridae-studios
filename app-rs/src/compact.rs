@@ -690,14 +690,37 @@ pub const LIBRARIAN_LIMITS: Limits = Limits { all: Duration::from_secs(45), one:
 /// One answer to a swarm member's knowledge question, from `prompt` (made and masked by `swarm::librarian`), written
 /// once with no tools on the user's OpenCode plan only, never Claude or Gemini (as `plain_summary`).
 pub fn librarian_answer(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
+    #[cfg(not(test))]
+    return opencode_once(prompt, &LIBRARIAN_LIMITS, stop, "answer");
+    #[cfg(test)]
+    opencode_once(prompt, &LIMITS, stop, "answer")
+}
+
+/// The budget for the Librarian's support check: one model, about 15 seconds, skipped when it does not answer.
+#[cfg_attr(test, allow(dead_code))]
+pub const LIBRARIAN_CHECK_LIMITS: Limits = Limits { all: Duration::from_secs(15), one: Duration::from_secs(15), reserve: Duration::from_secs(0) };
+
+/// The Librarian's support check (does each quote support its claim?), on the user's OpenCode plan only.
+pub fn librarian_check(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
+    #[cfg(not(test))]
+    return opencode_once(prompt, &LIBRARIAN_CHECK_LIMITS, stop, "check");
+    #[cfg(test)]
+    opencode_once(prompt, &LIMITS, stop, "check")
+}
+
+/// `prompt` written once by the first of the plan's models that answers within `limits` (a test's stand-in in tests).
+#[cfg_attr(test, allow(unused_variables))]
+fn opencode_once(prompt: &str, limits: &Limits, stop: &dyn Fn() -> bool, what: &str) -> Outcome {
     #[cfg(test)]
     let (means, limits) = STAND_IN.with(|s| s.borrow_mut().take()).unwrap_or_else(|| (Means::none(), LIMITS));
+    #[cfg(test)]
+    let limits = &limits;
     #[cfg(not(test))]
-    let (means, limits) = (means(), LIBRARIAN_LIMITS);
-    let tries = tries("opencode", (1, None), prompt, &means, &limits);
-    let out = first_written(tries, &limits, stop, &|_| {});
+    let means = means();
+    let tries = tries("opencode", (1, None), prompt, &means, limits);
+    let out = first_written(tries, limits, stop, &|_| {});
     for (model, why) in &out.failed {
-        eprintln!("librarian: {model} did not answer: {}", why.chars().take(300).collect::<String>());
+        eprintln!("librarian {what}: {model} did not answer: {}", why.chars().take(300).collect::<String>());
     }
     out
 }

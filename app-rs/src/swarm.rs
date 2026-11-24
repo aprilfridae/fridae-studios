@@ -929,7 +929,7 @@ fn librarian_asked(run: &Run, asker: &str, text: &str) {
         let (run_id, asker, text, project) = (run.id.clone(), asker.to_string(), text.to_string(), run.project.clone());
         thread::spawn(move || {
             let began = std::time::Instant::now();
-            let said = librarian::answer(&text, &|parts| librarian::search_cli(&project, parts), &librarian::write);
+            let said = librarian::answer(&text, &|parts| librarian::search_cli(&project, parts), &librarian::write, &librarian::check);
             eprintln!("librarian: answered @{asker} in {:.1} s", began.elapsed().as_secs_f64());
             librarian_answered(&run_id, &asker, &said);
         });
