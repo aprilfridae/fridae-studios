@@ -42,9 +42,18 @@ pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The app's standing instructions, with the guide routing table (shared with the tool server) filled in.
 static SYSTEM_PROMPT: LazyLock<String> = LazyLock::new(|| include_str!("text/system.txt").replace("{routing}", include_str!("../../routing.txt")));
+/// The standing instructions with the project's own part: a game's (GAME.md, the board, checkpoints), or for a
+/// plain project the note that the game parts do not apply, with the opening line made general.
+fn project_prompt(prompt: String, path: &str, game: bool) -> String {
+    if game {
+        return prompt + &PROJECT_PROMPT.replace("{path}", path);
+    }
+    prompt.replacen("helping the user build their Roblox game.", "helping the user with their project.", 1) + &PLAIN_PROJECT_PROMPT.replace("{path}", path)
+}
 const SELF_TEST_PROMPT: &str = include_str!("text/selftest.txt");
 const GEMINI_PROMPT: &str = include_str!("text/gemini.txt");
 const PROJECT_PROMPT: &str = include_str!("text/project.txt");
+const PLAIN_PROJECT_PROMPT: &str = include_str!("text/plain_project.txt");
 const KICKOFF_NEW: &str = include_str!("text/kickoff_new.txt");
 const KICKOFF_EXISTING: &str = include_str!("text/kickoff_existing.txt");
 const WORKER_PROMPT: &str = include_str!("text/worker.txt");
@@ -3518,7 +3527,7 @@ impl Agent {
             (st.project.clone().filter(|p| std::path::Path::new(p).is_dir()), st.role.clone(), st.expert_text.clone())
         };
         if let Some(p) = &project {
-            prompt += &PROJECT_PROMPT.replace("{path}", p);
+            prompt = project_prompt(prompt, p, projects::is_game(p));
         }
         match role.as_deref() {
             Some("critic") => prompt += CRITIC_PROMPT,
@@ -5760,6 +5769,16 @@ mod cursor_live_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plain_project_gets_the_plain_part_and_a_general_opening() {
+        let game = project_prompt(SYSTEM_PROMPT.to_string(), "/g/Lake", true);
+        assert!(game.contains("THIS CHAT BELONGS TO A GAME PROJECT") && game.contains("their Roblox game."));
+        let plain = project_prompt(SYSTEM_PROMPT.to_string(), "/p/Tool", false);
+        assert!(plain.contains("PLAIN PROJECT, NOT A GAME") && plain.contains("/p/Tool"));
+        assert!(!plain.contains("THIS CHAT BELONGS TO A GAME PROJECT"));
+        assert!(plain.starts_with("You are running inside the Fridae Studios desktop app, helping the user with their project."));
+    }
 
     #[test]
     fn lead_text_comes_from_the_vault_or_the_games_override() {

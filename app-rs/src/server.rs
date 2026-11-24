@@ -195,7 +195,7 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/research" {
         send_json(research::state())
     } else if path == "/api/projects" {
-        send_json(json!({"projects": projects::list(), "default_parent": projects::default_parent().display().to_string(), "git": projects::git_installed()}))
+        send_json(json!({"projects": projects::list(), "default_parent": projects::default_parent().display().to_string(), "default_parent_plain": projects::default_parent_plain().display().to_string(), "git": projects::git_installed()}))
     } else if path == "/api/status" {
         send_json(status())
     } else if path == "/api/promos" {
@@ -274,8 +274,9 @@ fn post(path: &str, body: Value) -> Reply {
                 Err(e) => send_json(json!({"ok": false, "error": e})),
             };
             match text_of("action").as_str() {
-                "create" => done(projects::create(&text_of("name"), body["parent"].as_str(), body["git"].as_bool().unwrap_or(false))),
-                "add" | "use" => done(projects::add(&path)),
+                "create" => done(projects::create(&text_of("name"), body["parent"].as_str(), body["git"].as_bool().unwrap_or(false), body["kind"].as_str())),
+                "add" | "use" => done(projects::add(&path, body["kind"].as_str())),
+                "kind" => done(projects::set_kind(&path, &text_of("kind"))),
                 "pick" => send_json(json!({"ok": true, "path": projects::pick_folder()})),
                 "open" => send_json(json!({"ok": projects::open(&path, &text_of("what"))})),
                 "forget" => {

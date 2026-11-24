@@ -231,11 +231,6 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .u-row b { font-weight: 500; }
 .u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
 .u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
-.u-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; align-items: end; height: 64px; padding: 4px 8px 0; }
-.u-week span { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; }
-.u-week i { display: block; width: 100%; max-width: 24px; border-radius: 2px; background: var(--dim); }
-.u-week span:last-child i { background: var(--text); }
-.u-week em { font: normal 12px/1 var(--mono); color: var(--faint); }
 .u-lim { padding: 8px; font-size: 14px; }
 .u-lim .lim-top { display: flex; align-items: baseline; gap: 8px; }
 .u-lim .lim-top b { font-weight: 500; flex: 1; min-width: 0; white-space: nowrap; text-align: left; }
@@ -607,9 +602,9 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
 
 /* ---------- the other pages take the whole space under the project's bar ---------- */
-#review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
-body.review #review, body.promos #promos, body.newproj #newproj, body.all #allproj { display: block; }
-body.review .body, body.promos .body, body.newproj .body, body.all .body { display: none; }
+#review, #promos, #ideas, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
+body.review #review, body.promos #promos, body.ideas #ideas, body.newproj #newproj, body.all #allproj { display: block; }
+body.review .body, body.promos .body, body.ideas .body, body.newproj .body, body.all .body { display: none; }
 .r-col { max-width: 960px; margin: 0 auto; }
 .r-col h2 { font-size: 16px; font-weight: 600; margin: 32px 0 4px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .r-col h2:first-child { margin-top: 0; }
@@ -670,6 +665,9 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 /* new project: a name and Create, then ideas to start from */
 .np-make { display: grid; gap: 4px; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 640px; }
 .np-make .keyrow { margin: 0; }
+.np-kind { margin: 0 0 8px; align-self: start; justify-self: start; }
+.np-kind button { height: 32px; padding: 0 16px; font-size: 14px; }
+.np-make .kind-note { margin: 0 0 8px; }
 .np-make .keyrow input, .r-find input { height: var(--h-l); font-size: 15px; border-radius: var(--r-m); padding: 0 16px; }
 .np-make .keyrow .pill, .r-find .pill { height: var(--h-l); padding: 0 24px; }
 .np-make .act { margin: 8px 0 0; }
@@ -963,16 +961,17 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <button class="icon" id="b-setup" aria-label="Setup" title="Setup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
       </div>
     </div>
-    <div class="pop" id="use-pop"><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><h5>This week, by AI</h5><div id="use-week"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
+    <div class="pop" id="use-pop"><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
 
   <main class="stage">
     <header class="top">
-      <button class="pname" id="b-proj" title="The game's folder, notes and git history"></button>
+      <button class="pname" id="b-proj" title="The project's folder, notes and git history"></button>
       <span class="grow"></span>
       <nav class="nav" id="tabs">
         <button class="tab on" id="v-chat">Chat</button>
-        <button class="tab" id="v-review" title="What is happening on this game, and what needs you">Review<span class="n" id="rv-badge" hidden></span></button>
+        <button class="tab" id="v-review" title="What is happening on this project, and what needs you">Review<span class="n" id="rv-badge" hidden></span></button>
+        <button class="tab" id="v-ideas" title="Game ideas from Roblox's live charts, for this game">Ideas</button>
         <button class="tab" id="v-promos" title="Promo videos made from your gameplay clips">Promos</button>
       </nav>
     </header>
@@ -1051,7 +1050,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <div id="allproj"><div class="ov">
       <div class="o-graph">
         <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
-        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
+        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
         <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
@@ -1077,10 +1076,10 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
             <div class="seg" id="rv-max"></div>
             <p class="sub">More experts finish sooner and use more of your AI plan.</p>
             <span class="pr-label">Go back</span>
-            <button class="pill sm" id="rv-undo" title="Put the game back as it was at one of the run's checkpoints">Undo this run</button>
+            <button class="pill sm" id="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button>
             <div id="rv-undo-box"></div>
             <span class="pr-label">Stop for good</span>
-            <button class="pill sm" id="rv-end" title="Stop this run so a new one can start. The game's files, review items and checkpoints stay.">End this run</button>
+            <button class="pill sm" id="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button>
             <div id="rv-end-box"></div>
           </details>
         </div>
@@ -1138,20 +1137,25 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     </section></div>
   </div></div>
 
-    <div id="newproj"><div class="r-col">
-      <div class="np-make">
-        <div class="keyrow"><input type="text" id="np-name" placeholder="Name of the game" autocomplete="off" aria-label="Name of the game"><button class="pill main" id="np-create">Create</button></div>
-        <p class="sub where" id="np-where"></p>
-        <div class="act" id="np-git-row"><button class="switch" id="np-git" role="switch" aria-checked="true"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div>
-        <p class="sub warn" id="np-note" hidden></p>
-      </div>
-      <p class="np-other"><button class="linkish" id="np-add">Add a game folder you already have</button><button class="linkish" id="np-chat">Just chat, without a project</button></p>
+    <div id="ideas"><div class="r-col">
       <h2>Ideas <small>from Roblox's live charts</small></h2>
-      <p class="sub">Reads the charts as they are now and proposes five game ideas, with the numbers behind each.</p>
+      <p class="sub">Reads the charts as they are now and proposes five game ideas, with the numbers behind each. Use one to shape this game.</p>
       <div class="r-find"><input type="text" id="r-focus" placeholder="Anything to steer it? e.g. horror, for phones, two-week build" autocomplete="off" aria-label="Anything to steer the ideas"><button class="pill main" id="r-find">Find ideas</button></div>
       <p class="r-note" id="r-note"></p>
       <div id="r-job"></div>
       <div id="r-ideas"></div>
+    </div></div>
+
+    <div id="newproj"><div class="r-col">
+      <div class="np-make">
+        <div class="seg np-kind" id="np-kind" role="radiogroup" aria-label="What kind of project"><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
+        <p class="sub kind-note" id="np-kind-note"></p>
+        <div class="keyrow"><input type="text" id="np-name" placeholder="Name of the project" autocomplete="off" aria-label="Name of the project"><button class="pill main" id="np-create">Create</button></div>
+        <p class="sub where" id="np-where"></p>
+        <div class="act" id="np-git-row"><button class="switch" id="np-git" role="switch" aria-checked="true"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div>
+        <p class="sub warn" id="np-note" hidden></p>
+      </div>
+      <p class="np-other"><button class="linkish" id="np-add">Add a folder you already have</button><button class="linkish" id="np-chat">Just chat, without a project</button></p>
     </div></div>
   </main>
 </div>
@@ -1186,9 +1190,9 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="act"><button class="pill" id="b-out">Open the output folder</button></div>
       <h3>Your notes</h3>
       <p class="sub">When you correct an agent it saves a short note, and later agents read it first.</p>
-      <details class="moreinfo"><summary>More</summary><p>House rules are the standing preferences every agent follows. Notes for everything stay on this computer; a game's notes live in its folder and travel with it. Open the folder to edit or delete any note.</p></details>
+      <details class="moreinfo"><summary>More</summary><p>House rules are the standing preferences every agent follows. Notes for everything stay on this computer; a project's notes live in its folder and travel with it. Open the folder to edit or delete any note.</p></details>
       <p class="sub" id="notes-state"></p>
-      <div class="act"><button class="pill" id="notes-open">Open notes folder</button><button class="pill" id="notes-open-game" hidden>Open this game's notes</button></div>
+      <div class="act"><button class="pill" id="notes-open">Open notes folder</button><button class="pill" id="notes-open-game" hidden>Open this project's notes</button></div>
     </section>
     <section data-s="connections">
       <h3>AIs</h3>
@@ -1236,7 +1240,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <label class="sub check-row"><input type="checkbox" id="xp-lead-picks"> The Lead may pick an AI for a job</label>
       <details class="moreinfo"><summary>More</summary><p>Now and then the Lead may start an expert on another AI or model; your rows here always win. An expert on Same as the Lead uses the Lead's model, so a Lead on a big model uses up that plan faster. Once you pick an AI, the expert uses that AI's default model unless you pick one. Only AIs installed on this computer are offered.</p></details>
       <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
-      <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your game, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
+      <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your project, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
       <label class="sub check-row"><input type="checkbox" id="xp-strong-lead"> Keep the Lead on a strong model</label>
       <p class="sub">A run's Lead plans and splits the work, so it never runs on DeepSeek or GLM. Turn off to let it.</p>
       <div id="xp-table" style="margin-top: 12px"></div>
@@ -1285,6 +1289,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
   <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
   <p class="sub" id="pd-path"></p>
+  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, GAME.md, Ideas and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
   <div class="act">
     <button class="pill" id="pd-folder">Open folder</button>
     <button class="pill" id="pd-bible">Open GAME.md</button>
@@ -1307,7 +1312,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <h3>Online copy</h3>
     <div id="pd-gh"></div>
     <p class="sub">Paste a repository's address (an empty one on GitHub, say) to keep a copy online.</p>
-    <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/game.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
+    <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/project.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
     <div class="act"><button class="pill" id="pd-push" title="Uploads this project's files to the online copy">Push</button><button class="pill" id="pd-pull">Pull</button></div>
   </div>
   <h3>Delete</h3>
@@ -1345,7 +1350,7 @@ try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (sa
    and a longer explanation that waits behind "More"]. */
 const GUIDE = [
   ["Start a game", [
-    ["Find a game to make", "New project reads Roblox's live charts and proposes ideas.", "@newproj"],
+    ["Find ideas for a game", "A game's Ideas tab reads Roblox's live charts and proposes ideas.", "@ideas"],
     ["Plan a new game", "It asks about the idea, one question at a time, before building anything.", "This is a new game. Interview me about the idea before building anything."],
     ["Learn an existing game", "It reads the open place and the folder, then writes up how the game works.", "Read through this game and write up how it works."],
   ]],
@@ -1375,8 +1380,8 @@ const GUIDE = [
   ["Bigger jobs", [
     ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first playable of this game and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
     ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
-    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make, or press Start a studio run on an idea in New project. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
-    ["Review", "What is happening on a game, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the game's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
+    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make, or press Start a studio run on an idea in a game's Ideas tab. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
+    ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
   ]],
@@ -1385,17 +1390,17 @@ const GUIDE = [
     ["Undo a turn", "The link under a finished turn takes back what it changed in Studio.", "", "Scripts included. It needs the Studio plugin (Setup, Connections)."],
     ["Undo the night", "A game's Review puts Studio and the files back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), today, and this week split by AI. Gemini, Cursor and OpenCode do not report their limits. A game's Review shows what that game has cost."],
-    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every game are in your notes folder; notes for one game are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
+    ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. A project's Review shows what that project has cost."],
+    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
-  ["Overview", "A live graph of every game, its chats and its experts, with one card per game beside it.", "", "In the graph a square is a game, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a game for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a game's run, what needs you and what it has cost; press it to open the game: its Review when something needs you, else its Chat. This page opens first when a game has a run going or something waits for you."],
-  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that game's Review. New project makes a folder for a new game and has ideas to start from. Chats that belong to no game sit under No project."],
-  ["Chat, Review, Promos", "A game's three tabs: talk to its agent, see what needs you, make promo videos."],
-  ["The chat's name", "Press it for the game's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
-  ["The game's name", "Press it for the game's folder, notes and git history."],
+  ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: its Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
+  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for a game or a plain project (a regular program, or anything else). Chats that belong to no project sit under No project."],
+  ["Chat, Review, Ideas, Promos", "A project's tabs: talk to its agent and see what needs you. A game also has Ideas (from Roblox's charts) and Promos (promo videos)."],
+  ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
+  ["The project's name", "Press it for the project's folder, its kind (Game or Project), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
   ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (or, for a chat going to Claude, by Claude's smallest model when OpenCode cannot). Common keys and passwords are masked where recognised, and the summary runs on your own plan either way. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
   ["More accounts", "Setup, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Setup, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there. An added Gemini account keeps its sign-in in a keychain of its own, which Fridae makes in that folder and opens by itself: your Mac's own keychain is not used for it and is never changed."],
@@ -1418,7 +1423,7 @@ function guideRow([name, what, example, more]) {
   const item = el("div", "g-item");
   const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
   if (example === "@newproj") row.onclick = () => { closeSetup(); showNewProject(); };
-  else if (example === "@promos" || example === "@review") row.onclick = () => { closeSetup(); setView(example.slice(1)); };
+  else if (example === "@promos" || example === "@review" || example === "@ideas") row.onclick = () => { closeSetup(); setView(example.slice(1)); };
   else if (example) row.onclick = () => { closeSetup(); setView("chat"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); };
   item.appendChild(row);
   if (more) item.appendChild(moreInfo(more));
@@ -1537,6 +1542,12 @@ function showNewProject() { curProj = null; setView("newproj"); }
 function showAll() { curProj = null; setView("all"); }
 /* the page in front is a project's tab, or one of the two pages of no project: Overview and New project */
 const isPage = (v) => v === "newproj" || v === "all";
+/* Ideas and Promos are a game's tabs: a plain project and a chat with no project have neither. A project the list
+   has not reached yet counts as a game, as every project did before kinds. */
+const isGameProj = (key) => !!key && kindOf(key) === "game";
+const gameTab = (v) => v === "ideas" || v === "promos";
+/* where a chat's start card goes once it has a project: a game with no GAME.md asks new or existing first */
+const startStep = (pr) => pr.bible || pr.kind === "plain" ? "ready" : "kind";
 let homeProj = null;   /* the project last in front, for the place kept across restarts */
 function savePlace() {
   if (curProj !== null) { homeProj = curProj; if (!isPage(view)) lastTab[curProj] = view; }
@@ -1562,7 +1573,7 @@ async function ensureChat(key, fresh) {
     if (draftSeed[key]) { pane(id).seed = draftSeed[key]; delete draftSeed[key]; }
     if (key) {
       const r = await api("/api/project", { agent: id, action: "use", path: key });
-      if (r && r.ok && r.project) { const q = pane(id); q.project = r.project; if (q.start) { q.start.step = r.project.bible ? "ready" : "kind"; q.start.paint(); } }
+      if (r && r.ok && r.project) { const q = pane(id); q.project = r.project; if (q.start) { q.start.step = startStep(r.project); q.start.paint(); } }
     }
     if (curProj === key) select(id);
     return id;
@@ -1842,7 +1853,7 @@ function paintSide() {
   rows.push(sideRow(used, "all", [view === "all", anyBusy].join("\n"), () => {
     const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
     if (anyBusy) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
-    all.title = "Every game, its chats and its experts, and what needs you";
+    all.title = "Every project, its chats and its experts, and what needs you";
     all.dataset.k = "all"; all.onclick = showAll;
     return all;
   }));
@@ -1870,7 +1881,7 @@ function paintSide() {
     const cls = marked(""), busy = loose.some((p) => p.busy);
     rows.push(sideRow(used, "none", "", () => {
       const b = el("button", "proj none", "<b>No project</b><span class=\"state\"><span class=\"dot\"></span></span>");
-      b.title = "Chats that belong to no game"; b.dataset.k = "none";
+      b.title = "Chats that belong to no project"; b.dataset.k = "none";
       b.onclick = () => showProject("");
       return b;
     }, (b) => { putClass(b, "proj none" + cls); putClass(b.querySelector(".dot"), "dot" + (busy ? " live" : "")); }));
@@ -1922,17 +1933,19 @@ $("proj-list").addEventListener("focusin", (ev) => {
   const group = b.closest(".s-kids[id^='kids-']");
   if (group) for (const r of group.querySelectorAll(".s-row.sx")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
 });
-/* the bar over the tabs: the game's name and its three tabs */
+/* the bar over the tabs: the project's name and its tabs (a game also has Ideas and Promos) */
 function paintView() {
-  for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
+  if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
+  for (const v of ["review", "promos", "ideas", "newproj", "all"]) document.body.classList.toggle(v, view === v);
   if (view !== "review") $("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
-  ["chat", "review", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
+  ["chat", "review", "ideas", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
   const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
   $("b-proj").textContent = name; $("b-proj").disabled = !curProj || isPage(view);
-  $("b-proj").title = curProj && !isPage(view) ? "The game's folder, notes and git history" : "";
+  $("b-proj").title = curProj && !isPage(view) ? "The project's folder, notes and git history" : "";
   $("tabs").hidden = isPage(view);
   $("v-review").hidden = !curProj;
+  $("v-ideas").hidden = $("v-promos").hidden = !isGameProj(curProj);
   paintReviewBadge();
 }
 function selectionHint() {
@@ -2021,7 +2034,7 @@ function paintConv() {
   const m = $("conv-menu"), key = curProj || "";
   m.replaceChildren();
   const add = el("button", "cv-new", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg>New chat');
-  add.title = "Start another chat for " + (key ? "this game" : "no game") + ". Chats that are working keep going at the same time.";
+  add.title = "Start another chat for " + (key ? "this " + thingOf(key) : "no project") + ". Chats that are working keep going at the same time.";
   add.disabled = (typeof status.slots_used === "number" ? status.slots_used : agents.size) >= (status.max_agents || 8);
   add.onclick = () => { closeConv(); showDraft(key); };
   m.appendChild(add);
@@ -2173,7 +2186,7 @@ async function loadProjects() {
 }
 function startCard(p) {
   const card = el("div", "ask start");
-  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, msg: "", paint };
+  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, kind: "game", msg: "", paint };
   p.start = st;
   const go = (step, msg) => { st.step = step; st.msg = msg || ""; paint(); };
   /* on an empty page (`p.draft`) the chat is made first; its own card then carries on */
@@ -2183,20 +2196,22 @@ function startCard(p) {
     const r = await api("/api/project", Object.assign({ agent: q.id }, body));
     if (!r.ok) { if (q.start) { q.start.msg = r.error || "That did not work."; q.start.paint(); } return go(st.step, r.error || "That did not work."); }
     q.project = r.project; paintProject(); loadProjects();
-    if (q !== p) { if (q.start) { q.start.step = r.project.bible ? "ready" : "kind"; q.start.msg = r.project.note || ""; q.start.paint(); } return; }
-    go(r.project.bible ? "ready" : "kind", r.project.note || "");
+    if (q !== p) { if (q.start) { q.start.step = startStep(r.project); q.start.msg = r.project.note || ""; q.start.paint(); } return; }
+    go(startStep(r.project), r.project.note || "");
   }
   const kickoff = async (kind) => { const q = await realize(); if (q) kickoffChat(q, kind); };
   function paint() {
     const pr = p.project; let h = "";
     if (st.step === "folder") {
-      h = "<h4>Start a folder for this game?</h4><p>A folder keeps the game's notes, scripts and history in one place.</p>"
+      h = "<h4>Start a folder for this project?</h4><p>A folder keeps the project's notes, files and history in one place.</p>"
         + '<div class="act"><button class="pill main" data-a="new">New folder</button><button class="pill" data-a="pick">Existing folder</button><button class="pill" data-a="skip">Skip, just chat</button></div>';
-      if (projects.projects.length) h += '<p class="sub">Or carry on with a game:</p><div class="act">' + projects.projects.slice(0, 6).map((x, i) => '<button class="pill" data-p="' + i + '">' + esc(x.name) + "</button>").join("") + "</div>";
+      if (projects.projects.length) h += '<p class="sub">Or carry on with a project:</p><div class="act">' + projects.projects.slice(0, 6).map((x, i) => '<button class="pill" data-p="' + i + '">' + esc(x.name) + "</button>").join("") + "</div>";
     } else if (st.step === "new") {
-      h = "<h4>New game folder</h4>"
-        + '<div class="keyrow"><input type="text" data-f="name" placeholder="Name of the game" autocomplete="off" value="' + esc(st.name) + '"></div>'
-        + '<p class="sub where">It goes in ' + esc(st.parent || projects.default_parent) + ' &nbsp;<button class="linkish" data-a="where">Change</button></p>'
+      h = "<h4>New project folder</h4>"
+        + '<div class="seg np-kind" role="radiogroup" aria-label="What kind of project">' + [["game", "Game"], ["plain", "Project"]].map(([k, t]) => '<button role="radio" data-a="k-' + k + '" class="' + (st.kind === k ? "on" : "") + '" aria-checked="' + (st.kind === k) + '">' + t + "</button>").join("") + "</div>"
+        + '<p class="sub">' + esc(KIND_NOTE[st.kind]) + "</p>"
+        + '<div class="keyrow"><input type="text" data-f="name" placeholder="Name of the project" aria-label="Name of the project" autocomplete="off" value="' + esc(st.name) + '"></div>'
+        + '<p class="sub where">It goes in ' + esc(st.parent || parentFor(st.kind)) + ' &nbsp;<button class="linkish" data-a="where">Change</button></p>'
         + (projects.git
           ? '<div class="act"><button class="switch" data-a="git" role="switch" aria-checked="' + (st.git ? "true" : "false") + '"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div><p class="sub">Git keeps a history of the project that you can look back through and return to.</p>'
           : '<p class="sub">Git is not installed, so no history is kept. You can add it later from git-scm.com.</p>')
@@ -2206,8 +2221,9 @@ function startCard(p) {
         + '<div class="act"><button class="pill main" data-a="kn">New game</button><button class="pill" data-a="ke">Already working on it</button></div>'
         + '<p class="sub">New game: I ask about the idea before building. Already working on it: I read the place and the folder first.</p>';
     } else {
-      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (pr && pr.bible ? "The game's notes (GAME.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
-        + '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>';
+      const game = !pr || pr.kind !== "plain";
+      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (game && pr && pr.bible ? "The game's notes (GAME.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
+        + (game ? '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>' : '<div class="act"><button class="pill" data-a="kp">Read through the project</button></div>');
     }
     if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
     card.innerHTML = h;
@@ -2220,7 +2236,10 @@ function startCard(p) {
       git: () => { st.git = !st.git; paint(); },
       pick: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) use({ action: "add", path: r.path }); },
       where: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { st.parent = r.path; paint(); } },
-      create: () => use({ action: "create", name: st.name, parent: st.parent || null, git: st.git && projects.git }),
+      create: () => use({ action: "create", name: st.name, parent: st.parent || null, git: st.git && projects.git, kind: st.kind }),
+      "k-game": () => { st.kind = "game"; paint(); },
+      "k-plain": () => { st.kind = "plain"; paint(); },
+      kp: async () => { const q = await realize(); if (q) api("/api/send", { agent: q.id, text: "Read through this project and get up to speed: what it is, how it is built and run, and its tests.", model: modelOf(q) || null, effort: effortOf(q), selftest: false, gemini: false, attachments: [] }); },
       kn: () => kickoff("new"),
       ke: () => kickoff("existing"),
     };
@@ -2281,10 +2300,19 @@ function openProject() {
   const pr = frontProj(); if (!pr || isPage(view)) return;
   closeSetup();
   $("pd-name").textContent = pr.name; $("pd-path").textContent = pr.path; $("pd-out").textContent = "";
-  $("pd-bible").hidden = !pr.bible;
+  $("pd-bible").hidden = !pr.bible; paintPdKind(pr);
   document.body.classList.add("pd-open"); panelOpened($("pd-close")); git("status");
   api("/api/projects").then((r) => { projects = r; const now = r.projects.find((x) => x.path === pr.path); if (now) $("pd-bible").hidden = !now.bible; });
 }
+function paintPdKind(pr) {
+  for (const b of $("pd-kind").querySelectorAll("button")) { const on = b.dataset.k === (pr.kind === "plain" ? "plain" : "game"); b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
+}
+for (const b of $("pd-kind").querySelectorAll("button")) b.onclick = async () => {
+  const pr = frontProj(); if (!pr) return;
+  const r = await api("/api/project", { action: "kind", path: pr.path, kind: b.dataset.k });
+  if (!r.ok) { $("pd-out").textContent = r.error || "That did not work."; return; }
+  await loadProjects(); paintPdKind(r.project);
+};
 function closeProject() { if (!document.body.classList.contains("pd-open")) return; document.body.classList.remove("pd-open"); panelClosed(); }
 $("b-proj").onclick = openProject; $("pd-close").onclick = closeProject;
 $("pd-folder").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "folder" }); };
@@ -2396,7 +2424,7 @@ function githubProject(state) {
   const pr = frontProj();
   if (pr) loadGithub(pr.path);
 }
-function ghRepoName(name) { return (name || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-game"; }
+function ghRepoName(name) { return (name || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-project"; }
 function ghWhen(at) {
   const d = new Date(at * 1000), today = new Date().toDateString() === d.toDateString();
   return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -2487,8 +2515,8 @@ let usageTimer = 0;
 function loadUsage() { clearTimeout(usageTimer); usageTimer = setTimeout(paintUsage, 400); }
 async function paintUsage() {
   const day = new Date(); day.setHours(0, 0, 0, 0);
-  const today = day.getTime() / 1000, week = today - 6 * 86400;
-  let r; try { r = await api("/api/usage", { since: week }); } catch (e) { return; }
+  const today = day.getTime() / 1000;
+  let r; try { r = await api("/api/usage", { since: today }); } catch (e) { return; }
   const recs = (r && r.records) || [];
   /* `quiet`: turns the AI ran without reporting what they used (Cursor on its kept connection). They are said as such, never counted as zero. */
   const sum = (list) => list.reduce((a, x) => ({ total: a.total + (x.total || 0), input: a.input + (x.input || 0), output: a.output + (x.output || 0), cached: a.cached + (x.cache_read || 0), cost: a.cost + (x.cost || 0), turns: a.turns + 1, quiet: a.quiet + (x.unreported ? 1 : 0) }), { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0, quiet: 0 });
@@ -2507,19 +2535,6 @@ async function paintUsage() {
     '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + shown(id, s) + "</span><small>" + esc(said(id, s, true)) + "</small></div>").join("")
     : '<div class="u-row"><small>Nothing yet today.</small></div>';
   paintLimits();
-  /* the last seven days, one block per AI: the week's total, then a bar a day */
-  const bars = (list) => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) { const from = today - i * 86400, d = sum(list.filter((x) => x.t >= from && x.t < from + 86400)); days.push([new Date(from * 1000).toLocaleDateString([], { weekday: "short" }), d.total - d.cached]); }
-    return days;
-  };
-  const perAi = AIS.map(([id]) => { const list = recs.filter((x) => x.ai === id); return [id, sum(list), bars(list)]; });
-  const top = Math.max(1, ...perAi.flatMap(([, , days]) => days.map((d) => d[1])));
-  $("use-week").innerHTML = perAi.map(([id, w, days]) =>
-    '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + (w.turns ? shown(id, w) : fmtTokens(0)) + "</span><small>" + (w.turns
-      ? esc(said(id, w, false))
-      : "Not used this week.") + "</small></div>"
-    + (w.turns ? '<div class="u-week">' + days.map(([d, n]) => '<span title="' + esc(d + ": " + fmtTokens(n)) + '"><i style="height:' + Math.max(n ? 3 : 1, Math.round((n / top) * 44)) + 'px"></i><em>' + esc(d.slice(0, 2)) + "</em></span>").join("") + "</div>" : "")).join("");
 }
 /* The plan's own limits, as Claude Code reported them after its last turn (the app asks no server for them). */
 function limitName(key) {
@@ -3076,7 +3091,7 @@ function gameInFront() {
 /* Studio needs a game folder, and helper agents on the chat's AI; "" when it can be used */
 function studioWhy() {
   const g = gameInFront();
-  if (!g) return "Needs a game folder: start one for this game first.";
+  if (!g) return "Needs a project folder: start one first.";
   const r = rvAll[g.path];
   return r && r.helpers === false ? "Needs helper agents, and they don't work on this chat's AI." : "";
 }
@@ -3495,41 +3510,47 @@ $("b-out").onclick = () => api("/api/open", { what: "work" });
 $("gd-list").appendChild(guideList(GUIDE));
 CONTROLS.forEach((c) => $("gd-controls").appendChild(guideRow(c)));
 
-/* ---------- tabs: Chat, Review and Promos for the project in front, or the New project page ---------- */
+/* ---------- tabs: Chat and Review for the project in front (and Ideas and Promos for a game), or the New project page ---------- */
 let research = {}, researchPane = null;
 function setView(v) {
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
   if (v === "review" && !curProj) v = "chat";
+  if (gameTab(v) && !isGameProj(curProj)) v = "chat";
   view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
-  if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
+  if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "ideas") loadResearch(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
-$("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos");
+$("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos"); $("v-ideas").onclick = () => setView("ideas");
 $("b-proj").onclick = () => openProject();
 
-/* ---------- New project: a name and Create, an existing folder, or an idea from the charts ---------- */
-let npParent = "", npGit = true;
+/* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
+let npParent = "", npGit = true, npKind = "game";
+const KIND_NOTE = { game: "A Roblox game: the Studio tools, GAME.md, Ideas and Promos.", plain: "A regular program, or anything else that is not a game." };
+const parentFor = (kind) => (kind === "plain" ? projects.default_parent_plain : projects.default_parent) || "";
 function openNewProject() {
-  paintNewProject(); loadProjects().then(paintNewProject); loadResearch();
+  paintNewProject(); loadProjects().then(paintNewProject);
   setTimeout(() => $("np-name").focus(), 0);
 }
 function paintNewProject() {
-  $("np-where").innerHTML = "It goes in " + esc(npParent || projects.default_parent || "your games folder") + ' &nbsp;<button class="linkish" id="np-where-b">Change</button>';
+  $("np-where").innerHTML = "It goes in " + esc(npParent || parentFor(npKind) || (npKind === "plain" ? "your projects folder" : "your games folder")) + ' &nbsp;<button class="linkish" id="np-where-b">Change</button>';
   $("np-where-b").onclick = async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { npParent = r.path; paintNewProject(); } };
   $("np-git-row").hidden = !projects.git;
   $("np-git").setAttribute("aria-checked", npGit ? "true" : "false");
+  for (const b of $("np-kind").querySelectorAll("button")) { const on = b.dataset.k === npKind; b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
+  $("np-kind-note").textContent = KIND_NOTE[npKind];
 }
+for (const b of $("np-kind").querySelectorAll("button")) b.onclick = () => { npKind = b.dataset.k; paintNewProject(); $("np-name").focus(); };
 function npNote(text) { $("np-note").textContent = text || ""; $("np-note").hidden = !text; }
 $("np-git").onclick = () => { npGit = !npGit; paintNewProject(); };
-/* a game folder made or added here opens in its Chat, with a chat ready for it */
+/* a folder made or added here opens in its Chat, with a chat ready for it */
 async function openMadeProject(project) {
   await loadProjects();
   showProject(project.path, "chat");
 }
 $("np-create").onclick = async () => {
-  const name = $("np-name").value.trim(); if (!name) { npNote("Give the game a name first."); $("np-name").focus(); return; }
+  const name = $("np-name").value.trim(); if (!name) { npNote("Give the project a name first."); $("np-name").focus(); return; }
   $("np-create").disabled = true; npNote("");
-  const r = await api("/api/project", { action: "create", name, parent: npParent || null, git: npGit && !!projects.git });
+  const r = await api("/api/project", { action: "create", name, parent: npParent || null, git: npGit && !!projects.git, kind: npKind });
   $("np-create").disabled = false;
   if (!r.ok) { npNote(r.error || "Could not make the folder."); return; }
   $("np-name").value = "";
@@ -3539,7 +3560,7 @@ $("np-create").onclick = async () => {
 $("np-name").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("np-create").click(); } };
 $("np-add").onclick = async () => {
   const pick = await api("/api/project", { action: "pick" }); if (!pick.path) return;
-  const r = await api("/api/project", { action: "add", path: pick.path });
+  const r = await api("/api/project", { action: "add", path: pick.path, kind: npKind });
   if (!r.ok) { npNote(r.error || "Could not add that folder."); return; }
   openMadeProject(r.project);
 };
@@ -3566,32 +3587,25 @@ function ideaCard(i) {
     + dd("Evidence", (i.evidence || []).length ? "<ul>" + i.evidence.map((x) => "<li>" + esc(String(x)) + "</li>").join("") + "</ul>" : "")
     + dd("Similar games", (i.comparables || []).length ? "<ul>" + i.comparables.map((c) => "<li>" + esc(c.name || "") + ": " + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes" + (c.note ? ". " + esc(c.note) : "") + "</li>").join("") + "</ul>" : "")
     + dd("First version", esc(i.first_playable || "")) + dd("Main risk", esc(i.risk || "")) + "</dl>"
-    + '<div class="act"><button class="pill main">Start this game</button><button class="pill">Start a studio run</button><button class="pill">Copy</button></div><p class="r-note"></p>';
+    + '<div class="act"><button class="pill main">Use this idea</button><button class="pill">Start a studio run</button><button class="pill">Copy</button></div><p class="r-note"></p>';
   const [start, build, copy] = card.querySelectorAll("button");
-  start.title = "Makes a project folder named after the idea and opens its Chat, where it interviews you about the idea before building.";
-  build.title = "Makes a project folder and starts a studio run with this idea: a Lead hands each stage to an expert and keeps going, and finished work waits for you in Review. Roblox Studio must be open on an empty place.";
+  start.title = "Opens a new chat in this game with the idea, where the agent talks it through with you before building.";
+  build.title = "Starts a studio run in this game with this idea: a Lead hands each stage to an expert and keeps going, and finished work waits for you in Review. Roblox Studio must be open.";
   const why = card.querySelector(".r-note");
-  const makeFolder = async (b) => {
-    why.textContent = ""; b.disabled = true;
-    const made = await api("/api/project", { action: "create", name: i.title || "New game", git: !!projects.git });
-    if (!made.ok) { b.disabled = false; why.textContent = made.error || "Could not make the folder."; return null; }
-    await loadProjects();
-    return made.project;
-  };
   build.onclick = async () => {
-    const project = await makeFolder(build); if (!project) return;
-    const r = await api("/api/studio-run", { action: "start", path: project.path, idea: ideaText(i) });
+    const key = curProj; if (!key) return;
+    why.textContent = ""; build.disabled = true;
+    const r = await api("/api/studio-run", { action: "start", path: key, idea: ideaText(i) });
     build.disabled = false;
-    if (!r.ok) { why.textContent = (r.error || "Could not start the run.") + " The folder " + project.name + " was made; start the run from its Chat."; return; }
-    showProject(project.path, "review");
+    if (!r.ok) { why.textContent = r.error || "Could not start the run."; return; }
+    showProject(key, "review");
   };
-  start.onclick = async () => {
-    const project = await makeFolder(start); if (!project) return;
-    start.disabled = false;
-    /* the idea goes with the chat's first message: New game in its Chat starts the interview from it */
-    draftSeed[project.path] = ideaText(i);
-    showProject(project.path, "chat");
-    box.value = "Let's make this: " + (i.title || "this idea"); fit();
+  start.onclick = () => {
+    const key = curProj; if (!key) return;
+    /* a new chat in this game: the idea goes with its first message */
+    draftSeed[key] = ideaText(i);
+    setView("chat"); showDraft(key);
+    box.value = "Let's shape the game around this idea: " + (i.title || "this idea"); fit(); box.focus();
   };
   copy.onclick = async () => { copy.textContent = (await copyText(ideaText(i))) ? "Copied" : "Could not copy"; setTimeout(() => (copy.textContent = "Copy"), 1500); };
   return card;
@@ -3644,7 +3658,7 @@ $("r-find").onclick = async () => {
   research.note = r.ok ? "" : (r.error || "Could not start."); if (r.ok) research.researching = r.agent; paintResearch();
 };
 $("r-focus").onkeydown = (e) => { if (e.key === "Enter") $("r-find").click(); };
-setInterval(() => { if (view === "newproj" && research.researching) loadResearch(); }, 2500);
+setInterval(() => { if (view === "ideas" && research.researching) loadResearch(); }, 2500);
 
 /* typing "/" offers the commands */
 const COMMANDS = [
@@ -4007,7 +4021,7 @@ function paintPromoProjects() {
   $("pr-proj-field").hidden = !!curProj;
   sel.innerHTML = "";
   sel.appendChild(new Option("No project", ""));
-  list.forEach((x) => sel.appendChild(new Option(x.name, x.path)));
+  list.filter((x) => x.kind !== "plain").forEach((x) => sel.appendChild(new Option(x.name, x.path)));
   sel.value = prForm.project;
   sel.onchange = () => { prForm.project = sel.value; };
 }
@@ -4202,7 +4216,7 @@ function paintReviewBadge() {
   const b = $("rv-badge"); if (!b) return;
   const st = curProj ? projState(curProj) : { n: 0, strong: false };
   b.hidden = !st.n; b.textContent = st.n; b.classList.toggle("strong", st.strong);
-  $("v-review").title = (st.n ? st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you" + (st.strong ? ", and the run is stopped until you answer" : "") + ". " : "") + "What is happening on this game, and what needs you";
+  $("v-review").title = (st.n ? st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you" + (st.strong ? ", and the run is stopped until you answer" : "") + ". " : "") + "What is happening on this " + thingOf(curProj) + ", and what needs you";
 }
 function openReview() {
   paintReview(); loadReview(rvPathNow()); loadRvUsage(true);
@@ -4255,7 +4269,7 @@ $("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren
 $("rv-end").onclick = () => {
   const box = $("rv-end-box"), path = rvPathNow();
   const card = el("div", "ask night-ask enter", '<h4>End this run?</h4><p></p><div class="act"><button class="pill main">End this run</button><button class="pill">Keep it</button></div>');
-  card.querySelector("p").textContent = "The Lead and the experts it started are stopped now, and nothing new starts. The game's files, review items, checkpoints and task cards stay as they are. Afterwards you can start a new run for this game.";
+  card.querySelector("p").textContent = "The Lead and the experts it started are stopped now, and nothing new starts. The " + thingOf(path) + "'s files, review items, checkpoints and task cards stay as they are. Afterwards you can start a new run for it.";
   const [go, keep] = card.querySelectorAll(".pill");
   keep.onclick = () => card.remove();
   go.onclick = async () => {
@@ -4644,7 +4658,7 @@ function paintAll() {
   const box = $("ap-cards"), cards = list.map(apCard).concat([add]);
   if (cards.length !== box.children.length || cards.some((c, i) => c.outerHTML !== box.children[i].outerHTML)) box.replaceChildren(...cards);
   const going = list.filter((x) => rank(x) < 3).length, working = [...agents.values()].filter((p) => p.busy).length, wait = list.reduce((n, x) => n + projState(x.path).n, 0);
-  $("ap-totals").textContent = [!list.length ? "No games yet" : going ? going + (going === 1 ? " game at work" : " games at work") : "Nothing going", working ? working + (working === 1 ? " agent working" : " agents working") : "", wait ? wait + (wait === 1 ? " thing waits for you" : " things wait for you") : ""].filter(Boolean).join(" · ");
+  $("ap-totals").textContent = [!list.length ? "No projects yet" : going ? going + (going === 1 ? " project at work" : " projects at work") : "Nothing going", working ? working + (working === 1 ? " agent working" : " agents working") : "", wait ? wait + (wait === 1 ? " thing waits for you" : " things wait for you") : ""].filter(Boolean).join(" · ");
   $("ap-stop-all").hidden = !working;
 }
 $("ap-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) api("/api/stop", { agent: p.id }); };
@@ -4744,7 +4758,7 @@ function overviewSync() {
   /* the same picture in words, for a reader who cannot see the canvas (the cards beside it say the rest) */
   const all = [...og.nodes.values()], count = (k) => all.filter((n) => n.kind === k).length, plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const busy = all.filter((n) => n.busy && n.kind !== "project").map((n) => n.label);
-  $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "game"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
+  $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "project"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
   return kind;
 }
 const NODE = { project: 10, chat: 6, expert: 4, saved: 3, step: 2.5 };

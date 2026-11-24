@@ -1,5 +1,5 @@
-//! Game projects: one folder per game, holding GAME.md (the game bible), the
-//! place's exported scripts, and usually a git repository.
+//! Projects: one folder each, usually a git repository. A project is a game (GAME.md, the game bible, and the
+//! place's exported scripts; the Roblox tools, Ideas and Promos) or a plain one: a regular program or anything else.
 
 use crate::paths::Start;
 use std::{
@@ -43,6 +43,26 @@ pub fn default_parent() -> PathBuf {
     if paths::packaged() { PATHS.home.join("games") } else { paths::work("games") }
 }
 
+/// Where new plain (not game) project folders go unless the user picks somewhere else.
+pub fn default_parent_plain() -> PathBuf {
+    if paths::packaged() { PATHS.home.join("projects") } else { paths::work("projects") }
+}
+
+/// A project's kind as asked for: "plain" for a plain project, "game" for anything else.
+pub fn kind_word(asked: Option<&str>) -> &'static str {
+    if asked.is_some_and(|k| k.trim().eq_ignore_ascii_case("plain")) { "plain" } else { "game" }
+}
+
+/// A saved project's kind. Projects saved before kinds existed are games.
+fn kind_of(entry: &Value) -> &'static str {
+    kind_word(entry["kind"].as_str())
+}
+
+/// Whether a known project is a game (and an unknown folder is taken as one, as before kinds existed).
+pub fn is_game(path: &str) -> bool {
+    saved().iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)).is_none_or(|p| kind_of(p) == "game")
+}
+
 pub fn same(a: &str, b: &str) -> bool {
     let norm = |s: &str| s.replace('/', "\\").trim_end_matches('\\').to_lowercase();
     norm(a) == norm(b)
@@ -63,12 +83,10 @@ pub fn known(path: &str) -> bool {
 /// What the window shows about a project.
 pub fn describe(path: &str) -> Value {
     let dir = PathBuf::from(path);
-    let name = saved()
-        .iter()
-        .find(|p| same(p["path"].as_str().unwrap_or(""), path))
-        .and_then(|p| p["name"].as_str().map(str::to_string))
-        .unwrap_or_else(|| paths::base_name(path));
-    json!({"name": name, "path": path, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": dir.join("GAME.md").is_file()})
+    let entry = saved().into_iter().find(|p| same(p["path"].as_str().unwrap_or(""), path));
+    let name = entry.as_ref().and_then(|p| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| paths::base_name(path));
+    let kind = entry.as_ref().map_or("game", kind_of);
+    json!({"name": name, "path": path, "kind": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": dir.join("GAME.md").is_file()})
 }
 
 /// Known projects, most recently used first.
@@ -76,17 +94,39 @@ pub fn list() -> Vec<Value> {
     saved().iter().filter_map(|p| p["path"].as_str()).map(describe).filter(|p| p["exists"] == true).collect()
 }
 
-fn remember(name: &str, path: &str) {
-    let mut list: Vec<Value> = saved().into_iter().filter(|p| !same(p["path"].as_str().unwrap_or(""), path)).collect();
-    list.insert(0, json!({"name": name, "path": path}));
-    save(list);
+/// Put a project at the top of the list. Without a `kind`, a project already on the list keeps its own.
+fn remember(name: &str, path: &str, kind: Option<&str>) {
+    save(remembered(saved(), name, path, kind));
+}
+
+fn remembered(list: Vec<Value>, name: &str, path: &str, kind: Option<&str>) -> Vec<Value> {
+    let was = list.iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)).map(kind_of);
+    let kind = kind.map(|k| kind_word(Some(k))).or(was).unwrap_or("game");
+    let mut list: Vec<Value> = list.into_iter().filter(|p| !same(p["path"].as_str().unwrap_or(""), path)).collect();
+    list.insert(0, json!({"name": name, "path": path, "kind": kind}));
+    list
 }
 
 /// Move a project to the top of the list.
 pub fn touch(path: &str) {
     if let Some(name) = describe(path)["name"].as_str() {
-        remember(name, path);
+        remember(name, path, None);
     }
+}
+
+/// Make a known project a game or a plain project.
+pub fn set_kind(path: &str, kind: &str) -> Result<Value, String> {
+    if !known(path) {
+        return Err("That is not one of your projects.".into());
+    }
+    let kind = kind_word(Some(kind));
+    save(saved().into_iter().map(|mut p| {
+        if same(p["path"].as_str().unwrap_or(""), path) {
+            p["kind"] = json!(kind);
+        }
+        p
+    }).collect());
+    Ok(describe(path))
 }
 
 pub fn forget(path: &str) {
@@ -118,7 +158,7 @@ pub fn delete(path: &str, trash: bool) -> Result<(), String> {
     if trash {
         let dir = fs::canonicalize(path).map_err(|_| "That folder is no longer there. Remove it from Fridae instead.".to_string())?;
         let canon = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        let mut protected = vec![canon(&PATHS.home), canon(&PATHS.kit), canon(&PATHS.work), canon(&PATHS.install), canon(&default_parent())];
+        let mut protected = vec![canon(&PATHS.home), canon(&PATHS.kit), canon(&PATHS.work), canon(&PATHS.install), canon(&default_parent()), canon(&default_parent_plain())];
         if let Some(h) = std::env::var_os("HOME") {
             protected.push(canon(Path::new(&h)));
         }
@@ -166,15 +206,16 @@ fn to_trash(_dir: &Path) -> Result<(), String> {
     Err("Fridae cannot move folders to the Trash here. Remove the project from Fridae, then delete its folder yourself.".into())
 }
 
-/// Make a new folder for a game, optionally as a git repository.
-pub fn create(name: &str, parent: Option<&str>, git: bool) -> Result<Value, String> {
+/// Make a new folder for a game or a plain project, optionally as a git repository.
+pub fn create(name: &str, parent: Option<&str>, git: bool, kind: Option<&str>) -> Result<Value, String> {
+    let kind = kind_word(kind);
     let name = name.trim();
     let folder: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_') { c } else { '_' }).collect();
     let folder = folder.trim().to_string();
     if folder.is_empty() {
-        return Err("Give the game a name first.".into());
+        return Err("Give the project a name first.".into());
     }
-    let parent = parent.map(str::trim).filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(default_parent);
+    let parent = parent.map(str::trim).filter(|p| !p.is_empty()).map(PathBuf::from).unwrap_or_else(|| if kind == "plain" { default_parent_plain() } else { default_parent() });
     let dir = parent.join(&folder);
     if dir.exists() && fs::read_dir(&dir).map(|mut d| d.next().is_some()).unwrap_or(true) {
         return Err(format!("{} already exists and is not empty. Use \"Existing folder\" to work in it.", dir.display()));
@@ -188,30 +229,28 @@ pub fn create(name: &str, parent: Option<&str>, git: bool) -> Result<Value, Stri
             note = format!("The folder was made, but git could not start a repository: {text}");
         }
     }
-    remember(name, &path);
+    remember(name, &path, Some(kind));
     let mut p = describe(&path);
     p["note"] = json!(note);
     Ok(p)
 }
 
-/// Start using a folder that already exists.
-pub fn add(path: &str) -> Result<Value, String> {
+/// Start using a folder that already exists. A `kind` makes it a game or a plain project; without one, a project
+/// already on the list keeps its kind and a new one is a game.
+pub fn add(path: &str, kind: Option<&str>) -> Result<Value, String> {
     let dir = PathBuf::from(path.trim());
     if !dir.is_dir() {
         return Err("That folder does not exist.".into());
     }
     let path = dir.display().to_string();
-    if !known(&path) {
-        remember(&paths::base_name(&path), &path);
-    } else {
-        touch(&path);
-    }
+    let name = describe(&path)["name"].as_str().map(str::to_string).unwrap_or_else(|| paths::base_name(&path));
+    remember(&name, &path, kind);
     Ok(describe(&path))
 }
 
 /// Ask the user for a folder with the system's own dialog.
 pub fn pick_folder() -> Option<String> {
-    rfd::FileDialog::new().set_title("Choose the game's folder").pick_folder().map(|p| p.display().to_string())
+    rfd::FileDialog::new().set_title("Choose the project's folder").pick_folder().map(|p| p.display().to_string())
 }
 
 pub fn open(path: &str, what: &str) -> bool {
@@ -401,6 +440,30 @@ pub fn git(path: &str, action: &str, body: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn projects_saved_before_kinds_are_games_and_plain_is_kept() {
+        assert_eq!(kind_of(&json!({"name": "Lake", "path": "/g/Lake"})), "game");
+        assert_eq!(kind_of(&json!({"kind": "plain"})), "plain");
+        assert_eq!(kind_word(Some("Plain")), "plain");
+        assert_eq!(kind_word(Some("game")), "game");
+        assert_eq!(kind_word(Some("anything")), "game");
+        assert_eq!(kind_word(None), "game");
+    }
+
+    #[test]
+    fn remembering_keeps_a_projects_kind_unless_told_otherwise() {
+        let list = vec![json!({"name": "Tool", "path": "/p/Tool", "kind": "plain"}), json!({"name": "Lake", "path": "/g/Lake"})];
+        let touched = remembered(list.clone(), "Tool", "/p/Tool", None);
+        assert_eq!(touched[0], json!({"name": "Tool", "path": "/p/Tool", "kind": "plain"}));
+        assert_eq!(touched.len(), 2);
+        let made_game = remembered(list.clone(), "Tool", "/p/Tool", Some("game"));
+        assert_eq!(made_game[0]["kind"], "game");
+        let old = remembered(list.clone(), "Lake", "/g/Lake", None);
+        assert_eq!(old[0]["kind"], "game");
+        let new = remembered(list, "App", "/p/App", Some("plain"));
+        assert_eq!((new[0]["kind"].as_str(), new.len()), (Some("plain"), 3));
+    }
 
     #[test]
     fn a_game_folder_may_go_to_the_trash() {
