@@ -401,6 +401,7 @@ class HeavyTests(unittest.TestCase):
         self.assertGreater(len(stub.bodies), 2)  # refused, then split and halved
         for b in stub.bodies:
             self.assertIs(b["truncate"], False)
+            self.assertEqual(b["keep_alive"], "30m")  # the model stays loaded between searches
             self.assertEqual(b["model"], "mxbai-embed-large")
         # every word of the long text was embedded in some accepted request: nothing was dropped
         accepted = [t for b in stub.bodies if all(len(x.split()) <= 50 for x in b["input"]) for t in b["input"]]

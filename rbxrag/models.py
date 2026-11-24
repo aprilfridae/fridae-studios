@@ -20,6 +20,7 @@ OLLAMA_URL = "http://127.0.0.1:11434"
 LIGHT = {"dense": "BAAI/bge-small-en-v1.5", "dim": 384, "sparse": "Qdrant/bm25",
          "rerank": "Xenova/ms-marco-MiniLM-L-6-v2"}
 HEAVY = {"dense": "mxbai-embed-large", "dim": 1024, "sparse": "Qdrant/bm25", "rerank": "BAAI/bge-reranker-base"}
+KEEP_ALIVE = "30m"
 MXBAI_QUERY = "Represent this sentence for searching relevant passages: "
 
 
@@ -127,7 +128,8 @@ class OllamaDense:
         self.timeout = timeout
 
     def _post(self, inputs):
-        body = json.dumps({"model": self.model, "input": inputs, "truncate": False}).encode()
+        # keep_alive: Ollama unloads an idle model after 5 minutes, and reloading it would cost a search seconds
+        body = json.dumps({"model": self.model, "input": inputs, "truncate": False, "keep_alive": KEEP_ALIVE}).encode()
         req = urllib.request.Request(self.url + "/api/embed", data=body, headers={"Content-Type": "application/json"})
         try:
             with LOOPBACK.open(req, timeout=self.timeout) as r:
