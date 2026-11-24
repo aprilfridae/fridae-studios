@@ -183,7 +183,12 @@ class Engine:
     # ------------------------------------------------------------ query
     def _filter(self, shelves, project):
         m = _models()
-        must = [m.FieldCondition(key="shelf", match=m.MatchAny(any=list(shelves)))]
+        import rbxvault
+        left_out = set(rbxvault.SHELVES) - set(shelves)
+        if not project:
+            left_out.discard("game")  # game chunks always carry their project, so project == "" leaves them out
+        # a shelf condition only when it removes something: in Qdrant's local mode every condition costs a pass
+        must = [m.FieldCondition(key="shelf", match=m.MatchAny(any=list(shelves)))] if left_out else []
         if project:
             must.append(m.Filter(should=[m.FieldCondition(key="project", match=m.MatchValue(value="")),
                                          m.FieldCondition(key="project", match=m.MatchValue(value=project))]))
@@ -191,7 +196,6 @@ class Engine:
             must.append(m.FieldCondition(key="project", match=m.MatchValue(value="")))
         must_not = []
         if project:  # the game's own team files replace the kit's experts of the same id
-            import rbxvault
             ids = [t for t, _ in rbxvault.team_files(os.path.join(project, ".fridae", "team", "experts"))]
             if ids:
                 must_not.append(m.Filter(must=[m.FieldCondition(key="shelf", match=m.MatchValue(value="team")),
