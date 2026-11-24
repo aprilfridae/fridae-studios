@@ -496,7 +496,19 @@ pub fn args(workspace: &Path, kit: &Path, project: Option<&str>, session: Option
 /// programs the user allowed, the user's own servers and the app's files denied.
 pub fn rules_now(servers: &Value) -> Value {
     let home = cursor_home();
-    permissions(servers, &paths::allowed_commands(), &user_servers(&home), &protected(&home))
+    let mut rules = permissions(servers, &paths::allowed_commands(), &user_servers(&home), &protected(&home));
+    deny_reads(&mut rules, &paths::app_secrets());
+    rules
+}
+
+/// The places that hold a sign-in or a key (`paths::app_secrets`) are never read either, in any mode: `Read(<path>)`
+/// and `Read(<path>/**)` in Cursor's deny list (a deny rule wins over every allow, and holds with --force).
+fn deny_reads(rules: &mut Value, secrets: &[PathBuf]) {
+    let Some(deny) = rules["deny"].as_array_mut() else { return };
+    for p in secrets {
+        let p = as_pattern(p);
+        deny.extend([json!(format!("Read({p})")), json!(format!("Read({p}/**)"))]);
+    }
 }
 
 /// Everything a Cursor process reads at its start is written: the chat's workspace, the app's Cursor settings (the
@@ -885,6 +897,22 @@ mod tests {
         names.sort();
         assert_eq!(names, ["git", "notion"]);
         assert!(server_names("not json").is_empty());
+    }
+
+    #[test]
+    fn cursor_may_not_read_where_a_sign_in_or_a_key_is_kept() {
+        let mut p = permissions(&json!({}), &[], &[], &[]);
+        deny_reads(&mut p, &[PathBuf::from("/s/Fridae Studios/github"), PathBuf::from("/kit/config.json")]);
+        let deny: Vec<&str> = p["deny"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        for r in ["Read(/s/Fridae Studios/github)", "Read(/s/Fridae Studios/github/**)", "Read(/kit/config.json)", "Read(/kit/config.json/**)"] {
+            assert!(deny.contains(&r), "{r}: {deny:?}");
+        }
+        // the rules Cursor gets each turn carry every secret, the GitHub sign-in among them
+        let now = rules_now(&json!({}));
+        let deny: Vec<&str> = now["deny"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        let github = as_pattern(&crate::github::folder());
+        assert!(deny.contains(&format!("Read({github}/**)").as_str()), "{deny:?}");
+        assert!(paths::app_secrets().iter().all(|s| deny.contains(&format!("Read({})", as_pattern(s)).as_str())));
     }
 
     #[test]

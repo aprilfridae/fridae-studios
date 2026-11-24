@@ -202,6 +202,8 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(promo_tab::list())
     } else if path == "/api/notes" {
         send_json(crate::notes::info(&unescape(&query(url, "path").unwrap_or_default())))
+    } else if path == "/api/github/status" {
+        send_json(crate::github::status(query(url, "project").map(|p| unescape(&p)).as_deref()))
     } else if path == "/api/review" {
         send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
     } else {
@@ -374,6 +376,8 @@ fn post(path: &str, body: Value) -> Reply {
             },
             _ => send_json(opencode::login_state()),
         },
+        // Setup > Connections > GitHub, and Project details' Put on GitHub and Push now (github.rs)
+        p if p.starts_with("/api/github/") => send_json(crate::github::post(p, &body)),
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
         "/api/unqueue" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.unqueue(&text_of("qid")))})),
         "/api/board" => {

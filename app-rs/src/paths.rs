@@ -606,6 +606,8 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     out.push((w.join("team-models.tmp"), false));
     // the second accounts' folders (`accounts`): who pays for a turn is never an agent's to change
     out.push((crate::accounts::base(), true));
+    // Fridae's GitHub sign-in (`github::folder`): its token is the app's alone
+    out.push((crate::github::folder(), true));
     // where a summary's writer works (`compact::folder`): nothing is written there, by the writer or by anyone
     out.push((crate::compact::folder(), true));
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
@@ -620,6 +622,25 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
         out.push((w.join(d), true));
     }
     out
+}
+
+/// What no agent may read either, in any mode, on any AI whose rules the app sets (Claude Code's `Read` deny rules,
+/// Cursor's, OpenCode's permission rules, the app's answers over ACP): the places that hold a sign-in or a key. Each
+/// is a file or a folder; the rules cover both forms. Add new secrets here and every AI's rules follow.
+pub fn app_secrets() -> Vec<PathBuf> {
+    vec![
+        // the settings (the Gemini key) and their guarded copy
+        config_file(),
+        guard_copy(),
+        // the GitHub sign-in (the folder holds nothing else)
+        crate::github::folder(),
+    ]
+    .into_iter()
+    // the second accounts' and Fridae's own OpenCode sign-in files: those files only, never the folders around them,
+    // where the tools keep their own working files (a deny rule beats every mode, bypass too)
+    .chain(crate::accounts::sign_in_files())
+    .chain(crate::opencode::sign_in_files())
+    .collect()
 }
 
 /// One place no AI's file tools may write, for the gates the app itself keeps (OpenCode's permission rules, and
