@@ -156,6 +156,21 @@ class EngineCases:
         self.assertEqual(hits[0]["title"], "Bravo")
         self.assertNotIn("replaced_by", hits[0])
 
+    def test_a_sync_finishing_during_a_query_never_fails_it(self):
+        # a sync on another thread replaces the superseded cache while a query is reading it (review finding 12)
+        eng = self.engine()
+        eng.sync()
+        import rbxnotes
+        real = rbxnotes.sidecars
+
+        def sync_finishes(*a, **kw):
+            eng._sup = {}
+            return real(*a, **kw)
+
+        with mock.patch.object(rbxnotes, "sidecars", side_effect=sync_finishes):
+            hits = eng.query("build a rocket from scrap metal", ["vault", "yours", "guides"], 3, None)
+        self.assertEqual(hits[0]["title"], "Charlie")
+
     def test_superseded_through_the_sidecar(self):
         home = os.path.join(self.tmp, "home")
         write(os.path.join(home, "notes", "superseded.json"), json.dumps({"Charlie": {"by": "Alpha", "date": "x"}}))

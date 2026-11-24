@@ -499,12 +499,14 @@ class Engine:
         import rbxnotes
         import rbxvault
         key = project or ""
-        if key not in self._sup:
-            self._sup[key] = rbxvault.superseded_map(
+        cache, heads = self._sup, self._heads  # one snapshot: a sync on another thread replaces both, never changes them
+        base = cache.get(key)
+        if base is None:
+            base = cache[key] = rbxvault.superseded_map(
                 {"title": t, "supersedes": olds, "superseded_by": by}
-                for _, t, proj, olds, by in self._heads.values() if (olds or by) and proj in ("", key))
+                for _, t, proj, olds, by in heads.values() if (olds or by) and proj in ("", key))
         side = rbxnotes.sidecars(project or None)
-        return dict(self._sup[key], **side) if side else self._sup[key]
+        return dict(base, **side) if side else base
 
     def _checkpoint(self, man, keep, old, new_entries, gone, work_paths, finished):
         """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (the
