@@ -66,8 +66,8 @@ you and what it has cost. Pick a game and it has three tabs:
   handed the chat so far and carries on. Cursor chats use the model picked there (Auto unless you
   pick another of the models your Cursor plan offers); OpenCode chats use the model picked there too, grouped by
   provider (your OpenCode default unless you pick another). Experts a Lead starts are chats of their own, listed under
-  the Lead's chat in the sidebar (the arrow beside it shows or hides them); press one to read that expert's work, or
-  stop it.
+  the Lead's chat in the sidebar (the arrow beside it shows or hides them; those idle for half an hour are behind
+  an "earlier" line); press one to read that expert's work, or stop it.
 - **Review**: what is happening on the game and what needs you (see Studio mode below).
 - **Promos**: promo videos from your clips.
 

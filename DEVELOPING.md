@@ -222,12 +222,18 @@ game has a run going or something waiting for the user (`needsOf`: blocking revi
 count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. The game
 in front shows its open chats under it (`sideChats`), and under a chat the experts it started (`expertsOf`: those its
 log names in `helper_started`, the saved chats with it as `parent` from `/api/history`, and the open ones; newest
-first). An arrow beside the chat shows or hides them, kept per chat in `localStorage` under `experts-shown`. A helper
+first). An arrow beside the chat shows or hides them, kept per chat in `localStorage` under `experts-shown`. Only
+experts at work, or at work within the last half hour (`xpRecent`; `xpWhen` holds when: a saved chat's `updated` as
+first heard, or a turn seen starting or ending), are listed outright; the rest are behind an "N earlier" line. The
+lists ease open and shut (`easeList`, not with reduced motion), and the sidebar is one list that scrolls as a whole
+and draws no scrollbar. A helper
 (an agent with `parent`) is a chat of its own, read only (`paintExpertBar` takes the message box's place): pressing
 its row opens it (`openChatById`, which reopens a saved one with `/api/open-chat`). In its parent's conversation it is
 one line (`xpLink`), placed where the parent's log has the `helper_started` event (`{helper, name, expert}`, sent by
-`spawn_named`), which opens the same chat. Sidebar rows are kept from one repaint to the next while nothing in them
-changes (`sideRow`), so a press is never lost to a repaint. Restored agents carry `role`, `parent`, `team` and
+`spawn_named`), which opens the same chat. A sidebar row stays the same element from one repaint to the next and
+its dot, words and mark are changed in place (`sideRow`), so a press is never lost to a repaint; after an event the
+sidebar is painted at most once a frame (`paintSideSoon`). A card in a helper's chat that asks to allow a program is
+live only while the helper is stopped on it (`approvalCard`). Restored agents carry `role`, `parent`, `team` and
 `expert` in `agent_new`. Overview (`view` `all`) is the graph beside a column of cards. The cards, one per game and a New project card
 (`apCard`, `paintAll`), open the game's Review when something needs the user, else its Chat. The graph (`og`,
 `overviewWanted`, `overviewSync`, `overviewStep`, `overviewDraw`) draws games, their open and saved chats, experts

@@ -120,6 +120,11 @@ pulsing dot while it works). An arrow beside the chat shows or hides them and is
 conversation one short line stays where each expert was started ("Coder · T1 Tricks · Open its chat"), which opens
 the same chat and marks it in the sidebar. The menu on the chat's name is unchanged.
 
+Later the same day, also at the user's request: the experts list eases open and shut (not with reduced motion); the
+sidebar draws no scrollbar (it still scrolls, as one list); and an expert that has not worked for half an hour is
+not listed outright: it is behind one "N earlier" line at the end of its chat's experts, and comes back by itself
+when it works again.
+
 ## How it is checked
 
 - Every screen opened with a scratch copy of the user's real data at 1180 x 820 and at about 900 wide: Home, Chat (with
