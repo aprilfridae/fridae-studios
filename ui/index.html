@@ -27,6 +27,7 @@
   --quiet: #6a6a6e;   /* marks that are not text: hollow dots, step markers, an off switch */
   --ink: #0b0b0c;
   --warn: #e5a23c;    /* the one colour: something is missing or nearly used up */
+  --bad: #e5484d;     /* only a step that failed (Setup, Knowledge index), beside its plain-words line */
   --r-s: 8px; --r-m: 12px; --r-l: 16px;
   --h-s: 28px; --h-m: 32px; --h-l: 40px;
   --focus: rgba(255, 255, 255, 0.6);
@@ -95,6 +96,7 @@ input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-of
 .dot.ok { background: var(--text); box-shadow: none; }
 .dot.live { background: var(--text); box-shadow: none; animation: pulse 1.1s ease-in-out infinite; }
 .dot.miss { background: var(--warn); box-shadow: none; }
+.dot.bad { background: var(--bad); box-shadow: none; }
 .tag { display: block; text-align: right; font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); margin: 4px 4px 0 0; }
 .tag .linkish { font: inherit; letter-spacing: inherit; margin-left: 8px; color: var(--dim); border-radius: 4px; }
 .tag .linkish:hover { color: var(--text); }
@@ -787,6 +789,27 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .su-close { position: absolute; top: 12px; right: 12px; }
 .eng-bar { height: 4px; max-width: 360px; margin-top: 12px; border-radius: 999px; background: var(--hover); overflow: hidden; }
 .eng-bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width 300ms ease; }
+/* Setup, Connections, Knowledge index: Off / Light / Heavy, Light's one row, Heavy's numbered steps, a test box */
+.rag-seg { margin-top: 12px; max-width: 100%; }
+.rag-seg[aria-busy="true"] { opacity: 0.7; }
+.rag-seg button:disabled { opacity: 0.45; }
+.rag-seg button:disabled:hover { color: var(--dim); }
+.rag-modes { margin: 8px 0 0; padding: 0; list-style: none; }
+.rag-modes li { font-size: 13px; line-height: 1.5; color: var(--faint); margin: 2px 0 0; }
+.rag-modes li b { font-weight: 500; color: var(--dim); }
+.rag-modes li.on { color: var(--dim); }
+.rag-modes li.on b { color: var(--text); }
+.rag-light { margin-top: 12px; }
+.rag-light .sub { margin: 0; }
+.rag-steps { margin: 12px 0 0; padding: 0; list-style: none; }
+.rag-steps .c-row .eng-bar { margin-top: 8px; }
+.rag-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; }
+.rag-err:empty { display: none; }
+.rag-test h4 { margin: 16px 0 0; font-size: 13px; font-weight: 500; }
+.rag-hits { margin: 8px 0 0; padding: 0 0 0 20px; font-size: 13px; line-height: 1.6; }
+.rag-hits span { color: var(--dim); }
+.rag-hits:empty, #rag-q-note:empty { display: none; }
+@media (max-width: 520px) { .rag-seg .rag-x { display: none; } }
 .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
 .scale-row output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
 .scale-row input[type=range] { flex: 1; min-width: 120px; max-width: 280px; accent-color: #ececed; }
@@ -1059,6 +1082,27 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div id="needs-blender"></div>
       <h3>Promo engine</h3>
       <div class="eng-row"><p class="sub eng-state">Checking...</p><div class="eng-bar" hidden><i></i></div><pre class="eng-error"></pre><div class="act"><button class="pill eng-install" hidden>Install</button></div></div>
+      <h3 id="rag-title">Knowledge index</h3>
+      <p class="sub">Lets the AIs look up just the right bits of your notes, guides and project docs instead of reading whole files. Runs on your Mac; nothing is sent anywhere.</p>
+      <div class="seg rag-seg" id="rag-seg" role="radiogroup" aria-labelledby="rag-title">
+        <button role="radio" aria-checked="false" tabindex="0" data-m="off" aria-describedby="rag-d-off">Off</button>
+        <button role="radio" aria-checked="false" tabindex="-1" data-m="light" aria-describedby="rag-d-light">Light</button>
+        <button role="radio" aria-checked="false" tabindex="-1" data-m="heavy" aria-describedby="rag-d-heavy">Heavy<span class="rag-x"> (Ollama + Qdrant)</span></button>
+      </div>
+      <ul class="rag-modes" id="rag-modes">
+        <li data-m="off"><b>Off:</b> <span id="rag-d-off">Simple word search (what Fridae does today).</span></li>
+        <li data-m="light"><b>Light:</b> <span id="rag-d-light">Works out of the box. Downloads about 200 MB of small models once.</span></li>
+        <li data-m="heavy"><b>Heavy:</b> <span id="rag-d-heavy">Fastest and smartest. Needs Ollama and Qdrant, which Fridae can set up for you.</span></li>
+      </ul>
+      <div class="rag-light" id="rag-light" hidden><p class="sub" id="rag-l-state"></p><div class="eng-bar" id="rag-l-bar" hidden><i></i></div><div class="act"><button class="pill" id="rag-l-go" hidden>Set up</button></div></div>
+      <ol class="rag-steps" id="rag-steps" hidden></ol>
+      <div class="rag-test" id="rag-test" hidden>
+        <h4>Test it</h4>
+        <div class="keyrow"><input type="text" id="rag-q" placeholder="Type something to look up" autocomplete="off" spellcheck="false" aria-label="Something to look up in the knowledge index"><button class="pill" id="rag-q-go">Test it</button></div>
+        <p class="sub" id="rag-q-note" role="status"></p>
+        <ol class="rag-hits" id="rag-hits" aria-label="Top matches"></ol>
+      </div>
+      <p class="sub rag-err" id="rag-err" role="status"></p>
       <h3>Check everything</h3>
       <p class="sub">Finds every program the tools use and says how to fix what is missing.</p>
       <div class="act"><button class="pill" id="b-check">Run full check</button><button class="pill" id="b-agents" title="Adds these tools to Claude Code, Antigravity or Cursor, to use them outside this window.">Connect other apps</button></div>
@@ -2326,6 +2370,7 @@ function settle(p) {
 function onEvent(e) {
   if (e.kind === "setup") { $("setup-out").textContent = e.text; return; }
   if (e.kind === "promo_engine") { onEngine(e); return; }
+  if (e.kind === "rag_setup") { if (ragVisible()) loadRag(); return; }
   if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
   if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? prAddPaths : addClips)(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
@@ -3391,6 +3436,172 @@ function onEngine(e) {
   paintEngine();
 }
 document.querySelectorAll(".eng-install").forEach((btn) => (btn.onclick = async () => { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } }));
+/* Setup, Connections, Knowledge index: Off, Light or Heavy. The mode is the app's setting and the control shows only
+   what the app says it is (rag.mode), never a guess. Light has one Set up; Heavy five numbered steps, each with its dot
+   (white done, amber needs you, red failed, hollow not yet) and a button that can always run it again. The status is
+   asked every second while something runs, otherwise every 10 s, and only while the section is in view. */
+let rag = null, ragFail = "", ragNote = "", ragSeq = 0, ragTimer = 0, ragFastUntil = 0, ragChoosing = false;
+const RAG_HEAVY_LINE = $("rag-d-heavy").textContent;
+const RAG_WORK = { load: "Loading the models", scan: "Looking through your files", index: "Building the index" };
+const RAG_DOING = { download: "Downloading", unpack: "Unpacking", start: "Starting Ollama", "ollama-pull": "Downloading the model", models: "Downloading the models" };
+const RAG_STEPS = [
+  { id: "ollama-install", name: "Install Ollama", go: "Install", doing: "Installing...", what: "Ollama runs the AI model that reads your docs. Fridae downloads the free app from ollama.com into your Applications folder.", done: "Ollama is running." },
+  { id: "ollama-pull", name: "Download the embedding model", go: "Download", doing: "Downloading...", what: "The model Ollama uses to find text by meaning. A one-time download.", done: "Downloaded.", after: [0], wait: "Needs Ollama running first (step 1)." },
+  { id: "qdrant-install", name: "Install Qdrant", go: "Install", doing: "Installing...", what: "Qdrant keeps the index on your Mac. It goes in Fridae's own folder; nothing is installed system-wide.", done: "Installed." },
+  { id: "models", name: "Start the reranker", go: "Start", doing: "Starting...", what: "Downloads the small model that puts the best matches first. A one-time download.", done: "Ready." },
+  { id: "build", name: "Build the index", go: "Build", doing: "Building...", what: "Reads your notes, guides and project docs and builds the index. The first time takes a few minutes.", after: [0, 1, 2, 3], wait: "Needs steps 1 to 4 first." },
+];
+function ragVisible() { return document.body.classList.contains("setup") && !!document.querySelector('.su-body section[data-s="connections"].on'); }
+const ragPct = (f) => Math.max(0, Math.min(100, Math.round((Number(f) || 0) * 100)));
+const ragPieces = (n) => { n = Number(n) || 0; return n.toLocaleString() + (n === 1 ? " piece" : " pieces"); };
+const ragSentence = (s) => { s = String(s || "").trim(); return s && !/[.!?]$/.test(s) ? s + "." : s; };
+/* the service, only when it serves the chosen mode (just after a switch the old one may still answer) */
+function ragService() { const s = rag && rag.service; return s && typeof s === "object" && (!s.mode || s.mode === rag.mode) ? s : null; }
+/* what a running setup step is doing now, from its progress line ("ollama-install: download") */
+function ragDoing(su) {
+  const d = String(su.detail || ""), word = d.slice(d.indexOf(":") + 1).trim();
+  return (RAG_DOING[word] || RAG_DOING[su.step] || "Working") + " (" + ragPct(su.fraction) + "%).";
+}
+function ragBuilding(s) { const pr = s.progress || {}; return (RAG_WORK[pr.step] || "Building the index") + " (" + ragPct(pr.fraction) + "%)."; }
+function ragBusy() {
+  if (!rag) return false;
+  const s = ragService(), p = rag.process || {}, su = rag.setup || {};
+  return !!(su.running || (s && s.building) || p.starting || p.restarting || Date.now() < ragFastUntil);
+}
+async function loadRag() {
+  clearTimeout(ragTimer);
+  const my = ++ragSeq;
+  if (!ragVisible()) return;
+  let r = null;
+  try { r = await api("/api/rag/status"); } catch (e) {}
+  if (my !== ragSeq) return;
+  if (r && typeof r === "object" && typeof r.mode === "string") { rag = r; ragFail = ""; } else ragFail = "Could not check the knowledge index.";
+  paintRag();
+  ragTimer = setTimeout(loadRag, ragBusy() ? 1000 : 10000);
+}
+/* a press: the answer's error (if any) goes in the line under the section, and the status is followed closely for a bit */
+async function ragPost(path, body) {
+  let r = null;
+  try { r = await api(path, body); } catch (e) {}
+  ragNote = !r ? "Could not reach the app. Try again." : r.ok === false ? ragSentence(r.error || "That did not work. Try again.") : "";
+  ragFastUntil = Date.now() + 6000;
+  return r;
+}
+async function chooseRag(mode) {
+  if (ragChoosing || (rag && rag.mode === mode)) return;
+  ragChoosing = true; paintRag();
+  await ragPost("/api/rag/mode", { mode });
+  ragChoosing = false;
+  $("rag-hits").replaceChildren(); $("rag-q-note").textContent = "";
+  await loadRag();
+}
+async function ragSetup(step) { ragNote = ""; const r = await ragPost("/api/rag/setup", { step, mode: rag && rag.mode }); if (r && r.setup) rag.setup = r.setup; paintRag(); loadRag(); }
+async function ragRebuild() { ragNote = ""; await ragPost("/api/rag/rebuild", {}); loadRag(); }
+function paintRag() {
+  const mode = rag ? rag.mode : "", win = !!(rag && rag.windows), seg = $("rag-seg");
+  seg.setAttribute("aria-busy", ragChoosing ? "true" : "false");
+  seg.querySelectorAll("[role=radio]").forEach((b) => {
+    const on = b.dataset.m === mode;
+    b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false");
+    b.disabled = b.dataset.m === "heavy" && win && !on;
+    b.tabIndex = on || (!/^(off|light|heavy)$/.test(mode) && b.dataset.m === "off") ? 0 : -1;
+  });
+  document.querySelectorAll("#rag-modes li").forEach((li) => li.classList.toggle("on", li.dataset.m === mode));
+  $("rag-d-heavy").textContent = win ? "Mac only for now." : RAG_HEAVY_LINE;
+  $("rag-light").hidden = mode !== "light";
+  $("rag-steps").hidden = mode !== "heavy";
+  /* Test it: once the index is ready (before that it could only say so) */
+  $("rag-test").hidden = (mode !== "light" && mode !== "heavy") || !(ragService() || {}).ready;
+  if (mode === "light") paintRagLight();
+  if (mode === "heavy") paintRagSteps();
+  /* one plain line under the section: a press that failed, the service's or its process's error */
+  const p = (rag && rag.process) || {}, s = ragService(), ck = (rag && rag.check) || {}, errs = [ragFail, ragNote];
+  if (mode === "light" || mode === "heavy") errs.push(ck.error ? "Could not check what is set up: " + ck.error : "", p.error, s && s.error);
+  $("rag-err").textContent = [...new Set(errs.map(ragSentence).filter(Boolean))].join(" ");
+}
+/* the problem the service or its process stopped with (shown in the line under the section) */
+function ragStopped() { const s = ragService(), p = rag.process || {}; return !!((s && s.error && !s.building) || (p.error && !p.running)); }
+function paintRagLight() {
+  const su = rag.setup || {}, ck = rag.check || {}, s = ragService(), p = rag.process || {}, mine = su.step === "models";
+  let text, bar = -1, go = "", act = null;
+  if (su.running && mine) { text = ragDoing(su) + " This happens once."; bar = ragPct(su.fraction); go = "Setting up..."; }
+  else if (mine && su.error && !ck.models) { text = "The setup did not finish: " + ragSentence(su.error); go = "Try again"; act = () => ragSetup("models"); }
+  else if (ck.error) text = "Could not check what is set up.";
+  else if (!ck.models) { text = "Not set up yet. Set up downloads about 200 MB of small models, once."; go = "Set up"; act = () => ragSetup("models"); }
+  else if (s && s.ready) { text = "Ready, " + ragPieces(s.chunks) + " indexed."; go = "Build again"; act = ragRebuild; }
+  else if (s && s.building) { text = ragBuilding(s) + " The first time takes a few minutes."; bar = ragPct((s.progress || {}).fraction); }
+  else if (ragStopped()) { text = "The index stopped with a problem."; go = "Try again"; act = ragRebuild; }
+  else text = p.restarting ? "Starting again..." : "Starting...";
+  $("rag-l-state").textContent = text;
+  const b = $("rag-l-bar"); b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
+  const btn = $("rag-l-go"); btn.hidden = !go; btn.textContent = go; btn.disabled = !act || !!su.running; btn.onclick = act;
+}
+function paintRagSteps() {
+  const su = rag.setup || {}, ck = rag.check || {}, s = ragService(), p = rag.process || {};
+  const done = [ck.ollama === "running", !!ck.ollama_model, !!ck.qdrant_binary, !!ck.models, !!(s && s.ready)];
+  const rows = RAG_STEPS.map((st, i) => {
+    const blocked = (st.after || []).some((j) => !done[j]);
+    let dot = "", line = st.what, bar = -1, go = st.go, act = () => ragSetup(st.id), live = false;
+    if (st.id === "build") {
+      act = ragRebuild;
+      if (s && s.building) { dot = " live"; line = ragBuilding(s); bar = ragPct((s.progress || {}).fraction); live = true; }
+      else if (done[i]) { dot = " ok"; line = "Ready, " + ragPieces(s.chunks) + " indexed."; }
+      else if (blocked) line = st.wait;
+      else if (ragStopped()) { dot = " bad"; line = "Could not build the index. What went wrong is just below."; go = "Try again"; }
+      else if (p.starting || p.restarting || (p.running && !s)) { dot = " live"; line = p.restarting ? "Starting again..." : "Starting..."; live = true; }
+    } else if (su.running && su.step === st.id) { dot = " live"; line = ragDoing(su); bar = ragPct(su.fraction); live = true; }
+    else if (done[i]) { dot = " ok"; line = st.done; }
+    else if (su.step === st.id && su.error) { dot = " bad"; line = ragSentence(su.error); go = "Try again"; }
+    else if (i === 0 && ck.ollama === "stopped") { dot = " miss"; line = "Open the Ollama app to start it."; go = "Check again"; act = () => { ragFastUntil = Date.now() + 6000; loadRag(); }; }
+    else if (blocked) line = st.wait;
+    const row = el("li", "c-row", '<span class="dot' + dot + '"></span><div><b></b><small></small><div class="eng-bar" hidden><i></i></div><div class="act"><button class="pill sm"></button></div></div>');
+    row.querySelector("b").textContent = (i + 1) + ". " + st.name;
+    row.querySelector("small").textContent = line;
+    const b = row.querySelector(".eng-bar"); b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
+    const btn = row.querySelector("button");
+    btn.textContent = live ? st.doing : go;
+    btn.disabled = live || blocked || (!!su.running && go !== "Check again");
+    btn.setAttribute("aria-label", btn.textContent.replace(/\.+$/, "") + ": " + st.name);
+    btn.onclick = act;
+    return row;
+  });
+  /* rebuilt only when what it says changed, so a focused button keeps its focus through the 1 s refresh */
+  const box = $("rag-steps"), sig = rows.map((r) => r.querySelector(".dot").className + "|" + r.textContent.replace(/\(\d+%\)/g, "") + "|" + r.querySelector("button").disabled).join("\n");
+  const bars = rows.map((r) => r.querySelector(".eng-bar i").style.width);
+  if (box.dataset.sig === sig) {
+    /* only the numbers moved: update them in place */
+    [...box.children].forEach((li, i) => { li.querySelector("small").textContent = rows[i].querySelector("small").textContent; li.querySelector(".eng-bar i").style.width = bars[i]; });
+    return;
+  }
+  box.dataset.sig = sig;
+  const had = box.contains(document.activeElement) ? [...box.children].indexOf(document.activeElement.closest("li")) : -1;
+  box.replaceChildren(...rows);
+  if (had >= 0 && rows[had]) { const b = rows[had].querySelector("button"); if (!b.disabled) b.focus(); }
+}
+$("rag-seg").addEventListener("click", (e) => { const b = e.target.closest("[role=radio]"); if (b && !b.disabled) chooseRag(b.dataset.m); });
+/* a radio group: the arrows move to the next choice and choose it; Home and End go to the first and last */
+$("rag-seg").addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const all = [...$("rag-seg").querySelectorAll("[role=radio]")].filter((b) => !b.disabled), at = all.indexOf(document.activeElement);
+  if (at < 0) return;
+  const to = e.key === "ArrowRight" || e.key === "ArrowDown" ? (at + 1) % all.length : e.key === "ArrowLeft" || e.key === "ArrowUp" ? (at - 1 + all.length) % all.length : e.key === "Home" ? 0 : e.key === "End" ? all.length - 1 : -1;
+  if (to < 0) return;
+  e.preventDefault(); all[to].focus(); chooseRag(all[to].dataset.m);
+});
+async function ragTest() {
+  const q = $("rag-q").value.trim(), note = $("rag-q-note"), list = $("rag-hits");
+  if (!q) { note.textContent = "Type something to look for."; $("rag-q").focus(); return; }
+  $("rag-q-go").disabled = true; note.textContent = "Looking..."; list.replaceChildren();
+  let r = null;
+  try { r = await api("/api/rag/test", { q }); } catch (e) {}
+  $("rag-q-go").disabled = false;
+  if (!r || r.ok === false) { note.textContent = !r ? "Could not reach the app. Try again." : ragSentence(r.error || "The test did not work."); return; }
+  const hits = Array.isArray(r.hits) && r.hits.length ? r.hits : (r.titles || []).map((title) => ({ title }));
+  note.textContent = hits.length ? "The best matches:" : "Nothing found. Try other words.";
+  list.replaceChildren(...hits.map((h) => { const li = el("li"); li.textContent = h.title || "(untitled)"; if (h.heading) li.appendChild(el("span", "", " › " + esc(String(h.heading)))); return li; }));
+}
+$("rag-q-go").onclick = ragTest;
+$("rag-q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); ragTest(); } });
 /* ---------- the Promos tab: new promo form, promos being made, and the library ---------- */
 const PR_VIDEO = ["mp4", "mov", "mkv", "webm"], PR_AUDIO = ["mp3", "wav", "m4a", "ogg"];
 const prExt = (p) => (/\.([A-Za-z0-9]+)$/.exec(p) || ["", ""])[1].toLowerCase();
@@ -4464,7 +4675,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); }
+function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadRag(); }
 /* Setup, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
@@ -4484,6 +4695,7 @@ function setupSection(name) {
   document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));
   document.querySelector(".su-body").scrollTop = 0;
   if (name === "experts") loadExperts();
+  if (name === "connections") loadRag();
 }
 /* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
