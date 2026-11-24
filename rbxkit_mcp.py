@@ -1334,9 +1334,13 @@ TOOLS = [
      "'game' (this game) hold what the user taught agents; search them before design or build work. 'note' (text, at "
      "most 1,500 characters; optional title; scope game or all; rule: true for a standing preference, one short "
      "sentence added to the House rules every agent gets) saves one; 'notes' lists them, 'forget' (title, scope) moves "
-     "one to the trash, 'rule_edit' (scope, old: words of a rule, text: new wording or empty to remove) changes a rule.",
+     "one to the trash, 'rule_edit' (scope, old: words of a rule, text: new wording or empty to remove) changes a rule. "
+     "A note that makes older ones out of date names them in 'supersedes': they are kept, marked, ranked below it "
+     "and shown as '(replaced by ...)'. 'note' refuses a near-duplicate (it shows the existing note) unless force is "
+     "true, and lists notes the new one may contradict for you to resolve. 'upkeep' writes a report of duplicates, "
+     "contradictions, stale and broken links in the notes folder.",
      schema({"action": {"type": "string", "enum": ["search", "read", "sections", "list", "api", "note", "notes",
-                                                   "forget", "rule_edit"]},
+                                                   "forget", "rule_edit", "upkeep"]},
              "query": {"type": "string", "description": "search: the task or bug in plain words"},
              "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game", "yours"],
                        "description": "search/read/sections: where to look; default all (game only when the chat has a game project)"},
@@ -1347,6 +1351,9 @@ TOOLS = [
              "rule": {"type": "boolean", "description": "note: true adds one House rule (only for a standing "
                       "preference: 'always', 'never', 'from now on')"},
              "replace": {"type": "boolean", "description": "note: true updates the note with exactly this title instead of adding another"},
+             "supersedes": {"type": "string", "description": "note: the exact title of an older note this one "
+                            "replaces (several: separate with ' | '); it is kept and marked, and ranks below"},
+             "force": {"type": "boolean", "description": "note: true files it even when a near-duplicate exists"},
              "old": {"type": "string", "description": "rule_edit: a few words of the rule to change"},
              "k": {"type": "integer", "description": "search: results to return, default 5 (3 for shelf vault), at most 8"},
              "game": {"type": "string", "enum": ["this", "general", "all"], "description": "search: 'this' = only "
