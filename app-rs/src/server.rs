@@ -169,7 +169,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "swarm_ceiling": crate::swarm::ceiling(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -206,6 +206,10 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(crate::github::status(query(url, "project").map(|p| unescape(&p)).as_deref()))
     } else if path == "/api/review" {
         send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
+    } else if path == "/api/swarm" {
+        // the swarm of a Lead's chat: its members and its board (the last 200 posts, or those after `since`)
+        let since = query(url, "since").and_then(|v| v.parse::<f64>().ok());
+        send_json(crate::swarm::api_get(&unescape(&query(url, "lead").unwrap_or_default()), since))
     } else if path == "/api/rag/status" {
         // Setup's knowledge index: the mode, `rag check` (for ?mode=, else the chosen one), the service, the setup step
         send_json(crate::rag::status(query(url, "mode").as_deref()))
@@ -401,6 +405,7 @@ fn post(path: &str, body: Value) -> Reply {
             let project = text_of("path");
             if body["action"].is_string() { send_json(board::act(&project, &body)) } else { send_json(board::get(&project)) }
         }
+        "/api/swarm" => send_json(crate::swarm::api_post(&body)),
         "/api/experts" => {
             // Setup > Experts: with an expert, save its row (AI "" or "lead" for Same as the Lead); always the listing
             if body["expert"].is_string() {

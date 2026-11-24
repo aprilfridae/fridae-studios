@@ -228,7 +228,11 @@ fn decide(project: &Path, id: &str, approve: bool, note: &str, seen: &mut HashMa
         supersede_older_changes(project, &item, seen);
     }
     let title = item["title"].as_str().unwrap_or("").trim().to_string();
-    Ok(if approve { format!("Review: {title} \u{2014} approved") } else { format!("Review: {title} \u{2014} change: {note}") })
+    drop(_lock);
+    // a swarm's verified work reaches the project's branch here, with the user's yes, and nowhere else
+    let landed = if approve && item["swarm"].is_string() { crate::swarm::land(&project.display().to_string(), &item) } else { String::new() };
+    let landed = if landed.is_empty() { landed } else { format!(" {landed}") };
+    Ok(if approve { format!("Review: {title} \u{2014} approved{landed}") } else { format!("Review: {title} \u{2014} change: {note}") })
 }
 
 /// A blocking item was approved: older blocking items of the same stage still marked "changes" (a redo filed without
