@@ -62,6 +62,13 @@ pub struct Limits {
 
 pub const LIMITS: Limits = Limits { all: Duration::from_secs(120), one: Duration::from_secs(45), reserve: Duration::from_secs(30) };
 
+/// The budget for a plain-English expert summary: a short, hard wall clock. It runs on its own background task and
+/// the expert's result is never held for it (`team::finished`), so a short cap keeps the whole attempt brief, and
+/// there is no non-OpenCode fall-back to keep time back for (`reserve` 0). (Tests drive the limits through the
+/// stand-in, so this constant is only reached in the real build.)
+#[cfg_attr(test, allow(dead_code))]
+pub const PLAIN_LIMITS: Limits = Limits { all: Duration::from_secs(45), one: Duration::from_secs(45), reserve: Duration::from_secs(0) };
+
 /// How long a summary may be, in characters (about 400 words): with its labels it takes the room the newest part
 /// gives up, so a hand-over with a summary is no longer than one without (`agents::SUMMARY_ROOM`).
 pub const SUMMARY_MAX: usize = 2_600;
@@ -516,6 +523,26 @@ pub fn writes(text: &'static str) -> Means {
     }
 }
 
+/// Tests: a stand-in plan writer that answers with `text` only after `delay` (to exercise the late-attach path),
+/// giving up at once when it is told to (Stop, the chat closed, the run ended).
+#[cfg(test)]
+pub fn writes_after(delay: Duration, text: &'static str) -> Means {
+    Means {
+        plan: vec![MODELS[0].to_string()],
+        plan_writes: Arc::new(move |_, _, cancel| {
+            let began = Instant::now();
+            while began.elapsed() < delay {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("cancelled".into());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok((text.to_string(), usage::Turn { output: 7, ..Default::default() }))
+        }),
+        ..Means::none()
+    }
+}
+
 /// Tests: one writer of the plan that does not answer until it is told to give up, so the wait for it ends by
 /// Stop or not at all.
 #[cfg(test)]
@@ -640,7 +667,7 @@ pub fn plain_summary(report: &str, changes: &str, stop: &dyn Fn() -> bool, start
         (found.unwrap_or_else(Means::none), LIMITS)
     });
     #[cfg(not(test))]
-    let (means, limits) = (means(), LIMITS);
+    let (means, limits) = (means(), PLAIN_LIMITS);
     // "opencode" (not "claude") as the target so no Claude fall-back is added: the summary never spends Claude/Gemini.
     let tries = tries("opencode", (1, None), &plain_prompt_for(&mask(&input)), &means, &limits);
     let out = first_written(tries, &limits, stop, &|t| starting(&writer_name(t.ai, &t.model)));

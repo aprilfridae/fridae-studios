@@ -998,6 +998,19 @@ pub fn get(id: &str) -> Option<Arc<Agent>> {
     AGENTS.lock().unwrap().iter().find(|a| a.id == id).cloned()
 }
 
+/// The plain-English summary stored on the open expert chat that did a piece of work for a Review item: a helper
+/// of roster `expert` started by `lead` in `project`, with a written summary (`stored_plain`). Best effort — the
+/// newest such chat, when more than one shares the roster — used to put the plain line on the review item, so a
+/// summary that was written too late to be woven into the result the Lead collected still reaches the item.
+pub fn plain_for(project: &str, expert: &str, lead: &str) -> Option<String> {
+    let mut found: Vec<Arc<Agent>> = agents()
+        .into_iter()
+        .filter(|a| a.project().as_deref() == Some(project) && a.expert().as_deref() == Some(expert) && a.parent().as_deref() == Some(lead))
+        .collect();
+    found.sort_by(|a, b| a.id.cmp(&b.id)); // ids carry the start time, so the newest is last
+    found.into_iter().rev().find_map(|a| a.stored_plain())
+}
+
 fn is_user(e: &Value) -> bool {
     e["kind"] == "user"
 }
@@ -2618,26 +2631,50 @@ impl Agent {
         studio_steps_since(&st.log, st.turn_started).iter().filter_map(|s| s["label"].as_str()).collect::<Vec<_>>().join("\n")
     }
 
-    /// A plain-English, non-technical summary of what this expert did (`report` is its own report), written on the
-    /// user's OpenCode plan — never Claude/Gemini — over the report and a small masked view of what it changed
-    /// (`compact::plain_summary`). Bounded time; None when the setting is off, nobody can write one in time, or they
-    /// all fail (the caller then falls back to the expert's own one-line report). On success it is recorded as usage
-    /// (the plan's), shown in the expert's chat as an "In plain words:" line, and returned for the Lead and Review.
-    pub fn plain_expert_summary(&self, report: &str) -> Option<String> {
+    /// Store a plain-English summary on this expert's chat: shown in its chat and on its sidebar row as an "In plain
+    /// words:" line (the `"plain"` event is logged, so it persists and a reopened chat shows it too).
+    pub fn set_plain(&self, text: &str) {
+        self.put("plain", json!({"text": text}));
+    }
+
+    /// The plain-English summary stored on this chat (its latest `"plain"` event), if any.
+    pub fn stored_plain(&self) -> Option<String> {
+        let st = self.st.lock().unwrap();
+        st.log.iter().rev().find(|e| e["kind"] == "plain").and_then(|e| e["text"].as_str()).filter(|s| !s.is_empty()).map(str::to_string)
+    }
+
+    /// Start writing a plain-English, non-technical summary of what this expert did (`report` is its own report), on
+    /// the user's OpenCode plan — never Claude/Gemini — over the report and a small masked view of what it changed
+    /// (`compact::plain_summary`). It runs on its own background task with a short hard cap (`compact::PLAIN_LIMITS`),
+    /// so the expert's result is never held for it; the caller waits a little for it and, if it is not ready, writes
+    /// the result with the expert's one-liner (`team::finished`). When the writer succeeds — in time or late — the
+    /// task records the (OpenCode-plan) usage and stores the line on this chat (`set_plain`), so a late summary still
+    /// reaches the expert's chat, its sidebar row and the Review item; it is never woven into a result already sent.
+    /// The returned channel yields the summary text once (or None when it could not be written); None here means the
+    /// off switch is off, so the caller uses the one-liner and no task is started. The task gives up at once when the
+    /// app is shutting down or this chat is gone (closed, deleted, or its run ended, which all remove the chat).
+    pub fn start_plain_summary(self: &Arc<Self>, report: String) -> Option<std::sync::mpsc::Receiver<Option<String>>> {
         if !paths::expert_summaries_on() {
             return None;
         }
         let changes = self.studio_changes_text();
-        let stop = || shutting();
-        // the chat shows a step while it is written, naming the cheap model (as the hand-over writer does)
-        let step = |writer: &str| self.put("tool", json!({"label": format!("Writing a plain summary of this expert's work ({writer})"), "app": true}));
-        let out = crate::compact::plain_summary(report, &changes, &stop, &step);
-        let s = out.summary?;
-        // it runs on Fridae's own OpenCode (the user's plan): recorded as usage, never billed to Claude/Gemini
-        usage::record(s.ai, (1, None), &self.id, self.project().as_deref(), &s.usage, None);
-        self.put("usage", s.usage.json());
-        self.put("plain", json!({"text": s.text}));
-        Some(s.text)
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (me, id) = (self.clone(), self.id.clone());
+        thread::spawn(move || {
+            let stop = || shutting() || get(&id).is_none();
+            // the chat shows a step while it is written, naming the cheap model (as the hand-over writer does)
+            let step = |writer: &str| me.put("tool", json!({"label": format!("Writing a plain summary of this expert's work ({writer})"), "app": true}));
+            let out = crate::compact::plain_summary(&report, &changes, &stop, &step);
+            let text = out.summary.map(|s| {
+                // it runs on Fridae's own OpenCode (the user's plan): recorded as usage, never billed to Claude/Gemini
+                usage::record(s.ai, (1, None), &me.id, me.project().as_deref(), &s.usage, None);
+                me.put("usage", s.usage.json());
+                me.set_plain(&s.text); // attach to the chat/sidebar first, so a late summary is there before the send
+                s.text
+            });
+            let _ = tx.send(text);
+        });
+        Some(rx)
     }
 
     /// The studio run of this chat's game, when this chat leads it and it is paused.

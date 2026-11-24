@@ -19,7 +19,7 @@ use std::{
     collections::HashMap,
     fs,
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -30,6 +30,14 @@ use crate::{
     agents::{self, Agent},
     expert_ai, paths, studio_run,
 };
+
+/// How long an expert's result waits for its plain-English summary before it goes back to the Lead. A short, hard
+/// cap: if the summary is not ready by then, the result goes with the expert's one-liner and the summary attaches
+/// late (`Agent::start_plain_summary`), so the run is never held past this. Matches the writer's own `PLAIN_LIMITS`.
+#[cfg(not(test))]
+const SUMMARY_WAIT: Duration = Duration::from_secs(45);
+#[cfg(test)]
+const SUMMARY_WAIT: Duration = Duration::from_millis(300);
 
 fn write_result(id: &str, value: Value) {
     let dir = paths::work("team-results");
@@ -311,7 +319,7 @@ pub fn with_plain(text: String, plain: Option<&str>) -> String {
 
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
-pub fn finished(agent: &Agent, stopped: bool) {
+pub fn finished(agent: &Arc<Agent>, stopped: bool) {
     release(agent);
     agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
 
@@ -320,10 +328,15 @@ pub fn finished(agent: &Agent, stopped: bool) {
         let text = with_lost_work(result_text(&report, stopped), agent.take_jobs_lost());
         let text = with_model_note(text, agent.model_note());
         // a plain-English line for the user, for an expert that finished its task (not one the user stopped): the app
-        // writes it on the user's OpenCode plan, and falls back to the expert's own one-liner when it cannot. Bounded
-        // time; it never blocks or fails the run (see `compact::plain_summary`).
+        // starts writing it on the user's OpenCode plan and waits at most SUMMARY_WAIT for it. If it is not ready by
+        // then, the result goes with the expert's own one-liner now and the summary attaches to the chat, its row and
+        // the Review item when it finishes (`start_plain_summary`): the run is never held, and a slow summary is late,
+        // not lost. Off or nothing written → the one-liner (or nothing when the report is empty too).
         let plain = (agent.expert().is_some() && !stopped)
-            .then(|| agent.plain_expert_summary(&report).unwrap_or_else(|| one_liner(&report)))
+            .then(|| {
+                let written = agent.start_plain_summary(report.clone()).and_then(|rx| rx.recv_timeout(SUMMARY_WAIT).ok().flatten());
+                written.unwrap_or_else(|| one_liner(&report))
+            })
             .filter(|s| !s.is_empty());
         let text = with_plain(text, plain.as_deref());
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
@@ -697,12 +710,47 @@ mod tests {
         crate::compact::STAND_IN_FOR.lock().unwrap().push((marker.to_string(), crate::compact::writes("Added a shop where players spend coins on hats.")));
         finished(&x, false);
         let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain.json")).unwrap()).unwrap();
-        // the plain line is on the result, structured and woven into the text the Lead reads
+        // the summary was ready within the wait: it is on the result, structured and woven into the text the Lead reads
         assert_eq!(res["plain"], "Added a shop where players spend coins on hats.");
         assert!(res["text"].as_str().unwrap().contains("In plain words (for the user, from Fridae Studios): Added a shop where players spend coins on hats."), "{}", res["text"]);
-        // and it is shown in the expert's own chat as a "plain" event (the sidebar's "In plain words:" line)
-        let last = x.last_user_event_for_test(); // (the chat has user + text + plain events logged)
-        assert!(last.is_some());
+        // and it is stored on the expert's own chat (the chat's "In plain words:" line, and its sidebar row)
+        assert_eq!(x.stored_plain().as_deref(), Some("Added a shop where players spend coins on hats."));
+        // and reaches the Review item for this work through the expert chat
+        assert_eq!(agents::plain_for(&p, "coder", &lead.id).as_deref(), Some("Added a shop where players spend coins on hats."));
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn a_slow_summary_does_not_hold_the_result_and_attaches_late() {
+        let d = game("plain-late");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain late", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain-late", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        let marker = "ZZmarkerLateZZ";
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": format!("Built the shop. {marker}")}));
+        // the writer takes longer than SUMMARY_WAIT (300ms in tests): the result must not wait for it
+        crate::compact::STAND_IN_FOR.lock().unwrap().push((marker.to_string(), crate::compact::writes_after(Duration::from_millis(600), "Added a shop where players buy hats.")));
+        let began = std::time::Instant::now();
+        finished(&x, false);
+        assert!(began.elapsed() < Duration::from_secs(2), "the result was not held for the slow summary: {:?}", began.elapsed());
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain-late.json")).unwrap()).unwrap();
+        // the result went back at once with the expert's own one-liner, not the (not-yet-written) summary
+        assert_eq!(res["plain"], "Built the shop. ZZmarkerLateZZ");
+        // when the writer finishes, the summary attaches to the expert's chat, its row and the Review item (late, not lost)
+        let mut attached = None;
+        for _ in 0..40 {
+            if let Some(s) = x.stored_plain() {
+                attached = Some(s);
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(attached.as_deref(), Some("Added a shop where players buy hats."));
+        assert_eq!(agents::plain_for(&p, "coder", &lead.id).as_deref(), Some("Added a shop where players buy hats."));
         for a in [&lead, &x] {
             agents::remove_agent(&a.id);
         }
