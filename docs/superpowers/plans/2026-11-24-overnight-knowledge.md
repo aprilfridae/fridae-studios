@@ -15,3 +15,6 @@ The user, going to sleep: "just work on this all night dont ask me for shit ... 
 
 ## Ledger
 - (entries appended as work lands)
+- C done: strong Lead merged (feature/strong-lead 3f40fdf). Setting `strong_lead`, on by default; OpenCode picks the strongest plan model (never per-use); falls back to Claude, then Gemini, by moving the chat.
+- A done: fast Librarian (feature/fast-librarian 20c01a3): `rbx lookup` searches all parts at once (0.87 s warm, keyword path), one cheap one-shot writer, snippet fallback. A2 (quotes plus support check) in progress on the same branch.
+- Baseline exam running in /Users/angela/fridae-rag-bench → docs/superpowers/reports/2026-11-25-bench-baseline.md
