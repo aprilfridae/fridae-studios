@@ -310,12 +310,42 @@ class FilingCheckTests(UpkeepCase):
         self.assertTrue(out.startswith("Not saved"), out)
         self.assertIn("'Menu motion'", out)
         self.assertIn("Menus fade in over a quarter second", out, "the existing note is shown")
-        self.assertIn("replace: true", out)
         self.assertIn("supersedes", out)
         self.assertIn("force: true", out)
+        # another text under the same title: overwriting it would lose the existing note, so it is not offered
+        self.assertNotIn("replace: true", out)
         self.assertEqual(os.listdir(self.notes), ["Menu motion.md"])
         self.vault("note", text="Something else about menus entirely.", title="Menu motion", scope="all", force=True)
         self.assertEqual(sorted(os.listdir(self.notes)), ["Menu motion 2.md", "Menu motion.md"])
+
+    def test_same_title_near_copy_offers_replace_last_and_says_it_overwrites(self):
+        self.vault("note", text="Menus fade in over a quarter second on every screen.", title="Menu motion",
+                   scope="all")
+        out = self.vault("note", text="Menus fade in over a quarter second on every screen!", title="Menu motion",
+                         scope="all")
+        self.assertTrue(out.startswith("Not saved"), out)
+        self.assertIn("replace: true", out)
+        self.assertIn("overwrites", out)
+        self.assertLess(out.index("supersedes"), out.index("replace: true"))
+        self.assertLess(out.index("force: true"), out.index("replace: true"))
+
+    def test_untitled_notes_are_compared_by_their_text_only(self):
+        # both get the title "The user wants the shop to use coins…" (review finding 9)
+        first = self.vault("note", text="The user wants the shop to use coins only, never Robux, because kids cannot "
+                           "buy Robux.", scope="all")
+        self.assertTrue(first.startswith("Note saved"), first)
+        out = self.vault("note", text="The user wants the shop to use coins for pets but gems for skins and trails.",
+                         scope="all")
+        self.assertTrue(out.startswith("Note saved"), out)
+        self.assertEqual(len(rbxnotes.note_files(self.notes)), 2)
+        # an untitled near-copy of a note's text is still caught, and the reply leads with supersedes and force
+        out = self.vault("note", text="The user wants the shop to use coins only, never Robux, because kids cannot "
+                         "buy Robux!", scope="all")
+        self.assertTrue(out.startswith("Not saved"), out)
+        self.assertNotIn("the same title", out)
+        lines = out.splitlines()
+        advice = lines[-1]
+        self.assertTrue(advice.index("supersedes") < advice.index("force: true"), advice)
 
     def test_near_duplicate_body_under_another_title(self):
         self.vault("note", text="The user wants thin outlines on every button, never thick black strokes.",

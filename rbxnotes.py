@@ -582,9 +582,11 @@ def run(action, a):
         import rbxupkeep  # the checks when a note is filed: no model, only the notes' words
         want, updating = target_title(a.get("text"), a.get("title"), scope, project, replace)
         if not _flag(a.get("force")) and (a.get("text") or "").strip():
-            dup = rbxupkeep.find_duplicate(a.get("text"), want, scope, project, skip=olds, exclude=updating)
+            titled = bool(str(a.get("title") or "").strip())  # else its title is the text's first words
+            dup = rbxupkeep.find_duplicate(a.get("text"), want, scope, project, skip=olds, exclude=updating,
+                                           titled=titled)
             if dup:
-                return rbxupkeep.duplicate_text(dup, scope)
+                return rbxupkeep.duplicate_text(dup, scope, want)
         title, path = write_note(a.get("text"), a.get("title"), scope, project, replace=replace, supersedes=olds)
         out = ("Note saved as '%s' (%s). Search finds it: rbx_vault action 'search' with shelf '%s'." %
                (title, "this game" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
