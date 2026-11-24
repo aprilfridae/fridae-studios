@@ -27,7 +27,8 @@ TITLE_MAX = 80
 _RESERVED = ({"con", "prn", "aux", "nul"} | {"com%s" % i for i in "123456789¹²³"} |
              {"lpt%s" % i for i in "123456789¹²³"})
 LOCK_WAIT, LOCK_STALE = 5.0, 10.0
-SIDECAR = "superseded.json"  # {old title: {"by": new title, "date": YYYY-MM-DD}} for shipped notes (read only)
+SIDECAR = "superseded.json"  # {old title: {"by": new title, "date": YYYY-MM-DD, "shelf": the old note's shelf}} for
+# shipped notes (read only); an entry without a shelf (written before it was kept) is a shipped note's
 _KEPT_NAMES = {RULES_NAME[:-3].casefold(), LESSONS_NAME[:-3].casefold()}
 
 
@@ -276,12 +277,25 @@ def sidecar_read(root):
 
 def sidecars(project=None):
     """{old title casefolded: new title} from the for-everything notes folder's superseded.json and, with a project,
-    the game's (which wins)."""
+    the game's (which wins). By title only: the upkeep sweep's view (search uses sidecar_marks)."""
     roots = [home_notes()] + ([game_notes(project)] if project else [])
     out = {}
     for root in roots:
         for old, v in sidecar_read(root).items():
             out[" ".join(old.split()).casefold()] = " ".join(str(v["by"]).split())
+    return out
+
+
+def sidecar_marks(project=None):
+    """[(old title, its shelf or None for a shipped note named before the shelf was kept, new title, the shelf the
+    new note is on first: "yours" or "game")] from the for-everything notes folder's superseded.json and, with a
+    project, the game's (later, so it wins)."""
+    roots = [(home_notes(), "yours")] + ([(game_notes(project), "game")] if project else [])
+    out = []
+    for root, where in roots:
+        for old, v in sidecar_read(root).items():
+            shelf = str(v.get("shelf") or "").strip() or None
+            out.append((" ".join(old.split()), shelf, " ".join(str(v["by"]).split()), where))
     return out
 
 
@@ -301,22 +315,27 @@ def supersedes_arg(v):
 
 
 def _shipped_titles():
-    """{title casefolded: title} of the shipped notes: the LihFolk vault notes, Fridae's guides and team files."""
+    """{title casefolded: (title, shelf)} of the shipped notes: the LihFolk vault notes, Fridae's guides and team
+    files (in that order: the first of a title wins)."""
     import rbxvault
-    out = {}
+    files = []
     try:
-        files = [os.path.basename(p)[:-3] for p in rbxvault.note_files()] if os.path.isdir(rbxvault.KB) else []
-        files += [t for t, _ in rbxvault.guide_files()] + [t for t, _ in rbxvault.team_files(rbxvault.kit_team_dir())]
+        if os.path.isdir(rbxvault.KB):
+            files += [(os.path.basename(p)[:-3], "vault") for p in rbxvault.note_files()]
+        files += [(t, "guides") for t, _ in rbxvault.guide_files()]
+        files += [(t, "team") for t, _ in rbxvault.team_files(rbxvault.kit_team_dir())]
     except Exception:  # the guide list needs the tool server; a missing part only narrows the lookup
-        files = []
-    for t in files:
-        out.setdefault(t.casefold(), t)
+        pass
+    out = {}
+    for t, shelf in files:
+        out.setdefault(t.casefold(), (t, shelf))
     return out
 
 
 def supersede_targets(olds, new_title, scope, project=None):
-    """[(old title, path or None for a shipped note)] for the titles a new note supersedes; refuses (before anything
-    is written) an unknown title, the note's own title, and, for an expert, a note for every game."""
+    """[(old title, path or None for a shipped note, its shelf)] for the titles a new note supersedes; refuses
+    (before anything is written) an unknown title, the note's own title, and, for an expert, a note for every game.
+    Looked for in this order: the scope's own notes, the other scope's, the shipped notes."""
     roots = [(scope, folder(scope, project))]
     other = "all" if scope == "game" else ("game" if project else None)
     if other:
@@ -338,11 +357,11 @@ def supersede_targets(olds, new_title, scope, project=None):
             if sc == "all" and is_helper():
                 raise KitError("'%s' is a note for every game: an expert marks only this game's notes. Tell your "
                                "Lead it is out of date instead." % t)
-            out.append((t, p))
+            out.append((t, p, "game" if sc == "game" else "yours"))
             continue
         shipped = _shipped_titles() if shipped is None else shipped
         if want in shipped:
-            out.append((shipped[want], None))
+            out.append((shipped[want][0], None, shipped[want][1]))
             continue
         near = sorted({t for _, root in roots for t, _ in note_files(root) if want in t.casefold()})[:12]
         raise KitError("No note called '%s' to supersede.%s Give the old note's exact title (action 'notes' lists "
@@ -373,9 +392,9 @@ def mark_superseded(targets, new_title, scope, project=None):
     superseded.json for a shipped one. Returns the titles marked."""
     day = time.strftime("%Y-%m-%d")
     side = []
-    for t, path in targets:
+    for t, path, shelf in targets:
         if path is None:
-            side.append(t)
+            side.append((t, shelf))
             continue
         try:
             with open(path, encoding="utf-8") as f:
@@ -393,10 +412,10 @@ def mark_superseded(targets, new_title, scope, project=None):
                 data = data if isinstance(data, dict) else {}
             except (OSError, ValueError, UnicodeDecodeError):
                 data = {}
-            for t in side:
-                data[t] = {"by": new_title, "date": day}
+            for t, shelf in side:
+                data[t] = {"by": new_title, "date": day, "shelf": shelf}
             _atomic_write(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
-    return [t for t, _ in targets]
+    return [t[0] for t in targets]
 
 
 # ------------------------------------------------------------------ writing
@@ -433,13 +452,13 @@ def write_note(text, title=None, scope="all", project=None, by=None, kind="note"
         title, path = _reserve(root, want)
     sup = ""
     if targets:
-        names = [t for t, _ in targets]
+        names = [t[0] for t in targets]
         sup = "supersedes: %s\n" % json.dumps(names[0] if len(names) == 1 else names, ensure_ascii=False)
     body = ("---\ntitle: %s\nwhen: %s\nscope: %s\nby: %s\nkind: %s\n%s---\n\n# %s\n\n%s\n" % (
         title, time.strftime("%Y-%m-%d %H:%M"), scope, by or _by(), kind, sup, title, text))
     _atomic_write(path, body)
     if targets:
-        mark_superseded([(t, p) for t, p in targets if p != path], title, scope, project)
+        mark_superseded([t for t in targets if t[1] != path], title, scope, project)
     return title, path
 
 

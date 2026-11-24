@@ -156,31 +156,51 @@ class EngineCases:
         self.assertEqual(hits[0]["title"], "Bravo")
         self.assertNotIn("replaced_by", hits[0])
 
+    def test_a_claim_marks_the_nearest_note_of_that_title_only(self):
+        # a user's note has the vault note's title; the newer note on the user's shelf replaces the user's (finding 7)
+        mine = write(os.path.join(self.tmp, "mine", "Bravo.md"),
+                     "# Bravo\n\n## Lanterns\n\nMy haunted forest lantern keeps ghosts away at dusk.\n")
+        new = write(os.path.join(self.tmp, "mine", "Bravo two.md"),
+                    "---\nsupersedes: \"Bravo\"\n---\n# Bravo two\n\n## Torches\n\nIn my forest a torch keeps ghosts "
+                    "away now.\n")
+        self.files += [("yours", "Bravo", mine), ("yours", "Bravo two", new)]
+        eng = self.engine()
+        eng.sync()
+        hits = eng.query("haunted forest lantern ghosts", ["vault", "yours", "guides"], 5, None)
+        by = {(h["shelf"], h["title"]): h for h in hits}
+        self.assertEqual(by[("yours", "Bravo")].get("replaced_by"), "Bravo two")
+        self.assertNotIn("replaced_by", by[("vault", "Bravo")])
+
     def test_a_sync_finishing_during_a_query_never_fails_it(self):
         # a sync on another thread replaces the superseded cache while a query is reading it (review finding 12)
         eng = self.engine()
         eng.sync()
         import rbxnotes
-        real = rbxnotes.sidecars
+        real = rbxnotes.sidecar_marks
 
         def sync_finishes(*a, **kw):
             eng._sup = {}
             return real(*a, **kw)
 
-        with mock.patch.object(rbxnotes, "sidecars", side_effect=sync_finishes):
+        with mock.patch.object(rbxnotes, "sidecar_marks", side_effect=sync_finishes):
             hits = eng.query("build a rocket from scrap metal", ["vault", "yours", "guides"], 3, None)
         self.assertEqual(hits[0]["title"], "Charlie")
 
     def test_superseded_through_the_sidecar(self):
+        # the sidecar marks shipped notes (Bravo is the vault's); an entry names no note of the user's of that title
         home = os.path.join(self.tmp, "home")
-        write(os.path.join(home, "notes", "superseded.json"), json.dumps({"Charlie": {"by": "Alpha", "date": "x"}}))
+        write(os.path.join(home, "notes", "superseded.json"), json.dumps({
+            "Bravo": {"by": "Alpha", "date": "x", "shelf": "vault"}, "Charlie": {"by": "Alpha", "date": "x"}}))
         eng = self.engine()
         eng.sync()
         with mock.patch.object(rbxpaths, "HOME_DIR", home):
+            hits = eng.query("haunted forest lantern ghosts", ["vault", "yours", "guides"], 3, None)
+            bravo = next(h for h in hits if h["title"] == "Bravo")
+            self.assertEqual(bravo["replaced_by"], "Alpha")
+            self.assertNotEqual(hits[0]["title"], "Bravo")
             hits = eng.query("build a rocket from scrap metal", ["vault", "yours", "guides"], 3, None)
-        charlie = next(h for h in hits if h["title"] == "Charlie")
-        self.assertEqual(charlie["replaced_by"], "Alpha")
-        self.assertNotEqual(hits[0]["title"], "Charlie")
+        self.assertEqual(hits[0]["title"], "Charlie")
+        self.assertNotIn("replaced_by", hits[0])
 
     def test_keyword_ranking_joins_the_fusion(self):
         # a useless dense model and no sparse (Light's plan): the keyword search's first result still comes first

@@ -90,16 +90,25 @@ class FrontMatterTests(unittest.TestCase):
                    {"title": "Self", "supersedes": ["self"]}]
         sup = rbxvault.superseded_map(entries, {"vault note": "Mine"})
         self.assertEqual(sup, {"old": "Newest", "vault note": "Mine"})  # the old note's own mark wins; no self-loops
+        # search's map: by identity, a title naming the nearest note of that title
+        known = rbxvault.known_titles([("yours", "New"), ("yours", "Old"), ("vault", "Old"), ("yours", "Newest"),
+                                       ("yours", "Self"), ("vault", "Vault note"), ("yours", "Mine")])
+        sup = rbxvault.supersession_map([("yours", "New", ["Old"], ""), ("yours", "Self", ["self"], "")],
+                                        [("Vault note", None, "Mine", "yours"), ("Old", None, "Mine", "yours")], known)
+        self.assertEqual(sup, {("yours", "old"): ("New", "yours"), ("vault", "vault note"): ("Mine", "yours"),
+                               ("vault", "old"): ("Mine", "yours")})
+        sup = rbxvault.supersession_map([("yours", "Old", [], "Newest")], [("Old", "yours", "Mine", "yours")], known)
+        self.assertEqual(sup, {("yours", "old"): ("Newest", "yours")})
 
     def test_demote_scales_and_the_replacement_wins_ties(self):
-        sup = {"old": "New"}
+        sup = {("vault", "old"): ("New", "vault")}
         items = [(1.0, {"title": "Old"}), (0.3, {"title": "New"}), (0.5, {"title": "Other"})]
         out = rbxvault.demote(items, lambda x: x[0], lambda x: rbxvault.replaced_by(sup, x[1]))
         self.assertEqual([(round(s, 3), x[1]["title"]) for s, x in out], [(0.5, "Other"), (0.3, "New"), (0.3, "Old")])
         self.assertEqual(len(out), 3, "a superseded note is never dropped")
 
     def test_demote_puts_it_after_its_replacement_on_another_scale(self):
-        sup = {"old": "New"}
+        sup = {("vault", "old"): ("New", "vault")}
         items = [(9.0, {"title": "Old"}), (1.0, {"title": "Other"}), (0.5, {"title": "New"})]
         out = rbxvault.demote(items, lambda x: x[0], lambda x: rbxvault.replaced_by(sup, x[1]),
                               lambda x: x[1]["title"])
@@ -238,6 +247,34 @@ class KeywordSearchTests(UpkeepCase):
         self.assertNotIn("Label-less note", [d["title"] for d in idx["docs"]])
         self.assertTrue(all("labels" in d and "links" in d for d in idx["docs"]))
         self.assertEqual(rbxvault.load_index()["sig"], idx["sig"], "rebuilt once, then read")
+
+    def test_a_mark_names_one_note_not_every_note_of_that_title(self):
+        # the user's own note has a vault note's exact title; a newer note replaces the user's (review finding 7)
+        idx = rbxvault.load_index()
+        vt = next(d["title"] for d in idx["docs"] if len(d["title"].split()) >= 4 and d["tldr"])
+        q = " ".join(vt.split()[:6])
+        self.vault("note", title=vt, text="My own take on this topic for my game, short.", scope="all", force=True)
+        self.vault("note", title="My newer take", text="Totally different newer take on something else entirely.",
+                   scope="all", supersedes=vt, force=True)
+        self.assertEqual(self.front(os.path.join(self.notes, vt + ".md"))["superseded_by"], "My newer take")
+        out = self.vault("search", query=q, shelf="all", k=8)
+        vault_line = next(l for l in out.splitlines() if "[vault] %s " % vt in l)
+        self.assertNotIn("replaced by", vault_line)
+        self.assertTrue(out.splitlines()[1].startswith("1. [vault] %s " % vt), out)
+        out = self.vault("search", query=q, shelf="yours", k=5)
+        self.assertIn("(replaced by My newer take)", next(l for l in out.splitlines() if "[yours] %s " % vt in l))
+        # the Librarian's lookup and the vault on its own agree
+        out = self.vault("search", query=q, shelf="vault", k=3)
+        self.assertNotIn("replaced by", out)
+        hits = rbxvault._keyword_passages(q, ["vault", "yours"], 3, None, None)
+        self.assertNotIn("replaced", next(h for h in hits if h["shelf"] == "vault" and h["title"] == vt)["text"])
+
+    def test_a_shipped_note_mark_in_the_sidecar_leaves_a_user_note_of_that_title(self):
+        self.mine("Spawn rule", "Players spawn at the lantern shrine.")
+        write(os.path.join(self.notes, rbxnotes.SIDECAR), json.dumps({"Spawn rule": {"by": "Our spawn", "date": "x"}}))
+        out = self.vault("search", query="where do players spawn shrine", shelf="yours", k=5)
+        self.assertIn("[yours] Spawn rule", out)
+        self.assertNotIn("replaced by", out)
 
     def test_a_shipped_vault_note_marked_in_the_sidecar(self):
         idx = rbxvault.load_index()

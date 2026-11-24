@@ -255,8 +255,8 @@ class Engine:
         self.checkpoint_batches = CHECKPOINT_BATCHES  # a killed build resumes from the last checkpoint
         self._names = {}  # path -> (shelf, title) of every indexed file the syncs listed
         self._graph = None  # (path -> [link targets], target name -> [(shelf, title, path)]), made by each sync
-        self._heads = {}  # path -> ((mtime_ns, size), title, project, supersedes, superseded_by), made by each sync
-        self._sup = {}  # project -> the superseded map from the heads (without the sidecars)
+        self._heads = {}  # path -> ((mtime_ns, size), title, project, supersedes, superseded_by, shelf), by each sync
+        self._sup = {}  # project -> (supersession entries, known titles) from the heads (the sidecars are added later)
 
     # ------------------------------------------------------------ manifest
     def _load_manifest(self):
@@ -480,7 +480,7 @@ class Engine:
             e = entries.get(path) or {}
             sig = (e.get("mtime_ns"), e.get("size"))
             old = self._heads.get(path)
-            if old and old[0] == sig and old[1] == title and sig[0] not in (None, -1):
+            if old and old[0] == sig and old[1] == title and old[5] == shelf and sig[0] not in (None, -1):
                 heads[path] = old
                 continue
             try:
@@ -489,24 +489,23 @@ class Engine:
             except OSError:
                 head = ""
             olds, by = rbxvault.supersession(head)
-            heads[path] = (sig, title, e.get("project", ""), olds, by)
+            heads[path] = (sig, title, e.get("project", ""), olds, by, shelf)
         self._heads = heads
         self._sup = {}
 
     def _superseded(self, project):
-        """{old title casefolded: new title} for a query: the indexed files' front matter (the shared ones and this
-        project's) and the notes folders' superseded.json."""
+        """{(shelf, old title casefolded): (new title, its shelf)} for a query (rbxvault.supersession_map): the indexed
+        files' front matter (the shared ones and this project's) and the notes folders' superseded.json."""
         import rbxnotes
         import rbxvault
         key = project or ""
         cache, heads = self._sup, self._heads  # one snapshot: a sync on another thread replaces both, never changes them
         base = cache.get(key)
         if base is None:
-            base = cache[key] = rbxvault.superseded_map(
-                {"title": t, "supersedes": olds, "superseded_by": by}
-                for _, t, proj, olds, by in heads.values() if (olds or by) and proj in ("", key))
-        side = rbxnotes.sidecars(project or None)
-        return dict(base, **side) if side else base
+            mine = [h for h in heads.values() if h[2] in ("", key)]
+            base = cache[key] = ([(shelf, t, olds, by) for _, t, _, olds, by, shelf in mine if olds or by],
+                                 rbxvault.known_titles((shelf, t) for _, t, _, _, _, shelf in mine))
+        return rbxvault.supersession_map(base[0], rbxnotes.sidecar_marks(project or None), base[1])
 
     def _checkpoint(self, man, keep, old, new_entries, gone, work_paths, finished):
         """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (the

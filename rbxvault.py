@@ -767,6 +767,8 @@ def wikilinks(text, limit=LINKS_MAX):
 # note (vault/Roblox, vault/Fridae: read only), adds it to the notes folder's superseded.json (rbxnotes.SIDECAR).
 # This is read when a search runs, never put in the knowledge index: a superseded note's score is multiplied by
 # SUPERSEDED_SCALE (the replacement wins a tie), its first line says "(replaced by <title>)", and it is never dropped.
+# Each note is known by its identity, its shelf and title: a title named in front matter or a sidecar means the note
+# of that title nearest the note that names it (_shelf_order), never every note of that title.
 SUPERSEDED_SCALE = 0.3
 _WIKI_VALUE = re.compile(r"^\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]$")
 _LIST_ITEM = re.compile(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([^,]+?))\s*(?:,|$)')
@@ -838,15 +840,75 @@ def superseded_map(entries=(), sidecars=None):
     return {old: new for old, new in out.items() if new and new.casefold() != old}
 
 
-def replaced_by(sup, d):
-    """The title replacing note d (a doc or hit with "title" and maybe "label"), or None."""
-    if not sup:
-        return None
-    t = (d.get("title") or "").casefold()
-    hit = sup.get(t)
-    if hit is None and d.get("label") and d["label"].casefold() != t:
-        hit = sup.get(d["label"].casefold())
-    return hit
+SHIPPED = ("vault", "guides", "team")  # the shelves Fridae ships (read only)
+
+
+def _cf(title):
+    return " ".join(str(title or "").split()).casefold()
+
+
+def _shelf_order(shelf):
+    """The shelves a title named by a note on this shelf is looked for on, nearest first (as rbx_vault 'note' does:
+    the note's own notes folder, the other one, then the shipped notes)."""
+    if shelf in PERSONAL:
+        return (shelf, "yours" if shelf == "game" else "game") + SHIPPED
+    return (shelf,) + tuple(s for s in SHIPPED if s != shelf) + PERSONAL
+
+
+def note_key(d, shelf=None):
+    """A note's identity: (its shelf, its title casefolded). A vault index entry has no shelf: it is the vault's."""
+    return (shelf or d.get("shelf") or "vault", _cf(d.get("title")))
+
+
+def known_titles(pairs):
+    """{title casefolded: {shelves}} from (shelf, title) pairs: the notes a search can see."""
+    out = {}
+    for shelf, title in pairs:
+        out.setdefault(_cf(title), set()).add(shelf)
+    return out
+
+
+def supersession_map(entries=(), marks=(), known=None):
+    """{(shelf, old title casefolded): (new title, the new note's shelf or None when it is not known)}: which note
+    replaces which, each by its identity. entries: (shelf, title, titles it supersedes, title it is superseded by)
+    for the notes that say anything about it; marks: the sidecars' (old title, its shelf or None, new title, the
+    notes folder's shelf) (rbxnotes.sidecar_marks); known: known_titles of every note searched. A title is the note
+    of that title nearest the note naming it (_shelf_order; a sidecar entry without a shelf names a shipped note).
+    The old note's own mark wins, then a sidecar's, then a newer note's claim; a note never replaces itself."""
+    known = known or {}
+
+    def find(title, order):
+        have = known.get(_cf(title), ())
+        return next((s for s in order if s in have), None)
+    claims, side, own = {}, {}, {}
+    for shelf, title, olds, by in entries:
+        if by:
+            own.setdefault((shelf, _cf(title)), (by, find(by, _shelf_order(shelf))))
+        for old in olds or ():
+            where = find(old, _shelf_order(shelf))
+            if where:
+                claims.setdefault((where, _cf(old)), (title, shelf))
+    for old, shelf, new, folder in marks:
+        where = shelf or find(old, SHIPPED)
+        if where:
+            side[(where, _cf(old))] = (new, find(new, _shelf_order(folder)))
+    out = dict(claims)
+    out.update(side)
+    out.update(own)
+    return {key: (new, shelf) for key, (new, shelf) in out.items()
+            if new and not (_cf(new) == key[1] and shelf in (None, key[0]))}
+
+
+def replacement_of(sup, d, shelf=None):
+    """(the title replacing note d, that note's shelf or None) or None. d: a doc or hit with a "title" (and a
+    "shelf", else shelf, else it is a vault note)."""
+    return sup.get(note_key(d, shelf)) if sup else None
+
+
+def replaced_by(sup, d, shelf=None):
+    """The title replacing note d (replacement_of), or None."""
+    hit = replacement_of(sup, d, shelf)
+    return hit[0] if hit else None
 
 
 def demote(items, score_of, replaced_of, title_of=None, scale=SUPERSEDED_SCALE):
@@ -872,14 +934,19 @@ def demote(items, score_of, replaced_of, title_of=None, scale=SUPERSEDED_SCALE):
     return [(s, x) for s, x, _ in out]
 
 
-def _sup_entries(docs):
-    """The entries of docs that say anything about superseding (kept on a Docs, which never changes)."""
+def _sup_entries(docs, shelf=None):
+    """(the supersession_map entries of docs, known_titles of docs): kept on a Docs, which never changes. shelf: the
+    docs' shelf when they carry none (the vault index's)."""
+    def make():
+        entries = [(shelf or d["shelf"], d["title"], d.get("supersedes"), d.get("superseded_by")) for d in docs
+                   if d.get("supersedes") or d.get("superseded_by")]
+        return entries, known_titles((shelf or d["shelf"], d["title"]) for d in docs)
     if isinstance(docs, Docs):
         hit = docs.__dict__.get("_sup_entries")
         if hit is None:
-            hit = docs.__dict__["_sup_entries"] = [d for d in docs if d.get("supersedes") or d.get("superseded_by")]
+            hit = docs.__dict__["_sup_entries"] = make()
         return hit
-    return [d for d in docs if d.get("supersedes") or d.get("superseded_by")]
+    return make()
 
 
 def _personal_docs(project=None):
@@ -892,13 +959,16 @@ def _personal_docs(project=None):
 
 
 def superseded_for(idx=None, docs=None, project=None):
-    """The superseded map (superseded_map) for a search: the vault index's notes when it is loaded, the section
+    """The superseded map (supersession_map) for a search: the vault index's notes when it is loaded, the section
     entries (else the user's own notes) and the notes folders' sidecars."""
     import rbxnotes
     project = project_dir() if project is None else project
-    entries = _sup_entries(idx["docs"]) if idx else []
-    entries = entries + _sup_entries(_personal_docs(project) if docs is None else docs)
-    return superseded_map(entries, rbxnotes.sidecars(project or None))
+    entries, known = _sup_entries(idx["docs"], "vault") if idx else ([], {})
+    more, more_known = _sup_entries(_personal_docs(project) if docs is None else docs)
+    if more_known:
+        known = {t: shelves | more_known.get(t, set()) for t, shelves in known.items()}
+        known.update({t: s for t, s in more_known.items() if t not in known})
+    return supersession_map(entries + more, rbxnotes.sidecar_marks(project or None), known)
 
 
 def label_text(labels, project=""):
@@ -1984,7 +2054,7 @@ def _vault_superseded():
         return False
     idx = load_index()
     sup = superseded_for(idx, None, None)
-    return bool(sup) and any(d["title"].casefold() in sup for d in idx["docs"])
+    return any(shelf == "vault" for shelf, _ in sup)
 
 
 def _list(folder):
