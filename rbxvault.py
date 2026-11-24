@@ -125,7 +125,7 @@ def parse(path):
                  "heads": tokens(" ".join(heads)), "body": tokens(plain)},
            "kb": round(len(text.encode("utf-8")) / 1024),
            "labels": note_labels("vault", title, path, fmd, text), "links": wikilinks(after)}
-    olds, by = supersession(text)  # rbxkit: superseded notes (see SUPERSEDED_SCALE)
+    olds, by = supersession(text)  # rbxkit: superseded notes (see place_superseded)
     if olds:
         out["supersedes"] = olds
     if by:
@@ -151,8 +151,14 @@ def parse_symptoms():
     return out
 
 
+VAULT_INDEX_FORMAT = 3  # rbxkit: bump when parse() adds or changes a field (2: labels, links, supersedes; 3: a
+# note's date only from its front matter)
+
+
 def signature(files):
-    h = hashlib.sha1(rbxpaths.VERSION.encode())  # the packaged app has no rbxvault.py on disk to stat
+    # the packaged app has no rbxvault.py on disk to stat, and an update may keep the notes' file times: the format
+    # number makes a cache from before a change of fields stale
+    h = hashlib.sha1(("%s|format %d" % (rbxpaths.VERSION, VAULT_INDEX_FORMAT)).encode())
     for p in files + [os.path.join(KB, "SYMPTOMS.md"), os.path.abspath(__file__)]:
         if os.path.exists(p):
             st = os.stat(p)
@@ -443,7 +449,8 @@ def api_notes(text):
     return out
 
 
-def main():
+def main(idx=None):
+    """The vault's command line (sys.argv); idx: the vault index when the caller has it loaded (rbxkit)."""
     try:  # Windows consoles default to cp1252, and notes contain arrows and dashes
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
@@ -452,7 +459,7 @@ def main():
     if not args or args[0] in ("-h", "--help"):
         print(__doc__)
         return
-    idx = load_index()
+    idx = idx or load_index()
     if args[0] == "--read":
         print_section(args[1], args[2] if len(args) > 2 else None, idx)
         return
@@ -549,7 +556,8 @@ PERSONAL = ("game", "yours")  # the user's own shelves: short notes are fine the
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
 GUIDES_CACHE_NAME = "knowledge-sections-index.json"
-INDEX_FORMAT = 3  # bump when the section index's shape changes (2: labels, links and the gist; 3: supersedes)
+INDEX_FORMAT = 4  # bump when the section index's shape changes (2: labels, links and the gist; 3: supersedes; 4: a
+# note's date only from its front matter)
 OPENING, WHOLE = "(opening)", "(whole file)"
 _FENCE = re.compile(r"^[ \t]{0,3}(```+|~~~+)")
 _NAV = re.compile(r"^(related|see also|connected notes|files|sources|references|further reading)\b", re.I)
@@ -581,7 +589,7 @@ def split_front(text):
 #   game    the game's name for a game's own notes (GAME.md, .fridae/notes, its team overrides), else "all"
 #   kind    rule | lesson | taste | reference | guide
 #   source  lihfolk | user | agent | community | game | fridae (Fridae's own guides and team files)
-#   date    YYYY-MM-DD: the front matter's date, else the file's modification day
+#   date    YYYY-MM-DD: the front matter's date (updated, date, when, created, verified), else none ("")
 # A "Learned in Fridae" section is a lesson an agent added, whatever the note around it is.
 KINDS = ("rule", "lesson", "taste", "reference", "guide")
 SOURCES = ("lihfolk", "user", "agent", "community", "game", "fridae")
@@ -627,14 +635,6 @@ def _in_kb(path):
         return os.path.commonpath([kb, os.path.abspath(path)]) == kb
     except ValueError:
         return False
-
-
-def _file_day(path):
-    import time
-    try:
-        return time.strftime("%Y-%m-%d", time.localtime(os.stat(path).st_mtime))
-    except (OSError, OverflowError, ValueError):
-        return ""
 
 
 def note_labels(shelf, title, path, fm=None, body="", project=""):
@@ -690,8 +690,8 @@ def note_labels(shelf, title, path, fm=None, body="", project=""):
         if m:
             day = "%s-%s-%s" % (m.group(1), m.group(2), m.group(3) or "01")
             break
-    return {"game": game_name(project) if project else "all", "kind": kind, "source": source,
-            "date": day or _file_day(path)}
+    # only a date the note states: a file's change day is when it was installed, checked out or touched
+    return {"game": game_name(project) if project else "all", "kind": kind, "source": source, "date": day}
 
 
 def section_labels(labels, heading, parents=()):
@@ -766,9 +766,12 @@ def wikilinks(text, limit=LINKS_MAX):
 # A newer note names the notes it replaces in its front matter (`supersedes: "Old title"`, or a list); filing it with
 # rbx_vault 'note' also marks the old note (`superseded_by: "New title"`, `superseded_on: <date>`), or, for a shipped
 # note (vault/Roblox, vault/Fridae: read only), adds it to the notes folder's superseded.json (rbxnotes.SIDECAR).
-# This is read when a search runs, never put in the knowledge index: a superseded note's score is multiplied by
-# SUPERSEDED_SCALE (the replacement wins a tie), its first line says "(replaced by <title>)", and it is never dropped.
-SUPERSEDED_SCALE = 0.3
+# This is read when a search runs, never put in the knowledge index. In every search (keyword, Light, Heavy) a
+# superseded note among the first k results gives its place to its replacement (moved up, or fetched when it is no
+# candidate: it is the right answer) and follows it directly; when its replacement cannot be shown it goes to the last
+# of the k places, never out (place_superseded). Its first line says "(replaced by <title>)".
+# Each note is known by its identity, its shelf and title: a title named in front matter or a sidecar means the note
+# of that title nearest the note that names it (_shelf_order), never every note of that title.
 _WIKI_VALUE = re.compile(r"^\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]$")
 _LIST_ITEM = re.compile(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([^,]+?))\s*(?:,|$)')
 
@@ -839,48 +842,146 @@ def superseded_map(entries=(), sidecars=None):
     return {old: new for old, new in out.items() if new and new.casefold() != old}
 
 
-def replaced_by(sup, d):
-    """The title replacing note d (a doc or hit with "title" and maybe "label"), or None."""
-    if not sup:
-        return None
-    t = (d.get("title") or "").casefold()
-    hit = sup.get(t)
-    if hit is None and d.get("label") and d["label"].casefold() != t:
-        hit = sup.get(d["label"].casefold())
-    return hit
+SHIPPED = ("vault", "guides", "team")  # the shelves Fridae ships (read only)
 
 
-def demote(items, score_of, replaced_of, title_of=None, scale=SUPERSEDED_SCALE):
-    """[(new score, item)] best first: a superseded item's score times SUPERSEDED_SCALE; on a tie the item that is
-    not superseded comes first, then the order given. With title_of, a superseded item still above its replacement
-    (scores on another scale, a reranker's) is put right after it, its score lowered to the replacement's. Nothing
-    is dropped."""
-    scored = []
-    for n, x in enumerate(items):
-        by = replaced_of(x)
-        s = score_of(x) * (scale if by else 1.0)
-        scored.append((-s, bool(by), n, s, x, by))
-    scored.sort(key=lambda r: r[:3])
-    out = [(s, x, by) for _, _, _, s, x, by in scored]
-    if title_of:
-        for x in [r for r in out if r[2]]:
-            p = next(i for i, r in enumerate(out) if r is x)
-            want = x[2].casefold()
-            q = next((i for i in range(p + 1, len(out)) if (title_of(out[i][1]) or "").casefold() == want), None)
-            if q is not None:  # its score no higher than its replacement's, so a later sort keeps it after
-                s, item, by = out.pop(p)
-                out.insert(q, (min(s, out[q - 1][0]), item, by))
-    return [(s, x) for s, x, _ in out]
+def _cf(title):
+    return " ".join(str(title or "").split()).casefold()
 
 
-def _sup_entries(docs):
-    """The entries of docs that say anything about superseding (kept on a Docs, which never changes)."""
+def _shelf_order(shelf):
+    """The shelves a title named by a note on this shelf is looked for on, nearest first (as rbx_vault 'note' does:
+    the note's own notes folder, the other one, then the shipped notes)."""
+    if shelf in PERSONAL:
+        return (shelf, "yours" if shelf == "game" else "game") + SHIPPED
+    return (shelf,) + tuple(s for s in SHIPPED if s != shelf) + PERSONAL
+
+
+def note_key(d, shelf=None):
+    """A note's identity: (its shelf, its title casefolded). A vault index entry has no shelf: it is the vault's."""
+    return (shelf or d.get("shelf") or "vault", _cf(d.get("title")))
+
+
+def known_titles(pairs):
+    """{title casefolded: {shelves}} from (shelf, title) pairs: the notes a search can see."""
+    out = {}
+    for shelf, title in pairs:
+        out.setdefault(_cf(title), set()).add(shelf)
+    return out
+
+
+def supersession_map(entries=(), marks=(), known=None):
+    """{(shelf, old title casefolded): (new title, the new note's shelf or None when it is not known)}: which note
+    replaces which, each by its identity. entries: (shelf, title, titles it supersedes, title it is superseded by)
+    for the notes that say anything about it; marks: the sidecars' (old title, its shelf or None, new title, the
+    notes folder's shelf) (rbxnotes.sidecar_marks); known: known_titles of every note searched. A title is the note
+    of that title nearest the note naming it (_shelf_order; a sidecar entry without a shelf names a shipped note).
+    The old note's own mark wins, then a sidecar's, then a newer note's claim; a note never replaces itself."""
+    known = known or {}
+
+    def find(title, order):
+        have = known.get(_cf(title), ())
+        return next((s for s in order if s in have), None)
+    claims, side, own = {}, {}, {}
+    for shelf, title, olds, by in entries:
+        if by:
+            own.setdefault((shelf, _cf(title)), (by, find(by, _shelf_order(shelf))))
+        for old in olds or ():
+            where = find(old, _shelf_order(shelf))
+            if where:
+                claims.setdefault((where, _cf(old)), (title, shelf))
+    for old, shelf, new, folder in marks:
+        where = shelf or find(old, SHIPPED)
+        if where:
+            side[(where, _cf(old))] = (new, find(new, _shelf_order(folder)))
+    out = dict(claims)
+    out.update(side)
+    out.update(own)
+    return {key: (new, shelf) for key, (new, shelf) in out.items()
+            if new and not (_cf(new) == key[1] and shelf in (None, key[0]))}
+
+
+def replacement_of(sup, d, shelf=None):
+    """(the title replacing note d, that note's shelf or None) or None. d: a doc or hit with a "title" (and a
+    "shelf", else shelf, else it is a vault note)."""
+    return sup.get(note_key(d, shelf)) if sup else None
+
+
+def replaced_by(sup, d, shelf=None):
+    """The title replacing note d (replacement_of), or None."""
+    hit = replacement_of(sup, d, shelf)
+    return hit[0] if hit else None
+
+
+def place_superseded(items, k, replacement_of, note_of, fetch=None):
+    """The k items to show from candidates ranked best first, some of them superseded notes. Going down the first k:
+    a superseded note's replacement takes its place (moved up from further down, or fetch(key, old item) when it is
+    no candidate) and the old note follows it directly; when the replacement is shown above already, the old note goes
+    directly after it; when the replacement cannot be shown, the old note goes to the last of the k places, never
+    out. replacement_of(item): (title, shelf or None) or None; note_of(item): (shelf, title casefolded)."""
+    rest, result, sunk, placed = list(items), [], [], set()
+
+    def at(key, seq):
+        return next((n for n, y in enumerate(seq) if note_of(y) == key), None)
+
+    def repl_key(item):
+        r = replacement_of(item)
+        return (r[1], _cf(r[0])) if r and r[1] else None
+    while rest and len(result) + len(sunk) < k:
+        x = rest.pop(0)
+        r = replacement_of(x)
+        if not r:
+            result.append(x)
+            continue
+        key = (r[1], _cf(r[0])) if r[1] else None
+        p = at(key, result) if key else None
+        if p is not None:  # shown already: right after it (and after its other old notes there)
+            q = p + 1
+            while q < len(result) and (note_of(result[q]) == key or repl_key(result[q]) == key):
+                q += 1
+            result.insert(q, x)
+            continue
+        if key is None or key in placed:  # no replacement to show (or it could not stay in the first k itself)
+            sunk.append(x)
+            continue
+        j = at(key, rest)
+        y = rest.pop(j) if j is not None else (fetch(key, x) if fetch else None)
+        if y is None:
+            sunk.append(x)
+            continue
+        placed.add(key)
+        rest[:0] = [y, x]  # the replacement in the old note's place (it may be replaced in turn), then the old note
+    keep = max(0, k - len(sunk))
+    return (result[:keep] + sunk)[:k]
+
+
+def _sup_entries(docs, shelf=None):
+    """(the supersession_map entries of docs, known_titles of docs): kept on a Docs, which never changes. shelf: the
+    docs' shelf when they carry none (the vault index's)."""
+    def make():
+        entries = [(shelf or d["shelf"], d["title"], d.get("supersedes"), d.get("superseded_by")) for d in docs
+                   if d.get("supersedes") or d.get("superseded_by")]
+        return entries, known_titles((shelf or d["shelf"], d["title"]) for d in docs)
     if isinstance(docs, Docs):
         hit = docs.__dict__.get("_sup_entries")
         if hit is None:
-            hit = docs.__dict__["_sup_entries"] = [d for d in docs if d.get("supersedes") or d.get("superseded_by")]
+            hit = docs.__dict__["_sup_entries"] = make()
         return hit
-    return [d for d in docs if d.get("supersedes") or d.get("superseded_by")]
+    return make()
+
+
+def _derived(idx, name, make):
+    """A value worked out from a loaded vault index and kept with it (gone when the index is)."""
+    store = idx.setdefault("_derived", {})
+    hit = store.get(name)
+    if hit is None:
+        hit = store[name] = make()
+    return hit
+
+
+def _vault_by_title(idx):
+    """{title casefolded: vault index entry}."""
+    return _derived(idx, "by_title", lambda: {_cf(d["title"]): d for d in idx["docs"]})
 
 
 def _personal_docs(project=None):
@@ -892,14 +993,33 @@ def _personal_docs(project=None):
     return docs
 
 
-def superseded_for(idx=None, docs=None, project=None):
-    """The superseded map (superseded_map) for a search: the vault index's notes when it is loaded, the section
-    entries (else the user's own notes) and the notes folders' sidecars."""
+_VAULT_SUP = {}  # the vault index's signature -> (its supersession entries, its known titles): one kept
+
+
+def _vault_sup(idx=None):
+    """(supersession entries, known titles) of the vault notes, kept by the vault index's signature: a search works
+    them out once, not per search (idx: the loaded index; else it is loaded only when they are not kept)."""
+    sig = idx.get("sig") if idx else signature(note_files())
+    hit = _VAULT_SUP.get(sig)
+    if hit is None:
+        idx = idx or load_index()
+        hit = _sup_entries(idx["docs"], "vault")
+        _VAULT_SUP.clear()
+        _VAULT_SUP[idx.get("sig", sig)] = hit
+    return hit
+
+
+def superseded_for(idx=None, docs=None, project=None, vault=False):
+    """The superseded map (supersession_map) for a search: the vault index's notes when it is loaded (or vault is
+    true: _vault_sup), the section entries (else the user's own notes) and the notes folders' sidecars."""
     import rbxnotes
     project = project_dir() if project is None else project
-    entries = _sup_entries(idx["docs"]) if idx else []
-    entries = entries + _sup_entries(_personal_docs(project) if docs is None else docs)
-    return superseded_map(entries, rbxnotes.sidecars(project or None))
+    entries, known = _vault_sup(idx) if idx or vault else ([], {})
+    more, more_known = _sup_entries(_personal_docs(project) if docs is None else docs)
+    if more_known:
+        known = {t: shelves | more_known.get(t, set()) for t, shelves in known.items()}
+        known.update({t: s for t, s in more_known.items() if t not in known})
+    return supersession_map(entries + more, rbxnotes.sidecar_marks(project or None), known)
 
 
 def label_text(labels, project=""):
@@ -1451,8 +1571,9 @@ def personal_match(q, d):
 
 
 def interleave(pool, k, may_promote=lambda item: True):
-    """The k results to show: first the best hit of each shelf that has a good one (best first), then the rest by
-    score. Without this one shelf (usually the vault, whose notes are long) can fill every place."""
+    """The k results to show (k None: all, in that order): first the best hit of each shelf that has a good one (best
+    first), then the rest by score. Without this one shelf (usually the vault, whose notes are long) can fill every
+    place."""
     pool = sorted(pool, key=lambda x: -x[0])
     firsts, seen = [], set()
     for item in pool:
@@ -1460,16 +1581,16 @@ def interleave(pool, k, may_promote=lambda item: True):
             seen.add(item[1])
             firsts.append(item)
     rest = [item for item in pool if not any(item is f for f in firsts)]
-    return (firsts + rest)[:k]
+    return (firsts + rest)[:k] if k is not None else firsts + rest
 
 
 def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False, project=None, info=None):
     """The keyword search's k results over several shelves, in the order it shows them, and the symptom lines:
     sections from guides/team/game and notes from the vault, merged by how much of the query each matches (scores
     from different shelves are not comparable, coverage is). filters (normalize_filters) keep only the notes whose
-    labels pass; links adds up to two notes the first results link to (_linked_pool). A superseded note's score is
-    scaled down (demote) and it is never moved up as its shelf's best; info (a dict), when given, gets the superseded
-    map ("sup")."""
+    labels pass; links adds up to two notes the first results link to (_linked_pool). A superseded note gives its place
+    to its replacement and follows it (place_superseded); info (a dict), when given, gets the superseded map
+    ("sup")."""
     terms = query_terms(q)
     pool = []
     symptoms = []
@@ -1483,36 +1604,50 @@ def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False,
     if info is not None:
         info["sup"] = sup
 
-    def old(d):
-        return replaced_by(sup, d)
     if use_vault:
-        res, symptoms = search(q, (max(k * 8, 40) if filters else k) + (10 if sup else 0), idx)
+        res, symptoms = search(q, max(k * 8, 40) if filters else k, idx)
         if filters:
             res = [(s, d) for s, d in res if labels_match(d.get("labels"), filters)]
-        top = res[0][0] if res else 1  # the best before scaling: a scaled one stays low
-        if sup:
-            res = [(s, x[1]) for s, x in demote(res, lambda x: x[0], lambda x: old(x[1]), lambda x: x[1]["title"])]
+        top = res[0][0] if res else 1
         for s, d in res[:k]:
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     if sec_shelves:
         if filters:
             docs = [d for d in docs if labels_match(d.get("labels"), filters)]
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
-        if sup:
-            hits = [(s, x[1], x[2]) for s, x in demote(hits, lambda x: x[0], lambda x: old(x[2]),
-                                                       lambda x: x[2]["title"])]
         taken = Counter()
         for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    if sup:  # already scaled: the replacement wins a tie and comes first (interleave keeps this order)
-        pool = [x for _, x in demote(pool, lambda x: x[0], lambda x: old(x[2]), lambda x: x[2]["title"], 1.0)]
-    pool = interleave(pool, k, lambda item: (item[1] not in PERSONAL or personal_match(q, item[2]))
-                      and not (sup and old(item[2])))
-    if links:
-        pool = _linked_pool(q, pool, shelves, k, idx if "vault" in shelves else None,
-                            docs if sec_shelves else None, filters)
+    promote = lambda item: item[1] not in PERSONAL or personal_match(q, item[2])  # noqa: E731
+    vault_idx, sec_docs = idx if "vault" in shelves else None, docs if sec_shelves else None
+    if not sup:
+        pool = interleave(pool, k, promote)
+        if links:
+            pool = _linked_pool(q, pool, shelves, k, vault_idx, sec_docs, filters)
+    else:
+        # every candidate in order, the linked notes among them, then the first k with the superseded notes placed
+        pool = interleave(pool, None, promote)
+        if links:
+            pool = _linked_pool(q, pool, shelves, k, vault_idx, sec_docs, filters, cut=False)
+
+        def fetch(key, old):
+            """The replacement's best part, for a note that is no candidate: on a searched shelf, passing the filters."""
+            shelf, title = key
+            if shelf not in shelves:
+                return None
+            if shelf == "vault":
+                d = _vault_by_title(idx).get(title) if use_vault else None
+                return (old[0], "vault", d) if d and labels_match(d.get("labels"), filters) else None
+            mine = [d for d in docs or () if d["shelf"] == shelf and _cf(d["title"]) == title]
+            if not mine:
+                return None
+            t = pquery_terms(q) if shelf in PERSONAL else squery_terms(q)
+            best = max(mine, key=lambda d: (_coverage(t, d["tf"], SECTION_FIELDS), d["own"]))
+            return (old[0], shelf, best)
+        pool = place_superseded(pool, k, lambda item: replacement_of(sup, item[2], item[1]),
+                                lambda item: note_key(item[2], item[1]), fetch)
     return pool, symptoms
 
 
@@ -1523,39 +1658,82 @@ LINK_FIELDS = ("title", "tags", "tldr", "heads")  # ... a vault note's in these 
 LINK_CANDIDATES = 24  # linked notes looked at per search at most
 
 
-def place_linked(direct, linked, k):
+def place_linked(direct, linked, k, cut=True, key=None):
     """The k results to show: the first DIRECT_KEPT direct ones, then up to LINKED_MAX linked ones, then the rest of
-    the direct ones."""
+    the direct ones. cut False: every direct one is kept (the caller cuts later), less those that key(item) says are
+    the same as a linked one."""
     head = direct[:DIRECT_KEPT]
     room = min(LINKED_MAX, k - len(head))
-    return (head + list(linked)[:max(0, room)] + direct[DIRECT_KEPT:])[:k]
+    linked = list(linked)[:max(0, room)]
+    if cut:
+        return (head + linked + direct[DIRECT_KEPT:])[:k]
+    shown = {key(x) for x in linked} if key else set()
+    return head + linked + [x for x in direct[DIRECT_KEPT:] if not key or key(x) not in shown]
 
 
-def _linked_pool(q, pool, shelves, k, idx, docs, filters=None):
+def _link_names(d):
+    """The names a [[link]] may give a section's note by: its title, the title's last part, its label."""
+    names = {d["title"].casefold(), os.path.basename(d["title"]).casefold(), (d.get("label") or "").casefold()} - {""}
+    return [n[:-3] if n.endswith(".md") else n for n in sorted(names)]
+
+
+def _link_maps(docs, shelves, tops, vault_by):
+    """(notes: (shelf, title) -> its sections, by_name: link name -> [(shelf, title)]) over the docs on these shelves,
+    for _linked_pool. A Docs keeps the whole maps (built once); for a plain list only the notes the first results are
+    and the ones their links name are looked up (no map of every note per search)."""
+    def add(notes, by_name, d, names):
+        key = (d["shelf"], d["title"])
+        notes.setdefault(key, []).append(d)
+        for name in names:
+            keys = by_name.setdefault(name, [])
+            if key not in keys:
+                keys.append(key)
+    if isinstance(docs, Docs):
+        cache = docs.__dict__.setdefault("_link_maps", {})
+        mk = tuple(sorted(shelves))
+        if mk not in cache:
+            notes, by_name = {}, {}
+            for d in docs:
+                if d["shelf"] in shelves:
+                    add(notes, by_name, d, _link_names(d))
+            cache[mk] = (notes, by_name)
+        return cache[mk]
+    own = {(shelf, d["title"]) for _, shelf, d in tops if shelf != "vault"}
+    notes = {}
+    for d in docs:
+        if (d["shelf"], d["title"]) in own:
+            notes.setdefault((d["shelf"], d["title"]), []).append(d)
+    want = set()
+    for _, shelf, d in tops:
+        want.update(d.get("links") or ())
+        for x in notes.get((shelf, d["title"]), ()) if shelf != "vault" else ():
+            want.update(x.get("links") or ())
+    found, by_name = {}, {}
+    for d in docs:
+        if d["shelf"] in shelves:
+            names = [n for n in _link_names(d) if n in want]
+            if names:
+                add(found, by_name, d, names)
+    for key, secs in found.items():
+        notes.setdefault(key, secs)
+    return notes, by_name
+
+
+def _linked_pool(q, pool, shelves, k, idx, docs, filters=None, cut=True):
     """The keyword search's link following: the [[links]] in the first results' notes, and of the notes they name
     (on the searched shelves, not already shown, passing the same filters: `docs` is already filtered) the best part
     of each that holds most of the query's own words (LINK_COVER; synonyms do not count, and a vault note counts only
-    its title, tags, TL;DR and headings). Linked items carry a 4th element: the linking title."""
+    its title, tags, TL;DR and headings). Linked items carry a 4th element: the linking title. cut False: pool is
+    every candidate in order, and so is the answer (place_linked)."""
     if k <= DIRECT_KEPT or len(pool) < 1:
         return pool
     terms = Counter({t: w for t, w in query_terms(q).items() if w >= 1})
-    have = {(item[1], item[2]["title"]) for item in pool}
-    vault_by = {d["title"].casefold(): d for d in (idx or {}).get("docs", [])} if idx else {}
-    notes, by_name = {}, {}
-    for d in docs or ():
-        if d["shelf"] not in shelves:
-            continue
-        key = (d["shelf"], d["title"])
-        notes.setdefault(key, []).append(d)
-        for name in {d["title"].casefold(), os.path.basename(d["title"]).casefold(),
-                     (d.get("label") or "").casefold()} - {""}:
-            if name.endswith(".md"):
-                name = name[:-3]
-            by_name.setdefault(name, [])
-            if key not in by_name[name]:
-                by_name[name].append(key)
+    have = {(item[1], item[2]["title"]) for item in pool[:k]}
+    vault_by = _vault_by_title(idx) if idx else {}
+    tops = [x[:3] for x in pool[:DIRECT_KEPT]]
+    notes, by_name = _link_maps(docs or (), shelves, tops, vault_by)
     cands, src = [], {}
-    for _, shelf, d in [x[:3] for x in pool[:DIRECT_KEPT]]:
+    for _, shelf, d in tops:
         if shelf == "vault":
             targets = d.get("links") or []
         else:
@@ -1585,7 +1763,7 @@ def _linked_pool(q, pool, shelves, k, idx, docs, filters=None):
             if best:
                 found.append((best[0], key[0], best[2], src[key]))
     linked = sorted((f for f in found if f[0] >= LINK_COVER), key=lambda f: -f[0])
-    return place_linked(pool, linked, k) if linked else pool
+    return place_linked(pool, linked, k, cut, lambda x: (x[1], x[2]["title"])) if linked else pool
 
 
 def keyword_ranking(q, shelves, depth, idx=None, docs=None, project=None):
@@ -1598,19 +1776,23 @@ def keyword_ranking(q, shelves, depth, idx=None, docs=None, project=None):
             return []
         idx = idx or load_index()
         sup = superseded_for(idx, None, project)
-        res = search(q, depth + (10 if sup else 0), idx)[0]
+        res = search(q, depth, idx)[0]
         if sup:
-            res = [x for _, x in demote(res, lambda x: x[0], lambda x: replaced_by(sup, x[1]))]
+            res = place_superseded(res, depth, lambda x: replacement_of(sup, x[1], "vault"),
+                                   lambda x: note_key(x[1], "vault"),
+                                   lambda key, old: (old[0], _vault_by_title(idx)[key[1]])
+                                   if key[0] == "vault" and key[1] in _vault_by_title(idx) else None)
         return [("vault", d["title"], None) for _, d in res[:depth]]
     pool, _ = _keyword_pool(q, shelves, depth, idx, docs, project=project)
     return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]
 
 
-def combined_search(q, shelves, k, filters=None):
-    """Text for a search over several shelves (`_keyword_pool`), with the notes linked from the first results."""
+def combined_search(q, shelves, k, filters=None, idx=None):
+    """Text for a search over several shelves (`_keyword_pool`), with the notes linked from the first results. idx:
+    the vault index when the caller has it loaded."""
     terms = query_terms(q)
     info = {}
-    pool, symptoms = _keyword_pool(q, shelves, k, None, None, filters, links=True, info=info)
+    pool, symptoms = _keyword_pool(q, shelves, k, idx, None, filters, links=True, info=info)
     if not pool:
         return "No match on %s%s. Try other words%s." % (
             ", ".join(shelves), " with those filters" if filters else "",
@@ -1931,7 +2113,9 @@ def _keyword_passages(q, shelves, k, idx, docs):
         if not s:
             continue
         lines = snippet(p["body"][s["start"]:s["own_end"]], terms, n=4, width=200)
-        out.append({"shelf": shelf, "title": d.get("label") or d["title"], "heading": d["heading"],
+        # a guide's title is its rbx_guide topic (the app's pointer names it), as the knowledge index sends it
+        title = d["title"] if shelf == "guides" else d.get("label") or d["title"]
+        out.append({"shelf": shelf, "title": title, "heading": d["heading"],
                     "text": mark + _cut(" ".join(lines))})
     return out
 
@@ -1975,14 +2159,13 @@ def lookup(queries, k=LOOKUP_K):
         return list(ex.map(one, queries))
 
 
-def _vault_superseded():
+def _vault_superseded(idx=None):
     """True when a note of the vault is superseded (the vault search alone then answers through combined_search,
-    which ranks and marks it)."""
+    which ranks and marks it). idx: the loaded vault index (without it, it is loaded only when the vault notes'
+    titles are not kept yet: _vault_sup)."""
     if not os.path.isdir(KB):
         return False
-    idx = load_index()
-    sup = superseded_for(idx, None, None)
-    return bool(sup) and any(d["title"].casefold() in sup for d in idx["docs"])
+    return any(shelf == "vault" for shelf, _ in superseded_for(idx, None, None, vault=True))
 
 
 def _list(folder):
@@ -2066,10 +2249,12 @@ def run(action, a):
     text = rag_search(q, shelves, k, filters)  # the knowledge index, when the app runs it; None: the keyword search
     if text is not None:
         return text
-    if shelf == "vault" and not filters and not _vault_superseded():  # the vault on its own answers as it always has
+    # the vault index is read once for the whole search
+    idx = load_index() if "vault" in shelves and os.path.isdir(KB) else None
+    if shelf == "vault" and not filters and not _vault_superseded(idx):  # the vault on its own answers as it always has
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
-            main()
+            main(idx)
         text = _vault_call(vault_search) or "No match. Try other words, or action 'list' to browse the sections."
         return text + "\n\nNext: rbx_vault action 'read' with a title and heading words for one section (not the whole note)."
-    return combined_search(q, shelves, k, filters)
+    return combined_search(q, shelves, k, filters, idx)

@@ -91,14 +91,14 @@ class ContextLineTests(Tmp):
         self.assertTrue(second.startswith("Context: "), second)
         self.assertIn("Saving Data > Sessions > Session locks", second)
         self.assertIn("| yours |", second)
-        self.assertIn("lesson, user, 2026-11", second)
+        self.assertIn("lesson, user |", second)  # no date in its front matter: no date (not the file's day)
         self.assertIn("Some opening words about saving player data safely.", second)  # the first sentence only
         self.assertNotIn("More words", second)
         self.assertEqual(body.strip(), "Lock the profile while a server holds it.")
         for c in cs:
             self.assertEqual(c["text"].split("\n")[1][:9], "Context: ")
             self.assertEqual({k: c[k] for k in chunks.LABEL_KEYS},
-                             {"game": "all", "kind": "lesson", "source": "user", "date": "2026-11-03"})
+                             {"game": "all", "kind": "lesson", "source": "user", "date": ""})
 
     def test_description_is_the_gist_and_a_game_note_says_its_game(self):
         project = os.path.join(self.tmp, "Lantern Run")
@@ -146,7 +146,7 @@ class ContextLineTests(Tmp):
                                  chunks.LIMIT // 4)
 
     def test_format_version_bumped_so_old_indexes_rebuild_once(self):
-        self.assertEqual(engine.FORMAT, 2)
+        self.assertEqual(engine.FORMAT, 3)
         a = write(os.path.join(self.tmp, "kit", "Alpha.md"), "# Alpha\n\n## Coins\n\nShiny coins. [[Bravo]]\n")
         b = write(os.path.join(self.tmp, "kit", "Bravo.md"), "# Bravo\n\n## Lanterns\n\nA lantern.\n")
         files = [("vault", "Alpha", a), ("vault", "Bravo", b)]
@@ -160,11 +160,11 @@ class ContextLineTests(Tmp):
         self.assertEqual(first["embedded"], first["chunks"])
         with open(manifest, encoding="utf-8") as f:
             man = json.load(f)
-        self.assertEqual(man["format"], 2)
+        self.assertEqual(man["format"], engine.FORMAT)
         self.assertEqual(man["files"][a]["links"], ["bravo"])
         self.assertNotIn("links", man["files"][b])
         self.assertEqual(eng().sync()["embedded"], 0)  # incremental as before
-        man["format"] = 1  # an index from before the context lines
+        man["format"] = 2  # an index from before front-matter-only dates
         with open(manifest, "w", encoding="utf-8") as f:
             json.dump(man, f)
         again = eng().sync()
@@ -209,13 +209,17 @@ class LabelTests(Tmp):
             self.assertEqual((got["kind"], got["source"]), want, (shelf, rel))
             self.assertEqual(got["game"], "Lantern Run" if project else "all", rel)
 
-    def test_date_from_front_matter_else_the_file(self):
+    def test_date_only_from_front_matter(self):
         got = self.labels("yours", "A.md", "---\nwhen: 2026-11-02 09:00\n---\n# A\n")
         self.assertEqual(got["date"], "2026-11-02")
         got = self.labels("vault", "B.md", "---\nverified: 2025-07\n---\n# B\n")
         self.assertEqual(got["date"], "2025-07-01")
+        # no date key: no date, never the day the file was installed or checked out (review finding 10)
         path = write(os.path.join(self.tmp, "C.md"), "# C\n", ts("2026-03-04"))
-        self.assertEqual(rbxvault.note_labels("vault", "C", path, {}, "# C\n")["date"], "2026-03-04")
+        self.assertEqual(rbxvault.note_labels("vault", "C", path, {}, "# C\n")["date"], "")
+        self.assertNotRegex(rbxvault.label_text(rbxvault.note_labels("vault", "C", path, {}, "# C\n")), r"\d")
+        self.assertFalse(rbxvault.labels_match(rbxvault.note_labels("vault", "C", path, {}, "# C\n"),
+                                               {"since": 20000101}), "since leaves undated notes out")
 
     def test_learned_in_fridae_section_is_an_agent_lesson(self):
         base = {"game": "all", "kind": "guide", "source": "lihfolk", "date": "2026-10-01"}
@@ -284,7 +288,7 @@ class EngineFilterCases:
         self.old = write(os.path.join(d, "Old lantern.md"), "---\nverified: 2025-01-05\n---\n# Old lantern\n\n"
                          "## Glow\n\nAn old lantern glow reference.\n")
         self.game = write(os.path.join(self.project, ".fridae", "notes", "Arena.md"),
-                          "# Arena\n\nThe arena lantern glow is green.\n", ts("2026-11-22"))
+                          "---\nwhen: 2026-11-22\n---\n# Arena\n\nThe arena lantern glow is green.\n")
         self.files = [("yours", "House rules", self.rule), ("yours", "Glow tip", self.lesson),
                       ("vault", "Old lantern", self.old)]
         self.client = QdrantClient(":memory:") if QdrantClient else None
@@ -312,7 +316,7 @@ class EngineFilterCases:
         self.assertEqual(self.titles({"kind": ["rule"]}), ["House rules"])
         self.assertEqual(self.titles({"kind": ["lesson"], "source": ["agent"]}), ["Glow tip"])
         self.assertEqual(self.titles({"source": ["user"]}), ["House rules", "Old lantern"])
-        self.assertEqual(self.titles({"since": 20261101}), ["Arena", "Glow tip", "House rules"])
+        self.assertEqual(self.titles({"since": 20261101}), ["Arena", "Glow tip"])  # House rules has no date
         self.assertEqual(self.titles({"since": 20261115}), ["Arena", "Glow tip"])
         self.assertEqual(self.titles({"game": "this"}), ["Arena"])
         self.assertEqual(self.titles({"game": "general"}), ["Glow tip", "House rules", "Old lantern"])
@@ -333,9 +337,9 @@ class MemFilterTests(EngineFilterCases, unittest.TestCase):
         again = Engine(self.new_store(), FakeEmbedders(), os.path.join(self.tmp, "rag", "manifest.json"),
                        corpus=self.corpus, project_files=lambda p: {self.game} if p else set(), plan=PLANS["light"])
         self.assertEqual(again.sync()["embedded"], 0)
-        hits = again.query("lantern glow", ["yours"], 5, None, {"kind": ["rule"]})
-        self.assertEqual([h["title"] for h in hits], ["House rules"])
-        self.assertEqual(hits[0]["date"], "2026-11-10")
+        hits = again.query("lantern glow", ["yours"], 5, None, {"kind": ["lesson"]})
+        self.assertEqual([h["title"] for h in hits], ["Glow tip"])
+        self.assertEqual(hits[0]["date"], "2026-11-20")
 
 
 class KeywordFilterTests(unittest.TestCase):
@@ -366,7 +370,7 @@ class KeywordFilterTests(unittest.TestCase):
     def test_filters(self):
         text = self.search()
         self.assertRegex(text, r"\[yours\] Zorblat tip .*\[lesson · agent · 2026-11\]")
-        self.assertRegex(text, r"\[game\] Cave glow .*\[lesson · this game · \d{4}-\d{2}\]")
+        self.assertRegex(text, r"\[game\] Cave glow .*\[lesson · this game\]")  # undated: no date shown
         self.assertEqual(self.titles(self.search(kind="rule")), ["House rules"])
         self.assertEqual(self.titles(self.search(source="agent")), ["Zorblat tip"])
         self.assertEqual(self.titles(self.search(game="this")), ["Cave glow"])

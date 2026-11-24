@@ -207,7 +207,7 @@ class SearchTests(NotesTestCase):
         with open(old, "w", encoding="utf-8") as f:
             f.write("- 2026-10-01: Test every menu on a phone emulator.\n")
         text = self.vault("search", query="phone emulator menu", shelf="yours")
-        self.assertRegex(text, r"\[yours\] studio-lessons .*\[lesson · agent ")
+        self.assertRegex(text, r"\[yours\] studio-lessons .*\[lesson · agent\]")
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.isfile(os.path.join(self.home, "notes", rbxnotes.LESSONS_NAME)))
         # if it could not be moved, the old place is still read

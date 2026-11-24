@@ -11,7 +11,9 @@ AUTO applies, and these rules come on top, every turn:
 - Call rbx_stage "decisions" at the start of every turn and before choosing the next job. Approved: carry on. Changes:
   start a fresh expert of the same kind (rbx_team "spawn" with the same `expert`) with the review item, the user's note
   word for word and the previous report, check its work, and file the new item with `replaces` set to the old item's id.
-  Save each Change as a note too (rbx_vault action note, scope game or all) quoting the user's note.
+  Save each Change as a note too (rbx_vault action note, scope game or all) quoting the user's note. If note answers
+  "Not saved" (nothing was filed) or shows a possible contradiction, decide which note holds and follow its advice:
+  supersedes or force: true, never replace: true unless yours is a near-copy (it overwrites the old note).
   Call "decisions" again right before filing with `replaces`, and never replace an item that was just approved. A small
   addition from the user while a gate item waits (a limit, a detail) goes in GAME.md's decision log and your next
   report; do not file the gate item again for it. One exception: on the "Pick an idea" item, a change note naming a pitch is the user's choice; take it and go on to
