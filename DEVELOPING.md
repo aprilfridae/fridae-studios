@@ -1175,10 +1175,40 @@ HOME, and has no keychain there to keep a new sign-in in.
   plugins or conversations of the user's), and a command it runs would inherit that other home (git identity, keys);
   the second point follows from how processes inherit HOME and was not run.
 
-So **a second Gemini account is not built**: the only thing that separates agy's sign-in is another HOME, and a turn
-there is not a turn like the first account's, with no way to learn beforehand whether the sign-in would even be kept.
-Two ways on, both for the user to decide: build it on a second HOME anyway and let the first real sign-in show whether
-agy keeps it; or use agy's own "Gemini API key" method as the second account (billed per use).
+So agy's own folders cannot give Gemini a second account: only another HOME separates its sign-in. (That was where
+the first round stopped. The user then decided to go ahead; what was measured for it is the next part.)
+
+**A second HOME for agy** (measured the same day, agy 1.5.15, in fresh scratch homes; nothing was signed in or out,
+and nothing of the user's keychain was read but two names):
+- agy's keychain entry is a generic password with the service `gemini` and the account `antigravity` (the two names
+  as the keychain's own listing shows them; its contents were never read). It is the only place the user's own
+  sign-in is kept: the user's `~/.gemini/antigravity-cli` holds no credentials file (names looked at only).
+- With the real HOME `/usr/bin/security find-generic-password -s gemini -a antigravity` finds it (exit 0). With a
+  scratch HOME it does not (exit 44), there is no default keychain, and a write fails (a made-up entry under a
+  made-up name: exit 154, and nothing appeared in the real keychain). `CFFIXED_USER_HOME`, `USER`, `LOGNAME` and
+  the `XDG_*` folders pointing at the real home do not bring it back: HOME alone decides. agy reaches the keychain
+  through that same program (`go_keyring`'s `macOSXKeychain` in its text). So an agy run with another HOME can
+  neither read nor write the user's own sign-in.
+- agy's app data folder is `<HOME>/.gemini/antigravity-cli` whatever it inherits (its own log line "CLI app data
+  directory", with `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `ANTIGRAVITY_APP_DATA_DIR`,
+  `ANTIGRAVITY_EXECUTABLE_DATA_DIR`, `ANTIGRAVITY_CONFIG_REL_DIR`, `SSH_CONNECTION` each set to something else:
+  no change, and nothing written anywhere else).
+- Where a sign-in made under such a HOME would be kept, from the program's text only: it has a file store beside
+  the keyring (`fileTokenStorage`, `compositeTokenStorage`, `useFileIfKeyringWritesDisabled`, "keyring writes
+  disabled after an earlier keyring write failure", "couldn't resolve the app data directory to save credentials
+  in", and a release note about "file storage when keyring storage is bypassed or unreachable"). So a sign-in made
+  where the keychain cannot be written should be kept in a file in that home's own app data folder.
+  **Not measured**: it takes a completed sign-in, which only the user does. The first real second sign-in shows it:
+  Setup says "Signed in." after it, and still says so after the app was closed and opened again. If it does not, a
+  second home does not keep a sign-in, and the other way (moving the keychain entry) would be the next thing to
+  build; it was not built.
+- A turn there without a sign-in says "Authentication required" (measured earlier). A turn with one was not run.
+  The plumbing for "agy's HOME is not the app's" already exists and was used the other way round for testing
+  (`FRIDAE_AGY_HOME`): the app's tool server is given the app's HOME back, and agy's home is kept from its file
+  tools.
+- What differs for a turn under the second home: agy starts from an empty `~/.gemini` there (none of the user's own
+  agy settings, plugins or conversations), and a shell command it runs inherits that home (so `~` is the account's
+  folder; the user's git identity is linked in, their keys are not).
 
 **Usage limits, as they reach the app today.**
 - Claude Code: a `result` with `is_error` and the tool's words (`usage_limit` knows "You've hit your 5-hour limit ·
