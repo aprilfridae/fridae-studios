@@ -1759,7 +1759,7 @@ function sideExpert(used, x, lead, tab) {
     /* once the expert has finished, its row shows the plain-English line of what it did; while it works, its state */
     putText(b.querySelector("small"), plain && !(h && h.busy) && !still ? "In plain words: " + plain : state[0] + " · " + ai);
     putTitle(b.lastChild, turn ? "It has the Studio turn: the only one changing the live place right now. The others carry on with their own copies." : "");
-    putTitle(b, [[who, job, state[0], ai].filter(Boolean).join(" · ") + ".", sw ? swTip(m.status, thing) : "", turn ? "It has the Studio turn." : "", plain ? "In plain words: " + plain : "", lead ? "" : "The chat that started it is closed."].filter(Boolean).join(" "));
+    putTitle(b, [[who, job, state[0], ai].filter(Boolean).join(" · ") + ".", sw ? swTip(m.status, thing, m.role) : "", turn ? "It has the Studio turn." : "", plain ? "In plain words: " + plain : "", lead ? "" : "The chat that started it is closed."].filter(Boolean).join(" "));
     putAttr(b, "aria-current", on ? "true" : null);
     const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
   });
@@ -5015,8 +5015,9 @@ const SW = {
   failed: { word: "failed", dot: " bad" },
 };
 /* and in one sentence, for its tooltip */
-function swTip(status, thing) {
-  return status === "working" ? "Working on its part now, in its own copy of the " + thing + "."
+function swTip(status, thing, role) {
+  return status === "working" && role === "librarian" ? "Looking it up in the knowledge base now. The answer comes on the board in a few seconds."
+    : status === "working" ? "Working on its part now, in its own copy of the " + thing + "."
     : status === "parked" ? "Done for now, or waiting on someone. Parked costs nothing; a mention on the board wakes it."
     : status === "verifying" ? "Its part is being checked before it goes into the " + thing + "."
     : status === "merged" ? "Checked and added to the run's copy of the " + thing + ". It reaches your " + thing + " only with your yes."
@@ -5193,7 +5194,7 @@ function paintBoard() {
       c.style.setProperty("--c", bdHue(s, n)); c.lastChild.textContent = n;
       if (m.studio_turn) c.appendChild(el("i", "bd-turn", "Studio"));
       const ai = m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : "";
-      c.title = [["@" + n, m.role, sw.word, ai].filter(Boolean).join(" · ") + ".", swTip(m.status, thing), m.studio_turn ? "It has the Studio turn." : "", "Press to see only its lines."].filter(Boolean).join(" ");
+      c.title = [["@" + n, m.role, sw.word, ai].filter(Boolean).join(" · ") + ".", swTip(m.status, thing, m.role), m.studio_turn ? "It has the Studio turn." : "", "Press to see only its lines."].filter(Boolean).join(" ");
       const pressed = bdFilter.f === "one" && bdFilter.name === n;
       c.setAttribute("aria-pressed", pressed ? "true" : "false");
       c.onclick = () => { bdFilter = pressed ? { f: "all", name: "" } : { f: "one", name: n }; paintBoard(); };
