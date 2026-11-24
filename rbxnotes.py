@@ -248,7 +248,7 @@ def yours_files():
 
 # ------------------------------------------------------------------ superseded notes
 # A note that replaces others names them (front matter `supersedes`); the old ones are kept and marked
-# (`superseded_by`, `superseded_on`), and search ranks them well below (rbxvault.SUPERSEDED_SCALE). The shipped
+# (`superseded_by`, `superseded_on`), and search shows them right after their replacement (rbxvault.place_superseded). The shipped
 # notes (vault/Roblox, vault/Fridae) are never written: their marks go to the notes folder's superseded.json.
 _SIDE_CACHE = {}  # path -> ((mtime_ns, size), entries)
 

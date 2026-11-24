@@ -100,19 +100,31 @@ class FrontMatterTests(unittest.TestCase):
         sup = rbxvault.supersession_map([("yours", "Old", [], "Newest")], [("Old", "yours", "Mine", "yours")], known)
         self.assertEqual(sup, {("yours", "old"): ("Newest", "yours")})
 
-    def test_demote_scales_and_the_replacement_wins_ties(self):
-        sup = {("vault", "old"): ("New", "vault")}
-        items = [(1.0, {"title": "Old"}), (0.3, {"title": "New"}), (0.5, {"title": "Other"})]
-        out = rbxvault.demote(items, lambda x: x[0], lambda x: rbxvault.replaced_by(sup, x[1]))
-        self.assertEqual([(round(s, 3), x[1]["title"]) for s, x in out], [(0.5, "Other"), (0.3, "New"), (0.3, "Old")])
-        self.assertEqual(len(out), 3, "a superseded note is never dropped")
+    def place(self, titles, k, sup, fetchable=()):
+        """place_superseded over vault notes named by title, best first: the titles shown."""
+        items = [{"title": t} for t in titles]
+        out = rbxvault.place_superseded(
+            items, k, lambda d: rbxvault.replacement_of(sup, d), lambda d: rbxvault.note_key(d),
+            lambda key, old: {"title": key[1].capitalize(), "fetched": True} if key[1] in fetchable else None)
+        return [d["title"] + ("*" if d.get("fetched") else "") for d in out]
 
-    def test_demote_puts_it_after_its_replacement_on_another_scale(self):
+    def test_the_replacement_takes_the_old_notes_place_and_the_old_note_follows(self):
         sup = {("vault", "old"): ("New", "vault")}
-        items = [(9.0, {"title": "Old"}), (1.0, {"title": "Other"}), (0.5, {"title": "New"})]
-        out = rbxvault.demote(items, lambda x: x[0], lambda x: rbxvault.replaced_by(sup, x[1]),
-                              lambda x: x[1]["title"])
-        self.assertEqual([(s, x[1]["title"]) for s, x in out], [(1.0, "Other"), (0.5, "New"), (0.5, "Old")])
+        self.assertEqual(self.place(["A", "Old", "B", "New"], 3, sup), ["A", "New", "Old"])
+        # the replacement above already: the old note goes directly after it
+        self.assertEqual(self.place(["New", "A", "Old"], 3, sup), ["New", "Old", "A"])
+        # not a candidate: fetched into the results, k kept
+        self.assertEqual(self.place(["Old", "A", "B"], 3, sup, {"new"}), ["New*", "Old", "A"])
+        # a replacement replaced in turn: the newest first
+        sup2 = {**sup, ("vault", "new"): ("Newest", "vault")}
+        self.assertEqual(self.place(["Old", "A", "New", "Newest"], 4, sup2), ["Newest", "New", "Old", "A"])
+        self.assertEqual(self.place(["Old", "A"], 5, sup), ["A", "Old"], "fewer than k: nothing made up")
+
+    def test_an_old_note_without_its_replacement_stays_in_the_first_k(self):
+        sup = {("vault", "old"): ("Gone", None), ("vault", "older"): ("Missing", "vault")}
+        self.assertEqual(self.place(["Old", "A", "B", "C"], 3, sup), ["A", "B", "Old"])
+        self.assertEqual(self.place(["Old", "Older", "A", "B"], 3, sup), ["A", "Old", "Older"])
+        self.assertEqual(self.place(["A", "B", "C", "Old"], 3, sup), ["A", "B", "C"], "only the first k count")
 
 
 # ------------------------------------------------------------------ filing with supersedes
@@ -268,6 +280,30 @@ class KeywordSearchTests(UpkeepCase):
         self.assertIn("[yours] Torch fuel", out)
         self.assertIn("(replaced by Lamp oil)", out)
 
+    def test_the_replacement_is_fetched_into_the_old_notes_place(self):
+        # its words do not match the query, but it is the right answer (review finding 4)
+        self.mine("Throw meter position", "The throw meter sits at the bottom centre of the HUD, 24 px above the safe "
+                  "area.", superseded_by="Lamp layout")
+        self.mine("Lamp layout", "Everything on the left edge now.")
+        for n in range(6):
+            self.mine("Filler %d" % n, "The HUD shows a throw meter filler %d." % n)
+        out = self.vault("search", query="throw meter position HUD safe area", shelf="yours", k=4)
+        firsts = [l for l in out.splitlines() if l[:3] in ("1. ", "2. ", "3. ", "4. ", "5. ")]
+        self.assertEqual(len(firsts), 4, out)
+        self.assertTrue(firsts[0].startswith("1. [yours] Lamp layout"), out)
+        self.assertTrue(firsts[1].startswith("2. [yours] Throw meter position"), out)
+        self.assertIn("(replaced by Lamp layout)", firsts[1])
+
+    def test_an_old_note_whose_replacement_is_gone_stays_in_the_first_k(self):
+        self.mine("Throw meter position", "The throw meter sits at the bottom centre of the HUD, 24 px above the safe "
+                  "area.", superseded_by="Trashed note")
+        for n in range(6):
+            self.mine("Filler %d" % n, "The HUD shows a throw meter position filler %d." % n)
+        out = self.vault("search", query="throw meter position HUD safe area", shelf="yours", k=3)
+        firsts = [l for l in out.splitlines() if l[:3] in ("1. ", "2. ", "3. ", "4. ")]
+        self.assertEqual(len(firsts), 3, out)
+        self.assertTrue(firsts[2].startswith("3. [yours] Throw meter position"), out)
+
     def test_game_notes_and_all_shelves(self):
         self.mine("Lantern colour", "Lanterns glow warm yellow at night in the village.")
         with self.in_project():
@@ -276,7 +312,7 @@ class KeywordSearchTests(UpkeepCase):
             out = self.vault("search", query="lanterns glow at night village", k=8, source="user,game")
             self.assertLess(out.index("Lantern colour here"), out.index("[yours] Lantern colour ›"))
             self.assertIn("(replaced by Lantern colour here)", out)
-            # over every shelf it may fall out of the first k (its score is scaled down), its replacement does not
+            # over every shelf: the pair stays together, the replacement first
             out = self.vault("search", query="lanterns glow at night village", k=3)
         self.assertIn("[game] Lantern colour here", out)
         self.assertNotIn("[yours] Lantern colour ›", out.split("[game] Lantern colour here")[0])

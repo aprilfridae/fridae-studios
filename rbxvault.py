@@ -125,7 +125,7 @@ def parse(path):
                  "heads": tokens(" ".join(heads)), "body": tokens(plain)},
            "kb": round(len(text.encode("utf-8")) / 1024),
            "labels": note_labels("vault", title, path, fmd, text), "links": wikilinks(after)}
-    olds, by = supersession(text)  # rbxkit: superseded notes (see SUPERSEDED_SCALE)
+    olds, by = supersession(text)  # rbxkit: superseded notes (see place_superseded)
     if olds:
         out["supersedes"] = olds
     if by:
@@ -765,11 +765,12 @@ def wikilinks(text, limit=LINKS_MAX):
 # A newer note names the notes it replaces in its front matter (`supersedes: "Old title"`, or a list); filing it with
 # rbx_vault 'note' also marks the old note (`superseded_by: "New title"`, `superseded_on: <date>`), or, for a shipped
 # note (vault/Roblox, vault/Fridae: read only), adds it to the notes folder's superseded.json (rbxnotes.SIDECAR).
-# This is read when a search runs, never put in the knowledge index: a superseded note's score is multiplied by
-# SUPERSEDED_SCALE (the replacement wins a tie), its first line says "(replaced by <title>)", and it is never dropped.
+# This is read when a search runs, never put in the knowledge index. In every search (keyword, Light, Heavy) a
+# superseded note among the first k results gives its place to its replacement (moved up, or fetched when it is no
+# candidate: it is the right answer) and follows it directly; when its replacement cannot be shown it goes to the last
+# of the k places, never out (place_superseded). Its first line says "(replaced by <title>)".
 # Each note is known by its identity, its shelf and title: a title named in front matter or a sidecar means the note
 # of that title nearest the note that names it (_shelf_order), never every note of that title.
-SUPERSEDED_SCALE = 0.3
 _WIKI_VALUE = re.compile(r"^\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|[^\]]*)?\]\]$")
 _LIST_ITEM = re.compile(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|([^,]+?))\s*(?:,|$)')
 
@@ -911,27 +912,46 @@ def replaced_by(sup, d, shelf=None):
     return hit[0] if hit else None
 
 
-def demote(items, score_of, replaced_of, title_of=None, scale=SUPERSEDED_SCALE):
-    """[(new score, item)] best first: a superseded item's score times SUPERSEDED_SCALE; on a tie the item that is
-    not superseded comes first, then the order given. With title_of, a superseded item still above its replacement
-    (scores on another scale, a reranker's) is put right after it, its score lowered to the replacement's. Nothing
-    is dropped."""
-    scored = []
-    for n, x in enumerate(items):
-        by = replaced_of(x)
-        s = score_of(x) * (scale if by else 1.0)
-        scored.append((-s, bool(by), n, s, x, by))
-    scored.sort(key=lambda r: r[:3])
-    out = [(s, x, by) for _, _, _, s, x, by in scored]
-    if title_of:
-        for x in [r for r in out if r[2]]:
-            p = next(i for i, r in enumerate(out) if r is x)
-            want = x[2].casefold()
-            q = next((i for i in range(p + 1, len(out)) if (title_of(out[i][1]) or "").casefold() == want), None)
-            if q is not None:  # its score no higher than its replacement's, so a later sort keeps it after
-                s, item, by = out.pop(p)
-                out.insert(q, (min(s, out[q - 1][0]), item, by))
-    return [(s, x) for s, x, _ in out]
+def place_superseded(items, k, replacement_of, note_of, fetch=None):
+    """The k items to show from candidates ranked best first, some of them superseded notes. Going down the first k:
+    a superseded note's replacement takes its place (moved up from further down, or fetch(key, old item) when it is
+    no candidate) and the old note follows it directly; when the replacement is shown above already, the old note goes
+    directly after it; when the replacement cannot be shown, the old note goes to the last of the k places, never
+    out. replacement_of(item): (title, shelf or None) or None; note_of(item): (shelf, title casefolded)."""
+    rest, result, sunk, placed = list(items), [], [], set()
+
+    def at(key, seq):
+        return next((n for n, y in enumerate(seq) if note_of(y) == key), None)
+
+    def repl_key(item):
+        r = replacement_of(item)
+        return (r[1], _cf(r[0])) if r and r[1] else None
+    while rest and len(result) + len(sunk) < k:
+        x = rest.pop(0)
+        r = replacement_of(x)
+        if not r:
+            result.append(x)
+            continue
+        key = (r[1], _cf(r[0])) if r[1] else None
+        p = at(key, result) if key else None
+        if p is not None:  # shown already: right after it (and after its other old notes there)
+            q = p + 1
+            while q < len(result) and (note_of(result[q]) == key or repl_key(result[q]) == key):
+                q += 1
+            result.insert(q, x)
+            continue
+        if key is None or key in placed:  # no replacement to show (or it could not stay in the first k itself)
+            sunk.append(x)
+            continue
+        j = at(key, rest)
+        y = rest.pop(j) if j is not None else (fetch(key, x) if fetch else None)
+        if y is None:
+            sunk.append(x)
+            continue
+        placed.add(key)
+        rest[:0] = [y, x]  # the replacement in the old note's place (it may be replaced in turn), then the old note
+    keep = max(0, k - len(sunk))
+    return (result[:keep] + sunk)[:k]
 
 
 def _sup_entries(docs, shelf=None):
@@ -947,6 +967,20 @@ def _sup_entries(docs, shelf=None):
             hit = docs.__dict__["_sup_entries"] = make()
         return hit
     return make()
+
+
+def _derived(idx, name, make):
+    """A value worked out from a loaded vault index and kept with it (gone when the index is)."""
+    store = idx.setdefault("_derived", {})
+    hit = store.get(name)
+    if hit is None:
+        hit = store[name] = make()
+    return hit
+
+
+def _vault_by_title(idx):
+    """{title casefolded: vault index entry}."""
+    return _derived(idx, "by_title", lambda: {_cf(d["title"]): d for d in idx["docs"]})
 
 
 def _personal_docs(project=None):
@@ -1520,8 +1554,9 @@ def personal_match(q, d):
 
 
 def interleave(pool, k, may_promote=lambda item: True):
-    """The k results to show: first the best hit of each shelf that has a good one (best first), then the rest by
-    score. Without this one shelf (usually the vault, whose notes are long) can fill every place."""
+    """The k results to show (k None: all, in that order): first the best hit of each shelf that has a good one (best
+    first), then the rest by score. Without this one shelf (usually the vault, whose notes are long) can fill every
+    place."""
     pool = sorted(pool, key=lambda x: -x[0])
     firsts, seen = [], set()
     for item in pool:
@@ -1529,16 +1564,16 @@ def interleave(pool, k, may_promote=lambda item: True):
             seen.add(item[1])
             firsts.append(item)
     rest = [item for item in pool if not any(item is f for f in firsts)]
-    return (firsts + rest)[:k]
+    return (firsts + rest)[:k] if k is not None else firsts + rest
 
 
 def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False, project=None, info=None):
     """The keyword search's k results over several shelves, in the order it shows them, and the symptom lines:
     sections from guides/team/game and notes from the vault, merged by how much of the query each matches (scores
     from different shelves are not comparable, coverage is). filters (normalize_filters) keep only the notes whose
-    labels pass; links adds up to two notes the first results link to (_linked_pool). A superseded note's score is
-    scaled down (demote) and it is never moved up as its shelf's best; info (a dict), when given, gets the superseded
-    map ("sup")."""
+    labels pass; links adds up to two notes the first results link to (_linked_pool). A superseded note gives its place
+    to its replacement and follows it (place_superseded); info (a dict), when given, gets the superseded map
+    ("sup")."""
     terms = query_terms(q)
     pool = []
     symptoms = []
@@ -1552,37 +1587,50 @@ def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False,
     if info is not None:
         info["sup"] = sup
 
-    def old(d):
-        return replaced_by(sup, d)
     if use_vault:
-        res, symptoms = search(q, (max(k * 8, 40) if filters else k) + (10 if sup else 0), idx)
+        res, symptoms = search(q, max(k * 8, 40) if filters else k, idx)
         if filters:
             res = [(s, d) for s, d in res if labels_match(d.get("labels"), filters)]
-        top = res[0][0] if res else 1  # the best before scaling: a scaled one stays low
-        if sup:
-            res = [(s, x[1]) for s, x in demote(res, lambda x: x[0], lambda x: old(x[1]), lambda x: x[1]["title"])]
+        top = res[0][0] if res else 1
         for s, d in res[:k]:
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     if sec_shelves:
         if filters:
             docs = [d for d in docs if labels_match(d.get("labels"), filters)]
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
-        if sup:
-            hits = [(s, x[1], x[2]) for s, x in demote(hits, lambda x: x[0], lambda x: old(x[2]),
-                                                       lambda x: x[2]["title"])]
         taken = Counter()
         for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    if sup:  # already scaled: the replacement wins a tie; the scores demote returns keep it after (interleave sorts)
-        pool = [(s,) + tuple(x[1:]) for s, x in demote(pool, lambda x: x[0], lambda x: old(x[2]),
-                                                       lambda x: x[2]["title"], 1.0)]
-    pool = interleave(pool, k, lambda item: (item[1] not in PERSONAL or personal_match(q, item[2]))
-                      and not (sup and old(item[2])))
-    if links:
-        pool = _linked_pool(q, pool, shelves, k, idx if "vault" in shelves else None,
-                            docs if sec_shelves else None, filters)
+    promote = lambda item: item[1] not in PERSONAL or personal_match(q, item[2])  # noqa: E731
+    vault_idx, sec_docs = idx if "vault" in shelves else None, docs if sec_shelves else None
+    if not sup:
+        pool = interleave(pool, k, promote)
+        if links:
+            pool = _linked_pool(q, pool, shelves, k, vault_idx, sec_docs, filters)
+    else:
+        # every candidate in order, the linked notes among them, then the first k with the superseded notes placed
+        pool = interleave(pool, None, promote)
+        if links:
+            pool = _linked_pool(q, pool, shelves, k, vault_idx, sec_docs, filters, cut=False)
+
+        def fetch(key, old):
+            """The replacement's best part, for a note that is no candidate: on a searched shelf, passing the filters."""
+            shelf, title = key
+            if shelf not in shelves:
+                return None
+            if shelf == "vault":
+                d = _vault_by_title(idx).get(title) if use_vault else None
+                return (old[0], "vault", d) if d and labels_match(d.get("labels"), filters) else None
+            mine = [d for d in docs or () if d["shelf"] == shelf and _cf(d["title"]) == title]
+            if not mine:
+                return None
+            t = pquery_terms(q) if shelf in PERSONAL else squery_terms(q)
+            best = max(mine, key=lambda d: (_coverage(t, d["tf"], SECTION_FIELDS), d["own"]))
+            return (old[0], shelf, best)
+        pool = place_superseded(pool, k, lambda item: replacement_of(sup, item[2], item[1]),
+                                lambda item: note_key(item[2], item[1]), fetch)
     return pool, symptoms
 
 
@@ -1593,23 +1641,29 @@ LINK_FIELDS = ("title", "tags", "tldr", "heads")  # ... a vault note's in these 
 LINK_CANDIDATES = 24  # linked notes looked at per search at most
 
 
-def place_linked(direct, linked, k):
+def place_linked(direct, linked, k, cut=True, key=None):
     """The k results to show: the first DIRECT_KEPT direct ones, then up to LINKED_MAX linked ones, then the rest of
-    the direct ones."""
+    the direct ones. cut False: every direct one is kept (the caller cuts later), less those that key(item) says are
+    the same as a linked one."""
     head = direct[:DIRECT_KEPT]
     room = min(LINKED_MAX, k - len(head))
-    return (head + list(linked)[:max(0, room)] + direct[DIRECT_KEPT:])[:k]
+    linked = list(linked)[:max(0, room)]
+    if cut:
+        return (head + linked + direct[DIRECT_KEPT:])[:k]
+    shown = {key(x) for x in linked} if key else set()
+    return head + linked + [x for x in direct[DIRECT_KEPT:] if not key or key(x) not in shown]
 
 
-def _linked_pool(q, pool, shelves, k, idx, docs, filters=None):
+def _linked_pool(q, pool, shelves, k, idx, docs, filters=None, cut=True):
     """The keyword search's link following: the [[links]] in the first results' notes, and of the notes they name
     (on the searched shelves, not already shown, passing the same filters: `docs` is already filtered) the best part
     of each that holds most of the query's own words (LINK_COVER; synonyms do not count, and a vault note counts only
-    its title, tags, TL;DR and headings). Linked items carry a 4th element: the linking title."""
+    its title, tags, TL;DR and headings). Linked items carry a 4th element: the linking title. cut False: pool is
+    every candidate in order, and so is the answer (place_linked)."""
     if k <= DIRECT_KEPT or len(pool) < 1:
         return pool
     terms = Counter({t: w for t, w in query_terms(q).items() if w >= 1})
-    have = {(item[1], item[2]["title"]) for item in pool}
+    have = {(item[1], item[2]["title"]) for item in pool[:k]}
     vault_by = {d["title"].casefold(): d for d in (idx or {}).get("docs", [])} if idx else {}
     notes, by_name = {}, {}
     for d in docs or ():
@@ -1655,7 +1709,7 @@ def _linked_pool(q, pool, shelves, k, idx, docs, filters=None):
             if best:
                 found.append((best[0], key[0], best[2], src[key]))
     linked = sorted((f for f in found if f[0] >= LINK_COVER), key=lambda f: -f[0])
-    return place_linked(pool, linked, k) if linked else pool
+    return place_linked(pool, linked, k, cut, lambda x: (x[1], x[2]["title"])) if linked else pool
 
 
 def keyword_ranking(q, shelves, depth, idx=None, docs=None, project=None):
@@ -1668,9 +1722,12 @@ def keyword_ranking(q, shelves, depth, idx=None, docs=None, project=None):
             return []
         idx = idx or load_index()
         sup = superseded_for(idx, None, project)
-        res = search(q, depth + (10 if sup else 0), idx)[0]
+        res = search(q, depth, idx)[0]
         if sup:
-            res = [x for _, x in demote(res, lambda x: x[0], lambda x: replaced_by(sup, x[1]))]
+            res = place_superseded(res, depth, lambda x: replacement_of(sup, x[1], "vault"),
+                                   lambda x: note_key(x[1], "vault"),
+                                   lambda key, old: (old[0], _vault_by_title(idx)[key[1]])
+                                   if key[0] == "vault" and key[1] in _vault_by_title(idx) else None)
         return [("vault", d["title"], None) for _, d in res[:depth]]
     pool, _ = _keyword_pool(q, shelves, depth, idx, docs, project=project)
     return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]

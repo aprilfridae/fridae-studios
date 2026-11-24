@@ -156,6 +156,26 @@ class EngineCases:
         self.assertEqual(hits[0]["title"], "Bravo")
         self.assertNotIn("replaced_by", hits[0])
 
+    def test_light_shows_the_replacement_in_the_old_notes_place_and_never_drops_the_old_note(self):
+        # Light's RRF scores times 0.3 put the old note below every candidate (review finding 4)
+        self.fillers()
+        home = os.path.join(self.tmp, "home")
+        write(os.path.join(home, "notes", "superseded.json"),
+              json.dumps({"Bravo": {"by": "Charlie", "date": "x", "shelf": "vault"}}))
+        eng = self.engine(plan=PLANS["light"])
+        eng.sync()
+        with mock.patch.object(rbxpaths, "HOME_DIR", home):
+            hits = eng.query("haunted forest lantern ghosts", ["vault", "yours", "guides"], 4, None)
+            self.assertEqual(len(hits), 4)
+            # Charlie (rockets) is no candidate for this query: fetched into Bravo's place, Bravo right after it
+            self.assertEqual([h["title"] for h in hits[:2]], ["Charlie", "Bravo"])
+            self.assertEqual(hits[1]["replaced_by"], "Charlie")
+            self.assertNotIn("replaced_by", hits[0])
+            # the replacement on a shelf not searched: the old note stays in the first k, last
+            hits = eng.query("haunted forest lantern ghosts", ["vault", "guides"], 4, None)
+            self.assertEqual(len(hits), 4)
+            self.assertEqual((hits[-1]["title"], hits[-1]["replaced_by"]), ("Bravo", "Charlie"))
+
     def test_a_claim_marks_the_nearest_note_of_that_title_only(self):
         # a user's note has the vault note's title; the newer note on the user's shelf replaces the user's (finding 7)
         mine = write(os.path.join(self.tmp, "mine", "Bravo.md"),

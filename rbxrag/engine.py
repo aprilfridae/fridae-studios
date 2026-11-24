@@ -9,9 +9,10 @@ format, dimension or model rebuilds the whole index. The manifest is written (wh
 points are in. The link graph (which note links to which) is made from it once per sync, never per query: a query
 adds up to two passages from notes its first results link to (Engine._follow_links).
 
-Superseded notes (rbxvault.SUPERSEDED_SCALE) are query-time metadata, not part of the index (FORMAT is unchanged):
+Superseded notes (rbxvault.place_superseded) are query-time metadata, not part of the index (FORMAT is unchanged):
 each sync reads the front matter of the files that changed (supersedes, superseded_by), a query adds the notes
-folders' superseded.json, scales a superseded hit's score down and says which note replaces it ("replaced_by").
+folders' superseded.json, puts a superseded hit's replacement in its place (fetched when it is no candidate) with the
+old note right after it, and says which note replaces it ("replaced_by").
 """
 import json
 import os
@@ -507,6 +508,20 @@ class Engine:
                                  rbxvault.known_titles((shelf, t) for _, t, _, _, _, shelf in mine))
         return rbxvault.supersession_map(base[0], rbxnotes.sidecar_marks(project or None), base[1])
 
+    def _fetch(self, key, old, dv, flt, shelves):
+        """A superseded hit's replacement when it is no candidate: its part nearest the query (passing the query's
+        shelves and filters), in the old hit's place (its score), or None."""
+        import rbxvault
+        shelf, want = key
+        if shelf not in shelves or not hasattr(self.store, "best_parts"):
+            return None
+        title = next((t for s, t in self._names.values() if s == shelf and rbxvault.note_key({"title": t}, s) == key),
+                     None)
+        if title is None:
+            return None
+        part = self.store.best_parts(dv, flt, [(shelf, title, None)]).get((shelf, title, None))
+        return dict(part[1], score=old["score"]) if part else None
+
     def _checkpoint(self, man, keep, old, new_entries, gone, work_paths, finished):
         """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (the
         old ids and any new ones kept, so their points already in are cleaned up next time), gone files still
@@ -540,7 +555,7 @@ class Engine:
                 flt[key] = filters[key]
         return flt
 
-    def _follow_links(self, q, dv, flt, out, k, shelves):
+    def _follow_links(self, q, dv, flt, out, k, shelves, cut=True):
         """Up to two passages from notes the first results link to ([[links]]), each the linked note's part nearest
         the query, when it is about as close to the query as the best direct result (LINK_SIM) or holds half of the
         query's words (LINK_COVER). They are marked linked_from (the linking note's title) and placed after the first
@@ -550,7 +565,7 @@ class Engine:
         if graph is None or k <= rbxvault.DIRECT_KEPT or not out or not hasattr(self.store, "best_parts"):
             return out
         links, targets = graph
-        have = {(h["shelf"], h["title"]) for h in out}
+        have = {(h["shelf"], h["title"]) for h in out[:k]}
         keys, src = [], {}
         for h in out[:rbxvault.DIRECT_KEPT]:
             for t in links.get(h["path"], ()):
@@ -580,7 +595,7 @@ class Engine:
                 found.append((sim, cover, pay, src[key]))
         found.sort(key=lambda f: (-f[0], -f[1]))
         linked = [dict(pay, score=float(sim), linked_from=frm) for sim, _, pay, frm in found[:rbxvault.LINKED_MAX]]
-        return rbxvault.place_linked(out, linked, k) if linked else out
+        return rbxvault.place_linked(out, linked, k, cut, lambda h: (h["shelf"], h["title"])) if linked else out
 
     def query(self, q, shelves, k, project, filters=None):
         """The k best sections for q on the given shelves (a game's chunks only for its own project), as the plan
@@ -629,14 +644,14 @@ class Engine:
             out.append(dict(c, score=float(sc)))
             if len(out) >= k and not sup:
                 break
-        if sup:  # a superseded note ranks well below (never dropped): its score scaled, the replacement wins a tie
-            import rbxvault
-            out = [dict(c, score=float(s)) for s, c in rbxvault.demote(
-                out, lambda c: c["score"], lambda c: rbxvault.replaced_by(sup, c), lambda c: c["title"])][:k]
-        try:
-            out = self._follow_links(q, dv, flt, out, k, shelves)
+        try:  # with superseded notes: every candidate stays in until they are placed
+            out = self._follow_links(q, dv, flt, out, k, shelves, cut=not sup)
         except Exception:  # link following only adds: a failure leaves the direct results
             pass
+        if sup:  # a superseded note gives its place to its replacement and follows it (never dropped)
+            import rbxvault
+            out = rbxvault.place_superseded(out, k, lambda c: rbxvault.replacement_of(sup, c), rbxvault.note_key,
+                                            lambda key, old: self._fetch(key, old, dv, flt, shelves))
         if sup:
             import rbxvault
             for c in out:
