@@ -8383,6 +8383,9 @@ mod tests {
             st.running = false;
             st.stopped = false;
         }
+        // the slots they hold are given back: every test shares MAX_AGENTS
+        remove_agent(&on_it.id);
+        remove_agent(&other.id);
     }
 
     #[test]
