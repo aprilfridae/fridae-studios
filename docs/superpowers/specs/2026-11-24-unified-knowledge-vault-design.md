@@ -42,6 +42,34 @@ Everything else moves to the app's Application Support folder: temp and tool fil
 - **One-time move of existing data.** Fridae sorts the user's current notes into topics, moves `work/` contents to their new homes (chats to `Chats/`, renders to `Made/`, the rest to Application Support) and moves `games/` to `Games/`. Nothing is deleted: a full backup is kept until the user confirms, and the move can be undone.
 - **Moving to a new computer:** copy the folder, install Fridae, choose "Use my existing Fridae folder" on first launch, and sign in to the AIs again. The RAG index rebuilds itself.
 
+## The vault is its own download, with updates that never override the user's own (user, 2026-11-24)
+
+The user asked: "make the vault a specific download from the app that only grabs new changes and doesnt override your
+own."
+
+- The app no longer bundles the vault. Setup has a **Knowledge vault** row with **Download** (the whole vault into
+  `Knowledge/`) and **Check for updates**. Fridae may also check quietly on its own; it only downloads, never uploads.
+- Each Fridae vault release publishes a manifest: every file's path and SHA-256, and the files themselves, from
+  Fridae's own GitHub release or tagged repo. Every file is checked against its hash before use. An update fetches only
+  the files whose hash changed.
+- Fridae keeps a hidden base record (`Knowledge/.fridae-vault/base.json`) holding the hash of each file as last
+  installed. On update it compares base, local and new:
+  - A new upstream file is added (unless the user already has a file at that path, in which case the new one is saved
+    beside it).
+  - A file unchanged locally since the base is replaced by the new version.
+  - A file edited locally and unchanged upstream is left alone.
+  - A file edited both locally and upstream gets a three-way text merge. If that is clean it is applied; otherwise the
+    user's version stays as it is, the new one is saved beside it as `<name> (Fridae update).md`, and it is flagged in
+    Review.
+  - A file the user deleted is recorded and never brought back.
+  - A file removed upstream is deleted only if it is unchanged locally.
+  - The user's own notes, `Taste/` and `House rules.md` are never touched.
+- The update is all-or-nothing per file: written to a temporary file, then renamed. The base record is updated only
+  for files that were applied.
+- Seeding: a fresh install with no network can still work through keyword search on the user's own notes, and offers
+  the download when online. The first-run move (above) treats the user's existing copy as both base and local, so
+  nothing they have is overwritten.
+
 ## Anti-goals
 
 - Losing or overwriting a single user note during the move or on any update.
