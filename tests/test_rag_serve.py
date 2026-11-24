@@ -327,14 +327,37 @@ class StubOllama:
 
     def __init__(self, tc, limit=50):
         self.bodies = []
+        self.paths = []
         stub = self
 
         class H(BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
 
+            def _json(self, out, code=200):
+                raw = json.dumps(out).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_GET(self):
+                stub.paths.append(self.path)
+                if self.path == "/api/version":
+                    return self._json({"version": "0.0-stub"})
+                return self._json({"models": [{"name": "mxbai-embed-large:latest"}]})
+
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                stub.paths.append(self.path)
+                if self.path == "/api/pull":
+                    raw = b"".join(json.dumps(x).encode() + b"\n" for x in (
+                        {"status": "pulling", "total": 10, "completed": 10}, {"status": "success"}))
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(raw)))
+                    self.end_headers()
+                    return self.wfile.write(raw)
                 stub.bodies.append(body)
                 if any(len(t.split()) > limit for t in body["input"]):
                     out, code = {"error": "the input length exceeds the context length"}, 400
@@ -355,6 +378,19 @@ class StubOllama:
 
 
 class HeavyTests(unittest.TestCase):
+    def test_loopback_calls_ignore_proxy_settings(self):
+        from tests.test_rag_vault import StubProxy
+        stub, proxy = StubOllama(self), StubProxy(self)
+        with proxy.env():
+            emb = models.HeavyEmbedders(cache_dir=None, ollama_url=stub.url, sparse=object(), reranker=object())
+            self.assertEqual(len(emb.dense(["a few words"])), 1)
+            self.assertEqual(setup.http_json(stub.url + "/api/version"), {"version": "0.0-stub"})
+            self.assertTrue(setup.ollama_has_model(stub.url))
+            self.assertEqual([e.get("status") for e in setup._pull_stream(stub.url, "mxbai-embed-large")],
+                             ["pulling", "success"])
+        self.assertEqual(proxy.seen, [])
+        self.assertEqual(stub.paths, ["/api/embed", "/api/version", "/api/tags", "/api/pull"])
+
     def test_heavy_embed_shrinks_on_context_error(self):
         stub = StubOllama(self, limit=50)
         emb = models.HeavyEmbedders(cache_dir=None, ollama_url=stub.url, sparse=object(), reranker=object())

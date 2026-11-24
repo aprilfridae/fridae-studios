@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 
 from rbxrag import models
+from rbxrag.net import LOOPBACK
 
 STEPS = ("models", "ollama-install", "ollama-pull", "qdrant-install")
 OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip"
@@ -52,7 +53,7 @@ def http_json(url, body=None, timeout=2.0):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if data else {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with LOOPBACK.open(req, timeout=timeout) as r:
             return json.load(r)
     except (urllib.error.URLError, OSError, ValueError):
         return None
@@ -187,7 +188,7 @@ def _pull_stream(url, model, timeout=600):
     body = json.dumps({"model": model, "stream": True}).encode()
     req = urllib.request.Request(url.rstrip("/") + "/api/pull", data=body, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with LOOPBACK.open(req, timeout=timeout) as r:
             for line in r:
                 line = line.strip()
                 if line:

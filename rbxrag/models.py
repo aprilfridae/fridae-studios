@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 
 from rbxrag.chunks import make_token_counter
+from rbxrag.net import LOOPBACK
 
 OLLAMA_URL = "http://127.0.0.1:11434"
 LIGHT = {"dense": "BAAI/bge-small-en-v1.5", "dim": 384, "sparse": "Qdrant/bm25",
@@ -129,7 +130,7 @@ class OllamaDense:
         body = json.dumps({"model": self.model, "input": inputs, "truncate": False}).encode()
         req = urllib.request.Request(self.url + "/api/embed", data=body, headers={"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with LOOPBACK.open(req, timeout=self.timeout) as r:
                 data = json.load(r)
         except urllib.error.HTTPError as e:
             with e:
