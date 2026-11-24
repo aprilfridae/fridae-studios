@@ -134,6 +134,12 @@ div.g-row { cursor: default; }
 .c-row .notice { margin: 8px 0 0; }
 .oc-row { padding-left: 24px; border-top: 0; }
 .oc-row .act { grid-column: 1 / -1; margin: 8px 0 0; }
+/* GitHub (Setup, Connections; Project details): the code to enter on GitHub, the account's picture */
+.gh-code { margin: 8px 0 0; font-family: var(--mono); font-size: 20px; letter-spacing: 0.12em; color: var(--text); user-select: all; }
+.gh-avatar { width: 18px; height: 18px; border-radius: 50%; vertical-align: -4px; margin-right: 6px; }
+#pd-gh { margin: 0 0 16px; }
+#pd-gh .act { margin: 8px 0 0; }
+#pd-gh .check-row { margin: 4px 0 0; }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
@@ -1052,6 +1058,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div id="ai-list"></div>
       <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment</label>
       <details class="moreinfo"><summary>More</summary><p>Off: an AI signed in with your plan is never billed to an API key set on this computer, such as ANTHROPIC_API_KEY. Turn it on if you sign in with a key or a company gateway. It covers Claude, Cursor and ChatGPT; OpenCode never gets these keys, since each one would add a provider billed to it.</p></details>
+      <h3>GitHub</h3>
+      <div id="gh-row"></div>
       <h3>Roblox Studio</h3>
       <div id="needs"></div>
       <div class="act"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove plugin</button></div>
@@ -1133,6 +1141,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <pre id="pd-log"></pre>
     <p class="sub" id="pd-nolog" hidden>Nothing committed yet.</p>
     <h3>Online copy</h3>
+    <div id="pd-gh"></div>
     <p class="sub">Paste a repository's address (an empty one on GitHub, say) to keep a copy online.</p>
     <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/game.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
     <div class="act"><button class="pill" id="pd-push" title="Uploads this project's files to the online copy">Push</button><button class="pill" id="pd-pull">Pull</button></div>
@@ -2079,6 +2088,7 @@ function paintGit(state, r) {
   $("pd-ident").hidden = !!state.identity;
   if (document.activeElement !== $("pd-remote")) $("pd-remote").value = state.remote || "";
   $("pd-push").disabled = $("pd-pull").disabled = !state.remote;
+  githubProject(state);
 }
 async function git(action, extra) {
   const pr = frontProj(); if (!pr) return null;
@@ -2105,6 +2115,137 @@ $("pd-ident-save").onclick = () => git("identity", { name: $("pd-uname").value, 
 $("pd-remote-save").onclick = () => git("remote", { url: $("pd-remote").value });
 $("pd-push").onclick = async () => { $("pd-out").textContent = "Pushing..."; git("push"); };
 $("pd-pull").onclick = async () => { $("pd-out").textContent = "Pulling..."; git("pull"); };
+
+/* ---------- GitHub: Setup, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
+   GitHub, Push now). Fridae keeps the sign-in to itself: agents never get it, and nothing is sent to GitHub unless you
+   press one of these buttons. ---------- */
+let gh = {}, ghProj = { path: "", info: null }, ghState = null, ghPoll = 0, ghBusy = false, ghNote = "";
+const ghLine = {}, ghName = {};
+async function loadGithub(project) {
+  let r = null;
+  try { r = await api("/api/github/status" + (project ? "?project=" + encodeURIComponent(project) : "")); } catch (e) { return; }
+  if (!r) return;
+  gh = r;
+  if (project) ghProj = { path: project, info: r.project || null };
+  paintGithub(); paintGithubProject();
+  clearTimeout(ghPoll);
+  if (gh.pending) ghPoll = setTimeout(() => loadGithub(), 2000);
+}
+function ghButton(label, onclick, cls) {
+  const b = el("button", cls || "pill sm", esc(label));
+  b.onclick = onclick;
+  return b;
+}
+async function ghAct(action, body) {
+  if (ghBusy) return null;
+  ghBusy = true;
+  document.querySelectorAll("#gh-row button, #pd-gh button").forEach((x) => { x.disabled = true; });
+  let r = null; try { r = await api("/api/github/" + action, body || {}); } catch (e) {}
+  ghBusy = false;
+  ghNote = r ? "" : "Could not reach the app. Try again.";
+  paintGithub.sig = paintGithubProject.sig = "";
+  await loadGithub(document.body.classList.contains("pd-open") && frontProj() ? frontProj().path : "");
+  return r;
+}
+/* Setup, Connections: GitHub's row, laid out like the AIs' rows */
+function paintGithub() {
+  const box = $("gh-row"); if (!box) return;
+  const p = gh.pending, sig = JSON.stringify([gh.configured, gh.connected, gh.login, gh.avatar_url, p, gh.error, ghNote]);
+  if (paintGithub.sig === sig) return;
+  paintGithub.sig = sig;
+  const row = el("div", "c-row", '<span class="dot' + (gh.connected ? " ok" : p ? " live" : "") + '"></span><div><b>GitHub</b><small></small><div class="gh-code" hidden></div><div class="notice"></div><div class="act"></div></div>');
+  const small = row.querySelector("small"), act = row.querySelector(".act"), code = row.querySelector(".gh-code");
+  if (gh.connected) {
+    if (gh.avatar_url && /^https:\/\//.test(gh.avatar_url)) { const img = el("img", "gh-avatar"); img.alt = ""; img.src = gh.avatar_url; small.appendChild(img); }
+    small.appendChild(document.createTextNode("Connected as " + (gh.login || "your GitHub account") + ". Fridae only uses it when you press Put on GitHub or Push now in a project."));
+    act.appendChild(ghButton("Disconnect", () => ghAct("disconnect")));
+    act.appendChild(ghButton("Remove Fridae's access on GitHub", () => api("/api/github/open", { what: "settings" }), "linkish"));
+  } else if (p) {
+    small.textContent = "Enter this code on GitHub's page, then press Authorize. Fridae carries on by itself once you have.";
+    code.hidden = false; code.textContent = p.user_code;
+    const copy = ghButton("Copy", async () => {
+      let ok = false; try { ok = !!(await api("/api/copy", { text: p.user_code })).ok; } catch (e) {}
+      copy.textContent = ok ? "Copied" : "Could not copy";
+      setTimeout(() => { copy.textContent = "Copy"; }, 1500);
+    });
+    act.appendChild(copy);
+    act.appendChild(ghButton("Open GitHub", () => api("/api/github/open", { what: "device" })));
+    act.appendChild(ghButton("Cancel", () => ghAct("cancel")));
+  } else if (gh.configured === false) {
+    small.textContent = "GitHub sign-in isn't set up in this copy of Fridae yet.";
+    const b = ghButton("Connect", () => {}); b.disabled = true; act.appendChild(b);
+  } else {
+    small.textContent = "Not connected. Connect to put your projects on GitHub and send your work there when you press a button. Fridae asks GitHub to let it make and update your repositories (private ones too) and to see your username.";
+    act.appendChild(ghButton("Connect", () => ghAct("connect")));
+  }
+  row.querySelector(".notice").textContent = ghNote || gh.error || "";
+  box.replaceChildren(row);
+}
+/* Project details: Put on GitHub (a new repository under your account, private unless you untick it), or once the
+   project is on GitHub, Push now and how the last push went. The paste-an-address box below stays for other places. */
+function githubProject(state) {
+  ghState = state;
+  const pr = frontProj();
+  if (pr) loadGithub(pr.path);
+}
+function ghRepoName(name) { return (name || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-game"; }
+function ghWhen(at) {
+  const d = new Date(at * 1000), today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function paintGithubProject() {
+  const box = $("pd-gh"), pr = frontProj(); if (!box) return;
+  const st = ghState, info = pr && ghProj.path === pr.path ? ghProj.info : null;
+  const show = !!(pr && st && st.repo && gh.configured !== undefined && gh.configured !== false);
+  const sig = JSON.stringify([show, pr && pr.path, gh.connected, gh.login, info, st && st.commits && st.commits.length, pr && ghLine[pr.path]]);
+  if (paintGithubProject.sig === sig) return;
+  paintGithubProject.sig = sig;
+  if (!show) { box.replaceChildren(); return; }
+  const path = pr.path, out = el("p", "sub");
+  const said = ghLine[path];
+  const parts = [];
+  if (!gh.connected) {
+    const p = el("p", "sub", "Connect GitHub in Setup, Connections, and this project can go on GitHub with one press.");
+    const act = el("div", "act"); act.appendChild(ghButton("Open Setup", () => openSetup("connections"), "pill"));
+    parts.push(p, act);
+  } else if (info && info.remote) {
+    const p = el("p", "sub");
+    p.textContent = "This project is on GitHub" + (info.web_url ? " at " + info.web_url.replace(/^https?:\/\/[^/]+\//, "") : "") + ". Push now sends your latest commits there.";
+    const act = el("div", "act");
+    act.appendChild(ghButton("Push now", async () => {
+      ghLine[path] = { busy: true, text: "Sending to GitHub..." }; paintGithubProject();
+      const r = await ghAct("push", { project: path });
+      /* the app keeps how the push went (shown as "Last push ..."): only a press that never reached it is said here */
+      if (r) delete ghLine[path]; else ghLine[path] = { ok: false, text: "Could not reach the app. Try again." };
+      paintGithubProject.sig = ""; git("status");
+    }, "pill"));
+    act.appendChild(ghButton("Open on GitHub", () => api("/api/github/open", { what: "repo", project: path }), "pill"));
+    parts.push(p, act);
+    const last = info.last_push;
+    if (said && said.busy) out.textContent = said.text;
+    else if (last) { out.textContent = "Last push " + ghWhen(last.at) + ": " + last.text; out.classList.toggle("warn", !last.ok); }
+  } else if (!(st.commits || []).length) {
+    parts.push(el("p", "sub", "Commit your files first, then you can put this project on GitHub."));
+  } else {
+    const p = el("p", "sub");
+    p.textContent = "Make a new repository under your GitHub account" + (gh.login ? " (" + gh.login + ")" : "") + " and send this project there. Nothing goes to GitHub until you press the button.";
+    const row = el("div", "keyrow", '<input type="text" id="pd-gh-name" autocomplete="off" spellcheck="false" aria-label="Name on GitHub"><button class="pill" id="pd-gh-put">Put on GitHub</button>');
+    const name = row.querySelector("input"); name.value = ghName[path] || ghRepoName(pr.name);
+    name.oninput = () => { ghName[path] = name.value; };
+    const priv = el("label", "sub check-row", '<input type="checkbox" checked> Private: only you can see it');
+    row.querySelector("button").onclick = async () => {
+      ghLine[path] = { busy: true, text: "Putting the project on GitHub..." }; paintGithubProject.sig = ""; paintGithubProject();
+      const r = await ghAct("put", { project: path, name: name.value.trim(), private: priv.querySelector("input").checked });
+      ghLine[path] = r ? { ok: r.ok, text: r.text } : { ok: false, text: "Could not reach the app. Try again." };
+      paintGithubProject.sig = ""; git("status");
+    };
+    parts.push(p, row, priv);
+    if (said && said.busy) out.textContent = said.text;
+  }
+  /* what the last press said (Put on GitHub, or a push that did not work) stays under the buttons */
+  if (said && !said.busy) { out.textContent = said.text; out.classList.toggle("warn", !said.ok); }
+  box.replaceChildren(...parts, out);
+}
 
 /* What is connected, as rows: [ok, name, one line]. The AIs first, then Studio, its plugin and Blender. */
 function needRows() {
@@ -4464,7 +4605,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); }
+function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); }
 /* Setup, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }

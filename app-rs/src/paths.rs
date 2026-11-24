@@ -606,6 +606,8 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     out.push((w.join("team-models.tmp"), false));
     // the second accounts' folders (`accounts`): who pays for a turn is never an agent's to change
     out.push((crate::accounts::base(), true));
+    // Fridae's GitHub sign-in (`github::folder`): its token is the app's alone
+    out.push((crate::github::folder(), true));
     // where a summary's writer works (`compact::folder`): nothing is written there, by the writer or by anyone
     out.push((crate::compact::folder(), true));
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes

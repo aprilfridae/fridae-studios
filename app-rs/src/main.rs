@@ -17,6 +17,7 @@ mod claude_live;
 mod codex;
 mod cursor;
 mod expert_ai;
+mod github;
 mod fridae_lock;
 mod jobs;
 mod limits;
@@ -139,6 +140,10 @@ fn widen_path() {
 }
 
 fn main() {
+    // started by git as its askpass helper for a GitHub push the user pressed (github.rs): answer and end
+    if let Some(code) = github::askpass_main() {
+        std::process::exit(code);
+    }
     #[cfg(target_os = "macos")]
     widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)
