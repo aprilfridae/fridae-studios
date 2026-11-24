@@ -854,9 +854,13 @@ fn write_with(st: &Store, known: &Map<String, Value>) {
 /// Takes in what another running copy of the app changed through its routes (its counter is newer): the keys taken.
 fn sync_from_copy(g: &mut Guard, st: &Store) -> Vec<String> {
     let Some((v, c)) = read_copy(st).filter(|(v, _)| *v > g.version) else { return Vec::new() };
-    let taken = GUARDED.iter().filter(|k| g.known.get(**k) != c.get(**k)).map(|k| k.to_string()).collect();
+    let taken: Vec<String> = GUARDED.iter().filter(|k| g.known.get(**k) != c.get(**k)).map(|k| k.to_string()).collect();
     g.known = c;
     g.version = v;
+    // the knowledge index's mode chosen in another window: this one runs that mode's service too
+    if taken.iter().any(|k| k == "rag_mode") {
+        crate::rag::mode_changed();
+    }
     taken
 }
 
@@ -1187,6 +1191,10 @@ fn answer_in(g: &mut Guard, st: &Store, take_file: bool) -> bool {
         sync_from_copy(g, st);
         let known = g.known.clone();
         update_in(g, st, |cfg| take_file_values(cfg, &note, &known));
+        // the knowledge index's mode taken from the settings file: its service follows
+        if g.known.get("rag_mode") != known.get("rag_mode") {
+            crate::rag::mode_changed();
+        }
     }
     true
 }
