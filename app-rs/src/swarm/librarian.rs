@@ -11,8 +11,10 @@
 //!    90% of its words in one stretch of it), and when two or more were dropped, one cheap model checks that each
 //!    quote left supports its claim (`check_prompt`, about 15 s, skipped when it does not answer);
 //! 5. what is posted: each part's claims with their notes, then the quotes they rest on (`render`, ~250 words). A
-//!    part left with no claim says the passages did not support an answer. A writer that ignores the format is
-//!    posted as it wrote (plain text);
+//!    part left with no claim says the passages did not support an answer. Writer text is never posted unchecked:
+//!    a reply with no valid claim (plain prose, or objects with no quote, a bad part or an empty claim) is answered
+//!    with the passages instead, under a line saying the writer's answer could not be checked (`UNCHECKED`,
+//!    `passages_text`), and anything around the valid claims of a reply is dropped;
 //! 6. when no model answers in time, the passages' titles and a line of each are the answer (`fallback_text`); when
 //!    the search itself fails, the answer says so (`NO_SEARCH`).
 //!
@@ -46,6 +48,9 @@ const PASSAGE_MAX: usize = 600;
 const LINE_MAX: usize = 150;
 
 pub const NO_SEARCH: &str = "Search is not answering right now.";
+/// The first line of an answer whose writer gave no claim the app could check.
+pub const UNCHECKED: &str = "The writer's answer could not be checked against the passages, so here is what the knowledge base holds:";
+const NO_WRITER: &str = "No writer answered in time, so here is what the knowledge base holds:";
 pub const NOT_FOUND: &str = "not in the knowledge base";
 pub const NOT_SUPPORTED: &str = "not in the knowledge base (the passages did not support an answer)";
 /// A quote's words that must stand in one stretch of its passage, and the fewest words a quote may have.
@@ -220,7 +225,12 @@ fn prompt_with(material: &str, mark: &str) -> String {
 
 /// The answer when no model wrote one: each part with its passages' titles and a line of each.
 pub fn fallback_text(parts: &[Part]) -> String {
-    let mut out = String::from("No writer answered in time, so here is what the knowledge base holds:");
+    passages_text(parts, NO_WRITER)
+}
+
+/// Each part with its passages' titles and a line of each (guides as pointers), under an opening line.
+fn passages_text(parts: &[Part], opening: &str) -> String {
+    let mut out = String::from(opening);
     for (i, p) in parts.iter().enumerate() {
         out += &format!("\n{}. {}:", i + 1, cut(&p.question, 120));
         if p.hits.is_empty() {
@@ -291,8 +301,8 @@ fn json_objects(text: &str) -> Vec<Value> {
     out
 }
 
-/// The claims in the writer's answer. None when it wrote none in the asked-for form (its text is then posted as
-/// plain text).
+/// The claims in the writer's answer: its objects with a part of the question, a claim and a quote (anything else
+/// in the text is dropped). None when it wrote none (the passages are then the answer, never its text).
 pub fn parse_claims(text: &str, parts: usize) -> Option<Vec<Claim>> {
     let s = |v: &Value, k: &str| v[k].as_str().unwrap_or("").trim().trim_matches(|c| c == '"' || c == '\u{201C}' || c == '\u{201D}').trim().to_string();
     let claims: Vec<Claim> = json_objects(text)
@@ -492,8 +502,8 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
 /// dropped, by one cheap model, `check`), or the text as written when it holds no claims in the asked-for form.
 pub fn checked_answer(parts: &[Part], written: &str, check: &dyn Fn(&str) -> Option<String>) -> String {
     let Some(claims) = parse_claims(written, parts.len()) else {
-        let pointers: Vec<String> = parts.iter().flat_map(guide_pointers).collect();
-        return if pointers.is_empty() { written.to_string() } else { format!("{written}\n{}", pointers.join("\n")) };
+        eprintln!("librarian: the writer gave no claim in the asked-for form; the passages are the answer");
+        return passages_text(parts, UNCHECKED);
     };
     let proposed: Vec<bool> = (0..parts.len()).map(|i| claims.iter().any(|c| c.part == i)).collect();
     let (mut kept, dropped) = supported(parts, claims);
@@ -667,9 +677,10 @@ mod tests {
         };
         let write = |p: &str| {
             prompts.lock().unwrap().push(p.to_string());
-            Some("1. ... (Mobile Safe Zones)".to_string())
+            Some(json!({"part": 1, "claim": "Keep the HUD in the safe area.", "quote": "Keep the HUD inside the safe area", "note": "Mobile Safe Zones"}).to_string())
         };
-        assert_eq!(answer(ASKED, &search, &write, &|_| panic!("no check without dropped claims")), "1. ... (Mobile Safe Zones)");
+        let said = answer(ASKED, &search, &write, &|_| panic!("no check without dropped claims"));
+        assert!(said.contains("- Keep the HUD in the safe area. (Mobile Safe Zones)"), "{said}");
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 1, "one search call for every part");
         assert_eq!(calls[0].len(), 3);
@@ -785,8 +796,9 @@ mod tests {
         // no writer in time: the guide is a pointer, not its text
         let fell = fallback_text(&mixed);
         assert!(fell.contains(&pointer) && !fell.contains("24 px") && fell.ends_with(READ_HATCH), "{fell}");
-        // a plain-text writer keeps the pointers
-        assert!(checked_answer(&mixed, "Prompts go off while dragging.", &|_| None).ends_with(&pointer));
+        // a plain-text writer: the passages, with the pointers
+        let said = checked_answer(&mixed, "Prompts go off while dragging.", &|_| None);
+        assert!(said.starts_with(UNCHECKED) && said.contains(&pointer) && !said.contains("Prompts go off"), "{said}");
     }
 
     #[test]
@@ -841,8 +853,37 @@ mod tests {
         // a quote in a passage the note does not name still counts, under the passage's own note
         let said = checked_answer(&parts, &line(2, "Inset 24 px.", "24 px from each edge", "Some Other Note"), &|_| None);
         assert!(said.contains("- Inset 24 px. (HUD Layout › Phone)"), "{said}");
-        // the writer ignored the format: its text as written
-        assert_eq!(checked_answer(&parts, "1. Turn prompts off while dragging.", &|_| None), "1. Turn prompts off while dragging.");
+        // the writer ignored the format: never its text, the passages (a_reply_with_no_valid_claim_is_never_posted_unchecked)
+        assert!(checked_answer(&parts, "1. Turn prompts off while dragging.", &|_| None).starts_with(UNCHECKED));
+    }
+
+    #[test]
+    fn a_reply_with_no_valid_claim_is_never_posted_unchecked() {
+        let parts = three();
+        // the smoke run's placeholder line (no quote), plain prose, an object with a bad part or an empty claim
+        let replies = [
+            r#"{"part": 1, "claim": "Placeholder", "note": "Touch Drag Lessons"}"#.to_string(),
+            "1. Turn prompts off while dragging.".to_string(),
+            [json!({"part": 9, "claim": "x", "quote": "Disable ProximityPrompts on the client", "note": "n"}).to_string(),
+             json!({"part": 1, "claim": "", "quote": "Disable ProximityPrompts on the client", "note": "n"}).to_string()]
+            .join("\n"),
+        ];
+        for written in &replies {
+            let said = checked_answer(&parts, written, &|_| panic!("no claim: no model check"));
+            assert!(said.starts_with(UNCHECKED), "{said}");
+            assert!(!said.contains("Placeholder") && !said.contains("Turn prompts off") && !said.contains('{'), "{said}");
+            assert!(said.contains("- Touch Drag Lessons: Disable ProximityPrompts on the client"), "{said}");
+            assert!(said.ends_with(READ_HATCH), "{said}");
+        }
+        // one valid claim among garbage: the claim is kept, the rest dropped
+        let mixed = format!(
+            "Here you go!\n{}\n{}\nHope that helps.",
+            line(1, "Turn prompts off while a drag is held.", "Disable ProximityPrompts on the client while a touch drag is held", "Touch Drag Lessons"),
+            r#"{"part": 2, "claim": "Placeholder"}"#
+        );
+        let said = checked_answer(&parts, &mixed, &|_| None);
+        assert!(said.starts_with("1. lessons on ProximityPrompts and touch drags:\n- Turn prompts off while a drag is held."), "{said}");
+        assert!(!said.contains("Placeholder") && !said.contains("Hope that helps") && !said.contains(UNCHECKED), "{said}");
     }
 
     #[test]
