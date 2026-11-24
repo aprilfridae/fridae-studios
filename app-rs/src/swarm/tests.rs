@@ -1,9 +1,9 @@
 use super::*;
 
-/// The swarm's tests share the list of chats and the agent slots: one at a time.
+/// The swarm's tests share the list of chats and the agent slots: one at a time (team.rs's Studio turn test too).
 static SERIAL: Mutex<()> = Mutex::new(());
 
-fn serial() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn serial() -> std::sync::MutexGuard<'static, ()> {
     SERIAL.lock().unwrap_or_else(|e| e.into_inner())
 }
 

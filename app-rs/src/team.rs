@@ -580,30 +580,32 @@ mod tests {
 
     #[test]
     fn the_studio_turn_is_exclusive_while_file_work_runs_in_parallel() {
+        let _s = crate::swarm::tests::serial();
         let d = game("studio-turn");
         let p = d.to_str().unwrap().to_string();
         let lead = agents::new_background_chat("Lead: studio turn", Some(p.clone())).unwrap();
-        let task = "Build the shop's buy button and its server check, in the folders named here, then report what you made.";
-        // two experts that change the game both start: each in its own copy, working at once
-        for (id, name) in [("w-turn-a", "Shop"), ("w-turn-b", "Map")] {
-            start(&json!({"id": id, "from": lead.id, "role": "worker", "name": name, "task": task, "expert": "coder", "expert_name": "Coder", "writes": true}));
-            let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join(format!("{id}.json"))).unwrap()).unwrap();
-            assert_eq!(res["status"], "running", "{res}");
+        // two experts that change the game, each in its own copy of the project, both at work
+        let mut kids = Vec::new();
+        for name in ["shop", "map"] {
+            let m = crate::swarm::prepare(&lead, name, true).unwrap();
+            let x = agents::spawn_helper(Some(&format!("w-turn-{name}")), "worker", name, m.folder(), None, Some(&lead.id)).unwrap();
+            crate::swarm::joined(&m, &x, "coder", "Build it.");
+            kids.push(x);
         }
-        let kids = agents::helpers_of(&lead.id);
         let (a, b) = (&kids[0], &kids[1]);
         assert_ne!(a.project(), b.project(), "each in its own copy");
         assert_ne!(a.project().as_deref(), Some(p.as_str()));
-        // the Studio turn: one at a time, given back, then the other's
+        // the Studio turn: one at a time, given back, then the other's (kept under the real project, not a copy)
         let turn = |who: &Agent, op: &str| studio_turn(&json!({"from": who.id, "turn": op}));
         assert_eq!(turn(a, "take")["status"], "done");
+        assert_eq!(a.writer().as_deref(), Some(p.as_str()));
         let refused = turn(b, "take");
         assert_eq!(refused["status"], "refused");
         assert!(refused["reason"].as_str().unwrap().contains("has the Studio turn"));
         assert!(turn(b, "status")["text"].as_str().unwrap().contains("has the Studio turn"));
         assert_eq!(turn(a, "give")["text"], "Studio turn given back.");
         assert_eq!(turn(b, "take")["status"], "done");
-        // a turn ends: the turn is given back with it
+        // a turn's end gives it back too
         release(b);
         assert_eq!(turn(a, "take")["status"], "done");
         release(a);

@@ -215,7 +215,7 @@ class ModelsListTests(unittest.TestCase):
     def test_unknown_action_names_models_too(self):
         with self.assertRaises(KitError) as cm:
             rbxteam.run("dance", {})
-        self.assertIn("spawn, status, wait or models", str(cm.exception))
+        self.assertIn("spawn, status, wait, models, post, board, wait_board or studio_turn", str(cm.exception))
 
 
 class LeadWaitTests(unittest.TestCase):

@@ -15,8 +15,14 @@ results; the app does the rest.
 
 A worker does a piece of the job; a critic reviews work and reports problems.
 Agents started this way cannot start more.
+
+The swarm (app-rs/src/swarm.rs): a Lead's experts work at once, each writer in its own copy, on one board.
+  index     WORK/swarm/members.json        the app's: {agent id: {"run", "name", "role", "lead", "board", "is_lead"}}
+  board     WORK/swarm/<run>/board.jsonl   the app's: one post per line {"t", "from", "to", "kind", "text"}
+  post and the Studio turn go through the app as requests {"id", "op": "post" | "studio", "from", ...}; their results
+  are read once and removed (so 'status' never lists them).
 """
-import os, random, time
+import json, os, random, time
 
 from rbxpaths import WORK, KitError, read_json, write_json
 
@@ -24,6 +30,10 @@ REQUESTS = os.path.join(WORK, "team-requests")
 RESULTS = os.path.join(WORK, "team-results")
 NUDGES = os.path.join(WORK, "team-nudge")  # WORK/team-nudge/<agent id>: the app has something waiting for that Lead
 MODELS = os.path.join(WORK, "team-models.json")
+SWARM = os.path.join(WORK, "swarm")
+INDEX = os.path.join(SWARM, "members.json")
+BOARD_SHOWN = 40   # posts a member reads at once ('board'), to save tokens
+POST_SHOWN = 400   # characters of one post shown when reading the board
 MODELS_SHOWN = 40  # of one AI's models, when every AI is listed (Cursor offers hundreds)
 ROLES = ("worker", "critic")
 FINISHED = ("done", "refused")
@@ -65,7 +75,7 @@ def _ended(run):
         and not isinstance(run.get("ended"), bool)
 
 
-def spawn(role, name, task, expert=None, ai=None, model=None):
+def spawn(role, name, task, expert=None, ai=None, model=None, member=None):
     mine = (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip().lower()
     if mine in ROLES:
         raise TeamError("You were started as a %s by another agent, and such agents may not start more. Do the task "
@@ -102,6 +112,9 @@ def spawn(role, name, task, expert=None, ai=None, model=None):
         req["ai"] = ai
     if model:
         req["model"] = model
+    member = str(member or "").strip()
+    if member:
+        req["member"] = member[:40]  # its handle on the swarm's board ("@shop-ui"); the app makes it unique
     if entry:
         req.update({"expert": entry["id"], "expert_name": entry["name"], "expert_text": entry["text"],
                     "writes": bool(entry["writes"])})
@@ -119,6 +132,134 @@ def spawn(role, name, task, expert=None, ai=None, model=None):
     except OSError:
         pass
     return rid, None
+
+
+def _new_id(prefix):
+    return "%s%d%s" % (prefix, int(time.time() * 1000), "".join(random.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(4)))
+
+
+def _ask_app(op, fields):
+    """A request the app answers at once (a post, the Studio turn): its result, read once and removed."""
+    rid = _new_id("q")
+    req = dict(fields, id=rid, op=op, **{"from": os.environ.get("RBXKIT_AGENT_ID") or ""})
+    os.makedirs(REQUESTS, exist_ok=True)
+    path = os.path.join(REQUESTS, rid + ".json")
+    write_json(path, req)
+    deadline = time.time() + PICKUP
+    while time.time() < deadline:
+        res = _result(rid)
+        if res:
+            try:
+                os.remove(os.path.join(RESULTS, rid + ".json"))
+            except OSError:
+                pass
+            if res.get("status") == "refused":
+                raise TeamError(res.get("reason") or "The app refused it.")
+            return res.get("text") or "Done."
+        time.sleep(0.2)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    raise TeamError("The app did not answer within %d seconds. The board only works when this chat runs inside the "
+                    "Fridae Studios app with it open." % PICKUP)
+
+
+def _me():
+    """This chat in the swarm ({"run", "name", "role", "lead", "board", "is_lead"}), or a TeamError."""
+    me = (os.environ.get("RBXKIT_AGENT_ID") or "").strip()
+    index = read_json(INDEX)
+    entry = index.get(me) if isinstance(index, dict) and me else None
+    if not isinstance(entry, dict) or not isinstance(entry.get("run"), str):
+        raise TeamError("This chat is not part of a swarm, so it has no board. A Lead's swarm starts with its first "
+                        "rbx_team spawn in a project folder.")
+    entry["board"] = os.path.join(SWARM, os.path.basename(entry["run"]), "board.jsonl")  # never a path from the file
+    return entry
+
+
+def read_board(path):
+    out = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    p = json.loads(line)
+                except ValueError:
+                    continue  # (a line being written)
+                if isinstance(p, dict):
+                    out.append(p)
+    except OSError:
+        pass
+    return out
+
+
+def for_me(post, me):
+    """Whether a post mentions this member (name, role or everyone); the Lead hears every post but its own."""
+    if post.get("from") == me["name"]:
+        return False
+    if me.get("is_lead"):
+        return True
+    to = [str(t).lstrip("@").lower() for t in post.get("to") or []]
+    return "all" in to or me["name"] in to or (me.get("role") and me["role"] in to)
+
+
+def _show(posts, me=None):
+    lines = []
+    for p in posts:
+        text = " ".join(str(p.get("text") or "").split())
+        if len(text) > POST_SHOWN:
+            text = text[:POST_SHOWN] + " ..."
+        to = " ".join(p.get("to") or []) or "board"
+        mark = "* " if me and for_me(p, me) else "  "
+        lines.append("%s[%.1f] @%s -> %s (%s): %s" % (mark, p.get("t") or 0, p.get("from"), to, p.get("kind"), text))
+    return "\n".join(lines)
+
+
+def post(to, text, kind="msg"):
+    _me()
+    if isinstance(to, str):
+        to = [to]
+    to = [str(t).strip() for t in to or [] if str(t).strip()]
+    kind = str(kind or "msg").strip().lower()
+    return _ask_app("post", {"to": to, "kind": kind, "text": str(text or "").strip()})
+
+
+def board(since=None, limit=None):
+    me = _me()
+    posts = read_board(me["board"])
+    if since not in (None, ""):
+        posts = [p for p in posts if (p.get("t") or 0) > float(since)]
+    limit = max(1, min(BOARD_SHOWN, int(limit or BOARD_SHOWN)))
+    left = max(0, len(posts) - limit)
+    posts = posts[-limit:]
+    if not posts:
+        return "The board has no posts%s." % (" since then" if since not in (None, "") else "")
+    head = "You are @%s. Posts marked * are for you.%s Newest last; pass since=<the last [t]> to read only newer ones.\n" % (
+        me["name"], " (%d older posts not shown.)" % left if left else "")
+    return head + _show(posts, me)
+
+
+def wait_board(timeout=300, since=None):
+    """Wait for a post that mentions this member (the Lead: any post), newer than `since` (default: now)."""
+    me = _me()
+    timeout = max(1, min(MAX_WAIT, int(timeout or 300)))
+    since = float(since) if since not in (None, "") else time.time()
+    deadline = time.time() + timeout
+    while True:
+        new = [p for p in read_board(me["board"]) if (p.get("t") or 0) > since and for_me(p, me)]
+        if new:
+            return "New for you:\n" + _show(new[-BOARD_SHOWN:], me)
+        if time.time() >= deadline:
+            return ("Nothing new for you after %d seconds. If you have nothing else to do, end your turn: you are woken "
+                    "when a post mentions you." % timeout)
+        time.sleep(0.5)
+
+
+def studio_turn(op):
+    op = str(op or "status").strip().lower()
+    if op not in ("take", "give", "status"):
+        raise TeamError("Give 'op': take (before changing the Studio place), give (as soon as you are done) or status.")
+    return _ask_app("studio", {"turn": op})
 
 
 def known():
@@ -258,7 +399,7 @@ def run(action, a=None):
     action = (action or "status").lower()
     if action == "spawn":
         rid, res = spawn(a.get("role"), a.get("name"), a.get("task"), expert=a.get("expert"), ai=a.get("ai"),
-                         model=a.get("model"))
+                         model=a.get("model"), member=a.get("member"))
         if res is None:
             return ("NOT STARTED. The app did not pick up the request within %d seconds, so it was withdrawn. Extra agents "
                     "only work when this chat runs inside the Fridae Studios app with it open. Carry on by yourself." % PICKUP)
@@ -300,4 +441,12 @@ def run(action, a=None):
         return "\n".join(out)
     if action == "models":
         return models(a.get("ai"))
-    raise TeamError("Unknown action '%s'. Use spawn, status, wait or models." % action)
+    if action == "post":
+        return post(a.get("to"), a.get("text"), a.get("kind"))
+    if action == "board":
+        return board(a.get("since"), a.get("limit"))
+    if action == "wait_board":
+        return wait_board(a.get("timeout"), a.get("since"))
+    if action == "studio_turn":
+        return studio_turn(a.get("op"))
+    raise TeamError("Unknown action '%s'. Use spawn, status, wait, models, post, board, wait_board or studio_turn." % action)
