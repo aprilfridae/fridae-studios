@@ -616,8 +616,9 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     // folder's `.agents/mcp_config.json` names, and the tools keep the model's name and each chat's count there;
     // `.agents`: a list of tool servers in the work folder itself, should agy also look in the folders above the
     // one it works in (not measured): a Claude chat with no game works in the work folder)
-    // the knowledge index's folder (`rag`): its key file, models, indexes and Qdrant's program and storage
-    out.push((w.join("rag"), true));
+    // the knowledge index's folder (`rag::dir`, beside `accounts`): its key file, endpoint file, models, indexes and
+    // Qdrant's program and storage
+    out.push((crate::rag::dir(), true));
     for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs", "antigravity", ".agents"] {
         out.push((w.join(d), true));
     }

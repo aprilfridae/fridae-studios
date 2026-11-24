@@ -57,7 +57,7 @@ def register(sub):
 
     def common(x):
         x.add_argument("--mode", choices=("light", "heavy"), required=True)
-        x.add_argument("--data", required=True, help="the index's folder (<work>/rag)")
+        x.add_argument("--data", required=True, help="the index's folder (the app's own rag folder in Application Support)")
         x.add_argument("--ollama-url", help=argparse_hidden())
 
     x = s.add_parser("serve", help="answer searches on 127.0.0.1 (prints {\"listening\": port} when bound)")

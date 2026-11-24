@@ -3,15 +3,16 @@
 //!
 //! - The mode is the guarded setting `rag_mode` ("off" | "light" | "heavy", default "off"; `paths::rag_mode`), set
 //!   only through the page's route (`set_mode`).
-//! - One process serves the index for every expert: `fridae-cli rag serve --mode M --data <work>/rag --port 0
-//!   --token-file <work>/rag/token`, which prints `{"listening": port}` once bound and answers on 127.0.0.1 with
-//!   `Authorization: Bearer <token>`. Heavy also runs Qdrant from `<work>/rag/bin/qdrant` on two free ports (never
+//! - `<rag>` is `dir()`, the app's own folder in Application Support (beside `accounts`), never the work folder.
+//! - One process serves the index for every expert: `fridae-cli rag serve --mode M --data <rag> --port 0
+//!   --token-file <rag>/token`, which prints `{"listening": port}` once bound and answers on 127.0.0.1 with
+//!   `Authorization: Bearer <token>`. Heavy also runs Qdrant from `<rag>/bin/qdrant` on two free ports (never
 //!   6333), with the token as its API key. Both are started in groups of their own, noted in the process ledger
 //!   (`procs`, owners "rag" and "rag-qdrant") and ended when the mode changes and when the app quits. The user's own
 //!   Ollama, or a Qdrant the user runs, is never started, stopped or touched here.
-//! - The token is 32 random bytes as hex, made anew for each start, written to `<work>/rag/token` (mode 0600) and
+//! - The token is 32 random bytes as hex, made anew for each start, written to `<rag>/token` (mode 0600) and
 //!   handed to the processes by that file's path, never on a command line, and never printed or logged.
-//! - Every tool server is told one constant path, `FRIDAE_RAG_FILE` = `<work>/rag/endpoint.json` (`endpoint_file`,
+//! - Every tool server is told one constant path, `FRIDAE_RAG_FILE` = `<rag>/endpoint.json` (`endpoint_file`,
 //!   `agents::mcp_servers_with`), never an address or key. The app writes `{"url", "token"}` there (0600, whole) when
 //!   the service says it is ready, and removes it before any of the service's processes is ended; without it
 //!   `rbx_vault` uses its keyword search.
@@ -21,7 +22,7 @@
 //! - Setup's steps run `fridae-cli rag setup <step> --mode M --data DIR --json-progress` in a process group of their
 //!   own, one at a time, the way the promo engine's install runs (`promo.rs`), its lines read by the same parser.
 
-use crate::paths::{self, PATHS, Start};
+use crate::paths::{self, Start};
 use std::{
     collections::HashMap,
     fs,
@@ -64,9 +65,15 @@ pub fn mode_of(v: &Value) -> &'static str {
     v.as_str().and_then(|m| MODES.iter().find(|x| **x == m)).copied().unwrap_or("off")
 }
 
-/// `<work>/rag`: models, indexes, Qdrant's binary and storage, the token. On `paths::app_protected`.
+/// The app's own `rag` folder beside the second accounts' (`accounts::base`), in Application Support on a Mac:
+/// models, indexes, Qdrant's binary and storage, the token and the endpoint file. These are this machine's caches,
+/// not the user's files, so they stay out of the work folder in Documents (which may be synced or moved). On
+/// `paths::app_protected`.
 pub fn dir() -> PathBuf {
-    PATHS.work.join("rag")
+    #[cfg(test)]
+    return paths::test_dir("rag");
+    #[allow(unreachable_code)]
+    crate::opencode::own_store().parent().map(Path::to_path_buf).unwrap_or_default().join("rag")
 }
 
 fn token_file() -> PathBuf {
@@ -136,7 +143,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// `<work>/rag/endpoint.json`: `{"url", "token"}` while the service is ready, gone otherwise. Every tool server is
+/// `<rag>/endpoint.json`: `{"url", "token"}` while the service is ready, gone otherwise. Every tool server is
 /// told this one path (`FRIDAE_RAG_FILE`, `agents::mcp_servers_with`) and reads it per query, so the tools' settings
 /// never change with the service, and never hold its address or key.
 pub fn endpoint_file() -> PathBuf {
@@ -1181,8 +1188,9 @@ mod tests {
 
     #[test]
     fn rag_folder_is_protected() {
-        let rag = crate::paths::PATHS.work.join("rag");
-        assert!(crate::paths::app_protected().contains(&(rag, true)));
+        assert!(crate::paths::app_protected().contains(&(dir(), true)));
+        assert!(!dir().starts_with(&crate::paths::PATHS.work), "machine-local caches stay out of the work folder");
+        assert_eq!(dir().parent(), crate::accounts::base().parent(), "beside the second accounts' folder");
     }
 
     #[test]
@@ -1194,7 +1202,7 @@ mod tests {
             assert_eq!(env["FRIDAE_RAG_FILE"].as_str(), Some(endpoint_file().display().to_string().as_str()));
             assert!(env.get("FRIDAE_RAG_URL").is_none() && env.get("FRIDAE_RAG_TOKEN").is_none(), "{env}");
         }
-        assert_eq!(endpoint_file(), crate::paths::PATHS.work.join("rag").join("endpoint.json"));
+        assert_eq!(endpoint_file(), dir().join("endpoint.json"));
         assert!(!print.is_empty() && crate::agents::guarded_print(&crate::paths::guarded_settings()) == print, "keyed on the guarded settings (the mode), never the key");
     }
 
