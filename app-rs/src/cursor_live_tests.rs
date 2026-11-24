@@ -554,6 +554,61 @@ mod stand_in {
         assert_eq!(b.fails(), 1);
     }
 
+    /// A chat too long to hand over whole, with `marker` in it (the summary's stand-in is found by it).
+    fn long_history(marker: &str) -> Vec<Value> {
+        (0..120).flat_map(|i| [json!({"kind": "user", "text": format!("Question {i} {marker} {}", "q".repeat(180))}), json!({"kind": "text", "text": format!("Answer {i} {}", "a".repeat(180))})]).collect()
+    }
+
+    /// Presses Stop from another thread once the chat shows that a summary is being written.
+    fn stop_at_the_summary(a: &Arc<Agent>) -> std::thread::JoinHandle<()> {
+        let a = a.clone();
+        std::thread::spawn(move || {
+            let until = std::time::Instant::now() + Duration::from_secs(20);
+            while !a.st.lock().unwrap().log.iter().any(|e| e["label"] == "Summarising the earlier chat with DeepSeek 4.1 Flash") {
+                assert!(std::time::Instant::now() < until, "the summary's step never showed");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            a.stop();
+        })
+    }
+
+    #[test]
+    fn stop_while_the_hand_overs_summary_is_written_starts_no_process_and_ends_the_turn() {
+        // a kept chat's message in Full auto goes per message, handed the chat as text: the chat is long, so a
+        // summary is written first, and its writer never answers. Stop is pressed while the step shows
+        let c = Chat::new("handover-stop");
+        c.send("the first message");
+        assert_eq!(c.session().as_deref(), Some("S1"));
+        c.a.st.lock().unwrap().log.extend(long_history("cursor-stop-full-auto"));
+        crate::compact::STAND_IN_FOR.lock().unwrap().push(("cursor-stop-full-auto".to_string(), crate::compact::hanging()));
+        let pressed = stop_at_the_summary(&c.a);
+        let began = std::time::Instant::now();
+        c.say_with("now in full auto", |s| s.full = true);
+        pressed.join().unwrap();
+        c.wait();
+        assert!(began.elapsed() < Duration::from_secs(15), "Stop ended the wait: {:?}", began.elapsed());
+        assert_eq!(c.said("error"), ["Stopped."], "no hand-over line: nothing was handed over");
+        assert_eq!(c.starts().len(), 1, "only the kept process of the first message: nothing was started after Stop");
+        assert_eq!(c.said("text").iter().filter(|t| *t == "per message").count(), 0);
+        assert!(!c.a.busy());
+        // the same when the kept process is lost before the turn began (the turn counts as running there): Stop
+        // marks the turn stopped, the wait ends, and no process per message is started
+        let b = Chat::new("load-broken-stop");
+        b.a.st.lock().unwrap().log = long_history("cursor-stop-lost");
+        b.has_kept("BROKEN");
+        crate::compact::STAND_IN_FOR.lock().unwrap().push(("cursor-stop-lost".to_string(), crate::compact::hanging()));
+        let pressed = stop_at_the_summary(&b.a);
+        let began = std::time::Instant::now();
+        b.start("hello");
+        pressed.join().unwrap();
+        b.wait();
+        assert!(began.elapsed() < Duration::from_secs(15), "Stop ended the wait: {:?}", began.elapsed());
+        assert_eq!(b.said("error").last().map(String::as_str), Some("Stopped."));
+        assert!(!b.said("error").iter().any(|e| e == CURSOR_HANDED_OVER) && !b.said("text").iter().any(|t| t == "per message"));
+        assert_eq!((b.starts().len(), b.kept_starts()), (1, 1), "no process per message was started after Stop");
+        assert!(!b.a.busy());
+    }
+
     #[test]
     fn stop_cancels_the_turn_at_once_and_the_process_stays() {
         let c = Chat::new("stop");

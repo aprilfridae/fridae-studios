@@ -104,6 +104,13 @@ fn record_in(dir: &std::path::Path, owner: &str, pid: u32) {
     write_in(&file, &v);
 }
 
+/// Whether a process is in this run's ledger (for tests of what must be noted there, and taken out again).
+#[cfg(test)]
+pub fn recorded(pid: u32) -> bool {
+    let _l = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    read_in(&mine_in(&folder()))["processes"].as_array().is_some_and(|l| l.iter().any(|e| e["pid"].as_u64() == Some(pid as u64)))
+}
+
 /// Drop a process from the ledger once it has ended (or the app has ended it).
 pub fn forget(pid: u32) {
     forget_in(&folder(), pid)

@@ -22,7 +22,6 @@
 //! - Tools on a server are all called through one built-in tool, `call_mcp_tool`, which names the real one in
 //!   its parameters.
 
-use crate::paths::Start;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -37,27 +36,46 @@ use crate::paths;
 
 static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
 
-/// Ask Antigravity which models it offers (`agy models` prints one "id<tab>name" per line). Done once, in the
-/// background, because it goes to the network.
-pub fn load_models() {
-    std::thread::spawn(|| {
-        let Some(exe) = paths::find_antigravity() else { return };
-        let mut cmd = Command::new(exe);
-        cmd.arg("models");
-        paths::quiet(&mut cmd);
-        paths::child_env(&mut cmd, "gemini");
-        if let Some(h) = home_override() {
-            cmd.env("HOME", h);
+/// Ask Antigravity which models it offers (`agy models` prints one "id<tab>name" per line) and keep the list. It
+/// goes to the network, so only from a background thread (`signin::check`, at start and when the sign-in is asked
+/// about: with nobody signed in it prints no list but "Please sign in", which is how the app knows). Hands back what
+/// it printed (output, error output, ended well); None when agy is not installed, could not be run, or did not answer
+/// in time. The list is
+/// kept once it has come: an empty answer (signed out, offline) leaves it to a later one.
+pub fn ask_models() -> Option<(String, String, bool)> {
+    ask_models_of(1)
+}
+
+/// The same question asked of an account: the user's own (1), whose answer fills the model menu, or the second
+/// (2: in its own home, `accounts::env`; None when it has no folder, and then nothing is run).
+pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
+    let exe = paths::find_antigravity()?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("models");
+    paths::child_env(&mut cmd, "gemini");
+    if account == 2 {
+        if !crate::accounts::env(&mut cmd, "gemini", 2) {
+            return None;
         }
-        let Ok(out) = cmd.run_output() else { return };
-        let list = String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|l| l.split_once('\t'))
-            .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
-            .filter(|(id, name)| !id.is_empty() && !id.contains(' ') && !name.is_empty())
-            .collect();
+    } else if let Some(h) = home_override() {
+        cmd.env("HOME", h);
+    }
+    // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
+    let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
+    let list = model_lines(&stdout);
+    if !list.is_empty() && account != 2 {
         let _ = MODELS.set(list);
-    });
+    }
+    Some((stdout, stderr, ok))
+}
+
+/// The "id<tab>name" lines of `agy models`.
+fn model_lines(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(id, name)| (id.trim().to_string(), name.trim().to_string()))
+        .filter(|(id, name)| !id.is_empty() && !id.contains(' ') && !name.is_empty())
+        .collect()
 }
 
 /// FRIDAE_AGY_HOME and FRIDAE_AGY_DIR (testing only, debug builds only): a copy of the app with a scratch HOME gives
@@ -412,6 +430,8 @@ pub struct Turn {
     shown: HashSet<i64>,
     said_something: bool,
     made: Generated,
+    /// agy's data folder when it is not the app's own home's (a turn on the second account: its home's)
+    pub data: Option<PathBuf>,
 }
 
 impl Turn {
@@ -420,7 +440,7 @@ impl Turn {
         let step = &e["step_update"];
         if let Some(id) = e["conversation_id"].as_str().or(step["conversation_id"].as_str()).or(e["result"]["conversation_id"].as_str()).filter(|s| !s.is_empty()) {
             out.push(Out::Conversation(id.to_string()));
-            if let Some(dir) = conversation_dir(&data_dir(), id) {
+            if let Some(dir) = conversation_dir(&self.data.clone().unwrap_or_else(data_dir), id) {
                 self.made.watch(dir);
             }
         }
@@ -502,7 +522,12 @@ impl Turn {
                 let status = r["status"].as_str().unwrap_or("");
                 if !matches!(status, "SUCCESS" | "") {
                     let why = r["error"]["message"].as_str().or(r["error"].as_str()).filter(|s| !s.is_empty());
-                    out.push(Out::Error(why.map(str::to_string).unwrap_or_else(|| format!("Gemini stopped: {}.", status.to_lowercase()))));
+                    match why.filter(|w| quota_reached(w)) {
+                        // the plan's quota: a failed turn (not just a line in the chat), so the account is marked used
+                        // up and the chat may carry on with Gemini's other account (`agents::roll_over`)
+                        Some(quota) => out.push(Out::Failed(quota.to_string())),
+                        None => out.push(Out::Error(why.map(str::to_string).unwrap_or_else(|| format!("Gemini stopped: {}.", status.to_lowercase())))),
+                    }
                 }
                 out.push(Out::Finished);
             }
@@ -512,8 +537,30 @@ impl Turn {
     }
 }
 
-/// What the chat is told when nobody is signed in to Antigravity.
-pub const SIGNED_OUT: &str = "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again.";
+/// Whether agy's words say that the plan's quota is spent: "Individual quota reached. Please upgrade your
+/// subscription to increase your limits. Resets in 2h6m48s." (as the user's chats of 22 November 2026 have it,
+/// from a process per message). The one line known.
+pub fn quota_reached(said: &str) -> bool {
+    said.to_lowercase().contains("quota reached")
+}
+
+/// That line in a turn's error output (where a process per message that fails before it has a result says why),
+/// without the "Error: " agy puts before what it prints there. None when the output holds no such line.
+pub fn quota_line(error_output: &str) -> Option<String> {
+    let line = error_output.lines().rev().map(str::trim).find(|l| quota_reached(l))?;
+    Some(line.strip_prefix("Error:").map(str::trim).unwrap_or(line).to_string())
+}
+
+/// What the chat is told when nobody is signed in to Antigravity: with the Sign in button beside it
+/// (`signin::signed_out_line`), or on Windows, where the app offers no sign-in, with the way through a terminal.
+/// The same for Gemini's second account (`accounts`).
+pub const SIGNED_OUT_SECOND: &str = "Gemini's second account is not signed in. Sign in, then send your message again.";
+
+pub const SIGNED_OUT: &str = if cfg!(windows) {
+    "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again."
+} else {
+    "Gemini is not signed in. Sign in, then send your message again."
+};
 
 /// A plain-language message for what Antigravity wrote on stderr, if we recognise it.
 pub fn explain(stderr: &str, got_result: bool) -> Option<String> {

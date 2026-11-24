@@ -1969,6 +1969,210 @@ fn shell_environment() -> Map<String, Value> {
     out
 }
 
+// ------------------------------------------------------------ a writer only
+
+use crate::compact::Failed;
+
+/// What a model wrote, and what writing it used.
+pub struct Written {
+    pub text: String,
+    pub usage: crate::usage::Turn,
+}
+
+/// The models of the user's plan that write a chat's summary, as the user named them, in the order they are tried:
+/// DeepSeek's flash, GLM's flash, GLM (`writers` finds them, or their families' listed members).
+pub const WRITERS: [&str; 3] = ["opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3-flash", "opencode-go/glm-5.3"];
+
+/// The plan every writer is on, and each writer's family: the start of its name there, and whether it is a flash model.
+const WRITER_PLAN: &str = "opencode-go/";
+const WRITER_FAMILIES: [(&str, bool); 3] = [("deepseek", true), ("glm", true), ("glm", false)];
+
+/// The title of a session that only writes (`write_only`).
+const WRITER_TITLE: &str = "Fridae: summary";
+
+/// A writer's session left behind is removed by the next writer only when it is older than this: far longer than
+/// any writer may run (`compact::LIMITS`), so a session at work is never taken, whoever started it (another chat,
+/// or another copy of the app on the same store).
+const WRITER_LEFT: Duration = Duration::from_secs(10 * 60);
+
+/// The sessions that only write and are running now in this app, so a sweep never removes one at work.
+static WRITING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Held while a writer looks for sessions left behind, makes its own and notes it: two writers of this app never
+/// sweep each other's session in the moment between its making and its noting.
+static WRITER_SETUP: Mutex<()> = Mutex::new(());
+
+/// The plan's models that can be asked to write now, in the order they are tried. None when OpenCode is not there,
+/// or Fridae's copy is known to be signed in to nothing. Before OpenCode's list has arrived: the names the user
+/// gave (the call itself then tells). Once it has: for each family the name the user gave when it is listed, else
+/// the first listed model of that family, always under `opencode-go/` and never a "-free" model.
+pub fn writers() -> Vec<String> {
+    if cfg!(windows) || paths::find_opencode().is_none() || free_only() {
+        return Vec::new();
+    }
+    let listed: Vec<String> = models().into_iter().map(|(id, _)| id).collect();
+    let found = writers_from(&listed);
+    if found.is_empty() && !listed.is_empty() {
+        eprintln!("summary: OpenCode lists no model of the plan to write with (looked under {WRITER_PLAN} for deepseek flash, glm flash, glm)");
+    }
+    found
+}
+
+/// See `writers`: from OpenCode's list of model ids (empty: not arrived yet).
+fn writers_from(listed: &[String]) -> Vec<String> {
+    if listed.is_empty() {
+        return WRITERS.iter().map(|m| m.to_string()).collect();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (wanted, (family, flash)) in WRITERS.iter().zip(WRITER_FAMILIES) {
+        let of_family = |id: &&String| {
+            let Some(name) = id.strip_prefix(WRITER_PLAN) else { return false };
+            let parts: Vec<&str> = name.split('-').collect();
+            parts.first() == Some(&family) && parts.contains(&"flash") == flash && !parts.contains(&"free")
+        };
+        let pick = listed.iter().find(|id| id.as_str() == *wanted).or_else(|| listed.iter().find(of_family));
+        if let Some(id) = pick.filter(|id| !out.contains(id)) {
+            out.push(id.clone());
+        }
+    }
+    out
+}
+
+/// Text from one of OpenCode's models and nothing else: a session on Fridae's own server whose every permission is
+/// denied (a denied tool is not offered, so the model has no tools at all), in the writers' own folder
+/// (`compact::folder`), sent `prompt` once. It is no chat of the user's (no chat is made for it in the app, and the
+/// app's server is not the user's OpenCode), and it is removed when it has answered, failed or been cancelled. A
+/// model that calls a tool or asks for anything all the same is ended and counts as failed. `cancel`: set by the
+/// caller when it has waited long enough; the session is then interrupted and removed at its next event (a
+/// heartbeat at the latest). A failure of the server itself, not of the model, says so (`Failed::server`).
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_only(model: &str, prompt: &str, cancel: &AtomicBool) -> Result<Written, Failed> {
+    // among the running turns meanwhile, so the idle watch and a sign-in's restart never end the server under it
+    let key = format!("writer-{}", paths::random_hex(1));
+    let me = Arc::new(Active::default());
+    active().as_mut().unwrap().insert(key.clone(), me.clone());
+    let out = match ensure() {
+        Ok(conn) => write_only_on(&conn, model, prompt, cancel, &crate::compact::folder()),
+        Err(why) => Err(Failed { why, server: true }),
+    };
+    leave(&key, &me);
+    out
+}
+
+/// A failure of the server (no answer at all), as against one of the model or of what was asked.
+fn servers(why: String) -> Failed {
+    Failed { why, server: true }
+}
+
+/// See `write_only`: on a running server (the real one, or in the tests a stand-in).
+fn write_only_on(conn: &Conn, model: &str, prompt: &str, cancel: &AtomicBool, folder: &Path) -> Result<Written, Failed> {
+    let _ = fs::create_dir_all(folder);
+    let rules = vec![rule("*", "*", "deny")];
+    let reference = model_ref(model).ok_or_else(|| format!("{model} is not a model's name."))?;
+    let body = json!({"title": WRITER_TITLE, "location": {"directory": folder}, "permissions": rules, "model": reference});
+    let session = {
+        let _one = WRITER_SETUP.lock().unwrap_or_else(|e| e.into_inner());
+        sweep_writers(conn, folder, paths::now_secs());
+        let session = match call(conn, "POST", "/api/session", Some(&body)) {
+            Ok((200, v)) if v["data"]["id"].is_string() => v["data"]["id"].as_str().unwrap().to_string(),
+            Ok((s, v)) => return Err(format!("OpenCode could not start the writer ({s}): {}", said(&v)).into()),
+            Err(e) => return Err(servers(e)),
+        };
+        WRITING.lock().unwrap_or_else(|e| e.into_inner()).push(session.clone());
+        session
+    };
+    let out = written_in(conn, &session, &rules, model, prompt, cancel);
+    // removed, however it went (one that cannot be removed now is swept by a later writer)
+    let _ = request(conn, "DELETE", &format!("/api/session/{}", quote(&session)), None, Duration::from_secs(10));
+    WRITING.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s != &session);
+    out
+}
+
+fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: &str, cancel: &AtomicBool) -> Result<Written, Failed> {
+    // the rules must be the ones written: nothing is sent to a session that could do anything
+    if !rules_intact(conn, session, rules) {
+        return Err("OpenCode did not take the writer's rules, so nothing was sent to it.".into());
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Err("It was not started in time.".into());
+    }
+    let mut events = Events::open(conn).map_err(servers)?;
+    match call(conn, "POST", &format!("/api/session/{}/prompt", quote(session)), Some(&json!({"text": prompt}))) {
+        Ok((200, _)) => {}
+        Ok((s, v)) => return Err(format!("OpenCode did not take the text ({s}): {}", said(&v)).into()),
+        Err(e) => return Err(servers(e)),
+    }
+    let interrupt = || {
+        let _ = request(conn, "POST", &format!("/api/session/{}/interrupt", quote(session)), None, Duration::from_secs(5));
+    };
+    let mut turn = Turn::new("", &json!({}), Some(model.to_string()));
+    let (mut texts, mut failed): (Vec<String>, Option<String>) = (Vec::new(), None);
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            interrupt();
+            return Err("It took too long.".into());
+        }
+        let e = match events.next() {
+            Ok(Some(e)) => e,
+            Ok(None) | Err(_) => {
+                interrupt();
+                return Err(servers("OpenCode's event stream ended before it had answered.".to_string()));
+            }
+        };
+        // it may only write: a tool it calls, or anything it asks to do, ends it there
+        let kind = e["type"].as_str().unwrap_or("");
+        if e["data"]["sessionID"] == session && (kind.starts_with("session.tool.") || kind == "permission.asked") {
+            interrupt();
+            return Err("The model tried to use a tool instead of writing.".into());
+        }
+        let step = turn.feed(session, &e);
+        for o in step.outs {
+            match o {
+                Out::Text(t) => texts.push(t),
+                Out::Failed(f) => failed = Some(f),
+                _ => {}
+            }
+        }
+        if step.ended {
+            break;
+        }
+    }
+    let usage = turn.finish().into_iter().find_map(|o| if let Out::Usage(u) = o { Some(u) } else { None }).unwrap_or_default();
+    if let Some(f) = failed {
+        return Err(f.into());
+    }
+    let text = texts.join("\n\n").trim().to_string();
+    if text.is_empty() {
+        return Err("It wrote nothing.".into());
+    }
+    Ok(Written { text, usage })
+}
+
+/// Whether two folders' names are one folder (as written, or once links in them are followed).
+fn same_folder(a: &Path, b: &Path) -> bool {
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
+}
+
+/// Sessions a writer left in the writers' folder (the app was closed, or the server ended, before it could remove
+/// its own): removed. Only a session that the server lists for that folder (`directory=`: measured, 2.3.2; a
+/// parameter it does not know would list everything), that itself says it is in that folder, that has the writer's
+/// title, that is not at work in this app, and that is older than `WRITER_LEFT`. A chat is never any of the first
+/// three.
+fn sweep_writers(conn: &Conn, folder: &Path, now: f64) {
+    let path = format!("/api/session?limit=100&directory={}", quote(&folder.display().to_string()));
+    let Ok((200, v)) = call(conn, "GET", &path, None) else { return };
+    let at_work = WRITING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for s in v["data"].as_array().into_iter().flatten() {
+        let Some(id) = s["id"].as_str() else { continue };
+        let here = s["location"]["directory"].as_str().is_some_and(|d| same_folder(Path::new(d), folder));
+        // (its times are in milliseconds; one without a time is not touched)
+        let old = s["time"]["created"].as_f64().is_some_and(|ms| now - ms / 1000.0 > WRITER_LEFT.as_secs_f64());
+        if here && old && s["title"] == WRITER_TITLE && !at_work.iter().any(|w| w == id) {
+            let _ = request(conn, "DELETE", &format!("/api/session/{}", quote(id)), None, Duration::from_secs(10));
+        }
+    }
+}
+
 /// Stop a chat's turn: OpenCode is asked to end it; if it has not within STOP_WAIT, the server is ended (with every
 /// OpenCode turn running), and the turn says so. A chat whose turn the app no longer follows still has its saved
 /// session interrupted (so "press Stop" after a busy answer is true). Blocks until then: call it off the page's thread.

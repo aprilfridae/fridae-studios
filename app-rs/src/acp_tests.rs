@@ -160,6 +160,7 @@ impl Chat {
             keys_on: false,
             home: Path::new("/home/u"),
             data_dir: None,
+            home_env: None,
         }
     }
 
@@ -420,6 +421,38 @@ fn gemini_is_not_kept_unless_its_switch_asks_for_it() {
 #[cfg(unix)]
 mod stand_in {
     use super::*;
+
+    #[test]
+    fn a_turn_on_geminis_second_account_runs_agy_in_that_accounts_own_home() {
+        let c = Chat::new("second-home");
+        let home = Path::new("/app/accounts/gemini-2-abcdef");
+        let first = c.launch();
+        let second = c.launch_with(|s| {
+            s.home = home;
+            s.home_env = Some(home);
+        });
+        let env = |cmd: &Command, k: &str| cmd.get_envs().find(|(key, _)| *key == k).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        // the kept process and a process per message alike: HOME is the account's own home (where its sign-in is
+        // kept, and from where the user's keychain entry cannot be found), and nothing names another
+        for cmd in [second.command(), second.per_turn(None, "hello").0] {
+            assert_eq!(env(&cmd, "HOME"), Some(Some("/app/accounts/gemini-2-abcdef".to_string())));
+            for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"] {
+                assert_eq!(env(&cmd, gone), Some(None), "{gone}");
+            }
+        }
+        // the user's own account: the app sets no HOME for agy
+        for cmd in [first.command(), first.per_turn(None, "hello").0] {
+            assert_eq!(env(&cmd, "HOME"), None);
+        }
+        // a process kept in one home is never sent a message meant for the other account
+        assert_ne!(first.key(), second.key());
+        assert!(second.key().contains("/app/accounts/gemini-2-abcdef/.gemini/antigravity-cli"), "its own data folder is the one its requests are judged by");
+        let again = c.launch_with(|s| {
+            s.home = home;
+            s.home_env = Some(home);
+        });
+        assert_eq!(second.key(), again.key());
+    }
 
     #[test]
     fn two_messages_run_on_one_process_and_other_settings_start_another_that_resumes() {

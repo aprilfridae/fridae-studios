@@ -215,6 +215,7 @@ fn settings<'a>(servers: &'a Value, allowed: &'a [String], denied: &'a [String])
         effort: Some("high"),
         work: Path::new("/work"),
         keys_on: false,
+        config_dir: None,
     }
 }
 
@@ -242,6 +243,7 @@ fn the_launch_key_changes_with_everything_a_turn_is_started_with() {
         ("the tool servers (a setting they are handed)", ClaudeSettings { servers: &other_servers, ..base() }),
         ("the tool-server file", ClaudeSettings { mcp_config: Path::new("/work/agent-tools/c2.json"), ..base() }),
         ("the provider-keys switch", ClaudeSettings { keys_on: true, ..base() }),
+        ("the account (the second account's folder)", ClaudeSettings { config_dir: Some(Path::new("/app/accounts/claude-2-abcdef")), ..base() }),
         ("the program", ClaudeSettings { exe: Path::new("/other/claude"), ..base() }),
         ("the kit folder", ClaudeSettings { kit: Path::new("/kit2"), ..base() }),
     ];
@@ -286,6 +288,9 @@ while read -r line; do
     *no-conv*) echo '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"S0"}'
        echo "No conversation found with session ID: S0" >&2; exit 1;;
     *signed-out*) echo "$init"; echo '{"type":"result","is_error":true,"result":"Not logged in","session_id":"S1"}';;
+    *out-of-usage*) echo "$init"
+       echo '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":4102444800,"rateLimitType":"five_hour"}}'
+       echo '{"type":"result","is_error":true,"result":"You have hit your 5-hour limit, resets 12:50am","session_id":"S1"}';;
     *background*) echo "$init"; echo '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1"}]}'; say "started"; echo "$ok";;
     *in-a-tool*) echo "$init"
        echo '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__rbxkit__rbx_blender","input":{}}]}}'
@@ -316,7 +321,7 @@ done
         }
 
         fn launch(&self, extra: &[&str]) -> ClaudeLaunch {
-            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new(), keys_on: false }
+            ClaudeLaunch { exe: "/bin/sh".into(), first: vec![self.script.clone().into()], args: extra.iter().map(Into::into).collect(), cwd: self.script.parent().unwrap().into(), servers: String::new(), keys_on: false, config_dir: None }
         }
 
         /// Sends a message the kept way and waits for the turn to end. False: it went to no kept process.
@@ -635,7 +640,12 @@ done
     fn a_failed_turn_and_a_turn_that_left_a_background_task_keep_no_process() {
         let c = Chat::new("signed-out");
         assert!(c.send("signed-out"));
-        assert_eq!(c.said("error"), ["Not logged in"]);
+        // Claude Code's own "Not logged in" is said in the app's words, and the line carries the AI for its Sign in
+        // button (not on Windows, where the app offers no sign-in and the tool's words stay)
+        let line = if cfg!(windows) { "Not logged in" } else { "Claude is not signed in. Sign in, then send your message again." };
+        assert_eq!(c.said("error"), [line]);
+        let event = c.a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").cloned().unwrap();
+        assert_eq!(event["sign_in"].as_str(), (!cfg!(windows)).then_some("claude"));
         assert_eq!((c.fails(), c.pid()), (0, None), "a new process gets to find the sign-in");
         assert!(c.send("again"));
         assert_eq!(c.starts().len(), 2);
@@ -647,6 +657,50 @@ done
         assert!(b.send("again"));
         assert_eq!(b.starts().len(), first + 1);
         assert!(b.starts()[first].ends_with("--resume S1"));
+    }
+
+    #[test]
+    fn a_kept_process_that_hits_the_limit_is_given_up_and_the_message_goes_again_for_the_other_account() {
+        crate::accounts::stand_in(true, true);
+        let c = Chat::new("limit");
+        c.a.st.lock().unwrap().accounts_for_test = crate::accounts::stand_in_now();
+        assert!(c.send("hello"));
+        let first = c.pid().expect("kept for the chat");
+        // (as `send` notes every message before it goes)
+        c.a.st.lock().unwrap().sent = Some(("out-of-usage".into(), "out-of-usage".into(), Ask::default()));
+        assert!(c.send("out-of-usage"));
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while !c.a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "rollover") {
+            assert!(std::time::Instant::now() < until, "no rollover: {:?}", c.a.st.lock().unwrap().log);
+            thread::sleep(Duration::from_millis(20));
+        }
+        // the reset time in Claude Code's event went through the reader into the turn's end: the account is used up
+        // until then
+        assert_eq!(crate::accounts::used_until("claude", 1, paths::now_secs()), Some(4_102_444_800.0));
+        {
+            let st = c.a.st.lock().unwrap();
+            assert_eq!((st.account, st.session.clone(), st.resent_for_test.len()), (2, None, 1));
+            assert_eq!(st.resent_for_test[0].resend, Some(("out-of-usage".to_string(), "out-of-usage".to_string())));
+            assert!(working(&st), "held for the message that goes again");
+        }
+        // one line about it, the app's; the tool's own words are not said beside it
+        assert!(c.said("error").is_empty(), "{:?}", c.said("error"));
+        let line = c.a.st.lock().unwrap().log.iter().find(|e| e["kind"] == "rollover").unwrap()["text"].as_str().unwrap().to_string();
+        assert!(line.starts_with("Your Claude account ran out of usage (back in about ") && line.ends_with("). Carrying on with the second account."), "{line}");
+        assert_eq!(c.a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "done").count(), 1, "the first message's: this turn is not over");
+        // the first account's process is not kept for it: the message goes to one started with the second's folder
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while c.pid().is_some() || !gone(first) {
+            assert!(std::time::Instant::now() < until, "the first account's process is still there");
+            thread::sleep(Duration::from_millis(20));
+        }
+        c.a.st.lock().unwrap().sending = false;
+        let second = ClaudeLaunch { config_dir: Some("/app/accounts/claude-2-standin".into()), ..c.launch(&[]) };
+        assert_ne!(second.key(), c.launch(&[]).key());
+        assert!(c.a.live_allowed() && c.a.live_turn(&second, "hello again"));
+        c.wait();
+        assert_eq!(c.starts().len(), 2, "a process of its own for the other account");
+        assert!(c.pid().is_some_and(|p| p != first));
     }
 
     #[test]

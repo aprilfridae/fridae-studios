@@ -280,6 +280,7 @@ button.pname:hover { background: var(--hover); }
 .copy { position: absolute; top: -4px; right: -4px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12px; color: var(--dim); background: var(--raised); border: 1px solid var(--line-strong); opacity: 0; pointer-events: none; transition: opacity 140ms ease; -webkit-user-select: none; user-select: none; }
 .prose:hover > .copy, .copy:focus-visible, .prose pre:hover > .copy { opacity: 1; pointer-events: auto; }
 .prose pre > .copy { top: 8px; right: 8px; }
+.err .pill { margin-left: 12px; vertical-align: baseline; }
 .err { margin: 8px 0 12px; padding: 12px 16px; border-left: 2px solid var(--dim); background: var(--hover); border-radius: 0 var(--r-s) var(--r-s) 0; font-size: 14px; white-space: pre-wrap; }
 .ask { position: relative; margin: 8px 0 16px; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 70ch; }
 .ask h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
@@ -1147,7 +1148,8 @@ const CONTROLS = [
   ["The chat's name", "Press it for the game's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
   ["The game's name", "Press it for the game's folder, notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
-  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. OpenCode says \"Free models only\" there, with a Sign in button, until Fridae's OpenCode is signed in."],
+  ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (or, for a chat going to Claude, by Claude's smallest model when OpenCode cannot). Common keys and passwords are masked where recognised, and the summary runs on your own plan either way. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
+  ["A second account", "Setup, Connections: a second account for Claude or for Gemini.", "", "When your account runs out of usage, the chat carries on with the second one by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. New chats use your own account again once it is back. Add signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in with another account than your own (sign out of yours in the browser first), or it adds no usage. On Gemini's second account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
@@ -2074,6 +2076,14 @@ function onEvent(e) {
     studioWaitLine(p, !!e.value);
   } else if (e.kind === "renamed") {
     p.name = e.name;
+  } else if (e.kind === "account") {
+    /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
+    p.account = e.account; if (p.id === current) paintModel();
+  } else if (e.kind === "rollover") {
+    /* one of the AI's two accounts ran out of usage and the chat carries on with the other: the app's one line about
+       it. The same message goes again there, so what follows is a turn of its own */
+    const t = el("span", "tag ai-tag enter"); t.textContent = e.text || "";
+    p.col.appendChild(t); p.turn = null;
   } else if (e.kind === "queued") {
     paintQueue(p, e.items || [], !!e.paused, !!e.kept);
   } else if (e.kind === "user") {
@@ -2154,7 +2164,10 @@ function onEvent(e) {
     p.last = "Needs you";
   } else if (e.kind === "error") {
     if (!p.turn) newTurn(p);
-    p.turn.appendChild(el("div", "err enter", esc(e.text)));
+    const line = p.turn.appendChild(el("div", "err enter", esc(e.text)));
+    /* the turn failed because nobody is signed in to this chat's AI: the same Sign in as in the picker, beside the
+       line (not on lines from before the app was opened: they are history) */
+    if (e.sign_in && e.id > bootMark) line.appendChild(signInButton(e.sign_in, "Sign in", "login", true));
     p.last = e.text === "Stopped." ? "Stopped" : "Needs attention";
   } else if (e.kind === "handed_back") {
     /* a helper's result went back to the chat that started it: it is finished, whatever it last asked for */
@@ -2569,15 +2582,104 @@ function modelParts(ai, name) {
    its row in Setup, Connections (.notice in the row). Return a node (the words, and a button when there is something
    to press) or null for nothing; an empty slot takes no room. A notice is painted again when its markup changes (its
    words, a button's label or whether it is disabled): give the node a data- attribute for a change that does not
-   show. OpenCode: Fridae's OpenCode is not signed in (free models only), with the sign-in one press away. */
+   show. An AI that is not signed in says so, with the sign-in one press away: Claude, Cursor and Gemini (your own
+   sign-in to those tools, signInLine), and OpenCode (Fridae's own copy: free models only until then, openCodeSignIn). */
 function aiNotice(ai) {
-  if (ai !== "opencode" || !((status.ai || {}).installed || {}).opencode) return null;
-  const s = openCodeSignIn();
+  if (!((status.ai || {}).installed || {})[ai]) return null;
+  const s = ai === "opencode" ? openCodeSignIn() : signInLine(ai);
   if (!s.text) return null;
   const n = el("span", "nt");
+  /* a press is a change that does not show: with it the notice is painted again, so a pressed button is never left greyed */
+  n.dataset.n = String(noticePresses);
   n.appendChild(el("span", "", esc(s.text)));
-  s.buttons.forEach(([label, action]) => n.appendChild(openCodeButton(label, action)));
+  s.buttons.forEach(([label, action]) => n.appendChild(ai === "opencode" ? openCodeButton(label, action) : signInButton(ai, label, action)));
   return n;
+}
+let noticePresses = 0;
+/* A second account for an AI (status.ai.accounts: Claude and Gemini): a sign-in of Fridae's own for the same tool, which a
+   chat moves to when the first account runs out of usage. In a chat, a few words say which account it is on, only
+   while there is a second one. */
+function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }
+function accountWords(ai, p) { return accountOf(ai).exists && p ? " · account " + (p.account || 1) : ""; }
+/* Its line in Setup, under the AI's own: Add; then its sign-in (the same line and buttons as any sign-in) or who is
+   signed in, and Remove. Your own account is never changed from here. */
+function secondAccountRow(ai) {
+  const id = ai + "2", acc = accountOf(ai), s = signInOf(id), line = signInLine(id), waiting = ((s.login || {}).state === "waiting");
+  const row = el("div", "g-row oc-row");
+  row.innerHTML = "<b>Second account</b><small></small><div class=\"act\"></div>";
+  row.querySelector("small").textContent = !acc.exists ? (sgError[id] || (acc.left ? "Removed, but its folder could not be deleted and may still hold its sign-in. Delete it yourself: " + acc.left : "None. Add one to carry on when the first runs out of usage."))
+    : acc.broken ? "Fridae does not use this account: its folder was changed from outside (it is a link now, or a keychain has appeared in it). Remove it and add it again."
+    : line.text ? line.text
+    : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as your own, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
+    : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
+    : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + ((acc.used || [])[1] ? " Out of usage for now." : "")
+    : "Checking the sign-in...";
+  const act = row.querySelector(".act");
+  if (!acc.exists) act.appendChild(accountButton(ai, "Add", "add"));
+  else {
+    /* (an account the app will not use offers no sign-in: only Remove) */
+    if (!acc.broken) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
+    if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove"));
+  }
+  return row;
+}
+/* Add makes the app's folder for the second account and starts the tool's sign-in for it (its page opens in your
+   browser); Remove deletes that folder. */
+function accountButton(ai, label, action) {
+  const b = el("button", "pill sm", esc(label)), id = ai + "2";
+  b.onclick = async () => {
+    b.disabled = true; noticePresses++;
+    let r = null; try { r = await api("/api/accounts", { ai, action }); } catch (e) {}
+    sgConfirm[id] = null;
+    sgError[id] = !r ? "Could not reach the app. Try again." : r.ok === false && action === "add" ? (r.error || "The second account could not be added.") + " Try again." : "";
+    await refresh(); watchOpenCode();
+  };
+  return b;
+}
+/* Your own sign-in to Claude Code, Cursor and Gemini, as the app has it from each tool (status.ai.sign_in: state
+   "in", "out" or "unknown", who, and the sign-in started here). What it needs from you now, as one plain line and its
+   buttons; nothing to say (signed in, not known yet, or no sign-in offered on this computer): no text. There is no
+   signing out here: these are your own tools' sign-ins, which Fridae only ever asks about and starts. */
+const sgError = {}, sgConfirm = {};
+function signInOf(ai) { return (((status.ai || {}).sign_in || {})[ai]) || {}; }
+/* the app's line that says what a new sign-in does to one that is there: it stands for a minute, for the second press */
+function signInConfirm(ai) { const c = sgConfirm[ai]; return c && Date.now() - c.at < 60000 ? c.text : ""; }
+function signInLine(ai) {
+  const s = signInOf(ai), login = s.login || {};
+  if (!s.offered) return { text: "", buttons: [] };
+  /* one that waits is said first, whatever the tool says about who is signed in (it may have been started beside a
+     failed message while the tool still said "signed in") */
+  if (login.state === "waiting") return { text: "Sign in on the page that opened in your browser. If none opened, cancel and try again.", buttons: [["Cancel", "cancel"]] };
+  if (signInConfirm(ai)) return { text: signInConfirm(ai), buttons: [["Sign in anyway", "sure"]] };
+  if (s.state === "in") return { text: "", buttons: [] };
+  const why = login.message ? ": " + login.message + (/[.!?]$/.test(login.message) ? "" : ".") : ".";
+  const text = sgError[ai] ? sgError[ai]
+    : s.state !== "out" ? ""
+    : login.state === "failed" ? "The sign-in did not finish" + why + " Try again."
+    /* a key on this computer that Fridae keeps from this AI: the switch may be all that is missing */
+    : s.kept_key ? "Not signed in. If you use an API key, turn on \"Use API keys from my environment\" in Setup, Connections."
+    : "Not signed in.";
+  return { text, buttons: text ? [["Sign in", "login"]] : [] };
+}
+/* Sign in starts the tool's own sign-in, which opens its page in your browser; the app then asks the tool who is
+   signed in. The app first asks the tool again: when it does not say "nobody is signed in", the answer is a line
+   that says what a new sign-in does, and only a second press ("sure") starts it. A start that fails says why, in the
+   same line. `fromChat`: pressed beside a failed message, where no notice is in view, so what comes next is said
+   over the message box, and the second press is on the same button. */
+function signInButton(ai, label, action, fromChat) {
+  const b = el("button", "pill sm", esc(label));
+  b.onclick = async () => {
+    b.disabled = true; noticePresses++;
+    const sure = action === "sure" || !!(fromChat && signInConfirm(ai));
+    const body = action === "cancel" ? { ai, action } : { ai, action: "login", sure };
+    let r = null; try { r = await api("/api/signin", body); } catch (e) {}
+    const asked = !!(r && r.confirm);
+    sgConfirm[ai] = asked ? { text: r.error, at: Date.now() } : null;
+    sgError[ai] = action === "cancel" || asked ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
+    if (fromChat) { say(asked ? r.error : sgError[ai] || "Sign in on the page that opened in your browser, then send your message again."); b.disabled = false; }
+    await refresh(); watchOpenCode();
+  };
+  return b;
 }
 function paintNotice(slot, ai) {
   const note = aiNotice(ai), sig = note ? note.outerHTML : "";
@@ -2588,7 +2690,7 @@ function paintNotice(slot, ai) {
 function paintModel() {
   const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
   const cur = list.find((m) => m[0] === chosen), ownEffort = ownLevel(ai, chosen);
-  $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "");
+  $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p);
   $("model").title = [aiName(ai), cur ? cur[1] : "", ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message.";
   paintGap(ai, p);
   if ($("settings-panel").classList.contains("on")) paintPicker();
@@ -4133,7 +4235,7 @@ async function switchAi(id) {
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
 function paintAi() {
   const ai = status.ai || {}, have = ai.installed || {};
-  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.outerHTML : ""; })]);
+  const sig = JSON.stringify([AIS.map((a) => a[0]), have, defaultAi(), ai.opencode || null, ai.sign_in || null, ai.accounts || null, noticePresses, AIS.map((a) => { const n = aiNotice(a[0]); return n ? n.outerHTML : ""; })]);
   if (paintAi.sig === sig) return;
   paintAi.sig = sig;
   $("ai-default").innerHTML = ""; $("ai-list").innerHTML = "";
@@ -4142,14 +4244,17 @@ function paintAi() {
     b.setAttribute("aria-pressed", defaultAi() === id ? "true" : "false");
     b.onclick = async () => { await api("/api/ai", { choice: id }); await refresh(); };
     $("ai-default").appendChild(b);
-    /* its row: found or not, in one line; under it, the slot for a notice about this AI (aiNotice) */
+    /* its row: found or not, and who is signed in when the tool says, in one line; under it, the slot for a notice
+       about this AI (aiNotice) */
+    const si = signInOf(id), signedIn = si.offered && si.state === "in" ? " Signed in" + (si.who ? " as " + si.who : "") + "." : "";
     const row = el("div", "c-row", '<span class="dot' + (have[id] ? " ok" : "") + '"></span><div><b></b><small></small><div class="notice"></div></div>');
     row.dataset.ai = id;
     row.querySelector("b").textContent = name + " · " + via;
-    row.querySelector("small").textContent = have[id] ? "Found on this computer." : "Not found. " + how;
+    row.querySelector("small").textContent = have[id] ? "Found on this computer." + signedIn : "Not found. " + how;
     paintNotice(row.querySelector(".notice"), id);
     $("ai-list").appendChild(row);
     if (id === "opencode" && have[id]) $("ai-list").appendChild(openCodeRow());
+    if (have[id] && accountOf(id).offered) $("ai-list").appendChild(secondAccountRow(id));
   });
 }
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in
@@ -4175,7 +4280,7 @@ function openCodeSignIn() {
 function openCodeButton(label, action) {
   const b = el("button", "pill sm", esc(label));
   b.onclick = async () => {
-    b.disabled = true;
+    b.disabled = true; noticePresses++;
     let r = null; try { r = await api("/api/opencode", { action }); } catch (e) {}
     /* only a sign-in that could not start: a page that did not open leaves the sign-in's own line in place */
     ocError = action !== "login" ? "" : !r ? "Could not reach the app. Try again." : r.ok === false ? (r.error || "The sign-in could not start.") + " Try again." : "";
@@ -4198,10 +4303,11 @@ function openCodeRow() {
   if (s.signed.length && !s.buttons.length) row.querySelector(".act").appendChild(openCodeButton("Sign in again", "login"));
   return row;
 }
-/* while a sign-in waits, Setup follows it */
+/* while a sign-in waits (OpenCode's, or one of your own tools'), the page follows it */
 function watchOpenCode() {
   clearTimeout(ocPoll);
-  if ((((status.ai || {}).opencode || {}).login || {}).state === "waiting") ocPoll = setTimeout(async () => { await refresh(); watchOpenCode(); }, 2000);
+  const waiting = (((status.ai || {}).opencode || {}).login || {}).state === "waiting" || Object.values((status.ai || {}).sign_in || {}).some((x) => x && x.login && x.login.state === "waiting");
+  if (waiting) ocPoll = setTimeout(async () => { await refresh(); watchOpenCode(); }, 2000);
 }
 /* Programs agents may run. Claude chats run without anyone watching, so a command the user has not allowed is
    refused; the chat then shows what was refused and one button to allow that program from now on. */

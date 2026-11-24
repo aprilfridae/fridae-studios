@@ -1085,6 +1085,411 @@ Cursor is `app-rs/src/cursor.rs`, checked against cursor-agent 2026.11.22; its h
   `FRIDAE_CURSOR=$HOME/.local/bin/cursor-agent`; put `{"chat_ai": "cursor"}` in the kit's `config.json`. Each turn
   uses the user's Cursor plan.
 
+## Signing in to Claude Code, Cursor and Gemini
+
+`app-rs/src/signin.rs`; its header has the commands and what was measured. These three run on the user's own sign-in,
+the one their tools have outside Fridae too, so the app only asks each tool who is signed in and starts the tool's own
+sign-in. **Nothing in the app signs anyone out**: no tool is ever started with `logout`, there is no button for it, and
+a test reads every source file of the app, the page and the Python tools to keep it so (the word may stand in
+comments and tests only). (OpenCode is different: Fridae's own copy, see the next section.)
+
+- **Who is signed in** (`signin::check`, `Known`, `Answer`): `claude auth status --json` (`loggedIn`, `email`,
+  `authMethod`; exit code 1 when signed out, the answer is read all the same), `cursor-agent status --format json`
+  (`isAuthenticated`, `userInfo.email`), and for Gemini `agy models`, which is the model list anyway
+  (`antigravity::ask_models`): signed out it ends with code 1 and "Error: Please sign in to view available models."
+  agy has no command that names the account. An answer the app cannot read is "not known", never "signed out", so no
+  Sign in button shows on a guess. A key or a gateway reads as signed in too (`authMethod` api_key, oauth_token,
+  api_key_helper, third_party; the reviewer's measurement) and is told apart (`by_key`). Asked at start, after a
+  sign-in or a cancelled one, when a turn fails as signed out (`turn_failed`), on every press of Sign in, and from the
+  page's status only when the last answer is old (`due`: half an hour after "signed in", five minutes otherwise). Each
+  runs with the environment a turn of that AI gets (`tool_env`: `paths::child_env`, and for Cursor the app's own
+  config and data folders, `cursor::environment`; measured: Cursor answers "authenticated" with those too), through
+  `paths::Start`, in a group of its own and in the ledger, and is ended after 30 seconds (`run_limited`).
+- **Sign in** (`login_start`, `/api/signin` with `ai`, `action` login, cancel or check, and `sure`): `claude auth
+  login`, `cursor-agent login`, and for Gemini `agy acp` with `initialize` and then `authenticate` for the method
+  `oauth-personal` ("Log in with Google", from the `authMethods` agy lists). Each tool opens the browser itself and
+  waits for it to come back (Claude Code and agy give the page a `localhost` address to return to; Cursor's link carries
+  a challenge and an id instead); nothing is typed. Claude Code also prints a link and "Paste code here if prompted"
+  for a browser on another computer: the app has no place to paste one and shows no link (a link's query is a secret
+  of that sign-in), so that way is not offered; the waiting line says to cancel and try again if no page opened.
+  When the tool ends, whatever it said, the app asks who is signed in and goes by that. A sign-in nobody finishes is
+  ended after ten minutes, and when the app quits. A press while one waits ends it and starts afresh (two presses
+  within three seconds are one).
+- **Never over a sign-in that is there without a second press.** These sign-ins are the user's own, also outside
+  Fridae, and finishing a new one replaces the old. So a press first asks the tool who is signed in. Only "nobody"
+  starts the sign-in; any other answer comes back as `confirm` with a line that says so ("Claude says it is signed in
+  as ... Signing in again replaces that sign-in, also outside Fridae. Press again to go on."), and the second press
+  sends `sure`. Not measured: whether a tool keeps the old sign-in when a new one is started and cancelled (it takes
+  a sign-in to lose). It can be measured safely on a second account's folder once the user has signed one in.
+- **The page**: `status.ai.sign_in` (`offered`, `state`, `who`, `kept_key`, `login`). `aiNotice(ai)` shows "Not signed
+  in." with Sign in, "Sign in on the page that opened in your browser. If none opened, cancel and try again." with
+  Cancel (first, whatever the status says), the confirm line with "Sign in anyway", or "The sign-in did not finish.
+  Try again.", in the picker and in the AI's row in Setup, Connections, whose own line adds "Signed in as <account>."
+  With a key on this computer that the switch keeps from the AI, "Not signed in." names the switch.
+- **A failed turn** (`signin::failure`, `Agent::put_failure`, the error event's `sign_in`): only Claude Code's plain
+  "Not logged in" becomes "Claude is not signed in. Sign in, then send your message again." with the button. Its
+  other lines that end in "Please run /login" (a key that is not valid, an account without access) keep the tool's
+  words, and get the button only when the last status was an account's, not a key's or a gateway's. Cursor's and
+  Gemini's signed-out lines are the app's own, with the button.
+- **The button starts one kind of sign-in**: the tool's default (a Claude account, a Cursor account, a Google
+  account). People on an API key, a company gateway or an Enterprise plan sign in in the tool itself; the Guide says so.
+- **Windows**: not offered (`signin::offered`; nothing was measured there). The lines say what they said before.
+- **Measured** (23 November 2026; Claude Code 2.1.319, cursor-agent 2026.11.22, agy 1.5.15): the three status
+  commands signed in (for real) and signed out (a scratch home; for Claude Code a scratch `CLAUDE_CONFIG_DIR` alone
+  also reads as signed out, so its sign-in is kept per config folder); the start of each sign-in in a scratch home,
+  with a stand-in `open` in place of the browser, ended before anything was done; and the same from the page of the
+  dev binary. **Not measured**: a sign-in that completes (how each tool ends then, agy's answer to `authenticate`,
+  and that the next status says "signed in"), since that would mean signing in for real.
+
+## A second account: what was measured first
+
+Design: `docs/superpowers/specs/2026-11-23-second-accounts-design.md`. Measured on 23 November 2026 (Claude Code
+2.1.319, agy 1.5.15, macOS), before any code. No sign-in was completed and no limit was reached for real; the user's
+own sign-ins were only ever asked for their status.
+
+**The Mac keychain follows HOME.** `/usr/bin/security default-keychain` names `~/Library/Keychains/login.keychain-db`
+with the real home, and with any other HOME says "A default keychain could not be found" (only the system keychain
+is listed, which a user cannot write). So a tool that keeps its sign-in in the keychain is signed out under another
+HOME, and has no keychain there to keep a new sign-in in.
+
+**Claude Code keeps its sign-in per config folder.**
+- `CLAUDE_CONFIG_DIR=<another folder>` with the real HOME: `claude auth status --json` says `loggedIn: false`, while
+  the user's own entry is still in the keychain. So the entry is looked up by the config folder. Its name for a
+  second folder is not measured (it takes a sign-in in that folder to exist).
+- `claude auth login` started for such a folder with the real HOME prints what it prints for the first account and
+  waits; ended before anything was done. Afterwards the user's own status was `loggedIn: true` as before.
+- The folder then holds `.claude.json`, `backups`, `plugins`, `projects`, `sessions`: the conversations are kept in
+  the folder (`projectsDirectory` in the status), so a chat's `--resume` id belongs to one account.
+- What a turn loads, from Claude Code's own `init` line (a signed-out turn: no model is called): an empty second
+  folder gives the built-in skills, plugins and agents only (18 skills, 4 plugins, 23 tools here), without the
+  user's own. With the user's `settings.json`, `skills` and `plugins` linked into it, the user's plugin is back (5
+  plugins, 24 tools). The app's own flags (`--strict-mcp-config`, the allowed and denied tools, the mode, the
+  standing instructions) are on the command line and do not depend on the folder.
+- Not measured: a turn that really runs on a second account, and what removing one leaves in the keychain.
+
+**agy keeps its sign-in in the keychain, one per HOME, whatever folder it is given.**
+- `agy acp --gemini-dir <a fresh folder>` with the real HOME: `session/new` answers with a session, so it is signed in
+  as the user. The same with `--app-data-dir` and `--cli_dir_name` set to other names. None of agy's folders
+  separates the sign-in.
+- With another HOME, `agy models` says "Please sign in" and `session/new` says "Authentication required". The
+  process per message (`agy -p`) has no `--gemini-dir` at all.
+- agy's program names the keyring it uses (`go_keyring`, `keyring.macOSXKeychain`, `KeyringTokenStorage`). Under
+  another HOME there is no keychain (above), so whether a sign-in made there would be kept, and where, cannot be
+  known without completing one.
+- Under another HOME agy also starts from an empty `~/.gemini` (seen in the scratch home: no settings, MCP config,
+  plugins or conversations of the user's), and a command it runs would inherit that other home (git identity, keys);
+  the second point follows from how processes inherit HOME and was not run.
+
+So agy's own folders cannot give Gemini a second account: only another HOME separates its sign-in. (That was where
+the first round stopped. The user then decided to go ahead; what was measured for it is the next part.)
+
+**A second HOME for agy** (measured the same day, agy 1.5.15, in fresh scratch homes; nothing was signed in or out,
+and nothing of the user's keychain was read but two names):
+- agy's keychain entry is a generic password with the service `gemini` and the account `antigravity` (the two names
+  as the keychain's own listing shows them; its contents were never read). It is the only place the user's own
+  sign-in is kept: the user's `~/.gemini/antigravity-cli` holds no credentials file (names looked at only).
+- With the real HOME `/usr/bin/security find-generic-password -s gemini -a antigravity` finds it (exit 0). With a
+  scratch HOME it does not (exit 44), there is no default keychain, and a write fails (a made-up entry under a
+  made-up name: exit 154, and nothing appeared in the real keychain). `CFFIXED_USER_HOME`, `USER`, `LOGNAME` and
+  the `XDG_*` folders pointing at the real home do not bring it back: HOME alone decides. agy reaches the keychain
+  through that same program (`go_keyring`'s `macOSXKeychain` in its text). So an agy run with another HOME can
+  neither read nor write the user's own sign-in.
+- agy's app data folder is `<HOME>/.gemini/antigravity-cli` whatever it inherits (its own log line "CLI app data
+  directory", with `XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `ANTIGRAVITY_APP_DATA_DIR`,
+  `ANTIGRAVITY_EXECUTABLE_DATA_DIR`, `ANTIGRAVITY_CONFIG_REL_DIR`, `SSH_CONNECTION` each set to something else:
+  no change, and nothing written anywhere else).
+- Where a sign-in made under such a HOME would be kept, from the program's text only: it has a file store beside
+  the keyring (`fileTokenStorage`, `compositeTokenStorage`, `useFileIfKeyringWritesDisabled`, "keyring writes
+  disabled after an earlier keyring write failure", "couldn't resolve the app data directory to save credentials
+  in", and a release note about "file storage when keyring storage is bypassed or unreachable"). So a sign-in made
+  where the keychain cannot be written should be kept in a file in that home's own app data folder.
+  **Not measured**: it takes a completed sign-in, which only the user does. The first real second sign-in shows it:
+  Setup says "Signed in." after it, and still says so after the app was closed and opened again. If it does not, a
+  second home does not keep a sign-in, and the other way (moving the keychain entry) would be the next thing to
+  build; it was not built.
+- A turn there without a sign-in says "Authentication required" (measured earlier). A turn with one was not run.
+  The plumbing for "agy's HOME is not the app's" already exists and was used the other way round for testing
+  (`FRIDAE_AGY_HOME`): the app's tool server is given the app's HOME back, and agy's home is kept from its file
+  tools.
+- What differs for a turn under the second home: agy starts from an empty `~/.gemini` there (none of the user's own
+  agy settings, plugins or conversations), and a shell command it runs inherits that home (so `~` is the account's
+  folder; the user's git identity is linked in, their keys are not).
+
+**Usage limits, as they reach the app today.**
+- Claude Code: a `result` with `is_error` and the tool's words (`usage_limit` knows "You've hit your 5-hour limit ·
+  resets 12:50am (America/Los_Angeles)" and "Claude usage limit reached. Your limit will reset at 3pm."), and every
+  turn's `rate_limit_event` with each window's `resetsAt` as a time (`limits.rs`). The only recorded event is one
+  with the status "allowed" (`tests/fixtures/claude/plain-with-rate-limit.ndjson`); no recording of a turn that hit a
+  limit exists.
+- Gemini: its error text. From the user's chats of 22 November, as handed to the builder (not read by the builder):
+  "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h6m48s."
+- A studio run pauses on it (`LIMIT_END`); any other chat only shows the words.
+
+## A second account for Claude, and the rollover
+
+`app-rs/src/accounts.rs`, the chat's part in `agents.rs` (`turn_account`, `turn_over_at`, `roll_over`, `resend`),
+the sign-in in `signin.rs` (id `claude2`). Written for Claude; Gemini's differs in one thing (the section after this).
+
+**The account.** The first account is the user's own sign-in and nothing here changes it. The second is a Claude
+Code config folder of the app's own, `<app data>/Fridae Studios/accounts/claude-2-<12 hex>`. `prepare` links the
+user's own `settings.json`, skills, plugins, agents, commands, `CLAUDE.md`, rules, output styles and key bindings
+into it before every command there, so a turn on the second account has the same setup; who is signed in and the
+conversations are the folder's own. Whether there is one is the guarded setting `second_accounts`
+(`{"claude": "<folder name>"}`): a name the app made, checked by `name_ok`, never a path, read from the app's
+memory, left out of other AIs' kept-process fingerprints (`guarded_print`), and the folder itself is part of
+Claude's launch key (`ClaudeLaunch.config_dir`). The folder of second accounts is in `paths::app_protected()`.
+Nothing runs a tool's logout.
+- **Where the sign-in is stored** (`accounts::point`). Every command of a second account (status, sign-in, turn,
+  the summary's fall-back) gets `CLAUDE_CONFIG_DIR` *and* `CLAUDE_SECURESTORAGE_CONFIG_DIR`, both set to its
+  folder. Claude Code names its keychain entry, and finds its plain credentials file, by the second variable when
+  it is set, over the first (read in the program's text, 2.1.319; it sets it for sessions it starts itself): one
+  inherited from the app's environment, or an empty one, would send the second account's sign-in to another entry
+  or to the user's own. Nothing is set or removed for account 1.
+- **A swapped folder is never followed** (`real_folder`, `prepare_in`, `remove_folder`). The account's folder, and
+  the folder of all accounts, are used only when `symlink_metadata` says they are directories themselves. A link
+  there: no status, sign-in or turn runs for the second account, and Remove takes the link away and nothing of
+  what it led to.
+- **Remove** first ends a waiting sign-in, stops every turn running on the account, waits for them (eight seconds
+  at most) and closes the processes kept for it (`agents::account_removed`), then deletes the folder: links as
+  links, then the sign-in's own place (`.credentials.json`, `.claude.json`, agy's `.gemini`), then the rest; what
+  cannot be deleted for its mode (a folder a tool left read-only) is made writable and tried again. The folder is
+  looked at again 5 and 40 seconds later and deleted again if something that was still running wrote it back. When
+  it is still there after all, Setup says so with its place ("Removed, but its folder could not be deleted and may
+  still hold its sign-in"). Nothing is deleted when the accounts folder itself is a link. The name is never used
+  again. The keychain entry of a removed Claude folder stays ("Claude Code-credentials-" and 8 hex of the folder's
+  path): the app deletes nothing in the keychain.
+
+**Ready** (`accounts::second_signed_in`, `signin::second_ready`). A second account takes chats only when its tool
+says an account is signed in there, an account of its own: not a key or token from the environment (`by_key`: it
+signs both accounts in alike), and not the account the first is signed in to (`same_as_first`: the browser was still
+signed in as the user's own when the second was added). Setup says which of the two it is.
+
+**Which account a turn runs on** (`turn_account`, `account_for`). A chat keeps its account (`State.account`) and,
+on the second, the folder's name (`account_name`), both saved with the chat. A new chat or a new expert starts on
+the user's own unless that is used up and the second is ready. A chat never moves on a guess: only its own turn
+ending on the limit moves it. A chat on a second account that is not there for it any more carries on with the
+user's own, in a new conversation handed the chat so far: the account was removed, or removed and added again
+(another folder, which has none of its conversations), or its sign-in is known to be gone while the user's own
+account is not used up. The folder is read once per turn: not usable at that very moment (removed, swapped for a
+link, a keychain in it), the turn runs on the user's own in a new conversation handed the chat so far, and the
+chat says so.
+
+**What counts as the limit.** `usage_limit` (a studio run pauses on it) is as it was, plus Claude Code's newer
+lines. `account_limit` is narrower and is what marks an account and moves a chat: "You've hit your ... limit",
+"You've reached your ... limit", "usage limit reached", "You're out of extra usage"; not a passing "rate limit"
+(429, overloaded) and not a spend limit the user set. Only Claude Code's own error result can say it, never a
+reply or a tool's output.
+
+**Used up.** The account is marked used up (`mark_used`) until `back_at`: the reset time in Claude Code's
+`rate_limit_event` when its status is not "allowed" (`event_reset`, kept for the turn in `TurnEnd.limit_reset` by
+the reader), else the tool's words ("Resets in 2h6m48s", or a clock time such as "resets 12:50am", taken as the
+next time this computer's clock shows it; a date is never guessed, also not in "resets at 9am on Nov 28"), else an
+hour from now, after which it is simply tried again. In memory only: after a restart the first turn finds out
+again.
+
+**The rollover** (`roll_over`, first thing in `after_turn` for a turn that ended on the account's limit and was
+not stopped). When the other account can take the chat (`rolls_to`), the chat gets a new conversation there
+(`session = None`, the chat so far as its hand-over, without the message: see the next section), an `account` and
+a `rollover` event (the one line in the chat; the tool's own line is held back for it, `TurnEnd.held_back`, and
+said only when the chat does not move), and the message goes again. `after_turn` then returns at once: no result
+for a waiting Lead, no "done", no carry-on, no pause of the run. The turn is not over.
+- *Never lost.* The message as it went out (`State.sent`) is kept from `send` on, and the rollover hands it to the
+  resend itself (`Ask.resend` carries what was typed and what the AI was sent), so nothing a later message leaves
+  behind can change it. The chat counts as working without a gap: `turn_over_at` sets `sending` (`roll_hold`) in
+  the same lock in which the turn stops counting as running, when its end is a limit that may roll, so a message
+  arriving then (typed, a Review decision, an expert's wake) is held behind the one that goes again. An end that
+  was not held and found the chat already working gives up: nothing is sent over a message on its way.
+- *Never twice.* A resend goes only while `resend_due` is set and no turn runs, once; it shows no second message,
+  takes no second checkpoint, spends no allowance, takes no notes, reads no new Studio context, and keeps the
+  turn's start time (`turn_started`, `plugin::begin` not called again), so an expert's Studio steps from before
+  the limit still reach its Lead and Undo covers the whole message.
+- *No bounce.* `State.rolled` is set when a message is sent again and cleared by the next message that is not a
+  resend: a message moves once.
+- If it cannot go after all (Stop in the moment before, the app closing), the turn ends as a stopped one
+  (`stopped_before_start`): said, an expert's Lead told, the board moved, and what the user typed meanwhile sent
+  next. A Lead's nudge is written again after a rollover, so what waits behind the resent turn still ends its
+  `rbx_team wait` early.
+- A turn that had used tools before the limit: the hand-over ends with a line saying some of the work may be done.
+- The kept process of the old account is never sent the message: the account's folder is in its key, so the next
+  turn starts one for the new account and the old one is given up.
+- Experts are chats, so the same holds for them. Both used up: nothing moves and everything is as before
+  (`LIMIT_END` pauses a studio run).
+
+**Known and left.** A second account's sign-in is a file in its folder (Gemini's, and Claude's where it uses no
+keychain), and the lists that keep agents out of the accounts folder cover writing: in Full auto an agent's Read
+tool, or a shell command, can read it. The app's image tool starts agy from its tool server, which has the app's
+own HOME, so pictures are made on the first account also in a chat that has moved to the second. "Used up" is
+forgotten when the app is closed.
+
+**Stand-ins only.** No sign-in was completed, no second account was signed in, no limit was reached and no turn ran
+on a second account: all of the above is tested with `accounts::stand_in` (one test's own accounts, handed to the
+threads its chat's turns run on) and turn ends made up from the tool's known words; one test runs the whole path on
+a kept stand-in process that answers with a "rejected" `rate_limit_event` and the limit's line. Left as they are:
+"used up" is forgotten on restart, and `limits.rs` (the usage shown in the window) is not per account.
+
+## Gemini's second account
+
+The same second account as Claude's (the section above: ready, which account a turn runs on, used up, the
+rollover, Remove, the swapped-folder rule all hold as written; `accounts::AIS` is now Claude and Gemini), with one
+difference: what separates the two accounts.
+
+**A home of its own** (`accounts::home`, `GeminiLaunch.home`). Gemini's second account is a folder of the app's own,
+`<app data>/Fridae Studios/accounts/gemini-2-<12 hex>`, given to every agy command of that account as HOME: its
+status (`agy models`, `antigravity::ask_models_of(2)`), its sign-in (`agy acp` with `authenticate`, the same
+one-click flow, id `gemini2`), the kept process and the process per message. agy's data folder
+(`<HOME>/.gemini/antigravity-cli`: conversations, settings, and a sign-in kept in a file) is then inside it.
+`CFFIXED_USER_HOME` and agy's own folder variables are taken out of those commands' environment. The home is part
+of the kept process's key. Nothing is set for account 1.
+- **The user's own sign-in cannot be reached from there.** It is one keychain entry, found through HOME alone
+  (measured, see "what was measured first"): from the second home it is not found and cannot be written. The app
+  itself never reads, copies or moves a token, and touches no keychain.
+- **That holds only while the home has no keychain, so one that has grown a keychain is not used**
+  (`accounts::no_keychain_in`). A link at `<home>/Library/Keychains` to the user's own brings their keychain back
+  for every command run with that home (measured by the reviewer: the entry is found again), and a sign-in made
+  there would be written into the user's own entry. A shell command of a turn on the second account could make
+  such a link. So before anything of Gemini's second account runs (status, sign-in, turn), `prepare` refuses the
+  home when `Library/Keychains` exists at all, as a folder or a link, when `Library` is not a folder of its own, or
+  when the home names a keychain list (`Library/Preferences/com.apple.security.plist`). Nothing of the app or of
+  agy puts any of these there (measured: status and the start of a sign-in leave no `Library` at all). Setup then
+  says "Fridae does not use this account" and offers only Remove; a chat that was on it carries on with the user's
+  own. Seen in the scratch app with a keychain folder made by hand: no sign-in started.
+- **No key stands in for a sign-in.** `GEMINI_API_KEY`, `GOOGLE_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are
+  taken out of every agy command of the second account (`KEPT_FROM_SECOND`), so an empty second home reads "Not
+  signed in." until the user signs in there, and no turn there is billed to a key. (Measured with made-up keys in
+  an empty home: `agy models` says "Please sign in" with each of them, so agy does not take one by itself there
+  today.) The app's tool server gets the two Gemini keys back in its own entry.
+- **Whether a sign-in made there is kept** rests on agy's file store for a sign-in made where the keychain cannot be
+  written (read in its program's text). **Not measured.** The user's first real second sign-in shows it: Setup
+  says "Signed in." afterwards, and still does after the app was closed and opened again.
+- The app's tool server is given the app's own HOME back; agy's home is kept from its own file tools (the code that
+  the testing switch `FRIDAE_AGY_HOME` already used, now fed from the account).
+- **What differs for a turn there.** agy starts from an empty `~/.gemini` (none of the user's own agy settings or
+  plugins). A shell command it runs inherits the second home: `~` is the account's folder, the user's git identity
+  is linked in (`.gitconfig`, `GEMINI_LINKED`), their keys and other tools' logins are not. The Guide says so.
+- agy's status names no account, so the app cannot tell when the second account is the same Google account as the
+  first (Claude's can, `same_as_first`). The Guide tells the user to sign in with another one.
+
+**The limit.** For Gemini `account_limit_of` knows agy's own words, "Individual quota reached. Please upgrade your
+subscription to increase your limits. Resets in 2h6m48s." (the user's chats of 22 November have exactly this, as a
+line of its own in a chat on a process per message). The app's line for a refused message is not taken for a
+limit: a refusal may be no limit at all. It becomes a failed turn, which is what a rollover needs, on every path:
+- the kept process (on request): agy's error answer, "Gemini could not run this message: ...", is `Out::Failed`;
+- a process per message (the default) whose result failed with those words: `antigravity::Turn::feed` hands it on
+  as `Out::Failed` (any other failed result stays a line in the chat, as before);
+- a process per message that ends with no result and the words in its error output: `limit_in_error_output`, in
+  `finish_turn` before the turn is over, makes the turn's end the same failed one (`antigravity::quota_line`).
+Which of the last two agy really does was not recorded (no recording of a quota failure exists); both are tested
+through the reader (`consume`) to the rollover. The line is held back for the rollover's one line as Claude's is
+(`TurnEnd.held_back`), and said once when the chat does not move. Claude needs none of this: its limit is always a
+result, on both of its paths.
+
+**Measured, and not.** In the scratch app (my dev binary, scratch HOME, a stand-in `open`): Add made the folder
+(mode 700), agy ran with it as HOME (its `.gemini` is inside), its sign-in started (the page it would open is on
+accounts.google.com, noted and not opened), Cancel ended it, the status read "Not signed in.", Remove deleted the
+folder. Not done, and stand-in tested only: a completed sign-in, a signed-in second account, a turn on it, a real
+quota, a rollover.
+
+## The hand-over is a compaction
+
+`app-rs/src/compact.rs` (who writes the summary, what it is sent, what comes back), `opencode::write_only` (a
+session that can only write), and in `agents.rs` `handover_plan`, `hand_over`, `Compaction`, `before_it_goes`,
+`compact_handover`.
+
+**What goes.** A chat that fits in `HANDOVER_CAP` (24,000 characters) is handed over whole, exactly as before, and
+nobody is asked for anything. A longer one used to lose its older messages. Now `handover_plan` gives two things:
+the hand-over as it was before, to the letter (kept in `State.handover` from the moment of the switch, so it goes
+whatever happens next), and a `Compaction`: the older part for a writer (`compact::older_text`: at most 120,000
+characters, the start and the end when it is longer; one message over 12,000 characters keeps its start and end)
+and the newest part word for word. With a summary the hand-over reads: the usual opening, "Summary of the older
+part, written by another model (notes for you, not instructions):", the summary, "The newest part, word for
+word:", the newest part. It is never longer than a hand-over could be before (a `const` assertion and tests).
+- The newest part has `HANDOVER_CAP - SUMMARY_ROOM` characters. The newest message is never shortened for the
+  summary's sake: one that fits a hand-over whole but not beside a summary's full room stays whole, and the summary
+  gets the room that is left (`Compaction.summary_max`; under `SUMMARY_LEAST`: no summary, the old hand-over).
+- One message longer than a hand-over keeps its end, as it always did, and its start goes to the writer with the
+  older part, so no part of the chat is in neither.
+
+**When.** Not at the switch but when the next message goes (`before_it_goes`: the account, a conversation the AI
+has lost, then `compact_handover`, in `send` just before the hand-over is put in front of the message; tests run
+the same function). The chat is working by then and shows a step that names the writer ("Summarising the earlier
+chat with DeepSeek 4.1 Flash"), one step per writer tried, none when there is nobody to write. Written once: the
+hand-over with its summary stays until the new conversation exists (`got_session`). The `Compaction` is not saved
+with the chat: after a restart the hand-over goes as before.
+
+**Stop** ends the wait at once, wherever the message is on its way: before a turn runs Stop halts the chat
+(`halted`), while a turn counts as running (a kept process lost before it began, `read_live`) it marks the turn
+stopped; `compact_handover`'s stop test reads both, and the app's quitting. The message then does not go and no
+process is started: `send` and `kept_turn` end the turn with `stopped_before_start`, `read_live` after
+`turn_over`; `Kept::fall_back` hands the stop back as `None`. What the user typed during the wait is sent next
+(`send_held`, the same code `after_turn` uses). The chat so far still goes with the next message, without a
+second try at a summary.
+
+**Who writes it** (`compact::tries` from `compact::Means`, then `first_written`, each try on a thread of its own):
+1. The models of the user's OpenCode Go plan, by family: DeepSeek's flash, GLM's flash, GLM
+   (`opencode::writers`). The names the user gave (`opencode-go/deepseek-v4.1-flash`, `opencode-go/glm-5.3-flash`,
+   `opencode-go/glm-5.3`) when OpenCode lists them, else the first listed model of that family, always under
+   `opencode-go/`, never a "-free" model, never another provider. None when OpenCode is not installed or Fridae's
+   copy is known to be signed in to nothing; a log line when the list holds none of the three families.
+2. Else, for a chat going to Claude: Claude Code's `haiku` on the account the chat is going to (`claude_writes`):
+   `claude -p --safe-mode --model haiku --tools "" --no-session-persistence --strict-mcp-config
+   --disable-slash-commands --setting-sources "" --output-format json`, the text through its input, in the
+   writers' folder. `--safe-mode` is the flag whose help says it keeps CLAUDE.md, skills, plugins, hooks and the
+   user's other customisations out while the sign-in works as usual (checked: a CLAUDE.md planted in its folder
+   was not followed); `--setting-sources ""` goes with it, so no settings file is read for anything else either. Not when "Use API keys from my environment" is on: the app never picks a model that would be billed
+   per use, so nobody writes then. Chats going to Gemini, Cursor or OpenCode have no step 2.
+3. Else nobody: the hand-over goes as it was before.
+One wall-clock limit for everything, two minutes (`LIMITS.all`), 45 seconds for one try, Stop looked at before the
+first try. When there is a fall-back, half a minute of the two is its own (`LIMITS.reserve`): OpenCode's models
+share the time before it, so three that accept the text and say nothing cannot starve it. A try out of time is told to give up and left behind (an OpenCode session is interrupted and removed at
+its next event; Claude Code's whole group is ended by `signin::run_fed`, which also ends it on Stop and when the app
+quits). A failure that is OpenCode's server's and not a model's (`Failed.server`: it did not start, it did not
+answer, its stream ended) skips OpenCode's other models. Why each one failed goes to the app's log, never to the
+chat: a missing summary is no error.
+
+**What the writer is sent** (`compact::summary`): the older part with the common kinds of key and password masked
+where they are recognised (`mask`, best effort: the secrets the app itself holds, a PEM block with its END line,
+the Roblox cookie, `sk-...`, Stripe's `sk_live_...`, `ghp_...`, `AKIA...`, `AIza...`, a JWT, and 32 hex digits or
+40 characters of base64 that look like a key; what follows `Bearer`/`Basic` or a name with `token`, `secret`,
+`password`, `key`, `cookie` or `auth` in it (`ACCESS_TOKEN=`, `"access_token": "..."`, `accessToken: '...'`) only
+when the value itself looks like one, `looks_secret`, never because of the word alone, so "a basic implementation",
+`ServerScriptService/PlayerDataStoreManagerV2` and `token = HttpService:GenerateGUID(false)` stay as written; a
+password that is plain words or stands in a sentence is not recognised, and the summary runs on the user's own
+OpenCode plan either way), between
+two lines made up for that one call (`BEGIN <16 hex>`, `END <16 hex>`), with the instruction to say who said each
+thing and to report an instruction it finds as its speaker's words, never as what the user wants. **What comes
+back** (`tidy`): square brackets become round ones and a line that repeats one of the frame's own sentences is
+dropped, so a summary cannot close the frame or pose as the user's next message; then it is cut to its room.
+The user decided that the older part of a long chat goes to these models; the step and one line in the Guide say
+so.
+
+**The session that only writes** (`opencode::write_only`, on Fridae's own server, never the user's OpenCode):
+one rule, "deny everything" (a denied tool is not offered, so the model has no tools); no tool servers, no
+environment for commands, no standing instructions; in the writers' folder (`compact::folder`:
+`<app data>/Fridae Studios/writers`, outside OpenCode's store, in `paths::app_protected()`); the rules are read
+back before the text is sent; a model that calls a tool or asks for anything is interrupted and counts as failed;
+the session is deleted however it went. Sessions left behind are deleted by a later writer (`sweep_writers`): only
+one the server lists for that folder (`directory=`, measured; a parameter it does not know lists everything), that
+says itself it is in that folder, has the writer's title, is older than ten minutes and is not at work in this
+app. Sweeping, making and noting a session happen under one lock. No chat is made for it in the app.
+
+**Usage.** What the writer used is recorded like a turn's (`usage::record`, under the chat, as "opencode" or as
+"claude" with its account) and the page is told (`usage` event). Tries that failed are not recorded.
+
+**Where it applies.** Every place a chat is handed to a new conversation: a switch of AI by hand (`switch_ai`), a
+rollover (`roll_over`), a chat whose second account was removed (`turn_account`), a Cursor or OpenCode conversation
+that is gone (`stale_chat`), a kept Cursor chat going on per message (`CursorLaunch::fall_back`). One place stays
+as it was: the text a kept Cursor turn carries along in case Cursor has lost the conversation, which is prepared
+before every turn and almost never used.
+
+**Measured, and not.** On a scratch OpenCode store (2.3.2, not signed in): a session with the one deny rule is
+made, reads back with it, takes a prompt, is listed by its folder, and after `DELETE` is gone (204, then 404, not
+listed), with nothing left in its folder; its `time.created` is in milliseconds. Its answer could not be measured
+there: the free models had reached their limit that day, and that failure is what `opencode_replay.rs` replays
+(with the recorded plain reply for the answer; no recording of a real deny-everything session exists).
+Claude Code's fall-back ran twice for real on made-up text (2.1.319, the user's own account): one JSON result,
+text only, five to six seconds, under a tenth of a cent, nothing written in its folder and no conversation saved.
+Not run: any model of the OpenCode Go plan, and the fall-back on a second account.
+
 ## OpenCode as a chat's AI
 
 OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the server's own API description
