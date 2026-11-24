@@ -437,7 +437,7 @@ pub fn first_written(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, 
 }
 
 type PlanWrites = Arc<dyn Fn(&str, &str, &AtomicBool) -> Wrote + Send + Sync>;
-type ClaudeWrites = Arc<dyn Fn(&Path, u8, String, Duration, &AtomicBool) -> Wrote + Send + Sync>;
+type ClaudeWrites = Arc<dyn Fn(&Path, Option<String>, String, Duration, &AtomicBool) -> Wrote + Send + Sync>;
 
 /// What there is to write a summary with, as the app finds it when one is wanted (`means`; in tests a stand-in).
 #[derive(Clone)]
@@ -477,7 +477,7 @@ fn means() -> Means {
 
 /// The writers for a chat going to `target` (an AI's id) on `account`, in order: the plan's models, then, for a chat
 /// going to Claude only, Claude Code's cheapest model on that account (see the module's header).
-fn tries(target: &str, account: u8, prompt: &str, means: &Means, limits: &Limits) -> Vec<Try> {
+fn tries(target: &str, account: (u8, Option<&str>), prompt: &str, means: &Means, limits: &Limits) -> Vec<Try> {
     let mut out: Vec<Try> = Vec::new();
     for model in &means.plan {
         let (writes, model, text) = (means.plan_writes.clone(), model.clone(), prompt.to_string());
@@ -485,7 +485,9 @@ fn tries(target: &str, account: u8, prompt: &str, means: &Means, limits: &Limits
     }
     if let Some(exe) = means.claude.clone().filter(|_| target == "claude") {
         let (writes, text, limit) = (means.claude_writes.clone(), prompt.to_string(), limits.one);
-        out.push(Try { ai: "claude", account, model: CLAUDE_MODEL.to_string(), run: Box::new(move |cancel| writes(&exe, account, text, limit, &cancel)) });
+        // (the account it runs on goes by its name: its place is only for the usage record)
+        let name = account.1.map(str::to_string);
+        out.push(Try { ai: "claude", account: account.0, model: CLAUDE_MODEL.to_string(), run: Box::new(move |cancel| writes(&exe, name, text, limit, &cancel)) });
     }
     out
 }
@@ -523,7 +525,7 @@ pub fn hanging() -> Means {
 /// A summary of `older` (`older_text`) for a chat going to `target` on `account`, if anyone can write one in time.
 /// Blocks for as long as `LIMITS` allow at most: call it where the chat already shows that it is working.
 /// `starting` is told each writer's name as its turn comes (never called when there is nobody to write).
-pub fn summary(older: &str, target: &str, account: u8, stop: &dyn Fn() -> bool, starting: &dyn Fn(&str)) -> Outcome {
+pub fn summary(older: &str, target: &str, account: (u8, Option<&str>), stop: &dyn Fn() -> bool, starting: &dyn Fn(&str)) -> Outcome {
     #[cfg(test)]
     let (means, limits) = STAND_IN.with(|s| s.borrow_mut().take()).unwrap_or_else(|| {
         let mut all = STAND_IN_FOR.lock().unwrap_or_else(|e| e.into_inner());
@@ -559,7 +561,7 @@ const CLAUDE_SYSTEM: &str = "You write summaries of conversations for another AI
 /// servers, custom commands and agents, output styles, ...) disabled", while the sign-in and the choice of model
 /// work as usual; `--bare` would refuse the plan's sign-in), and `--setting-sources ""` with it, so no settings
 /// file is read for anything either. No conversation is saved. In a folder of the app's own, on the given account.
-fn claude_command(exe: &Path, account: u8, folder: &Path) -> Option<Command> {
+fn claude_command(exe: &Path, account: Option<&str>, folder: &Path) -> Option<Command> {
     let mut cmd = Command::new(exe);
     cmd.args(["-p", "--safe-mode", "--model", CLAUDE_MODEL, "--tools", "", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "", "--output-format", "json", "--system-prompt", CLAUDE_SYSTEM]);
     cmd.current_dir(folder);
@@ -568,7 +570,7 @@ fn claude_command(exe: &Path, account: u8, folder: &Path) -> Option<Command> {
         cmd.env("HOME", home);
     }
     // the second account's folder; none there any more: not run at all
-    crate::accounts::env(&mut cmd, "claude", account).then_some(cmd)
+    crate::accounts::env_of(&mut cmd, "claude", account).then_some(cmd)
 }
 
 /// What Claude Code printed (`--output-format json`: its closing "result" event, alone or last in a list).
@@ -588,10 +590,10 @@ fn claude_answer(printed: &str) -> Result<(String, usage::Turn), String> {
 
 /// The fall-back, run to its end but no longer than `limit`, and ended at once when it is told to give up (Stop,
 /// its time, the app closing: `signin::run_fed` ends its whole group, and the app's quitting ends it too).
-fn claude_writes(exe: &Path, account: u8, prompt: String, limit: Duration, cancel: &AtomicBool) -> Wrote {
+fn claude_writes(exe: &Path, account: Option<String>, prompt: String, limit: Duration, cancel: &AtomicBool) -> Wrote {
     let folder = folder();
     let _ = std::fs::create_dir_all(&folder);
-    let cmd = claude_command(exe, account, &folder).ok_or("The account's folder is not there.")?;
+    let cmd = claude_command(exe, account.as_deref(), &folder).ok_or("The account's folder is not there.")?;
     match crate::signin::run_fed(cmd, limit, Some(prompt), "writer", &|| cancel.load(Ordering::SeqCst) || crate::agents::shutting()) {
         Some((out, _, true)) => Ok(claude_answer(&out)?),
         // (an error is printed as a result too: its words, when it has any)
@@ -746,7 +748,7 @@ mod tests {
     }
 
     /// The tries as the app puts them together, from stand-in means: who is asked, in what order, on which account.
-    fn order(target: &str, account: u8, plan: &[&str], claude: bool) -> Vec<(&'static str, u8, String)> {
+    fn order(target: &str, account: (u8, Option<&str>), plan: &[&str], claude: bool) -> Vec<(&'static str, u8, String)> {
         let means = Means { plan: plan.iter().map(|m| m.to_string()).collect(), claude: claude.then(|| PathBuf::from("/bin/claude")), ..Means::none() };
         tries(target, account, "p", &means, &LIMITS).into_iter().map(|t| (t.ai, t.account, t.model)).collect()
     }
@@ -758,14 +760,14 @@ mod tests {
         // a rollover to Claude's second account: the plan's three, then haiku on the second account, last
         let mut all = plan.clone();
         all.push(("claude", 2, "haiku".to_string()));
-        assert_eq!(order("claude", 2, &MODELS, true), all);
+        assert_eq!(order("claude", (2, Some("claude-2-standin")), &MODELS, true), all);
         // a chat going to another AI has no fall-back, whatever is installed
         for other in ["gemini", "cursor", "opencode", "chatgpt"] {
-            assert_eq!(order(other, 1, &MODELS, true), plan, "{other}");
+            assert_eq!(order(other, (1, None), &MODELS, true), plan, "{other}");
         }
         // no model of the plan can be asked (OpenCode missing, not signed in, none listed): the fall-back alone, or nobody
-        assert_eq!(order("claude", 1, &[], true), [("claude", 1, "haiku".to_string())]);
-        assert!(order("gemini", 1, &[], true).is_empty() && order("claude", 1, &[], false).is_empty());
+        assert_eq!(order("claude", (1, None), &[], true), [("claude", 1, "haiku".to_string())]);
+        assert!(order("gemini", (1, None), &[], true).is_empty() && order("claude", (1, None), &[], false).is_empty());
         // the fall-back is not offered where it would be billed per use, or on Windows
         assert!(claude_allowed(false, false) && !claude_allowed(false, true) && !claude_allowed(true, false));
         // each try hands its own model and the same text to the writer, and the fall-back its account and its limit
@@ -779,13 +781,13 @@ mod tests {
                 Err("no".into())
             }),
             claude_writes: Arc::new(move |exe, account, prompt, limit, _| {
-                b.lock().unwrap().push(format!("{} account {account} {limit:?} <- {prompt}", exe.display()));
+                b.lock().unwrap().push(format!("{} account {account:?} {limit:?} <- {prompt}", exe.display()));
                 Ok(("- done".to_string(), usage(3)))
             }),
         };
-        let out = first_written(tries("claude", 2, "the text", &means, &QUICK), &QUICK, &NEVER, &QUIET);
-        assert_eq!(out.summary.map(|s| (s.text, s.ai, s.account)), Some(("- done".to_string(), "claude", 2)));
-        assert_eq!(*seen.lock().unwrap(), [format!("{} <- the text", MODELS[0]), "/bin/claude account 2 200ms <- the text".to_string()]);
+        let out = first_written(tries("claude", (3, Some("claude-2-third")), "the text", &means, &QUICK), &QUICK, &NEVER, &QUIET);
+        assert_eq!(out.summary.map(|s| (s.text, s.ai, s.account)), Some(("- done".to_string(), "claude", 3)));
+        assert_eq!(*seen.lock().unwrap(), [format!("{} <- the text", MODELS[0]), "/bin/claude account Some(\"claude-2-third\") 200ms <- the text".to_string()], "the fall-back is told the account by its name");
         // the names the chat's step shows
         assert_eq!(writer_name("opencode", MODELS[0]), "DeepSeek 4.1 Flash");
         assert_eq!(writer_name("opencode", MODELS[1]), "GLM 5.3 Flash");
@@ -941,7 +943,7 @@ mod tests {
 
     #[test]
     fn claude_codes_fall_back_is_asked_for_text_only_and_saves_nothing() {
-        let cmd = claude_command(Path::new("/bin/claude"), 1, Path::new("/app/writers")).unwrap();
+        let cmd = claude_command(Path::new("/bin/claude"), None, Path::new("/app/writers")).unwrap();
         let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
         let after = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
         assert_eq!(after("--model").as_deref(), Some("haiku"), "the cheapest");
@@ -956,11 +958,11 @@ mod tests {
         assert!(cmd.get_envs().all(|(k, _)| k != "CLAUDE_CONFIG_DIR"), "the user's own account: Claude Code's own folder");
         // the second account: its folder, or not run at all when there is none
         crate::accounts::stand_in(true, true);
-        let second = claude_command(Path::new("/bin/claude"), 2, Path::new("/app/writers")).unwrap();
+        let second = claude_command(Path::new("/bin/claude"), Some("claude-2-standin"), Path::new("/app/writers")).unwrap();
         let dir = second.get_envs().find(|(k, _)| *k == "CLAUDE_CONFIG_DIR").and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string())).unwrap();
         assert!(dir.ends_with("claude-2-standin"), "{dir}");
         crate::accounts::stand_in(false, false);
-        assert!(claude_command(Path::new("/bin/claude"), 2, Path::new("/app/writers")).is_none());
+        assert!(claude_command(Path::new("/bin/claude"), Some("claude-2-standin"), Path::new("/app/writers")).is_none());
         // its answer: the result's text and what it used; an error is no summary
         let ok = r#"{"type":"result","subtype":"success","is_error":false,"result":"- The user wants a door.","session_id":"s","total_cost_usd":0.0012,"usage":{"input_tokens":900,"output_tokens":40}}"#;
         let (text, used) = claude_answer(ok).unwrap();
@@ -993,17 +995,17 @@ mod tests {
         let seen = paths::test_dir("writer-programs").join("seen.txt");
         let ok = program("answers", &format!("{{ echo \"$@\"; cat; }} > '{}'\necho '{{\"type\":\"result\",\"is_error\":false,\"result\":\"- The user asked for a door.\",\"usage\":{{\"input_tokens\":12,\"output_tokens\":5}}}}'", seen.display()));
         let never = AtomicBool::new(false);
-        let (text, used) = claude_writes(&ok, 1, "BEGIN x\nUser: a door\nEND x\n".to_string(), Duration::from_secs(20), &never).unwrap();
+        let (text, used) = claude_writes(&ok, None, "BEGIN x\nUser: a door\nEND x\n".to_string(), Duration::from_secs(20), &never).unwrap();
         assert_eq!((text.as_str(), used.input, used.output), ("- The user asked for a door.", 12, 5));
         let got = std::fs::read_to_string(&seen).unwrap();
         assert!(got.starts_with("-p --safe-mode --model haiku --tools  --no-session-persistence") && got.ends_with("BEGIN x\nUser: a door\nEND x\n"), "{got}");
         // an error it prints is why it wrote nothing
         let bad = program("refuses", "cat > /dev/null\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"Not logged in\"}'\nexit 1");
-        assert_eq!(claude_writes(&bad, 1, "x".into(), Duration::from_secs(20), &never).err(), Some("Not logged in".into()));
+        assert_eq!(claude_writes(&bad, None, "x".into(), Duration::from_secs(20), &never).err(), Some("Not logged in".into()));
         // one that hangs is ended at its limit
         let hangs = program("hangs", "cat > /dev/null\nsleep 60");
         let began = Instant::now();
-        assert!(claude_writes(&hangs, 1, "x".into(), Duration::from_millis(300), &never).is_err());
+        assert!(claude_writes(&hangs, None, "x".into(), Duration::from_millis(300), &never).is_err());
         assert!(began.elapsed() < Duration::from_secs(10), "{:?}", began.elapsed());
         // and at once when it is told to give up (Stop, or the app closing)
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1013,7 +1015,7 @@ mod tests {
             flag.store(true, Ordering::SeqCst);
         });
         let began = Instant::now();
-        assert!(claude_writes(&hangs, 1, "x".into(), Duration::from_secs(60), &cancel).is_err());
+        assert!(claude_writes(&hangs, None, "x".into(), Duration::from_secs(60), &cancel).is_err());
         assert!(began.elapsed() < Duration::from_secs(10), "{:?}", began.elapsed());
     }
 }

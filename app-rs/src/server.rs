@@ -317,20 +317,25 @@ fn post(path: &str, body: Value) -> Reply {
         // a second account for an AI (Setup, Connections): Add makes the app's folder for it and starts the tool's
         // sign-in there; Remove deletes that folder. Only from the page: the setting is guarded.
         "/api/accounts" => {
-            let ai = text_of("ai");
-            let id = format!("{ai}2");
+            let (ai, name) = (text_of("ai"), text_of("name"));
             match text_of("action").as_str() {
+                // another account: its folder, last in the AI's list, and the tool's sign-in started for it
                 "add" => match crate::accounts::add(&ai) {
-                    Ok(_) => send_json(crate::signin::login_start(&id, false)),
+                    Ok(name) => {
+                        let id = crate::accounts::id_of(&ai, &name);
+                        let mut answer = crate::signin::login_start(&id, false);
+                        answer["id"] = json!(id);
+                        send_json(answer)
+                    }
                     Err(why) => send_json(json!({"ok": false, "error": why})),
                 },
-                "remove" if crate::accounts::AIS.contains(&ai.as_str()) => {
+                "remove" if crate::accounts::folder_of(&ai, &name).is_some() => {
                     // nothing is left running in the folder that is about to go: a waiting sign-in, a turn on that
                     // account, a process kept for one
-                    crate::signin::forget(&id);
-                    agents::account_removed(&ai);
+                    crate::signin::forget(&crate::accounts::id_of(&ai, &name));
+                    agents::account_removed(&ai, &name);
                     // (its folder could not be deleted: said, with its place)
-                    let left = crate::accounts::remove(&ai);
+                    let left = crate::accounts::remove(&ai, &name);
                     send_json(json!({"ok": true, "left": left.map(|d| d.display().to_string())}))
                 }
                 _ => send_json(json!({"ok": false})),

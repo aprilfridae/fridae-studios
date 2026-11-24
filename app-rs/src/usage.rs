@@ -156,13 +156,16 @@ fn file() -> std::path::PathBuf {
 
 /// One line of the log: the turn's counts, when, which AI and chat, the game the chat belongs to (Review adds up a
 /// game's cost from it), and the Claude Code session with its running total when there is one.
-fn line(ai: &str, account: u8, chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>, t: f64) -> Value {
+fn line(ai: &str, account: (u8, Option<&str>), chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>, t: f64) -> Value {
     let mut line = turn.json();
     line["t"] = json!(t);
     line["ai"] = json!(ai);
     // which of the AI's accounts paid, when it was not the user's own (`accounts`)
-    if account == 2 {
-        line["account"] = json!(2);
+    // (its place in Setup's list at the time, and its folder's name: the place of an account changes when one before
+    // it is removed, the name never does, so a sum per account goes by the name)
+    if let (place, Some(name)) = account {
+        line["account"] = json!(place);
+        line["account_name"] = json!(name);
     }
     line["chat"] = json!(chat);
     if let Some(p) = project.filter(|p| !p.is_empty()) {
@@ -177,7 +180,7 @@ fn line(ai: &str, account: u8, chat: &str, project: Option<&str>, turn: &Turn, s
 
 /// Add a turn to the log.
 /// With the Claude Code session it belongs to, when there is one.
-pub fn record(ai: &str, account: u8, chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>) {
+pub fn record(ai: &str, account: (u8, Option<&str>), chat: &str, project: Option<&str>, turn: &Turn, session: Option<&str>) {
     if turn.is_empty() {
         return;
     }
@@ -243,16 +246,17 @@ mod tests {
     #[test]
     fn a_line_names_the_game_of_the_chat() {
         let turn = Turn { input: 10, output: 5, cost: Some(0.25), ..Default::default() };
-        let l = line("claude", 1, "c1-1", Some("/games/Odd One In é"), &turn, None, 100.0);
+        let l = line("claude", (1, None), "c1-1", Some("/games/Odd One In é"), &turn, None, 100.0);
         assert!(l.get("account").is_none(), "the user's own account is not noted");
-        assert_eq!(line("claude", 2, "c1-1", None, &turn, None, 100.0)["account"], 2, "a turn the second account paid for says so");
+        let added = line("claude", (3, Some("claude-2-abcdef")), "c1-1", None, &turn, None, 100.0);
+        assert_eq!((added["account"].clone(), added["account_name"].clone()), (json!(3), json!("claude-2-abcdef")), "a turn an added account paid for says which: its place then, and its name for good");
         assert_eq!(l["project"], "/games/Odd One In é");
         assert_eq!((l["chat"].as_str(), l["ai"].as_str(), l["t"].as_f64()), (Some("c1-1"), Some("claude"), Some(100.0)));
         assert_eq!(l["cost"], 0.25);
         assert!(l.get("session").is_none(), "no session without a running total");
         // a chat with no game: no project key at all, so older and newer lines read the same way
-        assert!(line("gemini", 1, "c2", None, &turn, None, 1.0).get("project").is_none());
-        assert!(line("gemini", 1, "c2", Some(""), &turn, None, 1.0).get("project").is_none());
+        assert!(line("gemini", (1, None), "c2", None, &turn, None, 1.0).get("project").is_none());
+        assert!(line("gemini", (1, None), "c2", Some(""), &turn, None, 1.0).get("project").is_none());
     }
 
     #[test]
@@ -261,7 +265,7 @@ mod tests {
         let u = json!({"inputTokens": 13200, "outputTokens": 428, "cacheReadTokens": 51840, "cacheWriteTokens": 0, "reasoningTokens": 199});
         let t = Turn::from_cursor(&u);
         assert_eq!((t.input, t.output, t.cache_read, t.cache_write, t.cost), (13200, 428, 51840, 0, None));
-        let l = line("cursor", 1, "c3", Some("/games/g"), &t, None, 5.0);
+        let l = line("cursor", (1, None), "c3", Some("/games/g"), &t, None, 5.0);
         assert_eq!((l["ai"].as_str(), l["total"].as_u64()), (Some("cursor"), Some(13200 + 428 + 51840)));
         assert!(l.get("session").is_none(), "Cursor reports no cost, so no running total");
         assert!(Turn::from_cursor(&json!({})).is_empty());
@@ -272,7 +276,7 @@ mod tests {
         // Cursor over ACP: the prompt's answer is `{"stopReason": "end_turn"}` and nothing else (recorded)
         let t = Turn::not_reported();
         assert!(!t.is_empty(), "it is logged: the turn did run");
-        let l = line("cursor", 1, "c4", None, &t, None, 7.0);
+        let l = line("cursor", (1, None), "c4", None, &t, None, 7.0);
         assert_eq!((l["unreported"].as_bool(), l["total"].as_u64(), l["ai"].as_str()), (Some(true), Some(0), Some("cursor")));
         // a turn with numbers says nothing of the kind, and one with nothing at all is still not logged
         assert!(Turn::from_cursor(&json!({"inputTokens": 5})).json().get("unreported").is_none());
