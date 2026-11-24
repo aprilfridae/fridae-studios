@@ -5343,6 +5343,7 @@ fn end_kept(chats: &[Arc<Agent>], turns: &[Arc<TurnProc>]) {
 pub fn shut_down() {
     set_shutting(true); // first: a turn ended below must not send its held messages as a new agent
     crate::promo::stop_install();
+    crate::rag::shut_down(); // a setup step, the knowledge index's service and its Qdrant (never the user's Ollama)
     // every running agent is ended, and the app waits for them (at most the stop grace), so none outlives it
     let turns: Vec<Arc<TurnProc>> = agents().iter().filter_map(|a| a.stop_turn()).collect();
     {
@@ -5483,7 +5484,7 @@ fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Op
 /// What a kept Gemini or Cursor process is keyed on of the guarded settings: a fingerprint, not the settings
 /// themselves (one of them is the user's Gemini key). The model picked for OpenCode is left out: no Gemini or Cursor
 /// process is started with it or decides by it, so picking one must not start those processes again.
-fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String {
+pub(crate) fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String {
     use sha2::{Digest, Sha256};
     let mut g = guarded.clone();
     // nor is whether Claude has a second account (that is part of Claude's own launch key, as the account's folder)
@@ -5507,6 +5508,10 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
             "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
     });
+    // the knowledge index (`rag`): one constant path, where the app keeps the service's address and key while it is
+    // ready (`rbx_vault` reads it per query, and falls back to its keyword search without it). Never the address or
+    // key themselves, so the tools' settings, and a kept process's launch key, never change with the service
+    servers["rbxkit"]["env"]["FRIDAE_RAG_FILE"] = json!(crate::rag::endpoint_file().display().to_string());
     // FRIDAE_NO_STUDIO (testing only): a copy of the app that cannot reach the user's open Studio place: no Studio
     // server for the agent, and rbxkit's own Studio tools are told so (they answer "Studio is off for this run")
     if no_studio {
@@ -8376,6 +8381,9 @@ mod tests {
             st.running = false;
             st.stopped = false;
         }
+        // the slots they hold are given back: every test shares MAX_AGENTS
+        remove_agent(&on_it.id);
+        remove_agent(&other.id);
     }
 
     #[test]

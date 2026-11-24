@@ -616,6 +616,8 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     // folder's `.agents/mcp_config.json` names, and the tools keep the model's name and each chat's count there;
     // `.agents`: a list of tool servers in the work folder itself, should agy also look in the folders above the
     // one it works in (not measured): a Claude chat with no game works in the work folder)
+    // the knowledge index's folder (`rag`): its key file, models, indexes and Qdrant's program and storage
+    out.push((w.join("rag"), true));
     for d in ["processes", "chats", "team-requests", "stage-requests", "texture-requests", "team-results", "team-nudge", "agent-tools", "before-undo", "tool-pictures", "tool-jobs", "antigravity", ".agents"] {
         out.push((w.join(d), true));
     }
@@ -690,13 +692,15 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
 /// - `expert_summaries`: the app writes a plain-English summary of each expert's work (`expert_summaries_on`); on
 ///   unless set to false. It is a small call on the user's OpenCode plan, so a guard keeps it the user's choice.
+/// - `rag_mode`: the knowledge index, "off" | "light" | "heavy" (`rag_mode`, `rag`): Heavy has the app run Qdrant and
+///   use the user's Ollama, so it stays the user's choice
 /// - `second_accounts`: whether an AI has a second account, and the name of the app's folder for it (`accounts`):
 ///   which account pays for a turn
 /// - `opencode_model`, `opencode_model_signed_in`: the model every OpenCode chat and expert runs on when none is
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", "rag_mode", crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -711,6 +715,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
         "expert_summaries" => "Plain-English summary of each expert's work",
+        "rag_mode" => "Knowledge index",
         "second_accounts" => "Second accounts",
         // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
         "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
@@ -849,9 +854,13 @@ fn write_with(st: &Store, known: &Map<String, Value>) {
 /// Takes in what another running copy of the app changed through its routes (its counter is newer): the keys taken.
 fn sync_from_copy(g: &mut Guard, st: &Store) -> Vec<String> {
     let Some((v, c)) = read_copy(st).filter(|(v, _)| *v > g.version) else { return Vec::new() };
-    let taken = GUARDED.iter().filter(|k| g.known.get(**k) != c.get(**k)).map(|k| k.to_string()).collect();
+    let taken: Vec<String> = GUARDED.iter().filter(|k| g.known.get(**k) != c.get(**k)).map(|k| k.to_string()).collect();
     g.known = c;
     g.version = v;
+    // the knowledge index's mode chosen in another window: this one runs that mode's service too
+    if taken.iter().any(|k| k == "rag_mode") {
+        crate::rag::mode_changed();
+    }
     taken
 }
 
@@ -897,6 +906,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
+        "rag_mode" => v.as_str().filter(|m| crate::rag::MODES.contains(m)).map(Value::from),
         "expert_ai" => v.as_object().map(|_| v.clone()),
         "second_accounts" => crate::accounts::checked_setting(v),
         _ => None,
@@ -982,7 +992,7 @@ fn describe_change(key: &str, file: Option<&Value>, kept: Option<&Value>) -> Str
             }
             format!("{name}: {}", parts.join("; "))
         }
-        "opencode_model" => {
+        "opencode_model" | "rag_mode" => {
             let show = |v: Option<&Value>| v.and_then(Value::as_str).map(shown_name).unwrap_or_else(|| "not set".into());
             format!("{name}: the file said {}, put back to {}", show(file), show(kept))
         }
@@ -1181,6 +1191,10 @@ fn answer_in(g: &mut Guard, st: &Store, take_file: bool) -> bool {
         sync_from_copy(g, st);
         let known = g.known.clone();
         update_in(g, st, |cfg| take_file_values(cfg, &note, &known));
+        // the knowledge index's mode taken from the settings file: its service follows
+        if g.known.get("rag_mode") != known.get("rag_mode") {
+            crate::rag::mode_changed();
+        }
     }
     true
 }
@@ -1906,6 +1920,11 @@ pub fn gemini_images_on() -> bool {
 /// call on the user's OpenCode plan): yes unless the user switched it off in Setup.
 pub fn expert_summaries_on() -> bool {
     setting("expert_summaries").as_bool().unwrap_or(true)
+}
+
+/// The knowledge index's mode, "off" | "light" | "heavy": off unless the user chose another in Setup (`rag`).
+pub fn rag_mode() -> String {
+    crate::rag::mode_of(&setting("rag_mode")).to_string()
 }
 
 /// A file name with any folder part removed, so requests cannot reach outside a folder.
