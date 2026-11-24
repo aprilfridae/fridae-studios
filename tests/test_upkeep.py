@@ -361,6 +361,28 @@ class KeywordSearchTests(UpkeepCase):
         self.assertIn("[yours] Spawn rule", out)
         self.assertNotIn("replaced by", out)
 
+    def test_a_vault_search_reads_the_vault_index_once(self):
+        # review finding 11: the superseded check read and parsed the whole vault cache a second time
+        rbxvault.load_index()
+        idx = rbxvault.load_index()
+        title = next(d["title"] for d in idx["docs"] if "DataStore" in d["title"])
+        real = rbxvault.load_index
+        for marked in (False, True):
+            if marked:
+                write(os.path.join(self.notes, rbxnotes.SIDECAR), json.dumps({title: {"by": "Mine", "date": "x"}}))
+            with mock.patch.object(rbxvault, "load_index", side_effect=real) as loads:
+                out = self.vault("search", query="datastore session locking", shelf="vault")
+                self.assertEqual(loads.call_count, 1, "marked" if marked else "plain")
+                self.vault("search", query="datastore session locking", shelf="all")
+                self.assertEqual(loads.call_count, 2)
+            self.assertEqual("replaced by" in self.vault("search", query=title, shelf="vault"), marked, out)
+        # the maps over the whole vault are worked out once per loaded index, not per search
+        with mock.patch.object(rbxvault, "_sup_entries", wraps=rbxvault._sup_entries) as made:
+            rbxvault.superseded_for(idx, [], "")
+            rbxvault.superseded_for(rbxvault.load_index(), [], "")
+        self.assertEqual([c.args[1:] for c in made.call_args_list], [(), ()], "the vault's are kept")
+        self.assertIs(rbxvault._vault_by_title(idx), rbxvault._vault_by_title(idx))
+
     def test_a_shipped_vault_note_marked_in_the_sidecar(self):
         idx = rbxvault.load_index()
         d = next(d for d in idx["docs"] if len(d["title"].split()) >= 3 and d["tldr"])

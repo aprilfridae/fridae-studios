@@ -449,7 +449,8 @@ def api_notes(text):
     return out
 
 
-def main():
+def main(idx=None):
+    """The vault's command line (sys.argv); idx: the vault index when the caller has it loaded (rbxkit)."""
     try:  # Windows consoles default to cp1252, and notes contain arrows and dashes
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
@@ -458,7 +459,7 @@ def main():
     if not args or args[0] in ("-h", "--help"):
         print(__doc__)
         return
-    idx = load_index()
+    idx = idx or load_index()
     if args[0] == "--read":
         print_section(args[1], args[2] if len(args) > 2 else None, idx)
         return
@@ -992,12 +993,28 @@ def _personal_docs(project=None):
     return docs
 
 
-def superseded_for(idx=None, docs=None, project=None):
-    """The superseded map (supersession_map) for a search: the vault index's notes when it is loaded, the section
-    entries (else the user's own notes) and the notes folders' sidecars."""
+_VAULT_SUP = {}  # the vault index's signature -> (its supersession entries, its known titles): one kept
+
+
+def _vault_sup(idx=None):
+    """(supersession entries, known titles) of the vault notes, kept by the vault index's signature: a search works
+    them out once, not per search (idx: the loaded index; else it is loaded only when they are not kept)."""
+    sig = idx.get("sig") if idx else signature(note_files())
+    hit = _VAULT_SUP.get(sig)
+    if hit is None:
+        idx = idx or load_index()
+        hit = _sup_entries(idx["docs"], "vault")
+        _VAULT_SUP.clear()
+        _VAULT_SUP[idx.get("sig", sig)] = hit
+    return hit
+
+
+def superseded_for(idx=None, docs=None, project=None, vault=False):
+    """The superseded map (supersession_map) for a search: the vault index's notes when it is loaded (or vault is
+    true: _vault_sup), the section entries (else the user's own notes) and the notes folders' sidecars."""
     import rbxnotes
     project = project_dir() if project is None else project
-    entries, known = _sup_entries(idx["docs"], "vault") if idx else ([], {})
+    entries, known = _vault_sup(idx) if idx or vault else ([], {})
     more, more_known = _sup_entries(_personal_docs(project) if docs is None else docs)
     if more_known:
         known = {t: shelves | more_known.get(t, set()) for t, shelves in known.items()}
@@ -1654,6 +1671,54 @@ def place_linked(direct, linked, k, cut=True, key=None):
     return head + linked + [x for x in direct[DIRECT_KEPT:] if not key or key(x) not in shown]
 
 
+def _link_names(d):
+    """The names a [[link]] may give a section's note by: its title, the title's last part, its label."""
+    names = {d["title"].casefold(), os.path.basename(d["title"]).casefold(), (d.get("label") or "").casefold()} - {""}
+    return [n[:-3] if n.endswith(".md") else n for n in sorted(names)]
+
+
+def _link_maps(docs, shelves, tops, vault_by):
+    """(notes: (shelf, title) -> its sections, by_name: link name -> [(shelf, title)]) over the docs on these shelves,
+    for _linked_pool. A Docs keeps the whole maps (built once); for a plain list only the notes the first results are
+    and the ones their links name are looked up (no map of every note per search)."""
+    def add(notes, by_name, d, names):
+        key = (d["shelf"], d["title"])
+        notes.setdefault(key, []).append(d)
+        for name in names:
+            keys = by_name.setdefault(name, [])
+            if key not in keys:
+                keys.append(key)
+    if isinstance(docs, Docs):
+        cache = docs.__dict__.setdefault("_link_maps", {})
+        mk = tuple(sorted(shelves))
+        if mk not in cache:
+            notes, by_name = {}, {}
+            for d in docs:
+                if d["shelf"] in shelves:
+                    add(notes, by_name, d, _link_names(d))
+            cache[mk] = (notes, by_name)
+        return cache[mk]
+    own = {(shelf, d["title"]) for _, shelf, d in tops if shelf != "vault"}
+    notes = {}
+    for d in docs:
+        if (d["shelf"], d["title"]) in own:
+            notes.setdefault((d["shelf"], d["title"]), []).append(d)
+    want = set()
+    for _, shelf, d in tops:
+        want.update(d.get("links") or ())
+        for x in notes.get((shelf, d["title"]), ()) if shelf != "vault" else ():
+            want.update(x.get("links") or ())
+    found, by_name = {}, {}
+    for d in docs:
+        if d["shelf"] in shelves:
+            names = [n for n in _link_names(d) if n in want]
+            if names:
+                add(found, by_name, d, names)
+    for key, secs in found.items():
+        notes.setdefault(key, secs)
+    return notes, by_name
+
+
 def _linked_pool(q, pool, shelves, k, idx, docs, filters=None, cut=True):
     """The keyword search's link following: the [[links]] in the first results' notes, and of the notes they name
     (on the searched shelves, not already shown, passing the same filters: `docs` is already filtered) the best part
@@ -1664,22 +1729,11 @@ def _linked_pool(q, pool, shelves, k, idx, docs, filters=None, cut=True):
         return pool
     terms = Counter({t: w for t, w in query_terms(q).items() if w >= 1})
     have = {(item[1], item[2]["title"]) for item in pool[:k]}
-    vault_by = {d["title"].casefold(): d for d in (idx or {}).get("docs", [])} if idx else {}
-    notes, by_name = {}, {}
-    for d in docs or ():
-        if d["shelf"] not in shelves:
-            continue
-        key = (d["shelf"], d["title"])
-        notes.setdefault(key, []).append(d)
-        for name in {d["title"].casefold(), os.path.basename(d["title"]).casefold(),
-                     (d.get("label") or "").casefold()} - {""}:
-            if name.endswith(".md"):
-                name = name[:-3]
-            by_name.setdefault(name, [])
-            if key not in by_name[name]:
-                by_name[name].append(key)
+    vault_by = _vault_by_title(idx) if idx else {}
+    tops = [x[:3] for x in pool[:DIRECT_KEPT]]
+    notes, by_name = _link_maps(docs or (), shelves, tops, vault_by)
     cands, src = [], {}
-    for _, shelf, d in [x[:3] for x in pool[:DIRECT_KEPT]]:
+    for _, shelf, d in tops:
         if shelf == "vault":
             targets = d.get("links") or []
         else:
@@ -1733,11 +1787,12 @@ def keyword_ranking(q, shelves, depth, idx=None, docs=None, project=None):
     return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]
 
 
-def combined_search(q, shelves, k, filters=None):
-    """Text for a search over several shelves (`_keyword_pool`), with the notes linked from the first results."""
+def combined_search(q, shelves, k, filters=None, idx=None):
+    """Text for a search over several shelves (`_keyword_pool`), with the notes linked from the first results. idx:
+    the vault index when the caller has it loaded."""
     terms = query_terms(q)
     info = {}
-    pool, symptoms = _keyword_pool(q, shelves, k, None, None, filters, links=True, info=info)
+    pool, symptoms = _keyword_pool(q, shelves, k, idx, None, filters, links=True, info=info)
     if not pool:
         return "No match on %s%s. Try other words%s." % (
             ", ".join(shelves), " with those filters" if filters else "",
@@ -2104,14 +2159,13 @@ def lookup(queries, k=LOOKUP_K):
         return list(ex.map(one, queries))
 
 
-def _vault_superseded():
+def _vault_superseded(idx=None):
     """True when a note of the vault is superseded (the vault search alone then answers through combined_search,
-    which ranks and marks it)."""
+    which ranks and marks it). idx: the loaded vault index (without it, it is loaded only when the vault notes'
+    titles are not kept yet: _vault_sup)."""
     if not os.path.isdir(KB):
         return False
-    idx = load_index()
-    sup = superseded_for(idx, None, None)
-    return any(shelf == "vault" for shelf, _ in sup)
+    return any(shelf == "vault" for shelf, _ in superseded_for(idx, None, None, vault=True))
 
 
 def _list(folder):
@@ -2195,10 +2249,12 @@ def run(action, a):
     text = rag_search(q, shelves, k, filters)  # the knowledge index, when the app runs it; None: the keyword search
     if text is not None:
         return text
-    if shelf == "vault" and not filters and not _vault_superseded():  # the vault on its own answers as it always has
+    # the vault index is read once for the whole search
+    idx = load_index() if "vault" in shelves and os.path.isdir(KB) else None
+    if shelf == "vault" and not filters and not _vault_superseded(idx):  # the vault on its own answers as it always has
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
-            main()
+            main(idx)
         text = _vault_call(vault_search) or "No match. Try other words, or action 'list' to browse the sections."
         return text + "\n\nNext: rbx_vault action 'read' with a title and heading words for one section (not the whole note)."
-    return combined_search(q, shelves, k, filters)
+    return combined_search(q, shelves, k, filters, idx)
