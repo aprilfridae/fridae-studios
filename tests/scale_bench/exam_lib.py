@@ -56,8 +56,9 @@ class StageCache:
     time (so a killed run keeps every answer it already has). The key holds the code version and the corpus, so a
     change to either starts that stage afresh while the old results stay where they were."""
 
-    def __init__(self, root):
+    def __init__(self, root, stamp=None):
         self.root = root
+        self.stamp = stamp  # added to every unit saved (the code commit measured)
 
     def dir(self, stage, key):
         d = os.path.join(self.root, "%s-%s" % (stage, key))
@@ -71,6 +72,8 @@ class StageCache:
         return read_json(self.path(stage, key, name))
 
     def put(self, stage, key, name, obj):
+        if self.stamp and isinstance(obj, dict):
+            obj.setdefault("_measured", self.stamp)
         write_json(self.path(stage, key, name), obj)
         return obj
 
@@ -91,6 +94,8 @@ class StageCache:
         return out
 
     def append(self, stage, key, name, record):
+        if self.stamp and isinstance(record, dict):
+            record.setdefault("_measured", self.stamp.get("commit") if isinstance(self.stamp, dict) else self.stamp)
         with open(self.path(stage, key, name, ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             f.flush()

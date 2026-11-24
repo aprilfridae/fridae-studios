@@ -181,8 +181,22 @@ def answer_entries(exam, qs, limit=None):
 
 
 # ------------------------------------------------------------------ versions
-SEARCH_CODE = ["rbxvault.py", "rbxnotes.py", "rbxpaths.py"]
+SEARCH_CODE = ["rbxvault.py", "rbxnotes.py", "rbxpaths.py", "rbxupkeep.py"]
 ANSWER_CODE = ["app-rs/src/swarm/librarian.rs", "app-rs/src/compact.rs", "app-rs/src/opencode.rs", "app-rs/src/exam.rs"]
+
+
+def code_commit():
+    """The commit measured: HEAD, plus "+dirty" when tracked files differ from it."""
+    try:
+        head = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True,
+                              timeout=10).stdout.strip()
+        dirty = subprocess.run(["git", "-C", REPO, "status", "--porcelain", "--untracked-files=no"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+        branch = subprocess.run(["git", "-C", REPO, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True,
+                                text=True, timeout=10).stdout.strip()
+        return {"commit": head + ("+dirty" if dirty else ""), "branch": branch}
+    except (OSError, subprocess.SubprocessError):
+        return {"commit": "unknown", "branch": ""}
 
 
 def search_version():
@@ -393,18 +407,23 @@ class Qdrant:
 
 # ------------------------------------------------------------------ the worker (one process per index)
 class Adapter:
-    """What rbxrag.serve.make_server needs, answering with the engine (the game project passed on) and timing it."""
+    """What rbxrag.serve.make_server needs: the app's own rbxrag.serve.Service over the already built engine (so a
+    search pays the same throttled refresh it pays in the app), timed."""
 
-    def __init__(self, engine):
-        self.engine = engine
+    def __init__(self, engine, mode="light"):
+        from rbxrag.serve import Service
+        self.svc = Service(mode, lambda: engine)
+        self.svc.engine = engine
+        self.svc.ready = True
+        self.svc._last_sync = self.svc.clock()  # the worker synced it just now
         self.last = None
 
     def status(self):
-        return {"mode": "exam", "ready": True, "building": False, "progress": {}, "chunks": 0, "error": ""}
+        return self.svc.status()
 
     def query(self, q, shelves, k, project, filters=None):
         t = time.perf_counter()
-        hits = self.engine.query(q, shelves, k, project or None, filters)
+        hits = self.svc.query(q, shelves, k, project, filters) if filters else self.svc.query(q, shelves, k, project)
         self.last = (time.perf_counter() - t, hits)
         return hits
 
@@ -418,11 +437,14 @@ class Endpoint:
         self.srv.server_close()
 
 
-def make_endpoint(engine, tmp):
+RAG_MARK = "The lines under each result are its matching passage."  # only rag_search's text says this
+
+
+def make_endpoint(engine, tmp, mode="light"):
     from rbxrag.serve import make_server
     import rbxvault
     ep = Endpoint.__new__(Endpoint)
-    ep.adapter = Adapter(engine)
+    ep.adapter = Adapter(engine, mode)
     token = secrets.token_hex(24)
     ep.srv = make_server(ep.adapter, token, 0)
     threading.Thread(target=ep.srv.serve_forever, daemon=True).start()
@@ -581,10 +603,10 @@ def query_rows(spec, eng, be, game, qs, variants):
     return rows
 
 
-def search_text_rows(qs, game, search):
+def search_text_rows(qs, game, search, ks=KS):
     """rbx_vault's search text at each k: tokens, ranks from the text, whether guide excerpts carry their tag."""
     out = {}
-    for k in KS:
+    for k in ks:
         rows = []
         for q in qs:
             project = game if q["set"] == "scope" else ""
@@ -634,15 +656,21 @@ def worker_query(spec, be, game, qs):
     res["rows"] = query_rows(spec, eng, be, game, qs, spec["qvariants"])
     if spec.get("text_pass"):
         tmp = shim.point_at(spec["corpus"])
-        ep = make_endpoint(eng, tmp)
+        ep = make_endpoint(eng, tmp, spec["method"])
         try:
             def search(q, k):
                 ep.adapter.last = None
                 with env(FRIDAE_RAG_FILE=ep.file):
                     text = rbxvault.run("search", {"query": q["q"], "shelf": "all", "k": k})
                 last = ep.adapter.last
-                return text, last[0] if last else None, "rag" if last and last[1] else "keyword"
+                return text, last[0] if last else None, "rag" if RAG_MARK in (text or "") else "keyword"
             res["text"] = search_text_rows(qs, game, search)
+            # the same searches with the app's own 3 s timeout: how often an agent silently gets the keyword search
+            rbxvault.RAG_TIMEOUT = APP_TIMEOUT
+            try:
+                res["text_app_timeout"] = search_text_rows(qs, game, search, ks=(5,))["5"]
+            finally:
+                rbxvault.RAG_TIMEOUT = 600.0
         finally:
             ep.close()
         res.update(update_timing(spec, lambda: eng.sync(game, quick=True, max_embed=200, blocking=True)))
@@ -722,7 +750,7 @@ def worker_main(argv):
                 res = worker_build(spec, be, game)
             elif spec["phase"] == "passages":
                 be.engine.sync(game)
-                ep = make_endpoint(be.engine, shim.point_at(spec["corpus"]))
+                ep = make_endpoint(be.engine, shim.point_at(spec["corpus"]), spec["method"])
                 try:
                     res = worker_passages(spec, game, ep)
                 finally:
@@ -738,12 +766,13 @@ class Exam:
         self.a = a
         self.root = os.path.join(a.cache_dir, "exam")
         os.makedirs(self.root, exist_ok=True)
-        self.cache = L.StageCache(os.path.join(self.root, "stages"))
+        self.cache = L.StageCache(os.path.join(self.root, "stages"), code_commit())
         self.work = os.path.join(self.root, "work")
         os.makedirs(self.work, exist_ok=True)
         self.rates_path = os.path.join(self.root, "rates%s.json" % ("-quick" if a.quick else ""))
-        self.rates = dict(DEFAULT_RATES, **(L.read_json(os.path.join(self.root, "rates.json"), {}) or {}),
-                          **(L.read_json(self.rates_path, {}) or {}))
+        self.rates = dict(DEFAULT_RATES)  # the full run's measured rates, then (quick) the quick run's own
+        for path in dict.fromkeys([os.path.join(self.root, "rates.json"), self.rates_path]):
+            self.rates.update({k: v for k, v in (L.read_json(path, {}) or {}).items() if not k.startswith("_")})
         self.base, self.exam = load_sets()
         self.qs = all_questions(self.base, self.exam)
         self.rq = retrieval_questions(self.qs, a.quick)
@@ -774,6 +803,10 @@ class Exam:
             path, summary = corpus.ensure(self.root, self.base, scale, self.a.quick, log=say, exam=self.exam)
             self.corpora[scale] = (path, summary)
         return self.corpora[scale]
+
+    def derived(self, scale):
+        """{distractor title: {"kind", "from", "looks_like"}} of this scale's corpus (corpus.py's manifest)."""
+        return L.read_json(os.path.join(self.corpus_for(scale)[0], "distractors.json"), {}) or {}
 
     def corpus_name(self, scale):
         return os.path.basename(self.corpus_for(scale)[0])
@@ -844,21 +877,24 @@ class Exam:
                 if self.cache.get("retrieval", self.key("retrieval"), "%s-%dx" % (m, sc)):
                     continue
                 if m != "keyword" and not self.index_ready(m, sc):
-                    s += self.est_chunks(sc) / r["%s_embed_cps" % m]
+                    s += self.new_chunks(m, sc, p) / r["%s_embed_cps" % m]
                 qs = r["%s_query_s" % m]
-                s += nq * qs * (1 + 2 + len(KS)) + 60  # app (with its signals), the text pass, opening
+                s += nq * qs * (2 + len(KS) + 1) + 60  # app (with its signals), the text passes, opening
             out["retrieval"] = s
         if "ablations" in stages:
             s = 0.0
             for m, sc in p["retrieval"]:
                 if self.cache.get("ablations", self.key("ablations"), "%s-%dx-query" % (m, sc)):
                     continue
-                s += nq * r["%s_query_s" % m] * len(QUERY_VARIANTS[m]) + 60
+                # Heavy's variants without the reranker cost a tenth of a reranked search
+                cost = sum(1.0 if m != "heavy" or v in ("app", "app+sparse", "nolinks") else 0.1
+                           for v in QUERY_VARIANTS[m])
+                s += nq * r["%s_query_s" % m] * cost + 60
             for m, sc, v in p["ablation_index"]:
                 if self.cache.get("ablations", self.key("ablations"), "%s-%dx-%s" % (m, sc, v)):
                     continue
                 if not self.index_ready(m, sc, v):
-                    s += self.est_chunks(sc) / r["light_embed_cps"]
+                    s += self.est_chunks(sc) / r["light_embed_cps"]  # new chunk texts: nothing cached
                 s += nq * r["light_query_s"] * 2 + 30
             out["ablations"] = s
         if "answers" in stages:
@@ -877,6 +913,11 @@ class Exam:
         if "analysis" in stages:
             out["analysis"] = 5.0
         return out
+
+    def new_chunks(self, method, scale, plan):
+        """Chunks a build must embed: a bigger corpus holds the smaller one's notes, whose vectors are cached."""
+        smaller = [sc for m, sc in plan["retrieval"] if m == method and sc < scale]
+        return self.est_chunks(scale) - (self.est_chunks(max(smaller)) if smaller else 0)
 
     # -------------------------------------------------------------- preflight
     def preflight(self, stages):
@@ -1082,8 +1123,10 @@ class Exam:
                 r["wall_since_start"] = time.perf_counter() - t0
                 self.cache.append("answers", key, name, r)
                 n += 1
-                say("  %s %s %.1f s%s" % (name, r["id"], r.get("secs") or 0, "" if r.get("format_ok") else
-                                          " (writer format failed or no writer)"))
+                why = ("" if r.get("format_ok") else " (no writer call: a guide pointer or no passages)"
+                       if not r.get("calls") else " (no usable writer answer)" if r.get("writer_raw") is None
+                       else " (the writer's reply did not parse)")
+                say("  %s %s %.1f s%s" % (name, r["id"], r.get("secs") or 0, why))
             p.wait()
         finally:
             timer.cancel()
@@ -1336,12 +1379,20 @@ def main():
         for pr in problems:
             say("  - " + pr)
         raise SystemExit(2)
+    run = dict(code_commit(), started=datetime.datetime.now().isoformat(timespec="seconds"), stages=stages,
+               argv=sys.argv[1:], search=search_version(), estimate_s=est)
+    say("measuring commit %s (%s)" % (run["commit"], run["branch"]))
+    run_path = os.path.join(ex.root, "runs", "%s.json" % run["started"].replace(":", ""))
+    L.write_json(run_path, run)
+    ex.run_meta = run
     t0 = time.perf_counter()
     for s in stages:
         t = time.perf_counter()
         say("== %s" % s)
         getattr(ex, "stage_" + s)()
         say("== %s took %s" % (s, L.fmt_secs(time.perf_counter() - t)))
+        run.setdefault("took_s", {})[s] = time.perf_counter() - t
+        L.write_json(run_path, run)
     say("exam done in %s" % L.fmt_secs(time.perf_counter() - t0))
 
 

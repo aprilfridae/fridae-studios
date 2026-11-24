@@ -388,11 +388,16 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print, exam=Non
         titles.add(t.casefold())
         return t
 
-    def write(folder, title, tags, tldr, intro, sections):
+    derived = {}  # distractor title -> {"kind", "from": the notes whose text it carries, "looks_like"}
+
+    def write(folder, title, tags, tldr, intro, sections, kind=None, sources=(), looks_like=None):
         nonlocal est
         sections = [(h or "Notes", _cap(b)) for h, b in sections if b.strip()]
         if not sections:
             return
+        derived[title] = {"kind": kind, "from": sorted(set(sources))}
+        if looks_like:
+            derived[title]["looks_like"] = looks_like
         text = render(title, tags, tldr, intro, sections)
         p = os.path.join(vault, folder, title + ".md")
         with open(p, "w", encoding="utf-8") as f:
@@ -408,11 +413,12 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print, exam=Non
                     words = " ".join(gtitle.split(" - ")[0].split()[:4])
                     title = unique(rng.choice(TITLES_ECHO).format(t=gtitle, w=words))
                     heads = [h for h, _ in parsed["sections"] if h][:4] or [words]
-                    bodies = [b for _, p2 in rng.sample(src, min(3, len(src))) for _, b in p2["sections"]]
+                    picked = rng.sample(src, min(3, len(src)))
+                    bodies = [b for _, p2 in picked for _, b in p2["sections"]]
                     rng.shuffle(bodies)
                     secs = [(h, bodies[i % len(bodies)]) for i, h in enumerate(heads)] if bodies else []
                     write(folder, title, rng.sample(parsed["tags"], min(4, len(parsed["tags"]))), [],
-                          rng.choice(INTROS).format(t=words.lower()), secs)
+                          rng.choice(INTROS).format(t=words.lower()), secs, "echo", [t for t, _ in picked], gtitle)
                     made["echo"] += 1
     while est < target:
         folder = rng.choices(folders, weights)[0]
@@ -431,28 +437,30 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print, exam=Non
             secs = [(_short(h, 8), "\n\n".join(parts[:len(parts) // 2 or 1]))]
             if len(parts) > 1:
                 secs.append(("More on " + _short(h, 4).lower(), "\n\n".join(parts[len(parts) // 2:])))
-            write(folder, title, tags, [], intro, secs)
+            write(folder, title, tags, [], intro, secs, kind, [title0])
         elif kind == "summary":
             title = unique(rng.choice(TITLES_SUM).format(t=title0))
             n0 = rng.randrange(len(p0["sections"]))
             secs = [(reheading(h, rng), summarise(b)) for h, b in (p0["sections"][n0:] + p0["sections"][:n0])[:6]]
-            write(folder, title, tags, p0["tldr"][:3], intro, secs)
+            write(folder, title, tags, p0["tldr"][:3], intro, secs, kind, [title0])
         elif kind == "reword":
             title = unique(rng.choice(TITLES_REWORD).format(t=title0))
             secs = [(reheading(h, rng), reword(b, rng)) for h, b in p0["sections"][:8]]
-            write(folder, title, tags, [], intro, secs)
+            write(folder, title, tags, [], intro, secs, kind, [title0])
         else:
             srcs = rng.sample(notes_here, min(len(notes_here), rng.randint(2, 4)))
             secs = []
-            for _, p in srcs:
-                secs += rng.sample(p["sections"], min(len(p["sections"]), rng.randint(1, 2)))
+            for t, p in srcs:  # each section keeps its note's title (the same draws as before)
+                secs += [(h, b, t) for h, b in rng.sample(p["sections"], min(len(p["sections"]), rng.randint(1, 2)))]
             rng.shuffle(secs)
             secs = secs[:rng.randint(3, 6)]
+            owners = [t for _, _, t in secs]
+            secs = [(h, b) for h, b, _ in secs]
             hs = [_short(h, 5) for h, _ in secs if h] or [topic]
             title = unique(rng.choice(TITLES_MIX).format(f=topic, h1=hs[0], h2=hs[-1]))
             bullets = [b for _, p in srcs for b in p["tldr"][:1]]
             write(folder, title, tags, bullets if rng.random() < 0.4 else [], intro,
-                  [(h, reword(b, rng) if rng.random() < 0.5 else b) for h, b in secs])
+                  [(h, reword(b, rng) if rng.random() < 0.5 else b) for h, b in secs], kind, owners)
         made[kind] += 1
     extra = write_exam_extras(tmp, exam) if exam else 0
     est += extra
@@ -466,6 +474,8 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print, exam=Non
                "exam_extras": bool(exam)}
     with open(os.path.join(tmp, "corpus.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
+    with open(os.path.join(tmp, "distractors.json"), "w", encoding="utf-8") as f:
+        json.dump(derived, f, indent=0, ensure_ascii=False)
     os.utime(os.path.join(tmp, "corpus.json"), (FIXED_MTIME, FIXED_MTIME))
     shutil.rmtree(out_dir, ignore_errors=True)
     os.replace(tmp, out_dir)

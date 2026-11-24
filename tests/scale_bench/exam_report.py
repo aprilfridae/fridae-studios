@@ -13,20 +13,54 @@ SIGNALS = (("kw_cov", "keyword coverage"), ("kw_bm25", "keyword BM25"), ("dense_
 
 
 # ------------------------------------------------------------------ retrieval
-def rank(row, q, k=None):
-    return L.first_rank(row.get("titles") or [], q.get("gold") or [], k)
+def rank(row, q, k=None, exp=None):
+    gold = q.get("gold") or []
+    return L.first_rank(row.get("titles") or [], exp(gold) if exp else gold, k)
 
 
-def set_table(rows, qs, sets):
+def expander(ex, scale):
+    """gold titles -> the gold titles plus every distractor made from them (split, summary, rewording, or a mix
+    holding one of their sections; not the echo notes, which only look like them), from the corpus manifest."""
+    rev = {}
+    for t, m in ex.derived(scale).items():
+        if m.get("kind") == "echo":
+            continue
+        for f in m.get("from") or []:
+            rev.setdefault(f.casefold(), []).append(t)
+    return lambda gold: list(gold) + [t for g in gold for t in rev.get(g.casefold(), [])]
+
+
+def set_table(rows, qs, sets, exp=None):
+    """Hit rates per set; exp (expander) scores content-right instead of strict."""
     out = {}
     for s in sets:
         rr = [r for r in rows if r["set"] == s and qs.get(r["id"], {}).get("gold")]
         if rr:
-            out[s] = L.hit_rates([rank(r, qs[r["id"]]) for r in rr])
+            out[s] = L.hit_rates([rank(r, qs[r["id"]], None, exp) for r in rr])
     rr = [r for r in rows if r["set"] in ANSWERABLE and qs.get(r["id"], {}).get("gold")]
     if rr:
-        out["answerable"] = L.hit_rates([rank(r, qs[r["id"]]) for r in rr])
+        out["answerable"] = L.hit_rates([rank(r, qs[r["id"]], None, exp) for r in rr])
     return out
+
+
+def drop(ex, small, large, qs):
+    """Of the answerable questions found strictly (gold in the top 5) at the small scale, the ones lost at the large
+    scale: still content-right there (a copy of the gold note ranked instead) or really missed."""
+    exp = expander(ex, large[0])
+    lost_copy = lost_real = kept = 0
+    by = {r["id"]: r for r in large[1]}
+    for r in small:
+        q = qs.get(r["id"]) or {}
+        if r["set"] not in ANSWERABLE or not q.get("gold") or not rank(r, q, 5) or r["id"] not in by:
+            continue
+        b = by[r["id"]]
+        if rank(b, q, 5):
+            kept += 1
+        elif rank(b, q, 5, exp):
+            lost_copy += 1
+        else:
+            lost_real += 1
+    return {"kept": kept, "copy": lost_copy, "real": lost_real}
 
 
 def multihop(rows, qs):
@@ -46,7 +80,8 @@ def stale(rows, qs):
         rr = [r for r in rows if r["set"] == "stale" and qs[r["id"]].get("marked") == marked]
         if not rr:
             continue
-        above = new3 = old3 = 0
+        above = new3 = old3 = old5 = 0
+        old_ranks = []
         for r in rr:
             q = qs[r["id"]]
             n = L.first_rank(r["titles"], q["gold"])
@@ -54,8 +89,11 @@ def stale(rows, qs):
             above += bool(n and (not o or n < o))
             new3 += bool(n and n <= 3)
             old3 += bool(o and o <= 3)
+            old5 += bool(o and o <= 5)
+            if o and o <= 5:
+                old_ranks.append(o)
         out[half] = {"n": len(rr), "new_above_old": above / len(rr), "new@3": new3 / len(rr),
-                     "old@3": old3 / len(rr)}
+                     "old@3": old3 / len(rr), "old@5": old5 / len(rr), "old_rank": L.mean(old_ranks)}
     return out
 
 
@@ -95,7 +133,8 @@ def thresholds(rows, qs):
 
 # ------------------------------------------------------------------ answers
 def first_token(rec):
-    for c in rec.get("calls") or []:
+    calls = rec.get("calls")
+    for c in calls if isinstance(calls, list) else []:
         if c.get("what") == "write":
             for t in c.get("tap") or []:
                 ft = (t.get("first") or {}).get("session.step.first-token")
@@ -165,7 +204,27 @@ def answer_summary(rows):
     }
 
 
+def config_scale(name):
+    return int(name.split("-")[2].rstrip("x"))
+
+
+def copy_only(ex, name, rows, passages):
+    """Answers whose passages held a copy of the gold note (a distractor made from it) but not the note itself."""
+    exp = expander(ex, config_scale(name))
+    n = 0
+    for e, rec, v, s in rows:
+        gold = e.get("gold") or []
+        if not rec or not gold:
+            continue
+        titles = [h.get("title") for p in (passages.get(e["id"]) or {}).get("parts", []) for h in p.get("hits") or []]
+        if not any(L.is_gold(t, gold) for t in titles) and any(L.is_gold(t, exp(gold)) for t in titles):
+            n += 1
+    return n
+
+
 def failures(ex, name, rows, passages):
+    """{failure class: [(entry, record, verdict)]}. A passage from a copy of the gold note counts as found."""
+    exp = expander(ex, config_scale(name))
     out = {}
     for e, rec, v, s in rows:
         if not rec or not v:
@@ -175,7 +234,7 @@ def failures(ex, name, rows, passages):
         if "writer_raw" in rec:
             calls = rec.get("calls") or []
             r["failed_writer"] = rec.get("writer_raw") is None and any(c.get("failed") for c in calls)
-        cat = L.classify(e, v, r, e.get("gold") or [], e.get("stale_old"))
+        cat = L.classify(e, v, r, exp(e.get("gold") or []), e.get("stale_old"))
         if cat:
             out.setdefault(cat, []).append((e, rec, v))
     return out
@@ -196,6 +255,11 @@ def build(ex):
         platform.python_version(), ", ".join("%dx = %s (about %d chunks)" % (s, ex.corpus_name(s),
                                                                           ex.corpus_for(s)[1]["est_chunks"])
                                              for s in sorted(ex.corpora)), ex.key("retrieval")))
+    run = getattr(ex, "run_meta", None) or {}
+    w("")
+    w("Code measured: commit `%s` on `%s`. Each saved result carries the commit it was measured at (`_measured`); "
+      "results from other commits: %s." % (run.get("commit", "?"), run.get("branch", "?"), ", ".join(
+          sorted(other_commits(ex, run.get("commit")))) or "none"))
     if a.quick:
         w("")
         w("**Quick smoke:** a sampled corpus, a few questions per set and %d answer questions. These numbers check "
@@ -217,13 +281,34 @@ def build(ex):
     rows = []
     for (m, sc), r in res.items():
         t = set_table(r["rows"]["app"], qs, sets[:-1])
+        c = set_table(r["rows"]["app"], qs, sets[:-1], expander(ex, sc))
         for s in sets:
             if s in t:
-                x = t[s]
+                x, y = t[s], c[s]
                 rows.append([m, "%dx" % sc, s, x["n"], L.pc(x["hit@1"]), L.pc(x["hit@3"]), L.pc(x["hit@5"]),
-                             L.f2(x["mrr"])])
-    w(L.md_table(["method", "scale", "set", "n", "hit@1", "hit@3", "hit@5", "MRR"], rows) if rows else "(no results)")
+                             L.f2(x["mrr"]), L.pc(y["hit@1"]), L.pc(y["hit@3"]), L.pc(y["hit@5"])])
+    w(L.md_table(["method", "scale", "set", "n", "hit@1", "hit@3", "hit@5", "MRR", "content-right hit@1", "hit@3",
+                  "hit@5"], rows) if rows else "(no results)")
     w("")
+    w("Strict: the gold note itself. Content-right: the gold note or a distractor the corpus made from it (a split, "
+      "summary or rewording of it, or a mix holding one of its sections; corpus.py records each distractor's source "
+      "notes in distractors.json). Echo notes, which only borrow the gold note's title words, never count.")
+    w("")
+    rows = []
+    for m in sorted({m for m, _ in res}):
+        ss = sorted(s for mm, s in res if mm == m)
+        if len(ss) > 1:
+            d = drop(ex, res[(m, ss[0])]["rows"]["app"], (ss[-1], res[(m, ss[-1])]["rows"]["app"]), qs)
+            lost = d["copy"] + d["real"]
+            rows.append([m, "%dx → %dx" % (ss[0], ss[-1]), d["kept"] + lost, d["kept"], lost,
+                         "%d (%s)" % (d["copy"], L.pc(d["copy"] / lost) if lost else "–"), d["real"]])
+    if rows:
+        w("Where the bigger vault's drop comes from (answerable questions with the gold note in the top 5 at the "
+          "smaller scale):")
+        w("")
+        w(L.md_table(["method", "scales", "found at small", "still found", "lost", "lost to a copy (right content)",
+                      "really missed"], rows))
+        w("")
     w("Multi-hop, stale pairs, guides and game scope:")
     w("")
     rows = []
@@ -234,8 +319,9 @@ def build(ex):
         gd = guides(app, (r.get("text") or {}).get("5"), qs)
         scp = scope(app, qs)
         rows.append([m, "%dx" % sc, "%s / %s" % (L.pc(mh["both@5"]), L.pc(mh["either@5"])),
-                     " / ".join("%s %s (old@3 %s)" % (h, L.pc(x["new_above_old"]), L.pc(x["old@3"]))
-                                for h, x in stl.items()),
+                     " / ".join("%s %s (outdated in top 5: %s, mean rank %s)" % (
+                         h, L.pc(x["new_above_old"]), L.pc(x["old@5"]), L.f2(x["old_rank"], 1))
+                         for h, x in stl.items()),
                      "%s / %s" % (L.pc(gd["found@5"]), L.pc(gd["found and tagged@5"])),
                      "%s → %s" % (L.pc(scp.get("game note @3, no filter")), L.pc(scp.get("game note @3, game=this"))),
                      L.pc(scp.get("general note @3, game=general"))])
@@ -248,15 +334,16 @@ def build(ex):
     rows = []
     for (m, sc), r in res.items():
         tx = r.get("text") or {}
-        b = r.get("build") or {}
+        b = r.get("build") or ({"build_s": r["build_s"], "keyword": True} if r.get("build_s") is not None else {})
         app = r["rows"]["app"]
         e2e = [x["e2e_secs"] for x in tx.get("5", [])]
         slow = sum(1 for x in tx.get("5", []) if x.get("over_app_timeout"))
         rows.append([m, "%dx" % sc] + [L.f2(L.mean([x["tokens"] for x in tx.get(str(k), [])]), 0) for k in (3, 5, 8)] +
                     ["%s / %s" % (L.f2(L.pct([x["secs"] for x in app], 50), 3), L.f2(L.pct([x["secs"] for x in app], 95), 3)),
                      "%s / %s" % (L.f2(L.pct(e2e, 50), 3), L.f2(L.pct(e2e, 95), 3)), slow,
-                     L.fmt_secs(b.get("build_s")) + ("" if not b else " (%d embedded, %d cached)" % (
-                         b.get("embed_misses", 0), b.get("embed_hits", 0))),
+                     L.fmt_secs(b.get("build_s")) + ("" if not b else " (keyword indexes)" if b.get("keyword") else
+                                                     " (%d embedded, %d cached)" % (b.get("embed_misses", 0),
+                                                                                    b.get("embed_hits", 0))),
                      L.f2(r.get("open_s"), 1, " s"), L.f2(r.get("update_s"), 2, " s"),
                      L.f2(r.get("rss_open_mb"), 0), L.f2(r.get("peak_rss_mb"), 0),
                      L.f2(r.get("qdrant_rss_mb"), 0), L.f2(r.get("disk_mb"), 0)])
@@ -269,6 +356,21 @@ def build(ex):
       "Open: an existing index loaded and checked. Over 3 s: searches the app would have answered with the keyword "
       "search instead (its timeout).")
     w("")
+    rows = []
+    for (m, sc), r in res.items():
+        ta = r.get("text_app_timeout")
+        if not ta:
+            continue
+        fell = sum(1 for x in ta if x.get("via") != "rag")
+        e2e = [x["e2e_secs"] for x in ta]
+        rows.append([m, "%dx" % sc, len(ta), "%d (%s)" % (fell, L.pc(fell / len(ta))),
+                     "%s / %s" % (L.f2(L.pct(e2e, 50), 2), L.f2(L.pct(e2e, 95), 2))])
+    if rows:
+        w("Silent fallback: the same searches (k=5) with rbx_vault's real 3 s timeout. A search that gets no index "
+          "answer in time is answered by the keyword search, and the agent is not told.")
+        w("")
+        w(L.md_table(["method", "scale", "searches", "fell back to keyword", "rbx_vault s p50 / p95"], rows))
+        w("")
     w("### Telling \"not in the knowledge base\" apart")
     w("")
     w("Each answerable question's and each negative question's best score, and the threshold that separates them "
@@ -363,19 +465,22 @@ def build(ex):
         s = answer_summary(sr)
         summaries[name] = s
         fails[name] = failures(ex, name, sr, pas[name])
+        s["copy_only"] = copy_only(ex, name, sr, pas[name])
         rows.append([name, "%d/%d/%d" % (s["n"], s["answered"], s["judged"]), L.pc(s["correct"]), L.pc(s["recall"]),
                      L.pc(s["wrong"]), "%d/%d" % s["neg_abstained"], L.pc(s["false_not_found"]),
                      "%d/%d" % s["guide_ok"], "%d/%d" % s["stale_old_fact"], L.f2(s["in"], 0), L.f2(s["out"], 0),
                      L.f2(s["reasoning"], 0), L.f2(s["calls"], 1),
                      "%s / %s" % (L.f2(s["p50"], 1), L.f2(s["p95"], 1)), L.f2(s["first_token_p50"], 1),
-                     s["format_fail"] + s["errors"]])
+                     s["format_fail"] + s["errors"], s["copy_only"]])
     w(L.md_table(["config", "asked/answered/judged", "correct", "fact recall", "wrong facts", "negatives abstained",
                   "false not-found", "guides right", "stale old fact", "tokens in", "out", "reasoning", "calls",
-                  "secs p50 / p95", "first token s", "format fails / errors"], rows) if rows else "(none)")
+                  "secs p50 / p95", "first token s", "format fails / errors", "from a copy only"], rows)
+      if rows else "(none)")
     w("")
     w("Wrong facts: share of answers (negatives aside) that assert a wrong fact or contradict a key fact. Tokens: per "
       "answer, all model calls (the Librarian's writer and support check; the reader's one call). First token: the "
-      "Librarian writer's first streamed token (reasoning included).")
+      "Librarian writer's first streamed token (reasoning included). From a copy only: the passages held a "
+      "distractor made from the gold note but not the note itself (the answer can still be right).")
     w("")
     eff = [n for n, _ in sets_ if n.endswith("-low")]
     if eff:
@@ -465,6 +570,26 @@ def build(ex):
     return "\n".join(out)
 
 
+def other_commits(ex, commit):
+    """Commits other than this run's that measured results the report uses (a resumed run can mix them)."""
+    import glob
+    import json
+    out = set()
+    dirs = [os.path.join(ex.cache.root, "%s-%s" % (st, ex.key(st))) for st in ("retrieval", "ablations", "answers",
+                                                                               "judge")]
+    for f in [f for d in dirs for f in glob.glob(os.path.join(d, "*.json")) + glob.glob(os.path.join(d, "*.jsonl"))]:
+        try:
+            with open(f, encoding="utf-8") as fh:
+                for line in (fh if f.endswith(".jsonl") else [fh.read()]):
+                    m = json.loads(line).get("_measured") if line.strip() else None
+                    c = m.get("commit") if isinstance(m, dict) else m
+                    if c and c != commit:
+                        out.add(c)
+        except (OSError, ValueError, AttributeError):
+            continue
+    return out
+
+
 def _clip(t, n):
     t = " ".join((t or "").split())
     return t if len(t) <= n else t[:n - 1] + "…"
@@ -497,6 +622,14 @@ def plain_findings(ex, res, summaries, fails):
             out.append("%s %dx can tell \"not in the knowledge base\" best by its %s (%s balanced: keeps %s of "
                        "answerable, refuses %s of negatives)." % (m, sc, label, L.pc(best["balanced"]),
                                                                     L.pc(best["kept"]), L.pc(best["refused"])))
+    for (m, sc), r in res.items():
+        st = stale(r["rows"]["app"], qs)
+        if len(st) == 2 and sc == max(s for _, s in res):
+            a, b = st["marked"], st["text only"]
+            out.append("%s %dx, stale pairs: the newer note ranks above the outdated one %s of the time when it "
+                       "carries `supersedes:`, %s when only its text says so; the outdated note is still in the "
+                       "top 5 for %s / %s." % (m, sc, L.pc(a["new_above_old"]), L.pc(b["new_above_old"]),
+                                                L.pc(a["old@5"]), L.pc(b["old@5"])))
     abl = []
     ak = ex.key("ablations")
     for m, sc in ex.plan()["retrieval"]:
@@ -510,10 +643,11 @@ def plain_findings(ex, res, summaries, fails):
     if abl:
         worst = min(abl)
         best = max(abl)
-        out.append("The piece that helps most: switching off %s for %s %dx costs %s points of hit@5." % (
-            worst[3], worst[1], worst[2], L.delta(0, worst[0])))
+        if worst[0] < 0:
+            out.append("The change that hurts most against the app as shipped: %s for %s %dx (%s points of hit@5)." % (
+                worst[3], worst[1], worst[2], L.delta(0, worst[0])))
         if best[0] > 0:
-            out.append("A piece that hurts: %s for %s %dx gains %s points of hit@5 when changed." % (
+            out.append("A change that beats the app as shipped: %s for %s %dx (%s points of hit@5)." % (
                 best[3], best[1], best[2], L.delta(0, best[0])))
     if summaries:
         ranked = sorted(((s["correct"] or 0, n) for n, s in summaries.items()), reverse=True)

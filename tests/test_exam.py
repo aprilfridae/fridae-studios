@@ -80,6 +80,14 @@ class Cache(unittest.TestCase):
                 f.write('{"id": "P03", "a"')  # a run killed mid-line
             self.assertEqual(sorted(c.records("answers", "k1", "lib")), ["P01", "P02"])
 
+    def test_every_unit_carries_the_commit_it_measured(self):
+        with tempfile.TemporaryDirectory() as d:
+            c = L.StageCache(d, {"commit": "abc123", "branch": "b"})
+            c.put("retrieval", "k", "u", {"x": 1})
+            c.append("answers", "k", "lib", {"id": "P01"})
+            self.assertEqual(c.get("retrieval", "k", "u")["_measured"]["commit"], "abc123")
+            self.assertEqual(c.records("answers", "k", "lib")["P01"]["_measured"], "abc123")
+
     def test_file_hash_follows_content(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "a.py")
@@ -193,6 +201,27 @@ class StalePairs(unittest.TestCase):
                 self.assertIn("[[Missing Note]]", f.read())  # the unmarked half: text only
             self.assertTrue(os.path.isfile(os.path.join(d, "game", "GAME.md")))
             self.assertTrue(os.path.isfile(os.path.join(d, "game", ".fridae", "notes", "Autosave Rules.md")))
+
+
+class ContentRight(unittest.TestCase):
+    """Scoring with copies: a distractor made from the gold note counts as content-right, an echo never does."""
+
+    class Ex:
+        def derived(self, scale):
+            return {"Gold - short version": {"kind": "summary", "from": ["Gold"]},
+                    "Working notes - Gold (3)": {"kind": "echo", "from": ["Other"], "looks_like": "Gold"},
+                    "Mixed bag": {"kind": "mix", "from": ["Other", "Gold"]}}
+
+    def test_expander_and_drop(self):
+        import exam_report as R
+        exp = R.expander(self.Ex(), 10)
+        self.assertEqual(sorted(exp(["Gold"])), ["Gold", "Gold - short version", "Mixed bag"])
+        qs = {"P1": {"gold": ["Gold"]}, "P2": {"gold": ["Gold"]}, "P3": {"gold": ["Gold"]}}
+        small = [{"id": i, "set": "paraphrase", "titles": ["Gold"]} for i in qs]
+        large = [{"id": "P1", "set": "paraphrase", "titles": ["Gold"]},
+                 {"id": "P2", "set": "paraphrase", "titles": ["Gold - short version"]},
+                 {"id": "P3", "set": "paraphrase", "titles": ["Working notes - Gold (3)"]}]
+        self.assertEqual(R.drop(self.Ex(), small, (10, large), qs), {"kept": 1, "copy": 1, "real": 1})
 
 
 class TheQuestions(unittest.TestCase):
