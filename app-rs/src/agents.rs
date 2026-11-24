@@ -5508,12 +5508,10 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
             "RBXKIT_BLENDER": paths::find_blender().map(|p| p.display().to_string()).unwrap_or_default(),
         }}
     });
-    // the knowledge index (`rag`), only while its service is ready: `rbx_vault` searches through it, and falls back
-    // to its keyword search without these. The token is never part of `guarded_print` (that is keyed on the mode)
-    if let Some((url, token)) = crate::rag::endpoint() {
-        servers["rbxkit"]["env"]["FRIDAE_RAG_URL"] = json!(url);
-        servers["rbxkit"]["env"]["FRIDAE_RAG_TOKEN"] = json!(token);
-    }
+    // the knowledge index (`rag`): one constant path, where the app keeps the service's address and key while it is
+    // ready (`rbx_vault` reads it per query, and falls back to its keyword search without it). Never the address or
+    // key themselves, so the tools' settings, and a kept process's launch key, never change with the service
+    servers["rbxkit"]["env"]["FRIDAE_RAG_FILE"] = json!(crate::rag::endpoint_file().display().to_string());
     // FRIDAE_NO_STUDIO (testing only): a copy of the app that cannot reach the user's open Studio place: no Studio
     // server for the agent, and rbxkit's own Studio tools are told so (they answer "Studio is off for this run")
     if no_studio {
