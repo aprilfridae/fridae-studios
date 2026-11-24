@@ -186,11 +186,101 @@ def load_index():
     return idx
 
 
+class Docs(list):
+    """Index entries that keep their own BM25F statistics between searches: the field averages, and an inverted
+    index (which entries hold each term) built once instead of the document frequencies being counted on every
+    search. A search then scores only the entries that hold a query term, with numpy. A caller that keeps one corpus
+    loaded for many searches (the knowledge index's KeywordRanker) wraps it in this; the scores are exactly the plain
+    list's (the same floating-point operations in the same order). Never changed after it is made."""
+
+    def stats(self, fields):
+        import threading
+        from array import array
+
+        import numpy as np
+        key = tuple(fields.items())
+        st = self.__dict__.setdefault("_stats", {}).get(key)
+        if st is None:
+            n = len(self)
+            avg = {f: sum(d["len"][f] for d in self) / n or 1 for f in fields}
+            tid, terms, docs = {}, array("i"), array("i")
+            for k, d in enumerate(self):
+                for t in {t for f in fields for t in d["tf"][f]}:
+                    i = tid.get(t)
+                    if i is None:
+                        i = tid[t] = len(tid)
+                    terms.append(i)
+                    docs.append(k)
+            terms = np.frombuffer(terms, dtype=np.int32)
+            order = np.argsort(terms, kind="stable")  # entries in order within a term
+            counts = np.bincount(terms, minlength=len(tid)) if len(tid) else np.zeros(0, dtype=np.int64)
+            starts = np.zeros(len(tid) + 1, dtype=np.int64)
+            np.cumsum(counts, out=starts[1:])
+            st = {"avg": avg, "tid": tid, "counts": counts, "starts": starts,
+                  "docs": np.frombuffer(docs, dtype=np.int32)[order], "tf": {}, "lock": threading.Lock()}
+            self._stats[key] = st
+        return st
+
+    def df(self, st, t):
+        i = st["tid"].get(t)
+        return 0 if i is None else int(st["counts"][i])
+
+    def postings(self, st, fields, t):
+        """(entries holding t, the BM25F term frequency of t in each), worked out on first use of t and kept."""
+        import numpy as np
+        hit = st["tf"].get(t)
+        if hit is None:
+            i = st["tid"][t]
+            ids = st["docs"][st["starts"][i]:st["starts"][i + 1]]
+            avg = st["avg"]
+            tfw = np.array([sum(w * self[k]["tf"][f].get(t, 0) / (1 - B + B * self[k]["len"][f] / avg[f])
+                                for f, w in fields.items()) for k in ids.tolist()], dtype=np.float64)
+            hit = (ids, tfw)
+            with st["lock"]:
+                if len(st["tf"]) > 20000:
+                    st["tf"].clear()
+                st["tf"][t] = hit
+        return hit
+
+    def warm(self, fields, min_df=100):
+        """Work out the term frequencies of every term held by at least min_df entries, most common first (the
+        expensive ones when a search meets them first); for a background thread."""
+        st = self.stats(fields)
+        common = sorted(((int(c), t) for t, c in zip(st["tid"], st["counts"].tolist()) if c >= min_df), reverse=True)
+        for _, t in common:
+            self.postings(st, fields, t)
+
+    def part(self, key, keep):
+        """The entries for which keep(entry) is true, as a Docs of its own (kept, so its statistics are too)."""
+        parts = self.__dict__.setdefault("_parts", {})
+        if key not in parts:
+            parts[key] = Docs(d for d in self if keep(d))
+        return parts[key]
+
+
+def _bm25f_kept(query_terms, docs, fields):
+    """bm25f over a Docs: the same arithmetic, only for the entries that hold a query term (the rest score 0)."""
+    import numpy as np
+    n = len(docs)
+    st = docs.stats(fields)
+    scores = np.zeros(n, dtype=np.float64)
+    for t, qw in query_terms.items():
+        df = docs.df(st, t)
+        if not df:
+            continue
+        ids, tfw = docs.postings(st, fields, t)
+        c = qw * math.log(1 + (n - df + 0.5) / (df + 0.5))
+        scores[ids] += c * tfw / (K1 + tfw)
+    return scores.tolist()
+
+
 def bm25f(query_terms, docs, fields=None):
     FIELDS_ = fields or FIELDS
     n = len(docs)
     if not n:
         return []
+    if isinstance(docs, Docs):
+        return _bm25f_kept(query_terms, docs, FIELDS_)
     avg = {f: sum(d["len"][f] for d in docs) / n or 1 for f in FIELDS_}
     df = Counter()
     for d in docs:
@@ -572,8 +662,32 @@ def _code_capped(text):
     return re.sub(r"```.*?```", lambda c: c.group(0)[:600], text, flags=re.S)
 
 
+_PERSONAL_CACHE = {}  # (shelf, title, path, rel, label_hint) -> ((mtime_ns, size), entries), for the user's shelves
+
+
 def _section_docs(shelf, title, path, rel, label_hint=""):
-    """Index entries for one file: one per section."""
+    """Index entries for one file: one per section. The user's own shelves are read on every search, so their
+    entries are kept per file and parsed again only when the file changes."""
+    if shelf in PERSONAL:
+        key = (shelf, title, path, rel, label_hint)
+        try:
+            st = os.stat(path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        hit = _PERSONAL_CACHE.get(key)
+        if sig is not None and hit and hit[0] == sig:
+            return hit[1]
+        out = _parse_section_docs(shelf, title, path, rel, label_hint)
+        if sig is not None:
+            if len(_PERSONAL_CACHE) > 50000:
+                _PERSONAL_CACHE.clear()
+            _PERSONAL_CACHE[key] = (sig, out)
+        return out
+    return _parse_section_docs(shelf, title, path, rel, label_hint)
+
+
+def _parse_section_docs(shelf, title, path, rel, label_hint=""):
     try:
         text = read(path)
     except (OSError, UnicodeDecodeError):
@@ -742,7 +856,10 @@ def search_sections(q, shelves, k, docs=None):
     # A handful of notes gives far smaller raw scores than a big corpus, so each group's scores are scaled to its own
     # best (1.0); the order inside a group is unchanged.
     for group, terms in ((False, squery_terms(q)), (True, pquery_terms(q))):
-        part = [d for d in docs if (d["shelf"] in PERSONAL) == group]
+        if isinstance(docs, Docs):
+            part = docs.part(("personal", group), lambda d, g=group: (d["shelf"] in PERSONAL) == g)
+        else:
+            part = [d for d in docs if (d["shelf"] in PERSONAL) == group]
         if not any(d["shelf"] in shelves for d in part):
             continue
         mine = []

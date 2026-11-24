@@ -270,17 +270,34 @@ class KeywordRankingTests(unittest.TestCase):
                 vault = rbxvault.keyword_ranking(q, ["vault"], 4)
                 self.assertEqual([t for _, t, _ in vault], [d["title"] for _, d in rbxvault.search(q, 4)[0]])
 
+    def test_kept_statistics_rank_exactly_as_the_plain_search(self):
+        idx = rbxvault.load_index()
+        kept = dict(idx, docs=rbxvault.Docs(idx["docs"]))
+        docs = rbxvault.section_corpus("")
+        kept_docs = rbxvault.Docs(docs)
+        shelves = [s for s in rbxvault.SHELVES if s != "game"]
+        for q in ("save player coins between sessions", "the zombie keeps walking into the wall", "GetPropertyChangedSignal",
+                  "make it feel softer", "price the first three upgrades", "remote event exploit"):
+            self.assertEqual(rbxvault.search(q, 10, kept), rbxvault.search(q, 10, idx), q)
+            for sh in (shelves, ["guides", "team"], ["vault", "guides"]):
+                self.assertEqual(rbxvault.keyword_ranking(q, sh, 20, kept, kept_docs),
+                                 rbxvault.keyword_ranking(q, sh, 20, idx, docs), (q, sh))
+                self.assertEqual(rbxvault.search_sections(q, sh, 20, kept_docs), rbxvault.search_sections(q, sh, 20, docs))
+
     def test_the_service_ranker_keeps_its_indexes_and_takes_a_project(self):
         from rbxrag.engine import KeywordRanker
         now = [0.0]
-        kr = KeywordRanker(every=10.0, clock=lambda: now[0])
-        with mock.patch.object(rbxvault, "load_index", wraps=rbxvault.load_index) as li:
+        kr = KeywordRanker(every=10.0, clock=lambda: now[0], background=False)
+        with mock.patch.object(rbxvault, "load_index", wraps=rbxvault.load_index) as li, \
+                mock.patch.object(rbxvault, "note_files", wraps=rbxvault.note_files) as nf:
             a = kr("datastore session lock", ["vault", "guides"], 5, "")
+            walks = nf.call_count
             kr("datastore session lock", ["vault", "guides"], 5, "")
-            self.assertEqual(li.call_count, 1)
+            self.assertEqual((li.call_count, nf.call_count), (1, walks))  # within 10 s: not even a look
             now[0] = 11.0
             kr("datastore session lock", ["vault", "guides"], 5, "")
-            self.assertEqual(li.call_count, 2)
+            self.assertEqual(nf.call_count, walks + 1)  # looked at the files again...
+            self.assertEqual(li.call_count, 1)  # ...and kept the loaded index: nothing changed
         self.assertEqual(a, rbxvault.keyword_ranking("datastore session lock", ["vault", "guides"], 5))
         proj = tempfile.mkdtemp(prefix="kw game ")
         self.addCleanup(shutil.rmtree, proj, True)
