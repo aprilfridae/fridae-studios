@@ -389,8 +389,7 @@ fn ask(ai: &str) -> Answer {
         }
         if let Some(("gemini", name)) = extra(ai) {
             // the same question in the added account's own home (not asked at all when its folder is not there)
-            let account = crate::accounts::position("gemini", name);
-            return account.and_then(antigravity::ask_models_of).map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
+            return antigravity::ask_models_of(Some(name)).map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
         }
         let Some(exe) = paths::find_ai(tool(ai)) else { return Answer::default() };
         let mut cmd = Command::new(exe);
@@ -416,9 +415,11 @@ fn tool_env(cmd: &mut Command, id: &str) -> bool {
     if id == "gemini" && let Some(h) = antigravity::home_override() {
         cmd.env("HOME", h);
     }
+    // an added account: by its name (never by where it stands in the list, which may change under a command); the
+    // AI's own sign-in: nothing more. Anything else that looks like an account's name and is not one: not run
     match extra(id) {
-        Some((ai, name)) => crate::accounts::position(ai, name).is_some_and(|account| crate::accounts::env(cmd, ai, account)),
-        None => true,
+        Some((ai, name)) => crate::accounts::env_of(cmd, ai, Some(name)),
+        None => AIS.contains(&id),
     }
 }
 
@@ -1175,6 +1176,19 @@ mod tests {
         assert!(first.get_envs().all(|(k, _)| k != "CLAUDE_CONFIG_DIR" && k != "CLAUDE_SECURESTORAGE_CONFIG_DIR"), "the user's own account: nothing set");
         crate::accounts::stand_in(false, false);
         assert!(!tool_env(&mut Command::new("claude"), "claude:claude-2-standin"));
+        // an id that looks like an account's and is none (a name the app did not make, an AI with no accounts) is
+        // never let run as if it were the AI's own
+        for bad in ["claude:../../x", "claude:claude-2-", "cursor:cursor-2-abcdef", "claude:", ":claude-2-abcdef", "opencode"] {
+            assert!(!tool_env(&mut Command::new("claude"), bad), "{bad}");
+        }
+        assert!(tool_env(&mut Command::new("cursor-agent"), "cursor"));
+        // by its name, wherever it stands: the third account's status runs in the third's folder
+        crate::accounts::stand_in_many(&[("bbbb", true), ("cccc", true), ("dddd", true)]);
+        let mut third = Command::new("claude");
+        assert!(tool_env(&mut third, "claude:claude-2-dddd"));
+        assert!(get(&third, "CLAUDE_CONFIG_DIR").is_some_and(|d| d.ends_with("claude-2-dddd")));
+        assert!(!tool_env(&mut Command::new("claude"), "claude:claude-2-gone"), "a well-formed name that is no account of the AI's");
+        crate::accounts::stand_in(false, false);
         // Gemini's second account: its commands run in its own home, and not at all without it
         crate::accounts::stand_in(true, true);
         let mut agy = Command::new("agy");

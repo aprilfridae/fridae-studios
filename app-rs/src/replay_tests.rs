@@ -410,7 +410,7 @@ fn a_gemini_process_per_message_that_hits_its_quota_carries_on_with_the_second_a
         let until = crate::accounts::used_until("gemini", 1, now).expect("marked used up");
         assert!((until - now - 7_608.0).abs() < 10.0, "{shape}: {}", until - now);
         // a new Gemini chat now starts on the second account
-        assert_eq!(Agent::detached_for_test(&format!("replay-gemini-new-{shape}"), None).turn_account("gemini"), 2, "{shape}");
+        assert_eq!(Agent::detached_for_test(&format!("replay-gemini-new-{shape}"), None).turn_account("gemini").0, 2, "{shape}");
         // without a second account everything is as it was: agy's line, once, and the turn is over
         crate::accounts::stand_in(false, false);
         let b = gemini_chat(&format!("replay-gemini-quota-alone-{shape}"));

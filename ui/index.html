@@ -2612,14 +2612,25 @@ function accountRow(ai, a) {
 /* Add account makes the app's folder for one more account and starts the tool's sign-in for it (its page opens in
    your browser); Remove deletes that account's folder. */
 const accError = {};
+let accBusy = false;
 function accountButton(ai, label, action, name) {
   const b = el("button", "pill sm", esc(label));
   b.onclick = async () => {
-    b.disabled = true; noticePresses++;
+    /* one at a time: the rows move up when one is removed, so a second click must never land on the next account's
+       Remove while the first is still on its way (every Add and Remove is greyed until the list is painted again) */
+    if (accBusy) return;
+    accBusy = true;
+    document.querySelectorAll("#ai-list .oc-row .act button").forEach((x) => { x.disabled = true; });
+    noticePresses++;
     let r = null; try { r = await api("/api/accounts", { ai, action, name }); } catch (e) {}
     if (r && r.id) sgConfirm[r.id] = null;
     accError[ai] = !r ? "Could not reach the app. Try again." : r.ok === false && action === "add" && !r.id ? (r.error || "The account could not be added.") + " Try again." : "";
-    await refresh(); watchOpenCode();
+    try { await refresh(); } catch (e) {}
+    /* the list is painted again even when the app could not be reached, so no button stays greyed */
+    try { paintAi(); } catch (e) {}
+    /* a moment more before another press counts, so a double click's second half finds nothing to press */
+    setTimeout(() => { accBusy = false; }, 600);
+    watchOpenCode();
   };
   return b;
 }

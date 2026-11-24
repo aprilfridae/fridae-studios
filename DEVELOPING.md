@@ -1330,16 +1330,23 @@ account". Everything in them holds for each added account; this section says wha
 **A list per AI.** The guarded setting `second_accounts` is `{"claude": ["<folder name>", ...], "gemini": [...]}`:
 each AI's added accounts by their folders' names, in the order they are tried after the user's own, which is the
 order they were added (`accounts::list`). One name alone, as the setting was, reads as a list of one. A name is
-still one the app made (`name_ok`), and at most `accounts::MOST` (20) are kept for one AI. **The order is that list
-and nothing else**: `slots`, `pick` and `next` only walk it, so another order (one the user sets) is a matter of
-writing the list in that order.
+still one the app made (`name_ok`), and at most `accounts::MOST` (20) are kept for one AI: the list is cut to that
+wherever it is read (`names_in`), not only at the Add button, so a long list written into the settings from
+outside starts no more status commands than twenty, and a place is a count that cannot wrap (`place`). **The order
+is that list and nothing else**: `slots`, `pick` and `next` only walk it, so another order (one the user sets) is a
+matter of writing the list in that order.
 
 **What an account is.** Its folder's name. A place in the order (1 the user's own, 2 the first added, ...) is only
-where it stands today: it changes when an account before it is removed. So a chat keeps the name
-(`State.account_name`) and reads its place from it before every turn (`turn_account`); "used up" is kept by name
-(`used_key`); the launch gets the folder (`prepare_at`), and the folder is in the launch key. The place is used for
-what the user reads ("account 3" beside the model, in the rollover's line, in a sign-in's line) and for the usage
-record.
+where it stands today: it changes when an account before it is removed, and the user can do that while a turn is
+on its way (while a hand-over's summary is written, that is minutes). So **everything that is done for an account
+goes by its name, and nothing by its place**: `turn_account` hands the turn the name with the place, from one
+reading of the list; the launch prepares the folder by name (`prepare_of`); a command is pointed at an account by
+name (`env_of`: status, sign-in, turn, the summary's fall-back); the sign-in a failed turn is about is the named
+account's (`sign_in_id`), never "whoever is at that place now", and never the user's own because the place names
+nobody; "used up" is marked and read by name (`mark_used_of`, `used_until_of`); a rollover reads the list once and
+takes the place it goes to, and that account's name, from that one reading; the usage record carries the name
+beside the place (`account_name`); agy's picture folder is the named account's. The place is only for what the
+user reads ("account 3" beside the model, in the rollover's line, in a sign-in's line, "Account 3" in Setup).
 
 **Its sign-in** is named `<ai>:<folder name>` (`accounts::id_of`, `signin::extra`), so every added account has its
 own status, its own sign-in and its own line in Setup. The status the page gets has one entry per account that
@@ -1356,6 +1363,9 @@ place a command is pointed at an account, whatever its number.
 for an added one a usable folder and a ready sign-in).
 - A new chat or expert: the first that can (`pick`), so the user's own whenever it is not used up, also again
   after its reset. None can: the user's own, where the turn fails as it would with one account.
+- A chat whose added account's sign-in is known to be gone goes to the first account that can take a chat (the
+  user's own before any added one), in a new conversation handed the chat so far; when none can, it stays and the
+  turn says to sign in (`account_for`).
 - At a limit (`roll_over`): the account is marked used up, and the chat moves to the first in the order that can
   take it and that this message has not been on (`next`, `State.tried`). So with three accounts a message can go
   from the first to the second to the third, once each, and never back to one it ran out on, whatever has reset in
@@ -1365,11 +1375,18 @@ for an added one a usable folder and a ready sign-in).
 
 **Setup, Connections.** Under Claude and under Gemini: one line per added account ("Account 2", "Account 3", ...)
 with its sign-in or who is signed in, and Remove; then one line with "Add account". Removing one moves the ones
-after it up.
+after it up, so one Add or Remove is taken at a time: while one is on its way every such button is greyed, and a
+double click's second half removes nothing (seen in the scratch app: two Remove buttons clicked twice each, one
+account removed).
 
 **Tested with three and four accounts** (stand-ins): the order of rotation, passing over a used-up and a
 signed-out one, back to the user's own after its reset, no bounce with three in play, a chat whose account moved
-up a place, marks kept by name, the list in the setting. Seen in the scratch app: two Gemini accounts and one
+up a place, marks kept by name (also when an account before the marked one is removed), the list in the setting
+and its cap, a command pointed at the third account, and an earlier account removed under a turn: the turn still
+starts in its own account's folder, its Sign in button is its own account's, and its limit marks its own account.
+
+**Known and left.** Each hop of one message plans its hand-over again, and a long chat's summary is written again
+for it. The words beside the model show the place from the chat's last turn until its next one. Seen in the scratch app: two Gemini accounts and one
 Claude account added (each sign-in started and cancelled), listed, the first removed (the second moved up), all
 removed.
 

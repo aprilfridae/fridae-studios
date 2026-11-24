@@ -43,18 +43,18 @@ static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
 /// in time. The list is
 /// kept once it has come: an empty answer (signed out, offline) leaves it to a later one.
 pub fn ask_models() -> Option<(String, String, bool)> {
-    ask_models_of(1)
+    ask_models_of(None)
 }
 
-/// The same question asked of an account: the user's own (1), whose answer fills the model menu, or an added one
-/// (by its place: in its own home, `accounts::env`; None when it has no folder, and then nothing is run).
-pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
+/// The same question asked of an account: the user's own (None), whose answer fills the model menu, or an added one
+/// by its name (in its own home, `accounts::env_of`; None when it has no folder, and then nothing is run).
+pub fn ask_models_of(account: Option<&str>) -> Option<(String, String, bool)> {
     let exe = paths::find_antigravity()?;
     let mut cmd = Command::new(exe);
     cmd.arg("models");
     paths::child_env(&mut cmd, "gemini");
-    if account >= 2 {
-        if !crate::accounts::env(&mut cmd, "gemini", account) {
+    if account.is_some() {
+        if !crate::accounts::env_of(&mut cmd, "gemini", account) {
             return None;
         }
     } else if let Some(h) = home_override() {
@@ -63,7 +63,7 @@ pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
     // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
     let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
     let list = model_lines(&stdout);
-    if !list.is_empty() && account < 2 {
+    if !list.is_empty() && account.is_none() {
         let _ = MODELS.set(list);
     }
     Some((stdout, stderr, ok))

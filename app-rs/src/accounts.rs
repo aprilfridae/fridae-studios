@@ -75,7 +75,16 @@ fn names_in(ai: &str, entry: &Value) -> Vec<String> {
             kept.push(name.to_string());
         }
     }
+    // never more than the app keeps for one AI, wherever the list came from (the settings file on a first run,
+    // the start-up question, a settings copy): every reader of the list is bounded by this
+    kept.truncate(MOST);
     kept
+}
+
+/// The place of the account that is `index`-th in the list of added ones: 2 for the first. A count that cannot
+/// wrap, whatever the list's length (it is never longer than `MOST`).
+fn place(index: usize) -> u8 {
+    u8::try_from(index.saturating_add(2)).unwrap_or(u8::MAX)
 }
 
 /// The setting as the app keeps it: only AIs that can have added accounts, only names the app could have made.
@@ -104,14 +113,17 @@ pub fn any(ai: &str) -> bool {
 }
 
 /// An account by its place in the order: 1 is the user's own (it has no name), 2 the first added, and so on. The
-/// name is what an account is: a place changes when an account before it is removed, so a chat keeps the name.
+/// name is what an account is: a place changes when an account before it is removed. So the place is only ever for
+/// what the user reads ("account 3"); whatever is *done* for an account (its folder prepared, a command pointed
+/// at it, its sign-in asked, its usage marked) goes by its name, which a chat keeps.
+#[cfg(test)]
 pub fn name_at(ai: &str, account: u8) -> Option<String> {
     (account >= 2).then(|| list(ai).get(account as usize - 2).cloned()).flatten()
 }
 
 /// The place of an added account, by its name, as it is now.
 pub fn position(ai: &str, name: &str) -> Option<u8> {
-    list(ai).iter().position(|n| n == name).map(|i| i as u8 + 2)
+    list(ai).iter().position(|n| n == name).map(place)
 }
 
 /// An added account's folder, while the AI has that account.
@@ -119,19 +131,9 @@ pub fn folder_of(ai: &str, name: &str) -> Option<PathBuf> {
     list(ai).iter().any(|n| n == name).then(|| base().join(name))
 }
 
-/// The same by its place.
-pub fn folder_at(ai: &str, account: u8) -> Option<PathBuf> {
-    name_at(ai, account).map(|n| base().join(n))
-}
-
 /// The name of an added account's sign-in (`signin`): "<ai>:<folder name>".
 pub fn id_of(ai: &str, name: &str) -> String {
     format!("{ai}:{name}")
-}
-
-/// The same by its place (None for the user's own, whose sign-in is the AI's).
-pub fn id_at(ai: &str, account: u8) -> Option<String> {
-    name_at(ai, account).map(|n| id_of(ai, &n))
 }
 
 /// Every added account's sign-in, for every AI.
@@ -142,21 +144,21 @@ pub fn ids() -> Vec<String> {
 /// Whether an added account can take a chat as far as its sign-in goes: its tool last said that an account is
 /// signed in there, one of its own (not a key or token from the environment, which is the same for every account,
 /// and not an account the user's own or an earlier added one is signed in to: `signin::second_ready`).
-pub fn signed_in_at(ai: &str, account: u8) -> bool {
+pub fn signed_in_of(ai: &str, name: &str) -> bool {
     #[cfg(test)]
-    if let Some(yes) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| account >= 2 && s.extras.get(account as usize - 2).is_some_and(|e| e.signed_in))) {
+    if let Some(yes) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.extras.iter().any(|e| format!("{ai}-2-{}", e.tag) == name && e.signed_in))) {
         return yes;
     }
-    id_at(ai, account).is_some_and(|id| crate::signin::second_ready(&id))
+    crate::signin::second_ready(&id_of(ai, name))
 }
 
 /// Whether an added account is known to be signed out (its tool said so; not merely "not known yet").
-pub fn signed_out_at(ai: &str, account: u8) -> bool {
+pub fn signed_out_of(ai: &str, name: &str) -> bool {
     #[cfg(test)]
-    if let Some(out) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| account >= 2 && s.extras.get(account as usize - 2).is_some_and(|e| e.out))) {
+    if let Some(out) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.extras.iter().any(|e| format!("{ai}-2-{}", e.tag) == name && e.out))) {
         return out;
     }
-    id_at(ai, account).is_some_and(|id| crate::signin::known_out(&id))
+    crate::signin::known_out(&id_of(ai, name))
 }
 
 /// Tests: one test's own accounts in place of the app's one copy (tests run side by side, each on its own thread):
@@ -415,11 +417,6 @@ fn users_claude() -> PathBuf {
 /// first command there, so the tool never makes a folder of its own where a link belongs. None: no second account.
 /// None as well when the folder, or the folder of all second accounts, is not a folder of its own but a link
 /// (`real_folder`): nothing is then run or written for the second account at all.
-pub fn prepare_at(ai: &str, account: u8) -> Option<PathBuf> {
-    prepare_of(ai, &name_at(ai, account)?)
-}
-
-/// The same for an added account by its name.
 pub fn prepare_of(ai: &str, name: &str) -> Option<PathBuf> {
     let dir = folder_of(ai, name)?;
     match ai {
@@ -479,14 +476,13 @@ fn link_into(dir: &Path, users: &Path, names: &[&str]) {
     let _ = (users, names);
 }
 
-/// The environment that makes a tool's process run on an account: nothing for the first (the user's own: nothing
-/// of its environment is touched), the second's folder for Claude Code (`point`). False when the account is the
-/// second and there is none (the caller falls back).
-pub fn env(cmd: &mut std::process::Command, ai: &str, account: u8) -> bool {
-    if account < 2 {
-        return true;
-    }
-    match (ai, prepare_at(ai, account)) {
+/// The environment that makes a tool's process run on an account, which is named: nothing for the user's own
+/// (None: nothing of its environment is touched), an added account's folder for Claude Code (`point`), its home
+/// for agy (`home`). False when the added account is not there, or its folder is not one the app uses: the command
+/// must then not be run at all.
+pub fn env_of(cmd: &mut std::process::Command, ai: &str, account: Option<&str>) -> bool {
+    let Some(name) = account else { return true };
+    match (ai, prepare_of(ai, name)) {
         ("claude", Some(dir)) => {
             point(cmd, &dir);
             true
@@ -537,18 +533,18 @@ pub fn point(cmd: &mut std::process::Command, dir: &Path) {
 /// first turn finds out again.
 static USED: Mutex<Option<HashMap<(String, String), f64>>> = Mutex::new(None);
 
-/// What an account is marked by: its name, so the mark stays with it when an account before it is removed ("" for
-/// the user's own). None: there is no such account.
-fn used_key(ai: &str, account: u8) -> Option<(String, String)> {
-    if account < 2 { Some((ai.to_string(), String::new())) } else { name_at(ai, account).map(|n| (ai.to_string(), n)) }
-}
-
 /// When nothing says when a limit resets, the account is tried again after this long.
 pub const TRY_AGAIN: f64 = 3600.0;
 
-/// An account hit its usage limit: used up until `until`.
-pub fn mark_used(ai: &str, account: u8, until: f64) {
-    let Some(key) = used_key(ai, account) else { return };
+/// What an account is marked by: its name, so the mark stays with it when an account before it is removed ("" for
+/// the user's own).
+fn used_key(ai: &str, account: Option<&str>) -> (String, String) {
+    (ai.to_string(), account.unwrap_or_default().to_string())
+}
+
+/// An account hit its usage limit: used up until `until`. By its name (None: the user's own).
+pub fn mark_used_of(ai: &str, account: Option<&str>, until: f64) {
+    let key = used_key(ai, account);
     #[cfg(test)]
     if STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.lock().unwrap().insert(key.clone(), until)).is_some()) {
         return;
@@ -556,9 +552,9 @@ pub fn mark_used(ai: &str, account: u8, until: f64) {
     USED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, until);
 }
 
-/// When the account is back, if it is used up now.
-pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
-    let key = used_key(ai, account)?;
+/// When the account is back, if it is used up now. By its name (None: the user's own).
+pub fn used_until_of(ai: &str, account: Option<&str>, now: f64) -> Option<f64> {
+    let key = used_key(ai, account);
     #[cfg(test)]
     if let Some(until) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.lock().unwrap().get(&key).copied())) {
         return until.filter(|until| *until > now);
@@ -566,14 +562,29 @@ pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
     USED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&key).copied()).filter(|until| *until > now)
 }
 
+/// Tests: the same by the account's place today.
+#[cfg(test)]
+pub fn mark_used(ai: &str, account: u8, until: f64) {
+    if account < 2 {
+        mark_used_of(ai, None, until);
+    } else if let Some(name) = name_at(ai, account) {
+        mark_used_of(ai, Some(&name), until);
+    }
+}
+
+#[cfg(test)]
+pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
+    if account < 2 { used_until_of(ai, None, now) } else { used_until_of(ai, Some(&name_at(ai, account)?), now) }
+}
+
 /// Which of an AI's accounts can take a chat now, in their order: first the user's own (not used up), then each
-/// added one (its folder is one the app uses, an account of its own is signed in there, and it is not used up).
-/// The order is the list's (`list`): whoever wants another order reorders that list, nothing here.
-pub fn slots(ai: &str, now: f64) -> Vec<bool> {
-    let mut out = vec![used_until(ai, 1, now).is_none()];
-    for i in 0..list(ai).len() {
-        let account = i as u8 + 2;
-        out.push(prepare_at(ai, account).is_some() && signed_in_at(ai, account) && used_until(ai, account, now).is_none());
+/// added one of `added` (its folder is one the app uses, an account of its own is signed in there, and it is not
+/// used up). `added` is the list as the caller read it (`list`), once: what it then does with a place it reads
+/// from that same list. The order is the list's: whoever wants another order reorders that list, nothing here.
+pub fn slots(ai: &str, added: &[String], now: f64) -> Vec<bool> {
+    let mut out = vec![used_until_of(ai, None, now).is_none()];
+    for name in added {
+        out.push(prepare_of(ai, name).is_some() && signed_in_of(ai, name) && used_until_of(ai, Some(name), now).is_none());
     }
     out
 }
@@ -581,14 +592,14 @@ pub fn slots(ai: &str, now: f64) -> Vec<bool> {
 /// The account a new chat or a new expert starts on: the first that can take a chat, the user's own first whenever
 /// it is not used up. None can: the user's own (it fails as it would with one account).
 pub fn pick(slots: &[bool]) -> u8 {
-    slots.iter().position(|usable| *usable).map(|i| i as u8 + 1).unwrap_or(1)
+    slots.iter().position(|usable| *usable).and_then(|i| u8::try_from(i + 1).ok()).unwrap_or(1)
 }
 
 /// The account a chat moves to when `from` has just hit its limit: the first in the order that can take a chat,
 /// other than `from` and other than any the message was already sent on (`tried`), so a message is sent once per
 /// account at most and never comes back to one. None: stay (all are used up, signed out, or tried).
 pub fn next(slots: &[bool], from: u8, tried: &[u8]) -> Option<u8> {
-    (1..=slots.len() as u8).find(|n| slots[*n as usize - 1] && *n != from && !tried.contains(n))
+    (1..=u8::try_from(slots.len()).unwrap_or(u8::MAX)).find(|n| slots[*n as usize - 1] && *n != from && !tried.contains(n))
 }
 
 /// When a limit resets, from the tool's own words: "Resets in 2h6m48s" (Gemini's quota line), as seconds from now.
@@ -689,13 +700,10 @@ pub fn state() -> Value {
         let accounts: Vec<Value> = list(ai)
             .iter()
             .enumerate()
-            .map(|(i, name)| {
-                let n = i as u8 + 2;
-                json!({"n": n, "name": name, "id": id_of(ai, name), "broken": prepare_of(ai, name).is_none(), "used": used_until(ai, n, now)})
-            })
+            .map(|(i, name)| json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": prepare_of(ai, name).is_none(), "used": used_until_of(ai, Some(name), now)}))
             .collect();
         let left: Vec<String> = left(ai).iter().map(|d| d.display().to_string()).collect();
-        out.insert(ai.to_string(), json!({"offered": !cfg!(windows), "used": used_until(ai, 1, now), "accounts": accounts, "left": left, "most": MOST}));
+        out.insert(ai.to_string(), json!({"offered": !cfg!(windows), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
     }
     Value::Object(out)
 }
@@ -785,6 +793,43 @@ mod tests {
     }
 
     #[test]
+    fn what_is_done_for_an_account_goes_by_its_name_and_the_list_is_never_longer_than_the_app_keeps() {
+        // a command is pointed at the account that is named, wherever it stands: the third's folder for the third
+        stand_in_many(&[("b", true), ("c", true), ("d", true)]);
+        let get = |cmd: &std::process::Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        let folder = |name: &str| base().join(name).to_string_lossy().to_string();
+        let mut third = std::process::Command::new("claude");
+        assert!(env_of(&mut third, "claude", Some("claude-2-d")));
+        assert_eq!((get(&third, "CLAUDE_CONFIG_DIR"), get(&third, "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (Some(folder("claude-2-d")), Some(folder("claude-2-d"))));
+        let mut agy = std::process::Command::new("agy");
+        assert!(env_of(&mut agy, "gemini", Some("gemini-2-c")));
+        assert_eq!(get(&agy, "HOME"), Some(folder("gemini-2-c")));
+        // a mark stays with its account when one BEFORE it is removed: "d" is used up at place 4, and still at place 3
+        let now = 1_000.0;
+        mark_used_of("claude", Some("claude-2-d"), now + 60.0);
+        assert_eq!((used_until("claude", 4, now), used_until("claude", 3, now)), (Some(now + 60.0), None));
+        let mut fewer = stand_in_now().unwrap();
+        fewer.extras.remove(0);
+        stand_in_here(&fewer);
+        assert_eq!(list("claude"), ["claude-2-c", "claude-2-d"]);
+        assert_eq!((used_until("claude", 3, now), used_until("claude", 2, now)), (Some(now + 60.0), None), "the mark moved up with it, and \"c\" did not inherit it");
+        assert_eq!(slots("claude", &list("claude"), now), [true, true, false]);
+        // the same account, asked by a name that is no longer in the list: not run at all
+        assert!(!env_of(&mut std::process::Command::new("claude"), "claude", Some("claude-2-b")));
+        // the list in the setting is never longer than the app keeps, whoever wrote it: 25 well-formed names read as 20
+        let many: Vec<String> = (0..25).map(|i| format!("claude-2-{i:06}")).collect();
+        assert_eq!(names_in("claude", &json!(many)).len(), MOST);
+        assert_eq!(names_in("claude", &json!(many))[..], many[..MOST], "the first twenty, in their order");
+        assert_eq!(checked_setting(&json!({"claude": many})).unwrap()["claude"].as_array().map(Vec::len), Some(MOST));
+        let settings = json!({"second_accounts": {"gemini": (0..300).map(|i| format!("gemini-2-{i:06}")).collect::<Vec<_>>()}});
+        assert_eq!(list_in(settings.as_object().unwrap(), "gemini").len(), MOST, "three hundred names start no three hundred status commands");
+        // and a place is a count that cannot wrap
+        assert_eq!((place(0), place(18), place(253), place(254), place(100_000)), (2, 20, 255, 255, 255));
+        assert_eq!(pick(&[false; 300]), 1);
+        assert_eq!(next(&[true; 300], 1, &[]), Some(2));
+    }
+
+    #[test]
     fn an_ai_has_any_number_of_added_accounts_in_the_order_they_were_added() {
         // the setting: a list per AI; one name alone (as it was while there could be one) reads as a list of one
         let settings = |v: Value| v.as_object().unwrap().clone();
@@ -800,18 +845,17 @@ mod tests {
         assert_eq!(list("claude"), ["claude-2-first", "claude-2-second", "claude-2-third"]);
         assert_eq!((name_at("claude", 1), name_at("claude", 2), name_at("claude", 4), name_at("claude", 5)), (None, Some("claude-2-first".to_string()), Some("claude-2-third".to_string()), None));
         assert_eq!((position("claude", "claude-2-third"), position("claude", "claude-2-gone")), (Some(4), None));
-        assert_eq!(id_at("gemini", 3).as_deref(), Some("gemini:gemini-2-second"));
+        assert_eq!(id_of("gemini", "gemini-2-second"), "gemini:gemini-2-second");
         assert_eq!(ids().len(), 6, "each AI's three");
-        assert_eq!(folder_at("claude", 3), Some(base().join("claude-2-second")));
         assert!(folder_of("claude", "claude-2-gone").is_none() && folder_of("claude", "gemini-2-first").is_none());
         // who can take a chat: the second is not signed in; a used-up one is passed over until its time
         let now = 1_000.0;
-        assert_eq!(slots("claude", now), [true, true, false, true]);
+        assert_eq!(slots("claude", &list("claude"), now), [true, true, false, true]);
         mark_used("claude", 1, now + 60.0);
         mark_used("claude", 2, now + 60.0);
-        assert_eq!(slots("claude", now), [false, false, false, true]);
-        assert_eq!((pick(&slots("claude", now)), pick(&slots("claude", now + 61.0))), (4, 1), "the user's own again once its time has passed");
-        assert_eq!(slots("gemini", now), [true, true, false, true], "each AI's accounts are its own");
+        assert_eq!(slots("claude", &list("claude"), now), [false, false, false, true]);
+        assert_eq!((pick(&slots("claude", &list("claude"), now)), pick(&slots("claude", &list("claude"), now + 61.0))), (4, 1), "the user's own again once its time has passed");
+        assert_eq!(slots("gemini", &list("gemini"), now), [true, true, false, true], "each AI's accounts are its own");
         // a mark stays with its account when one before it is removed: it is kept by name
         assert_eq!(used_until("claude", 2, now), Some(now + 60.0));
         let mut fewer = stand_in_now().unwrap();
@@ -825,7 +869,7 @@ mod tests {
         assert_eq!(rows.iter().map(|r| (r["n"].as_u64().unwrap(), r["id"].as_str().unwrap().to_string())).collect::<Vec<_>>(), [(2, "claude:claude-2-first".to_string()), (3, "claude:claude-2-third".to_string())]);
         assert!(rows.iter().all(|r| r["broken"] == false), "{rows:?}");
         stand_in(false, false);
-        assert!(list("claude").is_empty() && !any("claude") && slots("claude", now) == [true] && state()["claude"]["accounts"].as_array().unwrap().is_empty());
+        assert!(list("claude").is_empty() && !any("claude") && slots("claude", &list("claude"), now) == [true] && state()["claude"]["accounts"].as_array().unwrap().is_empty());
     }
 
     #[cfg(unix)]
@@ -981,17 +1025,17 @@ mod tests {
         // explicitly, so a `CLAUDE_SECURESTORAGE_CONFIG_DIR` the app inherited (empty: the user's own keychain
         // entry) can never decide
         let mut second = std::process::Command::new("claude");
-        assert!(env(&mut second, "claude", 2));
+        assert!(env_of(&mut second, "claude", Some("claude-2-standin")));
         let dir = base().join("claude-2-standin").to_string_lossy().to_string();
         assert_eq!(get(&second, "CLAUDE_CONFIG_DIR"), Some(Some(dir.clone())));
         assert_eq!(get(&second, "CLAUDE_SECURESTORAGE_CONFIG_DIR"), Some(Some(dir)));
         // the first account: nothing of its environment is set or removed by the app
         let mut first = std::process::Command::new("claude");
-        assert!(env(&mut first, "claude", 1));
+        assert!(env_of(&mut first, "claude", None));
         assert_eq!(first.get_envs().count(), 0);
         // Gemini's second account: its own HOME, and nothing that could name another home or another data folder
         let mut agy = std::process::Command::new("agy");
-        assert!(env(&mut agy, "gemini", 2));
+        assert!(env_of(&mut agy, "gemini", Some("gemini-2-standin")));
         let home_dir = base().join("gemini-2-standin").to_string_lossy().to_string();
         assert_eq!(get(&agy, "HOME"), Some(Some(home_dir)));
         for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
@@ -1002,15 +1046,15 @@ mod tests {
             assert_eq!(get(&agy, key), Some(None), "{key} is kept from the second account's agy");
         }
         let mut agy_first = std::process::Command::new("agy");
-        assert!(env(&mut agy_first, "gemini", 1));
+        assert!(env_of(&mut agy_first, "gemini", None));
         assert_eq!(agy_first.get_envs().count(), 0, "the user's own account: untouched");
         // no second account: the command is not to be run at all
         stand_in(false, false);
-        assert!(!env(&mut std::process::Command::new("claude"), "claude", 2));
-        assert!(!env(&mut std::process::Command::new("agy"), "gemini", 2));
+        assert!(!env_of(&mut std::process::Command::new("claude"), "claude", Some("claude-2-standin")));
+        assert!(!env_of(&mut std::process::Command::new("agy"), "gemini", Some("gemini-2-standin")));
         // an AI that has none
         stand_in(true, true);
-        assert!(!env(&mut std::process::Command::new("cursor-agent"), "cursor", 2));
+        assert!(!env_of(&mut std::process::Command::new("cursor-agent"), "cursor", Some("cursor-2-standin")));
     }
 
     #[test]
@@ -1020,7 +1064,7 @@ mod tests {
         assert_eq!(used_until("claude", 1, 1_000.0), Some(2_000.0));
         assert_eq!(used_until("claude", 1, 2_000.0), None, "back at its reset time: new chats go to the user's own again");
         assert_eq!(used_until("claude", 2, 1_000.0), None);
-        assert_eq!(slots("claude", 1_000.0), [false], "the user's own is used up, and there is no added account in this test");
+        assert_eq!(slots("claude", &list("claude"), 1_000.0), [false], "the user's own is used up, and there is no added account in this test");
         mark_used("claude", 1, 0.0);
     }
 
