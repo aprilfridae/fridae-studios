@@ -2,16 +2,22 @@
 //! Design: docs/superpowers/specs/2026-11-23-second-accounts-design.md. What was measured: DEVELOPING.md, "A second
 //! account: what was measured first".
 //!
-//! Claude only. Claude Code keeps its sign-in per config folder (`CLAUDE_CONFIG_DIR`; measured), so Claude's second
+//! Claude: Claude Code keeps its sign-in per config folder (`CLAUDE_CONFIG_DIR`; measured), so Claude's second
 //! account is a config folder of the app's own, beside Fridae's OpenCode copy in the app's data folder, outside every
 //! folder an AI is given. The user's own settings, skills and plugins are linked into it (`prepare`), so a turn there
 //! loads what a turn on the first account loads (measured from Claude Code's `init` line); who is signed in, and the
-//! conversations, are the folder's own. Gemini has none: agy keeps its sign-in in the keychain, one per HOME, whatever
-//! folder it is given (measured), so there is nothing the app could give it a second one in.
+//! conversations, are the folder's own.
+//!
+//! Gemini: agy keeps the user's sign-in in one keychain entry, which a command finds by HOME alone, and its data
+//! folder under HOME (measured). So Gemini's second account is a home folder of the app's own, in the same place:
+//! every agy command of the second account runs with it as HOME (`home`). The user's keychain cannot be read or
+//! written from there (measured), so the second account can never be, or replace, the user's own sign-in. A sign-in
+//! made there is kept, by what agy's program says, in a file in that home's own data folder (not measured: it
+//! takes a completed sign-in). The app's tool server is given the app's own HOME back.
 //!
 //! The first account is the user's own sign-in and is never touched. The second is signed in with the tool's own
-//! sign-in (`signin`, the id "claude2") and removed by deleting the app's folder, never by any command of the tool.
-//! The app reads, copies and stores no token.
+//! sign-in (`signin`, the ids "claude2" and "gemini2"), by the user's click, and removed by deleting the app's
+//! folder, never by any command of the tool. The app reads, copies, moves and stores no token.
 //!
 //! Which account pays is decided here and nowhere else:
 //! - whether a second account exists is a guarded setting (`SETTING`: the folder's name, never a path), changed only
@@ -33,7 +39,7 @@ use serde_json::{Map, Value, json};
 use crate::paths;
 
 /// The AIs that can have a second account.
-pub const AIS: [&str; 1] = ["claude"];
+pub const AIS: [&str; 2] = ["claude", "gemini"];
 
 /// The guarded setting: `{"claude": "<folder name>"}`. The name is one the app made (`name_ok`), under `base()`.
 pub const SETTING: &str = "second_accounts";
@@ -225,16 +231,24 @@ fn users_claude() -> PathBuf {
 /// (`real_folder`): nothing is then run or written for the second account at all.
 pub fn prepare(ai: &str) -> Option<PathBuf> {
     let dir = folder(ai)?;
-    prepare_in(&dir, &users_claude())
+    match ai {
+        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED),
+        _ => prepare_in(&dir, &users_claude(), &CLAUDE_LINKED),
+    }
 }
 
-fn prepare_in(dir: &Path, users: &Path) -> Option<PathBuf> {
+/// What of the user's own home a Gemini turn on the second account gets as well, by links: the git identity, so a
+/// `git commit` a turn runs there is the user's. Nothing of agy's own (its settings, plugins and conversations are
+/// the second home's: agy writes them, and its sign-in lives beside them), and none of the user's keys.
+const GEMINI_LINKED: [&str; 1] = [".gitconfig"];
+
+fn prepare_in(dir: &Path, users: &Path, names: &[&str]) -> Option<PathBuf> {
     let base = dir.parent()?;
     let _ = fs::create_dir_all(base);
     if !real_folder(base) || (fs::symlink_metadata(dir).is_ok() && !real_folder(dir)) {
         return None;
     }
-    link_into(dir, users, &CLAUDE_LINKED);
+    link_into(dir, users, names);
     real_folder(dir).then(|| dir.to_path_buf())
 }
 
@@ -273,7 +287,24 @@ pub fn env(cmd: &mut std::process::Command, ai: &str, account: u8) -> bool {
             point(cmd, &dir);
             true
         }
+        ("gemini", Some(dir)) => {
+            home(cmd, &dir);
+            true
+        }
         _ => false,
+    }
+}
+
+/// agy told to live in `dir`: its HOME. The keychain entry with the user's own sign-in is found through HOME alone
+/// (measured: with another HOME it is not found and cannot be written, whatever else the environment says), and
+/// agy's data folder, where a sign-in made without a keychain is kept, is `<HOME>/.gemini/antigravity-cli` whatever
+/// it inherits (measured). The variables that name other folders for agy, and the one that can name another home
+/// to the system's own libraries, are taken out all the same: nothing of a second account is ever to resolve to
+/// the first's.
+pub fn home(cmd: &mut std::process::Command, dir: &Path) {
+    cmd.env("HOME", dir);
+    for k in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
+        cmd.env_remove(k);
     }
 }
 
@@ -454,17 +485,19 @@ mod tests {
     fn the_second_accounts_folder_is_the_apps_own_and_nothing_else() {
         // only names the app makes, under the app's folder: the setting cannot point anywhere else
         assert!(name_ok("claude", "claude-2-0a1b2c3d4e5f"));
-        for bad in ["", "claude-2-", "claude-2-abc", "claude-2-../../x", "claude-2-ABCDEF", "../claude-2-abcdef", "/tmp/claude-2-abcdef", "claude-2-abcdef/x", "gemini-2-abcdef", &format!("claude-2-{}", "a".repeat(17))] {
+        for bad in ["", "claude-2-", "claude-2-abc", "claude-2-../../x", "claude-2-ABCDEF", "../claude-2-abcdef", "/tmp/claude-2-abcdef", "claude-2-abcdef/x", "gemini-2-abcdef", "cursor-2-abcdef", &format!("claude-2-{}", "a".repeat(17))] {
             assert!(!name_ok("claude", bad), "{bad}");
         }
-        assert!(!name_ok("gemini", "gemini-2-abcdef"), "Gemini can have none (agy keeps one sign-in per HOME)");
+        assert!(name_ok("gemini", "gemini-2-abcdef") && !name_ok("gemini", "claude-2-abcdef"), "each AI's own names only");
+        assert!(!name_ok("cursor", "cursor-2-abcdef") && !name_ok("opencode", "opencode-2-abcdef"), "no second account for the others");
         let settings = |v: Value| v.as_object().unwrap().clone();
         assert_eq!(folder_in(&settings(json!({"second_accounts": {"claude": "claude-2-abcdef"}})), "claude"), Some(base().join("claude-2-abcdef")));
         for bad in [json!({"second_accounts": {"claude": "../../Documents"}}), json!({"second_accounts": {"claude": "/etc"}}), json!({"second_accounts": "claude-2-abcdef"}), json!({})] {
             assert_eq!(folder_in(&settings(bad.clone()), "claude"), None, "{bad}");
         }
         // as a guarded setting: what could not be the app's own is dropped when the file is read
-        assert_eq!(checked_setting(&json!({"claude": "claude-2-abcdef", "gemini": "gemini-2-abcdef", "cursor": 1, "x": "/tmp"})), Some(json!({"claude": "claude-2-abcdef"})));
+        assert_eq!(checked_setting(&json!({"claude": "claude-2-abcdef", "gemini": "gemini-2-abcdef", "cursor": "cursor-2-abcdef", "x": "/tmp"})), Some(json!({"claude": "claude-2-abcdef", "gemini": "gemini-2-abcdef"})));
+        assert_eq!(checked_setting(&json!({"claude": "gemini-2-abcdef", "gemini": "../x"})), Some(json!({})));
         assert_eq!(checked_setting(&json!("claude-2-abcdef")), None);
         // and no agent's file tools may write there
         assert!(paths::app_protected().iter().any(|(p, dir)| *dir && *p == base()), "the folder of second accounts is among the app's protected places");
@@ -533,7 +566,7 @@ mod tests {
         let dir = base.join("claude-2-abcdef");
         std::os::unix::fs::symlink(&users, &dir).unwrap();
         // nothing is prepared, so nothing runs there: no sign-in, no status, no turn
-        assert_eq!(prepare_in(&dir, &users), None);
+        assert_eq!(prepare_in(&dir, &users, &CLAUDE_LINKED), None);
         let listed = |d: &Path| {
             let mut names: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
             names.sort();
@@ -549,11 +582,24 @@ mod tests {
         // the folder of all second accounts swapped for a link: no account in it is used either
         let linked_base = root.join("accounts-link");
         std::os::unix::fs::symlink(&users, &linked_base).unwrap();
-        assert_eq!(prepare_in(&linked_base.join("claude-2-abcdef"), &users), None);
+        assert_eq!(prepare_in(&linked_base.join("claude-2-abcdef"), &users, &CLAUDE_LINKED), None);
         assert!(!users.join("claude-2-abcdef").exists());
         // a folder of its own is prepared as before
         let real = base.join("claude-2-fedcba");
-        assert_eq!(prepare_in(&real, &users), Some(real.clone()));
+        assert_eq!(prepare_in(&real, &users, &CLAUDE_LINKED), Some(real.clone()));
+        // Gemini's second home: the same checks, and only the git identity of the user's is linked in
+        fs::write(users.join(".gitconfig"), "[user]\n").unwrap();
+        fs::create_dir_all(users.join(".ssh")).unwrap();
+        fs::create_dir_all(users.join(".gemini")).unwrap();
+        let second_home = base.join("gemini-2-abcdef");
+        assert_eq!(prepare_in(&second_home, &users, &GEMINI_LINKED), Some(second_home.clone()));
+        assert_eq!(listed(&second_home), [".gitconfig"], "none of the user's keys, and nothing of their agy");
+        assert!(fs::symlink_metadata(second_home.join(".gitconfig")).unwrap().file_type().is_symlink());
+        let swapped = base.join("gemini-2-fedcba");
+        std::os::unix::fs::symlink(&users, &swapped).unwrap();
+        assert_eq!(prepare_in(&swapped, &users, &GEMINI_LINKED), None, "a home swapped for a link to the user's own is never used");
+        remove_folder(&swapped);
+        assert!(users.join(".gemini").exists() && fs::symlink_metadata(&swapped).is_err());
         assert!(fs::symlink_metadata(real.join("skills")).unwrap().file_type().is_symlink());
         let _ = fs::remove_dir_all(&root);
     }
@@ -574,9 +620,24 @@ mod tests {
         let mut first = std::process::Command::new("claude");
         assert!(env(&mut first, "claude", 1));
         assert_eq!(first.get_envs().count(), 0);
+        // Gemini's second account: its own HOME, and nothing that could name another home or another data folder
+        let mut agy = std::process::Command::new("agy");
+        assert!(env(&mut agy, "gemini", 2));
+        let home_dir = base().join("gemini-2-standin").to_string_lossy().to_string();
+        assert_eq!(get(&agy, "HOME"), Some(Some(home_dir)));
+        for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
+            assert_eq!(get(&agy, gone), Some(None), "{gone} is taken out");
+        }
+        let mut agy_first = std::process::Command::new("agy");
+        assert!(env(&mut agy_first, "gemini", 1));
+        assert_eq!(agy_first.get_envs().count(), 0, "the user's own account: untouched");
         // no second account: the command is not to be run at all
         stand_in(false, false);
         assert!(!env(&mut std::process::Command::new("claude"), "claude", 2));
+        assert!(!env(&mut std::process::Command::new("agy"), "gemini", 2));
+        // an AI that has none
+        stand_in(true, true);
+        assert!(!env(&mut std::process::Command::new("cursor-agent"), "cursor", 2));
     }
 
     #[test]

@@ -57,17 +57,18 @@ pub const AIS: [&str; 3] = ["claude", "cursor", "gemini"];
 
 /// A second account's sign-in (`accounts`): the same tool, asked and signed in the same way, in the app's own folder
 /// for it. The one sign-in here that is not the user's own outside Fridae.
-pub const SECOND: [&str; 1] = ["claude2"];
+pub const SECOND: [&str; 2] = ["claude2", "gemini2"];
 
 /// Every sign-in the app knows: the three AIs' own, then the second accounts'.
 fn ids() -> impl Iterator<Item = &'static str> {
     AIS.into_iter().chain(SECOND)
 }
 
-/// The AI a sign-in belongs to ("claude2" is Claude's second account).
+/// The AI a sign-in belongs to ("claude2" is Claude's second account, "gemini2" Gemini's).
 pub fn tool(id: &str) -> &str {
     match id {
         "claude2" => "claude",
+        "gemini2" => "gemini",
         other => other,
     }
 }
@@ -76,6 +77,7 @@ pub fn tool(id: &str) -> &str {
 fn name(id: &str) -> String {
     match id {
         "claude2" => "Claude's second account".to_string(),
+        "gemini2" => "Gemini's second account".to_string(),
         other => crate::expert_ai::ai_name(other).to_string(),
     }
 }
@@ -365,6 +367,10 @@ fn ask(ai: &str) -> Answer {
         if !offered(ai) {
             return Answer::default();
         }
+        if ai == "gemini2" {
+            // the same question in the second account's own home (not asked at all when its folder is not there)
+            return antigravity::ask_models_of(2).map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
+        }
         let Some(exe) = paths::find_ai(tool(ai)) else { return Answer::default() };
         let mut cmd = Command::new(exe);
         cmd.args(if tool(ai) == "claude" { &["auth", "status", "--json"][..] } else { &["status", "--format", "json"][..] });
@@ -436,6 +442,8 @@ fn failure_of(ai: &str, said: &str, by_key: bool, offered: bool) -> Failure {
         "claude" if low.starts_with("not logged in") => Failure { text: if ai == "claude2" { CLAUDE2_SIGNED_OUT } else { CLAUDE_SIGNED_OUT }.to_string(), sign_in: true },
         "claude" if low.contains("please run /login") => as_said(!by_key),
         "cursor" => as_said(said == crate::cursor::SIGNED_OUT),
+        // (a turn says the first account's line whichever account it ran on: for the second, the app's line names it)
+        "gemini" if ai == "gemini2" && said == antigravity::SIGNED_OUT => Failure { text: antigravity::SIGNED_OUT_SECOND.to_string(), sign_in: true },
         "gemini" => as_said(said == antigravity::SIGNED_OUT),
         _ => as_said(false),
     }
@@ -589,7 +597,7 @@ pub fn login_start(ai: &str, sure: bool) -> Value {
             Err(why) => return json!({"ok": false, "error": why}),
         };
         // agy takes its requests on its input; the others are given none (nothing is typed into them)
-        cmd.stdin(if ai == "gemini" { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(if tool(ai) == "gemini" { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::quiet(&mut cmd);
         paths::own_group(&mut cmd);
         let child = match cmd.start() {
@@ -620,13 +628,13 @@ pub fn login_start(ai: &str, sure: bool) -> Value {
         let mut last = String::new();
         // agy: whether its sign-in ended well, from its answer (None: it ended without one)
         let mut answered: Option<Result<(), String>> = None;
-        if ai == "gemini" && let Some(input) = stdin.as_mut() {
+        if tool(ai) == "gemini" && let Some(input) = stdin.as_mut() {
             let _ = writeln!(input, "{}", acp_initialize());
             let _ = input.flush();
         }
         if let Some(out) = stdout {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
-                if ai == "gemini" {
+                if tool(ai) == "gemini" {
                     match acp_line(&line) {
                         Acp::Authenticate(request) => {
                             if let Some(input) = stdin.as_mut() {
@@ -646,12 +654,12 @@ pub fn login_start(ai: &str, sure: bool) -> Value {
             }
         }
         drop(stdin);
-        if ai == "gemini" {
+        if tool(ai) == "gemini" {
             paths::end_trees(&[pid]); // the ACP server has done its one job
         }
         let exited = child.wait().is_ok_and(|s| s.success());
         procs::forget(pid);
-        let (ok, why) = match (ai, answered) {
+        let (ok, why) = match (tool(ai), answered) {
             ("gemini", Some(Ok(()))) => (true, String::new()),
             ("gemini", Some(Err(why))) => (false, why),
             ("gemini", None) => (false, String::new()),
@@ -957,11 +965,13 @@ mod tests {
         assert_eq!(state_of(&Entry::default(), false, false)["state"], "unknown");
         // every one of the three is in the status, and nothing else
         let all = state();
-        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude2", "cursor", "gemini"]);
+        assert_eq!(all.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude2", "cursor", "gemini", "gemini2"]);
         assert!(offered("claude") == !cfg!(windows) && !offered("opencode") && !offered("chatgpt"));
         // a second account's sign-in is offered only once that account exists, and is Claude's own tool
         assert!(!offered("claude2") && all["claude2"]["offered"] == false && tool("claude2") == "claude" && tool("cursor") == "cursor");
         assert_eq!(login_start("claude2", true)["ok"], false, "no second account: nothing to sign in");
+        assert!(!offered("gemini2") && all["gemini2"]["offered"] == false && tool("gemini2") == "gemini");
+        assert_eq!(login_start("gemini2", true)["ok"], false);
         // a sign-in for anything else is never started
         assert_eq!(login_start("opencode", true)["ok"], false);
         assert_eq!(login_start("../x", true)["ok"], false);
@@ -1118,6 +1128,17 @@ mod tests {
         assert!(first.get_envs().all(|(k, _)| k != "CLAUDE_CONFIG_DIR" && k != "CLAUDE_SECURESTORAGE_CONFIG_DIR"), "the user's own account: nothing set");
         crate::accounts::stand_in(false, false);
         assert!(!tool_env(&mut Command::new("claude"), "claude2"));
+        // Gemini's second account: its commands run in its own home, and not at all without it
+        crate::accounts::stand_in(true, true);
+        let mut agy = Command::new("agy");
+        assert!(tool_env(&mut agy, "gemini2"));
+        assert!(get(&agy, "HOME").is_some_and(|h| h.ends_with("gemini-2-standin")));
+        crate::accounts::stand_in(false, false);
+        assert!(!tool_env(&mut Command::new("agy"), "gemini2"));
+        // a turn on it that failed as signed out says so in the second account's name, with its button
+        assert_eq!(failure_of("gemini2", antigravity::SIGNED_OUT, false, true), Failure { text: "Gemini's second account is not signed in. Sign in, then send your message again.".to_string(), sign_in: true });
+        assert_eq!(failure_of("gemini", antigravity::SIGNED_OUT, false, true).text, antigravity::SIGNED_OUT);
+        assert!(!confirm_line("gemini2", &Known::In(None)).contains("outside Fridae") && confirm_line("gemini2", &Known::In(None)).starts_with("Gemini's second account says it is signed in."));
         // the line before a second press: a second account's sign-in is the app's own, replaced here only
         assert!(!confirm_line("claude2", &me()).contains("outside Fridae") && confirm_line("claude", &me()).contains(", also outside Fridae"));
     }

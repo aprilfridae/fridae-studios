@@ -1223,7 +1223,7 @@ and nothing of the user's keychain was read but two names):
 ## A second account for Claude, and the rollover
 
 `app-rs/src/accounts.rs`, the chat's part in `agents.rs` (`turn_account`, `turn_over_at`, `roll_over`, `resend`),
-the sign-in in `signin.rs` (id `claude2`). Claude only here: see the measurements above for Gemini.
+the sign-in in `signin.rs` (id `claude2`). Written for Claude; Gemini's differs in one thing (the section after this).
 
 **The account.** The first account is the user's own sign-in and nothing here changes it. The second is a Claude
 Code config folder of the app's own, `<app data>/Fridae Studios/accounts/claude-2-<12 hex>`. `prepare` links the
@@ -1309,6 +1309,44 @@ on a second account: all of the above is tested with `accounts::stand_in` (one t
 threads its chat's turns run on) and turn ends made up from the tool's known words; one test runs the whole path on
 a kept stand-in process that answers with a "rejected" `rate_limit_event` and the limit's line. Left as they are:
 "used up" is forgotten on restart, and `limits.rs` (the usage shown in the window) is not per account.
+
+## Gemini's second account
+
+The same second account as Claude's (the section above: ready, which account a turn runs on, used up, the
+rollover, Remove, the swapped-folder rule all hold as written; `accounts::AIS` is now Claude and Gemini), with one
+difference: what separates the two accounts.
+
+**A home of its own** (`accounts::home`, `GeminiLaunch.home`). Gemini's second account is a folder of the app's own,
+`<app data>/Fridae Studios/accounts/gemini-2-<12 hex>`, given to every agy command of that account as HOME: its
+status (`agy models`, `antigravity::ask_models_of(2)`), its sign-in (`agy acp` with `authenticate`, the same
+one-click flow, id `gemini2`), the kept process and the process per message. agy's data folder
+(`<HOME>/.gemini/antigravity-cli`: conversations, settings, and a sign-in kept in a file) is then inside it.
+`CFFIXED_USER_HOME` and agy's own folder variables are taken out of those commands' environment. The home is part
+of the kept process's key. Nothing is set for account 1.
+- **The user's own sign-in cannot be reached from there.** It is one keychain entry, found through HOME alone
+  (measured, see "what was measured first"): from the second home it is not found and cannot be written. The app
+  itself never reads, copies or moves a token, and touches no keychain.
+- **Whether a sign-in made there is kept** rests on agy's file store for a sign-in made where the keychain cannot be
+  written (read in its program's text). **Not measured.** The user's first real second sign-in shows it: Setup
+  says "Signed in." afterwards, and still does after the app was closed and opened again.
+- The app's tool server is given the app's own HOME back; agy's home is kept from its own file tools (the code that
+  the testing switch `FRIDAE_AGY_HOME` already used, now fed from the account).
+- **What differs for a turn there.** agy starts from an empty `~/.gemini` (none of the user's own agy settings or
+  plugins). A shell command it runs inherits the second home: `~` is the account's folder, the user's git identity
+  is linked in (`.gitconfig`, `GEMINI_LINKED`), their keys and other tools' logins are not. The Guide says so.
+- agy's status names no account, so the app cannot tell when the second account is the same Google account as the
+  first (Claude's can, `same_as_first`). The Guide tells the user to sign in with another one.
+
+**The limit.** For Gemini `account_limit_of` knows agy's own words, "Individual quota reached. ... Resets in
+2h6m48s." (the one line known, as it reaches a turn's end in "Gemini could not run this message: ..."). The app's
+line for a refused message is not taken for a limit: a refusal may be no limit at all. The line is held back for
+the rollover's one line as Claude's is (`Agent::take`).
+
+**Measured, and not.** In the scratch app (my dev binary, scratch HOME, a stand-in `open`): Add made the folder
+(mode 700), agy ran with it as HOME (its `.gemini` is inside), its sign-in started (the page it would open is on
+accounts.google.com, noted and not opened), Cancel ended it, the status read "Not signed in.", Remove deleted the
+folder. Not done, and stand-in tested only: a completed sign-in, a signed-in second account, a turn on it, a real
+quota, a rollover.
 
 ## The hand-over is a compaction
 

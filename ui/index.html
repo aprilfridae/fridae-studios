@@ -1125,6 +1125,7 @@ const CONTROLS = [
   ["The game's name", "Press it for the game's folder, notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
   ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (keys and passwords are masked first). A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
+  ["A second account", "Setup, Connections: a second account for Claude or for Gemini.", "", "When your account runs out of usage, the chat carries on with the second one by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. New chats use your own account again once it is back. Add signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in with another account than your own (sign out of yours in the browser first), or it adds no usage. On Gemini's second account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each helper is one line where it was started: its name, its job and whether it is working.", "", "Open the line to read its own log; Stop is there while it works. You never need to talk to them: the agent you talk to does."],
@@ -2571,7 +2572,7 @@ function aiNotice(ai) {
   return n;
 }
 let noticePresses = 0;
-/* A second account for an AI (status.ai.accounts, Claude today): a sign-in of Fridae's own for the same tool, which a
+/* A second account for an AI (status.ai.accounts: Claude and Gemini): a sign-in of Fridae's own for the same tool, which a
    chat moves to when the first account runs out of usage. In a chat, a few words say which account it is on, only
    while there is a second one. */
 function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }

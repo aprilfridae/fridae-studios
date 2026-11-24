@@ -43,17 +43,27 @@ static MODELS: OnceLock<Vec<(String, String)>> = OnceLock::new();
 /// in time. The list is
 /// kept once it has come: an empty answer (signed out, offline) leaves it to a later one.
 pub fn ask_models() -> Option<(String, String, bool)> {
+    ask_models_of(1)
+}
+
+/// The same question asked of an account: the user's own (1), whose answer fills the model menu, or the second
+/// (2: in its own home, `accounts::env`; None when it has no folder, and then nothing is run).
+pub fn ask_models_of(account: u8) -> Option<(String, String, bool)> {
     let exe = paths::find_antigravity()?;
     let mut cmd = Command::new(exe);
     cmd.arg("models");
     paths::child_env(&mut cmd, "gemini");
-    if let Some(h) = home_override() {
+    if account == 2 {
+        if !crate::accounts::env(&mut cmd, "gemini", 2) {
+            return None;
+        }
+    } else if let Some(h) = home_override() {
         cmd.env("HOME", h);
     }
     // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
     let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
     let list = model_lines(&stdout);
-    if !list.is_empty() {
+    if !list.is_empty() && account != 2 {
         let _ = MODELS.set(list);
     }
     Some((stdout, stderr, ok))
@@ -420,6 +430,8 @@ pub struct Turn {
     shown: HashSet<i64>,
     said_something: bool,
     made: Generated,
+    /// agy's data folder when it is not the app's own home's (a turn on the second account: its home's)
+    pub data: Option<PathBuf>,
 }
 
 impl Turn {
@@ -428,7 +440,7 @@ impl Turn {
         let step = &e["step_update"];
         if let Some(id) = e["conversation_id"].as_str().or(step["conversation_id"].as_str()).or(e["result"]["conversation_id"].as_str()).filter(|s| !s.is_empty()) {
             out.push(Out::Conversation(id.to_string()));
-            if let Some(dir) = conversation_dir(&data_dir(), id) {
+            if let Some(dir) = conversation_dir(&self.data.clone().unwrap_or_else(data_dir), id) {
                 self.made.watch(dir);
             }
         }
@@ -522,6 +534,9 @@ impl Turn {
 
 /// What the chat is told when nobody is signed in to Antigravity: with the Sign in button beside it
 /// (`signin::signed_out_line`), or on Windows, where the app offers no sign-in, with the way through a terminal.
+/// The same for Gemini's second account (`accounts`).
+pub const SIGNED_OUT_SECOND: &str = "Gemini's second account is not signed in. Sign in, then send your message again.";
+
 pub const SIGNED_OUT: &str = if cfg!(windows) {
     "Gemini is not signed in. Open a terminal, run `agy`, sign in with your Google account, close it, then send your message again."
 } else {

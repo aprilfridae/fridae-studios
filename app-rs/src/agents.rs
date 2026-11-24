@@ -274,6 +274,16 @@ fn usage_limit(msg: &str) -> bool {
 /// "You're out of extra usage"). Narrower than `usage_limit`: not a passing "rate limit" from the API (a 429,
 /// "overloaded": trying again is enough, and the other account would not help), and not a spend limit the user set
 /// for extra usage (theirs to raise; the plan itself may have usage left).
+///
+/// Gemini (`kind`): agy's own words for a spent plan, "Individual quota reached. ... Resets in 2h6m48s." (the one
+/// line known). Not the app's line for a refused message, which may be a refusal to answer and no limit at all.
+fn account_limit_of(kind: &str, msg: &str) -> bool {
+    match kind {
+        "gemini" => msg.to_lowercase().contains("quota reached"),
+        _ => account_limit(msg),
+    }
+}
+
 fn account_limit(msg: &str) -> bool {
     let low = msg.to_lowercase();
     if low.contains("rate limit") || low.contains("rate_limit") || low.contains("429") || low.contains("overloaded") || low.contains("spend limit") || low.contains("spending limit") {
@@ -1794,6 +1804,10 @@ struct GeminiLaunch {
     first: Vec<std::ffi::OsString>,
     /// agy's data folder when it is not `~/.gemini` (FRIDAE_AGY_DIR, testing only): given as `--gemini-dir`
     data_dir: Option<std::path::PathBuf>,
+    /// the HOME agy runs with when it is not the app's: the second account's home (`accounts`), which is where
+    /// that account's sign-in and conversations are; or the testing override. Part of the key: a process started
+    /// in one home is never sent a message meant for the other account.
+    home: Option<std::path::PathBuf>,
     /// the workspace, the tool servers, the model and effort, and the rules its requests are answered by
     spec: crate::acp::Spec,
     /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
@@ -1833,6 +1847,8 @@ struct GeminiSettings<'a> {
     /// the home folder agy runs with, and its data folder when not `<home>/.gemini`
     home: &'a std::path::Path,
     data_dir: Option<&'a std::path::Path>,
+    /// that home, when agy is to be given it as HOME because it is not the app's own (`GeminiLaunch.home`)
+    home_env: Option<&'a std::path::Path>,
 }
 
 impl GeminiLaunch {
@@ -1861,7 +1877,7 @@ impl GeminiLaunch {
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         let guarded = guarded_print(s.guarded);
-        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), home: s.home_env.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
     /// The kept process: `agy acp`, in the chat's workspace.
@@ -1885,8 +1901,8 @@ impl GeminiLaunch {
                 cmd.env_remove(k);
             }
         }
-        if let Some(h) = agy_home() {
-            cmd.env("HOME", h);
+        if let Some(h) = &self.home {
+            crate::accounts::home(&mut cmd, h);
         }
         cmd
     }
@@ -1894,7 +1910,7 @@ impl GeminiLaunch {
     /// Everything a kept process was started with, or answers requests by, that a later message could need otherwise.
     fn key(&self) -> String {
         let r = &self.spec.rules;
-        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.home, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
                r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, r.images, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
         .to_string()
     }
@@ -1974,8 +1990,8 @@ impl Kept for GeminiLaunch {
         let mut cmd = Command::new(&self.exe);
         cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
-        if let Some(h) = agy_home() {
-            cmd.env("HOME", h);
+        if let Some(h) = &self.home {
+            crate::accounts::home(&mut cmd, h);
         }
         (cmd, antigravity::message_line(text))
     }
@@ -3342,8 +3358,12 @@ impl Agent {
         }
         let cmd = match kind.as_str() {
             "gemini" => {
+                // agy's HOME when it is not the app's: the second account's home, where that account's sign-in is
+                // (never the user's own keychain entry, which is found by the app's HOME alone), or the testing
+                // override. The app's tool server gets the app's HOME back
+                let agy_home = second_dir.clone().or_else(agy_home);
                 let mut servers = servers.clone();
-                if agy_home().is_some() {
+                if agy_home.is_some() {
                     servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
                 }
                 // the one list of what no file tool may write, as OpenCode's rules have it
@@ -3354,7 +3374,7 @@ impl Agent {
                         paths::NoWrite::HiddenIn(h) => hidden_in.push(h),
                     }
                 }
-                if let Some(h) = agy_home() {
+                if let Some(h) = &agy_home {
                     hidden_in.push(h.clone());
                     protected.push(h.join("Library"));
                 }
@@ -3377,8 +3397,9 @@ impl Agent {
                     allowed: &paths::allowed_commands(),
                     guarded: &paths::guarded_settings(),
                     keys_on: paths::env_keys_on(),
-                    home: &agy_home().unwrap_or_else(paths::home_dir),
-                    data_dir: agy_dir().as_deref(),
+                    home: &agy_home.clone().unwrap_or_else(paths::home_dir),
+                    data_dir: agy_dir().filter(|_| second_dir.is_none()).as_deref(),
+                    home_env: agy_home.as_deref(),
                 });
                 return self.kept_turn(&launch, &text);
             }
@@ -3826,6 +3847,10 @@ impl Agent {
         let mut mine = live.as_ref().is_none_or(|l| l.first || !l.marks.load(Ordering::SeqCst));
         t.ended = live.is_some();
         let (mut gemini, mut chatgpt, mut cursor_turn) = (antigravity::Turn::default(), codex::Turn::default(), cursor::Turn::default());
+        // (a Gemini turn on the second account: agy's data folder is in that account's home)
+        if kind == "gemini" && self.st.lock().unwrap().account == 2 {
+            gemini.data = crate::accounts::folder("gemini").map(|h| h.join(".gemini").join("antigravity-cli"));
+        }
         let mut first = true;
         // the conversation this turn asked to go on with: an AI that reports another one started afresh
         let asked = self.st.lock().unwrap().session.clone();
@@ -4076,7 +4101,7 @@ impl Agent {
         st.proc_ = None;
         st.turned = true;
         let stopped = std::mem::take(&mut st.stopped);
-        if !stopped && !shutting() && t.result_error && account_limit(&t.result_text) && crate::accounts::AIS.contains(&kind) {
+        if !stopped && !shutting() && t.result_error && account_limit_of(kind, &t.result_text) && crate::accounts::AIS.contains(&kind) {
             st.sending = true;
             st.roll_hold = true;
         }
@@ -4142,7 +4167,13 @@ impl Agent {
                 t.result_error = true;
                 t.result_said = true;
                 t.result_text = text.clone();
-                self.put_failure(&self.ai(), &text);
+                // the account's limit, with a second account there: said in `after_turn`, in one line (as Claude's)
+                let kind = self.ai();
+                if account_limit_of(&kind, &text) && crate::accounts::AIS.contains(&kind.as_str()) && crate::accounts::folder(&kind).is_some() {
+                    t.held_back = true;
+                } else {
+                    self.put_failure(&kind, &text);
+                }
             }
             Out::Usage(turn) => self.used(&turn),
             Out::Finished => t.got_result = true,
@@ -4455,7 +4486,7 @@ impl Agent {
         // can take the chat, the same message goes out again there. The turn is then not over for anyone: no result
         // for a waiting Lead, no pause of the studio run, no carry-on, no "done"
         let held = std::mem::take(&mut self.st.lock().unwrap().roll_hold);
-        if !stopped && result_error && account_limit(&result_text) && self.roll_over(kind, &result_text, limit_reset, held) {
+        if !stopped && result_error && account_limit_of(kind, &result_text) && self.roll_over(kind, &result_text, limit_reset, held) {
             // what waits behind the message that goes again still ends a Lead's wait early
             self.nudge();
             return;
@@ -6991,7 +7022,11 @@ mod tests {
         crate::accounts::mark_used("claude", 2, now + 600.0);
         assert_eq!(account("c-new-4"), 1);
         // an AI without second accounts is always on its one
-        assert_eq!(Agent::detached_for_test("c-new-5", None).turn_account("gemini"), 1);
+        assert_eq!(Agent::detached_for_test("c-new-5", None).turn_account("cursor"), 1);
+        // Gemini has two like Claude, counted apart from Claude's
+        assert_eq!(Agent::detached_for_test("c-new-6", None).turn_account("gemini"), 1, "Claude's accounts are used up, Gemini's are not");
+        crate::accounts::mark_used("gemini", 1, now + 600.0);
+        assert_eq!(Agent::detached_for_test("c-new-7", None).turn_account("gemini"), 2);
     }
 
     #[test]
@@ -7533,6 +7568,75 @@ mod tests {
         c.send("Now add a lock", &Ask::default());
         c.after_turn("claude", TurnEnd { result_text: "API Error: 429 rate limit exceeded".into(), ..limit_end(None) }, "", Some((false, 1)), false);
         assert!(c.st.lock().unwrap().resent_for_test.is_empty() && crate::accounts::used_until("claude", 1, paths::now_secs()).is_none());
+    }
+
+    #[test]
+    fn gemini_carries_on_with_its_second_account_at_its_quota_as_claude_does_at_its_limit() {
+        let quota = "Gemini could not run this message: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h6m48s.";
+        let refusal = "Gemini refused this message: its usage limit was reached, or it would not answer. Try again once the limit resets.";
+        assert!(account_limit_of("gemini", quota) && usage_limit(quota));
+        assert!(!account_limit_of("gemini", refusal), "a refusal may be no limit at all: nothing moves on it");
+        assert!(!account_limit_of("claude", quota) && !account_limit_of("gemini", "You've hit your 5-hour limit"), "each tool's own words");
+        let ended = |text: &str| TurnEnd { got_result: true, result_error: true, result_said: true, held_back: true, result_text: text.into(), ..TurnEnd::default() };
+        crate::accounts::stand_in(true, true);
+        let now = paths::now_secs();
+        let a = chat_on_first("c-roll-gemini");
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        a.send("Now add a lock", &Ask::default());
+        a.after_turn("gemini", ended(quota), "", Some((true, 0)), false);
+        let again = {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.session.clone(), st.account_name.as_deref()), (2, None, Some("gemini-2-standin")));
+            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with the second account.");
+            assert!(!st.log.iter().any(|e| e["kind"] == "error" && e["text"] == quota), "one line, the app's");
+            st.resent_for_test[0].clone()
+        };
+        // used up until the time agy's words give, and Claude's accounts are not Gemini's
+        let until = crate::accounts::used_until("gemini", 1, now).expect("marked");
+        assert!((until - now - 7_608.0).abs() < 10.0, "{}", until - now);
+        assert_eq!(crate::accounts::used_until("claude", 1, now), None);
+        a.resend(&again);
+        {
+            let st = a.st.lock().unwrap();
+            let went = st.went_for_test.last().unwrap();
+            assert!(went.starts_with("[This chat carries on here in a new conversation") && went.contains("Gemini: Done: the door opens.") && went.ends_with("Now add a lock"), "{went}");
+        }
+        // a turn there that finds nobody signed in says so in the second account's name, with its Sign in button
+        a.put_failure("gemini", antigravity::SIGNED_OUT);
+        let last = a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").cloned().unwrap();
+        if !cfg!(windows) {
+            assert_eq!((last["text"].as_str(), last["sign_in"].as_str()), (Some(antigravity::SIGNED_OUT_SECOND), Some("gemini2")));
+        }
+        // the second runs out on the same message: no bounce, and the tool's own line is said
+        let at = a.st.lock().unwrap().log.len();
+        a.after_turn("gemini", ended(quota), "", Some((true, 0)), false);
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.resent_for_test.len()), (2, 1));
+            assert!(st.log[at..].iter().any(|e| e["kind"] == "error" && e["text"] == quota) && st.log[at..].iter().any(|e| e["kind"] == "done"));
+        }
+        // a refusal moves nothing
+        let b = chat_on_first("c-roll-gemini-refusal");
+        b.st.lock().unwrap().ai = Some("gemini".into());
+        b.send("Now add a lock", &Ask::default());
+        b.after_turn("gemini", TurnEnd { held_back: false, ..ended(refusal) }, "", Some((true, 0)), false);
+        assert!(b.st.lock().unwrap().resent_for_test.is_empty());
+        // as the reader hands a failed turn on: with a second account the quota line waits for the turn's end, without
+        // one (and for any other failure) it is said at once, as before
+        let c = chat_on_first("c-roll-gemini-take");
+        c.st.lock().unwrap().ai = Some("gemini".into());
+        let mut t = TurnEnd::default();
+        c.take(Out::Failed(quota.into()), &mut t);
+        assert!(t.held_back && t.result_error && !c.st.lock().unwrap().log.iter().any(|e| e["kind"] == "error"));
+        let mut t = TurnEnd::default();
+        c.take(Out::Failed(refusal.into()), &mut t);
+        assert!(!t.held_back && c.st.lock().unwrap().log.iter().any(|e| e["kind"] == "error" && e["text"] == refusal));
+        crate::accounts::stand_in(false, false);
+        let d = chat_on_first("c-roll-gemini-none");
+        d.st.lock().unwrap().ai = Some("gemini".into());
+        let mut t = TurnEnd::default();
+        d.take(Out::Failed(quota.into()), &mut t);
+        assert!(!t.held_back && d.st.lock().unwrap().log.iter().any(|e| e["kind"] == "error" && e["text"] == quota));
     }
 
     #[test]
