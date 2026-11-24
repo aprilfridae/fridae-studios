@@ -624,6 +624,21 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     out
 }
 
+/// What no agent may read either, in any mode, on any AI whose rules the app sets (Claude Code's `Read` deny rules,
+/// Cursor's, OpenCode's permission rules, the app's answers over ACP): the places that hold a sign-in or a key. Each
+/// is a file or a folder; the rules cover both forms. Add new secrets here and every AI's rules follow.
+pub fn app_secrets() -> Vec<PathBuf> {
+    vec![
+        // the settings (the Gemini key) and their guarded copy
+        config_file(),
+        guard_copy(),
+        // the second accounts' sign-ins, Fridae's own OpenCode sign-in, and the GitHub sign-in
+        crate::accounts::base(),
+        crate::opencode::own_store(),
+        crate::github::folder(),
+    ]
+}
+
 /// One place no AI's file tools may write, for the gates the app itself keeps (OpenCode's permission rules, and
 /// its answers to Gemini's requests over ACP, `acp::decide`).
 #[derive(Clone, Debug, PartialEq)]

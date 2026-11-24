@@ -1934,6 +1934,8 @@ impl GeminiLaunch {
             // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
             protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
             hidden_in: s.hidden_in.to_vec(),
+            // the places that hold a sign-in or a key: never read or written, in any mode
+            secrets: paths::app_secrets(),
             agent_dir: s.data_dir.map(std::path::Path::to_path_buf).unwrap_or_else(|| s.home.join(".gemini")).join("antigravity-cli"),
             // Setup's switch, from the settings this launch was given (the app's memory): on unless switched off
             images: s.guarded.get("gemini_images").and_then(Value::as_bool).unwrap_or(true),
@@ -2205,6 +2207,7 @@ impl CursorLaunch {
             reads: Vec::new(),
             protected: Vec::new(),
             hidden_in: Vec::new(),
+            secrets: Vec::new(),
             agent_dir: std::path::PathBuf::new(),
             images: true,
         };
@@ -5530,9 +5533,16 @@ pub fn test_servers(no_studio: bool) -> Value {
 }
 
 /// Claude Code's deny rules for the app's own files (`paths::app_protected`): `Edit(//<path>)`, with `/**` for a
-/// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool).
+/// folder (`//` is an absolute path in its rules; Edit rules cover every file-writing tool); and for the places that
+/// hold a sign-in or a key (`paths::app_secrets`) `Read(//<path>)` and `Read(//<path>/**)` too (Read rules cover every
+/// file-reading tool). Deny rules hold in bypass mode.
 fn claude_denied() -> Vec<String> {
-    paths::app_protected().into_iter().map(|(p, dir)| claude_edit_rule(&p.display().to_string(), dir, cfg!(windows))).collect()
+    let mut out: Vec<String> = paths::app_protected().into_iter().map(|(p, dir)| claude_edit_rule(&p.display().to_string(), dir, cfg!(windows))).collect();
+    for p in paths::app_secrets() {
+        let p = p.display().to_string();
+        out.extend([claude_rule("Read", &p, false, cfg!(windows)), claude_rule("Read", &p, true, cfg!(windows))]);
+    }
+    out
 }
 
 /// Claude Code's deny rule for an absolute path, by its documented syntax (code.claude.com/docs/en/permissions, "Read
@@ -5540,6 +5550,11 @@ fn claude_denied() -> Vec<String> {
 /// `C:\Users\a` is `//c/Users/a`. A folder gets `/**`. (Matching ignores case: measured, Claude Code in bypass mode
 /// refused `CONFIG.JSON` under a rule for `config.json`, in a folder with a space.)
 fn claude_edit_rule(path: &str, dir: bool, windows: bool) -> String {
+    claude_rule("Edit", path, dir, windows)
+}
+
+/// The same rule for another of Claude Code's path tools (`Read`).
+fn claude_rule(tool: &str, path: &str, dir: bool, windows: bool) -> String {
     let posix = if windows {
         let p = path.replace('\\', "/");
         let b = p.as_bytes();
@@ -5547,7 +5562,7 @@ fn claude_edit_rule(path: &str, dir: bool, windows: bool) -> String {
     } else {
         path.to_string()
     };
-    format!("Edit(/{posix}{})", if dir { "/**" } else { "" })
+    format!("{tool}(/{posix}{})", if dir { "/**" } else { "" })
 }
 
 fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
@@ -6207,8 +6222,28 @@ mod tests {
         assert_eq!(claude_edit_rule(r"C:\Users\a\Documents\Fridae Studios\config.json", false, true), "Edit(//c/Users/a/Documents/Fridae Studios/config.json)");
         assert_eq!(claude_edit_rule(r"D:\Fridae\work\processes", true, true), "Edit(//d/Fridae/work/processes/**)");
         for r in claude_denied() {
-            assert!(r.starts_with("Edit(//"), "{r}");
+            assert!(r.starts_with("Edit(//") || r.starts_with("Read(//"), "{r}");
         }
+    }
+
+    #[test]
+    fn claude_may_not_read_where_a_sign_in_or_a_key_is_kept() {
+        let denied = claude_denied();
+        // the GitHub sign-in, the settings (the Gemini key), the second accounts and Fridae's OpenCode sign-in
+        for p in paths::app_secrets() {
+            let p = p.display().to_string();
+            assert!(denied.contains(&format!("Read(/{p})")) && denied.contains(&format!("Read(/{p}/**)")), "{p}: {denied:?}");
+        }
+        for must in [crate::github::folder(), paths::config_file(), crate::accounts::base(), crate::opencode::own_store()] {
+            assert!(paths::app_secrets().contains(&must), "{}", must.display());
+        }
+        assert_eq!(claude_rule("Read", r"C:\Users\a\AppData\Fridae Studios\github", true, true), "Read(//c/Users/a/AppData/Fridae Studios/github/**)");
+        // and they reach Claude Code as deny rules (held in bypass mode too)
+        let servers = json!({});
+        let s = ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &denied, full: true, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false };
+        let args: Vec<String> = ClaudeLaunch::new(&s).args.iter().map(|a| a.to_string_lossy().to_string()).collect();
+        let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert!(args[at..].contains(&format!("Read(/{}/**)", crate::github::folder().display())));
     }
 
     #[test]

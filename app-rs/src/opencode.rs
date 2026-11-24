@@ -996,6 +996,36 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     r
 }
 
+/// The places that hold a sign-in or a key (`paths::app_secrets`): no tool reads, lists, searches or writes them, in
+/// any mode. Written last, so they win over every allow (the last rule that matches wins): by their absolute paths
+/// (and real paths), as OpenCode names them relative to the working folder when they share its git repository, and
+/// on a disk that ignores case in any case of letters (`any_case_all`; a few look-alike paths are refused too).
+pub fn deny_secrets(r: &mut Vec<Value>, secrets: &[PathBuf], location: &Path) {
+    let bases = spellings(location);
+    for p in secrets {
+        let mut forms: Vec<String> = Vec::new();
+        for s in spellings(p) {
+            for b in &bases {
+                if let Some(rel) = relative_pattern(b, &s) {
+                    forms.push(rel);
+                }
+            }
+            forms.push(s);
+        }
+        if paths::case_blind() {
+            let blind: Vec<String> = forms.iter().flat_map(|f| any_case_all(f)).collect();
+            forms.extend(blind);
+        }
+        forms.dedup();
+        for f in forms {
+            for a in ["read", "glob", "grep", "list", "edit", "external_directory"] {
+                r.push(rule(a, &f, "deny"));
+                r.push(rule(a, &format!("{f}/*"), "deny"));
+            }
+        }
+    }
+}
+
 /// Whether OpenCode's pattern matches a text: `*` any text (also across `/`), `?` any one character, the rest literal.
 fn wild_match(pat: &str, text: &str) -> bool {
     let (p, t): (Vec<char>, Vec<char>) = (pat.chars().collect(), text.chars().collect());
@@ -1702,7 +1732,8 @@ fn turn_on(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out)) -> 
 fn turn_steps(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out), added: &mut Vec<String>) -> Ended {
     let conn = conn.clone();
     let folders = Folders { location: &spec.location, project: spec.project.as_deref(), kit: &paths::PATHS.kit, reads: vec![paths::work("attachments"), paths::work("chat-images")] };
-    let rules = permissions(spec.full, &spec.agent_id, &paths::allowed_commands(), &folders, &protected(&paths::home_dir()));
+    let mut rules = permissions(spec.full, &spec.agent_id, &paths::allowed_commands(), &folders, &protected(&paths::home_dir()));
+    deny_secrets(&mut rules, &paths::app_secrets(), folders.location);
     let model = spec.model.as_deref().and_then(model_ref);
     // the saved conversation, with this turn's rules, or a new one
     let mut session = None;
@@ -3368,6 +3399,30 @@ mod tests {
         }
         assert_eq!(any_case_all("/a/éééé/x"), ["/?/*/?"], "too many: the part is any name");
         assert!(wild_match("/?????/*/.*", "/Users/a/b/.x") && !wild_match("/??/x", "/abc/x") && wild_match("a*b*c", "aXbYbc"));
+    }
+
+    #[test]
+    fn no_opencode_tool_reads_where_a_sign_in_or_a_key_is_kept() {
+        let secrets = [PathBuf::from("/s/Fridae Studios/github"), PathBuf::from("/kit/config.json")];
+        let f = Folders { location: Path::new("/kit/work"), project: None, kit: Path::new("/kit"), reads: vec![] };
+        for full in [true, false] {
+            let mut r = permissions(full, "c1", &[], &f, &[]);
+            deny_secrets(&mut r, &secrets, f.location);
+            for a in ["read", "glob", "grep", "list", "edit", "external_directory"] {
+                assert_eq!(decides(&r, a, "/s/Fridae Studios/github/token"), "deny", "full {full}: {a}");
+                assert_eq!(decides(&r, a, "/s/Fridae Studios/github"), "deny", "full {full}: {a}");
+            }
+            assert_eq!(decides(&r, "read", "/kit/config.json"), "deny");
+            assert_eq!(decides(&r, "read", "../config.json"), "deny", "as named from the working folder in the same repository");
+            assert_eq!(decides(&r, "read", "/kit/vault/notes.md"), "allow", "the rest of the kit is read as before");
+            if case_blind() {
+                assert_eq!(decides(&r, "read", "/S/FRIDAE STUDIOS/GITHUB/TOKEN"), "deny");
+            }
+        }
+        // the rules a turn gets carry every secret, the GitHub sign-in among them
+        let mut r = permissions(true, "c1", &[], &f, &[]);
+        deny_secrets(&mut r, &paths::app_secrets(), f.location);
+        assert_eq!(decides(&r, "read", &format!("{}/token", crate::github::folder().display())), "deny");
     }
 
     #[test]
