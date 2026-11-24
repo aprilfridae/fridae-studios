@@ -158,6 +158,98 @@
   {
    "id": "N12",
    "q": "what are the visitor center opening hours at Roblox headquarters"
+  },
+  {
+   "id": "N13",
+   "q": "how do I connect signals between nodes in Godot 4"
+  },
+  {
+   "id": "N14",
+   "q": "set up Unreal Engine 5 Lumen lighting for an indoor level"
+  },
+  {
+   "id": "N15",
+   "q": "how do I use Unity DOTS ECS to run thousands of zombies"
+  },
+  {
+   "id": "N16",
+   "q": "which GameMaker Studio 2 collision function is best for platformers"
+  },
+  {
+   "id": "N17",
+   "q": "how do I publish my game on the Epic Games Store"
+  },
+  {
+   "id": "N18",
+   "q": "write a Minecraft Forge mod that adds a new ore"
+  },
+  {
+   "id": "N19",
+   "q": "what's a good recipe for chocolate chip cookies"
+  },
+  {
+   "id": "N20",
+   "q": "set up a PostgreSQL read replica for our leaderboard service"
+  },
+  {
+   "id": "N21",
+   "q": "how many players were online in our game last Tuesday"
+  },
+  {
+   "id": "N22",
+   "q": "what did the team decide in Friday's meeting about the pet system"
+  },
+  {
+   "id": "N23",
+   "q": "what is the phone number of our community manager"
+  },
+  {
+   "id": "N24",
+   "q": "how do I set up Steam achievements with Steamworks"
+  },
+  {
+   "id": "N25",
+   "q": "configure Nginx rate limiting for our studio website"
+  },
+  {
+   "id": "N26",
+   "q": "how long does Nintendo take to approve a developer account"
+  },
+  {
+   "id": "N27",
+   "q": "integrate Google Play Billing in an Android Unity game"
+  },
+  {
+   "id": "N28",
+   "q": "what will the weather be at our team offsite next week"
+  },
+  {
+   "id": "N29",
+   "q": "what Xbox Game Pass deal terms should an indie studio ask for"
+  },
+  {
+   "id": "N30",
+   "q": "make cloud saves work with Apple Game Center"
+  },
+  {
+   "id": "N31",
+   "q": "use Unreal Blueprints to open a door when the player walks up"
+  },
+  {
+   "id": "N32",
+   "q": "how do I set up Unity Netcode for GameObjects for a 4-player co-op"
+  },
+  {
+   "id": "N33",
+   "q": "which Twitch extension should we use for viewer voting"
+  },
+  {
+   "id": "N34",
+   "q": "how do I export a Spine 2D animation to Godot"
+  },
+  {
+   "id": "N35",
+   "q": "what did our March 2026 survey say players want next"
   }
  ],
  "multihop": [
@@ -1197,6 +1289,144 @@
     "The starter sword deals 12 base damage",
     "The swing cooldown is 0.4 seconds"
    ],
+   "wrong": []
+  },
+  {
+   "id": "N13",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N14",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N15",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N16",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N17",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N18",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N19",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N20",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N21",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N22",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N23",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N24",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N25",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N26",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N27",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N28",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N29",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N30",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N31",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N32",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N33",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N34",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N35",
+   "expect": "not_found",
+   "facts": [],
    "wrong": []
   }
  ]

@@ -728,7 +728,7 @@ def worker_passages(spec, game, ep):
         project = game if item.get("scope") else ""
         with env(RBXKIT_PROJECT=project, FRIDAE_RAG_FILE=ep.file if ep else None):
             t = time.perf_counter()
-            res = rbxvault.lookup(item["parts"], k=3)
+            res = rbxvault.lookup(item["parts"], k=spec.get("k", 3))
             dt = time.perf_counter() - t
         out[item["id"]] = {"secs": dt, "parts": [{"question": r.get("query"), "via": r.get("via"),
                                                     "hits": r.get("hits") or [], "error": r.get("error")} for r in res]}
