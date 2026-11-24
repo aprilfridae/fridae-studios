@@ -41,6 +41,7 @@ mod splash;
 mod studio_run;
 mod studio_undo;
 mod studio_watch;
+mod swarm;
 mod team;
 mod textures;
 mod update;
@@ -107,6 +108,7 @@ fn self_test(message: &str) {
         who.set_project(&p);
     }
     thread::spawn(team::watch);
+    thread::spawn(swarm::watch); // the swarm's watchdog: app code, no tokens
     let mut atts = Vec::new();
     if let Some(path) = var("RBXKIT_ATTACH") {
         use base64::Engine;

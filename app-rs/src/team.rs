@@ -56,13 +56,14 @@ fn with_writers<T>(f: impl FnOnce(&mut HashMap<String, String>) -> T) -> T {
     f(WRITERS.lock().unwrap().get_or_insert_with(HashMap::new))
 }
 
-/// Take the project's one writer place for `agent_name`, or say who has it. Experts that only read or review never need it.
+/// Take the project's one Studio turn for `agent_name`, or say who has it. Since the swarm, file work runs in parallel
+/// (each writer in its own copy, `swarm`): only changes inside the live Studio place take turns. Readers never need it.
 fn writer_gate(held: &mut HashMap<String, String>, project: &str, agent_name: &str, writes: bool) -> Result<(), String> {
     if !writes {
         return Ok(());
     }
     if let Some(who) = held.get(project) {
-        return Err(format!("Another expert is changing the game right now ({who}). Wait for it, then start this one."));
+        return Err(format!("Another member has the Studio turn right now ({who}). Do work that needs no Studio, then ask again."));
     }
     held.insert(project.to_string(), agent_name.to_string());
     Ok(())
@@ -104,18 +105,27 @@ fn set_slots_note(project: &str, on: bool) {
     });
 }
 
-/// The run's limit on experts working at once (studio.json "max_experts", 1 to 4, 2 when unset). None when there is
-/// room for one more.
+/// The limit on experts working at once. None when there is room for one more.
 fn experts_limit(working: usize, max: u64) -> Option<String> {
     (working as u64 >= max).then(|| format!("The run already has {working} experts working (the limit is {max}). Wait for one, then start this one."))
 }
 
-/// For a request from the Lead of a running studio run: refused when as many of its helpers as the run allows are still
-/// at work (a helper counts until its result is handed back, or again while the user has it working).
+/// How many of a Lead's experts may work at once: the user's ceiling (`swarm::ceiling`, Setup > Experts), or a
+/// running studio run's own "max_experts" when that is lower.
+fn expert_max(run: Option<&Value>, ceiling: usize) -> u64 {
+    let own = run.and_then(|r| r["max_experts"].as_u64()).filter(|n| (1..=agents::MAX_AGENTS as u64).contains(n));
+    own.map_or(ceiling as u64, |n| n.min(ceiling as u64))
+}
+
+/// For a request from a Lead: refused when as many of its helpers as the ceiling allows are at work (a helper counts
+/// until its result is handed back, or again while it works after being resumed; the Librarian is not counted).
 fn over_expert_limit(lead: &Agent, project: &str) -> Option<String> {
-    let run = studio_run::read_run(Path::new(project)).filter(|r| studio_run::running(r) && r["lead"] == lead.id.as_str())?;
-    let max = run["max_experts"].as_u64().filter(|n| (1..=4).contains(n)).unwrap_or(2);
-    let working = agents::agents().iter().filter(|a| a.parent().as_deref() == Some(lead.id.as_str()) && a.team().is_some() && a.holds_slot()).count();
+    let run = studio_run::read_run(Path::new(project)).filter(|r| studio_run::running(r) && r["lead"] == lead.id.as_str());
+    let max = expert_max(run.as_ref(), crate::swarm::ceiling());
+    let working = agents::agents()
+        .iter()
+        .filter(|a| a.parent().as_deref() == Some(lead.id.as_str()) && a.team().is_some() && a.holds_slot() && !crate::swarm::is_librarian(&a.id))
+        .count();
     experts_limit(working, max)
 }
 
@@ -175,7 +185,57 @@ fn studio_open() -> bool {
     cfg!(test) || crate::plugin::connected()
 }
 
+/// `rbx_team` action "studio_turn": {"op": "studio", "from": agent id, "turn": "take" | "give" | "status"}.
+fn studio_turn(req: &Value) -> Value {
+    let Some(agent) = agents::get(req["from"].as_str().unwrap_or("")) else {
+        return json!({"status": "refused", "reason": "The Studio turn is only for agents inside the app."});
+    };
+    let key = crate::swarm::project_of(&agent.id).or_else(|| agent.project()).unwrap_or_default();
+    let holder = with_writers(|w| w.get(&key).cloned());
+    let text = match req["turn"].as_str().unwrap_or("status") {
+        "take" if agent.writer().is_some() => "You already have the Studio turn. Give it back with op 'give' when your Studio part is done.".to_string(),
+        "take" => {
+            if let Some(why) = needs_studio(true, studio_open()) {
+                return json!({"status": "refused", "reason": why});
+            }
+            if let Err(why) = with_writers(|w| writer_gate(w, &key, &agent.name(), true)) {
+                return json!({"status": "refused", "reason": why});
+            }
+            agent.set_writer(&key);
+            "You have the Studio turn. Change the place now, then give it back with op 'give'.".to_string()
+        }
+        "give" if agent.writer().is_some() => {
+            release(&agent);
+            "Studio turn given back.".to_string()
+        }
+        "give" => "You did not have the Studio turn.".to_string(),
+        _ => match holder {
+            Some(who) => format!("{who} has the Studio turn."),
+            None => "Nobody has the Studio turn.".to_string(),
+        },
+    };
+    json!({"status": "done", "text": text})
+}
+
+/// A request that is not a spawn: the Studio turn, or a post on the swarm's board.
+fn answer_op(req: &Value) {
+    let id = paths::base_name(req["id"].as_str().unwrap_or(""));
+    if id.is_empty() {
+        return;
+    }
+    let mut res = match req["op"].as_str().unwrap_or("") {
+        "studio" => studio_turn(req),
+        "post" => crate::swarm::request(req),
+        _ => json!({"status": "refused", "reason": "Unknown request."}),
+    };
+    res["id"] = json!(id);
+    write_result(&id, res);
+}
+
 fn start(req: &Value) {
+    if req["op"].is_string() {
+        return answer_op(req);
+    }
     let id = paths::base_name(req["id"].as_str().unwrap_or(""));
     let role = if req["role"] == "critic" { "critic" } else { "worker" };
     let name = req["name"].as_str().unwrap_or("").trim().to_string();
@@ -229,26 +289,25 @@ fn start(req: &Value) {
     let agent = if let Some(expert_id) = &expert {
         let expert_name = req["expert_name"].as_str().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(expert_id);
         let title = expert_title(expert_name, &name);
-        let key = project.clone().unwrap_or_default();
         let writes = req["writes"].as_bool().unwrap_or(false);
         if let Some(why) = needs_studio(writes, studio_open()) {
-            return refuse(why); // before the writer gate: a refused request never takes the place
+            return refuse(why);
         }
-        if let Err(why) = with_writers(|w| writer_gate(w, &key, &title, writes)) {
-            return refuse(&why); // a refused request never takes the place
-        }
+        // a member of the Lead's swarm: a worker gets its own copy of the project (Studio changes take turns instead)
+        let member = from.as_ref().and_then(|l| crate::swarm::prepare(l, member_hint(req, &name), role == "worker"));
+        let folder = member.as_ref().and_then(|m| m.folder()).or_else(|| project.clone());
         let info = agents::Expert { id: expert_id.clone(), name: expert_name.to_string(), text: req["expert_text"].as_str().unwrap_or("").to_string() };
-        let Some(agent) = agents::spawn_on(&id, role, &title, project.clone(), choice.ai.clone(), choice.model.clone(), parent, Some(info)) else {
-            if writes {
-                with_writers(|w| w.remove(&key));
+        let Some(agent) = agents::spawn_on(&id, role, &title, folder, choice.ai.clone(), choice.model.clone(), parent, Some(info)) else {
+            if let Some(m) = member {
+                crate::swarm::discard(m);
             }
             if let Some(p) = &project {
                 set_slots_note(p, true);
             }
             return refuse(NO_SLOT);
         };
-        if writes {
-            agent.set_writer(&key);
+        if let Some(m) = &member {
+            crate::swarm::joined(m, &agent, expert_id, &task);
         }
         if let Some(p) = &project {
             set_slots_note(p, false);
@@ -256,9 +315,17 @@ fn start(req: &Value) {
         agent
     } else {
         let title = if role == "critic" && !name.to_lowercase().starts_with("review") { format!("Review: {name}") } else { name.clone() };
-        let Some(agent) = agents::spawn_on(&id, role, &title, project, choice.ai.clone(), choice.model.clone(), parent, None) else {
+        let member = from.as_ref().and_then(|l| crate::swarm::prepare(l, member_hint(req, &name), role == "worker"));
+        let folder = member.as_ref().and_then(|m| m.folder()).or(project);
+        let Some(agent) = agents::spawn_on(&id, role, &title, folder, choice.ai.clone(), choice.model.clone(), parent, None) else {
+            if let Some(m) = member {
+                crate::swarm::discard(m);
+            }
             return refuse(NO_SLOT);
         };
+        if let Some(m) = &member {
+            crate::swarm::joined(m, &agent, role, &task);
+        }
         agent
     };
     let mut started = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "running"});
@@ -269,6 +336,11 @@ fn start(req: &Value) {
     }
     write_result(&id, with_expert(started));
     thread::spawn(move || agent.send(&task, &agents::Ask::default()));
+}
+
+/// The handle a member is known by on the board: the request's "member" ("@shop-ui"), else its name.
+fn member_hint<'a>(req: &'a Value, name: &'a str) -> &'a str {
+    req["member"].as_str().map(str::trim).filter(|m| !m.trim_start_matches('@').is_empty()).unwrap_or(name)
 }
 
 /// What a helper hands back: its reply, or why there is none. A helper the user stopped says so first, so the
@@ -351,6 +423,8 @@ pub fn finished(agent: &Arc<Agent>, stopped: bool) {
         wake_lead_of(agent);
         slot_freed();
     }
+    // a swarm member is parked now: a verifier's verdict is acted on, and members mentioned meanwhile are resumed
+    crate::swarm::turn_ended(agent, stopped);
 }
 
 /// What a waiting Lead is told when one of its experts finished.
@@ -497,11 +571,55 @@ mod tests {
         let mut held = HashMap::new();
         assert!(writer_gate(&mut held, "/g/one", "Coder: Shop", true).is_ok());
         let why = writer_gate(&mut held, "/g/one", "World builder: Map", true).unwrap_err();
-        assert_eq!(why, "Another expert is changing the game right now (Coder: Shop). Wait for it, then start this one.");
+        assert_eq!(why, "Another member has the Studio turn right now (Coder: Shop). Do work that needs no Studio, then ask again.");
         // readers are never held up, another game is separate, and a refusal took nothing
         assert!(writer_gate(&mut held, "/g/one", "Security reviewer: Remotes", false).is_ok());
         assert!(writer_gate(&mut held, "/g/two", "World builder: Map", true).is_ok());
         assert_eq!(held.get("/g/one").map(String::as_str), Some("Coder: Shop"));
+    }
+
+    #[test]
+    fn the_studio_turn_is_exclusive_while_file_work_runs_in_parallel() {
+        let d = game("studio-turn");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: studio turn", Some(p.clone())).unwrap();
+        let task = "Build the shop's buy button and its server check, in the folders named here, then report what you made.";
+        // two experts that change the game both start: each in its own copy, working at once
+        for (id, name) in [("w-turn-a", "Shop"), ("w-turn-b", "Map")] {
+            start(&json!({"id": id, "from": lead.id, "role": "worker", "name": name, "task": task, "expert": "coder", "expert_name": "Coder", "writes": true}));
+            let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join(format!("{id}.json"))).unwrap()).unwrap();
+            assert_eq!(res["status"], "running", "{res}");
+        }
+        let kids = agents::helpers_of(&lead.id);
+        let (a, b) = (&kids[0], &kids[1]);
+        assert_ne!(a.project(), b.project(), "each in its own copy");
+        assert_ne!(a.project().as_deref(), Some(p.as_str()));
+        // the Studio turn: one at a time, given back, then the other's
+        let turn = |who: &Agent, op: &str| studio_turn(&json!({"from": who.id, "turn": op}));
+        assert_eq!(turn(a, "take")["status"], "done");
+        let refused = turn(b, "take");
+        assert_eq!(refused["status"], "refused");
+        assert!(refused["reason"].as_str().unwrap().contains("has the Studio turn"));
+        assert!(turn(b, "status")["text"].as_str().unwrap().contains("has the Studio turn"));
+        assert_eq!(turn(a, "give")["text"], "Studio turn given back.");
+        assert_eq!(turn(b, "take")["status"], "done");
+        // a turn ends: the turn is given back with it
+        release(b);
+        assert_eq!(turn(a, "take")["status"], "done");
+        release(a);
+        for x in kids.iter() {
+            agents::remove_agent(&x.id);
+        }
+        agents::remove_agent(&lead.id);
+    }
+
+    #[test]
+    fn the_ceiling_and_the_runs_own_limit() {
+        assert_eq!(expert_max(None, 4), 4);
+        assert_eq!(expert_max(None, 1), 1, "a ceiling of 1: one at a time, as before the swarm");
+        assert_eq!(expert_max(Some(&json!({"max_experts": 2})), 4), 2, "the run's own setting can only lower it");
+        assert_eq!(expert_max(Some(&json!({"max_experts": 6})), 4), 4);
+        assert_eq!(expert_max(Some(&json!({"max_experts": 0})), 3), 3);
     }
 
     #[test]

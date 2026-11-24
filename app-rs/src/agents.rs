@@ -813,6 +813,8 @@ struct State {
     expert: Option<String>,
     expert_text: Option<String>,
     writer_of: Option<String>,
+    /// When this chat last put an event out (any output): the swarm's watchdog finds a silent member by it.
+    last_event: f64,
     /// The chat that started this helper (a studio run's Lead, for its experts).
     parent: Option<String>,
     /// A paused studio run's Lead has been told to wind down (see `pause_step`).
@@ -2691,6 +2693,16 @@ impl Agent {
         self.st.lock().unwrap().writer_of = Some(project.to_string());
     }
 
+    /// The project whose Studio turn this helper holds now, if any (it keeps holding it).
+    pub fn writer(&self) -> Option<String> {
+        self.st.lock().unwrap().writer_of.clone()
+    }
+
+    /// When this chat last put out any event (0 when never): see `swarm` (the watchdog).
+    pub fn last_activity(&self) -> f64 {
+        self.st.lock().unwrap().last_event
+    }
+
     /// Give up the writer place: the project it was held for, once, then nothing (so a second release cannot free another helper's).
     pub fn take_writer(&self) -> Option<String> {
         self.st.lock().unwrap().writer_of.take()
@@ -2860,6 +2872,7 @@ impl Agent {
         BUS.put(kind, Value::Object(shown));
         let stale = {
             let mut st = self.st.lock().unwrap();
+            st.last_event = paths::now_secs();
             if !matches!(kind, "agent_new" | "agent_removed" | "busy" | "model" | "queued") {
                 ev.insert("kind".into(), json!(kind));
                 st.log.push(Value::Object(ev));
@@ -3458,6 +3471,8 @@ impl Agent {
             prompt += &format!("\n\n{}", text.trim());
         }
         prompt += &team_prompt(self);
+        // a member of a swarm: its name, its own copy, the board, the Studio turn, parking (`swarm::member_prompt`)
+        prompt += &crate::swarm::member_prompt(&self.id);
         // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
         prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);
