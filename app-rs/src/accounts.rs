@@ -11,9 +11,11 @@
 //! Gemini: agy keeps the user's sign-in in one keychain entry, which a command finds by HOME alone, and its data
 //! folder under HOME (measured). So Gemini's second account is a home folder of the app's own, in the same place:
 //! every agy command of the second account runs with it as HOME (`home`). The user's keychain cannot be read or
-//! written from there (measured), so the second account can never be, or replace, the user's own sign-in. A sign-in
-//! made there is kept, by what agy's program says, in a file in that home's own data folder (not measured: it
-//! takes a completed sign-in). The app's tool server is given the app's own HOME back.
+//! written from there (measured), so the second account can never be, or replace, the user's own sign-in. agy
+//! keeps a sign-in in the default keychain of its HOME and puts a system alert on the screen when there is none
+//! (seen by the user), so the home is given a keychain of its own before agy runs there (`keychain_open`): a file
+//! in the home, made and unlocked by the app with a password of the app's own, the home's default by the home's
+//! own list file. The app's tool server is given the app's own HOME back.
 //!
 //! The first account is the user's own sign-in and is never touched. The second is signed in with the tool's own
 //! sign-in (`signin`, under the id "<ai>:<folder name>"), by the user's click, and removed by deleting the app's
@@ -259,7 +261,11 @@ pub fn add(ai: &str) -> Result<String, String> {
         cfg.insert(SETTING.into(), Value::Object(all));
     });
     note_left(ai, None);
-    prepare_of(ai, &name).map(|_| name).ok_or_else(|| "Fridae could not make the account's folder.".to_string())
+    if prepare_of(ai, &name).is_none() {
+        return Err("Fridae could not make the account's folder.".to_string());
+    }
+    // (Gemini: with its keychain, so the sign-in that follows finds one and the Mac asks nothing)
+    ready_of(ai, &name).map(|_| name).ok_or_else(|| "Fridae could not make a keychain for the account.".to_string())
 }
 
 /// How many added accounts one AI may have: far more than anyone signs in to, and few enough that a setting cannot
@@ -284,6 +290,10 @@ pub fn remove(ai: &str, name: &str) -> Option<PathBuf> {
     });
     if let Some(used) = USED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         used.remove(&(ai.to_string(), name.to_string()));
+    }
+    if let Some(d) = &dir {
+        KEYCHAIN_FAILED.lock().unwrap_or_else(|e| e.into_inner()).retain(|f| f != d);
+        KEYCHAIN_CHANGED.lock().unwrap_or_else(|e| e.into_inner()).retain(|f| f != d);
     }
     // only a folder of its checked name, directly in the accounts folder, and only when that folder is the app's
     // own (not a link to somewhere else, where a folder of the same name would be somebody else's)
@@ -351,8 +361,9 @@ fn real_folder(dir: &Path) -> bool {
 
 /// Where a tool keeps an account's sign-in inside the account's folder: deleted before anything else, so that
 /// whatever else in the folder cannot be deleted, the sign-in is not what stays. Claude Code: its credentials file
-/// and its account file. agy: its data folder (`.gemini`), where a sign-in made without a keychain is kept.
-const SIGN_IN_PLACES: [&str; 3] = [".credentials.json", ".claude.json", ".gemini"];
+/// and its account file. agy: its data folder (`.gemini`), where a sign-in made without a keychain is kept, and the
+/// home's `Library`, where the account's own keychain is (`KEYCHAIN`), with that keychain's password beside them.
+const SIGN_IN_PLACES: [&str; 5] = [".credentials.json", ".claude.json", ".gemini", "Library", KEYCHAIN_KEY];
 
 /// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the
 /// sign-in's own place, then the rest. A folder that has been swapped for a link: the link is removed and nothing
@@ -418,24 +429,440 @@ fn users_claude() -> PathBuf {
 /// None as well when the folder, or the folder of all second accounts, is not a folder of its own but a link
 /// (`real_folder`): nothing is then run or written for the second account at all.
 pub fn prepare_of(ai: &str, name: &str) -> Option<PathBuf> {
-    let dir = folder_of(ai, name)?;
+    let dir = folder_of(ai, name).filter(|d| in_accounts(d))?;
     match ai {
-        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED).filter(|d| no_keychain_in(d)),
+        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED).filter(|d| !keychain_changed_in(d) && (!keychain_used() || list_its_own(d))),
         _ => prepare_in(&dir, &users_claude(), &CLAUDE_LINKED),
     }
 }
 
-/// Whether a home of the app's own (Gemini's second account) still has no keychain of any kind in it. The promise
-/// that the user's own sign-in cannot be reached from there rests on the home having none: a link at
+/// Whether a folder is an account's: a full path, directly in the accounts folder. Nothing is prepared, and no
+/// command of a tool or of the Mac's keychain program is given a home, that is anything else: an empty or a
+/// relative home would let such a program fall back to the user's real one.
+fn in_accounts(dir: &Path) -> bool {
+    dir.is_absolute() && dir.parent().is_some_and(|p| !p.as_os_str().is_empty() && p == base())
+}
+
+/// The same, and ready for a command of the tool to run there now: for Gemini on a Mac, with the account's own
+/// keychain made and unlocked (`keychain_open`). None when it is not: the command must then not be run at all (agy
+/// started where its keychain is missing or locked puts a system alert or a password box on the screen).
+pub fn ready_of(ai: &str, name: &str) -> Option<PathBuf> {
+    ready_of_until(ai, name, &|| false)
+}
+
+/// The same, given up as soon as `stop` says so (Stop was pressed while the keychain was being opened): None then
+/// too, and the caller asks `stop` to tell the two apart.
+pub fn ready_of_until(ai: &str, name: &str, stop: &dyn Fn() -> bool) -> Option<PathBuf> {
+    let dir = prepare_of(ai, name)?;
+    (ai != "gemini" || keychain_open(&dir, stop)).then_some(dir)
+}
+
+/// Whether the app uses an added account's folder at all, as far as it knows without running anything: it is a
+/// folder of its own (`prepare_of`), and its keychain did not fail to open when that was last tried.
+fn usable_of(ai: &str, name: &str) -> bool {
+    prepare_of(ai, name).is_some_and(|dir| !KEYCHAIN_FAILED.lock().unwrap_or_else(|e| e.into_inner()).contains(&dir))
+}
+
+/// Whether an added Gemini account's keychain was changed from outside the app: what its home has for a keychain
+/// is no longer its own (`keychain_its_own`), or its list file is there and no longer says the app's words
+/// (`ListFile::Changed`: a command run in that home named another keychain, the user's own it may be). Looked at
+/// before every command of the account, at the end of every turn on it, and for Setup. Once found it stays so
+/// while the app runs, whatever is put back: the app does not repair it, does not use the account, and says so,
+/// since agy may have used another keychain meanwhile.
+pub fn keychain_changed(ai: &str, name: &str) -> bool {
+    ai == "gemini" && folder_of(ai, name).filter(|d| in_accounts(d) && real_folder(d)).is_some_and(|d| keychain_changed_in(&d))
+}
+
+/// Homes found changed (`keychain_changed`), while the app runs.
+static KEYCHAIN_CHANGED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn keychain_changed_in(home: &Path) -> bool {
+    let mut noted = KEYCHAIN_CHANGED.lock().unwrap_or_else(|e| e.into_inner());
+    if noted.iter().any(|h| h == home) {
+        return true;
+    }
+    let changed = !keychain_its_own(home, &paths::home_dir()) || (keychain_used() && list_file(home) == ListFile::Changed);
+    if changed {
+        noted.push(home.to_path_buf());
+    }
+    changed
+}
+
+// ------------------------------------------------------------------ Gemini: a keychain of the account's own
+//
+// agy keeps a sign-in with the Mac's `security` program, in the default keychain of its HOME (its program's text:
+// `/usr/bin/security -i` fed `add-generic-password -U -s gemini -a antigravity -w ...`, and `find-generic-password`
+// to read it; no keychain is named). In a home with no keychain the Mac then puts "Keychain Not Found" on the
+// screen (the user saw it at their first sign-in for an added account). So an added Gemini account's home gets a
+// keychain of its own before any agy command runs there:
+// - a keychain FILE in the home, `Library/Keychains/fridae.keychain-db`, made by `security create-keychain` with a
+//   password the app makes up and keeps in the home (`KEYCHAIN_KEY`); before every agy command of the account it
+//   is unlocked with that password and then told never to lock by itself (`keychain_open`: each in a run of its
+//   own that must end well);
+// - made the home's default, and its whole search list, by the home's OWN list file
+//   (`Library/Preferences/com.apple.security.plist` inside the home), which the app writes as a plain file when
+//   there is none, and never puts right when it says anything else (`keychain_changed`).
+// All of it is found through HOME alone: every command is `/usr/bin/security -i` with HOME set to the account's
+// home and the keychain given by its bare name, which resolves inside that home. Nothing here names the user's
+// keychain, and nothing changes the user's own search list or default keychain (no `list-keychains -s`,
+// `default-keychain -s` or `login-keychain -s` is ever run: the list is a file in the account's home).
+//
+// The name is not `login.keychain-db` on purpose: a keychain under that name in a home's Keychains folder does not
+// unlock with the password it was created with (seen in scratch homes on 23 November 2026: exit 51 every time,
+// while one under any other name unlocks), so the app could never open it again once it is locked, and agy would
+// make the Mac ask the user for a password nobody has.
+
+/// The file name of an added Gemini account's own keychain, in `<home>/Library/Keychains`.
+pub const KEYCHAIN: &str = "fridae.keychain-db";
+
+/// Where the password of that keychain is kept: a file in the account's home (the user's alone to read), under the
+/// protected accounts folder. Made up by the app, used for nothing else, shown and logged nowhere.
+const KEYCHAIN_KEY: &str = ".fridae-keychain-key";
+
+/// The home's keychain list file, inside the account's home.
+const KEYCHAIN_LIST_FILE: &str = "com.apple.security.plist";
+
+macro_rules! keychain_entry {
+    () => {
+        "\t\t<dict>\n\t\t\t<key>DbName</key>\n\t\t\t<string>~/Library/Keychains/fridae.keychain</string>\n\t\t\t<key>GUID</key>\n\t\t\t<string>{87191ca3-0fc9-11d4-849a-000502b52122}</string>\n\t\t\t<key>SubserviceType</key>\n\t\t\t<integer>6</integer>\n\t\t</dict>\n"
+    };
+}
+
+/// What the home's list file says: the account's own keychain is the one keychain searched and the default, named
+/// from the home (`~/`), so the words are the same for every account. Byte for byte what `security` itself writes
+/// for it.
+const KEYCHAIN_LIST: &str = concat!(
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n",
+    "<plist version=\"1.0\">\n<dict>\n",
+    "\t<key>DLDBSearchList</key>\n\t<array>\n",
+    keychain_entry!(),
+    "\t</array>\n\t<key>DefaultKeychain</key>\n\t<array>\n",
+    keychain_entry!(),
+    "\t</array>\n</dict>\n</plist>\n"
+);
+
+/// Whether an added Gemini account gets a keychain here: on a Mac (and in tests, which never run the real program).
+fn keychain_used() -> bool {
+    cfg!(target_os = "macos") || cfg!(test)
+}
+
+/// Whether a path is a file itself: there, a regular file, and not a link to one.
+fn real_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+}
+
+/// Whether what a home of the app's own (an added Gemini account's) has for a keychain is its own and nobody
+/// else's. The promise that the user's own sign-in cannot be reached from there rests on it: a link at
 /// `Library/Keychains` to the user's own brings their keychain back for every command run with that home (measured:
-/// the entry is found again), and a sign-in made there would then be written into the user's own entry. Nothing of
-/// the app or of agy puts a keychain there (measured: agy's sign-in and status leave no `Library` at all), so a
-/// home that has grown one, as a folder or as a link, or whose `Library` is a link, or that names a keychain list
-/// of its own, is not used for anything: no status, no sign-in, no turn. Setup says so, and Remove takes it away.
-fn no_keychain_in(home: &Path) -> bool {
+/// the entry is found again), and a sign-in made there would then be written into the user's own entry. So the
+/// home is not used for anything (no status, no sign-in, no turn; Setup says so, and Remove takes it away) when:
+/// - `Library`, `Library/Keychains` or `Library/Preferences` is there and is not a folder itself (a link);
+/// - the home's keychain list file is there and is not a file itself;
+/// - anything in `Library/Keychains` is a link, or is a file that is also somewhere else (a second name for the
+///   same file: that is how the user's own keychain could be there without a link), or is one of the files in the
+///   user's own `Library/Keychains` (`users`: the user's home).
+///
+/// The app's own keychain there, a regular file made in that home, is what it is for; so is nothing at all yet.
+fn keychain_its_own(home: &Path, users: &Path) -> bool {
     let library = home.join("Library");
+    let (keychains, preferences) = (library.join("Keychains"), library.join("Preferences"));
     let there = |p: &Path| fs::symlink_metadata(p).is_ok();
-    (!there(&library) || real_folder(&library)) && !there(&library.join("Keychains")) && !there(&library.join("Preferences").join("com.apple.security.plist"))
+    if [&library, &keychains, &preferences].into_iter().any(|d| there(d) && !real_folder(d)) {
+        return false;
+    }
+    let list = preferences.join(KEYCHAIN_LIST_FILE);
+    if there(&list) && !real_file(&list) {
+        return false;
+    }
+    if !there(&keychains) {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(&keychains) else { return false };
+    #[cfg(unix)]
+    let of_users: Vec<(u64, u64)> = {
+        use std::os::unix::fs::MetadataExt;
+        fs::read_dir(users.join("Library").join("Keychains")).into_iter().flatten().flatten().filter_map(|e| fs::metadata(e.path()).ok()).map(|m| (m.dev(), m.ino())).collect()
+    };
+    #[cfg(not(unix))]
+    let _ = users;
+    for entry in entries.flatten() {
+        // (one that is gone by now is passed over: the Mac writes and removes lock and temporary files here while
+        // a sign-in is saved, and a file that is not there is nobody's keychain)
+        let meta = match fs::symlink_metadata(entry.path()) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return false,
+        };
+        if meta.file_type().is_symlink() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if meta.file_type().is_file() && of_users.contains(&(meta.dev(), meta.ino())) {
+                return false;
+            }
+            // a second name for the file: refused when it is still there after a moment (it was not checked
+            // whether the Mac's own saving ever gives a keychain file one for an instant; a link someone made
+            // stays)
+            let shared = |m: &fs::Metadata| m.file_type().is_file() && m.nlink() != 1;
+            if shared(&meta) {
+                let mut still = true;
+                for _ in 0..3 {
+                    std::thread::sleep(std::time::Duration::from_millis(60));
+                    still = fs::symlink_metadata(entry.path()).is_ok_and(|m| shared(&m) || m.file_type().is_symlink());
+                    if !still {
+                        break;
+                    }
+                }
+                if still {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// One at a time for each home's keychain: making it, unlocking it, its settings. A lock of the home's own, so one
+/// account's keychain program that is slow holds up nobody else's turn; looking at an account (Setup's list)
+/// takes none.
+static KEYCHAIN_LOCKS: Mutex<Option<HashMap<PathBuf, std::sync::Arc<Mutex<()>>>>> = Mutex::new(None);
+
+fn keychain_lock(home: &Path) -> std::sync::Arc<Mutex<()>> {
+    KEYCHAIN_LOCKS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).entry(home.to_path_buf()).or_default().clone()
+}
+
+/// Homes whose keychain could not be made or opened when that was last tried: Setup says the account is not used.
+static KEYCHAIN_FAILED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// For the names of files written beside their place and then put there whole.
+static NEW_FILE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn beside(file: &Path) -> PathBuf {
+    let n = NEW_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    file.with_file_name(format!(".fridae-new-{}-{n}-{name}", std::process::id()))
+}
+
+/// Write a file whole or not at all, and never over anything that is already there under its name: written
+/// beside its place (the user's alone to read when `private`), then given its name. Whether it is there now, from
+/// this write.
+fn place_whole(file: &Path, text: &str, private: bool) -> bool {
+    let new = beside(file);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = private;
+    let written = options.open(&new).and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()).and_then(|_| f.sync_all())).is_ok();
+    // (a second name for the finished file, which fails when the name is taken; then the first name goes)
+    let placed = written && fs::hard_link(&new, file).is_ok();
+    let _ = fs::remove_file(&new);
+    placed
+}
+
+/// What a home's keychain list file is now.
+#[derive(PartialEq, Debug)]
+enum ListFile {
+    /// not there (a new home, or it was deleted): the app writes it
+    Missing,
+    /// there, a file itself, saying exactly the app's words (`KEYCHAIN_LIST`)
+    Ours,
+    /// there and anything else: other words, a link, not a file. Never put right by the app (`keychain_changed`)
+    Changed,
+}
+
+fn list_file(home: &Path) -> ListFile {
+    let list = home.join("Library").join("Preferences").join(KEYCHAIN_LIST_FILE);
+    match fs::symlink_metadata(&list) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => ListFile::Missing,
+        Ok(m) if m.file_type().is_file() && fs::read(&list).is_ok_and(|b| b == KEYCHAIN_LIST.as_bytes()) => ListFile::Ours,
+        _ => ListFile::Changed,
+    }
+}
+
+/// The home's own list file says the app's words (`KEYCHAIN_LIST`): the account's keychain is the home's default
+/// before any command runs there. A file that is MISSING is written (a new home, or one where it was deleted),
+/// whole and never over anything. A file that says anything else is left exactly as it is and the answer is no:
+/// the app never puts a changed list right in silence (`keychain_changed`). The home's keychain folders are made,
+/// the user's alone. Called after `keychain_its_own` (so none of them is a link). Whether it says them.
+fn list_its_own(home: &Path) -> bool {
+    let library = home.join("Library");
+    let preferences = library.join("Preferences");
+    for dir in [&library, &library.join("Keychains"), &preferences] {
+        if fs::symlink_metadata(dir).is_err() && fs::create_dir(dir).is_ok() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+            }
+        }
+        if !real_folder(dir) {
+            return false;
+        }
+    }
+    match list_file(home) {
+        ListFile::Ours => true,
+        ListFile::Changed => false,
+        ListFile::Missing => {
+            let _ = place_whole(&preferences.join(KEYCHAIN_LIST_FILE), KEYCHAIN_LIST, false);
+            // (written by this call or by another at the same moment: what counts is what it says now)
+            list_file(home) == ListFile::Ours
+        }
+    }
+}
+
+/// The kept password of a home's keychain: 48 lower-case hex digits and nothing else (it is put into the text
+/// `security` reads, so nothing that is not exactly that is ever used), from a file that is a file itself.
+fn keychain_key(home: &Path) -> Option<String> {
+    let file = home.join(KEYCHAIN_KEY);
+    let key = real_file(&file).then(|| fs::read_to_string(&file).ok()).flatten()?;
+    let key = key.trim_end_matches('\n');
+    (key.len() == 48 && key.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))).then(|| key.to_string())
+}
+
+/// A new password for a home's keychain, made up from the system's random numbers and kept in the home, the
+/// user's alone to read: put there whole or not at all (`place_whole`), so a write that was cut short leaves no
+/// file that is no password and would keep the account from ever getting one. None when there is something under
+/// that name already, or it could not be made or kept.
+fn new_keychain_key(home: &Path) -> Option<String> {
+    let file = home.join(KEYCHAIN_KEY);
+    if fs::symlink_metadata(&file).is_ok() {
+        return None;
+    }
+    let mut bytes = [0u8; 24];
+    fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes)).ok()?;
+    let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    place_whole(&file, &key, true).then_some(key)
+}
+
+/// The Mac's keychain program, told to read its commands from its input (so a password is never on a command line,
+/// where other programs can read it), with the account's home as its HOME and nothing else that could name a home:
+/// the keychain it is told about by its bare name is then `<home>/Library/Keychains/<name>`.
+fn security_command(home: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new("/usr/bin/security");
+    cmd.arg("-i").current_dir(home);
+    self::home(&mut cmd, home);
+    cmd
+}
+
+/// What `security` is fed to make a home's keychain, with the kept password. One command to a run: the program
+/// ends with the result of the last line it read, so each result the app needs is asked for by itself.
+fn create_feed(key: &str) -> String {
+    format!("create-keychain -p {key} {KEYCHAIN}\n")
+}
+
+/// What `security` is fed to unlock a home's keychain with the kept password (it answers at once, right or wrong:
+/// with the password given it asks nothing on the screen).
+fn unlock_feed(key: &str) -> String {
+    format!("unlock-keychain -p {key} {KEYCHAIN}\n")
+}
+
+/// What `security` is fed so that a home's keychain never locks by itself (no time limit, not when the Mac
+/// sleeps). A keychain is made with the Mac's own settings (seen: it locks after five minutes unused, and on
+/// sleep), and a keychain that locked under a turn makes agy's next look at it a password box on the screen. So
+/// this is fed after EVERY unlock, in a run of its own whose result counts, never only when the keychain is made,
+/// and never before the unlock (a locked keychain asked for this may ask on the screen).
+fn settings_feed() -> String {
+    format!("set-keychain-settings {KEYCHAIN}\n")
+}
+
+/// The longest one run of the keychain program may take (it answers in a fraction of a second).
+const SECURITY_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run `security` for a home with that text to read, given up when `stop` says so; whether it ended well. What it
+/// prints is thrown away. Never for a home that is not an account's folder (`in_accounts`).
+fn security(home: &Path, feed: String, stop: &dyn Fn() -> bool) -> bool {
+    if !in_accounts(home) {
+        return false;
+    }
+    #[cfg(test)]
+    return security_stand_in(home, &feed, stop);
+    #[allow(unreachable_code)]
+    crate::signin::run_fed(security_command(home), SECURITY_LIMIT, Some(feed), "keychain", stop).is_some_and(|(_, _, ok)| ok)
+}
+
+/// For tests: every text `security` would have been fed, by home, and the homes where it is to fail ("create",
+/// "unlock" or "settings"). Tests never run the real program: a keychain is a file holding the password it was
+/// "made" with, and unlocks with that password alone.
+#[cfg(test)]
+pub static SECURITY_FOR_TEST: Mutex<(Vec<(PathBuf, String)>, SecurityFails)> = Mutex::new((Vec::new(), Vec::new()));
+
+#[cfg(test)]
+type SecurityFails = Vec<(PathBuf, &'static str)>;
+
+#[cfg(test)]
+fn security_stand_in(home: &Path, feed: &str, stop: &dyn Fn() -> bool) -> bool {
+    let mut g = SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    g.0.push((home.to_path_buf(), feed.to_string()));
+    let fails = |what: &str| g.1.iter().any(|(h, w)| h == home && *w == what);
+    let file = home.join("Library").join("Keychains").join(KEYCHAIN);
+    let key = feed.split_whitespace().nth(2).unwrap_or_default();
+    // (as the real program: one command to a run is all the app may feed, and a run that is stopped did not end well)
+    if feed.lines().count() != 1 || stop() {
+        false
+    } else if feed.starts_with("create-keychain ") {
+        !fails("create") && fs::symlink_metadata(&file).is_err() && fs::write(&file, key).is_ok()
+    } else if feed.starts_with("unlock-keychain ") {
+        !fails("unlock") && fs::read_to_string(&file).is_ok_and(|made_with| made_with == key)
+    } else if feed.starts_with("set-keychain-settings ") {
+        !fails("settings") && real_file(&file)
+    } else {
+        false
+    }
+}
+
+/// The account's own keychain, there, unlocked and set never to lock by itself, so that an agy command started in
+/// this home now finds a keychain to read and to keep a sign-in in, and the Mac asks nothing, however long the
+/// command runs. Made the first time (with a new password, kept in the home); unlocked, and its settings given
+/// again, every time. False when it could not be: no keychain and none could be made, a keychain whose password
+/// is not there (the app then never asks it anything, since that would put a password box on the screen), one
+/// that did not unlock, or one whose settings did not take. The command must then not be run. Given up when
+/// `stop` says so (false as well, and not held against the account).
+fn keychain_open(home: &Path, stop: &dyn Fn() -> bool) -> bool {
+    if !keychain_used() {
+        return true;
+    }
+    let lock = keychain_lock(home);
+    let _one = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let open = keychain_open_in(home, stop);
+    let mut failed = KEYCHAIN_FAILED.lock().unwrap_or_else(|e| e.into_inner());
+    failed.retain(|f| f != home);
+    if !open && !stop() {
+        failed.push(home.to_path_buf());
+    }
+    open
+}
+
+fn keychain_open_in(home: &Path, stop: &dyn Fn() -> bool) -> bool {
+    if !in_accounts(home) {
+        return false;
+    }
+    let file = home.join("Library").join("Keychains").join(KEYCHAIN);
+    let there = fs::symlink_metadata(&file).is_ok();
+    let key = match (keychain_key(home), there) {
+        (Some(key), true) => key,
+        (None, true) => return false,
+        (kept, false) => {
+            // (a password with no keychain: the keychain was never made, or was taken away; the password is used
+            // for the new one. Something else under the password's name: nothing is done)
+            let Some(key) = kept.or_else(|| new_keychain_key(home)) else { return false };
+            // made in a run of its own, whose result is its own
+            if !security(home, create_feed(&key), stop) || !real_file(&file) {
+                return false;
+            }
+            key
+        }
+    };
+    // the keychain as it is now, made in this moment or long ago, is checked like everything else in the home;
+    // then unlocked; then, unlocked, told never to lock by itself: each in a run of its own, and each must succeed
+    real_file(&file) && !keychain_changed_in(home) && security(home, unlock_feed(&key), stop) && security(home, settings_feed(), stop)
 }
 
 /// What of the user's own home a Gemini turn on the second account gets as well, by links: the git identity, so a
@@ -478,11 +905,12 @@ fn link_into(dir: &Path, users: &Path, names: &[&str]) {
 
 /// The environment that makes a tool's process run on an account, which is named: nothing for the user's own
 /// (None: nothing of its environment is touched), an added account's folder for Claude Code (`point`), its home
-/// for agy (`home`). False when the added account is not there, or its folder is not one the app uses: the command
-/// must then not be run at all.
+/// for agy (`home`), with that home's own keychain open (`ready_of`). False when the added account is not there,
+/// its folder is not one the app uses, or its keychain could not be opened: the command must then not be run at
+/// all.
 pub fn env_of(cmd: &mut std::process::Command, ai: &str, account: Option<&str>) -> bool {
     let Some(name) = account else { return true };
-    match (ai, prepare_of(ai, name)) {
+    match (ai, ready_of(ai, name)) {
         ("claude", Some(dir)) => {
             point(cmd, &dir);
             true
@@ -496,9 +924,9 @@ pub fn env_of(cmd: &mut std::process::Command, ai: &str, account: Option<&str>) 
 }
 
 /// agy told to live in `dir`: its HOME. The keychain entry with the user's own sign-in is found through HOME alone
-/// (measured: with another HOME it is not found and cannot be written, whatever else the environment says), and
-/// agy's data folder, where a sign-in made without a keychain is kept, is `<HOME>/.gemini/antigravity-cli` whatever
-/// it inherits (measured). The variables that name other folders for agy, and the one that can name another home
+/// (measured: with another HOME it is not found and cannot be written, whatever else the environment says); the
+/// keychain agy finds there instead is the account's own (`keychain_open`). agy's data folder, where it keeps a
+/// sign-in it could not put into a keychain, is `<HOME>/.gemini/antigravity-cli` whatever it inherits (measured). The variables that name other folders for agy, and the one that can name another home
 /// to the system's own libraries, are taken out all the same: nothing of a second account is ever to resolve to
 /// the first's.
 ///
@@ -584,7 +1012,7 @@ pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
 pub fn slots(ai: &str, added: &[String], now: f64) -> Vec<bool> {
     let mut out = vec![used_until_of(ai, None, now).is_none()];
     for name in added {
-        out.push(prepare_of(ai, name).is_some() && signed_in_of(ai, name) && used_until_of(ai, Some(name), now).is_none());
+        out.push(usable_of(ai, name) && signed_in_of(ai, name) && used_until_of(ai, Some(name), now).is_none());
     }
     out
 }
@@ -691,7 +1119,9 @@ pub fn in_words(until: f64, now: f64) -> String {
 
 /// For the page, by AI: whether more accounts are offered; when the user's own is back if it is used up (`used`);
 /// each added account in its order (`accounts`: its place `n`, the `id` of its sign-in, `broken` when its folder
-/// is not one the app will use (swapped for a link, or a keychain has appeared in it), `used` as above); and the
+/// is not one the app will use (swapped for a link, a keychain in it that is not its own, or its own keychain
+/// could not be opened), `changed` when that is because its keychain was changed from outside the app
+/// (`keychain_changed`), `used` as above); and the
 /// folders of removed accounts that could not be deleted (`left`, with their places).
 pub fn state() -> Value {
     let now = paths::now_secs();
@@ -700,7 +1130,7 @@ pub fn state() -> Value {
         let accounts: Vec<Value> = list(ai)
             .iter()
             .enumerate()
-            .map(|(i, name)| json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": prepare_of(ai, name).is_none(), "used": used_until_of(ai, Some(name), now)}))
+            .map(|(i, name)| json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": !usable_of(ai, name), "changed": keychain_changed(ai, name), "used": used_until_of(ai, Some(name), now)}))
             .collect();
         let left: Vec<String> = left(ai).iter().map(|d| d.display().to_string()).collect();
         out.insert(ai.to_string(), json!({"offered": !cfg!(windows), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
@@ -930,47 +1360,358 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_gemini_home_that_has_grown_a_keychain_is_not_used_for_anything() {
+    fn a_gemini_homes_keychain_is_its_own_or_the_home_is_not_used_for_anything() {
         let root = paths::test_dir("accounts-keychain");
         let _ = fs::remove_dir_all(&root);
         let (users, base) = (root.join("users"), root.join("accounts"));
-        fs::create_dir_all(users.join("Library").join("Keychains")).unwrap();
-        fs::write(users.join("Library").join("Keychains").join("login.keychain-db"), "the user's own keychain").unwrap();
+        let users_keychains = users.join("Library").join("Keychains");
+        fs::create_dir_all(&users_keychains).unwrap();
+        fs::write(users_keychains.join("login.keychain-db"), "the user's own keychain").unwrap();
         let home = |name: &str| {
             let h = base.join(name);
             assert_eq!(prepare_in(&h, &users, &GEMINI_LINKED), Some(h.clone()));
             h
         };
-        // a clean home, and one where agy and a turn's commands have left their own things: used
+        let keychains = |h: &Path| h.join("Library").join("Keychains");
+        // a new home with no Library at all, and one where agy and a turn's commands have left their own things
         let clean = home("gemini-2-aaaaaa");
-        assert!(no_keychain_in(&clean));
+        assert!(keychain_its_own(&clean, &users));
         fs::create_dir_all(clean.join(".gemini").join("antigravity-cli")).unwrap();
         fs::create_dir_all(clean.join("Library").join("Caches")).unwrap();
-        assert!(no_keychain_in(&clean), "a Library of its own with no keychain in it is nothing to refuse");
+        assert!(keychain_its_own(&clean, &users));
+        // the app's own keychain in it, a regular file made there, with the files the Mac puts beside it, the list
+        // file, and even a keychain file of its own under the Mac's usual name: that is what the home is for
+        assert!(list_its_own(&clean));
+        fs::write(keychains(&clean).join(KEYCHAIN), "its own keychain").unwrap();
+        fs::write(keychains(&clean).join(".fl80D2F631"), "").unwrap();
+        fs::write(keychains(&clean).join("login.keychain-db"), "another of its own").unwrap();
+        assert!(keychain_its_own(&clean, &users), "the app's own freshly made keychain is allowed");
         // the user's keychain folder linked in (what brings their sign-in back for every command there): refused
         let linked = home("gemini-2-bbbbbb");
         fs::create_dir_all(linked.join("Library")).unwrap();
-        std::os::unix::fs::symlink(users.join("Library").join("Keychains"), linked.join("Library").join("Keychains")).unwrap();
-        assert!(!no_keychain_in(&linked));
-        // a keychain folder of its own, with a link to the user's keychain file in it, or with nothing in it: refused
-        // all the same (a home that has no keychain never grows one)
-        let own = home("gemini-2-cccccc");
-        fs::create_dir_all(own.join("Library").join("Keychains")).unwrap();
-        assert!(!no_keychain_in(&own));
-        std::os::unix::fs::symlink(users.join("Library").join("Keychains").join("login.keychain-db"), own.join("Library").join("Keychains").join("login.keychain-db")).unwrap();
-        assert!(!no_keychain_in(&own));
-        // its whole Library a link to the user's, or a keychain list of its own: refused
+        std::os::unix::fs::symlink(&users_keychains, keychains(&linked)).unwrap();
+        assert!(!keychain_its_own(&linked, &users));
+        assert!(!list_its_own(&linked), "and nothing is written through the link");
+        // a keychain folder of its own with a link in it: to the user's keychain under the app's name, under the
+        // Mac's usual name, or under any name
+        for name in [KEYCHAIN, "login.keychain-db", "fridae.keychain", "anything"] {
+            let own = home("gemini-2-cccccc");
+            fs::create_dir_all(keychains(&own)).unwrap();
+            assert!(keychain_its_own(&own, &users), "an empty keychain folder of its own is nothing to refuse");
+            std::os::unix::fs::symlink(users_keychains.join("login.keychain-db"), keychains(&own).join(name)).unwrap();
+            assert!(!keychain_its_own(&own, &users), "{name} as a link");
+            assert!(remove_folder(&own));
+        }
+        // the user's keychain there with no link at all: the same file under a second name
+        let shared = home("gemini-2-ffffff");
+        fs::create_dir_all(keychains(&shared)).unwrap();
+        fs::hard_link(users_keychains.join("login.keychain-db"), keychains(&shared).join(KEYCHAIN)).unwrap();
+        assert!(!keychain_its_own(&shared, &users), "a second name for the user's own keychain file");
+        fs::remove_file(keychains(&shared).join(KEYCHAIN)).unwrap();
+        fs::write(root.join("somewhere-else"), "x").unwrap();
+        fs::hard_link(root.join("somewhere-else"), keychains(&shared).join(KEYCHAIN)).unwrap();
+        assert!(!keychain_its_own(&shared, &users), "or for any file that is also somewhere else");
+        // its whole Library a link to the user's; its Preferences a link; its list file a link
         let library = home("gemini-2-dddddd");
         std::os::unix::fs::symlink(users.join("Library"), library.join("Library")).unwrap();
-        assert!(!no_keychain_in(&library));
-        let listed = home("gemini-2-eeeeee");
+        assert!(!keychain_its_own(&library, &users));
+        assert!(!list_its_own(&library));
+        assert!(!users.join("Library").join("Preferences").exists(), "nothing was made in the user's own Library");
+        let preferences = home("gemini-2-eeeeee");
+        fs::create_dir_all(preferences.join("Library")).unwrap();
+        fs::create_dir_all(users.join("Preferences-of-the-user")).unwrap();
+        std::os::unix::fs::symlink(users.join("Preferences-of-the-user"), preferences.join("Library").join("Preferences")).unwrap();
+        assert!(!keychain_its_own(&preferences, &users));
+        assert!(!list_its_own(&preferences));
+        assert_eq!(fs::read_dir(users.join("Preferences-of-the-user")).unwrap().count(), 0, "nothing was written where the link leads");
+        let listed = home("gemini-2-abcabc");
         fs::create_dir_all(listed.join("Library").join("Preferences")).unwrap();
-        fs::write(listed.join("Library").join("Preferences").join("com.apple.security.plist"), "").unwrap();
-        assert!(!no_keychain_in(&listed));
-        // Remove still takes such a home away, and nothing of the user's with it
-        assert!(remove_folder(&linked) && remove_folder(&own) && remove_folder(&library));
-        assert_eq!(fs::read_to_string(users.join("Library").join("Keychains").join("login.keychain-db")).unwrap(), "the user's own keychain");
+        fs::write(users.join("the-users-list"), "the user's own list").unwrap();
+        std::os::unix::fs::symlink(users.join("the-users-list"), listed.join("Library").join("Preferences").join(KEYCHAIN_LIST_FILE)).unwrap();
+        assert!(!keychain_its_own(&listed, &users), "a list file that is a link");
+        assert_eq!(fs::read_to_string(users.join("the-users-list")).unwrap(), "the user's own list");
+        // a list file of its own that says something else (a turn's command named another keychain in it): it is
+        // NOT put right. It stays as it was found, and the answer is no
+        let rewritten = home("gemini-2-defdef");
+        fs::create_dir_all(rewritten.join("Library").join("Preferences")).unwrap();
+        let list = rewritten.join("Library").join("Preferences").join(KEYCHAIN_LIST_FILE);
+        let other_words = format!("<plist><string>{}</string></plist>", users_keychains.join("login.keychain-db").display());
+        fs::write(&list, &other_words).unwrap();
+        assert_eq!(list_file(&rewritten), ListFile::Changed);
+        assert!(!list_its_own(&rewritten), "a changed list file is never the app's own");
+        assert_eq!(fs::read_to_string(&list).unwrap(), other_words, "and is left exactly as it was found");
+        // the app's words with one more keychain named after them, or an empty file: changed all the same
+        for words in [KEYCHAIN_LIST.replace("</array>\n</dict>", "<string>/Users/x/Library/Keychains/login.keychain-db</string></array>\n</dict>"), String::new()] {
+            fs::write(&list, &words).unwrap();
+            assert!(list_file(&rewritten) == ListFile::Changed && !list_its_own(&rewritten), "{words:?}");
+        }
+        // a list file that is MISSING (a new home, or one where it was deleted) is written, quietly, and whole
+        fs::remove_file(&list).unwrap();
+        assert_eq!(list_file(&rewritten), ListFile::Missing);
+        assert!(list_its_own(&rewritten));
+        assert_eq!(fs::read_to_string(&list).unwrap(), KEYCHAIN_LIST);
+        assert!(real_file(&list) && real_folder(&keychains(&rewritten)));
+        assert_eq!(fs::read_dir(list.parent().unwrap()).unwrap().count(), 1, "nothing is left beside it");
+        // and with its whole Preferences folder gone
+        fs::remove_dir_all(list.parent().unwrap()).unwrap();
+        assert!(list_file(&rewritten) == ListFile::Missing && list_its_own(&rewritten) && list_file(&rewritten) == ListFile::Ours);
+        // written whole and never over what is there
+        assert!(!place_whole(&list, "other words", false), "a name that is taken is not written over");
+        assert_eq!(fs::read_to_string(&list).unwrap(), KEYCHAIN_LIST);
+        // Remove still takes every such home away, and nothing of the user's with it
+        assert!(remove_folder(&linked) && remove_folder(&shared) && remove_folder(&library) && remove_folder(&preferences) && remove_folder(&listed) && remove_folder(&clean) && remove_folder(&rewritten));
+        assert_eq!(fs::read_to_string(users_keychains.join("login.keychain-db")).unwrap(), "the user's own keychain");
+        assert_eq!(fs::read_to_string(root.join("somewhere-else")).unwrap(), "x");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_homes_list_file_names_the_accounts_own_keychain_and_no_other() {
+        // the one keychain searched and the default, both the account's own, named from the home: no path of the
+        // user's, nothing of the Mac's usual login keychain, and the same words for every account
+        assert_eq!(KEYCHAIN_LIST.matches("<string>~/Library/Keychains/fridae.keychain</string>").count(), 2);
+        assert_eq!(KEYCHAIN_LIST.matches("DbName").count(), 2, "one keychain in the search list, one as the default");
+        assert!(KEYCHAIN_LIST.contains("<key>DLDBSearchList</key>") && KEYCHAIN_LIST.contains("<key>DefaultKeychain</key>"));
+        assert!(!KEYCHAIN_LIST.contains("login") && !KEYCHAIN_LIST.contains("/Users/") && !KEYCHAIN_LIST.contains(&paths::home_dir().to_string_lossy().to_string()));
+        assert_eq!(KEYCHAIN_LIST.len(), 735, "byte for byte the file the Mac's own program wrote for this keychain");
+        assert!(KEYCHAIN.starts_with("fridae.keychain") && KEYCHAIN != "login.keychain-db");
+    }
+
+    #[test]
+    fn the_keychain_commands_are_the_accounts_alone_by_its_home_and_carry_no_password_on_the_command_line() {
+        // (built and looked at; never run)
+        let home = paths::test_dir("accounts-keychain-command").join("gemini-2-abcdef");
+        let cmd = security_command(&home);
+        assert_eq!(cmd.get_program(), "/usr/bin/security");
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["-i"], "its commands come on its input, so no password is ever an argument");
+        let get = |key: &str| cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        assert_eq!(get("HOME"), Some(Some(home.to_string_lossy().to_string())), "the account's home, and so its keychain folder");
+        assert_eq!(get("CFFIXED_USER_HOME"), Some(None), "nothing else that could name a home");
+        assert_eq!(cmd.get_current_dir(), Some(home.as_path()));
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(create_feed(key), format!("create-keychain -p {key} fridae.keychain-db\n"));
+        assert_eq!(unlock_feed(key), format!("unlock-keychain -p {key} fridae.keychain-db\n"));
+        assert_eq!(settings_feed(), "set-keychain-settings fridae.keychain-db\n", "no time limit and not on sleep: no -l, -u or -t");
+        assert!(SECURITY_LIMIT <= std::time::Duration::from_secs(5));
+        for feed in [create_feed(key), unlock_feed(key), settings_feed()] {
+            // one command to a run: the program ends with the result of the last line it read, and each of these
+            // results is one the app needs
+            assert_eq!(feed.lines().count(), 1, "{feed}");
+            // the keychain by its bare name (found in the home's own keychain folder), never by a path; and nothing
+            // that changes which keychains anyone searches, the user's own least of all
+            assert!(!feed.contains('/') && !feed.contains('~') && !feed.contains("login"), "{feed}");
+            for never in ["list-keychains", "default-keychain", "login-keychain", "delete-keychain", "add-generic-password", "find-generic-password", "delete-generic-password", "import", " -s", " -d "] {
+                assert!(!feed.contains(never), "{never} in {feed}");
+            }
+            assert!(feed.lines().all(|l| l.starts_with("create-keychain -p ") || l.starts_with("unlock-keychain -p ") || l == "set-keychain-settings fridae.keychain-db"), "{feed}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_gemini_account_has_its_own_keychain_made_once_and_unlocked_before_every_command() {
+        use std::os::unix::fs::PermissionsExt;
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_many(&[("kkkkaaaa", true), ("kkkkbbbb", true)]);
+        let (first, second) = (base().join("gemini-2-kkkkaaaa"), base().join("gemini-2-kkkkbbbb"));
+        for h in [&first, &second] {
+            let _ = fs::remove_dir_all(h);
+        }
+        let fed = |h: &Path| SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(home, _)| home == h).map(|(_, f)| f.clone()).collect::<Vec<_>>();
+        let forget = |h: &Path| SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.retain(|(home, _)| home != h);
+        forget(&first);
+        forget(&second);
+        // looking at the account (Setup's list does, over and over) runs nothing: it only keeps the home's list file
+        assert_eq!(prepare_of("gemini", "gemini-2-kkkkaaaa"), Some(first.clone()));
+        assert!(state()["gemini"]["accounts"].as_array().unwrap().iter().all(|a| a["broken"] == false));
+        assert!(fed(&first).is_empty() && fed(&second).is_empty(), "no keychain command for a look");
+        assert_eq!(fs::read_to_string(first.join("Library").join("Preferences").join(KEYCHAIN_LIST_FILE)).unwrap(), KEYCHAIN_LIST);
+        for dir in [first.join("Library"), first.join("Library").join("Keychains"), first.join("Library").join("Preferences")] {
+            assert_eq!(fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700, "{dir:?} is the user's alone");
+        }
+        // the first agy command of the account: the keychain is made with a password of the app's own, then unlocked
+        let mut agy = std::process::Command::new("agy");
+        assert!(env_of(&mut agy, "gemini", Some("gemini-2-kkkkaaaa")));
+        let key = fs::read_to_string(first.join(KEYCHAIN_KEY)).unwrap();
+        assert!(key.len() == 48 && key.bytes().all(|b| b.is_ascii_hexdigit()), "a password of 48 hex digits");
+        assert_eq!(fs::metadata(first.join(KEYCHAIN_KEY)).unwrap().permissions().mode() & 0o777, 0o600, "the user's alone to read");
+        // made, in a run of its own; unlocked; and, unlocked, told never to lock by itself
+        assert_eq!(fed(&first), [create_feed(&key), unlock_feed(&key), settings_feed()]);
+        assert!(real_file(&first.join("Library").join("Keychains").join(KEYCHAIN)));
+        assert_eq!(fs::read_dir(&first).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().contains("fridae-new")).count(), 0, "the password was put in place whole");
+        // every later one: unlocked again with the kept password and told again never to lock, never made again
+        assert!(env_of(&mut std::process::Command::new("agy"), "gemini", Some("gemini-2-kkkkaaaa")));
+        assert_eq!(ready_of("gemini", "gemini-2-kkkkaaaa"), Some(first.clone()));
+        assert_eq!(fed(&first), [create_feed(&key), unlock_feed(&key), settings_feed(), unlock_feed(&key), settings_feed(), unlock_feed(&key), settings_feed()]);
+        // each account has a keychain and a password of its own
+        assert!(env_of(&mut std::process::Command::new("agy"), "gemini", Some("gemini-2-kkkkbbbb")));
+        let other = fs::read_to_string(second.join(KEYCHAIN_KEY)).unwrap();
+        assert!(other != key && fed(&second) == [create_feed(&other), unlock_feed(&other), settings_feed()]);
+        // Claude's accounts and the user's own Gemini account have none of this
+        stand_in_many(&[("kkkkaaaa", true)]);
+        let claude = base().join("claude-2-kkkkaaaa");
+        let _ = fs::remove_dir_all(&claude);
+        forget(&claude);
+        assert!(env_of(&mut std::process::Command::new("claude"), "claude", Some("claude-2-kkkkaaaa")));
+        assert!(fed(&claude).is_empty() && !claude.join("Library").exists() && !claude.join(KEYCHAIN_KEY).exists());
+        let before = SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.len();
+        assert!(env_of(&mut std::process::Command::new("agy"), "gemini", None));
+        assert_eq!(SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.len(), before, "nothing for the user's own account");
+        // Remove takes the keychain and its password away with the home
+        assert!(remove_folder(&first) && remove_folder(&second));
+        let _ = fs::remove_dir_all(&claude);
+        stand_in(false, false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_list_file_changed_from_outside_is_never_put_right_and_the_account_is_not_used_again() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_many(&[("kkkklist", true), ("kkkkgone", true)]);
+        let (home, other) = (base().join("gemini-2-kkkklist"), base().join("gemini-2-kkkkgone"));
+        for h in [&home, &other] {
+            let _ = fs::remove_dir_all(h);
+            SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.retain(|(at, _)| at != h);
+            KEYCHAIN_CHANGED.lock().unwrap_or_else(|e| e.into_inner()).retain(|at| at != h);
+        }
+        let fed = |h: &Path| SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(at, _)| at == h).count();
+        let row = |name: &str, key: &str| state()["gemini"]["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name).unwrap()[key].clone();
+        let run = |name: &str| env_of(&mut std::process::Command::new("agy"), "gemini", Some(name));
+        let list_of = |h: &Path| h.join("Library").join("Preferences").join(KEYCHAIN_LIST_FILE);
+        assert!(run("gemini-2-kkkklist") && run("gemini-2-kkkkgone"));
+        assert!(!keychain_changed("gemini", "gemini-2-kkkklist") && row("gemini-2-kkkklist", "changed") == false);
+        // a command run in the account's home names the user's keychain in the home's list (what `security
+        // list-keychains -s` or `default-keychain -s` run there would write)
+        let theirs = "<plist><dict><key>DefaultKeychain</key><string>/Users/someone/Library/Keychains/login.keychain-db</string></dict></plist>";
+        fs::write(list_of(&home), theirs).unwrap();
+        let asked = fed(&home);
+        // found, and said: not usable, not put right, nothing run
+        assert!(keychain_changed("gemini", "gemini-2-kkkklist"));
+        assert_eq!(prepare_of("gemini", "gemini-2-kkkklist"), None);
+        assert!(!run("gemini-2-kkkklist"), "no agy command for it");
+        assert_eq!((row("gemini-2-kkkklist", "changed"), row("gemini-2-kkkklist", "broken")), (json!(true), json!(true)));
+        assert_eq!(fs::read_to_string(list_of(&home)).unwrap(), theirs, "the file is left as it was found: nothing is repaired in silence");
+        assert_eq!(fed(&home), asked, "and the keychain program is not run");
+        assert_eq!(slots("gemini", &list("gemini"), paths::now_secs()), [true, false, true], "no chat goes there");
+        // put back by whoever changed it: it stays not used while the app runs (agy may have used the other
+        // keychain meanwhile, and the app cannot know)
+        fs::write(list_of(&home), KEYCHAIN_LIST).unwrap();
+        assert!(keychain_changed("gemini", "gemini-2-kkkklist") && !run("gemini-2-kkkklist") && fed(&home) == asked);
+        // the other account, whose list file was only deleted: written again without a word, and used as before
+        fs::remove_file(list_of(&other)).unwrap();
+        assert!(!keychain_changed("gemini", "gemini-2-kkkkgone"));
+        assert!(run("gemini-2-kkkkgone") && row("gemini-2-kkkkgone", "changed") == false && row("gemini-2-kkkkgone", "broken") == false);
+        assert_eq!(fs::read_to_string(list_of(&other)).unwrap(), KEYCHAIN_LIST);
+        // Claude's accounts and the user's own are never "changed"
+        assert!(!keychain_changed("claude", "claude-2-kkkklist") && !keychain_changed("gemini", "gemini-2-nosuchone"));
+        // Remove forgets it with the folder
+        stand_in(false, false);
+        for h in [&home, &other] {
+            KEYCHAIN_CHANGED.lock().unwrap_or_else(|e| e.into_inner()).retain(|at| at != h);
+            assert!(remove_folder(h));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_keychain_that_cannot_be_opened_means_no_command_runs_and_nothing_is_asked_of_it() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_many(&[("kkkkcccc", true), ("kkkkdddd", true)]);
+        let (home, other) = (base().join("gemini-2-kkkkcccc"), base().join("gemini-2-kkkkdddd"));
+        for h in [&home, &other] {
+            let _ = fs::remove_dir_all(h);
+            SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.retain(|(at, _)| at != h);
+        }
+        let fed = |h: &Path| SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(at, _)| at == h).count();
+        let fails = |h: &Path, what: Option<&'static str>| {
+            let mut g = SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner());
+            g.1.retain(|(at, _)| at != h);
+            if let Some(what) = what {
+                g.1.push((h.to_path_buf(), what));
+            }
+        };
+        let broken = |name: &str| state()["gemini"]["accounts"].as_array().unwrap().iter().find(|a| a["name"] == name).unwrap()["broken"] == true;
+        let now = paths::now_secs();
+        let run = |name: &str| env_of(&mut std::process::Command::new("agy"), "gemini", Some(name));
+        // it cannot be made: no agy command, Setup is told, and a chat is not sent there
+        fails(&home, Some("create"));
+        assert!(!run("gemini-2-kkkkcccc"));
+        assert!(broken("gemini-2-kkkkcccc") && !broken("gemini-2-kkkkdddd"));
+        assert_eq!(slots("gemini", &list("gemini"), now), [true, false, true]);
+        // made now, but it does not unlock: the same
+        fails(&home, Some("unlock"));
+        assert!(!run("gemini-2-kkkkcccc") && broken("gemini-2-kkkkcccc"));
+        // it unlocks, but the "never lock by itself" setting does not take: the same (a keychain that may lock under
+        // a turn would have the Mac ask for its password), and the setting is tried again every time, not only when
+        // the keychain is made
+        fails(&home, Some("settings"));
+        let texts = |h: &Path| SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(at, _)| at == h).map(|(_, f)| f.split(' ').next().unwrap_or_default().to_string()).collect::<Vec<_>>();
+        let before = texts(&home).len();
+        assert!(!run("gemini-2-kkkkcccc") && broken("gemini-2-kkkkcccc"));
+        assert_eq!(texts(&home)[before..], ["unlock-keychain", "set-keychain-settings"], "the keychain is there already: not made again, its settings asked for again");
+        let before = texts(&home).len();
+        assert!(!run("gemini-2-kkkkcccc"));
+        assert_eq!(texts(&home)[before..], ["unlock-keychain", "set-keychain-settings"], "and again the next time");
+        // it opens again: used again
+        fails(&home, None);
+        let before = texts(&home).len();
+        assert!(run("gemini-2-kkkkcccc") && !broken("gemini-2-kkkkcccc"));
+        assert_eq!(texts(&home)[before..], ["unlock-keychain", "set-keychain-settings"]);
+        assert_eq!(slots("gemini", &list("gemini"), now), [true, true, true]);
+        // Stop while it is being opened: nothing is run to its end, and it is not held against the account
+        fails(&home, None);
+        assert_eq!(ready_of_until("gemini", "gemini-2-kkkkcccc", &|| true), None);
+        assert!(!broken("gemini-2-kkkkcccc"), "a stopped try is no failure of the keychain");
+        assert!(run("gemini-2-kkkkcccc"));
+        // the program is never run for a home that is not an account's folder: an empty or a relative path would
+        // let it fall back to the user's real home
+        let all = SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.len();
+        for not_a_home in [PathBuf::new(), PathBuf::from("gemini-2-kkkkcccc"), PathBuf::from("."), paths::home_dir(), base(), base().join("gemini-2-kkkkcccc").join("deeper"), paths::test_dir("accounts-elsewhere").join("gemini-2-kkkkcccc")] {
+            assert!(!in_accounts(&not_a_home), "{not_a_home:?}");
+            assert!(!security(&not_a_home, settings_feed(), &|| false) && !keychain_open_in(&not_a_home, &|| false), "{not_a_home:?}");
+        }
+        assert_eq!(SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.len(), all, "nothing was fed for any of them");
+        assert!(in_accounts(&home));
+        // its password is gone: the keychain is asked nothing at all (with no password it would ask on the screen),
+        // and none is made over it
+        let asked = fed(&home);
+        let key = fs::read_to_string(home.join(KEYCHAIN_KEY)).unwrap();
+        fs::remove_file(home.join(KEYCHAIN_KEY)).unwrap();
+        assert!(!run("gemini-2-kkkkcccc") && broken("gemini-2-kkkkcccc"));
+        assert_eq!(fed(&home), asked, "nothing was run");
+        assert!(!home.join(KEYCHAIN_KEY).exists(), "no new password for a keychain that has another");
+        // a password file that is not a password of the app's (it would be put into the program's input): not used
+        for bad in ["wrong", "0123456789abcdef0123456789abcdef0123456789abcdeX", &format!("{key}\nlist-keychains -s x"), &format!("{key} {key}")] {
+            fs::write(home.join(KEYCHAIN_KEY), bad).unwrap();
+            assert!(!run("gemini-2-kkkkcccc"), "{bad:?}");
+            assert_eq!(fed(&home), asked, "nothing was run for {bad:?}");
+        }
+        // or one that is a link
+        fs::remove_file(home.join(KEYCHAIN_KEY)).unwrap();
+        fs::write(base().join("a-password-elsewhere"), &key).unwrap();
+        std::os::unix::fs::symlink(base().join("a-password-elsewhere"), home.join(KEYCHAIN_KEY)).unwrap();
+        assert!(!run("gemini-2-kkkkcccc") && fed(&home) == asked);
+        // the right one back: it opens
+        fs::remove_file(home.join(KEYCHAIN_KEY)).unwrap();
+        fs::write(home.join(KEYCHAIN_KEY), &key).unwrap();
+        assert!(run("gemini-2-kkkkcccc") && !broken("gemini-2-kkkkcccc"));
+        // the keychain swapped for a link to the user's own after it was made: the home is not used, nothing is run
+        let asked = fed(&home);
+        let keychain = home.join("Library").join("Keychains").join(KEYCHAIN);
+        fs::remove_file(&keychain).unwrap();
+        fs::write(base().join("the-users-keychain"), &key).unwrap();
+        std::os::unix::fs::symlink(base().join("the-users-keychain"), &keychain).unwrap();
+        assert!(!run("gemini-2-kkkkcccc") && broken("gemini-2-kkkkcccc"));
+        assert_eq!(fed(&home), asked, "a keychain that is a link is never unlocked, and none is made through it");
+        assert_eq!(fs::read_to_string(base().join("the-users-keychain")).unwrap(), key);
+        assert!(keychain_changed("gemini", "gemini-2-kkkkcccc") && !keychain_changed("gemini", "gemini-2-kkkkdddd"), "and Setup is told that it was changed from outside");
+        KEYCHAIN_CHANGED.lock().unwrap_or_else(|e| e.into_inner()).retain(|h| h != &home);
+        for f in ["a-password-elsewhere", "the-users-keychain"] {
+            let _ = fs::remove_file(base().join(f));
+        }
+        assert!(remove_folder(&home));
+        let _ = fs::remove_dir_all(&other);
+        stand_in(false, false);
     }
 
     #[cfg(unix)]

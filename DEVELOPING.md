@@ -1223,7 +1223,8 @@ and nothing of the user's keychain was read but two names):
   **Not measured**: it takes a completed sign-in, which only the user does. The first real second sign-in shows it:
   Setup says "Signed in." after it, and still says so after the app was closed and opened again. If it does not, a
   second home does not keep a sign-in, and the other way (moving the keychain entry) would be the next thing to
-  build; it was not built.
+  build; it was not built. (What the first real sign-in then showed: the Mac's "Keychain Not Found" box, and after
+  it the sign-in kept in that file. The home now gets a keychain of its own: "Gemini's second account", below.)
 - A turn there without a sign-in says "Authentication required" (measured earlier). A turn with one was not run.
   The plumbing for "agy's HOME is not the app's" already exists and was used the other way round for testing
   (`FRIDAE_AGY_HOME`): the app's tool server is given the app's HOME back, and agy's home is kept from its file
@@ -1288,8 +1289,8 @@ ending on the limit moves it. A chat on a second account that is not there for i
 user's own, in a new conversation handed the chat so far: the account was removed, or removed and added again
 (another folder, which has none of its conversations), or its sign-in is known to be gone while the user's own
 account is not used up. The folder is read once per turn: not usable at that very moment (removed, swapped for a
-link, a keychain in it), the turn runs on the user's own in a new conversation handed the chat so far, and the
-chat says so.
+link, a keychain in it that is not its own, or, for Gemini, its own keychain not opening), the turn runs on the
+user's own in a new conversation handed the chat so far, and the chat says so.
 
 **What counts as the limit.** `usage_limit` (a studio run pauses on it) is as it was, plus Claude Code's newer
 lines. `account_limit` is narrower and is what marks an account and moves a chat: "You've hit your ... limit",
@@ -1332,9 +1333,10 @@ for a waiting Lead, no "done", no carry-on, no pause of the run. The turn is not
 - Experts are chats, so the same holds for them. Both used up: nothing moves and everything is as before
   (`LIMIT_END` pauses a studio run).
 
-**Known and left.** A second account's sign-in is a file in its folder (Gemini's, and Claude's where it uses no
-keychain), and the lists that keep agents out of the accounts folder cover writing: in Full auto an agent's Read
-tool, or a shell command, can read it. The app's image tool starts agy from its tool server, which has the app's
+**Known and left.** A second account's sign-in is in its folder (Gemini's in the account's own keychain there,
+whose password is a file beside it, or in agy's own file; Claude's in a file where it uses no keychain), and the
+lists that keep agents out of the accounts folder cover writing: in Full auto an agent's Read tool, or a shell
+command, can read it. The app's image tool starts agy from its tool server, which has the app's
 own HOME, so pictures are made on the first account also in a chat that has moved to the second. "Used up" is
 forgotten when the app is closed.
 
@@ -1376,10 +1378,11 @@ exists. An added account is ready when an account of its own is signed in there:
 account as the user's own *or as one added before it* (`signin::same_as_first`).
 
 **Every safety rule is per account**: its own folder and nothing else's; `real_folder` on it and on the accounts
-folder; Claude's `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` both pinned to it; Gemini's own HOME, the
-`Library/Keychains` refusal and the keys kept from it; the fall-back to the user's own account, with the chat so
-far, when a chat's account is gone, replaced, unusable or signed out. `accounts::env(cmd, ai, place)` is the one
-place a command is pointed at an account, whatever its number.
+folder; Claude's `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` both pinned to it; Gemini's own HOME, a
+keychain of its own that may never be or link to the user's (`keychain_its_own`), and the keys kept from it; the
+fall-back to the user's own account, with the chat so far, when a chat's account is gone, replaced, unusable or
+signed out. `accounts::env_of(cmd, ai, name)` is the one place a command is pointed at an account, whatever its
+number.
 
 **Which account** (`accounts::slots`: for each account in order, whether it can take a chat now: not used up, and
 for an added one a usable folder and a ready sign-in).
@@ -1420,32 +1423,98 @@ difference: what separates the two accounts.
 
 **A home of its own** (`accounts::home`, `GeminiLaunch.home`). Gemini's second account is a folder of the app's own,
 `<app data>/Fridae Studios/accounts/gemini-2-<12 hex>`, given to every agy command of that account as HOME: its
-status (`agy models`, `antigravity::ask_models_of(2)`), its sign-in (`agy acp` with `authenticate`, the same
-one-click flow, id `gemini2`), the kept process and the process per message. agy's data folder
-(`<HOME>/.gemini/antigravity-cli`: conversations, settings, and a sign-in kept in a file) is then inside it.
+status (`agy models`, `antigravity::ask_models_of`), its sign-in (`agy acp` with `authenticate`, the same
+one-click flow), the kept process and the process per message. agy's data folder
+(`<HOME>/.gemini/antigravity-cli`: conversations, settings) is then inside it, and so is the keychain agy keeps the
+sign-in in (below).
 `CFFIXED_USER_HOME` and agy's own folder variables are taken out of those commands' environment. The home is part
 of the kept process's key. Nothing is set for account 1.
 - **The user's own sign-in cannot be reached from there.** It is one keychain entry, found through HOME alone
   (measured, see "what was measured first"): from the second home it is not found and cannot be written. The app
-  itself never reads, copies or moves a token, and touches no keychain.
-- **That holds only while the home has no keychain, so one that has grown a keychain is not used**
-  (`accounts::no_keychain_in`). A link at `<home>/Library/Keychains` to the user's own brings their keychain back
-  for every command run with that home (measured by the reviewer: the entry is found again), and a sign-in made
-  there would be written into the user's own entry. A shell command of a turn on the second account could make
-  such a link. So before anything of Gemini's second account runs (status, sign-in, turn), `prepare` refuses the
-  home when `Library/Keychains` exists at all, as a folder or a link, when `Library` is not a folder of its own, or
-  when the home names a keychain list (`Library/Preferences/com.apple.security.plist`). Nothing of the app or of
-  agy puts any of these there (measured: status and the start of a sign-in leave no `Library` at all). Setup then
-  says "Fridae does not use this account" and offers only Remove; a chat that was on it carries on with the user's
-  own. Seen in the scratch app with a keychain folder made by hand: no sign-in started.
+  itself never reads, copies or moves a token. The one keychain it touches is the account's own, which it makes
+  and unlocks and never reads; the user's keychain it never names.
+- **The home has a keychain of its own, made by the app** (`accounts::keychain_open`, `ready_of`). agy keeps a
+  sign-in with the Mac's `security` program in the default keychain of its HOME (its program's text:
+  `/usr/bin/security -i` fed `add-generic-password -U -s gemini -a antigravity -w ...`; no keychain is named). A
+  home of the app's own has none, and the Mac then puts "Keychain Not Found: a keychain cannot be found to store
+  antigravity" on the screen: the user got exactly that at their first sign-in for an added account. So before
+  every agy command of an added Gemini account (status, sign-in, every turn):
+  - the home's own list file, `<home>/Library/Preferences/com.apple.security.plist`, is written by the app as a
+    plain file when it is MISSING (`list_its_own`, `KEYCHAIN_LIST`): one keychain is searched and is the default,
+    `~/Library/Keychains/fridae.keychain`, named from the home, so the words are the same for every account. A
+    list file that is there and says anything else is never put right (below);
+  - the keychain `<home>/Library/Keychains/fridae.keychain-db` is made the first time, unlocked every time, and
+    after every unlock told never to lock by itself. **Three texts, each fed to a `security -i` of its own, each
+    of which must end well**: `create-keychain -p <password> fridae.keychain-db` (only when there is no keychain),
+    `unlock-keychain -p <password> fridae.keychain-db`, then `set-keychain-settings fridae.keychain-db`. One
+    command to a run because the program ends with the result of the last line it read: fed together, a setting
+    that did not take would hide behind nothing, and a keychain made with a setting that failed was never given it
+    again. A keychain is made with the Mac's own settings (seen: "lock-on-sleep timeout=300s"), and one that
+    locked under a turn longer than that, or across a sleep, makes agy's next look at it a password box for a
+    password the user has never seen. So the setting is given after EVERY unlock (never before it: a locked
+    keychain asked for it may ask on the screen), and when it does not take no agy command runs. One run may take
+    5 seconds (`SECURITY_LIMIT`) and is given up when Stop is pressed (the message then does not go, and nothing
+    is held against the account); each home has a lock of its own for this, and looking at an account takes none.
+  - The password is 48 hex digits from the system's random numbers, kept in `<home>/.fridae-keychain-key` (the
+    user's alone to read, under the protected accounts folder), put there whole or not at all (`place_whole`),
+    never on a command line (the commands are fed on the program's input), never printed or logged; what
+    `security` prints is thrown away.
+  - `security` and agy are only ever given a home that is a full path directly in the accounts folder
+    (`in_accounts`): an empty or a relative home would let the Mac's program fall back to the user's real one.
+  - Everything is found through HOME alone: `security` runs with the account's home as HOME (`security_command`)
+    and is given the keychain by its bare name, which resolves inside that home. **Nothing changes the user's own
+    keychain list or default keychain**: no `list-keychains -s`, `default-keychain -s` or `login-keychain -s` is
+    ever run (the list is a file in the account's home), and nothing names the user's keychain.
+  - When the keychain cannot be made, does not unlock, or its password file is missing or is not a password of the
+    app's, **no agy command runs for that account** (agy started on a missing or locked keychain makes the Mac ask
+    on the screen, and a locked one asks for a password nobody has): its status is not asked, no sign-in starts, a
+    chat that was on it carries on with the user's own, and Setup says "Fridae does not use this account ... its
+    keychain could not be opened".
+  - **Why not `login.keychain-db`**, the name the Mac uses by default (with it no list file would be needed): a
+    keychain under that name in a home's Keychains folder did not unlock with the password it was created with
+    (exit 51 every time, by name or by path, fed or as arguments, while a keychain under any other name in the same
+    folder unlocked), so the app could not open it again once it is locked.
+- **The home is used only while what it has for a keychain is its own** (`accounts::keychain_its_own`, in
+  `prepare_of`, so before anything of the account runs and before Setup shows it). A link at
+  `<home>/Library/Keychains` to the user's own brings their keychain back for every command run with that home
+  (measured by the reviewer: the entry is found again), and a sign-in made there would be written into the user's
+  own entry. A shell command of a turn on the account could make such a link. So the home is refused when
+  `Library`, `Library/Keychains` or `Library/Preferences` is a link, when the list file is a link, when anything
+  in `Library/Keychains` is a link, or is a file that also exists under another name (how the user's keychain could
+  be there with no link; refused when the second name is still there after a moment), or is one of the files in the
+  user's own `Library/Keychains`. An entry that is gone by the time it is looked at is passed over (the Mac writes
+  and removes lock and temporary files there while a sign-in is saved). The app's own keychain, a regular file made
+  in that home, is allowed, and so is a home with no `Library` yet. Remove deletes `Library` and the password with
+  the sign-in, first.
+- **A keychain changed from outside is said, and never put right in silence** (`accounts::keychain_changed`,
+  `Agent::keychain_warning`). Every check above runs before a command starts; an agy process then lives for the
+  whole turn (a kept one for hours) and goes to the keychain whenever it reads or renews its sign-in, and the
+  home's list file decides which keychain that is. A shell command of a turn on the account (its `~` is the
+  account's home) can rewrite that list, for instance `security default-keychain -s` with the user's login
+  keychain "so git finds the keychain": from then on, in that turn, agy reads and writes the USER'S own entry. The
+  app cannot stop a command in Full auto from doing that, or see what agy did meanwhile. What it does:
+  - it looks again **at the end of every turn** on an added Gemini account (`after_turn`) and **before every
+    message goes** to it, to a kept process as well (`send`, through `ready_of`), and for Setup's list;
+  - a list file that is there and does not say the app's words, or a home whose keychain is no longer its own, is
+    "changed": **the file is left exactly as it was found**, the account is not used again while the app runs
+    whatever is put back (`KEYCHAIN_CHANGED`; after a restart the unrepaired file says it again), no keychain
+    command and no agy command runs for it, the process kept for it is closed, the chat is told once ("The
+    keychain settings of Gemini account 2 were changed while it was in use, so Fridae has stopped using that
+    account. Please check that your own Gemini sign-in still works. ..."), its next message runs on the user's
+    own account with the chat so far, and Setup says the same with only Remove;
+  - a list file that is MISSING is written again without a word (a new home; and one where it was deleted, where
+    there is then no default keychain at all and nothing of the user's can be reached).
+  Not covered, and it cannot be: a command that changes the list and puts it back before the turn ends.
 - **No key stands in for a sign-in.** `GEMINI_API_KEY`, `GOOGLE_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are
   taken out of every agy command of the second account (`KEPT_FROM_SECOND`), so an empty second home reads "Not
   signed in." until the user signs in there, and no turn there is billed to a key. (Measured with made-up keys in
   an empty home: `agy models` says "Please sign in" with each of them, so agy does not take one by itself there
   today.) The app's tool server gets the two Gemini keys back in its own entry.
-- **Whether a sign-in made there is kept** rests on agy's file store for a sign-in made where the keychain cannot be
-  written (read in its program's text). **Not measured.** The user's first real second sign-in shows it: Setup
-  says "Signed in." afterwards, and still does after the app was closed and opened again.
+- **Where a sign-in made there is kept.** In the account's own keychain when agy can write it; and agy has a
+  file store behind it (`fileTokenStorage`): after the user dismissed the "Keychain Not Found" box at their first
+  sign-in, the account's folder had `.gemini/antigravity-cli/antigravity-oauth-token` (the name was seen; the file
+  was never read). agy reads the keychain first and the file after it (its own log line: "Failed to load stored
+  token from keyring, falling back to file"), so that sign-in still counts once the home has a keychain.
 - The app's tool server is given the app's own HOME back; agy's home is kept from its own file tools (the code that
   the testing switch `FRIDAE_AGY_HOME` already used, now fed from the account).
 - **What differs for a turn there.** agy starts from an empty `~/.gemini` (none of the user's own agy settings or
@@ -1468,11 +1537,44 @@ through the reader (`consume`) to the rollover. The line is held back for the ro
 (`TurnEnd.held_back`), and said once when the chat does not move. Claude needs none of this: its limit is always a
 result, on both of its paths.
 
-**Measured, and not.** In the scratch app (my dev binary, scratch HOME, a stand-in `open`): Add made the folder
-(mode 700), agy ran with it as HOME (its `.gemini` is inside), its sign-in started (the page it would open is on
-accounts.google.com, noted and not opened), Cancel ended it, the status read "Not signed in.", Remove deleted the
-folder. Not done, and stand-in tested only: a completed sign-in, a signed-in second account, a turn on it, a real
-quota, a rollover.
+**Measured, and not.** In the scratch app (my dev binary, scratch HOME, a stand-in `open`), before the keychain was
+built: Add made the folder (mode 700), agy ran with it as HOME (its `.gemini` is inside), its sign-in started (the
+page it would open is on accounts.google.com, noted and not opened), Cancel ended it, the status read "Not signed
+in.", Remove deleted the folder. Not done, and stand-in tested only: a completed sign-in, a signed-in second
+account, a turn on it, a real quota, a rollover.
+
+**The keychain: what was seen, and the rule since.** On 23 November 2026 the builder tried the keychain in scratch
+homes with the real `security` and the real `agy models` (no sign-in, nothing of the user's keychain read but
+whether their entry exists and when it last changed, which stayed the same; the user's own keychain list file did
+not exist before or after). Seen there:
+- with the list file above and a keychain under the app's name, `security default-keychain` and `list-keychains`
+  run with that HOME name the home's own keychain, and `security` writes no list file of the user's;
+- an entry added the way agy's keyring adds one (no keychain named) lands in the home's keychain, is found with
+  that HOME and not with the user's (exit 44), and the user's entry is not found from that HOME (exit 44);
+- the keychain, locked, unlocks with the kept password (exit 0) and not with a wrong one (exit 51, nothing asked);
+- `agy models` in such a home says "Please sign in" and asks nothing; with an entry under agy's names that is no
+  sign-in, its log says it failed to load the token from the keyring: agy reads the home's keychain;
+- a home path with a space and an apostrophe in it works (the keychain is given by its bare name);
+- with no `Library/Preferences` folder, `security` writes no list file and says nothing (so the app makes it).
+**Those runs put system boxes on the user's own screen** (a password box for a locked scratch keychain, and
+"Keychain Not Found" for an entry added where the default had not been set), which had to be dismissed by ending
+the Mac's asking program. **So nothing of the kind is run on a user's machine by a builder or by a test, ever
+again**: no `agy`, and no `security` command. The tests build the command and the texts it is fed and look at them
+(`security_command`, `create_feed`, `unlock_feed`), check the guard and the list file on plain files, and use a
+stand-in for the program (`SECURITY_FOR_TEST`), which a test can tell to fail at making, unlocking or the setting,
+and which refuses more than one command to a run.
+
+**Left for the user's first real sign-in in the installed app** (nothing here has seen it):
+- Add account for Gemini, sign in at Google: no "Keychain Not Found", no password box, and Setup says "Signed in.";
+- it still says so after the app was closed and opened again, and after the Mac was restarted (the keychain is then
+  locked until the app unlocks it with the kept password: seen with a lock, not with a restart);
+- a turn longer than five minutes, and one across a sleep of the Mac, asks nothing (the "never locks by itself"
+  setting, given after every unlock: its effect was seen as "no-timeout", a long turn was not);
+- Setup does not say "its keychain settings were changed" for an account nobody touched (the app takes any list
+  file that is not byte for byte its own for a change; if the Mac's own program ever rewrites that file in other
+  words, this is where it would show);
+- the account added before this (signed in while the box was shown): it should read "Signed in." from agy's file.
+If the Mac asks anything on any of these, the keychain did not do its job: say what the box said.
 
 ## The hand-over is a compaction
 

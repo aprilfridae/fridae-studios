@@ -14,6 +14,21 @@ ahead.
   app, never changed by the app) and may have one second account.
 - The second account is a sign-in of the app's own: the tool's own official sign-in, kept in a folder of the app's own
   outside every folder an AI is given. The app never reads, copies or stores a token itself.
+- Gemini (added 2026-11-23, after the user's first sign-in for an added account put the Mac's "Keychain Not Found"
+  on the screen): agy keeps its sign-in in the default keychain of its home, and an added account's home has none.
+  So each added Gemini account has a keychain of its own, which the app makes inside the account's folder, with a
+  password the app makes up and keeps in that folder, and unlocks before every agy command of the account. It is
+  that home's default by a list file inside the home. The user's own keychain, its list and its default are never
+  read, written or changed, and the account's keychain may never be, link to, or share a file with the user's:
+  a home where it does is not used at all. When the account's keychain cannot be opened, or cannot be told never
+  to lock by itself, no agy command runs for the account (it would make the Mac ask on the screen) and its chats
+  carry on with the user's own.
+- A command run in an added Gemini account's home can change that home's keychain list, and agy would then use
+  another keychain, the user's own it may be, for the rest of that turn. The app cannot prevent or see that, so it
+  never hides it: at the end of every turn on such an account and before every message to it, a list that no
+  longer says the app's own words is left as it is, the account is not used again, its kept process is closed, and
+  the chat and Setup tell the user to check their own Gemini sign-in. Only a list that is missing is written again
+  without a word.
 - Setup, Connections, under Claude and under Gemini: "Second account" with Add (runs that tool's sign-in for the
   second folder, the same one-click flow as the first), then "Signed in as ..." and Remove. Remove deletes only the
   app's own second sign-in. There is still no sign-out for the first account.
@@ -69,3 +84,6 @@ ahead.
 
 ## Cannot be tested without the user
 - A real second account's sign-in, and a real limit reached on a real account.
+- That the Mac asks nothing when an added Gemini account is signed in, and that its sign-in is still there after
+  the app and the Mac were restarted. Nobody but the user, in the installed app, runs agy or the Mac's keychain
+  program for this: a builder's or a test's run of them puts system boxes on the user's screen.

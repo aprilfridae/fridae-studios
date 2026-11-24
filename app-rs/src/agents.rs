@@ -634,6 +634,12 @@ fn limit_in_error_output(kind: &str, t: &mut TurnEnd, err: &str) {
     }
 }
 
+/// What a chat is told when the keychain of the added account it is on was changed from outside the app
+/// (`Agent::keychain_warning`). `which`: "Gemini account 3".
+fn keychain_line(which: &str) -> String {
+    format!("The keychain settings of {which} were changed while it was in use, so Fridae has stopped using that account. Please check that your own Gemini sign-in still works. To use the account again, remove it in Setup and add it again.")
+}
+
 /// A second account is about to be removed (Setup): every turn running on it is stopped and every process kept for
 /// it closed, so nothing of the tool's writes its folder back after it is gone. The chats stay, and carry on with
 /// the user's own account from their next message (`turn_account`).
@@ -834,6 +840,8 @@ struct State {
     /// record), read again from this name before every turn; an account removed and added again is another
     /// account, with none of this chat's conversations.
     account_name: Option<String>,
+    /// The added account this chat has been told about (`keychain_warning`): the line is said once to a chat.
+    keychain_warned: Option<String>,
     /// The turn ended on the usage limit and may move to the other account: the chat was kept counting as working
     /// (`sending`) from the moment the turn stopped counting as running (`turn_over_at`), so no message gets in
     /// before `roll_over` has decided. Taken by `after_turn`.
@@ -3323,8 +3331,21 @@ impl Agent {
         // turn runs on the user's own account, and the chat says so
         // (by the account's name, as the turn's account was decided: never by its place, which is another account's
         // when one before it was removed in the meantime)
-        let second_dir = account_name.as_deref().and_then(|name| crate::accounts::prepare_of(&kind, name));
+        // (ready: for Gemini with the account's own keychain open, so agy never makes the Mac ask for one; and
+        // looked at again before this message goes, to a kept process as well: `accounts::keychain_changed`)
+        let stop = || {
+            let st = self.st.lock().unwrap();
+            st.halted || (st.running && st.stopped) || shutting()
+        };
+        let second_dir = account_name.as_deref().and_then(|name| crate::accounts::ready_of_until(&kind, name, &stop));
         let _ = account;
+        if account_name.is_some() && second_dir.is_none() && stop() {
+            // Stop while the keychain was being opened: the message does not go, on any account
+            return self.stopped_before_start();
+        }
+        if let (Some(name), None) = (&account_name, &second_dir) {
+            self.keychain_warning(&kind, name);
+        }
         if account_name.is_some() && second_dir.is_none() {
             // (as `turn_account` does for an account that was removed: the conversation was the second account's,
             // so this message starts a new one on the user's own, with the chat so far)
@@ -4597,12 +4618,51 @@ impl Agent {
         }
     }
 
+    /// An added Gemini account's keychain was changed from outside the app (`accounts::keychain_changed`: its list
+    /// file no longer says the app's words, or what it has for a keychain is no longer its own), found at the end
+    /// of a turn on it or before a message goes to it. A command run in that account's home can do that, and agy
+    /// may then have read or written another keychain, the user's own it may be, for the rest of that turn. The
+    /// app cannot undo or even see that, so it does not hide it and does not carry on: the chat is told, once; the
+    /// process kept for the account is closed; and the account is not used again (`accounts` notes it, Setup says
+    /// so). Whether it was.
+    fn keychain_warning(self: &Arc<Self>, kind: &str, name: &str) -> bool {
+        if !crate::accounts::keychain_changed(kind, name) {
+            return false;
+        }
+        let (said, live) = {
+            let mut st = self.st.lock().unwrap();
+            let said = st.keychain_warned.as_deref() == Some(name);
+            st.keychain_warned = Some(name.to_string());
+            // (the kept process: taken from the chat now, and closed beside it, as one started with other arguments is)
+            let live = st.live.take();
+            if let Some(l) = &live {
+                retire(&mut st, l);
+            }
+            (said, live)
+        };
+        if let Some(l) = live {
+            thread::spawn(move || l.close());
+        }
+        if !said {
+            let which = crate::accounts::position(kind, name).map(|n| format!("{} account {n}", ai_label(kind))).unwrap_or_else(|| format!("an added {} account", ai_label(kind)));
+            self.put("error", json!({"text": keychain_line(&which)}));
+        }
+        true
+    }
+
     /// What follows every turn: a message for how it ended, the board, and whether the chat carries on by itself.
     /// `exit` is how the AI's program ended (success, code), when there was one.
     fn after_turn(self: &Arc<Self>, kind: &str, t: TurnEnd, err: &str, exit: Option<(bool, i32)>, stopped: bool) {
         let TurnEnd { got_result, result_error, result_text, result_said, limit_reset, held_back, .. } = t;
         #[cfg(test)]
         self.accounts_here();
+        // a turn on an added Gemini account: its keychain is looked at again now that the turn's commands have run
+        if kind == "gemini" {
+            let name = self.st.lock().unwrap().account_name.clone();
+            if let Some(name) = name {
+                self.keychain_warning(kind, &name);
+            }
+        }
         self.clear_nudge(); // what waited is sent now (or dropped), so the next wait does not return for it
         // a process per message took its tool server, and so its jobs, with it (a kept turn has said so already)
         self.drop_jobs(Some(&crate::jobs::file(&self.id)), false);
@@ -7925,6 +7985,186 @@ mod tests {
         let chat = st.handover.clone().expect("the chat so far goes with the message");
         assert!(chat.starts_with("[This chat carries on here in a new conversation") && chat.contains("User: Make a door") && !chat.contains("Carry on"), "{chat}");
         assert_eq!(st.log.iter().rev().find(|e| e["kind"] == "account").map(|e| e["account"].clone()), Some(json!(1)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_gemini_turn_on_an_added_account_has_that_accounts_keychain_opened_first_or_does_not_run_there() {
+        // (the Mac's keychain program is never run by a test: `accounts::SECURITY_FOR_TEST` notes what it would
+        // have been fed, and can be told to fail)
+        crate::accounts::stand_in_tagged("kkkkturn");
+        let home = crate::accounts::base().join("gemini-2-kkkkturn");
+        let _ = fs::remove_dir_all(&home);
+        let fed = || crate::accounts::SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(at, _)| *at == home).map(|(_, f)| f.split(' ').next().unwrap_or_default().to_string()).collect::<Vec<_>>();
+        let fails = |what: Option<&'static str>| {
+            let mut g = crate::accounts::SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner());
+            g.0.retain(|(at, _)| *at != home);
+            g.1.retain(|(at, _)| *at != home);
+            if let Some(what) = what {
+                g.1.push((home.clone(), what));
+            }
+        };
+        let chat = |id: &str| {
+            let a = chat_on_first(id);
+            let mut st = a.st.lock().unwrap();
+            st.ai = Some("gemini".into());
+            st.account = 2;
+            st.account_name = Some("gemini-2-kkkkturn".into());
+            st.session = Some("on the second".into());
+            drop(st);
+            a
+        };
+        // the account's keychain is made (the first time) and unlocked, and agy is started in that home
+        fails(None);
+        let a = chat("c-keychain-turn");
+        let l = launches(&a, "Carry on");
+        assert_eq!(l.len(), 1);
+        assert_eq!(env_of(&l[0], "HOME"), Some(Some(home.to_string_lossy().to_string())));
+        assert_eq!(fed(), ["create-keychain", "unlock-keychain", "set-keychain-settings"]);
+        assert_eq!(a.st.lock().unwrap().account, 2);
+        // the next message: unlocked again and told again never to lock by itself, not made again
+        fails(None);
+        let l = launches(&a, "And on");
+        assert_eq!((l.len(), fed()), (1, vec!["unlock-keychain".to_string(), "set-keychain-settings".to_string()]));
+        // the setting does not take: as a keychain that does not unlock (below), agy is not started in that home
+        fails(Some("settings"));
+        let s = chat("c-keychain-settings");
+        let l = launches(&s, "Carry on");
+        assert_eq!((l.len(), env_of(&l[0], "HOME"), s.st.lock().unwrap().account), (1, None, 1));
+        assert_eq!(fed(), ["unlock-keychain", "set-keychain-settings"]);
+        // it does not unlock: agy is not started in that home at all (it would make the Mac ask for a password on
+        // the screen); the message goes on the user's own account, in a new conversation handed the chat so far
+        fails(Some("unlock"));
+        let b = chat("c-keychain-locked");
+        let l = launches(&b, "Carry on");
+        assert_eq!(l.len(), 1);
+        assert_eq!(env_of(&l[0], "HOME"), None, "the user's own account: no home is set for agy");
+        assert!(!l[0].0.contains("gemini-2-kkkkturn"));
+        {
+            let st = b.st.lock().unwrap();
+            assert_eq!((st.account, st.session.clone(), st.account_name.clone()), (1, None, None));
+            assert!(st.handover.as_deref().is_some_and(|h| h.contains("User: Make a door") && !h.contains("Carry on")), "{:?}", st.handover);
+        }
+        assert_eq!(crate::accounts::state()["gemini"]["accounts"][0]["broken"], true, "Setup is told");
+        fails(None);
+        // Stop while the keychain is being opened: the message does not go, on any account, and the account is
+        // not held to have failed
+        let c = chat("c-keychain-stop");
+        let halting = c.clone();
+        AFTER_ACCOUNT_FOR_TEST.with(|f| *f.borrow_mut() = Some(Box::new(move || halting.st.lock().unwrap().halted = true)));
+        let l = launches(&c, "Carry on");
+        AFTER_ACCOUNT_FOR_TEST.with(|f| *f.borrow_mut() = None);
+        assert!(l.is_empty(), "nothing is started");
+        {
+            let st = c.st.lock().unwrap();
+            assert_eq!(st.log.iter().rev().find(|e| e["kind"] == "error").map(|e| e["text"].clone()), Some(json!("Stopped.")));
+            assert_eq!((st.account, st.account_name.as_deref()), (2, Some("gemini-2-kkkkturn")), "the chat stays where it was");
+        }
+        assert_eq!(crate::accounts::state()["gemini"]["accounts"][0]["broken"], false);
+        let _ = fs::remove_dir_all(&home);
+        crate::accounts::stand_in(false, false);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_gemini_accounts_keychain_settings_changed_under_a_turn_are_said_and_never_put_right_in_silence() {
+        crate::accounts::stand_in_tagged("kkkkwarn");
+        let home = crate::accounts::base().join("gemini-2-kkkkwarn");
+        let _ = fs::remove_dir_all(&home);
+        let list = home.join("Library").join("Preferences").join("com.apple.security.plist");
+        let chat = |id: &str| {
+            let a = chat_on_first(id);
+            let mut st = a.st.lock().unwrap();
+            st.ai = Some("gemini".into());
+            st.account = 2;
+            st.account_name = Some("gemini-2-kkkkwarn".into());
+            st.session = Some("on the second".into());
+            drop(st);
+            a
+        };
+        let warned = |a: &Arc<Agent>| a.st.lock().unwrap().log.iter().filter(|e| e["kind"] == "error" && e["text"].as_str().is_some_and(|t| t.starts_with("The keychain settings of Gemini account 2 were changed while it was in use"))).count();
+        let kept = || Live::start_as(std::process::Command::new("/bin/cat"), "kept for the account".into(), "gemini", crate::acp::stray).expect("a kept process");
+        let gone = |l: &Arc<Live>| {
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while !l.exited() && std::time::Instant::now() < until {
+                thread::sleep(Duration::from_millis(20));
+            }
+            l.exited()
+        };
+        // a turn runs on the account, in its home, and ends well: nothing is said
+        let a = chat("c-keychain-warn");
+        let idle = chat("c-keychain-warn-idle");
+        let l = launches(&a, "Carry on");
+        assert_eq!(env_of(&l[0], "HOME"), Some(Some(home.to_string_lossy().to_string())));
+        a.after_turn("gemini", TurnEnd { got_result: true, ..Default::default() }, "", Some((true, 0)), false);
+        assert_eq!(warned(&a), 0);
+        assert_eq!(fs::read_to_string(&list).unwrap().matches("fridae.keychain").count(), 2, "the app's own words");
+        // the next turn's command names another keychain in the home's list file (the user's own, to "find the
+        // keychain"). The chat has a process kept for the account, and so has another chat that is idle on it
+        let l = launches(&a, "And on");
+        assert_eq!(l.len(), 1);
+        let (of_a, of_idle) = (kept(), kept());
+        a.st.lock().unwrap().live = Some(of_a.clone());
+        idle.st.lock().unwrap().live = Some(of_idle.clone());
+        let theirs = "<plist><dict><key>DefaultKeychain</key><string>/Users/someone/Library/Keychains/login.keychain-db</string></dict></plist>";
+        fs::write(&list, theirs).unwrap();
+        // at the turn's end: said in the chat, once; the kept process is closed; the account is not used; and the
+        // file is left as it was found (the one sign of what happened is not wiped away)
+        a.after_turn("gemini", TurnEnd { got_result: true, ..Default::default() }, "", Some((true, 0)), false);
+        assert_eq!(warned(&a), 1, "{:?}", a.st.lock().unwrap().log);
+        let line = a.st.lock().unwrap().log.iter().rev().find(|e| e["kind"] == "error").map(|e| e["text"].as_str().unwrap_or_default().to_string()).unwrap();
+        assert!(line.contains("Fridae has stopped using that account") && line.contains("check that your own Gemini sign-in still works"), "{line}");
+        assert!(a.st.lock().unwrap().live.is_none() && gone(&of_a), "the process kept for the account is closed");
+        assert_eq!(fs::read_to_string(&list).unwrap(), theirs, "not repaired");
+        let row = crate::accounts::state()["gemini"]["accounts"][0].clone();
+        assert_eq!((row["changed"].clone(), row["broken"].clone()), (json!(true), json!(true)), "Setup is told");
+        // the chat's next message runs on the user's own account, with the chat so far, and the line is not said again
+        let l = launches(&a, "Carry on then");
+        assert_eq!((l.len(), env_of(&l[0], "HOME")), (1, None));
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.account_name.clone(), st.session.clone()), (1, None, None));
+            assert!(st.handover.as_deref().is_some_and(|h| h.contains("User: Make a door")));
+        }
+        assert_eq!(warned(&a), 1, "once to a chat");
+        // the chat that was idle on the account: before its kept process is given the next message, the same is
+        // found. The process is closed without the message, the chat is told, and the message goes on the user's own
+        let l = launches(&idle, "Hello again");
+        assert_eq!((l.len(), env_of(&l[0], "HOME")), (1, None));
+        assert!(!l[0].0.contains("gemini-2-kkkkwarn"), "not the kept process's key of the account");
+        assert_eq!(warned(&idle), 1);
+        assert!(gone(&of_idle) && idle.st.lock().unwrap().account == 1);
+        // the app's words put back by whoever changed them: still not used while the app runs
+        fs::write(&list, theirs.replace("/Users/someone/Library/Keychains/login.keychain-db", "x")).unwrap();
+        let again = chat("c-keychain-warn-again");
+        let l = launches(&again, "Hello");
+        assert_eq!((env_of(&l[0], "HOME"), warned(&again)), (None, 1));
+        // a turn on the user's own Gemini account, and one on an added account that is as it should be, say nothing
+        crate::accounts::stand_in_tagged("kkkkfine");
+        let fine_home = crate::accounts::base().join("gemini-2-kkkkfine");
+        let _ = fs::remove_dir_all(&fine_home);
+        let fine = chat_on_first("c-keychain-fine");
+        {
+            let mut st = fine.st.lock().unwrap();
+            st.ai = Some("gemini".into());
+            st.account = 2;
+            st.account_name = Some("gemini-2-kkkkfine".into());
+        }
+        launches(&fine, "Carry on");
+        // (its list file deleted under the turn: written again without a word, as a missing one is)
+        fs::remove_file(fine_home.join("Library").join("Preferences").join("com.apple.security.plist")).unwrap();
+        fine.after_turn("gemini", TurnEnd { got_result: true, ..Default::default() }, "", Some((true, 0)), false);
+        let own = chat_on_first("c-keychain-own");
+        own.st.lock().unwrap().ai = Some("gemini".into());
+        own.after_turn("gemini", TurnEnd { got_result: true, ..Default::default() }, "", Some((true, 0)), false);
+        for a in [&fine, &own] {
+            assert!(!a.st.lock().unwrap().log.iter().any(|e| e["text"].as_str().is_some_and(|t| t.contains("keychain"))), "{:?}", a.st.lock().unwrap().log);
+        }
+        let l = launches(&fine, "And on");
+        assert_eq!(env_of(&l[0], "HOME"), Some(Some(fine_home.to_string_lossy().to_string())), "still on its account");
+        let _ = fs::remove_dir_all(&home);
+        let _ = fs::remove_dir_all(&fine_home);
+        crate::accounts::stand_in(false, false);
     }
 
     #[test]
