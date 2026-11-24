@@ -457,9 +457,10 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 
 /* overview: the live graph of every game, its chats and its experts; beside it, one card per game and one to start
-   a new one. Under 1000px the cards go under the graph. */
-#allproj { padding: 0; overflow: hidden; }
-body.all #allproj { display: grid; grid-template-columns: minmax(0, 1fr) 400px; }
+   a new one. The layout goes by the space the page really has (the text-size setting scales everything, so the
+   window's width says little): the cards take a share of it, and under 760px of it they go under the graph. */
+#allproj { padding: 0; overflow: hidden; container: overview / size; }
+.ov { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 40%, 400px); overflow: hidden; }
 .o-graph { position: relative; min-width: 0; min-height: 0; }
 .o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 .o-graph canvas.over { cursor: pointer; }
@@ -468,15 +469,15 @@ body.all #allproj { display: grid; grid-template-columns: minmax(0, 1fr) 400px; 
 .o-key summary { width: var(--h-s); height: var(--h-s); display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--dim); font-size: 13px; cursor: pointer; list-style: none; transition: background-color 140ms ease, color 140ms ease; }
 .o-key summary::-webkit-details-marker { display: none; }
 .o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
-.o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
+.o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); max-width: min(460px, calc(100cqw - 32px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
 .ap-side { border-left: 1px solid var(--line); padding: 24px 16px 48px; overflow-y: auto; min-width: 0; min-height: 0; }
 .ap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-m); margin: 0 0 16px; }
 .ap-head .sub { margin: 0; font-size: 14px; }
 .ap-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-@media (max-width: 1000px) {
-  body.all #allproj { grid-template-columns: minmax(0, 1fr); grid-template-rows: 460px auto; overflow-y: auto; }
+@container overview (max-width: 760px) {
+  .ov { grid-template-columns: minmax(0, 1fr); grid-template-rows: clamp(240px, 60cqh, 460px) auto; overflow-y: auto; }
   .ap-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; min-height: auto; padding: 24px 24px 48px; }
-  .ap-cards { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .ap-cards { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
 }
 .ap-card { display: flex; flex-direction: column; width: 100%; min-height: 136px; text-align: left; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 140ms ease, background-color 140ms ease; }
 .ap-card:hover { border-color: var(--dim); }
@@ -836,7 +837,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     </div>
     </div>
 
-    <div id="allproj">
+    <div id="allproj"><div class="ov">
       <div class="o-graph">
         <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
         <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
@@ -845,7 +846,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
         <div class="ap-cards" id="ap-cards"></div>
       </div>
-    </div>
+    </div></div>
 
     <div id="review"><div class="rv-page">
       <section class="rv-run" aria-label="The run">
@@ -3655,7 +3656,7 @@ $("ap-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) 
    what there is to draw every 900 ms (`overviewTick`) and the pointer wake it again.
    The layout cools as it goes (`og.heat`): at full strength for two seconds after it starts, then easing off over
    about five more, so it always comes to rest instead of drifting for ever. */
-const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", drawn: 0, last: 0, still: false };
+const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, armed: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", shape: "", drawn: 0, last: 0, still: false };
 /* less motion: nothing drifts or pulses. The nodes are put straight where they come to rest, and a working chat is
    bright with a ring that does not move. */
 { const m = window.matchMedia("(prefers-reduced-motion: reduce)"); og.still = m.matches; m.addEventListener("change", () => { og.still = m.matches; overviewPoke(); }); }
@@ -3695,7 +3696,9 @@ function overviewWanted() {
   for (const id of [...want.keys()]) if (id.startsWith("saved:") && !links.some((l) => l[1] === id)) want.delete(id);
   return { want, links };
 }
-/* bring the nodes into line with what there is to show; true when anything that shows has changed */
+/* Bring the nodes into line with what there is to show. Says what changed: "layout" when a game, a chat or a tie
+   between them came or went (the nodes must find their places again), "look" when only what is drawn did (a step
+   taken, a chat starting or stopping work, a name), false when nothing did. */
 function overviewSync() {
   const { want, links } = overviewWanted();
   for (const id of [...og.nodes.keys()]) if (!want.has(id)) og.nodes.delete(id);
@@ -3713,13 +3716,18 @@ function overviewSync() {
   const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1)).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
   if (sig === og.sig) return false;
   og.sig = sig;
+  const shape = [...want.values()].filter((n) => n.kind !== "step").map((n) => n.id).join("\n") + "\n" + og.links.filter((l) => !l[1].startsWith("step:")).map((l) => l[0] + ">" + l[1]).join("\n");
+  const kind = shape === og.shape ? "look" : "layout"; og.shape = shape;
   /* the same picture in words, for a reader who cannot see the canvas (the cards beside it say the rest) */
   const all = [...og.nodes.values()], count = (k) => all.filter((n) => n.kind === k).length, plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const busy = all.filter((n) => n.busy && n.kind !== "project").map((n) => n.label);
   $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "game"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
-  return true;
+  return kind;
 }
 const NODE = { project: 8, chat: 6, expert: 4, saved: 3, step: 2.5 };
+/* the furthest out the graph goes, by the fit or by the wheel: in a small space (large text, a narrow window) the
+   whole of it is still inside */
+const ZOOM_MIN = 0.15;
 const radius = (n) => NODE[n.kind] + (n.weight || 0) * 0.6;
 /* one step of the layout; false once every node has come to rest (and until something wakes it) */
 function overviewStep() {
@@ -3748,9 +3756,19 @@ function overviewStep() {
   if ((og.heat < 0.01 || og.calm > 30) && !og.drag) { og.asleep = true; for (const n of nodes) n.vx = n.vy = 0; }
   return !og.asleep;
 }
+/* The graph's space: its width and height in the page's own px (a px of the stylesheet, which the text-size setting
+   scales), where it starts in the window, and that scale. Engines disagree on whether an element's rectangle is
+   already scaled when the text size is not 100% (its offsetWidth never is), so the rectangle is compared with the
+   offset width and brought to window px either way. Everything the graph draws and every pointer place goes
+   through this, so names grow with the text size and a press lands on the node under it. */
+function overviewBox() {
+  const host = $("o-canvas").parentNode, r = host.getBoundingClientRect(), z = (typeof scale === "number" && scale > 0 ? scale : 100) / 100;
+  const ratio = host.offsetWidth ? r.width / host.offsetWidth : 1, scaled = Math.abs(ratio - z) <= Math.abs(ratio - 1), up = scaled ? 1 : z;
+  return { z, left: r.left * up, top: r.top * up, width: r.width * up / z, height: r.height * up / z };
+}
 /* draw it once; true while the zoom is still easing towards the fit */
 function overviewDraw(now) {
-  const cv = $("o-canvas"), box0 = cv.parentNode.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+  const cv = $("o-canvas"), box0 = overviewBox(), dpr = (og.dpr = window.devicePixelRatio || 1) * box0.z;
   if (!box0.width || !box0.height) return false;
   if (cv.width !== Math.round(box0.width * dpr) || cv.height !== Math.round(box0.height * dpr)) { cv.width = Math.round(box0.width * dpr); cv.height = Math.round(box0.height * dpr); }
   const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box0.width, box0.height);
@@ -3772,7 +3790,7 @@ function overviewDraw(now) {
       if (Math.abs(n.x - mx) > 1) fit = Math.min(fit, (box0.width / 2 - half) / Math.abs(n.x - mx));
       if (Math.abs(n.y - my) > 1) fit = Math.min(fit, (box0.height / 2 - 40) / (Math.abs(n.y - my) + radius(n)));
     }
-    fit = Math.max(0.3, fit);
+    fit = Math.max(ZOOM_MIN, fit);
     const near = Math.abs(fit - og.zoom) < 0.002 && Math.abs(mx - og.cx) < 0.5 && Math.abs(my - og.cy) < 0.5;
     if (og.still || near) { og.zoom = fit; og.cx = mx; og.cy = my; }
     else { og.zoom += (fit - og.zoom) * 0.06; og.cx += (mx - og.cx) * 0.06; og.cy += (my - og.cy) * 0.06; easing = true; }
@@ -3787,8 +3805,9 @@ function overviewDraw(now) {
     c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
   }
   const pulse = og.still ? 0.5 : 0.5 + 0.5 * Math.sin(now / 420), size = (p) => p / Math.min(1.4, og.zoom);
+  const names = [];
   for (const n of og.nodes.values()) {
-    const r = radius(n), dim = lit(n.id) ? 1 : 0.18;
+    const r = Math.max(radius(n), 1.5 / og.zoom), dim = lit(n.id) ? 1 : 0.18;   /* never under 1.5px on the screen */
     const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85;
     if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
     c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
@@ -3796,21 +3815,31 @@ function overviewDraw(now) {
     if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
     c.fill();
     /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
-       step, the one its chat is on now (all of its last steps under the pointer or zoomed in) */
+       step, the one its chat is on now (all of its last steps under the pointer or zoomed in). They are drawn after
+       the dots, the more important first. */
     const wordy = named(n) || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id) && (n.newest || !!og.hover || og.zoom >= 1));
-    if (wordy) {
-      c.font = (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT;
-      c.fillStyle = "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : 0.62) * dim + ")";
-      const chat = n.kind === "step" && og.nodes.get(n.of);
-      if (chat) {
-        /* a step's name sits beside it, on the side away from its chat, so it never lies across the chat's own */
-        const side = n.x < chat.x ? -1 : 1;
-        c.textAlign = side < 0 ? "right" : "left"; c.textBaseline = "middle";
-        c.fillText(short(n), n.x + side * (r + size(6)), n.y);
-        c.textBaseline = "alphabetic";
-      } else { c.textAlign = "center"; c.fillText(short(n), n.x, n.y + r + size(14)); }
-    }
+    if (!wordy) continue;
+    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : 0.62) * dim + ")",
+      rank: n === og.hover ? 0 : n.kind === "project" ? 1 : n.kind === "chat" ? (n.busy ? 2 : 3) : n.kind === "expert" ? 4 : n.kind === "step" ? (n.newest ? 5 : 6) : 7 };
+    const chat = n.kind === "step" && og.nodes.get(n.of);
+    if (chat) {
+      /* a step's name sits beside it, on the side away from its chat, so it never lies across the chat's own */
+      const side = n.x < chat.x ? -1 : 1;
+      l.align = side < 0 ? "right" : "left"; l.base = "middle"; l.x = n.x + side * (r + size(6)); l.y = n.y;
+    } else { l.align = "center"; l.base = "alphabetic"; l.x = n.x; l.y = n.y + r + size(14); }
+    names.push(l);
   }
+  /* a name that would lie across one already drawn is left out; the node under the pointer always shows its own */
+  const taken = [], tall = size(15);
+  names.sort((a, b) => a.rank - b.rank);
+  for (const l of names) {
+    c.font = l.font;
+    const wide = c.measureText(l.text).width, x0 = l.align === "center" ? l.x - wide / 2 : l.align === "right" ? l.x - wide : l.x, y0 = l.base === "middle" ? l.y - tall / 2 : l.y - tall * 0.8;
+    if (l.rank > 0 && taken.some((t) => x0 < t[2] && x0 + wide > t[0] && y0 < t[3] && y0 + tall > t[1])) continue;
+    taken.push([x0, y0, x0 + wide, y0 + tall]);
+    c.fillStyle = l.fill; c.textAlign = l.align; c.textBaseline = l.base; c.fillText(l.text, l.x, l.y);
+  }
+  c.textBaseline = "alphabetic";
   og.drawn++;
   return easing;
 }
@@ -3833,7 +3862,11 @@ function overviewWake() { og.asleep = false; og.calm = 0; og.heat = Math.max(og.
 /* every 900 ms while the page is in front: is there something else to show? */
 function overviewTick() {
   if (view !== "all") { clearInterval(og.timer); og.timer = 0; return; }
-  if (overviewSync()) overviewWake();
+  if (og.dpr !== (window.devicePixelRatio || 1)) overviewPoke();   /* the display's density changed without a word */
+  const changed = overviewSync();
+  /* with less motion the nodes are put straight to rest, which is only worth doing when the layout itself changed:
+     a step taken by a working chat just appears beside it */
+  if (changed === "layout" || (changed && !og.still)) overviewWake(); else if (changed) overviewPoke();
 }
 function overviewOpen() {
   /* the first time, the layout starts from scratch at full strength; coming back to it, only what changed stirs it */
@@ -3844,21 +3877,39 @@ function overviewOpen() {
 }
 /* where the pointer is, in the graph's own coordinates, and which node is under it */
 function overviewAt(ev) {
-  const r = $("o-canvas").getBoundingClientRect(), x = (ev.clientX - r.left - r.width / 2 - og.panX) / og.zoom + og.cx, y = (ev.clientY - r.top - r.height / 2 - og.panY) / og.zoom + og.cy;
+  const b = overviewBox(), px = (ev.clientX - b.left) / b.z, py = (ev.clientY - b.top) / b.z;   /* in the page's own px, from the graph's corner */
+  const x = (px - b.width / 2 - og.panX) / og.zoom + og.cx, y = (py - b.height / 2 - og.panY) / og.zoom + og.cy;
   let hit = null, best = 1e9;
   for (const n of og.nodes.values()) { const d = Math.hypot(n.x - x, n.y - y); if (d < radius(n) + 7 / og.zoom && d < best) { best = d; hit = n; } }
-  return { x, y, hit };
+  return { x, y, px, py, hit };
 }
+/* the cards are under the graph (a narrow space, or large text) */
+function overviewStacked() { const host = $("o-canvas").parentNode, side = document.querySelector(".ap-side"); return side.offsetTop >= host.offsetTop + host.offsetHeight - 1; }
+/* and the page has to be scrolled to reach them all */
+function overviewScrolls() { const ov = $("o-canvas").closest(".ov"); return overviewStacked() && ov.scrollHeight > ov.clientHeight + 1; }
+/* a press that never got its release (a menu opened over it, the window lost the keyboard) is over */
+function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = null; if (d.moved && d.node) overviewWake(); else overviewPoke(); }
 {
   const cv = $("o-canvas");
   cv.addEventListener("mousemove", (ev) => {
-    const at = overviewAt(ev);
-    if (og.drag) { og.drag.moved = true; if (og.drag.node) { og.drag.node.x = at.x; og.drag.node.y = at.y; overviewWake(); } else { og.panX += ev.movementX; og.panY += ev.movementY; og.mine = true; overviewPoke(); } return; }
+    const at = overviewAt(ev), d = og.drag;
+    if (d) {
+      /* a press becomes a drag once the pointer has gone three px from where it went down; until then it is still a
+         press, and letting go opens what is under it */
+      if (!d.moved && Math.hypot(at.px - d.px0, at.py - d.py0) <= 3) return;
+      d.moved = true;
+      if (d.node) { d.node.x = at.x; d.node.y = at.y; overviewWake(); } else { og.panX += at.px - d.px; og.panY += at.py - d.py; og.mine = true; overviewPoke(); }
+      d.px = at.px; d.py = at.py; return;
+    }
     if (og.hover !== at.hit) { og.hover = at.hit; overviewPoke(); }
     cv.classList.toggle("over", !!at.hit && at.hit.kind !== "step");
   });
-  cv.addEventListener("mousedown", (ev) => { og.drag = { node: overviewAt(ev).hit, moved: false }; });
-  window.addEventListener("mouseup", () => {
+  /* the left button only: any other leaves the graph alone (and opens nothing) */
+  cv.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; const at = overviewAt(ev); og.drag = { node: at.hit, moved: false, px0: at.px, py0: at.py, px: at.px, py: at.py }; og.armed = true; });
+  cv.addEventListener("contextmenu", overviewDrop);
+  window.addEventListener("blur", overviewDrop);
+  window.addEventListener("mouseup", (ev) => {
+    if (ev.button !== 0) return;
     const d = og.drag; og.drag = null; if (!d) return;
     if (d.moved) { if (d.node) overviewWake(); return; }   /* a dragged node is let go: the rest settle around it */
     if (!d.node) return;
@@ -3868,10 +3919,27 @@ function overviewAt(ev) {
     else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
     else if (n.kind === "saved") openChatById(n.chat);
   });
-  cv.addEventListener("mouseleave", () => { if (og.hover) { og.hover = null; overviewPoke(); } });
+  cv.addEventListener("mouseleave", () => { og.armed = false; if (og.hover) { og.hover = null; overviewPoke(); } });
   cv.addEventListener("dblclick", () => { og.mine = false; og.panX = og.panY = 0; overviewPoke(); });   /* double-click: fit it to the space again */
-  cv.addEventListener("wheel", (ev) => { ev.preventDefault(); og.mine = true; og.zoom = Math.max(0.4, Math.min(3, og.zoom * (ev.deltaY < 0 ? 1.1 : 0.9))); overviewPoke(); }, { passive: false });
+  /* The wheel zooms the graph, down to the smallest zoom the fit itself may choose (ZOOM_MIN). A pinch (the wheel with Ctrl or
+     Command) always does, and stops here, so it never also changes the page's text size. When the cards are under
+     the graph and the page has to scroll to reach them, the plain wheel belongs to the page: it zooms the graph only
+     after a press on the graph, until the pointer leaves it. */
+  cv.addEventListener("wheel", (ev) => {
+    const pinch = ev.ctrlKey || ev.metaKey;
+    if (!pinch && !og.armed && overviewScrolls()) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const by = pinch ? Math.max(0.8, Math.min(1.25, Math.exp(-ev.deltaY * 0.01))) : ev.deltaY < 0 ? 1.1 : 0.9;
+    og.mine = true; og.zoom = Math.max(ZOOM_MIN, Math.min(3, og.zoom * by)); overviewPoke();
+  }, { passive: false });
   new ResizeObserver(overviewPoke).observe(cv.parentNode);
+  /* a sharper or coarser display (the window moved to another screen): draw again at its density */
+  const density = () => { const m = window.matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)"); m.addEventListener("change", () => { overviewPoke(); density(); }, { once: true }); };
+  density();
+  /* the key behind "?" closes like a menu: on Escape (the keyboard goes back to the "?") and on a press anywhere else */
+  const key = $("o-key");
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && key.open) { const inside = key.contains(document.activeElement); key.open = false; if (inside) key.querySelector("summary").focus(); } });
+  document.addEventListener("mousedown", (ev) => { if (key.open && !key.contains(ev.target)) key.open = false; });
 }
 
 /* a new review item: Review reloads; the chat that filed it gets one line pointing there */
