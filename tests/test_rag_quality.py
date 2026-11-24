@@ -160,11 +160,11 @@ class ContextLineTests(Tmp):
         self.assertEqual(first["embedded"], first["chunks"])
         with open(manifest, encoding="utf-8") as f:
             man = json.load(f)
-        self.assertEqual(man["format"], 2)
+        self.assertEqual(man["format"], engine.FORMAT)
         self.assertEqual(man["files"][a]["links"], ["bravo"])
         self.assertNotIn("links", man["files"][b])
         self.assertEqual(eng().sync()["embedded"], 0)  # incremental as before
-        man["format"] = 1  # an index from before the context lines
+        man["format"] = 2  # an index from before front-matter-only dates
         with open(manifest, "w", encoding="utf-8") as f:
             json.dump(man, f)
         again = eng().sync()
