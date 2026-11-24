@@ -33,22 +33,29 @@ vault) and all his machine-specific config.
 - **Token-aware chunking** with a safe truncation margin (the reference doc's char-vs-token bug is a lesson: chunk and
   truncate by real tokens).
 
-## Stack — recommended: bundled and embedded, no daemons (decision for the build)
+## Stack — the heavy local stack, offered as an option (decided by the user)
 
-Fridae is free, open-source and zero-setup for anyone who installs it, so it should NOT require every user to run and
-maintain an always-on Qdrant server + Ollama + launchd like the reference setup. Recommended:
+The user chose the reference doc's full stack for SPEED and TOKEN ECONOMY, and does not mind the setup: it is an
+**opt-in option** for users who want it, not forced on everyone. Build it as the reference setup does, with Fridae
+helping install and manage the pieces the way it already installs OpenCode and the promo engine:
 
-- **Vector store**: Qdrant in its local no-server mode (`QdrantClient(path=...)`) or an equally embedded store
-  (sqlite-vec / hnswlib) — a file under the app's data folder, no daemon.
-- **Embeddings**: FastEmbed (ONNX, CPU, pip-installable, no Ollama) — a small dense model (e.g. `bge-small-en-v1.5`)
-  plus FastEmbed BM25 sparse.
-- **Reranker**: a small ONNX cross-encoder via FastEmbed, on demand, no separate process.
-- All pip/uv-installable and bundled with the Fridae tools (PyInstaller), so there is nothing for the user to install
-  or keep running.
+- **Vector store**: Qdrant as a real local service (native binary, the way Fridae runs its other helpers; not Docker).
+  Fridae starts/stops it and keeps it under the app's data folder.
+- **Embeddings**: Ollama, dense (e.g. `mxbai-embed-large`, 1024 dims) — the user specifically wants Ollama. Fridae
+  installs it (official installer) and pulls the model. Plus a sparse/BM25 vector (FastEmbed `Qdrant/bm25`, CPU) for
+  exact-identifier recall.
+- **Reranker**: a cross-encoder (e.g. `bge-reranker-v2-m3`), on demand or as a kept reranker process to avoid the
+  cold-start load per query (the reference doc's reranker-daemon idea).
+- Each point stores named `dense`/`sparse` vectors; a query is embedded both ways and fused with Qdrant's RRF before
+  rerank.
 
-Alternative, only if the user asks for it: the reference doc's exact Qdrant-server + Ollama + launchd setup (more
-headroom, but the user maintains the services). Settle this at build time; the user leans to "just do it", default to
-the recommended embedded stack.
+Why heavy is the right call here: local Ollama embeddings and rerank cost **no AI-plan tokens**, and retrieving a few
+small passages instead of loading whole guides cuts the context tokens an agent spends — the user's SPEED + ECONOMY
+goal. It is an option: a user who does not set it up runs on the keyword fallback below, so the heavy stack is never
+forced.
+
+A lighter embedded fallback (FastEmbed CPU + Qdrant local mode, no Ollama/daemon) may be added later for users who want
+RAG without the setup, but it is secondary; the primary, user-chosen build is the Ollama + Qdrant stack above.
 
 ## Behaviour
 
@@ -63,15 +70,24 @@ the recommended embedded stack.
 - Respects the app's model/plan rules: embedding and rerank are local/CPU, so they cost no AI plan.
 
 ## Anti-goals
-- Requiring a background Qdrant server, Ollama, or launchd on a normal user's machine.
+- Forcing the heavy stack on a user who did not opt in — it is an option; without it, Fridae uses the keyword fallback.
 - Indexing a user's whole disk or anything outside Fridae's vault, notes and game folders.
-- Sending any of this knowledge to an external service (all local).
+- Sending any of this knowledge to an external service (all local — Ollama and Qdrant run on the user's machine).
+
+## Setup and management (an option, like the other connections)
+- Setup > Connections gets a RAG/"Knowledge index" row: install Ollama and Qdrant (Fridae runs the installers), pull
+  the embedding model, build the index, and start/stop the services — the same shape as the OpenCode and promo-engine
+  rows. Off until the user turns it on.
+- Fridae manages the Qdrant and reranker processes under its process ledger (start on enable, stop on quit), stored in
+  the app's data folder; it does not touch a user's own separate Ollama/Qdrant if they run one.
+- When the index is off or a service is down, agents fall back to today's keyword lookup, never error.
 
 ## Open for the build
-- The embedded store and the exact small models (measure recall on real Roblox queries; the hybrid + rerank shape is
-  fixed, the specific models are not).
+- The exact models (the user named Ollama + `mxbai-embed-large`-class dense and a `bge-reranker` cross-encoder from the
+  reference doc; confirm recall on real Roblox queries). The hybrid + rerank shape is fixed.
 - Whether `rbx_vault` is upgraded in place or a new `rbx_rag` tool is added and `rbx_vault` points at it.
 - Index storage location and size budget; first-build time and progress shown in the app.
+- Windows (Ollama/Qdrant availability) — later.
 
 ## Tests
 - Chunking/truncation by real tokens, with the shrink-on-overflow fallback.
