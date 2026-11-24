@@ -2813,18 +2813,31 @@ impl Agent {
         if self.set_ai(kind) {
             return Ok(false);
         }
-        let from = {
-            let mut st = self.st.lock().unwrap();
+        {
+            let st = self.st.lock().unwrap();
             if working(&st) || st.making {
                 return Err("Wait until it finishes (or stop it), then switch.".into());
             }
-            let from = st.ai.clone().unwrap_or_else(paths::default_ai);
-            if from == kind {
+            if st.ai.clone().unwrap_or_else(paths::default_ai) == kind {
                 return Ok(false);
             }
+        }
+        self.carry_on_with(kind);
+        Ok(true)
+    }
+
+    /// A started chat carries on with another AI (`switch_ai`, and a run's Lead moved off a cheap model in `send`): a
+    /// fresh session, handed the chat so far as text, and the old AI's model and effort forgotten.
+    fn carry_on_with(&self, kind: &str) {
+        let from = {
+            let mut st = self.st.lock().unwrap();
+            let from = st.ai.clone().unwrap_or_else(paths::default_ai);
             // an earlier handover not yet sent is part of the log it is rebuilt from, so nothing is lost
+            // (a chat with nothing said yet has nothing to hand over)
             let all = st.log.len();
-            hand_over(&mut st, all, ai_label(&from), false);
+            if st.session.is_some() || st.log.iter().any(is_user) {
+                hand_over(&mut st, all, ai_label(&from), false);
+            }
             st.session = None;
             st.ai = Some(kind.to_string());
             // the last message's model and effort were the old AI's: the app's own messages (a run's wakes, board
@@ -2845,7 +2858,6 @@ impl Agent {
             retire(&mut self.st.lock().unwrap(), &l);
             thread::spawn(move || l.close());
         }
-        Ok(true)
     }
 
     /// The model and effort picked for this chat in the window: what the app's own messages to it (a run's wakes, board
@@ -3280,6 +3292,33 @@ impl Agent {
             "opencode" => opencode::pick_model(model),
             _ => model.filter(|m| codex::models().iter().any(|(id, _)| id == m)).map(str::to_string).or_else(codex::default_model),
         };
+        // a run's Lead plans and splits the work, so its turn never runs on a cheap model (unless the user turned
+        // "Keep the Lead on a strong model" off): the same AI's strong model, else Claude's Opus, else Gemini
+        // (`swarm::lead_model`). Moving to another AI hands the chat over, as a switch in the window does; a message
+        // sent again after a rollover stays on its AI (it is in the chat already)
+        let leads = !helper && self.role().is_none() && ((ask.studio && has_project) || crate::swarm::leads(&self.id));
+        let strong = crate::swarm::lead_model(leads, paths::strong_lead_on(), &self.ai(), model.as_deref(), &crate::swarm::lead_world()).filter(|(ai, _)| *ai == self.ai() || !resend);
+        let lead_swap = strong.map(|(ai, strong_model)| {
+            let (from_ai, from_model) = (self.ai(), model.clone().unwrap_or_default());
+            if ai != from_ai {
+                self.carry_on_with(&ai);
+            }
+            let shown = match strong_model.as_deref() {
+                Some(m) if ai == from_ai => crate::expert_ai::model_name(&ai, m),
+                Some(m) => format!("{} {}", crate::expert_ai::ai_name(&ai), crate::expert_ai::model_name(&ai, m)),
+                None => crate::expert_ai::ai_name(&ai).to_string(),
+            };
+            let swap = crate::expert_ai::Swap {
+                chat: format!("A run's Lead plans the work, so this ran on {shown}, not {}. Setup, Experts can change that.", crate::swarm::cheap_name(&from_model)),
+                lead: format!("it ran on {}, not the cheap \"{from_model}\" as set: a run's Lead never runs on a cheap model.", strong_model.as_deref().unwrap_or(&ai)),
+                free: false,
+            };
+            (strong_model, swap)
+        });
+        let (model, lead_swap) = match lead_swap {
+            Some((m, swap)) => (m, Some(swap)),
+            None => (model, None),
+        };
         let model = model.as_deref();
         // never in silence: a turn that runs on another model than the one set for it says so under the message (once),
         // and a helper's Lead is told with its result. OpenCode has more to say: a model billed per use, a free model
@@ -3295,8 +3334,9 @@ impl Agent {
                 "opencode" => !opencode::models().is_empty(),
                 _ => !codex::models().is_empty(),
             };
-            let caveat = (ai == "opencode").then(|| opencode::caveat(asked, model)).flatten();
-            let swap = listed.then(|| crate::expert_ai::swap_line(&ai, asked, model, caveat.map(Into::into))).flatten();
+            // a Lead moved off a cheap model is told that, not why its cheap model was not taken
+            let caveat = (ai == "opencode" && lead_swap.is_none()).then(|| opencode::caveat(asked, model)).flatten();
+            let swap = lead_swap.or_else(|| listed.then(|| crate::expert_ai::swap_line(&ai, asked, model, caveat.map(Into::into))).flatten());
             let replaced = (ai == "opencode" && !helper).then(|| opencode::replaced_pick(model)).flatten();
             let notes: Vec<(&'static str, String)> = replaced.map(|l| ("pick", l)).into_iter().chain(caveat.and_then(|c| c.alone()).map(|l| ("free", l.to_string()))).collect();
             let line = model_line(&mut self.st.lock().unwrap(), swap, notes);
@@ -7161,6 +7201,63 @@ mod tests {
         assert_eq!(d.last_user_event_for_test().unwrap()["model_note"], "Newest is not available, so this ran on Opus.");
         opencode::set_for_test("", &[], false);
         for x in [&a, &b, &c, &d] {
+            remove_agent(&x.id);
+        }
+    }
+
+    #[test]
+    fn a_runs_lead_on_deepseek_or_glm_runs_on_the_plans_strong_model_and_says_so_once() {
+        // the wiring in `send`: Fridae's OpenCode signed in to the plan, with Kimi on it and Claude's Opus billed per use
+        let _state = opencode::TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        opencode::set_for_test("opencode-go/deepseek-v4.1-flash\nopencode-go/glm-5.3\nopencode-go/kimi-k3\nopencode/claude-opus-5-5\n", &["opencode"], true);
+        let game = paths::test_dir("strong-lead").join("game");
+        fs::create_dir_all(&game).unwrap();
+        let settle = |a: &Arc<Agent>| {
+            for _ in 0..100 {
+                if !a.busy() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        };
+        // a studio run's Lead set to DeepSeek: its turn runs on Kimi, never the per-use Opus, and the chat says why
+        let lead = new_agent(Some("opencode")).unwrap();
+        assert!(lead.set_project(game.to_str().unwrap()));
+        let studio = |model: &str| Ask { studio: true, model: Some(model.into()), ..Default::default() };
+        lead.send("Build the shop", &studio("opencode-go/deepseek-v4.1-flash"));
+        let e = lead.last_user_event_for_test().unwrap();
+        assert_eq!(e["model"], "opencode-go/kimi-k3");
+        assert_eq!(e["model_note"], "A run's Lead plans the work, so this ran on OpenCode Go · kimi-k3, not DeepSeek. Setup, Experts can change that.");
+        assert_eq!(e["model_swap"], true);
+        // the next turn runs there too, and nothing is said twice
+        settle(&lead);
+        lead.send("And the lobby", &studio("opencode-go/deepseek-v4.1-flash"));
+        let e = lead.last_user_event_for_test().unwrap();
+        assert_eq!((e["text"].as_str(), e["model"].as_str(), e["model_note"].is_null()), (Some("And the lobby"), Some("opencode-go/kimi-k3"), true));
+        assert_eq!(lead.ai(), "opencode", "the same AI: no hand-over");
+        // GLM too, in another Lead
+        let glm = new_agent(Some("opencode")).unwrap();
+        assert!(glm.set_project(game.to_str().unwrap()));
+        glm.send("Plan the map", &studio("opencode-go/glm-5.3"));
+        let e = glm.last_user_event_for_test().unwrap();
+        assert_eq!((e["model"].as_str(), e["model_note"].as_str()), (Some("opencode-go/kimi-k3"), Some("A run's Lead plans the work, so this ran on OpenCode Go · kimi-k3, not GLM. Setup, Experts can change that.")));
+        // a chat that leads no run keeps its cheap model, and is told nothing
+        let plain = new_agent(Some("opencode")).unwrap();
+        plain.send("Rename the file", &Ask { model: Some("opencode-go/deepseek-v4.1-flash".into()), ..Default::default() });
+        let e = plain.last_user_event_for_test().unwrap();
+        assert_eq!((e["model"].as_str(), e["model_note"].is_null()), (Some("opencode-go/deepseek-v4.1-flash"), true));
+        // an expert of a run (a helper) keeps the cheap model it was started on
+        let expert = new_agent(Some("opencode")).unwrap();
+        {
+            let mut st = expert.st.lock().unwrap();
+            st.parent = Some(lead.id.clone());
+            st.model = Some("opencode-go/glm-5.3".into());
+            st.project = Some(game.display().to_string());
+        }
+        expert.send("Make the button", &studio("opencode-go/glm-5.3"));
+        assert_eq!(expert.last_user_event_for_test().unwrap()["model"], "opencode-go/glm-5.3");
+        opencode::set_for_test("", &[], false);
+        for x in [&lead, &glm, &plain, &expert] {
             remove_agent(&x.id);
         }
     }

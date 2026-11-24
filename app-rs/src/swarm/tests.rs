@@ -300,3 +300,47 @@ fn a_ceiling_of_one_works_one_at_a_time() {
     TEST_CEILING.with(|c| c.set(None));
     done(&lead.id);
 }
+
+#[test]
+fn a_runs_lead_never_plans_on_a_cheap_model() {
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // the strongest: a stronger family first, then "pro"/"max", then the newer; never cheap or light ("gemini" is no "mini")
+    assert_eq!(strongest(&ids(&["x/kimi-k3", "x/gpt-5.6-luna", "x/gpt-6-luna"])).as_deref(), Some("x/gpt-6-luna"));
+    assert_eq!(strongest(&ids(&["x/qwen3.8-max", "x/kimi-k3", "x/kimi-k3.1-pro"])).as_deref(), Some("x/kimi-k3.1-pro"));
+    assert_eq!(strongest(&ids(&["x/gemini-4-argon", "x/grok-4.7"])).as_deref(), Some("x/gemini-4-argon"));
+    assert_eq!(strongest(&ids(&["x/deepseek-v4-pro", "x/glm-6", "x/gpt-5-mini", "x/claude-haiku-5-5", "x/hy4-flash-free"])), None);
+    assert_eq!(strongest(&ids(&["x/deepseek-v4-pro", "x/hy4"])).as_deref(), Some("x/hy4"), "a family not named still beats none");
+    // a world: OpenCode's plan has Kimi; Claude and Gemini are set up
+    let plan = |ai: &str| (ai == "opencode").then(|| "opencode-go/kimi-k3".to_string());
+    let none = |_: &str| None;
+    let all = |_: &str| true;
+    let only_gemini = |ai: &str| ai == "gemini";
+    let nothing = |_: &str| false;
+    let world = LeadWorld { strong_of: &plan, installed: &all, gemini_default: Some("gemini-4-pro".into()) };
+    let deepseek = Some("opencode-go/deepseek-v4.1-flash");
+    let glm = Some("opencode-go/glm-5.3");
+    // a Lead on DeepSeek or GLM: the same AI's strong model
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &world), Some(("opencode".into(), Some("opencode-go/kimi-k3".into()))));
+    assert_eq!(lead_model(true, true, "opencode", glm, &world), Some(("opencode".into(), Some("opencode-go/kimi-k3".into()))));
+    // not a Lead, the setting off, or a model that is not cheap: as it is
+    assert_eq!(lead_model(false, true, "opencode", deepseek, &world), None);
+    assert_eq!(lead_model(true, false, "opencode", deepseek, &world), None);
+    assert_eq!(lead_model(true, true, "opencode", Some("opencode-go/kimi-k3"), &world), None);
+    assert_eq!(lead_model(true, true, "claude", Some("opus"), &world), None);
+    assert_eq!(lead_model(true, true, "opencode", None, &world), None);
+    // no strong model on the AI (never one billed per use: `opencode::strong_model`): Claude's Opus, else Gemini's default
+    let w = LeadWorld { strong_of: &none, installed: &all, gemini_default: Some("gemini-4-pro".into()) };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), Some(("claude".into(), Some("opus".into()))));
+    let w = LeadWorld { strong_of: &none, installed: &only_gemini, gemini_default: Some("gemini-4-pro".into()) };
+    assert_eq!(lead_model(true, true, "opencode", glm, &w), Some(("gemini".into(), Some("gemini-4-pro".into()))));
+    // nothing stronger set up: it runs as it is
+    let w = LeadWorld { strong_of: &none, installed: &nothing, gemini_default: None };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), None);
+    // an AI's "strong" model that is cheap all the same is not taken
+    let cheap_too = |_: &str| Some("opencode-go/glm-6".to_string());
+    let w = LeadWorld { strong_of: &cheap_too, installed: &nothing, gemini_default: None };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), None);
+    assert_eq!((cheap_name("opencode-go/deepseek-v4.1-flash"), cheap_name("opencode-go/glm-5.3")), ("DeepSeek", "GLM"));
+    // verifiers and the Librarian keep their own rules
+    assert_eq!(verifier_model("opencode", Some("opencode-go/glm-5.3"), None), ("claude".to_string(), None));
+}
