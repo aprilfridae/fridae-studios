@@ -11,6 +11,7 @@ from unittest import mock
 import zlib
 
 from rbxrag import chunks
+from rbxrag import engine
 from rbxrag.engine import PLANS, Engine
 from rbxrag.stores import MemStore, QdrantStore
 
@@ -65,6 +66,11 @@ class FakeEmbedders:
         self.reranked = getattr(self, "reranked", []) + [(len(texts), max_tokens)]
         q = set(words(query))
         return [float(len(q & set(words(t)))) for t in texts]
+
+
+class WideEmbedders(FakeEmbedders):
+    dim = 1024
+    model = "fake-1024"
 
 
 class ConstantDense(FakeEmbedders):
@@ -191,7 +197,7 @@ class EngineCases:
         self.assertIn("score", hits[0])
         with open(self.manifest, encoding="utf-8") as f:
             man = json.load(f)
-        self.assertEqual(man["format"], 1)
+        self.assertEqual(man["format"], engine.FORMAT)
         self.assertEqual(man["dim"], 64)
         self.assertEqual(man["model"], "fake-64")
         self.assertIn(self.b, man["files"])
@@ -502,14 +508,16 @@ class StoreEquivalenceTests(unittest.TestCase):
             files.append(("vault" if i % 3 else "guides", "Note %d" % i,
                           write(os.path.join(tmp, "Note %d.md" % i), "# Note %d\n\n" % i + body)))
         corpus = lambda project: list(files)
-        q_eng = Engine(QdrantStore(QdrantClient(":memory:")), FakeEmbedders(), os.path.join(tmp, "q.json"),
+        # a wide hashed model: with 64 numbers, unrelated words share a slot often enough to give two passages the
+        # very same score, and each store orders such a tie its own way
+        q_eng = Engine(QdrantStore(QdrantClient(":memory:")), WideEmbedders(), os.path.join(tmp, "q.json"),
                        corpus=corpus, project_files=lambda p: set())
         # 32-bit vectors here: the stores must rank alike exactly (Light's 16-bit ones may swap near ties)
-        m_eng = Engine(MemStore(os.path.join(tmp, "light"), dtype="float32"), FakeEmbedders(), os.path.join(tmp, "m.json"),
-                       corpus=corpus, project_files=lambda p: set())
+        m_eng = Engine(MemStore(os.path.join(tmp, "light"), dtype="float32"), WideEmbedders(),
+                       os.path.join(tmp, "m.json"), corpus=corpus, project_files=lambda p: set())
         q_eng.sync()
         m_eng.sync()
-        emb = FakeEmbedders()
+        emb = WideEmbedders()
         for q in ["shiny coins", "haunted lantern", "session lock datastore", "phone touch buttons", "zzz unknown",
                   "leaderboard top datastore", "pets"]:
             for shelves in (["vault", "guides"], ["guides"]):

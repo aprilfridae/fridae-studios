@@ -232,10 +232,10 @@ class GameShelfTests(unittest.TestCase):
             self.assertIn("Decision log", text)
             self.assertIn("lantern skins", text)
             text = rbxvault.run("search", {"query": "lantern flicker fade", "shelf": "game"})
-            self.assertIn("[game] [lesson] lessons.md", text)
+            self.assertRegex(text, r"\[game\] lessons\.md .*\[lesson · this game · \d{4}-\d{2}\]")
             # lessons for every game are on the yours shelf now (A12), with or without a project
             text = rbxvault.run("search", {"query": "phone emulator menu", "shelf": "yours"})
-            self.assertIn("[yours] [lesson] studio-lessons", text)
+            self.assertRegex(text, r"\[yours\] studio-lessons .*\[lesson · agent · \d{4}-\d{2}\]")
             out = rbxvault.run("read", {"shelf": "game", "title": "GAME.md", "heading": "decision log"})
             self.assertIn("Phones first", out)
             all_text = rbxvault.run("search", {"query": "lantern skins decision log", "k": 8})

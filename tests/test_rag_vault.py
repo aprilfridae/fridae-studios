@@ -1,6 +1,7 @@
 """rbx_vault search through the knowledge index (RAG) service, falling back to the keyword search on any failure."""
 import json
 import os
+import re
 import shutil
 import socket
 import tempfile
@@ -289,9 +290,18 @@ class KeywordRankingTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": ""}):
             for q in ("save player coins between sessions", "the zombie keeps walking into the wall"):
                 out = rbxvault.run("search", {"query": q, "shelf": "all", "k": 5})
-                shown = [json.loads(l.split("read: ", 1)[1])["title"] for l in out.splitlines() if l.strip().startswith("read: ")]
+                lines = out.splitlines()
+                heads = [l for l in lines if re.match(r"^\d+\. \[", l)]
+                reads = [json.loads(l.split("read: ", 1)[1])["title"] for l in lines if l.strip().startswith("read: ")]
+                self.assertEqual(len(heads), len(reads))
+                # the direct results keep the keyword order; notes found through a link (at most two) come after the
+                # first three and take the last places
+                shown = [t for h, t in zip(heads, reads) if "(linked from " not in h]
+                linked = [i for i, h in enumerate(heads) if "(linked from " in h]
+                self.assertLessEqual(len(linked), rbxvault.LINKED_MAX)
+                self.assertTrue(all(i >= rbxvault.DIRECT_KEPT for i in linked))
                 ranked = rbxvault.keyword_ranking(q, [s for s in rbxvault.SHELVES if s != "game"], 5)
-                self.assertEqual([t for _, t, _ in ranked], shown)
+                self.assertEqual([t for _, t, _ in ranked][:len(shown)], shown)
                 self.assertTrue(all((i is None) == (shelf == "vault") for shelf, _, i in ranked))
                 vault = rbxvault.keyword_ranking(q, ["vault"], 4)
                 self.assertEqual([t for _, t, _ in vault], [d["title"] for _, d in rbxvault.search(q, 4)[0]])
