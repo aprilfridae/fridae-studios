@@ -232,7 +232,7 @@ fn post(path: &str, body: Value) -> Reply {
                 // Studio mode implies full auto and overnight's loop
                 let studio = body["studio"].as_bool().unwrap_or(false);
                 let overnight = studio || body["overnight"].as_bool().unwrap_or(false);
-                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff, studio, wake: false, app: body["app"].as_bool().unwrap_or(false), typed: None };
+                let ask = agents::Ask { selftest, gemini, autopilot: body["autopilot"].as_bool().unwrap_or(false), overnight, full: overnight || body["full"].as_bool().unwrap_or(false), model, effort, attachments, kickoff, studio, wake: false, app: body["app"].as_bool().unwrap_or(false), typed: None, resend: false };
                 thread::spawn(move || agent.ask(&text, &ask));
             }
             send_json(json!({"ok": target.is_some()}))

@@ -2054,6 +2054,11 @@ function onEvent(e) {
   } else if (e.kind === "account") {
     /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
     p.account = e.account; if (p.id === current) paintModel();
+  } else if (e.kind === "rollover") {
+    /* one of the AI's two accounts ran out of usage and the chat carries on with the other: the app's one line about
+       it. The same message goes again there, so what follows is a turn of its own */
+    const t = el("span", "tag ai-tag enter"); t.textContent = e.text || "";
+    p.col.appendChild(t); p.turn = null;
   } else if (e.kind === "queued") {
     paintQueue(p, e.items || [], !!e.paused, !!e.kept);
   } else if (e.kind === "user") {

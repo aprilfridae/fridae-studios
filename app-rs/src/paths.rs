@@ -1942,30 +1942,38 @@ pub fn stamp() -> String {
     }
     #[cfg(not(windows))]
     {
-        // struct tm: nine ints, then (macOS, Linux) the offset and the zone name; room to spare
-        #[repr(C)]
-        struct Tm {
-            sec: i32,
-            min: i32,
-            hour: i32,
-            mday: i32,
-            mon: i32,
-            year: i32,
-            wday: i32,
-            yday: i32,
-            isdst: i32,
-            rest: [u64; 4],
-        }
-        unsafe extern "C" {
-            fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-        }
         let t = now_secs() as i64;
-        let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, rest: [0; 4] };
-        if unsafe { localtime_r(&t, &mut tm) }.is_null() {
-            return format!("{t}");
+        match local_time(t) {
+            Some(tm) => format!("{:04}{:02}{:02}-{:02}{:02}{:02}", tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec),
+            None => format!("{t}"),
         }
-        format!("{:04}{:02}{:02}-{:02}{:02}{:02}", tm.year + 1900, tm.mon + 1, tm.mday, tm.hour, tm.min, tm.sec)
     }
+}
+
+/// C's `struct tm`: nine ints, then (macOS, Linux) the offset and the zone name; room to spare.
+#[cfg(not(windows))]
+#[repr(C)]
+pub struct Tm {
+    pub sec: i32,
+    pub min: i32,
+    pub hour: i32,
+    pub mday: i32,
+    pub mon: i32,
+    pub year: i32,
+    wday: i32,
+    yday: i32,
+    isdst: i32,
+    rest: [u64; 4],
+}
+
+/// A time (seconds since 1970) on this computer's clock.
+#[cfg(not(windows))]
+pub fn local_time(t: i64) -> Option<Tm> {
+    unsafe extern "C" {
+        fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
+    }
+    let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, rest: [0; 4] };
+    (!unsafe { localtime_r(&t, &mut tm) }.is_null()).then_some(tm)
 }
 
 #[cfg(test)]

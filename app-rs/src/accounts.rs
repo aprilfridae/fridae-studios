@@ -24,9 +24,10 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{LazyLock, Mutex},
 };
 
+use regex::Regex;
 use serde_json::{Map, Value, json};
 
 use crate::paths;
@@ -64,7 +65,41 @@ fn folder_in(settings: &Map<String, Value>, ai: &str) -> Option<PathBuf> {
 
 /// The second account's folder, when the AI has one (from the app's memory of the guarded settings).
 pub fn folder(ai: &str) -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(second) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.second)) {
+        return (second && AIS.contains(&ai)).then(|| base().join(format!("{ai}-2-standin")));
+    }
     folder_in(&paths::guarded_settings(), ai)
+}
+
+/// Whether the AI's second account can take a chat as far as its sign-in goes: what its tool last said (`signin`).
+pub fn second_signed_in(ai: &str) -> bool {
+    #[cfg(test)]
+    if let Some(yes) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.signed_in)) {
+        return yes;
+    }
+    crate::signin::signed_in(&format!("{ai}2"))
+}
+
+/// Tests: one test's own accounts in place of the app's one copy (tests run side by side, each on its own thread):
+/// whether there is a second account, whether it is signed in, and which accounts are used up until when.
+#[cfg(test)]
+#[derive(Default)]
+pub struct StandIn {
+    pub second: bool,
+    pub signed_in: bool,
+    pub used: HashMap<(String, u8), f64>,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub static STAND_IN: std::cell::RefCell<Option<StandIn>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Tests: this test's accounts from here on (`StandIn`).
+#[cfg(test)]
+pub fn stand_in(second: bool, signed_in: bool) {
+    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second, signed_in, used: HashMap::new() }));
 }
 
 /// A new second account: a new folder under a new name (never a name used before: on a Mac the tool's sign-in for a
@@ -186,11 +221,19 @@ pub const TRY_AGAIN: f64 = 3600.0;
 
 /// An account hit its usage limit: used up until `until`.
 pub fn mark_used(ai: &str, account: u8, until: f64) {
+    #[cfg(test)]
+    if STAND_IN.with(|s| s.borrow_mut().as_mut().map(|s| s.used.insert((ai.to_string(), account), until)).is_some()) {
+        return;
+    }
     USED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert((ai.to_string(), account), until);
 }
 
 /// When the account is back, if it is used up now.
 pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
+    #[cfg(test)]
+    if let Some(until) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.used.get(&(ai.to_string(), account)).copied())) {
+        return until.filter(|until| *until > now);
+    }
     USED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&(ai.to_string(), account)).copied()).filter(|until| *until > now)
 }
 
@@ -224,8 +267,7 @@ pub fn other(have: Have, ran_out: u8) -> Option<u8> {
 }
 
 /// When a limit resets, from the tool's own words: "Resets in 2h6m48s" (Gemini's quota line), as seconds from now.
-/// Claude Code names a clock time ("resets 12:50am (America/Los_Angeles)"), which is not read here: its
-/// `rate_limit_event` carries the time itself (`event_reset`).
+/// Claude Code names a clock time ("resets 12:50am (America/Los_Angeles)"): see `resets_at_clock`.
 pub fn resets_in(said: &str) -> Option<f64> {
     let low = said.to_lowercase();
     let rest = low.split("resets in ").nth(1)?;
@@ -250,6 +292,37 @@ pub fn resets_in(said: &str) -> Option<f64> {
     (any && number.is_empty() && total > 0.0).then_some(total)
 }
 
+/// When a limit resets, from a clock time in the tool's words: Claude Code's "resets 12:50am (America/Los_Angeles)"
+/// and "Your limit will reset at 3pm", as seconds from now. `day_secs`: the seconds since midnight on this computer's
+/// clock (Claude Code names the time in the computer's own zone). The next time the clock shows it, so always within
+/// a day. Words that name a day ("resets Nov 28 at 9am") are not read: nothing is guessed about a date.
+pub fn resets_at_clock(said: &str, day_secs: f64) -> Option<f64> {
+    static CLOCK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\breset(?:s)?(?: at)? (\d{1,2})(?::(\d{2}))?\s?(am|pm)\b").unwrap());
+    let low = said.to_lowercase();
+    let c = CLOCK.captures(&low)?;
+    let (hour, min): (u32, u32) = (c[1].parse().ok()?, c.get(2).map_or(Some(0), |m| m.as_str().parse().ok())?);
+    if !(1..=12).contains(&hour) || min > 59 {
+        return None;
+    }
+    let hour = hour % 12 + if &c[3] == "pm" { 12 } else { 0 };
+    let ahead = f64::from(hour * 3600 + min * 60) - day_secs;
+    Some(if ahead <= 0.0 { ahead + 86_400.0 } else { ahead })
+}
+
+/// The seconds since midnight on this computer's clock. None where the app does not read it (Windows: no second
+/// accounts there).
+pub fn day_secs(now: f64) -> Option<f64> {
+    #[cfg(windows)]
+    {
+        let _ = now;
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        paths::local_time(now as i64).map(|tm| f64::from(tm.hour * 3600 + tm.min * 60 + tm.sec))
+    }
+}
+
 /// The reset time in a Claude Code `rate_limit_event` whose limit is reached (its status is not "allowed"): the
 /// time of the event itself, else of the first window that is not allowed. None for an event that allows the turn.
 pub fn event_reset(event: &Value) -> Option<f64> {
@@ -261,10 +334,12 @@ pub fn event_reset(event: &Value) -> Option<f64> {
     info["unifiedWindows"].as_object().into_iter().flatten().map(|(_, w)| w).filter(|w| reached(w)).filter_map(|w| w["resetsAt"].as_f64()).filter(|t| *t > 0.0).reduce(f64::max)
 }
 
-/// When an account that just hit its limit is back: the tool's own time when it gave one that lies ahead (`event`,
-/// from `event_reset`; or `resets_in` the tool's words), otherwise an hour from now (then it is simply tried again).
-pub fn back_at(said: &str, event: Option<f64>, now: f64) -> f64 {
-    event.filter(|t| *t > now).or_else(|| resets_in(said).map(|s| now + s)).unwrap_or(now + TRY_AGAIN)
+/// When an account that just hit its limit is back, and whether the tool said so: its own time when it gave one that
+/// lies ahead (`event`, from `event_reset`; else its words, `resets_in` or `resets_at_clock` with this computer's
+/// `day_secs`); otherwise an hour from now, when it is simply tried again.
+pub fn back_at(said: &str, event: Option<f64>, now: f64, day_secs: Option<f64>) -> (f64, bool) {
+    let told = event.filter(|t| *t > now).or_else(|| resets_in(said).map(|s| now + s)).or_else(|| day_secs.and_then(|d| resets_at_clock(said, d)).map(|s| now + s));
+    (told.unwrap_or(now + TRY_AGAIN), told.is_some())
 }
 
 /// A reset time as the chat says it: "in about 2 hours", "in about 40 minutes".
@@ -381,12 +456,25 @@ mod tests {
         for other in ["Resets in a while", "resets 12:50am (America/Los_Angeles)", "Resets in 5 minutes", "Resets in 2x", "Resets in ", "quota reached"] {
             assert_eq!(resets_in(other), None, "{other}");
         }
-        assert_eq!(back_at(gemini, None, 1_000.0), 1_000.0 + 7_608.0);
-        // Claude Code's words name a clock time; its event carries the time itself
+        assert_eq!(back_at(gemini, None, 1_000.0, None), (1_000.0 + 7_608.0, true));
+        // Claude Code's words name a clock time; its event carries the time itself, and goes first
         let claude = "You've hit your 5-hour limit \u{b7} resets 12:50am (America/Los_Angeles)";
-        assert_eq!(back_at(claude, Some(9_000.0), 1_000.0), 9_000.0);
-        assert_eq!(back_at(claude, None, 1_000.0), 1_000.0 + TRY_AGAIN, "no time given: tried again after an hour");
-        assert_eq!(back_at(claude, Some(500.0), 1_000.0), 1_000.0 + TRY_AGAIN, "a time that has passed is no reset time");
+        let ten_pm = 22.0 * 3600.0;
+        assert_eq!(back_at(claude, Some(9_000.0), 1_000.0, Some(ten_pm)), (9_000.0, true));
+        assert_eq!(back_at(claude, None, 1_000.0, Some(ten_pm)), (1_000.0 + 2.0 * 3600.0 + 50.0 * 60.0, true), "the next 12:50am on this computer's clock");
+        assert_eq!(back_at(claude, Some(500.0), 1_000.0, Some(ten_pm)).0, 1_000.0 + 2.0 * 3600.0 + 50.0 * 60.0, "an event's time that has passed is no reset time");
+        assert_eq!(back_at(claude, None, 1_000.0, None), (1_000.0 + TRY_AGAIN, false), "no clock to read it by: tried again after an hour");
+        assert_eq!(back_at("You've hit your usage limit", None, 1_000.0, Some(ten_pm)), (1_000.0 + TRY_AGAIN, false), "no time given: tried again after an hour");
+        // the clock times Claude Code is known to write
+        assert_eq!(resets_at_clock("Claude usage limit reached. Your limit will reset at 3pm.", 14.5 * 3600.0), Some(1800.0));
+        assert_eq!(resets_at_clock("resets 3pm", 15.0 * 3600.0), Some(86_400.0), "the time it is now: tomorrow's");
+        assert_eq!(resets_at_clock("resets 12pm", 11.0 * 3600.0), Some(3600.0));
+        assert_eq!(resets_at_clock("resets 12:05am", 0.0), Some(300.0));
+        // a day is never guessed, nor a time that is none
+        for other in ["You've hit your weekly limit \u{b7} resets Nov 28 at 9am", "resets 13pm", "resets 9:75am", "resets soon", "resets 9", "it presets 9am"] {
+            assert_eq!(resets_at_clock(other, 0.0), None, "{other}");
+        }
+        assert!(day_secs(1_795_000_000.0).is_some_and(|d| (0.0..86_400.0).contains(&d)) || cfg!(windows));
         assert_eq!(in_words(1_000.0 + 7_608.0, 1_000.0), "in about 2 hours");
         assert_eq!(in_words(1_000.0 + 2_400.0, 1_000.0), "in about 40 minutes");
     }

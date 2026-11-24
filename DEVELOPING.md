@@ -1190,6 +1190,58 @@ agy keeps it; or use agy's own "Gemini API key" method as the second account (bi
   "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h6m48s."
 - A studio run pauses on it (`LIMIT_END`); any other chat only shows the words.
 
+## A second account for Claude, and the rollover
+
+`app-rs/src/accounts.rs`, the chat's part in `agents.rs` (`turn_account`, `roll_over`, `resend`), the sign-in in
+`signin.rs` (id `claude2`). Claude only: see the measurements above for Gemini.
+
+**The account.** The first account is the user's own sign-in and nothing here changes it. The second is a Claude
+Code config folder of the app's own, `<app data>/Fridae Studios/accounts/claude-2-<12 hex>`, given to the tool as
+`CLAUDE_CONFIG_DIR`. `prepare` links the user's own `settings.json`, skills, plugins, agents, commands, `CLAUDE.md`,
+rules, output styles and key bindings into it before every command there, so a turn on the second account has the
+same setup; who is signed in and the conversations are the folder's own. Whether there is one is the guarded setting
+`second_accounts` (`{"claude": "<folder name>"}`): a name the app made, checked by `name_ok`, never a path, read from
+the app's memory, left out of other AIs' kept-process fingerprints (`guarded_print`), and the folder itself is part of
+Claude's launch key (`ClaudeLaunch.config_dir`). The folder of second accounts is in `paths::app_protected()`. Remove
+deletes the folder (links as links) and the name is never used again. Nothing runs a tool's logout.
+
+**Which account a turn runs on** (`account_for`). A chat keeps its account (`State.account`, saved with the chat). A
+new chat or a new expert starts on the user's own unless that is used up and the second is signed in and not used
+up. A chat never moves on a guess: only its own turn ending on the limit moves it. A chat whose second account was
+removed carries on with the user's own, in a new conversation handed the chat so far.
+
+**Used up.** `usage_limit` reads the tool's words as before. The account is then marked used up (`mark_used`) until
+`back_at`: the reset time in Claude Code's `rate_limit_event` when its status is not "allowed" (`event_reset`, kept
+for the turn in `TurnEnd.limit_reset`), else the tool's words ("Resets in 2h6m48s", or a clock time such as "resets
+12:50am", taken as the next time this computer's clock shows it; a date is never guessed), else an hour from now,
+after which it is simply tried again. In memory only: after a restart the first turn finds out again.
+
+**The rollover** (`roll_over`, called first thing in `after_turn` for a turn that ended on the limit and was not
+stopped). When the other account can take the chat (`rolls_to`), the chat gets a new conversation there
+(`session = None`, the chat so far as its hand-over, without the message), an `account` and a `rollover` event (the
+one line in the chat), and the message goes again. `after_turn` then returns at once: no result for a waiting Lead,
+no "done", no carry-on, no pause of the run. The turn is not over.
+- *Never lost.* The message as it went out (`State.sent`: what was typed, what the AI was sent with attachments,
+  kick-off, Studio's note and the app's notes, and its settings) is kept from `send` until the next message. From the
+  decision until the message is under way the chat counts as working (`sending`, `resend_due`), so what the user
+  types in that moment is held behind it. If it cannot go after all (Stop in that moment, the app closing), `resend`
+  ends the turn as a stopped one.
+- *Never twice.* A resent message (`Ask.resend`) shows no second message in the chat, takes no second checkpoint,
+  spends no allowance, takes no notes, and reads no new Studio context: it is the saved text, after the hand-over.
+- *No bounce.* `State.rolled` is set when a message is sent again and cleared by the next message that is not a
+  resend: a message moves once. A chat on the second account goes back to the user's own only when the second runs
+  out on a later message and the first is not used up.
+- A turn that had used tools before the limit: the hand-over ends with a line saying some of the work may be done.
+- The kept process of the old account is never sent the message: the account is in its key, so the next turn starts
+  one for the new account and retires the old.
+- Experts are chats, so the same holds for them. Both used up: nothing moves and everything is as before
+  (`LIMIT_END` pauses a studio run).
+
+**Stand-ins only.** No sign-in was completed, no second account was signed in, no limit was reached and no turn ran
+on a second account: all of the above is tested with `accounts::stand_in` (one test's own accounts) and turn ends
+made up from the tool's recorded words. Known gaps: `limits.rs` (the usage shown in the window) is not per account;
+`usage_limit` also matches a passing "rate limit" error, which would move a chat that could have tried again.
+
 ## OpenCode as a chat's AI
 
 OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the server's own API description
