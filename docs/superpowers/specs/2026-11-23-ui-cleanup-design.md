@@ -113,6 +113,13 @@ cards of section 1 (with the New project card, the totals line and Stop everythi
 and go under the graph below about 1000 px. The graph keeps to section 9: its key is behind one small "?", it has a
 text alternative, it does not pulse with reduced motion, and it draws nothing while nothing changes.
 
+"Expert rows are one compact line each" (section on the conversation) no longer holds either. Experts are out of the
+conversation: the game in front lists its chats under it in the sidebar, and under a chat the experts it started,
+newest first, each a chat of its own that opens in the main pane, read only (who, what for, its state and its AI; a
+pulsing dot while it works). An arrow beside the chat shows or hides them and is remembered per chat. In the
+conversation one short line stays where each expert was started ("Coder · T1 Tricks · Open its chat"), which opens
+the same chat and marks it in the sidebar. The menu on the chat's name is unchanged.
+
 ## How it is checked
 
 - Every screen opened with a scratch copy of the user's real data at 1180 x 820 and at about 900 wide: Home, Chat (with

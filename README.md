@@ -65,8 +65,9 @@ you and what it has cost. Pick a game and it has three tabs:
   and **OpenCode** at any time: in a chat that has started, the other AI is
   handed the chat so far and carries on. Cursor chats use the model picked there (Auto unless you
   pick another of the models your Cursor plan offers); OpenCode chats use the model picked there too, grouped by
-  provider (your OpenCode default unless you pick another). Experts a Lead starts show as one line each inside its chat; open the line to read
-  that expert's work, or stop it.
+  provider (your OpenCode default unless you pick another). Experts a Lead starts are chats of their own, listed under
+  the Lead's chat in the sidebar (the arrow beside it shows or hides them); press one to read that expert's work, or
+  stop it.
 - **Review**: what is happening on the game and what needs you (see Studio mode below).
 - **Promos**: promo videos from your clips.
 
@@ -124,7 +125,7 @@ in the menu, what you send in the Lead's own chat goes to the run.
 you pick another for it in Setup → Experts (for example the World builder on
 Cursor with a model of your choice). Your choice always wins; the Lead may
 also ask for another AI now and then, for work it is clearly better at. Only
-AIs installed on this computer are offered, and the expert's line in the chat
+AIs installed on this computer are offered, and the expert's row in the sidebar
 and in Right now says what it runs on when that differs from the Lead.
 
 **When it stops for you.** By default only twice: to approve the **design
