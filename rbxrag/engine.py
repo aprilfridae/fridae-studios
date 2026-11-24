@@ -17,6 +17,7 @@ from rbxrag.stores import FUSED, PREFETCH, MemStore, QdrantStore  # noqa: F401 (
 
 FORMAT = 1
 BATCH = 64
+CHECKPOINT_BATCHES = 32  # save the manifest (and Light's arrays) every 2,048 embedded chunks
 
 
 class Embedders(Protocol):
@@ -48,6 +49,8 @@ class Engine:
         self.ready = False
         self.synced_projects = set()
         self.chunks = 0
+        self.batch = BATCH
+        self.checkpoint_batches = CHECKPOINT_BATCHES  # a killed build resumes from the last checkpoint
 
     # ------------------------------------------------------------ manifest
     def _load_manifest(self):
@@ -99,12 +102,19 @@ class Engine:
                                             "project": e.get("project", "")}
                                         for p, e in man["files"].items()}})
 
+    def _invalidate(self):
+        """Before the store is emptied: a manifest naming no files, so a build stopped half way is never read as a
+        complete index (it is resumed instead, from the checkpoints)."""
+        man = {"format": FORMAT, "dim": self.emb.dim, "model": self.model, "generation": None, "files": {}}
+        self._write_manifest(man)
+        return man
+
     def _sync(self, project, progress):
         man = self._load_manifest()
-        ok = self._compatible(man) and self.store.open(man)
-        if not ok:
+        rebuilt = not (self._compatible(man) and self.store.open(man))
+        if rebuilt:
+            man = self._invalidate()
             self.store.reset(self.emb.dim)
-            man = {"format": FORMAT, "dim": self.emb.dim, "model": self.model, "files": {}}
             self.synced_projects = set()
         old = man["files"]
         mine = self._project_files(project) if project else set()
@@ -117,7 +127,7 @@ class Engine:
         for shelf, title, path in listed:
             files.setdefault(path, (shelf, title))
         progress("scan", 0.0)
-        todo, new_entries = [], {}
+        todo, new_entries, changed = [], {}, []  # changed: [(path, index in todo after its last chunk)]
         for path, (shelf, title) in files.items():
             try:
                 st = os.stat(path)
@@ -131,34 +141,58 @@ class Engine:
                 continue
             cs = chunks.chunks_for_file(shelf, title, path, self.emb.count_tokens, project=proj)
             todo += cs
+            changed.append((path, len(todo)))
             new_entries[path] = {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "ids": [c["id"] for c in cs],
                                  "project": proj}
         # a file is gone when it was indexed for the shared shelves or for this project and is no longer listed
         gone = [p for p, e in old.items() if p not in new_entries and e.get("project", "") in ("", project or "")]
-        stale = []
-        for path, e in new_entries.items():
-            prev = old.get(path)
-            if prev is not None and prev is not e:
-                stale += sorted(set(prev.get("ids", [])) - set(e["ids"]))
-        for path in gone:
-            stale += old[path].get("ids", [])
+        stale = {p: sorted(set(old[p].get("ids", [])) - set(new_entries[p]["ids"])) for p, _ in changed if p in old}
+        if not todo and not gone and not any(stale.values()) and not rebuilt:
+            # nothing changed: the manifest and the store stay as they are
+            self.chunks = sum(len(e["ids"]) for e in old.values())
+            return {"chunks": self.chunks, "files": len(new_entries), "embedded": 0, "removed": 0}
+        keep = {p: e for p, e in old.items() if p not in new_entries and p not in gone}  # other projects' files
         total = len(todo)
-        for n in range(0, total, BATCH):
-            batch = todo[n:n + BATCH]
+        complete = 0  # changed[:complete] are fully upserted
+        batches = 0
+        for n in range(0, total, self.batch):
+            batch = todo[n:n + self.batch]
             texts = [c["text"] for c in batch]
             dense = self.emb.dense(texts)
             sparse = self.emb.sparse(texts)
             self.store.upsert([(c["id"], dv, sv, c) for c, dv, sv in zip(batch, dense, sparse)])
-            progress("index", min(1.0, (n + len(batch)) / total))
-        if stale:
-            self.store.delete(stale)
-        # files of other projects stay as they were
-        keep = {p: e for p, e in old.items() if p not in new_entries and p not in gone}
+            done = n + len(batch)
+            while complete < len(changed) and changed[complete][1] <= done:
+                path = changed[complete][0]
+                if stale.get(path):  # this file's points that its new version no longer has
+                    self.store.delete(stale.pop(path))
+                complete += 1
+            batches += 1
+            progress("index", min(1.0, done / total))
+            if self.checkpoint_batches and batches % self.checkpoint_batches == 0 and done < total:
+                self._checkpoint(man, keep, old, new_entries, gone, changed, complete)
+        rest = [i for ids in stale.values() for i in ids] + [i for p in gone for i in old[p].get("ids", [])]
+        if rest:
+            self.store.delete(rest)
         man["files"] = dict(keep, **new_entries)
         self._commit(man)
         self.chunks = sum(len(e["ids"]) for e in man["files"].values())
         progress("index", 1.0)
         return {"chunks": self.chunks, "files": len(new_entries), "embedded": total, "removed": len(gone)}
+
+    def _checkpoint(self, man, keep, old, new_entries, gone, changed, complete):
+        """Save what is fully in: unchanged and finished files as they are, unfinished ones marked to be redone (their
+        ids kept, so any of their points already in are cleaned up next time), gone files still listed."""
+        files = dict(keep)
+        files.update({p: old[p] for p in gone})
+        pending = {p for p, _ in changed[complete:]}
+        for p, e in new_entries.items():
+            if p in pending:
+                ids = sorted(set(old.get(p, {}).get("ids", [])) | set(e["ids"]))
+                files[p] = {"mtime_ns": -1, "size": -1, "ids": ids, "project": e.get("project", "")}
+            else:
+                files[p] = e
+        self._commit(dict(man, files=files))
 
     # ------------------------------------------------------------ query
     def _filter(self, shelves, project):

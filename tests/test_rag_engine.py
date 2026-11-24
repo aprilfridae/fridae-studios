@@ -229,6 +229,58 @@ class EngineCases:
         hits = eng.query("glowing mushrooms", ["team"], 3, None)
         self.assertEqual([h["path"] for h in hits], [kit])
 
+    def test_failed_rebuild_never_looks_complete(self):
+        first = self.engine().sync()
+
+        class Other(FakeEmbedders):
+            model = "fake-other"
+
+            def dense(self, texts):
+                raise RuntimeError("model fell over")
+        with self.assertRaises(RuntimeError):
+            self.engine(Other()).sync()
+        with open(self.manifest, encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertEqual((man["model"], man["files"]), ("fake-other", {}))  # invalidated before the store was emptied
+        # the old model's engine does not take the emptied store for its index: it rebuilds
+        self.assertEqual(self.engine().sync()["embedded"], first["chunks"])
+
+    def test_killed_build_resumes(self):
+        for i in range(12):
+            p = write(os.path.join(self.tmp, "kit", "More %d.md" % i), "# More %d\n\n## Part\n\nWords number %d here.\n" % (i, i))
+            self.files.append(("vault", "More %d" % i, p))
+        calls = {"n": 0}
+
+        class Dies(FakeEmbedders):
+            def dense(self, texts):
+                calls["n"] += 1
+                if calls["n"] == 4:
+                    raise RuntimeError("killed")
+                return super().dense(texts)
+        eng = self.engine(Dies())
+        eng.batch, eng.checkpoint_batches = 2, 1
+        with self.assertRaises(RuntimeError):
+            eng.sync()
+        with open(self.manifest, encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertTrue(man["files"])  # the checkpoint lists what was fully in
+        fresh = self.engine()
+        stats = fresh.sync()
+        total = sum(len(chunks.chunks_for_file(s, t, p, fresh.emb.count_tokens)) for s, t, p in self.files)
+        self.assertEqual(stats["chunks"], total)
+        self.assertEqual(stats["embedded"], total - 6)  # three batches of two were in before it died
+        self.assertEqual(sum(self.count_path(fresh, p) for _, _, p in self.files), total)
+        self.assertEqual(fresh.query("words number 7", ["vault"], 1, None)[0]["title"], "More 7")
+
+    def test_nothing_changed_writes_nothing(self):
+        eng = self.engine()
+        eng.sync()
+        before = os.stat(self.manifest)
+        stats = eng.sync()
+        after = os.stat(self.manifest)
+        self.assertEqual((stats["embedded"], stats["removed"]), (0, 0))
+        self.assertEqual((before.st_ino, before.st_mtime_ns), (after.st_ino, after.st_mtime_ns))
+
     def test_model_change_rebuilds(self):
         eng = self.engine()
         first = eng.sync()
