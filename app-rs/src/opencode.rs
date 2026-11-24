@@ -1126,6 +1126,14 @@ fn protected(home: &Path) -> Vec<String> {
     list
 }
 
+/// The files in the app's OpenCode store that hold a sign-in (`paths::app_secrets`): OpenCode's own (`auth.json`)
+/// and its tool servers' (`mcp-auth.json`), in its data folder (`XDG_DATA_HOME` is `<store>/data`). Only these: the
+/// rest of the data folder is OpenCode's working place (it saves cut-off tool output there for the agent to read).
+pub fn sign_in_files() -> Vec<PathBuf> {
+    let data = store().join("data").join("opencode");
+    vec![data.join("auth.json"), data.join("mcp-auth.json")]
+}
+
 /// Where the app keeps OpenCode's own data, for the other gate (`acp::Rules`).
 pub fn own_store() -> PathBuf {
     store()
@@ -3423,6 +3431,16 @@ mod tests {
         let mut r = permissions(true, "c1", &[], &f, &[]);
         deny_secrets(&mut r, &paths::app_secrets(), f.location);
         assert_eq!(decides(&r, "read", &format!("{}/token", crate::github::folder().display())), "deny");
+        // OpenCode's own sign-in is, its data folder around it is not: it saves cut-off tool output there for the
+        // agent to read and search (a deny rule would beat every mode)
+        let data = own_store().join("data").join("opencode");
+        for a in ["read", "grep"] {
+            assert_eq!(decides(&r, a, &data.join("auth.json").display().to_string()), "deny", "{a}");
+            assert_eq!(decides(&r, a, &data.join("mcp-auth.json").display().to_string()), "deny", "{a}");
+        }
+        for own in [data.join("tool-output/tool_1"), data.join("storage/part/x.json")] {
+            assert_ne!(decides(&r, "read", &own.display().to_string()), "deny", "{}", own.display());
+        }
     }
 
     #[test]

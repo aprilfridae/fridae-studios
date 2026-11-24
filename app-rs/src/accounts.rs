@@ -365,6 +365,34 @@ fn real_folder(dir: &Path) -> bool {
 /// home's `Library`, where the account's own keychain is (`KEYCHAIN`), with that keychain's password beside them.
 const SIGN_IN_PLACES: [&str; 5] = [".credentials.json", ".claude.json", ".gemini", "Library", KEYCHAIN_KEY];
 
+/// The files in an account's folder that hold its sign-in, for the read rules (`paths::app_secrets`): Claude Code's
+/// credentials and account files, agy's sign-in files when it kept one without a keychain, the account's own
+/// keychain folder and that keychain's password. Only these: the rest of the folder is the tool's own working place
+/// (Claude Code spills large tool outputs, plans and memory there and tells the model to read them), and a deny
+/// rule would block that even in bypass mode.
+pub const SIGN_IN_FILES: [&str; 8] = [
+    ".credentials.json",
+    ".claude.json",
+    KEYCHAIN_KEY,
+    "Library/Keychains",
+    ".gemini/oauth_creds.json",
+    ".gemini/google_accounts.json",
+    ".gemini/mcp-oauth-tokens.json",
+    ".gemini/antigravity/oauth_creds.json",
+];
+
+/// Those files for every account folder there is: each AI's listed accounts, and any other folder still in
+/// `base()` (a removed account's that could not all be deleted).
+pub fn sign_in_files() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = AIS.iter().flat_map(|ai| list(ai).into_iter().map(|n| base().join(n))).collect();
+    for e in fs::read_dir(base()).into_iter().flatten().flatten() {
+        if !dirs.contains(&e.path()) {
+            dirs.push(e.path());
+        }
+    }
+    dirs.iter().flat_map(|d| SIGN_IN_FILES.iter().map(move |f| d.join(f))).collect()
+}
+
 /// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the
 /// sign-in's own place, then the rest. A folder that has been swapped for a link: the link is removed and nothing
 /// else, never what it leads to. Something in it that cannot be deleted as it is (a folder a tool left read-only)

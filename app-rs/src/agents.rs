@@ -6234,7 +6234,7 @@ mod tests {
             let p = p.display().to_string();
             assert!(denied.contains(&format!("Read(/{p})")) && denied.contains(&format!("Read(/{p}/**)")), "{p}: {denied:?}");
         }
-        for must in [crate::github::folder(), paths::config_file(), crate::accounts::base(), crate::opencode::own_store()] {
+        for must in [crate::github::folder(), paths::config_file()] {
             assert!(paths::app_secrets().contains(&must), "{}", must.display());
         }
         assert_eq!(claude_rule("Read", r"C:\Users\a\AppData\Fridae Studios\github", true, true), "Read(//c/Users/a/AppData/Fridae Studios/github/**)");
@@ -6244,6 +6244,45 @@ mod tests {
         let args: Vec<String> = ClaudeLaunch::new(&s).args.iter().map(|a| a.to_string_lossy().to_string()).collect();
         let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
         assert!(args[at..].contains(&format!("Read(/{}/**)", crate::github::folder().display())));
+    }
+
+    #[test]
+    fn a_second_account_reads_its_own_working_files_but_never_its_sign_in() {
+        crate::accounts::stand_in_tagged("rd");
+        let denied = claude_denied();
+        let blocked = |path: &std::path::Path| {
+            let path = path.display().to_string();
+            denied.iter().filter_map(|r| r.strip_prefix("Read(/").and_then(|r| r.strip_suffix(')'))).any(|p| match p.strip_suffix("/**") {
+                Some(dir) => path.starts_with(&format!("{dir}/")),
+                None => path == p,
+            })
+        };
+        // Claude Code on a second account has CLAUDE_CONFIG_DIR in its folder, spills big tool outputs, plans and
+        // memory there and tells the model to read them: a deny rule would beat even bypass
+        let config = crate::accounts::base().join("claude-2-rd");
+        for own in [config.join("projects/-work/0b1c/tool-results/toolu_1.txt"), config.join("plans/a-plan.md"), config.join("projects/-work/memory/MEMORY.md"), config.join("todos/t.json")] {
+            assert!(!blocked(&own), "{}", own.display());
+        }
+        // OpenCode's data folder: cut-off tool output it tells the agent to read
+        let data = crate::opencode::own_store().join("data/opencode");
+        assert!(!blocked(&data.join("tool-output/tool_1")) && !blocked(&data.join("storage/session/x.json")));
+        // while every sign-in file is
+        let gemini = crate::accounts::base().join("gemini-2-rd");
+        for secret in [
+            config.join(".credentials.json"),
+            config.join(".claude.json"),
+            gemini.join(".gemini/oauth_creds.json"),
+            gemini.join(".gemini/google_accounts.json"),
+            gemini.join("Library/Keychains/fridae.keychain-db"),
+            gemini.join(".fridae-keychain-key"),
+            data.join("auth.json"),
+            data.join("mcp-auth.json"),
+            crate::github::folder().join("token"),
+            paths::config_file(),
+            paths::guard_copy(),
+        ] {
+            assert!(blocked(&secret), "{}", secret.display());
+        }
     }
 
     #[test]
@@ -8038,7 +8077,12 @@ mod tests {
         let b = chat("c-launch-claude-1", "claude", 1);
         let l = launches(&b, "Carry on");
         assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
-        assert!(!l[0].0.contains("claude-2-standin"));
+        // (the account's sign-in files are named, in the read rules every turn gets, and nothing else of it)
+        let mut key = l[0].0.clone();
+        for f in crate::accounts::SIGN_IN_FILES {
+            key = key.replace(&format!("{}/{f}", folder("claude")), "");
+        }
+        assert!(!key.contains("claude-2-standin"));
         // Gemini on the second account: agy's HOME is the account's own home, no key reaches it, and the app's tool
         // server has the app's own HOME back
         let c = chat("c-launch-gemini-2", "gemini", 2);

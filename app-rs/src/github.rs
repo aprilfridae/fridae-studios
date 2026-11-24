@@ -855,7 +855,11 @@ pub fn push(path: &str) -> Value {
     if let Err(why) = check_target(&dir, &repo, &remote) {
         return fail(&why);
     }
-    start_job(path, &format!("Sending to {repo} on GitHub..."), move || push_branch(&dir, &remote, &branch, token))
+    // checked again in the job, right before git runs: the folder's git setup may have changed since the press
+    start_job(path, &format!("Sending to {repo} on GitHub..."), move || match check_target(&dir, &repo, &remote) {
+        Ok(()) => push_branch(&dir, &remote, &branch, token),
+        Err(why) => (false, why),
+    })
 }
 
 /// Open a GitHub page in the browser: the sign-in page, the app's settings page there, or a project's repository.

@@ -632,11 +632,15 @@ pub fn app_secrets() -> Vec<PathBuf> {
         // the settings (the Gemini key) and their guarded copy
         config_file(),
         guard_copy(),
-        // the second accounts' sign-ins, Fridae's own OpenCode sign-in, and the GitHub sign-in
-        crate::accounts::base(),
-        crate::opencode::own_store(),
+        // the GitHub sign-in (the folder holds nothing else)
         crate::github::folder(),
     ]
+    .into_iter()
+    // the second accounts' and Fridae's own OpenCode sign-in files: those files only, never the folders around them,
+    // where the tools keep their own working files (a deny rule beats every mode, bypass too)
+    .chain(crate::accounts::sign_in_files())
+    .chain(crate::opencode::sign_in_files())
+    .collect()
 }
 
 /// One place no AI's file tools may write, for the gates the app itself keeps (OpenCode's permission rules, and
