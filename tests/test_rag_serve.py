@@ -19,6 +19,7 @@ import numpy as np
 
 from rbxrag import models, serve, setup
 from rbxrag.engine import Engine
+from rbxrag.stores import MemStore
 from tests.test_rag_engine import FakeEmbedders, write
 
 try:
@@ -44,6 +45,22 @@ def call(base, path, body=None, token=TOKEN, timeout=5):
                 return e.code, json.load(e)
             except ValueError:
                 return e.code, None
+
+
+class env_file:
+    """An endpoint file for rbx_vault, as the app writes it."""
+
+    def __init__(self, base, token=TOKEN):
+        self.data = {"url": base, "token": token}
+
+    def __enter__(self):
+        fd, self.path = tempfile.mkstemp(prefix="rag-endpoint-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(self.data, f)
+        return self.path
+
+    def __exit__(self, *exc):
+        os.remove(self.path)
 
 
 def wait_for(cond, timeout=10.0):
@@ -291,22 +308,21 @@ class NoNetworkTests(unittest.TestCase):
     def test_no_network_in_query(self):
         kit = Kit(self)
         tried = []
-        real = socket.create_connection
+        real = socket.socket.connect
 
-        def guarded(address, *a, **kw):
-            host = address[0]
-            if host not in ("127.0.0.1", "localhost", "::1"):
+        def guarded(sock, address, *a, **kw):  # every TCP/UDP connect, whatever library makes it
+            host = address[0] if isinstance(address, tuple) else address
+            if host not in ("127.0.0.1", "::1"):
                 tried.append(host)
                 raise OSError("network blocked in this test: %s" % host)
-            return real(address, *a, **kw)
+            return real(sock, address, *a, **kw)
 
         emb = models.LightEmbedders(dense=FakeDenseModel(), sparse=FakeSparseModel(), reranker=FakeReranker())
         self.assertEqual(emb.dim, 384)
         emb.dim = 64  # the stand-in dense model gives 64 numbers
-        client = QdrantClient(path=os.path.join(kit.tmp, "rag", "light"))
-        self.addCleanup(client.close)
-        with mock.patch.object(socket, "create_connection", guarded):
-            svc = serve.Service("light", lambda: kit.engine(client, emb))
+        store = MemStore(os.path.join(kit.tmp, "rag", "light"))  # Light's own store
+        with mock.patch.object(socket.socket, "connect", guarded):
+            svc = serve.Service("light", lambda: kit.engine(store, emb))
             srv = serve.make_server(svc, TOKEN, 0)
             threading.Thread(target=srv.serve_forever, daemon=True).start()
             self.addCleanup(srv.server_close)
@@ -315,9 +331,13 @@ class NoNetworkTests(unittest.TestCase):
             svc.start()
             self.assertTrue(wait_for(lambda: svc.ready), svc.error)
             code, body = call(base, "/query", {"q": "shiny coins meadow", "shelves": ["guides", "yours"], "k": 2})
+            with env_file(base) as path, mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": path, "RBXKIT_PROJECT": ""}):
+                import rbxvault
+                out = rbxvault.rag_search("shiny coins meadow", ["guides", "yours"], 2)
         self.assertEqual(code, 200)
         self.assertEqual(body["hits"][0]["title"], "Coins")
         self.assertIsInstance(body["hits"][0]["score"], float)
+        self.assertIsNotNone(out)  # rbx_vault's call reached the service too, on 127.0.0.1 only
         self.assertEqual(tried, [])
 
 
