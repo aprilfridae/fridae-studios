@@ -106,12 +106,15 @@ class WriteTests(NotesTestCase):
         self.assertEqual(sorted(os.listdir(self.tmp)), ["My Gäme é", "home é"], "nothing written outside the notes folder")
 
     def test_duplicates_get_a_number(self):
-        for _ in range(3):
-            self.vault("note", text="same", title="Palette")
+        # the same title again is refused (rbxupkeep's filing check); with force it gets a number
+        self.vault("note", text="same", title="Palette")
+        self.assertTrue(self.vault("note", text="same", title="Palette").startswith("Not saved"))
+        for _ in range(2):
+            self.vault("note", text="same", title="Palette", force=True)
         self.assertEqual(self.files(os.path.join(self.home, "notes")), ["Palette 2.md", "Palette 3.md", "Palette.md"])
 
     def test_concurrent_writers_lose_nothing(self):
-        threads = [threading.Thread(target=self.vault, args=("note",), kwargs={"text": "n%d" % n, "title": "Same"})
+        threads = [threading.Thread(target=self.vault, args=("note",), kwargs={"text": "n%d" % n, "title": "Same", "force": True})
                    for n in range(15)]
         for t in threads:
             t.start()
@@ -137,7 +140,7 @@ class ManageTests(NotesTestCase):
 
     def test_forget_moves_to_trash(self):
         self.vault("note", text="wrong idea", title="Wrong idea")
-        self.vault("note", text="wrong idea again", title="Wrong idea")
+        self.vault("note", text="wrong idea again", title="Wrong idea", force=True)
         # a partial title moves nothing: it lists the candidates
         with self.assertRaises(KitError) as cm:
             self.vault("forget", title="wrong", scope="all")

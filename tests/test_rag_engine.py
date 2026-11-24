@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 import zlib
 
+import rbxpaths
 from rbxrag import chunks
 from rbxrag import engine
 from rbxrag.engine import PLANS, Engine
@@ -19,6 +20,19 @@ try:
     from qdrant_client import QdrantClient, models
 except ImportError:  # pragma: no cover
     QdrantClient = None
+
+
+def setUpModule():
+    # a query reads the notes home's superseded.json: never the real one
+    global _HOME, _PATCH
+    _HOME = tempfile.mkdtemp(prefix="rag engine home ")
+    _PATCH = mock.patch.object(rbxpaths, "HOME_DIR", _HOME)
+    _PATCH.start()
+
+
+def tearDownModule():
+    _PATCH.stop()
+    shutil.rmtree(_HOME, True)
 
 
 def words(text):
@@ -121,6 +135,37 @@ class EngineCases:
             p = write(os.path.join(self.tmp, "kit", "Filler %d.md" % i),
                       "# Filler %d\n\n## Events\n\nConnect to an event and react when the property changes.\n" % i)
             self.files.append(("vault", "Filler %d" % i, p))
+
+    def test_superseded_ranks_below_its_replacement(self):
+        # Bravo matches the query best by its words; a newer note says it supersedes Bravo
+        new = write(os.path.join(self.tmp, "kit", "Bravo two.md"),
+                    "---\nsupersedes: \"Bravo\"\n---\n# Bravo two\n\n## Lanterns\n\nIn the forest a torch keeps ghosts "
+                    "away now.\n")
+        self.files.append(("yours", "Bravo two", new))
+        eng = self.engine()
+        eng.sync()
+        hits = eng.query("haunted forest lantern ghosts", ["vault", "yours", "guides"], 5, None)
+        titles = [h["title"] for h in hits]
+        self.assertLess(titles.index("Bravo two"), titles.index("Bravo"), "never dropped, ranked below")
+        self.assertEqual(hits[titles.index("Bravo")]["replaced_by"], "Bravo two")
+        self.assertNotIn("replaced_by", hits[titles.index("Bravo two")])
+        # the claim goes away when the newer note changes (read again only because it changed)
+        write(new, "# Bravo two\n\n## Lanterns\n\nIn the forest a torch keeps ghosts away now.\n", bump=10 ** 9)
+        eng.sync()
+        hits = eng.query("haunted forest lantern ghosts", ["vault", "yours", "guides"], 5, None)
+        self.assertEqual(hits[0]["title"], "Bravo")
+        self.assertNotIn("replaced_by", hits[0])
+
+    def test_superseded_through_the_sidecar(self):
+        home = os.path.join(self.tmp, "home")
+        write(os.path.join(home, "notes", "superseded.json"), json.dumps({"Charlie": {"by": "Alpha", "date": "x"}}))
+        eng = self.engine()
+        eng.sync()
+        with mock.patch.object(rbxpaths, "HOME_DIR", home):
+            hits = eng.query("build a rocket from scrap metal", ["vault", "yours", "guides"], 3, None)
+        charlie = next(h for h in hits if h["title"] == "Charlie")
+        self.assertEqual(charlie["replaced_by"], "Alpha")
+        self.assertNotEqual(hits[0]["title"], "Charlie")
 
     def test_keyword_ranking_joins_the_fusion(self):
         # a useless dense model and no sparse (Light's plan): the keyword search's first result still comes first

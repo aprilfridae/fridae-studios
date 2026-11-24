@@ -18,6 +18,7 @@
   rag       the knowledge index: its local search service, setup steps and check
   where     print the paths the kit uses
   lookup    search the knowledge for several questions at once (JSON in and out; the app's Librarian)
+  upkeep    check the user's notes and write a report to <notes>/upkeep/YYYY-MM-DD.md
 """
 import argparse, glob, importlib, json, os, shutil, subprocess, sys
 
@@ -284,7 +285,7 @@ def main(argv=None):
 
     names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen", "rbximage": "image",
              "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",
-             "rbxpromo.cli": "promo", "rbxrag.cli": "rag", "rbxstage": "stage"}
+             "rbxpromo.cli": "promo", "rbxrag.cli": "rag", "rbxstage": "stage", "rbxupkeep": "upkeep"}
     for mod, name in names.items():
         try:
             importlib.import_module(mod).register(sub)
