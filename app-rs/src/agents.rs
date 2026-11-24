@@ -4117,7 +4117,8 @@ impl Agent {
             // the chat so far, without the message that goes out again. A chat whose conversation had not begun (its
             // first message, or the first after a switch of AI) keeps what it was to be handed, or nothing
             let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-            if st.session.is_some() || (st.handover.is_none() && st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text")) {
+            let said = st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text");
+            if said && (st.session.is_some() || st.handover.is_none()) {
                 hand_over(&mut st, upto, ai_label(kind), true);
             }
             // what the ended turn had begun is not in the hand-over: the AI is told that it may find work done
@@ -6719,7 +6720,9 @@ mod tests {
         // the chat's first message: there is no chat so far
         let a = Agent::detached_for_test("c-roll-first", None);
         a.send("Make a door", &Ask::default());
+        got_session(&mut a.st.lock().unwrap(), "s-first".into()); // (Claude Code names its conversation before it answers)
         a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(a.st.lock().unwrap().session, None, "a new conversation on the other account");
         let again = a.st.lock().unwrap().resent_for_test[0].clone();
         assert_eq!(a.st.lock().unwrap().handover, None);
         a.resend(&again);
