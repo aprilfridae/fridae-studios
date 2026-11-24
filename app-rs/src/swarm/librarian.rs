@@ -306,14 +306,32 @@ pub fn parse_claims(text: &str, parts: usize) -> Option<Vec<Claim>> {
     if claims.is_empty() { None } else { Some(claims) }
 }
 
-/// Lowercase words, every mark that is not a letter or digit a space.
+/// Lowercase words, every mark that is not a letter or digit a space; an apostrophe is dropped (can't -> cant).
 fn words(text: &str) -> Vec<String> {
-    text.chars().map(|c| if c.is_alphanumeric() { c.to_lowercase().next().unwrap_or(c) } else { ' ' }).collect::<String>().split_whitespace().map(str::to_string).collect()
+    text.chars()
+        .filter(|c| !matches!(c, '\'' | '\u{2019}'))
+        .map(|c| if c.is_alphanumeric() { c.to_lowercase().next().unwrap_or(c) } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Words that turn a statement around (as words() writes them: can't is "cant").
+const NEGATIONS: &[&str] = &[
+    "not", "no", "never", "cannot", "none", "nobody", "nothing", "nowhere", "nor", "neither", "without", "dont", "doesnt", "didnt", "isnt", "arent", "wasnt",
+    "werent", "cant", "wont", "shouldnt", "mustnt", "wouldnt", "couldnt", "hasnt", "havent", "hadnt", "neednt", "aint", "shant",
+];
+
+/// A word a quote may never change, add or leave out: one that holds a number, or a negation.
+fn is_fact_word(w: &str) -> bool {
+    w.chars().any(char::is_numeric) || NEGATIONS.contains(&w)
 }
 
 /// Whether a quote stands in a passage: word for word after normalising spaces, case and punctuation, else with at
 /// least 90% of its words in one stretch of the passage a little longer than the quote (a word changed, added or
-/// left out). A quote of fewer than 3 words supports nothing.
+/// left out). The word that differs is never a number or a negation: every such word of the quote stands in the
+/// matched stretch, and the stretch has none the quote left out. A quote of fewer than 3 words supports nothing.
 pub fn quote_found(quote: &str, passage: &str) -> bool {
     let (q, p) = (words(quote), words(passage));
     if q.len() < QUOTE_MIN_WORDS || p.is_empty() {
@@ -325,9 +343,22 @@ pub fn quote_found(quote: &str, passage: &str) -> bool {
     let need = (q.len() as f64 * QUOTE_MATCH).ceil() as usize;
     let span = (q.len() + 2).min(p.len());
     (0..=p.len() - span).any(|at| {
-        let mut window: Vec<&String> = p[at..at + span].iter().collect();
-        let found = q.iter().filter(|w| window.iter().position(|x| x == w).map(|i| window.swap_remove(i)).is_some()).count();
-        found >= need
+        let window = &p[at..at + span];
+        let mut used = vec![false; span];
+        let mut found = 0;
+        for w in &q {
+            match (0..span).find(|&i| !used[i] && &window[i] == w) {
+                Some(i) => {
+                    used[i] = true;
+                    found += 1;
+                }
+                None if is_fact_word(w) => return false, // a number or negation the passage does not have here
+                None => {}
+            }
+        }
+        let (Some(first), Some(last)) = (used.iter().position(|&u| u), used.iter().rposition(|&u| u)) else { return false };
+        // a number or negation inside the stretch that the quote left out
+        found >= need && !(first..=last).any(|i| !used[i] && is_fact_word(&window[i]))
     })
 }
 
@@ -769,6 +800,29 @@ mod tests {
         assert!(!quote_found("keep the ThrowMeter 48 px from the top of the screen at all times", SAFE));
         // too short to support anything
         assert!(!quote_found("the drag", DRAGS));
+    }
+
+    #[test]
+    fn the_one_word_a_quote_may_change_is_never_a_number_or_a_negation() {
+        const VFX: &str = "Ambient emitters: at most 20 particles a second each, 4 emitters per area.";
+        assert!(quote_found("Ambient emitters: at most 20 particles a second each, 4 emitters per area", VFX));
+        // the fact itself changed: 20 -> 200
+        assert!(!quote_found("Ambient emitters: at most 200 particles a second each, 4 emitters per area", VFX));
+        // a number dropped from the middle of the stretch
+        assert!(!quote_found("Ambient emitters: at most particles a second each, 4 emitters per area", VFX));
+        // an ordinary word may still differ
+        assert!(quote_found("Ambient emitters: at most 20 particles a second each, 4 emitters per zone", VFX));
+        const TRADE: &str = "Players can not trade pets with friends in the hub or the market square.";
+        // "not" dropped, "not" added, a negation changed
+        assert!(!quote_found("Players can trade pets with friends in the hub or the market square", TRADE));
+        assert!(!quote_found("Players can trade pets with friends in the hub or the market square", &TRADE.replace("can not", "can't")));
+        assert!(!quote_found("Players can not trade pets with friends in the hub or the market square", &TRADE.replace("can not", "can")));
+        assert!(!quote_found("Players can never trade pets with friends in the hub or the market square", TRADE));
+        assert!(quote_found("Players can’t trade pets with friends in the hub or the market place", &TRADE.replace("can not", "can't")));
+        // the Librarian's check drops the altered quote, so the board never shows it
+        let parts = three();
+        let said = checked_answer(&parts, &line(3, "Emitters may use 200 particles a second.", "Ambient emitters: at most 200 particles a second each, 4 emitters per area", "VFX Budgets"), &|_| None);
+        assert!(!said.contains("200"), "{said}");
     }
 
     #[test]
