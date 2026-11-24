@@ -3323,7 +3323,8 @@ impl Agent {
         // turn runs on the user's own account, and the chat says so
         // (by the account's name, as the turn's account was decided: never by its place, which is another account's
         // when one before it was removed in the meantime)
-        let second_dir = account_name.as_deref().and_then(|name| crate::accounts::prepare_of(&kind, name));
+        // (ready: for Gemini with the account's own keychain open, so agy never makes the Mac ask for one)
+        let second_dir = account_name.as_deref().and_then(|name| crate::accounts::ready_of(&kind, name));
         let _ = account;
         if account_name.is_some() && second_dir.is_none() {
             // (as `turn_account` does for an account that was removed: the conversation was the second account's,
@@ -7925,6 +7926,64 @@ mod tests {
         let chat = st.handover.clone().expect("the chat so far goes with the message");
         assert!(chat.starts_with("[This chat carries on here in a new conversation") && chat.contains("User: Make a door") && !chat.contains("Carry on"), "{chat}");
         assert_eq!(st.log.iter().rev().find(|e| e["kind"] == "account").map(|e| e["account"].clone()), Some(json!(1)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_gemini_turn_on_an_added_account_has_that_accounts_keychain_opened_first_or_does_not_run_there() {
+        // (the Mac's keychain program is never run by a test: `accounts::SECURITY_FOR_TEST` notes what it would
+        // have been fed, and can be told to fail)
+        crate::accounts::stand_in_tagged("kkkkturn");
+        let home = crate::accounts::base().join("gemini-2-kkkkturn");
+        let _ = fs::remove_dir_all(&home);
+        let fed = || crate::accounts::SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).0.iter().filter(|(at, _)| *at == home).map(|(_, f)| f.split(' ').next().unwrap_or_default().to_string()).collect::<Vec<_>>();
+        let fails = |what: Option<&'static str>| {
+            let mut g = crate::accounts::SECURITY_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner());
+            g.0.retain(|(at, _)| *at != home);
+            g.1.retain(|(at, _)| *at != home);
+            if let Some(what) = what {
+                g.1.push((home.clone(), what));
+            }
+        };
+        let chat = |id: &str| {
+            let a = chat_on_first(id);
+            let mut st = a.st.lock().unwrap();
+            st.ai = Some("gemini".into());
+            st.account = 2;
+            st.account_name = Some("gemini-2-kkkkturn".into());
+            st.session = Some("on the second".into());
+            drop(st);
+            a
+        };
+        // the account's keychain is made (the first time) and unlocked, and agy is started in that home
+        fails(None);
+        let a = chat("c-keychain-turn");
+        let l = launches(&a, "Carry on");
+        assert_eq!(l.len(), 1);
+        assert_eq!(env_of(&l[0], "HOME"), Some(Some(home.to_string_lossy().to_string())));
+        assert_eq!(fed(), ["create-keychain", "unlock-keychain"]);
+        assert_eq!(a.st.lock().unwrap().account, 2);
+        // the next message: unlocked again, not made again
+        fails(None);
+        let l = launches(&a, "And on");
+        assert_eq!((l.len(), fed()), (1, vec!["unlock-keychain".to_string()]));
+        // it does not unlock: agy is not started in that home at all (it would make the Mac ask for a password on
+        // the screen); the message goes on the user's own account, in a new conversation handed the chat so far
+        fails(Some("unlock"));
+        let b = chat("c-keychain-locked");
+        let l = launches(&b, "Carry on");
+        assert_eq!(l.len(), 1);
+        assert_eq!(env_of(&l[0], "HOME"), None, "the user's own account: no home is set for agy");
+        assert!(!l[0].0.contains("gemini-2-kkkkturn"));
+        {
+            let st = b.st.lock().unwrap();
+            assert_eq!((st.account, st.session.clone(), st.account_name.clone()), (1, None, None));
+            assert!(st.handover.as_deref().is_some_and(|h| h.contains("User: Make a door") && !h.contains("Carry on")), "{:?}", st.handover);
+        }
+        assert_eq!(crate::accounts::state()["gemini"]["accounts"][0]["broken"], true, "Setup is told");
+        fails(None);
+        let _ = fs::remove_dir_all(&home);
+        crate::accounts::stand_in(false, false);
     }
 
     #[test]
