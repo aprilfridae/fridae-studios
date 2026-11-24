@@ -56,19 +56,10 @@ pub const NOT_SUPPORTED: &str = "not in the knowledge base (the passages did not
 /// A quote's words that must stand in one stretch of its passage, and the fewest words a quote may have.
 const QUOTE_MATCH: f64 = 0.9;
 const QUOTE_MIN_WORDS: usize = 3;
-/// A quote as posted and the whole answer, at most (words).
+/// A quote as posted, claims per part, and the whole answer, at most (words).
 const QUOTE_WORDS: usize = 25;
+const CLAIMS_PER_PART: usize = 2;
 const ANSWER_WORDS: usize = 250;
-
-/// Claims a part may get: more when the question has fewer parts (a one-part question often needs three or four facts;
-/// the knowledge exam found two a part could never answer one that needs three). The whole answer stays ANSWER_WORDS.
-pub fn claims_per_part(parts: usize) -> usize {
-    match parts {
-        0 | 1 => 4,
-        2 => 3,
-        _ => 2,
-    }
-}
 
 /// One passage found for a part.
 #[derive(Clone, Debug, PartialEq)]
@@ -207,10 +198,10 @@ pub fn prompt_for(question: &str, parts: &[Part]) -> String {
     while material.contains(&mark) {
         mark = paths::random_hex(1);
     }
-    prompt_with(&material, &mark, claims_per_part(parts.len()))
+    prompt_with(&material, &mark)
 }
 
-fn prompt_with(material: &str, mark: &str, per_part: usize) -> String {
+fn prompt_with(material: &str, mark: &str) -> String {
     format!(
         "You are the Librarian of a team of AI experts building a game in the app Fridae Studios. A team member asked \
          the question below on the team's board. You have no tools: answer with the answer's text only.\n\n\
@@ -222,7 +213,7 @@ fn prompt_with(material: &str, mark: &str, per_part: usize) -> String {
          - claim: one short sentence (at most 3 short lines for a whole part) that says only what the quote says.\n\
          - quote: the words of ONE passage that support the claim, copied exactly, at most 25 words.\n\
          - note: that passage's note title, exactly as shown after Note.\n\
-         - At most {per_part} claims per part. Answer only from the passages: never make an answer up and never add what \
+         - At most 2 claims per part. Answer only from the passages: never make an answer up and never add what \
          they do not say. A part whose passages hold nothing relevant to it gets no line; the app then answers it \
          \"{NOT_FOUND}\".\n\
          - No other text, no code fences, no @mentions.\n\n\
@@ -494,9 +485,8 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
         out.join("\n")
     };
     let count = |t: &str| t.split_whitespace().count();
-    let most = claims_per_part(parts.len());
-    let mut text = draw(most, QUOTE_WORDS);
-    for (per_part, quote_words) in [(most.min(2), QUOTE_WORDS), (1, QUOTE_WORDS), (1, 12)] {
+    let mut text = draw(CLAIMS_PER_PART, QUOTE_WORDS);
+    for (per_part, quote_words) in [(1, QUOTE_WORDS), (1, 12)] {
         if count(&text) <= ANSWER_WORDS {
             break;
         }
@@ -931,22 +921,6 @@ mod tests {
         let said = render(&parts, &claims, &[true; 6]);
         assert!(said.split_whitespace().count() <= 260, "{} words: {said}", said.split_whitespace().count());
         assert!(said.lines().filter(|l| l.starts_with("> ")).all(|l| l.split_whitespace().count() <= 30), "{said}");
-    }
-
-    #[test]
-    fn a_one_part_question_may_get_four_claims() {
-        // The knowledge exam: every Librarian answer to a three-fact question was wrong (0 of 17), as two claims a part
-        // could never hold three facts. Fewer parts leave room for more claims; the whole answer stays as short.
-        assert_eq!((claims_per_part(1), claims_per_part(2), claims_per_part(3), claims_per_part(6)), (4, 3, 2, 2));
-        let one = vec![Part { question: "how do I keep a vehicle smooth".into(), hits: vec![hit("Note", "word")] }];
-        assert!(prompt_for("q", &one).contains("At most 4 claims per part."));
-        assert!(prompt_for(ASKED, &split_parts(ASKED).into_iter().map(|q| Part { question: q, hits: vec![] }).collect::<Vec<_>>())
-            .contains("At most 2 claims per part."));
-        let claims: Vec<Claim> = (0..5)
-            .map(|i| Claim { part: 0, claim: format!("Fact number {i} said plainly."), quote: format!("fact {i} quoted from the note"), note: "Note".into() })
-            .collect();
-        let said = render(&one, &claims, &[true]);
-        assert!((0..4).all(|i| said.contains(&format!("Fact number {i}"))) && !said.contains("Fact number 4"), "{said}");
     }
 
     #[test]
