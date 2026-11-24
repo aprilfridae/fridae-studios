@@ -169,7 +169,7 @@ fn status() -> Value {
                "default_models": {"claude": "opus", "gemini": antigravity::default_model(), "chatgpt": codex::default_model(), "cursor": cursor::default_model(), "opencode": opencode::default_model()}},
         "studio": paths::studio_mcp().is_some(), "blender": blender_found(),
         "busy": agents::agents().iter().any(|a| a.busy()), "max_agents": MAX_AGENTS, "slots_used": agents::slots_used(), "models": MODELS,
-        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "swarm_ceiling": crate::swarm::ceiling(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
+        "limits": crate::limits::state(), "plugin": plugin::status(), "git": projects::git_installed(), "gemini": !paths::gemini_key().is_empty(), "gemini_api": paths::gemini_api_on(), "gemini_images": paths::gemini_images_on(), "expert_summaries": paths::expert_summaries_on(), "strong_lead": paths::strong_lead_on(), "swarm_ceiling": crate::swarm::ceiling(), "env_keys": paths::env_keys_on(), "settings_put_back": paths::put_back_at_start(), "version": VERSION, "update": update::state(), "commands": paths::allowed_commands(),
     })
 }
 
@@ -535,6 +535,15 @@ fn post(path: &str, body: Value) -> Reply {
                 });
             }
             send_json(json!({"ok": true, "expert_summaries": paths::expert_summaries_on()}))
+        }
+        "/api/strong-lead" => {
+            // "Keep the Lead on a strong model": on unless switched off
+            if let Some(on) = body["on"].as_bool() {
+                paths::update_config(|cfg| {
+                    cfg.insert(crate::swarm::STRONG_LEAD_KEY.into(), json!(on));
+                });
+            }
+            send_json(json!({"ok": true, "strong_lead": paths::strong_lead_on()}))
         }
         // Setup's knowledge index (`rag`): the mode (a guarded setting), a setup step, a test query, a rebuild
         "/api/rag/mode" => send_json(crate::rag::choose(&body)),

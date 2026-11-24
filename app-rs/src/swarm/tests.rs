@@ -238,10 +238,27 @@ fn board_mentions_wake_parked_members_and_only_those() {
     turn_ended(&c, false);
     assert!(sent_to(&c.id).iter().any(|t| t.contains("@alpha (msg): @gamma which folder")));
     assert!(sent_to(&b.id).len() == 1);
-    // the Librarian is started on its first question, on a cheap OpenCode model
+    // a question to the Librarian is answered by the app, with no agent, while the Librarian shows as working
+    let run = run_of(&lead.id);
     post_from(&a.id, &["@librarian".into()], "msg", "how do we stop exploiters firing this remote?").unwrap();
+    assert!(member_id(&lead.id, "librarian").is_empty(), "no agent for a question");
+    let asked: Vec<_> = LIBRARIAN_ASKED.lock().unwrap().iter().filter(|q| q.0 == run).cloned().collect();
+    assert_eq!(asked, vec![(run.clone(), "alpha".to_string(), "how do we stop exploiters firing this remote?".to_string())]);
+    let lib_status = |lead: &str| api_get(lead, None)["members"].as_array().unwrap().iter().find(|m| m["name"] == "librarian").unwrap()["status"].clone();
+    assert_eq!(lib_status(&lead.id), "working");
+    librarian_answered(&run, "alpha", "1. Validate on the server (Roblox security). Ask @gamma too.");
+    assert_eq!(lib_status(&lead.id), "parked");
+    let answer = read_board(&run).into_iter().last().unwrap();
+    assert_eq!((answer["from"].as_str(), answer["kind"].as_str()), (Some("librarian"), Some("msg")));
+    assert_eq!(answer["to"], json!(["@alpha"]), "to the asker only: an @ in the answer wakes nobody");
+    assert!(sent_to(&a.id).iter().any(|t| t.contains("@librarian (msg): 1. Validate on the server")), "the asker is woken with it");
+    assert_eq!(sent_to(&c.id).len(), 1);
+    // "remember: ..." still starts the Librarian's agent, on a cheap OpenCode model
+    post_from(&a.id, &["@librarian".into()], "msg", "remember: remotes are validated on the server").unwrap();
+    assert_eq!(LIBRARIAN_ASKED.lock().unwrap().iter().filter(|q| q.0 == run).count(), 1, "not answered by the app");
     let lib = member_id(&lead.id, "librarian");
     assert!(!lib.is_empty());
+    assert!(sent_to(&lib)[0].contains("remember: remotes are validated"));
     assert_eq!(agents::get(&lib).unwrap().ai(), "opencode");
     assert!(cheap(agents::get(&lib).unwrap().model().as_deref()));
     assert!(member_prompt(&lib).contains("not in the knowledge base"));
@@ -299,4 +316,48 @@ fn a_ceiling_of_one_works_one_at_a_time() {
     assert_eq!(sent_to(&b.id).len(), 1, "resumed once alpha is parked");
     TEST_CEILING.with(|c| c.set(None));
     done(&lead.id);
+}
+
+#[test]
+fn a_runs_lead_never_plans_on_a_cheap_model() {
+    let ids = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    // the strongest: a stronger family first, then "pro"/"max", then the newer; never cheap or light ("gemini" is no "mini")
+    assert_eq!(strongest(&ids(&["x/kimi-k3", "x/gpt-5.6-luna", "x/gpt-6-luna"])).as_deref(), Some("x/gpt-6-luna"));
+    assert_eq!(strongest(&ids(&["x/qwen3.8-max", "x/kimi-k3", "x/kimi-k3.1-pro"])).as_deref(), Some("x/kimi-k3.1-pro"));
+    assert_eq!(strongest(&ids(&["x/gemini-4-argon", "x/grok-4.7"])).as_deref(), Some("x/gemini-4-argon"));
+    assert_eq!(strongest(&ids(&["x/deepseek-v4-pro", "x/glm-6", "x/gpt-5-mini", "x/claude-haiku-5-5", "x/hy4-flash-free"])), None);
+    assert_eq!(strongest(&ids(&["x/deepseek-v4-pro", "x/hy4"])).as_deref(), Some("x/hy4"), "a family not named still beats none");
+    // a world: OpenCode's plan has Kimi; Claude and Gemini are set up
+    let plan = |ai: &str| (ai == "opencode").then(|| "opencode-go/kimi-k3".to_string());
+    let none = |_: &str| None;
+    let all = |_: &str| true;
+    let only_gemini = |ai: &str| ai == "gemini";
+    let nothing = |_: &str| false;
+    let world = LeadWorld { strong_of: &plan, installed: &all, gemini_default: Some("gemini-4-pro".into()) };
+    let deepseek = Some("opencode-go/deepseek-v4.1-flash");
+    let glm = Some("opencode-go/glm-5.3");
+    // a Lead on DeepSeek or GLM: the same AI's strong model
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &world), Some(("opencode".into(), Some("opencode-go/kimi-k3".into()))));
+    assert_eq!(lead_model(true, true, "opencode", glm, &world), Some(("opencode".into(), Some("opencode-go/kimi-k3".into()))));
+    // not a Lead, the setting off, or a model that is not cheap: as it is
+    assert_eq!(lead_model(false, true, "opencode", deepseek, &world), None);
+    assert_eq!(lead_model(true, false, "opencode", deepseek, &world), None);
+    assert_eq!(lead_model(true, true, "opencode", Some("opencode-go/kimi-k3"), &world), None);
+    assert_eq!(lead_model(true, true, "claude", Some("opus"), &world), None);
+    assert_eq!(lead_model(true, true, "opencode", None, &world), None);
+    // no strong model on the AI (never one billed per use: `opencode::strong_model`): Claude's Opus, else Gemini's default
+    let w = LeadWorld { strong_of: &none, installed: &all, gemini_default: Some("gemini-4-pro".into()) };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), Some(("claude".into(), Some("opus".into()))));
+    let w = LeadWorld { strong_of: &none, installed: &only_gemini, gemini_default: Some("gemini-4-pro".into()) };
+    assert_eq!(lead_model(true, true, "opencode", glm, &w), Some(("gemini".into(), Some("gemini-4-pro".into()))));
+    // nothing stronger set up: it runs as it is
+    let w = LeadWorld { strong_of: &none, installed: &nothing, gemini_default: None };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), None);
+    // an AI's "strong" model that is cheap all the same is not taken
+    let cheap_too = |_: &str| Some("opencode-go/glm-6".to_string());
+    let w = LeadWorld { strong_of: &cheap_too, installed: &nothing, gemini_default: None };
+    assert_eq!(lead_model(true, true, "opencode", deepseek, &w), None);
+    assert_eq!((cheap_name("opencode-go/deepseek-v4.1-flash"), cheap_name("opencode-go/glm-5.3")), ("DeepSeek", "GLM"));
+    // verifiers and the Librarian keep their own rules
+    assert_eq!(verifier_model("opencode", Some("opencode-go/glm-5.3"), None), ("claude".to_string(), None));
 }

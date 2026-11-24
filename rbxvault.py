@@ -1014,7 +1014,8 @@ def read_file_section(shelf, key, heading, docs):
     if not s["level"] and p["description"]:
         body = "> " + p["description"] + "\n\n" + body.lstrip()
     sub = [(x["level"], x["heading"]) for x in p["sections"] if s["start"] < x["start"] < s["end"]]
-    return "%s › %s (%s)\n\n%s" % (head, s["heading"], size_text(s_size(p, s)), cap_text(body, sub, key, shelf))
+    out = "%s › %s (%s)\n\n%s" % (head, s["heading"], size_text(s_size(p, s)), cap_text(body, sub, key, shelf))
+    return out + ("\n\n" + guide_excerpt_tag(key) if shelf == "guides" else "")
 
 
 def s_size(p, s):
@@ -1128,6 +1129,13 @@ def _vault_note_lines(rank, d):
     return out
 
 
+def guide_excerpt_tag(title):
+    """The line under every piece of a guide that search or a section read hands out: a piece is for finding the
+    guide, and the agent loads the whole guide before acting on it."""
+    return ("[Excerpt from guide: %s — do not act on this snippet; call rbx_guide with topic `%s` for the full "
+            "procedure first.]" % (title, title))
+
+
 def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
     """One section: rank, shelf, title › heading, size, a snippet (or the given passage lines) and the arguments
     that read exactly it."""
@@ -1143,6 +1151,8 @@ def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
         if not s["level"] and p["description"]:
             text = p["description"] + "\n" + text
         out += ["   " + x for x in snippet(text, terms)]
+    if shelf == "guides":
+        out.append("   " + guide_excerpt_tag(d["title"]))
     if args is None:
         args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
     out.append("   read: " + json.dumps(args, ensure_ascii=False))
@@ -1248,6 +1258,28 @@ def _rag_hit_lines(rank, hit, terms, budget=0):
     return _section_lines(rank, shelf, d, p, s, terms, args, lines)
 
 
+def _rag_hits(end, q, shelves, k):
+    """The knowledge index's hits for q (a non-empty list), or None when it answers anything else. Raises on a failed
+    call (the callers turn every failure into the keyword search)."""
+    url, token = end
+    body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
+    req = urllib.request.Request(url + "/query", data=body, headers={
+        "Content-Type": "application/json", "Authorization": "Bearer " + token})
+    with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
+        if r.status != 200:
+            return None
+        hits = json.load(r).get("hits")
+    return hits if isinstance(hits, list) and hits else None
+
+
+def _close_quietly(e):
+    if hasattr(e, "close"):  # an HTTP error answer holds its connection open
+        try:
+            e.close()
+        except Exception:
+            pass
+
+
 def rag_search(q, shelves, k):
     """Search text from the knowledge index service (its endpoint file, see rag_endpoint), in the same format as the
     keyword search, or None on any failure (not running, slower than 3 s, an error, a bad answer, no hits) so the
@@ -1255,16 +1287,9 @@ def rag_search(q, shelves, k):
     end = rag_endpoint()
     if not end:
         return None
-    url, token = end
     try:
-        body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
-        req = urllib.request.Request(url + "/query", data=body, headers={
-            "Content-Type": "application/json", "Authorization": "Bearer " + token})
-        with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
-            if r.status != 200:
-                return None
-            hits = json.load(r).get("hits")
-        if not isinstance(hits, list) or not hits:
+        hits = _rag_hits(end, q, shelves, k)
+        if hits is None:
             return None
         terms = query_terms(q)
         out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
@@ -1285,12 +1310,113 @@ def rag_search(q, shelves, k):
             "\nThe lines under each result are its matching passage.\nNext: rbx_vault action 'read' with the "
             "arguments shown, only if you need more, for ONE section at a time.")
     except Exception as e:  # never an error from here: the keyword search is the answer
-        if hasattr(e, "close"):  # an HTTP error answer holds its connection open
-            try:
-                e.close()
-            except Exception:
-                pass
+        _close_quietly(e)
         return None
+
+
+# ------------------------------------------------------------------ several questions at once (the app's Librarian)
+# The swarm's Librarian answers a board question without an agent: the app splits it into its parts and asks for
+# all of them in one call (`rbx lookup`), then has one cheap model write the answer from these passages.
+LOOKUP_K = 3  # passages per part
+LOOKUP_MAX = 6  # parts per call
+LOOKUP_CHARS = 600  # one passage at most
+
+
+def _shelves_now():
+    return [s for s in SHELVES if s != "game" or project_dir()]
+
+
+def _rag_passages(end, q, shelves, k):
+    """[{shelf, title, heading, text}] from the knowledge index, or None on any failure or no usable hit."""
+    try:
+        hits = _rag_hits(end, q, shelves, k)
+    except Exception as e:
+        _close_quietly(e)
+        return None
+    out = []
+    for hit in (hits or [])[:k]:
+        if not isinstance(hit, dict) or hit.get("shelf") not in SHELVES or not hit.get("title"):
+            continue
+        text = hit.get("text") if isinstance(hit.get("text"), str) else ""
+        lines = passage(text, LOOKUP_CHARS) if text.strip() else []
+        if lines:
+            title = _team_label(hit["title"]) if hit["shelf"] == "team" else str(hit["title"])
+            out.append({"shelf": hit["shelf"], "title": title, "heading": str(hit.get("heading") or ""),
+                        "text": " ".join(lines)})
+    return out or None
+
+
+def _cut(text, n=LOOKUP_CHARS):
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[:n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _keyword_passages(q, shelves, k, idx, docs):
+    """[{shelf, title, heading, text}] from the keyword search: a vault note's TL;DR and its lines that match best, a
+    section's matching lines."""
+    terms = query_terms(q)
+    pool, _ = _keyword_pool(q, shelves, k, idx, docs)
+    out = []
+    for _, shelf, d in pool:
+        if shelf == "vault":
+            bullets, _ = tldr_parts(d)
+            try:
+                lines = snippet(split_front(read(os.path.join(KB, d["path"])))[1], terms, n=3, width=200)
+            except (OSError, UnicodeDecodeError):
+                lines = []
+            text = " ".join([b[2:] if b.startswith("- ") else b for b in bullets[:2]] + lines)
+            out.append({"shelf": "vault", "title": d["title"], "heading": "", "text": _cut(text)})
+            continue
+        try:
+            p = parse_sections(_reader_text(d))
+        except (OSError, UnicodeDecodeError):
+            continue
+        s = p["sections"][d["i"]] if d["i"] < len(p["sections"]) else None
+        if not s:
+            continue
+        lines = snippet(p["body"][s["start"]:s["own_end"]], terms, n=4, width=200)
+        out.append({"shelf": shelf, "title": d.get("label") or d["title"], "heading": d["heading"],
+                    "text": _cut(" ".join(lines))})
+    return out
+
+
+def _lookup_one(q, shelves, k, end, corpora):
+    """One part's passages: the knowledge index when it answers, else the keyword search (corpora() loads its
+    indexes once for every part)."""
+    hits = _rag_passages(end, q, shelves, k) if end else None
+    if hits is not None:
+        return {"query": q, "via": "rag", "hits": hits}
+    idx, docs = corpora()
+    return {"query": q, "via": "keyword", "hits": _keyword_passages(q, shelves, k, idx, docs)}
+
+
+def lookup(queries, k=LOOKUP_K):
+    """Passages for several questions at once, every part searched at the same time: [{query, via, hits:
+    [{shelf, title, heading, text}]}] in the order asked, or a part's {"error"} when its search failed."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    queries = [" ".join(str(q).split()) for q in queries if str(q).strip()][:LOOKUP_MAX]
+    if not queries:
+        return []
+    k = max(1, min(int(k), 8))
+    shelves, end = _shelves_now(), rag_endpoint()
+    loaded, lock = {}, threading.Lock()
+
+    def corpora():
+        with lock:
+            if not loaded:
+                loaded["idx"] = load_index() if os.path.isdir(KB) else None
+                loaded["docs"] = section_corpus()
+            return loaded["idx"], loaded["docs"]
+
+    def one(q):
+        try:
+            return _lookup_one(q, shelves, k, end, corpora)
+        except Exception as e:  # one part failing never loses the others
+            return {"query": q, "via": "", "hits": [], "error": "%s: %s" % (type(e).__name__, e)}
+
+    with ThreadPoolExecutor(max_workers=len(queries)) as ex:
+        return list(ex.map(one, queries))
 
 
 def _list(folder):

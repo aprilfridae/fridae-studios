@@ -717,6 +717,8 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 /// - `expert_ai`, `lead_picks_ai`: which AI and model experts run on (a bigger model costs more of a plan)
 /// - `expert_summaries`: the app writes a plain-English summary of each expert's work (`expert_summaries_on`); on
 ///   unless set to false. It is a small call on the user's OpenCode plan, so a guard keeps it the user's choice.
+/// - `strong_lead`: a run's Lead never runs on a cheap model (`strong_lead_on`, `swarm::lead_model`); on unless set to
+///   false. Off lets a Lead plan on DeepSeek or GLM, so a guard keeps it the user's choice.
 /// - `rag_mode`: the knowledge index, "off" | "light" | "heavy" (`rag_mode`, `rag`): Heavy has the app run Qdrant and
 ///   use the user's Ollama, so it stays the user's choice
 /// - `second_accounts`: whether an AI has a second account, and the name of the app's folder for it (`accounts`):
@@ -725,7 +727,7 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::swarm::STRONG_LEAD_KEY, "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -740,6 +742,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "expert_ai" => "Experts table",
         "lead_picks_ai" => "Lead may pick the AI",
         "expert_summaries" => "Plain-English summary of each expert's work",
+        "strong_lead" => "Keep the Lead on a strong model",
         "rag_mode" => "Knowledge index",
         "swarm_ceiling" => "Most experts working at once",
         "second_accounts" => "Second accounts",
@@ -928,7 +931,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
                 .collect();
             Some(Value::Array(list))
         }
-        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "expert_summaries" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
+        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "expert_summaries" | "strong_lead" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
@@ -1946,6 +1949,11 @@ pub fn gemini_images_on() -> bool {
 /// call on the user's OpenCode plan): yes unless the user switched it off in Setup.
 pub fn expert_summaries_on() -> bool {
     setting("expert_summaries").as_bool().unwrap_or(true)
+}
+
+/// Whether a run's Lead is kept off cheap models (`swarm::lead_model`): yes unless the user switched it off in Setup.
+pub fn strong_lead_on() -> bool {
+    setting(crate::swarm::STRONG_LEAD_KEY).as_bool().unwrap_or(true)
 }
 
 /// The knowledge index's mode, "off" | "light" | "heavy": off unless the user chose another in Setup (`rag`).
