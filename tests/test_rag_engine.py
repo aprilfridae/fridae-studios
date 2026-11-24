@@ -200,6 +200,31 @@ class EngineTests(unittest.TestCase):
         self.assertGreater(self.count_path(eng, ga), 0)
         self.assertGreater(self.count_path(eng, gb), 0)
 
+    def test_team_override_does_not_drop_kit_expert(self):
+        kit = write(os.path.join(self.tmp, "kit", "team", "maya.md"), "# Maya\n\n## Craft\n\nMaya paints glowing mushrooms.\n")
+        proj = os.path.join(self.tmp, "P")
+        mine = write(os.path.join(proj, ".fridae", "team", "experts", "maya.md"),
+                     "# Maya here\n\n## Craft\n\nIn this game Maya paints glowing mushrooms blue.\n")
+        self.files.append(("team", "maya", kit))
+        base = self.corpus
+
+        def corpus(project):  # like corpus_files: the game's override replaces the kit's expert
+            out = base(project)
+            return [f for f in out if f[2] != kit] + [("team", "maya", mine)] if project == proj else out
+        self.corpus = corpus
+        self.project_files = lambda project: {mine} if project == proj else set()
+        eng = self.engine()
+        eng.sync()
+        eng.sync(proj)
+        self.assertGreater(self.count_path(eng, kit), 0)  # still there for every other chat
+        self.assertGreater(self.count_path(eng, mine), 0)
+        eng.sync()
+        self.assertEqual(eng.sync(proj)["embedded"], 0)  # no back-and-forth re-embedding
+        hits = eng.query("glowing mushrooms", ["team"], 3, proj)
+        self.assertEqual([h["path"] for h in hits], [mine])
+        hits = eng.query("glowing mushrooms", ["team"], 3, None)
+        self.assertEqual([h["path"] for h in hits], [kit])
+
     def test_model_change_rebuilds(self):
         eng = self.engine()
         first = eng.sync()

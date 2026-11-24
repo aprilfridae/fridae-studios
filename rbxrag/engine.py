@@ -121,8 +121,13 @@ class Engine:
             self.synced_projects = set()
         old = man["files"]
         mine = self._project_files(project) if project else set()
+        # the shared files are always the whole shared set (a game's team override hides a kit expert only in that
+        # game's queries, never in the index), plus the game's own files
+        listed = list(self._corpus(None))
+        if project:
+            listed += [f for f in self._corpus(project) if f[2] in mine]
         files = {}
-        for shelf, title, path in self._corpus(project):
+        for shelf, title, path in listed:
             files.setdefault(path, (shelf, title))
         progress("scan", 0.0)
         todo, new_entries = [], {}
