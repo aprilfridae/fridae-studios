@@ -52,7 +52,9 @@ fn stand_in_with(sse: String, session: String, twist: Twist) -> (u16, Seen) {
             let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
             let (method, url) = (rq.method().to_string(), rq.url().to_string());
             let path = url.split('?').next().unwrap_or("").to_string();
-            log.lock().unwrap().push((method.clone(), path.clone(), body.clone()));
+            // (a listing's question is in its address: noted in place of a body, for the tests that ask what was asked)
+            let noted = if method == "GET" && path == "/api/session" { json!({"query": url.split_once('?').map(|(_, q)| q).unwrap_or("")}) } else { body.clone() };
+            log.lock().unwrap().push((method.clone(), path.clone(), noted));
             let json_ok = |v: Value| Response::from_string(v.to_string()).with_header(Header::from_bytes("Content-Type", "application/json").unwrap());
             let at = format!("/api/session/{session}");
             let r = match (method.as_str(), path.as_str()) {
@@ -297,14 +299,18 @@ fn tool_servers_are_removed_when_a_turn_ends_early() {
 
 type Calls = Vec<(String, String, Value)>;
 
+fn writers_folder() -> std::path::PathBuf {
+    crate::paths::test_dir("opencode-writers")
+}
+
 /// A writer (`write_only_on`) against the stand-in serving `case`: what it gave back, and the calls it made.
-fn written(case: &str, twist: impl FnOnce(&str) -> Twist, cancelled: bool) -> (Result<String, String>, crate::usage::Turn, Calls) {
+fn written(case: &str, twist: impl FnOnce(&str) -> Twist, cancelled: bool) -> (Result<String, crate::compact::Failed>, crate::usage::Turn, Calls) {
     let (sse, session) = recording(case);
     let twist = twist(&sse);
     let (port, seen) = stand_in_with(sse, session, twist);
     let conn = Conn { port, auth: "Basic dGVzdA==".into() };
     let cancel = AtomicBool::new(cancelled);
-    let out = write_only_on(&conn, "mock/scripted", "Summarise: the user wants a door.", &cancel, &crate::paths::test_dir("opencode-writers"));
+    let out = write_only_on(&conn, "mock/scripted", "Summarise: the user wants a door.", &cancel, &writers_folder());
     let calls = seen.lock().unwrap().clone();
     match out {
         Ok(w) => (Ok(w.text), w.usage, calls),
@@ -319,7 +325,7 @@ fn called(calls: &[(String, String, Value)], method: &str, end: &str) -> bool {
 #[test]
 fn a_writer_is_a_session_that_may_do_nothing_gets_the_text_once_and_is_removed() {
     let (out, used, calls) = written("plain", |_| Twist::default(), false);
-    assert_eq!(out.as_deref(), Ok("OK: hello there"), "what the model wrote");
+    assert_eq!(out, Ok("OK: hello there".to_string()), "what the model wrote");
     assert!(used.total() > 0, "and what writing it used, for the usage record");
     // the session: every permission denied and nothing else, in the writers' own folder, under the writer's title
     let made = calls.iter().find(|(m, p, _)| m == "POST" && p == "/api/session").expect("a session of its own");
@@ -335,44 +341,92 @@ fn a_writer_is_a_session_that_may_do_nothing_gets_the_text_once_and_is_removed()
     assert_eq!(calls.iter().find(|(_, p, _)| p.ends_with("/prompt")).unwrap().2["text"], "Summarise: the user wants a door.");
     // nothing a chat's turn gets: no tool servers, no environment for commands, no standing instructions
     assert!(!calls.iter().any(|(m, _, _)| m == "PUT" || m == "PATCH"), "{calls:?}");
+    // and it is no longer among the writers at work
+    assert!(!WRITING.lock().unwrap().iter().any(|w| session.ends_with(w.as_str())));
 }
 
 #[test]
 fn a_writer_that_fails_or_does_anything_but_write_gives_nothing_and_is_removed_all_the_same() {
     let removed = |calls: &[(String, String, Value)]| calls.iter().any(|(m, p, _)| m == "DELETE" && p.starts_with("/api/session/ses_fixture"));
-    // the model cannot be used (here: the free limit, as OpenCode really says it): the reason, for the next writer's turn
+    let models = |why: &str| Err(crate::compact::Failed { why: why.to_string(), server: false });
+    // the model cannot be used (here: the free limit, as OpenCode really says it): the reason, and it is the
+    // model's failure, so the next model is tried
     let (out, _, calls) = written("limit", |_| Twist::default(), false);
-    assert!(out.as_ref().is_err_and(|e| e.starts_with("Free usage limit reached")), "{out:?}");
+    assert!(out.as_ref().is_err_and(|e| e.why.starts_with("Free usage limit reached") && !e.server), "{out:?}");
     assert!(removed(&calls));
     // a model that calls a tool: ended there, never answered, nothing of what it wrote is used
     let (out, _, calls) = written("tool", |_| Twist::default(), false);
-    assert_eq!(out, Err("The model tried to use a tool instead of writing.".to_string()));
+    assert_eq!(out, models("The model tried to use a tool instead of writing."));
     assert!(called(&calls, "POST", "/interrupt") && removed(&calls));
     // one that asks to run something: the same (nothing is ever answered "once")
     let (out, _, calls) = written("refused", |_| Twist::default(), false);
-    assert_eq!(out, Err("The model tried to use a tool instead of writing.".to_string()));
+    assert_eq!(out, models("The model tried to use a tool instead of writing."));
     assert!(!calls.iter().any(|(_, p, _)| p.contains("/permission/")) && removed(&calls));
     // rules that do not read back as written: nothing is sent
     let (out, _, calls) = written("plain", |_| Twist { wrong_rules: true, ..Default::default() }, false);
-    assert!(out.is_err_and(|e| e.contains("did not take the writer's rules")));
+    assert!(out.is_err_and(|e| e.why.contains("did not take the writer's rules")));
     assert!(!called(&calls, "POST", "/prompt") && removed(&calls));
     // given up on before it began (its time was up while the server started): nothing is sent
     let (out, _, calls) = written("plain", |_| Twist::default(), true);
     assert!(out.is_err());
     assert!(!called(&calls, "POST", "/prompt") && removed(&calls));
-    // the stream ends before the answer: interrupted, removed
+    // the stream ends before the answer: interrupted, removed; that is the server's failure, not the model's, so
+    // OpenCode's other models are not asked either
     let (out, _, calls) = written("plain", |sse| Twist { pieces: vec![sse[..sse.find("\"session.text.ended\"").map(|i| sse[..i].rfind("data: ").unwrap()).unwrap()].to_string()], ..Default::default() }, false);
-    assert_eq!(out, Err("OpenCode's event stream ended before it had answered.".to_string()));
+    assert_eq!(out, Err(crate::compact::Failed { why: "OpenCode's event stream ended before it had answered.".to_string(), server: true }));
     assert!(called(&calls, "POST", "/interrupt") && removed(&calls));
+    // a server that does not answer at all: the server's failure too
+    let nobody = Conn { port: 1, auth: "Basic dGVzdA==".into() };
+    let out = write_only_on(&nobody, "mock/scripted", "x", &AtomicBool::new(false), &writers_folder());
+    assert!(out.is_err_and(|e| e.server));
 }
 
 #[test]
 fn writers_left_behind_are_removed_by_the_next_and_nothing_else_is() {
-    let left = json!([{"id": "ses_left_behind", "title": WRITER_TITLE}, {"id": "ses_not_a_writer", "title": "A chat"}]);
+    let folder = writers_folder();
+    let here = json!({"directory": folder});
+    let long_ago = 1_000_000.0;
+    let just_now = crate::paths::now_secs() * 1000.0 - 5_000.0;
+    WRITING.lock().unwrap().push("ses_at_work".to_string());
+    let left = json!([
+        {"id": "ses_left_behind", "title": WRITER_TITLE, "location": here, "time": {"created": long_ago}},
+        {"id": "ses_not_a_writer", "title": "Fridae \u{b7} A chat", "location": here, "time": {"created": long_ago}},
+        {"id": "ses_elsewhere", "title": WRITER_TITLE, "location": {"directory": "/games/a"}, "time": {"created": long_ago}},
+        {"id": "ses_no_folder_said", "title": WRITER_TITLE, "time": {"created": long_ago}},
+        {"id": "ses_young", "title": WRITER_TITLE, "location": here, "time": {"created": just_now}},
+        {"id": "ses_no_time", "title": WRITER_TITLE, "location": here},
+        {"id": "ses_at_work", "title": WRITER_TITLE, "location": here, "time": {"created": long_ago}},
+    ]);
     let (out, _, calls) = written("plain", |_| Twist { listed: left, ..Default::default() }, false);
+    WRITING.lock().unwrap().retain(|w| w != "ses_at_work");
     assert!(out.is_ok());
-    let listing = calls.iter().find(|(m, p, _)| m == "GET" && p == "/api/session").expect("the writers' folder is looked at");
-    let _ = listing;
-    assert!(called(&calls, "DELETE", "/api/session/ses_left_behind"));
-    assert!(!called(&calls, "DELETE", "/api/session/ses_not_a_writer"));
+    // the server is asked for the writers' folder only, by the parameter it knows (`directory=`: one it does not
+    // know lists every session), before the writer's own session is made
+    let listing = calls.iter().position(|(m, p, _)| m == "GET" && p == "/api/session").expect("the writers' folder is looked at");
+    let asked = calls[listing].2["query"].as_str().unwrap().to_string();
+    assert!(asked.split('&').any(|q| q == format!("directory={}", quote(&folder.display().to_string()))), "{asked}");
+    assert!(listing < calls.iter().position(|(m, p, _)| m == "POST" && p == "/api/session").unwrap());
+    // only a writer's session, in that folder by its own word, old, and not at work in this app
+    let deleted: Vec<&str> = calls.iter().filter(|(m, p, _)| m == "DELETE" && !p.contains("ses_fixture")).map(|(_, p, _)| p.rsplit('/').next().unwrap()).collect();
+    assert_eq!(deleted, ["ses_left_behind"]);
+}
+
+#[test]
+fn the_writers_are_the_plans_models_of_three_families_and_never_anything_else() {
+    let ids = |list: &str| -> Vec<String> { list.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect() };
+    // the list has not arrived: the names the user gave (the call itself tells)
+    assert_eq!(writers_from(&[]), WRITERS);
+    // listed as named: those, in the user's order, whatever order OpenCode lists them in
+    let listed = ids("opencode-go/glm-5.3\nopencode-go/beam-free\nopencode-go/glm-5.3-flash\nopencode-go/claude-haiku-5-5\nopencode-go/deepseek-v4.1-flash\nopencode/big-pickle");
+    assert_eq!(writers_from(&listed), WRITERS);
+    // the plan lists them under newer names: the family's listed member, under opencode-go/ only
+    let renamed = ids("opencode/deepseek-v4.1-flash-free\nopencode/glm-5.3\nopencode-go/deepseek-v4-pro\nopencode-go/deepseek-v5-flash\nopencode-go/glm-6-flash\nopencode-go/glm-6\nopencode-go/glm-6-flash-free");
+    assert_eq!(writers_from(&renamed), ["opencode-go/deepseek-v5-flash", "opencode-go/glm-6-flash", "opencode-go/glm-6"]);
+    // one family is gone: the others, still in order
+    assert_eq!(writers_from(&ids("opencode-go/glm-5.3\nopencode-go/kimi-k3")), ["opencode-go/glm-5.3"]);
+    // nothing of the plan (signed in to an account without it): nobody, never a free or a per-use model
+    assert!(writers_from(&ids("opencode/big-pickle\nopencode/deepseek-v4.1-flash-free\nopencode/glm-5.3\nanthropic/claude-haiku-5-5\nopencode-go/beam-free")).is_empty());
+    for id in writers_from(&listed).iter().chain(&writers_from(&renamed)) {
+        assert!(id.starts_with("opencode-go/") && !id.ends_with("-free"), "{id}");
+    }
 }

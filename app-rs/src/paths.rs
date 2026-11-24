@@ -606,6 +606,8 @@ pub fn app_protected() -> Vec<(PathBuf, bool)> {
     out.push((w.join("team-models.tmp"), false));
     // the second accounts' folders (`accounts`): who pays for a turn is never an agent's to change
     out.push((crate::accounts::base(), true));
+    // where a summary's writer works (`compact::folder`): nothing is written there, by the writer or by anyone
+    out.push((crate::compact::folder(), true));
     // the copy of the guarded settings (`guard_copy`): changing a setting then takes a command, not two file writes
     out.push((guard_copy(), false));
     // (`tool-pictures`: where the app's tool server notes each result's pictures for a kept Gemini chat;

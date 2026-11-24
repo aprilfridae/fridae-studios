@@ -271,17 +271,22 @@ fn take_answer(e: &mut Entry, answer: Answer) -> bool {
 /// well. In a group of its own and in the ledger while it runs, so one that hangs is ended, here or by the next start
 /// of the app. None when it could not be started or was ended for taking too long.
 pub fn run_limited(cmd: Command, limit: Duration) -> Option<(String, String, bool)> {
-    run_fed(cmd, limit, None, "signin")
+    run_fed(cmd, limit, None, "signin", &|| false)
 }
 
-/// The same, with text for the command to read (`input`), noted in the ledger under `what`.
-pub fn run_fed(mut cmd: Command, limit: Duration, input: Option<String>, what: &str) -> Option<(String, String, bool)> {
+/// The commands `run_fed` has running now: ended when the app quits (`shut_down`), so none outlives it.
+static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// The same, with text for the command to read (`input`), noted in the ledger under `what`, and ended early (as one
+/// that took too long) as soon as `stop` says so.
+pub fn run_fed(mut cmd: Command, limit: Duration, input: Option<String>, what: &str, stop: &dyn Fn() -> bool) -> Option<(String, String, bool)> {
     cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
     paths::own_group(&mut cmd);
     let mut child = cmd.start().ok()?;
     let pid = child.id();
     procs::record(what, pid);
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
     // written from a thread of its own (a command that does not read must not hold this one), then closed
     if let (Some(text), Some(mut pipe)) = (input, child.stdin.take()) {
         std::thread::spawn(move || {
@@ -302,7 +307,7 @@ pub fn run_fed(mut cmd: Command, limit: Duration, input: Option<String>, what: &
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
-            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) if Instant::now() < until && !stop() => std::thread::sleep(Duration::from_millis(50)),
             _ => {
                 paths::end_trees(&[pid]);
                 let _ = child.wait();
@@ -311,6 +316,7 @@ pub fn run_fed(mut cmd: Command, limit: Duration, input: Option<String>, what: &
         }
     };
     procs::forget(pid);
+    RUNNING.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| *p != pid);
     let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
     status.map(|s| (out, err, s.success()))
 }
@@ -682,6 +688,12 @@ pub fn login_cancel(ai: &str) {
 pub fn shut_down() {
     for ai in ids() {
         end_login(ai);
+    }
+    // a status check or a summary's writer still running: ended with the app (each in a group of its own). Not in
+    // tests, which run side by side and would end each other's stand-in commands
+    let running = RUNNING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if !running.is_empty() && !cfg!(test) {
+        paths::end_trees(&running);
     }
 }
 
