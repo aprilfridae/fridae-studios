@@ -95,8 +95,13 @@ shows it as "Experts at once"). While a writer runs, do not change the place you
 
 An expert runs on your own AI and model unless something says otherwise. The user may have set some experts to an AI
 and model of their choice in Setup > Experts; that always wins, and the spawn result says where the expert runs
-("runs on: cursor (model auto)"). You may ask for one with `ai` and `model` on `spawn`, but use it sparingly: only for
-a kind of work another AI is clearly better at (the user may tell you which), never per whim or to try them out. An AI
+("runs on: cursor (model auto)"). You may ask for one with `ai` and `model` on `spawn`, for two reasons only, never
+per whim or to try models out. One: a kind of work another AI is clearly better at (the user may tell you which). Two:
+a simple, well-specified job that a cheaper model on the user's plan does well, such as a small code or number change,
+a text or data edit, a simple fix or a small UI change. The user's notes say which models they trust for that, and
+`models` shows what their plan offers. Planning, design, anything hard to implement and UI builds stay on your own AI
+or the one the user set. Brief a cheaper model to hand back a full report and to release any lock it took, and read its
+work yourself before you accept it. An AI
 that is not installed is refused with the reason: run the expert on your own AI (leave `ai` out) or ask the user. The user
 can also switch off "The Lead may pick an AI for a job" in Setup: your `ai` and `model` are then refused, so leave
 them out. `rbx_team` action `models` lists what each AI offers (its default model and its model ids; add `ai` for one
