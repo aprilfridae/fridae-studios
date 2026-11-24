@@ -1418,15 +1418,27 @@ of the kept process's key. Nothing is set for account 1.
   antigravity" on the screen: the user got exactly that at their first sign-in for an added account. So before
   every agy command of an added Gemini account (status, sign-in, every turn):
   - the home's own list file, `<home>/Library/Preferences/com.apple.security.plist`, is written by the app as a
-    plain file whenever it says anything else (`list_its_own`, `KEYCHAIN_LIST`): one keychain is searched and is
-    the default, `~/Library/Keychains/fridae.keychain`, named from the home, so the words are the same for every
-    account;
-  - the keychain `<home>/Library/Keychains/fridae.keychain-db` is made the first time (`security -i` fed
-    `create-keychain -p <password> fridae.keychain-db` and `set-keychain-settings fridae.keychain-db`: never locks
-    by itself) and unlocked every time (`unlock-keychain -p <password> fridae.keychain-db`). The password is 48 hex
-    digits from the system's random numbers, kept in `<home>/.fridae-keychain-key` (the user's alone to read,
-    under the protected accounts folder), never on a command line (the commands are fed on the program's input),
-    never printed or logged; what `security` prints is thrown away.
+    plain file when it is MISSING (`list_its_own`, `KEYCHAIN_LIST`): one keychain is searched and is the default,
+    `~/Library/Keychains/fridae.keychain`, named from the home, so the words are the same for every account. A
+    list file that is there and says anything else is never put right (below);
+  - the keychain `<home>/Library/Keychains/fridae.keychain-db` is made the first time, unlocked every time, and
+    after every unlock told never to lock by itself. **Three texts, each fed to a `security -i` of its own, each
+    of which must end well**: `create-keychain -p <password> fridae.keychain-db` (only when there is no keychain),
+    `unlock-keychain -p <password> fridae.keychain-db`, then `set-keychain-settings fridae.keychain-db`. One
+    command to a run because the program ends with the result of the last line it read: fed together, a setting
+    that did not take would hide behind nothing, and a keychain made with a setting that failed was never given it
+    again. A keychain is made with the Mac's own settings (seen: "lock-on-sleep timeout=300s"), and one that
+    locked under a turn longer than that, or across a sleep, makes agy's next look at it a password box for a
+    password the user has never seen. So the setting is given after EVERY unlock (never before it: a locked
+    keychain asked for it may ask on the screen), and when it does not take no agy command runs. One run may take
+    5 seconds (`SECURITY_LIMIT`) and is given up when Stop is pressed (the message then does not go, and nothing
+    is held against the account); each home has a lock of its own for this, and looking at an account takes none.
+  - The password is 48 hex digits from the system's random numbers, kept in `<home>/.fridae-keychain-key` (the
+    user's alone to read, under the protected accounts folder), put there whole or not at all (`place_whole`),
+    never on a command line (the commands are fed on the program's input), never printed or logged; what
+    `security` prints is thrown away.
+  - `security` and agy are only ever given a home that is a full path directly in the accounts folder
+    (`in_accounts`): an empty or a relative home would let the Mac's program fall back to the user's real one.
   - Everything is found through HOME alone: `security` runs with the account's home as HOME (`security_command`)
     and is given the keychain by its bare name, which resolves inside that home. **Nothing changes the user's own
     keychain list or default keychain**: no `list-keychains -s`, `default-keychain -s` or `login-keychain -s` is
@@ -1447,11 +1459,30 @@ of the kept process's key. Nothing is set for account 1.
   own entry. A shell command of a turn on the account could make such a link. So the home is refused when
   `Library`, `Library/Keychains` or `Library/Preferences` is a link, when the list file is a link, when anything
   in `Library/Keychains` is a link, or is a file that also exists under another name (how the user's keychain could
-  be there with no link), or is one of the files in the user's own `Library/Keychains`. The app's own keychain, a
-  regular file made in that home, is allowed, and so is a home with no `Library` yet. A list file a turn's command
-  has rewritten is not refused: it is written back before anything runs. Setup then says "Fridae does not use this
-  account" and offers only Remove; a chat that was on it carries on with the user's own. Remove deletes `Library`
-  and the password with the sign-in, first.
+  be there with no link; refused when the second name is still there after a moment), or is one of the files in the
+  user's own `Library/Keychains`. An entry that is gone by the time it is looked at is passed over (the Mac writes
+  and removes lock and temporary files there while a sign-in is saved). The app's own keychain, a regular file made
+  in that home, is allowed, and so is a home with no `Library` yet. Remove deletes `Library` and the password with
+  the sign-in, first.
+- **A keychain changed from outside is said, and never put right in silence** (`accounts::keychain_changed`,
+  `Agent::keychain_warning`). Every check above runs before a command starts; an agy process then lives for the
+  whole turn (a kept one for hours) and goes to the keychain whenever it reads or renews its sign-in, and the
+  home's list file decides which keychain that is. A shell command of a turn on the account (its `~` is the
+  account's home) can rewrite that list, for instance `security default-keychain -s` with the user's login
+  keychain "so git finds the keychain": from then on, in that turn, agy reads and writes the USER'S own entry. The
+  app cannot stop a command in Full auto from doing that, or see what agy did meanwhile. What it does:
+  - it looks again **at the end of every turn** on an added Gemini account (`after_turn`) and **before every
+    message goes** to it, to a kept process as well (`send`, through `ready_of`), and for Setup's list;
+  - a list file that is there and does not say the app's words, or a home whose keychain is no longer its own, is
+    "changed": **the file is left exactly as it was found**, the account is not used again while the app runs
+    whatever is put back (`KEYCHAIN_CHANGED`; after a restart the unrepaired file says it again), no keychain
+    command and no agy command runs for it, the process kept for it is closed, the chat is told once ("The
+    keychain settings of Gemini account 2 were changed while it was in use, so Fridae has stopped using that
+    account. Please check that your own Gemini sign-in still works. ..."), its next message runs on the user's
+    own account with the chat so far, and Setup says the same with only Remove;
+  - a list file that is MISSING is written again without a word (a new home; and one where it was deleted, where
+    there is then no default keychain at all and nothing of the user's can be reached).
+  Not covered, and it cannot be: a command that changes the list and puts it back before the turn ends.
 - **No key stands in for a sign-in.** `GEMINI_API_KEY`, `GOOGLE_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are
   taken out of every agy command of the second account (`KEPT_FROM_SECOND`), so an empty second home reads "Not
   signed in." until the user signs in there, and no turn there is billed to a key. (Measured with made-up keys in
@@ -1508,12 +1539,18 @@ not exist before or after). Seen there:
 the Mac's asking program. **So nothing of the kind is run on a user's machine by a builder or by a test, ever
 again**: no `agy`, and no `security` command. The tests build the command and the texts it is fed and look at them
 (`security_command`, `create_feed`, `unlock_feed`), check the guard and the list file on plain files, and use a
-stand-in for the program (`SECURITY_FOR_TEST`), which a test can tell to fail.
+stand-in for the program (`SECURITY_FOR_TEST`), which a test can tell to fail at making, unlocking or the setting,
+and which refuses more than one command to a run.
 
 **Left for the user's first real sign-in in the installed app** (nothing here has seen it):
 - Add account for Gemini, sign in at Google: no "Keychain Not Found", no password box, and Setup says "Signed in.";
 - it still says so after the app was closed and opened again, and after the Mac was restarted (the keychain is then
   locked until the app unlocks it with the kept password: seen with a lock, not with a restart);
+- a turn longer than five minutes, and one across a sleep of the Mac, asks nothing (the "never locks by itself"
+  setting, given after every unlock: its effect was seen as "no-timeout", a long turn was not);
+- Setup does not say "its keychain settings were changed" for an account nobody touched (the app takes any list
+  file that is not byte for byte its own for a change; if the Mac's own program ever rewrites that file in other
+  words, this is where it would show);
 - the account added before this (signed in while the box was shown): it should read "Signed in." from agy's file.
 If the Mac asks anything on any of these, the keychain did not do its job: say what the box said.
 

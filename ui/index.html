@@ -2597,7 +2597,8 @@ function accountRow(ai, a) {
   const row = el("div", "g-row oc-row");
   row.innerHTML = "<b></b><small></small><div class=\"act\"></div>";
   row.querySelector("b").textContent = "Account " + a.n;
-  row.querySelector("small").textContent = a.broken ? "Fridae does not use this account: its folder was changed from outside, or its keychain could not be opened. Remove it and add it again."
+  row.querySelector("small").textContent = a.changed ? "Fridae has stopped using this account: its keychain settings were changed from outside Fridae. Check that your own Gemini sign-in still works, then remove this account and add it again."
+    : a.broken ? "Fridae does not use this account: its folder was changed from outside, or its keychain could not be opened. Remove it and add it again."
     : line.text ? line.text
     : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as one above it, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
     : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
@@ -2605,7 +2606,7 @@ function accountRow(ai, a) {
     : "Checking the sign-in...";
   const act = row.querySelector(".act");
   /* (an account the app will not use offers no sign-in: only Remove) */
-  if (!a.broken) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
+  if (!a.broken && !a.changed) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
   if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove", a.name));
   return row;
 }
