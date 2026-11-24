@@ -119,10 +119,12 @@ def parse(path):
             if p and not p.startswith(("#", "|", "!", "<!--", ">", "-", "```")):
                 summary = " ".join(p.split())[:300]
                 break
+    fmd, after = split_front(text)
     return {"title": title, "path": rel, "tags": tags, "tldr": tldr, "summary": summary,
             "f": {"title": tokens(title), "tags": tokens(" ".join(tags)), "tldr": tokens(tldr),
                   "heads": tokens(" ".join(heads)), "body": tokens(plain)},
-            "kb": round(len(text.encode("utf-8")) / 1024)}
+            "kb": round(len(text.encode("utf-8")) / 1024),
+            "labels": note_labels("vault", title, path, fmd, text), "links": wikilinks(after)}
 
 
 def parse_symptoms():
@@ -541,7 +543,7 @@ PERSONAL = ("game", "yours")  # the user's own shelves: short notes are fine the
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
 GUIDES_CACHE_NAME = "knowledge-sections-index.json"
-INDEX_FORMAT = 1  # bump when the section index's shape changes
+INDEX_FORMAT = 2  # bump when the section index's shape changes (2: labels, links and the gist)
 OPENING, WHOLE = "(opening)", "(whole file)"
 _FENCE = re.compile(r"^[ \t]{0,3}(```+|~~~+)")
 _NAV = re.compile(r"^(related|see also|connected notes|files|sources|references|further reading)\b", re.I)
@@ -566,6 +568,264 @@ def split_front(text):
         elif key and line[:1] in (" ", "\t"):
             fm[key] = (fm[key] + " " + line.strip()).strip()
     return fm, text[m.end():]
+
+
+# ------------------------------------------------------------------ note labels, gists and links (both searches)
+# Every note gets four labels, worked out from its front matter and where it lives (no model involved):
+#   game    the game's name for a game's own notes (GAME.md, .fridae/notes, its team overrides), else "all"
+#   kind    rule | lesson | taste | reference | guide
+#   source  lihfolk | user | agent | community | game | fridae (Fridae's own guides and team files)
+#   date    YYYY-MM-DD: the front matter's date, else the file's modification day
+# A "Learned in Fridae" section is a lesson an agent added, whatever the note around it is.
+KINDS = ("rule", "lesson", "taste", "reference", "guide")
+SOURCES = ("lihfolk", "user", "agent", "community", "game", "fridae")
+_KIND_WORDS = {
+    "rule": "rule", "rules": "rule", "house-rule": "rule", "house-rules": "rule", "policy": "rule",
+    "lesson": "lesson", "lessons": "lesson", "learned": "lesson", "learning": "lesson", "note": "lesson",
+    "taste": "taste", "style": "taste", "preference": "taste",
+    "reference": "reference", "atlas": "reference", "glossary": "reference", "case-study": "reference",
+    "hub": "reference", "api": "reference", "card": "reference", "concept": "reference", "teardown": "reference",
+    "guide": "guide", "how-to": "guide", "howto": "guide", "tutorial": "guide", "checklist": "guide",
+    "recipe": "guide", "build": "guide", "template": "guide", "troubleshooting": "guide", "playbook": "guide"}
+_REFERENCE_FOLDERS = ("46 Resource Library/", "52 Core Concepts/", "57 API and Concept Atlas/",
+                      "62 Engine Reference Cards/")
+_LEARNED = re.compile(r"^learned in fridae\b", re.I)
+_CREDIT = re.compile(r"(CC BY[^\n]{0,40}LihFolk|LihFolk[^\n]{0,40}CC BY|\(c\)[^\n]{0,20}LihFolk)", re.I)
+_DATE = re.compile(r"\b(\d{4})-(\d{2})(?:-(\d{2}))?\b")
+_USER_BY = {"user", "you", "me", "the user", "owner", "human"}
+_WIKILINK = re.compile(r"\[\[([^\]\|#\n]+)(?:#[^\]\|\n]*)?(?:\|[^\]\n]*)?\]\]")
+LINKS_MAX = 40  # wikilinks kept per note
+
+
+def game_name(project):
+    return os.path.basename(os.path.normpath(project)) if project else ""
+
+
+def _fm_list(v):
+    v = (v or "").strip()
+    if v.startswith("[") and v.endswith("]"):
+        v = v[1:-1]
+    return [x.strip().strip("'\"") for x in re.split(r"[,\s]+", v) if x.strip().strip("'\"")]
+
+
+def _kind_word(w):
+    w = (w or "").strip().casefold()
+    if w.startswith("type/") or w.startswith("kind/"):
+        w = w.split("/", 1)[1]
+    return _KIND_WORDS.get(w) or (w if w in KINDS else "")
+
+
+def _in_kb(path):
+    try:
+        kb = os.path.abspath(KB)
+        return os.path.commonpath([kb, os.path.abspath(path)]) == kb
+    except ValueError:
+        return False
+
+
+def _file_day(path):
+    import time
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(os.stat(path).st_mtime))
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def note_labels(shelf, title, path, fm=None, body="", project=""):
+    """{"game", "kind", "source", "date"} for one note (see KINDS and SOURCES above). fm: its front matter
+    (split_front); body: its text (for a credit line); project: the game's folder when the note is that game's."""
+    fm = fm or {}
+    norm = (path or "").replace(os.sep, "/")
+    base = os.path.basename(norm)
+    t = (title or "").casefold()
+    kb_rel = os.path.relpath(path, KB).replace(os.sep, "/") if path and _in_kb(path) else ""
+    # kind: the front matter (kind, type, tags), else the folder or the title, else what the shelf holds
+    kind = _kind_word(fm.get("kind")) or _kind_word(fm.get("type"))
+    if not kind:
+        for tag in _fm_list(fm.get("tags")):
+            if tag.casefold().startswith(("type/", "kind/")) or tag.casefold() in KINDS:
+                kind = _kind_word(tag)
+                if kind:
+                    break
+    if not kind:
+        if t in ("house rules", "house rules.md"):
+            kind = "rule"
+        elif "/taste/" in "/" + norm.casefold():
+            kind = "taste"
+        elif t in ("lessons.md", "studio-lessons", "lessons"):
+            kind = "lesson"
+        elif kb_rel.startswith(_REFERENCE_FOLDERS) or t == "glossary":
+            kind = "reference"
+        elif base == "GAME.md":
+            kind = "reference"
+        else:
+            kind = {"vault": "reference", "guides": "guide", "team": "guide"}.get(shelf, "lesson")
+    # source: the front matter, else the shelf and path, the credit line, who wrote it
+    src = (fm.get("source") or fm.get("origin") or "").strip().casefold()
+    source = src if src in SOURCES else ""
+    if not source and (fm.get("contributor") or fm.get("submitted_by")):
+        source = "community"
+    if not source and shelf == "game":
+        source = "game"
+    if not source and fm.get("by"):
+        source = "user" if fm["by"].strip().casefold() in _USER_BY else "agent"
+    if not source and (kb_rel or "/lihfolk/" in norm.casefold() or (body and _CREDIT.search(body[-4000:] + body[:2000]))):
+        source = "lihfolk"
+    if not source:
+        if t in ("studio-lessons", "lessons.md"):
+            source = "agent"
+        elif shelf in ("guides", "team"):
+            source = "fridae"
+        else:
+            source = "user"
+    day = ""
+    for key in ("updated", "date", "when", "created", "verified", "last_verified"):
+        m = _DATE.search(fm.get(key) or "")
+        if m:
+            day = "%s-%s-%s" % (m.group(1), m.group(2), m.group(3) or "01")
+            break
+    return {"game": game_name(project) if project else "all", "kind": kind, "source": source,
+            "date": day or _file_day(path)}
+
+
+def section_labels(labels, heading, parents=()):
+    """A section's labels: its note's, except that a "Learned in Fridae" section is an agent's lesson."""
+    if any(_LEARNED.match(h or "") for h in list(parents or ()) + [heading or ""]):
+        return dict(labels, kind="lesson", source="agent")
+    return labels
+
+
+def _plain(s):
+    s = re.sub(r"\[\[([^\]\|]+)\|([^\]]+)\]\]", r"\2", s)
+    s = re.sub(r"\[\[([^\]#\|]+)(#[^\]]*)?\]\]", r"\1", s)
+    s = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", s)
+    s = re.sub(r"[*_`]{1,3}", "", s)
+    return " ".join(s.split())
+
+
+def note_gist(fm, body, words=30):
+    """A note's gist: its front matter description or summary, else its first meaningful sentence, at most about
+    `words` words."""
+    g = (fm or {}).get("description") or (fm or {}).get("summary") or ""
+    if not g:
+        fence = False
+        para = []
+        for line in body.split("\n"):
+            st = line.strip()
+            if _FENCE.match(st):
+                fence = not fence
+                if para:
+                    break
+                continue
+            if fence:
+                continue
+            if not st:
+                if para:
+                    break
+                continue
+            if (st.startswith(("#", "|", "!", "<!--", ">", "---", "***")) or _HEAD.match(st)
+                    or re.match(r"^(source labels|license|credit)\b", st, re.I)):
+                if para:
+                    break
+                continue
+            para.append(st.lstrip("-*+ ").strip() if not para else st)
+            if st.startswith(("- ", "* ", "+ ")):
+                break  # a list: its first item is the gist
+        g = " ".join(para)
+        m = re.search(r"(?<=[.!?])\s", g)
+        if m and len(g[:m.start()].split()) >= 4:
+            g = g[:m.start()]
+    g = _plain(g)
+    w = g.split()
+    return " ".join(w[:words]) + ("…" if len(w) > words else "")
+
+
+def wikilinks(text, limit=LINKS_MAX):
+    """The distinct [[note]] targets in a text, in order, casefolded (aliases and #headings dropped)."""
+    out, seen = [], set()
+    for m in _WIKILINK.finditer(text or ""):
+        t = " ".join(m.group(1).split()).casefold()
+        if t.endswith(".md"):
+            t = t[:-3]
+        t = t.rsplit("/", 1)[-1]
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+            if len(out) >= limit:
+                break
+    return out
+
+
+def label_text(labels, project=""):
+    """The compact label of one result, e.g. "[lesson · this game · 2026-11]" or "[guide · lihfolk · 2026-10]"."""
+    if not labels:
+        return ""
+    where = "this game" if labels.get("game") not in (None, "", "all") else labels.get("source") or ""
+    bits = [labels.get("kind") or "", where, (labels.get("date") or "")[:7]]
+    return "[%s]" % " · ".join(b for b in bits if b)
+
+
+def day_number(date):
+    m = _DATE.search(date or "")
+    return int("%s%s%s" % (m.group(1), m.group(2), m.group(3) or "01")) if m else 0
+
+
+def normalize_filters(a, project=None):
+    """The search filters from a request: {"game": "this" | "general", "kind": [..], "source": [..],
+    "since": YYYYMMDD}, only the ones given (an empty dict filters nothing). game: "this" (or the game's own name)
+    for this game's notes only, "general" (or "shared") for the notes for every game; "all" or "any" is no filter.
+    kind and source: one value or several (a list or comma-separated). since: a date (YYYY, YYYY-MM or YYYY-MM-DD)."""
+    out = {}
+    g = str(a.get("game") or "").strip().casefold()
+    if g and g not in ("all", "any", "everything", "*"):
+        if g in ("this", "current", "this game", "mine") or (project and g == game_name(project).casefold()):
+            if not project:
+                raise KitError("game 'this' needs a chat with a game project.")
+            out["game"] = "this"
+        elif g in ("general", "shared", "all games", "every game", "none"):
+            out["game"] = "general"
+        else:
+            raise KitError("game must be 'this' (this game's notes only), 'general' (notes for every game) or 'all'.")
+    for key, allowed in (("kind", KINDS), ("source", SOURCES)):
+        v = a.get(key)
+        vals = v if isinstance(v, list) else re.split(r"[,\s|]+", str(v or ""))
+        vals = [str(x).strip().casefold() for x in vals if str(x).strip()]
+        if key == "kind":
+            vals = [_KIND_WORDS.get(x, x) for x in vals]
+        bad = [x for x in vals if x not in allowed]
+        if bad:
+            raise KitError("%s must be one or more of: %s." % (key, ", ".join(allowed)))
+        if vals:
+            out[key] = sorted(set(vals))
+    since = a.get("since")
+    if since not in (None, ""):
+        if isinstance(since, int) and since > 10000000:
+            out["since"] = since
+        else:
+            m = re.match(r"^\s*(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?\s*$", str(since))
+            if not m:
+                raise KitError("since must be a date: YYYY, YYYY-MM or YYYY-MM-DD.")
+            out["since"] = int("%s%02d%02d" % (m.group(1), int(m.group(2) or 1), int(m.group(3) or 1)))
+    return out
+
+
+def labels_match(labels, filters):
+    """True when a note's labels pass the filters (normalize_filters)."""
+    if not filters:
+        return True
+    labels = labels or {}
+    g = filters.get("game")
+    if g == "this" and labels.get("game") in (None, "", "all"):
+        return False
+    if g == "general" and labels.get("game") not in (None, "", "all"):
+        return False
+    if filters.get("kind") and labels.get("kind") not in filters["kind"]:
+        return False
+    if filters.get("source") and labels.get("source") not in filters["source"]:
+        return False
+    if filters.get("since") and day_number(labels.get("date")) < filters["since"]:
+        return False
+    return True
 
 
 def parse_sections(text):
@@ -662,14 +922,15 @@ def _code_capped(text):
     return re.sub(r"```.*?```", lambda c: c.group(0)[:600], text, flags=re.S)
 
 
-_PERSONAL_CACHE = {}  # (shelf, title, path, rel, label_hint) -> ((mtime_ns, size), entries), for the user's shelves
+_PERSONAL_CACHE = {}  # (shelf, title, path, rel, label_hint, project) -> ((mtime_ns, size), entries)
 
 
-def _section_docs(shelf, title, path, rel, label_hint=""):
+def _section_docs(shelf, title, path, rel, label_hint="", project=""):
     """Index entries for one file: one per section. The user's own shelves are read on every search, so their
-    entries are kept per file and parsed again only when the file changes."""
+    entries are kept per file and parsed again only when the file changes. project: the game's folder when the
+    file is that game's own (its labels say so)."""
     if shelf in PERSONAL:
-        key = (shelf, title, path, rel, label_hint)
+        key = (shelf, title, path, rel, label_hint, project)
         try:
             st = os.stat(path)
             sig = (st.st_mtime_ns, st.st_size)
@@ -678,16 +939,16 @@ def _section_docs(shelf, title, path, rel, label_hint=""):
         hit = _PERSONAL_CACHE.get(key)
         if sig is not None and hit and hit[0] == sig:
             return hit[1]
-        out = _parse_section_docs(shelf, title, path, rel, label_hint)
+        out = _parse_section_docs(shelf, title, path, rel, label_hint, project)
         if sig is not None:
             if len(_PERSONAL_CACHE) > 50000:
                 _PERSONAL_CACHE.clear()
             _PERSONAL_CACHE[key] = (sig, out)
         return out
-    return _parse_section_docs(shelf, title, path, rel, label_hint)
+    return _parse_section_docs(shelf, title, path, rel, label_hint, project)
 
 
-def _parse_section_docs(shelf, title, path, rel, label_hint=""):
+def _parse_section_docs(shelf, title, path, rel, label_hint="", project=""):
     try:
         text = read(path)
     except (OSError, UnicodeDecodeError):
@@ -697,20 +958,23 @@ def _parse_section_docs(shelf, title, path, rel, label_hint=""):
     tok = ptokens if shelf in PERSONAL else stokens
     # on the user's own shelves, what an agent learned (a lesson) is shown apart from what the user said (a note)
     lesson = shelf in PERSONAL and (p["fm"].get("kind") == "lesson" or title in ("lessons.md", "studio-lessons"))
+    labels = note_labels(shelf, title, path, p["fm"], text, project)
+    gist = p["description"] or note_gist(p["fm"], p["body"])  # the note's context line, as the knowledge index has
     out = []
     for i, s in enumerate(p["sections"]):
         own = p["body"][s["start"]:s["own_end"]]
         if s["level"]:
             own = own.split("\n", 1)[1] if "\n" in own else ""
         heads = " ".join(s["parents"] + ([s["heading"]] if s["level"] else [label]))
-        f = {"title": tok(title.replace("-", " ") + " " + label), "tldr": tok(p["description"]),
+        f = {"title": tok(title.replace("-", " ") + " " + label), "tldr": tok(gist),
              "heads": tok(heads), "body": tok(_code_capped(own))}
         tf = {k: Counter(v) for k, v in f.items()}
         out.append({"shelf": shelf, "title": title, "label": label, "rel": rel, "path": path, "i": i,
                     "heading": s["heading"], "parents": s["parents"], "level": s["level"],
                     "size": len(p["body"][s["start"]:s["end"]].encode("utf-8")),
                     "own": len(own.strip()), "tf": tf, "len": {k: sum(c.values()) for k, c in tf.items()},
-                    "lesson": lesson})
+                    "lesson": lesson, "labels": section_labels(labels, s["heading"], s["parents"]),
+                    "links": wikilinks(own)})
     return out
 
 
@@ -837,9 +1101,9 @@ def section_corpus(project=None, kit=None):
         ids = {t for t, _ in mine}
         docs = [d for d in docs if not (d["shelf"] == "team" and d["title"] in ids)]
         for t, p in mine:
-            docs += _section_docs("team", t, p, p, _team_label(t))
+            docs += _section_docs("team", t, p, p, _team_label(t), project)
     for t, p in game_files(project):
-        docs += _section_docs("game", t, p, p)
+        docs += _section_docs("game", t, p, p, "", project)
     return docs
 
 
@@ -1051,29 +1315,110 @@ def interleave(pool, k, may_promote=lambda item: True):
     return (firsts + rest)[:k]
 
 
-def _keyword_pool(q, shelves, k, idx=None, docs=None):
+def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False):
     """The keyword search's k results over several shelves, in the order it shows them, and the symptom lines:
     sections from guides/team/game and notes from the vault, merged by how much of the query each matches (scores
-    from different shelves are not comparable, coverage is)."""
+    from different shelves are not comparable, coverage is). filters (normalize_filters) keep only the notes whose
+    labels pass; links adds up to two notes the first results link to (_linked_pool)."""
     terms = query_terms(q)
     pool = []
     symptoms = []
     if "vault" in shelves and os.path.isdir(KB):
         idx = idx or load_index()
-        res, symptoms = search(q, k, idx)
+        res, symptoms = search(q, max(k * 8, 40) if filters else k, idx)
+        if filters:
+            res = [(s, d) for s, d in res if labels_match(d.get("labels"), filters)][:k]
         top = res[0][0] if res else 1
         for s, d in res:
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     sec_shelves = [s for s in shelves if s != "vault"]
     if sec_shelves:
         docs = section_corpus() if docs is None else docs
+        if filters:
+            docs = [d for d in docs if labels_match(d.get("labels"), filters)]
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
         taken = Counter()
         for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    return interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2])), symptoms
+    pool = interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2]))
+    if links:
+        pool = _linked_pool(q, pool, shelves, k, idx if "vault" in shelves else None,
+                            docs if sec_shelves else None, filters)
+    return pool, symptoms
+
+
+LINKED_MAX = 2  # linked results added to one answer at most
+DIRECT_KEPT = 3  # ... and never in place of one of the first three direct results
+LINK_COVER = 0.6  # a linked note qualifies when its best part holds at least this share of the query's own words
+LINK_FIELDS = ("title", "tags", "tldr", "heads")  # ... a vault note's in these (its long body holds most words)
+LINK_CANDIDATES = 24  # linked notes looked at per search at most
+
+
+def place_linked(direct, linked, k):
+    """The k results to show: the first DIRECT_KEPT direct ones, then up to LINKED_MAX linked ones, then the rest of
+    the direct ones."""
+    head = direct[:DIRECT_KEPT]
+    room = min(LINKED_MAX, k - len(head))
+    return (head + list(linked)[:max(0, room)] + direct[DIRECT_KEPT:])[:k]
+
+
+def _linked_pool(q, pool, shelves, k, idx, docs, filters=None):
+    """The keyword search's link following: the [[links]] in the first results' notes, and of the notes they name
+    (on the searched shelves, not already shown, passing the same filters: `docs` is already filtered) the best part
+    of each that holds most of the query's own words (LINK_COVER; synonyms do not count, and a vault note counts only
+    its title, tags, TL;DR and headings). Linked items carry a 4th element: the linking title."""
+    if k <= DIRECT_KEPT or len(pool) < 1:
+        return pool
+    terms = Counter({t: w for t, w in query_terms(q).items() if w >= 1})
+    have = {(item[1], item[2]["title"]) for item in pool}
+    vault_by = {d["title"].casefold(): d for d in (idx or {}).get("docs", [])} if idx else {}
+    notes, by_name = {}, {}
+    for d in docs or ():
+        if d["shelf"] not in shelves:
+            continue
+        key = (d["shelf"], d["title"])
+        notes.setdefault(key, []).append(d)
+        for name in {d["title"].casefold(), os.path.basename(d["title"]).casefold(),
+                     (d.get("label") or "").casefold()} - {""}:
+            if name.endswith(".md"):
+                name = name[:-3]
+            by_name.setdefault(name, [])
+            if key not in by_name[name]:
+                by_name[name].append(key)
+    cands, src = [], {}
+    for _, shelf, d in [x[:3] for x in pool[:DIRECT_KEPT]]:
+        if shelf == "vault":
+            targets = d.get("links") or []
+        else:
+            own = d.get("links") or []
+            targets = own + [t for x in notes.get((shelf, d["title"]), ()) for t in x.get("links") or ()
+                             if t not in own]
+        for t in targets:
+            keys = ([("vault", vault_by[t]["title"])] if t in vault_by else []) + by_name.get(t, [])
+            for key in keys:
+                if key not in have and key not in src:
+                    src[key] = d["title"]
+                    cands.append(key)
+        if len(cands) >= LINK_CANDIDATES:
+            break
+    found = []
+    for key in cands[:LINK_CANDIDATES]:
+        if key[0] == "vault":
+            d = vault_by.get(key[1].casefold())
+            if d is None or not labels_match(d.get("labels"), filters):
+                continue
+            found.append((_coverage(terms, d["tf"], LINK_FIELDS), "vault", d, src[key]))
+        else:
+            t = pquery_terms(q) if key[0] in PERSONAL else squery_terms(q)
+            t = Counter({x: w for x, w in t.items() if w >= 1})
+            best = max(((_coverage(t, x["tf"], SECTION_FIELDS), x["own"], x) for x in notes.get(key, ())),
+                       key=lambda c: (c[0], c[1]), default=None)
+            if best:
+                found.append((best[0], key[0], best[2], src[key]))
+    linked = sorted((f for f in found if f[0] >= LINK_COVER), key=lambda f: -f[0])
+    return place_linked(pool, linked, k) if linked else pool
 
 
 def keyword_ranking(q, shelves, depth, idx=None, docs=None):
@@ -1088,17 +1433,21 @@ def keyword_ranking(q, shelves, depth, idx=None, docs=None):
     return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]
 
 
-def combined_search(q, shelves, k):
-    """Text for a search over several shelves (`_keyword_pool`)."""
+def combined_search(q, shelves, k, filters=None):
+    """Text for a search over several shelves (`_keyword_pool`), with the notes linked from the first results."""
     terms = query_terms(q)
-    pool, symptoms = _keyword_pool(q, shelves, k)
+    pool, symptoms = _keyword_pool(q, shelves, k, None, None, filters, links=True)
     if not pool:
-        return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
+        return "No match on %s%s. Try other words%s." % (
+            ", ".join(shelves), " with those filters" if filters else "",
+            ", or action 'list' to browse the vault" if "vault" in shelves else "")
     out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
     files = {}
-    for rank, (_, shelf, d) in enumerate(pool, 1):
+    for rank, item in enumerate(pool, 1):
+        _, shelf, d = item[:3]
+        linked = item[3] if len(item) > 3 else None
         if shelf == "vault":
-            out += _vault_note_lines(rank, d)
+            out += _vault_note_lines(rank, d, linked)
         else:
             key = (shelf, d["title"])
             if key not in files:
@@ -1108,17 +1457,23 @@ def combined_search(q, shelves, k):
                     files[key] = None
             p = files[key]
             s = p["sections"][d["i"]] if p and d["i"] < len(p["sections"]) else None
-            out += _section_lines(rank, shelf, d, p, s, terms)
+            out += _section_lines(rank, shelf, d, p, s, terms, linked=linked)
     return _results_tail(out, q, shelves, symptoms)
 
 
 # ------------------------------------------------------------------ the lines of one search result (both searches)
-def _vault_note_lines(rank, d):
+def _tail(labels, linked=None, lesson=False):
+    """The end of a result's first line: its labels, and the note that links to it when it was found that way."""
+    lab = label_text(labels) or ("[lesson]" if lesson else "")
+    return ("  " + lab if lab else "") + ("  (linked from %s)" % linked if linked else "")
+
+
+def _vault_note_lines(rank, d, linked=None):
     """A vault note found by the keyword search: its TL;DR bullets, its sections and the arguments to read one."""
     out = []
     bullets, _ = tldr_parts(d)
     hints = _vault_section_hint(d)
-    out.append("%d. [vault] %s  (note, %d KB)" % (rank, d["title"], d["kb"]))
+    out.append("%d. [vault] %s  (note, %d KB)%s" % (rank, d["title"], d["kb"], _tail(d.get("labels"), linked)))
     out += ["   " + b for b in bullets[:2]]
     if hints:
         out.append("   Sections: " + " · ".join(hints))
@@ -1136,14 +1491,14 @@ def guide_excerpt_tag(title):
             "procedure first.]" % (title, title))
 
 
-def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
-    """One section: rank, shelf, title › heading, size, a snippet (or the given passage lines) and the arguments
-    that read exactly it."""
+def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None, linked=None):
+    """One section: rank, shelf, its labels, title › heading, size, a snippet (or the given passage lines) and the
+    arguments that read exactly it; a result found through a link says which note links to it."""
     out = []
     where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
     label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
-    kind = " [lesson]" if d.get("lesson") else ""
-    out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
+    out.append("%d. [%s] %s%s › %s  (%s)%s" % (rank, shelf, d["title"], label, where, size_text(d["size"]),
+                                               _tail(d.get("labels"), linked, d.get("lesson"))))
     if lines is not None:
         out += ["   " + x for x in lines]
     elif s:
@@ -1203,10 +1558,15 @@ PASSAGE_CHARS = 700  # one hit's passage at most (about 175 tokens)
 ANSWER_CHARS = 3200  # every passage of one answer together at most (about 800 tokens); the rest show a snippet
 
 
+CONTEXT_MARK = "Context: "  # the knowledge index's context line, second in a chunk (rbxrag.chunks)
+
+
 def passage(text, budget):
-    """The lines of a matched chunk (its own text, without the title › heading line the index puts first), up to
-    budget characters: the passage an agent reads instead of the whole note."""
+    """The lines of a matched chunk (its own text, without the title › heading line and the context line the index
+    puts first), up to budget characters: the passage an agent reads instead of the whole note."""
     body = text.split("\n", 1)[1] if "\n" in text else text
+    if body.startswith(CONTEXT_MARK):
+        body = body.split("\n", 1)[1] if "\n" in body else ""
     out, used, fence = [], 0, False
     for line in body.split("\n"):
         st = line.strip()
@@ -1233,9 +1593,10 @@ def _rag_hit_lines(rank, hit, terms, budget=0):
     if shelf not in SHELVES or not title or not isinstance(path, str) or not path.endswith(".md"):
         return None
     try:
-        p = parse_sections(_reader_text({"shelf": shelf, "path": path}))
+        text = _reader_text({"shelf": shelf, "path": path})
     except (OSError, UnicodeDecodeError):
         return None
+    p = parse_sections(text)
     i, heading = hit.get("i"), hit.get("heading")
     secs = p["sections"]
     s = secs[i] if isinstance(i, int) and 0 <= i < len(secs) and secs[i]["heading"] == heading else None
@@ -1245,8 +1606,10 @@ def _rag_hit_lines(rank, hit, terms, budget=0):
         return None
     label = _team_label(title) if shelf == "team" else (p["label"] or title)
     lesson = shelf in PERSONAL and (p["fm"].get("kind") == "lesson" or title in ("lessons.md", "studio-lessons"))
+    labels = section_labels(note_labels(shelf, title, path, p["fm"], text, hit.get("project") or ""),
+                            s["heading"], s["parents"])
     d = {"title": title, "label": label, "heading": s["heading"], "parents": s["parents"], "size": s_size(p, s),
-         "lesson": lesson}
+         "lesson": lesson, "labels": labels}
     args = None
     if shelf == "vault":  # a vault read takes heading words of a ## or ### heading; without one it lists the sections
         args = {"action": "read", "shelf": "vault", "title": title}
@@ -1255,14 +1618,18 @@ def _rag_hit_lines(rank, hit, terms, budget=0):
     lines = None
     if budget > 0 and isinstance(hit.get("text"), str) and hit["text"].strip():
         lines = passage(hit["text"], budget) or None
-    return _section_lines(rank, shelf, d, p, s, terms, args, lines)
+    linked = hit.get("linked_from") if isinstance(hit.get("linked_from"), str) else None
+    return _section_lines(rank, shelf, d, p, s, terms, args, lines, linked)
 
 
-def _rag_hits(end, q, shelves, k):
+def _rag_hits(end, q, shelves, k, filters=None):
     """The knowledge index's hits for q (a non-empty list), or None when it answers anything else. Raises on a failed
     call (the callers turn every failure into the keyword search)."""
     url, token = end
-    body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
+    req_body = {"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}
+    if filters:
+        req_body["filters"] = filters
+    body = json.dumps(req_body).encode()
     req = urllib.request.Request(url + "/query", data=body, headers={
         "Content-Type": "application/json", "Authorization": "Bearer " + token})
     with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
@@ -1280,7 +1647,7 @@ def _close_quietly(e):
             pass
 
 
-def rag_search(q, shelves, k):
+def rag_search(q, shelves, k, filters=None):
     """Search text from the knowledge index service (its endpoint file, see rag_endpoint), in the same format as the
     keyword search, or None on any failure (not running, slower than 3 s, an error, a bad answer, no hits) so the
     caller answers with the keyword search instead."""
@@ -1288,7 +1655,7 @@ def rag_search(q, shelves, k):
     if not end:
         return None
     try:
-        hits = _rag_hits(end, q, shelves, k)
+        hits = _rag_hits(end, q, shelves, k, filters)
         if hits is None:
             return None
         terms = query_terms(q)
@@ -1496,13 +1863,14 @@ def run(action, a):
         raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
     if shelf == "all" and not project_dir():
         shelves.remove("game")
-    text = rag_search(q, shelves, k)  # the knowledge index, when the app runs it; None means the keyword search
+    filters = normalize_filters(a, project_dir())
+    text = rag_search(q, shelves, k, filters)  # the knowledge index, when the app runs it; None: the keyword search
     if text is not None:
         return text
-    if shelf == "vault":  # the vault on its own answers exactly as it always has
+    if shelf == "vault" and not filters:  # the vault on its own answers exactly as it always has
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
             main()
         text = _vault_call(vault_search) or "No match. Try other words, or action 'list' to browse the sections."
         return text + "\n\nNext: rbx_vault action 'read' with a title and heading words for one section (not the whole note)."
-    return combined_search(q, shelves, k)
+    return combined_search(q, shelves, k, filters)

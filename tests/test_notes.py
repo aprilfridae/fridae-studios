@@ -204,7 +204,7 @@ class SearchTests(NotesTestCase):
         with open(old, "w", encoding="utf-8") as f:
             f.write("- 2026-10-01: Test every menu on a phone emulator.\n")
         text = self.vault("search", query="phone emulator menu", shelf="yours")
-        self.assertIn("[yours] [lesson] studio-lessons", text)
+        self.assertRegex(text, r"\[yours\] studio-lessons .*\[lesson · agent ")
         self.assertFalse(os.path.exists(old))
         self.assertTrue(os.path.isfile(os.path.join(self.home, "notes", rbxnotes.LESSONS_NAME)))
         # if it could not be moved, the old place is still read
@@ -312,11 +312,11 @@ class Round3Tests(NotesTestCase):
                     call()
             rbxstage.run("lesson", {"project": self.project, "text": "Gaps for JumpPower 50 need 12 studs.", "scope": "game"})
             text = self.vault("search", query="JumpPower gaps", shelf="game")
-        self.assertIn("[game] [lesson]", text)
+        self.assertRegex(text, r"\[game\] .*\[lesson · this game ")
         self.assertFalse(os.path.exists(os.path.join(self.home, "notes")))
         with self.in_project():  # the Lead or an ordinary chat may save for every game
             rbxstage.run("lesson", {"project": self.project, "text": "Brief experts with GAME.md's remotes.", "scope": "all"})
-        self.assertIn("[yours] [lesson]", self.vault("search", query="brief experts remotes", shelf="yours"))
+        self.assertRegex(self.vault("search", query="brief experts remotes", shelf="yours"), r"\[yours\] .*\[lesson · ")
 
 
 class StudioOffTests(unittest.TestCase):
