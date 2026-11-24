@@ -145,15 +145,19 @@ def make_handler(service, token):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "fridae-rag"
+        timeout = 15  # seconds a connection may sit idle or half-sent
 
         def log_message(self, fmt, *args):  # nothing is logged (requests carry the token in a header)
             pass
 
-        def _send(self, code, data):
+        def _send(self, code, data, close=False):
             body = json.dumps(data, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            if close:  # an unread or refused request body must not be taken for the next request
+                self.send_header("Connection", "close")
+                self.close_connection = True
             self.end_headers()
             self.wfile.write(body)
 
@@ -161,13 +165,16 @@ def make_handler(service, token):
             got = (self.headers.get("Authorization") or "").encode()
             if hmac.compare_digest(got, want):
                 return True
-            self._send(401, {"error": "unauthorized"})
+            self._send(401, {"error": "unauthorized"}, close=True)
             return False
 
         def _body(self):
-            n = int(self.headers.get("Content-Length") or 0)
-            if n > MAX_BODY:
-                raise ValueError("request too large")
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise ValueError("bad Content-Length")
+            if n < 0 or n > MAX_BODY:
+                raise ValueError("bad or too large Content-Length (1 MB at most)")
             raw = self.rfile.read(n) if n else b"{}"
             data = json.loads(raw or b"{}")
             if not isinstance(data, dict):
@@ -188,7 +195,7 @@ def make_handler(service, token):
             try:
                 data = self._body()
             except (ValueError, UnicodeDecodeError) as e:
-                return self._send(400, {"error": str(e)})
+                return self._send(400, {"error": str(e)}, close=True)
             if path == "/rebuild":
                 return self._send(200, {"started": service.start(full=True)})
             if path != "/query":
@@ -198,9 +205,9 @@ def make_handler(service, token):
             try:
                 k = max(1, min(int(data.get("k") or 5), 20))
             except (TypeError, ValueError):
-                return self._send(400, {"error": "k must be a whole number"})
+                return self._send(400, {"error": "k must be a whole number"}, close=True)
             if not q:
-                return self._send(400, {"error": "q is empty"})
+                return self._send(400, {"error": "q is empty"}, close=True)
             try:
                 hits = service.query(q, shelves, k, _project_arg(data.get("project")))
             except NotReady:

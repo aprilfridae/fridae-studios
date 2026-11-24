@@ -149,6 +149,32 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(body["hits"][0]["heading"], "Landing")
         self.assertIn("purple", body["hits"][0]["text"])
 
+    def test_bad_requests_refused_and_closed(self):
+        kit = Kit(self)
+        svc = serve.Service("light", kit.engine)
+        base = self.start(svc)
+        port = int(base.rsplit(":", 1)[1])
+        self.assertEqual(serve.make_handler(svc, TOKEN).timeout, 15)
+
+        def raw(head):
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                s.sendall(head.encode())
+                data = b""
+                while True:
+                    part = s.recv(65536)
+                    if not part:
+                        break
+                    data += part
+            return data.decode("utf-8", "replace")  # the server closed the connection, or this would time out
+        for length in ("-5", "2000000", "abc"):
+            out = raw("POST /query HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer %s\r\nContent-Length: %s\r\n\r\n"
+                      % (TOKEN, length))
+            self.assertIn(" 400 ", out.split("\r\n")[0], length)
+            self.assertIn("Connection: close", out)
+        out = raw("POST /query HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n{}")
+        self.assertIn(" 401 ", out.split("\r\n")[0])
+        self.assertIn("Connection: close", out)
+
     def test_quick_sync_never_rebuilds(self):
         kit = Kit(self)
         clock = [100.0]
