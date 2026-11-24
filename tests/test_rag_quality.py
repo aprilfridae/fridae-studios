@@ -146,7 +146,7 @@ class ContextLineTests(Tmp):
                                  chunks.LIMIT // 4)
 
     def test_format_version_bumped_so_old_indexes_rebuild_once(self):
-        self.assertEqual(engine.FORMAT, 2)
+        self.assertEqual(engine.FORMAT, 3)
         a = write(os.path.join(self.tmp, "kit", "Alpha.md"), "# Alpha\n\n## Coins\n\nShiny coins. [[Bravo]]\n")
         b = write(os.path.join(self.tmp, "kit", "Bravo.md"), "# Bravo\n\n## Lanterns\n\nA lantern.\n")
         files = [("vault", "Alpha", a), ("vault", "Bravo", b)]

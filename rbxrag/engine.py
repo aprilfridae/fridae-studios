@@ -23,7 +23,7 @@ from typing import Callable, Protocol
 from rbxrag import chunks
 from rbxrag.stores import FUSED, PREFETCH, MemStore, QdrantStore  # noqa: F401 (re-exported)
 
-FORMAT = 2  # 2: every chunk carries its context lines and labels, and the manifest each file's [[links]]
+FORMAT = 3  # 2: every chunk carries its context lines and labels, and the manifest each file's [[links]]; 3: dates only from front matter (an undated note has none in its context line)
 KEYWORD_DEPTH = 20  # how many of the keyword search's results join the fusion
 
 # How a query is answered, per mode. Measured on the bench of 33 queries (12 vault baseline, 6 knowledge-bench tasks,
