@@ -1932,7 +1932,9 @@ def _keyword_passages(q, shelves, k, idx, docs):
         if not s:
             continue
         lines = snippet(p["body"][s["start"]:s["own_end"]], terms, n=4, width=200)
-        out.append({"shelf": shelf, "title": d.get("label") or d["title"], "heading": d["heading"],
+        # a guide's title is its rbx_guide topic (the app's pointer names it), as the knowledge index sends it
+        title = d["title"] if shelf == "guides" else d.get("label") or d["title"]
+        out.append({"shelf": shelf, "title": title, "heading": d["heading"],
                     "text": mark + _cut(" ".join(lines))})
     return out
 

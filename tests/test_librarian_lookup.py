@@ -100,6 +100,18 @@ class LookupTests(unittest.TestCase):
                 self.assertLessEqual(len(h["text"]), rbxvault.LOOKUP_CHARS)
                 self.assertNotIn("tags:", h["text"])  # no front matter
 
+    def test_keyword_guide_hits_name_a_topic_rbx_guide_loads(self):
+        # the app's pointer is "Call rbx_guide with topic `<title>`": the title must be the topic, as on the RAG path
+        import rbxkit_mcp
+        queries = ["how to make code testable with unit tests in roblox", "particle emitter budgets for ambient vfx",
+                   "build and check roblox ui layout"]
+        with env():
+            out = rbxvault.lookup(queries, k=3)
+        guides = [h for part in out for h in part["hits"] if h["shelf"] == "guides"]
+        self.assertTrue(guides, out)
+        for h in guides:
+            self.assertIsNotNone(rbxkit_mcp._guide_path(h["title"]), h["title"])
+
     def test_the_command_reads_and_writes_json(self):
         fake = [{"query": "a", "via": "keyword", "hits": [{"title": "Señal"}]}]
         raw = io.BytesIO()
