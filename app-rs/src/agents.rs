@@ -2611,6 +2611,35 @@ impl Agent {
         }
     }
 
+    /// What this expert changed in the game this turn, as plain step labels (one per line): the small, non-code view
+    /// the plain-English summary writer is shown beside the expert's report.
+    fn studio_changes_text(&self) -> String {
+        let st = self.st.lock().unwrap();
+        studio_steps_since(&st.log, st.turn_started).iter().filter_map(|s| s["label"].as_str()).collect::<Vec<_>>().join("\n")
+    }
+
+    /// A plain-English, non-technical summary of what this expert did (`report` is its own report), written on the
+    /// user's OpenCode plan — never Claude/Gemini — over the report and a small masked view of what it changed
+    /// (`compact::plain_summary`). Bounded time; None when the setting is off, nobody can write one in time, or they
+    /// all fail (the caller then falls back to the expert's own one-line report). On success it is recorded as usage
+    /// (the plan's), shown in the expert's chat as an "In plain words:" line, and returned for the Lead and Review.
+    pub fn plain_expert_summary(&self, report: &str) -> Option<String> {
+        if !paths::expert_summaries_on() {
+            return None;
+        }
+        let changes = self.studio_changes_text();
+        let stop = || shutting();
+        // the chat shows a step while it is written, naming the cheap model (as the hand-over writer does)
+        let step = |writer: &str| self.put("tool", json!({"label": format!("Writing a plain summary of this expert's work ({writer})"), "app": true}));
+        let out = crate::compact::plain_summary(report, &changes, &stop, &step);
+        let s = out.summary?;
+        // it runs on Fridae's own OpenCode (the user's plan): recorded as usage, never billed to Claude/Gemini
+        usage::record(s.ai, (1, None), &self.id, self.project().as_deref(), &s.usage, None);
+        self.put("usage", s.usage.json());
+        self.put("plain", json!({"text": s.text}));
+        Some(s.text)
+    }
+
     /// The studio run of this chat's game, when this chat leads it and it is paused.
     fn paused_run(&self) -> bool {
         let Some(p) = self.project() else { return false };
@@ -2798,7 +2827,7 @@ impl Agent {
             paths::now_secs() - st.saved_at > 3.0
         };
         // saved as the chat goes, so nothing is lost if the window is closed or the app is killed
-        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting" | "helper_steps" | "run_undone" | "rollover") || (kind == "tool" && stale) {
+        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting" | "helper_steps" | "run_undone" | "rollover" | "plain") || (kind == "tool" && stale) {
             self.save();
         }
     }
@@ -5115,6 +5144,8 @@ fn saved_in(dir: &std::path::Path, open: &[String]) -> Vec<Value> {
             // an expert's request and name, so a review item that names only the request can still say who made it
             "team": d["team"],
             "expert": if d["expert"].is_string() { json!(d["name"].as_str().unwrap_or("").split(':').next().unwrap_or("").trim()) } else { Value::Null },
+            // the latest plain-English summary of this expert's work, for its row in the sidebar (the chat replays it anyway)
+            "plain": d["events"].as_array().and_then(|es| es.iter().rev().find(|e| e["kind"] == "plain").and_then(|e| e["text"].as_str())).map(|s| json!(s)).unwrap_or(Value::Null),
         }));
     }
     out.sort_by(|a, b| b["updated"].as_f64().partial_cmp(&a["updated"].as_f64()).unwrap_or(std::cmp::Ordering::Equal));

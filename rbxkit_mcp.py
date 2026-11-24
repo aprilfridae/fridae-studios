@@ -1495,6 +1495,7 @@ TOOLS = [
              "status": {"type": "string", "enum": ["start", "done"], "description": "stage: start or finish it"},
              "title": {"type": "string", "description": "review: short title"},
              "summary": {"type": "string", "description": "review: what was done and what the user should check"},
+             "plain": {"type": "string", "description": "review: the expert's \"In plain words\" line (from its result), kept on the item for the user"},
              "media": {"type": "array", "items": {"type": "string"}, "description": "review: picture or video file paths (png, jpg, webp, mp4, mov; 8 at most)"},
              "expert": {"type": "string", "description": "review: the expert that made the work"},
              "blocking": {"type": "boolean", "description": "review: true if the run must wait for the user's yes"},

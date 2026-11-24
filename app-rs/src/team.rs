@@ -294,6 +294,21 @@ pub fn with_model_note(text: String, note: Option<String>) -> String {
     }
 }
 
+/// The expert's own one-line summary: the first non-empty line of its report, trimmed. Stands in for a written
+/// plain-English summary when that is switched off or could not be written (never blocks or fails the run).
+pub fn one_liner(report: &str) -> String {
+    report.lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.chars().take(200).collect::<String>()).unwrap_or_default()
+}
+
+/// An expert's result with a plain-English line for the user appended, when there is one. Marked as Fridae's own
+/// words (not the expert's), so the Lead can tell it apart and weave it into the progress it reports (see lead.md).
+pub fn with_plain(text: String, plain: Option<&str>) -> String {
+    match plain.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => format!("{text}\n\nIn plain words (for the user, from Fridae Studios): {p}"),
+        None => text,
+    }
+}
+
 /// Called when an agent's turn ends: hand its reply back if another agent is waiting for it.
 /// `stopped`: the turn was ended with Stop (or app quit, or End this run), not finished by the agent.
 pub fn finished(agent: &Agent, stopped: bool) {
@@ -301,11 +316,22 @@ pub fn finished(agent: &Agent, stopped: bool) {
     agent.hand_steps_to_lead(); // an expert's Studio steps count toward its Lead's studio run
 
     if let Some((id, role)) = agent.team() {
-        let text = with_lost_work(result_text(&agent.last_reply(), stopped), agent.take_jobs_lost());
+        let report = agent.last_reply();
+        let text = with_lost_work(result_text(&report, stopped), agent.take_jobs_lost());
         let text = with_model_note(text, agent.model_note());
+        // a plain-English line for the user, for an expert that finished its task (not one the user stopped): the app
+        // writes it on the user's OpenCode plan, and falls back to the expert's own one-liner when it cannot. Bounded
+        // time; it never blocks or fails the run (see `compact::plain_summary`).
+        let plain = (agent.expert().is_some() && !stopped)
+            .then(|| agent.plain_expert_summary(&report).unwrap_or_else(|| one_liner(&report)))
+            .filter(|s| !s.is_empty());
+        let text = with_plain(text, plain.as_deref());
         let mut result = json!({"id": id, "agent": agent.id, "name": agent.name(), "role": role, "status": "done", "text": text});
         if let Some(e) = agent.expert() {
             result["expert"] = json!(e);
+        }
+        if let Some(p) = &plain {
+            result["plain"] = json!(p); // also structured, for the review item filed for this work
         }
         write_result(&id, result);
         agent.mark_result(); // its slot is free once it stops working (the chat stays open to read)
@@ -646,4 +672,58 @@ mod tests {
         assert!(NO_STUDIO.contains("under needs") && NO_STUDIO.contains("start this expert again"));
     }
 
+    #[test]
+    fn a_one_liner_is_the_first_line_and_a_plain_line_is_marked_as_fridaes() {
+        assert_eq!(one_liner("  Built the shop.\nMore details here."), "Built the shop.");
+        assert_eq!(one_liner("   \n   "), "");
+        assert_eq!(one_liner(&"word ".repeat(100)).chars().count(), 200);
+        assert_eq!(with_plain("report".into(), None), "report");
+        assert_eq!(with_plain("report".into(), Some("  ")), "report", "an empty plain line is not appended");
+        let out = with_plain("the full report".into(), Some("Added a shop."));
+        assert_eq!(out, "the full report\n\nIn plain words (for the user, from Fridae Studios): Added a shop.");
+    }
+
+    #[test]
+    fn a_finished_expert_gets_a_plain_english_line_for_the_user_in_its_result() {
+        let d = game("plain");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        // the expert's report carries a marker the stand-in OpenCode writer is keyed to (it never asks a real model)
+        let marker = "ZZmarkerShopZZ";
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": format!("Implemented ShopService + GUI. {marker}")}));
+        crate::compact::STAND_IN_FOR.lock().unwrap().push((marker.to_string(), crate::compact::writes("Added a shop where players spend coins on hats.")));
+        finished(&x, false);
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain.json")).unwrap()).unwrap();
+        // the plain line is on the result, structured and woven into the text the Lead reads
+        assert_eq!(res["plain"], "Added a shop where players spend coins on hats.");
+        assert!(res["text"].as_str().unwrap().contains("In plain words (for the user, from Fridae Studios): Added a shop where players spend coins on hats."), "{}", res["text"]);
+        // and it is shown in the expert's own chat as a "plain" event (the sidebar's "In plain words:" line)
+        let last = x.last_user_event_for_test(); // (the chat has user + text + plain events logged)
+        assert!(last.is_some());
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
+
+    #[test]
+    fn a_stopped_expert_gets_no_plain_line_and_the_run_is_never_blocked() {
+        let d = game("plain-stopped");
+        let p = d.to_str().unwrap().to_string();
+        let lead = agents::new_background_chat("Lead: plain stop", Some(p.clone())).unwrap();
+        let x = agents::spawn_expert("w-plain-stop", "worker", "Coder: Shop", Some(p.clone()), None, Some(&lead.id),
+            agents::Expert { id: "coder".into(), name: "Coder".into(), text: String::new() }).unwrap();
+        x.put("user", serde_json::json!({"text": "go"}));
+        x.put("text", serde_json::json!({"text": "Half the shop is built."}));
+        // stopped: no writer is asked (no stand-in registered), the result still goes back at once
+        finished(&x, true);
+        let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain-stop.json")).unwrap()).unwrap();
+        assert!(res.get("plain").is_none());
+        assert!(res["text"].as_str().unwrap().starts_with("Stopped:"));
+        for a in [&lead, &x] {
+            agents::remove_agent(&a.id);
+        }
+    }
 }

@@ -348,7 +348,9 @@ def _review(project, a):
     kept, skipped = _copy_media(project, item_id, a.get("media"))
     now = time.time()
     item = {"id": item_id, "stage": (a.get("stage") or run.get("stage") or "").strip(), "expert": (a.get("expert") or "").strip(),
-            "title": title[:120], "summary": (a.get("summary") or "").strip()[:4000], "media": kept,
+            "title": title[:120], "summary": (a.get("summary") or "").strip()[:4000],
+            # the app's plain-English line for the user ("In plain words:"), passed on from the expert's result
+            "plain": (a.get("plain") or "").strip()[:4000], "media": kept,
             "blocking": bool(a.get("blocking")), "status": "waiting", "note": "", "created": now, "decided": 0,
             "replaces": replaces, "by_chat": os.environ.get("RBXKIT_AGENT_ID") or ""}
     note = ""
@@ -425,8 +427,8 @@ def run(action, a):
 
 def _cmd(args):
     a = {"project": args.project, "id": args.id, "status": args.state, "title": args.title, "summary": args.summary,
-         "media": args.media, "expert": args.expert, "blocking": args.blocking, "replaces": args.replaces,
-         "text": args.text, "scope": args.scope}
+         "plain": args.plain, "media": args.media, "expert": args.expert, "blocking": args.blocking,
+         "replaces": args.replaces, "text": args.text, "scope": args.scope}
     print(run(args.action, a))
 
 
@@ -438,6 +440,7 @@ def register(sub):
     g.add_argument("--state", choices=["start", "done"], help="stage: start or finish it")
     g.add_argument("--title")
     g.add_argument("--summary")
+    g.add_argument("--plain", help="review: the plain-English line from the expert's result, for the user")
     g.add_argument("--media", nargs="*", help="review: picture or video files to attach")
     g.add_argument("--expert")
     g.add_argument("--blocking", action="store_true")

@@ -144,6 +144,15 @@ class StageTests(unittest.TestCase):
         for name in item["media"]:
             self.assertTrue(os.path.isfile(os.path.join(self.review_dir(), rid, name)))
 
+    def test_review_keeps_the_plain_english_line(self):
+        rid = self.filed_id(self.call("review", title="Shop", summary="Added ShopService + GUI",
+                                      plain="Added a shop where players spend coins on hats."))
+        item = self.item(rid)
+        self.assertEqual(item["plain"], "Added a shop where players spend coins on hats.")
+        # none passed: an empty string, never missing (the app and window always read it)
+        rid2 = self.filed_id(self.call("review", title="Map", summary="s"))
+        self.assertEqual(self.item(rid2)["plain"], "")
+
     def test_review_bad_media(self):
         good = [self.media("g%d.png" % i) for i in range(9)]
         missing = os.path.join(self.tmp, "gone.png")

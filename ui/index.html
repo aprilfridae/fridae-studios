@@ -98,6 +98,10 @@ input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-of
 .tag { display: block; text-align: right; font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); margin: 4px 4px 0 0; }
 .tag .linkish { font: inherit; letter-spacing: inherit; margin-left: 8px; color: var(--dim); border-radius: 4px; }
 .tag .linkish:hover { color: var(--text); }
+/* "In plain words": the app's plain-English line of what an expert did, for a non-technical reader */
+.plain-words { max-width: 70ch; margin: 10px 0 2px; padding: 10px 14px; border-radius: 10px; background: var(--soft, rgba(127, 127, 127, 0.08)); border-left: 3px solid var(--accent, #6b8afd); }
+.plain-words b { display: block; font-size: 12px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--faint); margin-bottom: 3px; }
+.plain-words p { margin: 0; color: var(--text); line-height: 1.5; }
 /* a longer explanation, folded behind one word */
 .moreinfo { margin: 4px 0 0; }
 .moreinfo summary { display: inline-block; font-size: 13px; color: var(--dim); cursor: pointer; list-style: none; text-decoration: underline; text-underline-offset: 3px; border-radius: 4px; }
@@ -1065,6 +1069,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <p class="sub">In a studio run, the Lead hands each part of the game to an expert.<br>Pick an AI and model for any of them; the rest run on the Lead's.</p>
       <label class="sub check-row"><input type="checkbox" id="xp-lead-picks"> The Lead may pick an AI for a job</label>
       <details class="moreinfo"><summary>More</summary><p>Now and then the Lead may start an expert on another AI or model; your rows here always win. An expert on Same as the Lead uses the Lead's model, so a Lead on a big model uses up that plan faster. Once you pick an AI, the expert uses that AI's default model unless you pick one. Only AIs installed on this computer are offered.</p></details>
+      <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
+      <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your game, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
       <div id="xp-table" style="margin-top: 12px"></div>
     </section>
     <section data-s="permissions">
@@ -1440,7 +1446,7 @@ function expertsOf(p) {
   const all = new Map();
   const put = (id, more) => { const x = all.get(id) || { id }; for (const k in more) if (more[k] !== undefined && more[k] !== null && more[k] !== "") x[k] = more[k]; all.set(id, x); };
   for (const x of Object.values(p.xps)) put(x.id, { name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at });
-  for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai }); }
+  for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai, plain: c.plain }); }
   for (const h of agents.values()) if (h.parent === p.id) put(h.id, { name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h });
   /* an open expert nothing is known of was open when the page loaded: it counts from then; one put back from a
      saved chat that the list of saved chats never named counts as old */
@@ -1559,11 +1565,13 @@ function sideExpert(used, x, lead, tab) {
     const b = w.firstChild, h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
     const state = h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
     const ai = x.runsOn || aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead)));
+    const plain = (h && h.plain) || x.plain || "";
     putClass(b, "s-row sx" + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
     putClass(b.firstChild, "dot" + state[1]);
     putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
-    putText(b.querySelector("small"), state[0] + " · " + ai);   /* the state first: the end is what a narrow sidebar cuts */
-    putTitle(b, [who, job, state[0], ai].filter(Boolean).join(" · ") + (lead ? "" : ". The chat that started it is closed."));
+    /* once the expert has finished, its row shows the plain-English line of what it did; while it works, its state */
+    putText(b.querySelector("small"), plain && !(h && h.busy) ? "In plain words: " + plain : state[0] + " · " + ai);
+    putTitle(b, [who, job, state[0], ai].filter(Boolean).join(" · ") + (plain ? ". In plain words: " + plain : "") + (lead ? "" : ". The chat that started it is closed."));
     putAttr(b, "aria-current", on ? "true" : null);
     const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
   });
@@ -2473,6 +2481,15 @@ function onEvent(e) {
     }
     if (p.turn) p.turn.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
     p.now = "Writing";
+  } else if (e.kind === "plain") {
+    /* the app's plain-English line of what this expert did, for the user: shown in the expert's chat and on its row */
+    p.plain = e.text || "";
+    if (e.text) {
+      if (!p.turn) newTurn(p);
+      const box = el("div", "plain-words enter", "<b>In plain words</b><p></p>");
+      putText(box.querySelector("p"), e.text);
+      p.turn.appendChild(box); p.turn._steps = null;
+    }
   } else if (e.kind === "images") {
     if (!p.turn) newTurn(p);
     const g = el("div", "shots enter");
@@ -3811,7 +3828,7 @@ function paintRun(r) {
    of To look at that holds this card) is told what was decided instead of the card folding to one line itself. */
 function rvItemCard(it, r, onDone) {
   const path = r.project;
-  const card = el("div", "ask rv-item enter" + (it.blocking ? " block" : ""), '<div class="rv-media"></div><div class="meta"></div><h4></h4><p></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button></div><div class="rv-change"><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Ask for changes</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const card = el("div", "ask rv-item enter" + (it.blocking ? " block" : ""), '<div class="rv-media"></div><div class="meta"></div><h4></h4><div class="plain-words rv-plain" hidden><b>In plain words</b><p></p></div><p class="rv-sum"></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button></div><div class="rv-change"><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Ask for changes</button></div><p class="rv-err"></p><div class="rv-said"></div>');
   card.dataset.id = it.id;
   const media = it.media || [], row = card.querySelector(".rv-media");
   if (!media.length) row.remove();
@@ -3824,7 +3841,9 @@ function rvItemCard(it, r, onDone) {
   });
   card.querySelector(".meta").textContent = [expertName(r, it), it.stage ? stageName(it.stage) : "", it.blocking ? "the run waits for this" : "", it.created ? ago(it.created) : ""].filter(Boolean).join("  ·  ");
   card.querySelector("h4").textContent = it.title || "Untitled";
-  const sum = card.querySelector("p"), more = card.querySelector(".more");
+  const plainBox = card.querySelector(".rv-plain");
+  if (it.plain) { plainBox.querySelector("p").textContent = it.plain; plainBox.hidden = false; } else plainBox.remove();
+  const sum = card.querySelector(".rv-sum"), more = card.querySelector(".more");
   sum.textContent = it.summary || "";
   if (!it.summary) sum.remove();
   else if (it.summary.length > 320 || it.summary.split("\n").length > 6) { sum.classList.add("clamp"); more.hidden = false; more.onclick = () => { const open = sum.classList.toggle("clamp"); more.textContent = open ? "Show all" : "Show less"; }; }
@@ -3917,8 +3936,8 @@ function paintReview() {
   const items = ((r && r.items) || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
   const needs = rvNeeds(r).filter((c) => rvShown(c.id));
   const keep = new Set();
-  const itemEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, expertName(r, i)].join("|"), () => rvItemCard(i, r)); };
-  const lookEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, expertName(r, i)].join("|"), () => rvLookRow(i, r)); };
+  const itemEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvItemCard(i, r)); };
+  const lookEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvLookRow(i, r)); };
   const needEl = (c) => { keep.add(c.id); return rvCard(c.id, [path, c.id, c.title, c.note, c.chat].join("|"), () => rvNeedCard(c, path)); };
   const blocking = items.filter((i) => i.blocking), look = items.filter((i) => !i.blocking);
   paintRvList($("rv-needs"), blocking.map(itemEl).concat(needs.map(needEl)));
@@ -4551,8 +4570,9 @@ $("b-update").onclick = async () => {
 $("upd-check").onclick = async () => { await api("/api/update", { action: "check" }); setTimeout(refresh, 600); };
 $("upd-auto").onclick = async () => { const on = $("upd-auto").getAttribute("aria-checked") !== "true"; await api("/api/update", { action: "auto", value: on }); refresh(); };
 function paintGemini() { $("gem-state").textContent = ((status.ai || {}).installed || {}).gemini ? "Made through Antigravity on your own Google account, at no extra cost. If that fails, " + (status.gemini_api ? "your API key is used." : "you get the prompt to run in Gemini yourself.") : status.gemini_api ? "Made automatically with your API key. Google charges for each one." : "Made through your own Gemini chat, at no extra cost." + (status.gemini ? " A key is saved but switched off." : "");
-  $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; $("gem-images").checked = status.gemini_images !== false; }
+  $("gem-api").style.display = status.gemini ? "" : "none"; $("gem-api").setAttribute("aria-checked", status.gemini_api ? "true" : "false"); $("gem-clear").style.display = status.gemini ? "" : "none"; $("gem-images").checked = status.gemini_images !== false; $("xp-summaries").checked = status.expert_summaries !== false; }
 $("gem-images").onchange = async (e) => { await api("/api/gemini", { images: e.target.checked }); refresh(); };
+$("xp-summaries").onchange = async (e) => { await api("/api/expert-summaries", { on: e.target.checked }); refresh(); };
 $("gem-save").onclick = async () => { const k = $("gem-key").value.trim(); if (!k) return; await api("/api/gemini", { key: k }); $("gem-key").value = ""; refresh(); };
 $("env-keys").onchange = async (e) => { await api("/api/env-keys", { on: e.target.checked }); refresh(); };
 $("gem-api").onclick = async () => { await api("/api/gemini", { use_api: $("gem-api").getAttribute("aria-checked") !== "true" }); refresh(); };
