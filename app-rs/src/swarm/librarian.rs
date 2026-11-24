@@ -16,6 +16,10 @@
 //! 6. when no model answers in time, the passages' titles and a line of each are the answer (`fallback_text`); when
 //!    the search itself fails, the answer says so (`NO_SEARCH`).
 //!
+//! Guides (vault/Fridae/Guides) are procedures to follow whole: their passages never go to the writer, and a part
+//! that matched one gets a pointer to load it with rbx_guide (`guide_pointer`). An answer drawn from notes ends with
+//! how to read a note in full (`READ_HATCH`), for when a summary looks thin.
+//!
 //! "@librarian remember: ..." still goes to the Librarian's agent (`is_remember`): filing a note takes judgement.
 
 use std::{
@@ -170,10 +174,11 @@ fn material(question: &str, parts: &[Part]) -> String {
     let mut out = format!("The question, as it was posted:\n{}\n", without_mentions(question));
     for (i, p) in parts.iter().enumerate() {
         out += &format!("\nPart {}: {}\n", i + 1, p.question);
-        if p.hits.is_empty() {
+        let notes: Vec<&Hit> = p.hits.iter().filter(|h| !is_guide(h)).collect();
+        if notes.is_empty() {
             out += "(no passage was found for this part)\n";
         }
-        for h in &p.hits {
+        for h in notes {
             out += &format!("- Note \"{}\" ({}): {}\n", source(h), h.shelf, cut(&h.text, PASSAGE_MAX));
         }
     }
@@ -221,12 +226,15 @@ pub fn fallback_text(parts: &[Part]) -> String {
         if p.hits.is_empty() {
             out += &format!(" {NOT_FOUND}.");
         }
-        for h in &p.hits {
+        for h in p.hits.iter().filter(|h| !is_guide(h)) {
             out += &format!("\n   - {}: {}", source(h), cut(&h.text, LINE_MAX));
-            if h.shelf == "guides" {
-                out += &format!("\n     {}", guide_excerpt_tag(&h.title));
-            }
         }
+        for g in guide_pointers(p) {
+            out += &format!("\n   - {g}");
+        }
+    }
+    if parts.iter().any(|p| p.hits.iter().any(|h| !is_guide(h))) {
+        out += &format!("\n{READ_HATCH}");
     }
     crate::compact::mask(&out)
 }
@@ -326,15 +334,16 @@ pub fn quote_found(quote: &str, passage: &str) -> bool {
 /// The passages of a part a note names: by its title (or title › heading), else every passage of the part.
 fn cited<'a>(part: &'a Part, note: &str) -> Vec<&'a Hit> {
     let n = words(note).join(" ");
-    let named: Vec<&Hit> = part
-        .hits
+    let notes: Vec<&Hit> = part.hits.iter().filter(|h| !is_guide(h)).collect();
+    let named: Vec<&Hit> = notes
         .iter()
+        .copied()
         .filter(|h| {
             let (t, src) = (words(&h.title).join(" "), words(&source(h)).join(" "));
             !n.is_empty() && !t.is_empty() && (n == t || n == src || n.contains(&t) || src.contains(&n))
         })
         .collect();
-    if named.is_empty() { part.hits.iter().collect() } else { named }
+    if named.is_empty() { notes } else { named }
 }
 
 /// The claims whose quote is in the passage they cite (the note's name set to that passage's), and how many were
@@ -381,11 +390,32 @@ fn first_words(text: &str, n: usize) -> String {
     if w.len() <= n { w.join(" ") } else { format!("{} …", w[..n].join(" ")) }
 }
 
-/// The line under a quote from one of Fridae's guides (the same words as rbxvault.guide_excerpt_tag): a piece is
-/// for finding the guide, and the asker loads the whole guide before acting on it.
-pub fn guide_excerpt_tag(title: &str) -> String {
-    format!("[Excerpt from guide: {title} — do not act on this snippet; call rbx_guide with topic `{title}` for the full procedure first.]")
+/// A passage from one of Fridae's guides (vault/Fridae/Guides). A guide is a procedure to follow whole, so the
+/// Librarian never summarises one: the writer never sees its passages, and the answer points to the guide instead.
+fn is_guide(h: &Hit) -> bool {
+    h.shelf == "guides"
 }
+
+/// The pointer for one guide a part matched (`title` is its rbx_guide topic).
+pub fn guide_pointer(title: &str, matched: &str) -> String {
+    format!("Recommended guide: {title} — matched on \"{matched}\". Call rbx_guide with topic `{title}` to load the full instructions.")
+}
+
+/// The guides a part matched, once each, as pointers.
+fn guide_pointers(p: &Part) -> Vec<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for h in p.hits.iter().filter(|h| is_guide(h)) {
+        if !seen.contains(&h.title.as_str()) {
+            seen.push(&h.title);
+            out.push(guide_pointer(&h.title, if h.heading.is_empty() { &h.title } else { &h.heading }));
+        }
+    }
+    out
+}
+
+/// The last line of an answer drawn from notes: a summary can drop a detail, and the asker can read the note itself.
+pub const READ_HATCH: &str = "To check a claim in full, read its note: rbx_vault action 'read', shelf 'all', title = the note's name before ›, heading = the words after it.";
 
 /// The posted answer: each part's claims with their notes, then the quotes they rest on. `proposed`: the parts the
 /// writer made claims for (a part that had claims and lost them all was not supported by its passages).
@@ -394,6 +424,12 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
         let mut out: Vec<String> = Vec::new();
         for (i, p) in parts.iter().enumerate() {
             let mine: Vec<&Claim> = kept.iter().filter(|c| c.part == i).take(per_part).collect();
+            let pointers = guide_pointers(p);
+            if mine.is_empty() && !pointers.is_empty() {
+                out.push(format!("{}. {}:", i + 1, cut(&p.question, 90)));
+                out.extend(pointers);
+                continue;
+            }
             if mine.is_empty() {
                 let why = if proposed.get(i).copied().unwrap_or(false) { NOT_SUPPORTED } else { NOT_FOUND };
                 out.push(format!("{}. {}: {why}.", i + 1, cut(&p.question, 90)));
@@ -403,15 +439,7 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
             out.extend(mine.iter().map(|c| format!("- {} ({})", c.claim, c.note)));
             out.push("Quotes:".into());
             out.extend(mine.iter().map(|c| format!("> \"{}\" ({})", first_words(&c.quote, quote_words), c.note)));
-            let mut guides: Vec<&str> = Vec::new();
-            for c in &mine {
-                if let Some(h) = p.hits.iter().find(|h| h.shelf == "guides" && source(h) == c.note) {
-                    if !guides.contains(&h.title.as_str()) {
-                        guides.push(&h.title);
-                    }
-                }
-            }
-            out.extend(guides.iter().map(|g| guide_excerpt_tag(g)));
+            out.extend(pointers);
         }
         out.join("\n")
     };
@@ -423,13 +451,19 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
         }
         text = draw(per_part, quote_words);
     }
+    if !kept.is_empty() {
+        text += &format!("\n{READ_HATCH}");
+    }
     crate::compact::mask(&text)
 }
 
 /// The writer's answer made into what is posted: claims checked against their passages (and, when two or more were
 /// dropped, by one cheap model, `check`), or the text as written when it holds no claims in the asked-for form.
 pub fn checked_answer(parts: &[Part], written: &str, check: &dyn Fn(&str) -> Option<String>) -> String {
-    let Some(claims) = parse_claims(written, parts.len()) else { return written.to_string() };
+    let Some(claims) = parse_claims(written, parts.len()) else {
+        let pointers: Vec<String> = parts.iter().flat_map(guide_pointers).collect();
+        return if pointers.is_empty() { written.to_string() } else { format!("{written}\n{}", pointers.join("\n")) };
+    };
     let proposed: Vec<bool> = (0..parts.len()).map(|i| claims.iter().any(|c| c.part == i)).collect();
     let (mut kept, dropped) = supported(parts, claims);
     if dropped > 0 {
@@ -467,6 +501,9 @@ pub fn answer(question: &str, search: Search, write: Model, check: Model) -> Str
     };
     if parts.iter().all(|p| p.hits.is_empty()) {
         return nothing_found(&parts);
+    }
+    if parts.iter().all(|p| p.hits.iter().all(is_guide)) {
+        return render(&parts, &[], &vec![false; parts.len()]);
     }
     match write(&prompt_for(question, &parts)).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
         Some(text) => checked_answer(&parts, &text, check),
@@ -697,19 +734,28 @@ mod tests {
     }
 
     #[test]
-    fn a_quote_from_a_guide_says_to_load_the_whole_guide() {
+    fn a_guide_is_pointed_to_never_summarised() {
         let guide = Hit { shelf: "guides".into(), title: "roblox-ui".into(), heading: "Safe area".into(), text: SAFE.into() };
-        let parts = vec![Part { question: "phone safe zones".into(), hits: vec![guide] }];
-        let said = checked_answer(&parts, &line(1, "Inset 24 px.", "24 px from each edge", "roblox-ui"), &|_| None);
-        assert!(said.contains("- Inset 24 px. (roblox-ui › Safe area)"), "{said}");
-        assert!(said.contains(&guide_excerpt_tag("roblox-ui")), "{said}");
-        assert!(guide_excerpt_tag("roblox-ui").contains("rbx_guide with topic `roblox-ui`"));
-        // a note from the vault or the game carries no such line
-        let said = checked_answer(&three(), &line(2, "Inset 24 px.", "24 px from each edge", "HUD Layout"), &|_| None);
-        assert!(!said.contains("[Excerpt from guide"), "{said}");
-        // with no writer, the passages are shown as they are, and a guide's still carries the line
-        assert!(fallback_text(&parts).contains(&guide_excerpt_tag("roblox-ui")));
-        assert!(!fallback_text(&three()).contains("[Excerpt from guide"));
+        let pointer = guide_pointer("roblox-ui", "Safe area");
+        assert!(pointer.contains("rbx_guide with topic `roblox-ui`") && pointer.starts_with("Recommended guide: roblox-ui"));
+        // the writer never sees a guide's passage, and a quote from it is not a claim
+        let mixed = vec![Part { question: "phone safe zones".into(), hits: vec![guide.clone(), hit("HUD Notes", DRAGS)] }];
+        assert!(!prompt_for("q", &mixed).contains("24 px"));
+        let said = checked_answer(&mixed, &line(1, "Inset 24 px.", "24 px from each edge", "roblox-ui"), &|_| None);
+        assert!(!said.contains("Inset 24 px"), "{said}");
+        assert!(said.contains(&pointer), "{said}");
+        // a part with claims from notes keeps the pointer under its quotes, and the answer ends with how to read a note
+        let said = checked_answer(&mixed, &line(1, "Prompts off while dragging.", "Disable ProximityPrompts on the client while a touch drag is held", "HUD Notes"), &|_| None);
+        assert!(said.contains("Quotes:") && said.contains(&pointer) && said.ends_with(READ_HATCH), "{said}");
+        // only guides found: no writer is asked, and the answer is the pointers
+        let only = vec![Part { question: "phone safe zones".into(), hits: vec![guide.clone(), guide.clone()] }];
+        let said = answer("@librarian phone safe zones?", &|_| Ok(only.clone()), &|_| panic!("no writer for guides only"), &|_| None);
+        assert_eq!(said, format!("1. phone safe zones:\n{pointer}"));
+        // no writer in time: the guide is a pointer, not its text
+        let fell = fallback_text(&mixed);
+        assert!(fell.contains(&pointer) && !fell.contains("24 px") && fell.ends_with(READ_HATCH), "{fell}");
+        // a plain-text writer keeps the pointers
+        assert!(checked_answer(&mixed, "Prompts go off while dragging.", &|_| None).ends_with(&pointer));
     }
 
     #[test]
