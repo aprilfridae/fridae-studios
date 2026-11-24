@@ -11,6 +11,7 @@ import math
 import os
 import re
 import sys
+import urllib.request
 from collections import Counter, defaultdict
 
 import rbxpaths
@@ -185,11 +186,101 @@ def load_index():
     return idx
 
 
+class Docs(list):
+    """Index entries that keep their own BM25F statistics between searches: the field averages, and an inverted
+    index (which entries hold each term) built once instead of the document frequencies being counted on every
+    search. A search then scores only the entries that hold a query term, with numpy. A caller that keeps one corpus
+    loaded for many searches (the knowledge index's KeywordRanker) wraps it in this; the scores are exactly the plain
+    list's (the same floating-point operations in the same order). Never changed after it is made."""
+
+    def stats(self, fields):
+        import threading
+        from array import array
+
+        import numpy as np
+        key = tuple(fields.items())
+        st = self.__dict__.setdefault("_stats", {}).get(key)
+        if st is None:
+            n = len(self)
+            avg = {f: sum(d["len"][f] for d in self) / n or 1 for f in fields}
+            tid, terms, docs = {}, array("i"), array("i")
+            for k, d in enumerate(self):
+                for t in {t for f in fields for t in d["tf"][f]}:
+                    i = tid.get(t)
+                    if i is None:
+                        i = tid[t] = len(tid)
+                    terms.append(i)
+                    docs.append(k)
+            terms = np.frombuffer(terms, dtype=np.int32)
+            order = np.argsort(terms, kind="stable")  # entries in order within a term
+            counts = np.bincount(terms, minlength=len(tid)) if len(tid) else np.zeros(0, dtype=np.int64)
+            starts = np.zeros(len(tid) + 1, dtype=np.int64)
+            np.cumsum(counts, out=starts[1:])
+            st = {"avg": avg, "tid": tid, "counts": counts, "starts": starts,
+                  "docs": np.frombuffer(docs, dtype=np.int32)[order], "tf": {}, "lock": threading.Lock()}
+            self._stats[key] = st
+        return st
+
+    def df(self, st, t):
+        i = st["tid"].get(t)
+        return 0 if i is None else int(st["counts"][i])
+
+    def postings(self, st, fields, t):
+        """(entries holding t, the BM25F term frequency of t in each), worked out on first use of t and kept."""
+        import numpy as np
+        hit = st["tf"].get(t)
+        if hit is None:
+            i = st["tid"][t]
+            ids = st["docs"][st["starts"][i]:st["starts"][i + 1]]
+            avg = st["avg"]
+            tfw = np.array([sum(w * self[k]["tf"][f].get(t, 0) / (1 - B + B * self[k]["len"][f] / avg[f])
+                                for f, w in fields.items()) for k in ids.tolist()], dtype=np.float64)
+            hit = (ids, tfw)
+            with st["lock"]:
+                if len(st["tf"]) > 20000:
+                    st["tf"].clear()
+                st["tf"][t] = hit
+        return hit
+
+    def warm(self, fields, min_df=100):
+        """Work out the term frequencies of every term held by at least min_df entries, most common first (the
+        expensive ones when a search meets them first); for a background thread."""
+        st = self.stats(fields)
+        common = sorted(((int(c), t) for t, c in zip(st["tid"], st["counts"].tolist()) if c >= min_df), reverse=True)
+        for _, t in common:
+            self.postings(st, fields, t)
+
+    def part(self, key, keep):
+        """The entries for which keep(entry) is true, as a Docs of its own (kept, so its statistics are too)."""
+        parts = self.__dict__.setdefault("_parts", {})
+        if key not in parts:
+            parts[key] = Docs(d for d in self if keep(d))
+        return parts[key]
+
+
+def _bm25f_kept(query_terms, docs, fields):
+    """bm25f over a Docs: the same arithmetic, only for the entries that hold a query term (the rest score 0)."""
+    import numpy as np
+    n = len(docs)
+    st = docs.stats(fields)
+    scores = np.zeros(n, dtype=np.float64)
+    for t, qw in query_terms.items():
+        df = docs.df(st, t)
+        if not df:
+            continue
+        ids, tfw = docs.postings(st, fields, t)
+        c = qw * math.log(1 + (n - df + 0.5) / (df + 0.5))
+        scores[ids] += c * tfw / (K1 + tfw)
+    return scores.tolist()
+
+
 def bm25f(query_terms, docs, fields=None):
     FIELDS_ = fields or FIELDS
     n = len(docs)
     if not n:
         return []
+    if isinstance(docs, Docs):
+        return _bm25f_kept(query_terms, docs, FIELDS_)
     avg = {f: sum(d["len"][f] for d in docs) / n or 1 for f in FIELDS_}
     df = Counter()
     for d in docs:
@@ -571,8 +662,32 @@ def _code_capped(text):
     return re.sub(r"```.*?```", lambda c: c.group(0)[:600], text, flags=re.S)
 
 
+_PERSONAL_CACHE = {}  # (shelf, title, path, rel, label_hint) -> ((mtime_ns, size), entries), for the user's shelves
+
+
 def _section_docs(shelf, title, path, rel, label_hint=""):
-    """Index entries for one file: one per section."""
+    """Index entries for one file: one per section. The user's own shelves are read on every search, so their
+    entries are kept per file and parsed again only when the file changes."""
+    if shelf in PERSONAL:
+        key = (shelf, title, path, rel, label_hint)
+        try:
+            st = os.stat(path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        hit = _PERSONAL_CACHE.get(key)
+        if sig is not None and hit and hit[0] == sig:
+            return hit[1]
+        out = _parse_section_docs(shelf, title, path, rel, label_hint)
+        if sig is not None:
+            if len(_PERSONAL_CACHE) > 50000:
+                _PERSONAL_CACHE.clear()
+            _PERSONAL_CACHE[key] = (sig, out)
+        return out
+    return _parse_section_docs(shelf, title, path, rel, label_hint)
+
+
+def _parse_section_docs(shelf, title, path, rel, label_hint=""):
     try:
         text = read(path)
     except (OSError, UnicodeDecodeError):
@@ -707,13 +822,14 @@ def load_sections():
     return docs
 
 
-def section_corpus():
+def section_corpus(project=None, kit=None):
     """Every section doc: the cached kit part, with the yours shelf, a game's team overrides and the game shelf added
-    on the fly."""
-    docs = load_sections()
+    on the fly. project: the game's folder ("" for none; None: RBXKIT_PROJECT). kit: load_sections() when the caller
+    keeps it loaded."""
+    docs = load_sections() if kit is None else list(kit)  # never added to in place: the caller keeps kit
     for t, p in yours_files():
         docs = docs + _section_docs("yours", t, p, p)
-    project = project_dir()
+    project = project_dir() if project is None else (project if project and os.path.isdir(project) else None)
     if not project:
         return docs
     mine = team_files(os.path.join(project, ".fridae", "team", "experts"))
@@ -740,7 +856,10 @@ def search_sections(q, shelves, k, docs=None):
     # A handful of notes gives far smaller raw scores than a big corpus, so each group's scores are scaled to its own
     # best (1.0); the order inside a group is unchanged.
     for group, terms in ((False, squery_terms(q)), (True, pquery_terms(q))):
-        part = [d for d in docs if (d["shelf"] in PERSONAL) == group]
+        if isinstance(docs, Docs):
+            part = docs.part(("personal", group), lambda d, g=group: (d["shelf"] in PERSONAL) == g)
+        else:
+            part = [d for d in docs if (d["shelf"] in PERSONAL) == group]
         if not any(d["shelf"] in shelves for d in part):
             continue
         mine = []
@@ -931,43 +1050,54 @@ def interleave(pool, k, may_promote=lambda item: True):
     return (firsts + rest)[:k]
 
 
-def combined_search(q, shelves, k):
-    """Text for a search over several shelves: sections from guides/team/game and notes from the vault, merged by how
-    much of the query each matches (scores from different shelves are not comparable, coverage is)."""
+def _keyword_pool(q, shelves, k, idx=None, docs=None):
+    """The keyword search's k results over several shelves, in the order it shows them, and the symptom lines:
+    sections from guides/team/game and notes from the vault, merged by how much of the query each matches (scores
+    from different shelves are not comparable, coverage is)."""
     terms = query_terms(q)
     pool = []
     symptoms = []
     if "vault" in shelves and os.path.isdir(KB):
-        idx = load_index()
+        idx = idx or load_index()
         res, symptoms = search(q, k, idx)
         top = res[0][0] if res else 1
         for s, d in res:
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     sec_shelves = [s for s in shelves if s != "vault"]
     if sec_shelves:
-        docs = section_corpus()
+        docs = section_corpus() if docs is None else docs
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
         taken = Counter()
         for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    pool = interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2]))
+    return interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2])), symptoms
+
+
+def keyword_ranking(q, shelves, depth, idx=None, docs=None):
+    """The keyword search's own order for q, as (shelf, title, section index), the index None for a vault note
+    (the vault search ranks whole notes). The knowledge index fuses this with its dense ranking. idx and docs: the
+    vault index and the section docs (section_corpus) when the caller keeps them loaded."""
+    if list(shelves) == ["vault"]:  # the vault on its own ranks as its own search does
+        if not os.path.isdir(KB):
+            return []
+        return [("vault", d["title"], None) for _, d in search(q, depth, idx or load_index())[0]]
+    pool, _ = _keyword_pool(q, shelves, depth, idx, docs)
+    return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]
+
+
+def combined_search(q, shelves, k):
+    """Text for a search over several shelves (`_keyword_pool`)."""
+    terms = query_terms(q)
+    pool, symptoms = _keyword_pool(q, shelves, k)
     if not pool:
         return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
     out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
     files = {}
     for rank, (_, shelf, d) in enumerate(pool, 1):
         if shelf == "vault":
-            bullets, _ = tldr_parts(d)
-            hints = _vault_section_hint(d)
-            out.append("%d. [vault] %s  (note, %d KB)" % (rank, d["title"], d["kb"]))
-            out += ["   " + b for b in bullets[:2]]
-            if hints:
-                out.append("   Sections: " + " · ".join(hints))
-            args = {"action": "read", "shelf": "vault", "title": d["title"], "heading": hints[0] if hints else "<heading>"}
-            if not hints:
-                out.append('   sections: {"action": "sections", "shelf": "vault", "title": %s}' % json.dumps(d["title"], ensure_ascii=False))
+            out += _vault_note_lines(rank, d)
         else:
             key = (shelf, d["title"])
             if key not in files:
@@ -977,17 +1107,49 @@ def combined_search(q, shelves, k):
                     files[key] = None
             p = files[key]
             s = p["sections"][d["i"]] if p and d["i"] < len(p["sections"]) else None
-            where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
-            label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
-            kind = " [lesson]" if d.get("lesson") else ""
-            out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
-            if s:
-                text = p["body"][s["start"]:s["own_end"]]
-                if not s["level"] and p["description"]:
-                    text = p["description"] + "\n" + text
-                out += ["   " + x for x in snippet(text, terms)]
-            args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
-        out.append("   read: " + json.dumps(args, ensure_ascii=False))
+            out += _section_lines(rank, shelf, d, p, s, terms)
+    return _results_tail(out, q, shelves, symptoms)
+
+
+# ------------------------------------------------------------------ the lines of one search result (both searches)
+def _vault_note_lines(rank, d):
+    """A vault note found by the keyword search: its TL;DR bullets, its sections and the arguments to read one."""
+    out = []
+    bullets, _ = tldr_parts(d)
+    hints = _vault_section_hint(d)
+    out.append("%d. [vault] %s  (note, %d KB)" % (rank, d["title"], d["kb"]))
+    out += ["   " + b for b in bullets[:2]]
+    if hints:
+        out.append("   Sections: " + " · ".join(hints))
+    args = {"action": "read", "shelf": "vault", "title": d["title"], "heading": hints[0] if hints else "<heading>"}
+    if not hints:
+        out.append('   sections: {"action": "sections", "shelf": "vault", "title": %s}' % json.dumps(d["title"], ensure_ascii=False))
+    out.append("   read: " + json.dumps(args, ensure_ascii=False))
+    return out
+
+
+def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
+    """One section: rank, shelf, title › heading, size, a snippet (or the given passage lines) and the arguments
+    that read exactly it."""
+    out = []
+    where = d["heading"] if not d["parents"] else " › ".join(d["parents"][-1:] + [d["heading"]])
+    label = " (%s)" % d["label"] if d["label"] and d["label"] != d["title"] else ""
+    kind = " [lesson]" if d.get("lesson") else ""
+    out.append("%d. [%s]%s %s%s › %s  (%s)" % (rank, shelf, kind, d["title"], label, where, size_text(d["size"])))
+    if lines is not None:
+        out += ["   " + x for x in lines]
+    elif s:
+        text = p["body"][s["start"]:s["own_end"]]
+        if not s["level"] and p["description"]:
+            text = p["description"] + "\n" + text
+        out += ["   " + x for x in snippet(text, terms)]
+    if args is None:
+        args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
+    out.append("   read: " + json.dumps(args, ensure_ascii=False))
+    return out
+
+
+def _results_tail(out, q, shelves, symptoms):
     if "vault" in shelves:
         notes = api_notes(q)
         if notes:
@@ -998,6 +1160,137 @@ def combined_search(q, shelves, k):
             out += ["- " + s["line"] for s in symptoms]
     out.append("\nNext: rbx_vault action 'read' with the arguments shown, for ONE section at a time.")
     return "\n".join(out)
+
+
+# ------------------------------------------------------------------ search through the knowledge index (RAG)
+RAG_TIMEOUT = 3.0  # seconds; a slower answer is not waited for (the keyword search answers instead)
+# calls to the knowledge index stay on this Mac: never through an HTTP proxy (the environment's or the system's),
+# which would otherwise receive the token and the query
+_LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def rag_endpoint():
+    """(url, token) from the endpoint file the app writes while the knowledge index is ready (its path is in
+    FRIDAE_RAG_FILE), read fresh on every search; None when there is none or it does not read."""
+    path = (os.environ.get("FRIDAE_RAG_FILE") or "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        url = str(data.get("url") or "").strip().rstrip("/")
+        token = str(data.get("token") or "").strip()
+    except (OSError, ValueError, AttributeError, UnicodeDecodeError):
+        return None
+    host = url[len("http://"):].split("/", 1)[0].rsplit(":", 1)[0] if url.startswith("http://") else ""
+    if not token or host not in _LOOPBACK_HOSTS:
+        return None
+    return url, token
+
+
+PASSAGE_CHARS = 700  # one hit's passage at most (about 175 tokens)
+ANSWER_CHARS = 3200  # every passage of one answer together at most (about 800 tokens); the rest show a snippet
+
+
+def passage(text, budget):
+    """The lines of a matched chunk (its own text, without the title › heading line the index puts first), up to
+    budget characters: the passage an agent reads instead of the whole note."""
+    body = text.split("\n", 1)[1] if "\n" in text else text
+    out, used, fence = [], 0, False
+    for line in body.split("\n"):
+        st = line.strip()
+        if _FENCE.match(st):
+            fence = not fence
+            continue
+        if not st or st.startswith("<!--") or re.match(r"^\|?[\s:|-]+\|?$", st):
+            continue
+        st = " ".join(st.strip("|").replace(" | ", " · ").split()) if not fence else st
+        if used + len(st) > budget:
+            room = budget - used
+            if room > 40:
+                out.append(st[:room - 1].rsplit(" ", 1)[0] + "…")
+            break
+        out.append(st)
+        used += len(st)
+    return out
+
+
+def _rag_hit_lines(rank, hit, terms, budget=0):
+    """The lines for one hit of the knowledge index, or None when the file or section is no longer there. With a
+    budget (characters) and the hit's chunk text, the matched passage is shown instead of a snippet."""
+    shelf, title, path = hit.get("shelf"), hit.get("title"), hit.get("path")
+    if shelf not in SHELVES or not title or not isinstance(path, str) or not path.endswith(".md"):
+        return None
+    try:
+        p = parse_sections(_reader_text({"shelf": shelf, "path": path}))
+    except (OSError, UnicodeDecodeError):
+        return None
+    i, heading = hit.get("i"), hit.get("heading")
+    secs = p["sections"]
+    s = secs[i] if isinstance(i, int) and 0 <= i < len(secs) and secs[i]["heading"] == heading else None
+    if s is None:  # the file changed since it was indexed: the same heading elsewhere, else nothing
+        s = next((x for x in secs if x["heading"] == heading), None)
+    if s is None:
+        return None
+    label = _team_label(title) if shelf == "team" else (p["label"] or title)
+    lesson = shelf in PERSONAL and (p["fm"].get("kind") == "lesson" or title in ("lessons.md", "studio-lessons"))
+    d = {"title": title, "label": label, "heading": s["heading"], "parents": s["parents"], "size": s_size(p, s),
+         "lesson": lesson}
+    args = None
+    if shelf == "vault":  # a vault read takes heading words of a ## or ### heading; without one it lists the sections
+        args = {"action": "read", "shelf": "vault", "title": title}
+        if s["level"] >= 2:
+            args["heading"] = s["heading"]
+    lines = None
+    if budget > 0 and isinstance(hit.get("text"), str) and hit["text"].strip():
+        lines = passage(hit["text"], budget) or None
+    return _section_lines(rank, shelf, d, p, s, terms, args, lines)
+
+
+def rag_search(q, shelves, k):
+    """Search text from the knowledge index service (its endpoint file, see rag_endpoint), in the same format as the
+    keyword search, or None on any failure (not running, slower than 3 s, an error, a bad answer, no hits) so the
+    caller answers with the keyword search instead."""
+    end = rag_endpoint()
+    if not end:
+        return None
+    url, token = end
+    try:
+        body = json.dumps({"q": q, "shelves": list(shelves), "k": k, "project": project_dir() or ""}).encode()
+        req = urllib.request.Request(url + "/query", data=body, headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + token})
+        with _LOOPBACK.open(req, timeout=RAG_TIMEOUT) as r:
+            if r.status != 200:
+                return None
+            hits = json.load(r).get("hits")
+        if not isinstance(hits, list) or not hits:
+            return None
+        terms = query_terms(q)
+        out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]
+        rank, left = 0, ANSWER_CHARS
+        for hit in hits[:k]:
+            budget = min(PASSAGE_CHARS, left)
+            lines = _rag_hit_lines(rank + 1, hit, terms, budget if budget > 80 else 0) if isinstance(hit, dict) else None
+            if lines:
+                rank += 1
+                out += lines
+                if budget > 80 and isinstance(hit.get("text"), str):
+                    left -= min(budget, sum(len(x) - 3 for x in lines[1:-1]))
+        if not rank:
+            return None
+        symptoms = search(q, k, load_index())[1] if "vault" in shelves and os.path.isdir(KB) else []
+        return _results_tail(out, q, shelves, symptoms).replace(
+            "\nNext: rbx_vault action 'read' with the arguments shown, for ONE section at a time.",
+            "\nThe lines under each result are its matching passage.\nNext: rbx_vault action 'read' with the "
+            "arguments shown, only if you need more, for ONE section at a time.")
+    except Exception as e:  # never an error from here: the keyword search is the answer
+        if hasattr(e, "close"):  # an HTTP error answer holds its connection open
+            try:
+                e.close()
+            except Exception:
+                pass
+        return None
 
 
 def _list(folder):
@@ -1072,15 +1365,18 @@ def run(action, a):
         k = max(1, min(int(kk), 8)) if kk else (3 if shelf == "vault" else 5)
     except (TypeError, ValueError):
         raise KitError("k must be a whole number from 1 to 8.")
+    shelves = list(SHELVES) if shelf == "all" else [shelf]
+    if shelf == "game" and not project_dir():
+        raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
+    if shelf == "all" and not project_dir():
+        shelves.remove("game")
+    text = rag_search(q, shelves, k)  # the knowledge index, when the app runs it; None means the keyword search
+    if text is not None:
+        return text
     if shelf == "vault":  # the vault on its own answers exactly as it always has
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
             main()
         text = _vault_call(vault_search) or "No match. Try other words, or action 'list' to browse the sections."
         return text + "\n\nNext: rbx_vault action 'read' with a title and heading words for one section (not the whole note)."
-    shelves = list(SHELVES) if shelf == "all" else [shelf]
-    if shelf == "game" and not project_dir():
-        raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
-    if shelf == "all" and not project_dir():
-        shelves.remove("game")
     return combined_search(q, shelves, k)

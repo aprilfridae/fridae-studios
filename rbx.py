@@ -15,6 +15,7 @@
   economy   simulate progression numbers or a drop table from a JSON file
   market    look up live Roblox experiences (public data)
   promo     vertical promo videos: probe clips, render, check (needs the promo engine)
+  rag       the knowledge index: its local search service, setup steps and check
   where     print the paths the kit uses
 """
 import argparse, glob, importlib, json, os, shutil, subprocess, sys
@@ -262,7 +263,7 @@ def main(argv=None):
 
     names = {"rbxtex": "tex", "rbximg": "icon", "rbxvideo": "video", "rbxpack": "package", "rbxgen": "gen", "rbximage": "image",
              "rbxstudio": "studio", "rbxproject": "project", "rbxeconomy": "economy", "rbxmarket": "market", "rbxresearch": "research",
-             "rbxpromo.cli": "promo", "rbxstage": "stage"}
+             "rbxpromo.cli": "promo", "rbxrag.cli": "rag", "rbxstage": "stage"}
     for mod, name in names.items():
         try:
             importlib.import_module(mod).register(sub)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build Fridae Studios for macOS:  python3 build_mac.py  ->  build-out/Fridae-Studios-macOS.dmg
 
-Needs Rust (cargo), and PyInstaller, numpy, pillow and opencv-python in the Python running this.
+Needs Rust (cargo), and PyInstaller, numpy, pillow, opencv-python, fastembed 0.9 and qdrant-client 1.20 (the
+knowledge index) in the Python running this (`python3 install.py` installs the libraries).
 The download is a .dmg on purpose: the Windows app updates itself from the first .zip in the
 latest release, so a Mac .zip there could be installed over a Windows copy.
 The app is not signed with an Apple Developer ID, so the first open needs "Open Anyway".

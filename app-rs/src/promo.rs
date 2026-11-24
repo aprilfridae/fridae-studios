@@ -352,7 +352,7 @@ fn install_command() -> Command {
 }
 
 /// Stop the install and everything it started.
-fn kill_tree(child: &mut Child) {
+pub(crate) fn kill_tree(child: &mut Child) {
     let pid = child.id().to_string();
     #[cfg(unix)]
     let mut kill = {
@@ -374,13 +374,13 @@ fn kill_tree(child: &mut Child) {
 
 /// One line of `rbx promo install --json-progress`.
 #[derive(Debug, PartialEq)]
-enum EngineLine {
+pub(crate) enum EngineLine {
     Progress(String, f64),
     /// The last line: it has no "step".
     Done(bool, Vec<String>),
 }
 
-fn engine_line(line: &str) -> Option<EngineLine> {
+pub(crate) fn engine_line(line: &str) -> Option<EngineLine> {
     let v: Value = serde_json::from_str(line.trim()).ok().filter(Value::is_object)?;
     match v["step"].as_str() {
         Some(step) => Some(EngineLine::Progress(step.to_string(), v["fraction"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0))),
@@ -392,7 +392,7 @@ fn engine_line(line: &str) -> Option<EngineLine> {
 }
 
 /// The last lines of what the install printed on failure, short enough for Setup.
-fn error_tail(text: &str) -> String {
+pub(crate) fn error_tail(text: &str) -> String {
     let lines: Vec<&str> = text.trim().lines().collect();
     let tail = lines[lines.len().saturating_sub(12)..].join("\n");
     let chars: Vec<char> = tail.chars().collect();

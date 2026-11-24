@@ -3,7 +3,7 @@
 
     python build_app.py            ->  <build dir>/dist/Fridae Studios
 
-Needs Rust (cargo), PyInstaller, numpy, pillow and opencv-python.
+Needs Rust (cargo), PyInstaller, numpy, pillow, opencv-python, fastembed 0.9 and qdrant-client 1.20 (the knowledge index).
 
 Where things go:
     FRIDAE_BUILD_DIR   build folder (default: H:\\rbxkit-build if H: exists, else ./build-out)

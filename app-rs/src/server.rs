@@ -206,6 +206,9 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(crate::github::status(query(url, "project").map(|p| unescape(&p)).as_deref()))
     } else if path == "/api/review" {
         send_json(studio_run::list(&unescape(&query(url, "path").unwrap_or_default())))
+    } else if path == "/api/rag/status" {
+        // Setup's knowledge index: the mode, `rag check` (for ?mode=, else the chosen one), the service, the setup step
+        send_json(crate::rag::status(query(url, "mode").as_deref()))
     } else {
         not_found()
     }
@@ -520,6 +523,11 @@ fn post(path: &str, body: Value) -> Reply {
             }
             send_json(json!({"ok": true, "expert_summaries": paths::expert_summaries_on()}))
         }
+        // Setup's knowledge index (`rag`): the mode (a guarded setting), a setup step, a test query, a rebuild
+        "/api/rag/mode" => send_json(crate::rag::choose(&body)),
+        "/api/rag/setup" => send_json(crate::rag::setup(&body)),
+        "/api/rag/test" => send_json(crate::rag::test_query(&body)),
+        "/api/rag/rebuild" => send_json(crate::rag::rebuild()),
         "/api/remove" => {
             if let Some(a) = target {
                 agents::remove_agent(&a.id);
