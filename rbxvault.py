@@ -708,13 +708,14 @@ def load_sections():
     return docs
 
 
-def section_corpus():
+def section_corpus(project=None, kit=None):
     """Every section doc: the cached kit part, with the yours shelf, a game's team overrides and the game shelf added
-    on the fly."""
-    docs = load_sections()
+    on the fly. project: the game's folder ("" for none; None: RBXKIT_PROJECT). kit: load_sections() when the caller
+    keeps it loaded."""
+    docs = load_sections() if kit is None else list(kit)  # never added to in place: the caller keeps kit
     for t, p in yours_files():
         docs = docs + _section_docs("yours", t, p, p)
-    project = project_dir()
+    project = project_dir() if project is None else (project if project and os.path.isdir(project) else None)
     if not project:
         return docs
     mine = team_files(os.path.join(project, ".fridae", "team", "experts"))
@@ -932,28 +933,47 @@ def interleave(pool, k, may_promote=lambda item: True):
     return (firsts + rest)[:k]
 
 
-def combined_search(q, shelves, k):
-    """Text for a search over several shelves: sections from guides/team/game and notes from the vault, merged by how
-    much of the query each matches (scores from different shelves are not comparable, coverage is)."""
+def _keyword_pool(q, shelves, k, idx=None, docs=None):
+    """The keyword search's k results over several shelves, in the order it shows them, and the symptom lines:
+    sections from guides/team/game and notes from the vault, merged by how much of the query each matches (scores
+    from different shelves are not comparable, coverage is)."""
     terms = query_terms(q)
     pool = []
     symptoms = []
     if "vault" in shelves and os.path.isdir(KB):
-        idx = load_index()
+        idx = idx or load_index()
         res, symptoms = search(q, k, idx)
         top = res[0][0] if res else 1
         for s, d in res:
             pool.append((_coverage(terms, d["tf"], FIELDS) * s / top, "vault", d))
     sec_shelves = [s for s in shelves if s != "vault"]
     if sec_shelves:
-        docs = section_corpus()
+        docs = section_corpus() if docs is None else docs
         hits = search_sections(q, sec_shelves, max(k, 8) * len(sec_shelves), docs)
         taken = Counter()
         for s, cov, d in hits:  # each shelf's own best k, by score (already scaled to 1.0 at the best)
             if taken[d["shelf"]] < k:
                 taken[d["shelf"]] += 1
                 pool.append((cov * s, d["shelf"], d))
-    pool = interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2]))
+    return interleave(pool, k, lambda item: item[1] not in PERSONAL or personal_match(q, item[2])), symptoms
+
+
+def keyword_ranking(q, shelves, depth, idx=None, docs=None):
+    """The keyword search's own order for q, as (shelf, title, section index), the index None for a vault note
+    (the vault search ranks whole notes). The knowledge index fuses this with its dense ranking. idx and docs: the
+    vault index and the section docs (section_corpus) when the caller keeps them loaded."""
+    if list(shelves) == ["vault"]:  # the vault on its own ranks as its own search does
+        if not os.path.isdir(KB):
+            return []
+        return [("vault", d["title"], None) for _, d in search(q, depth, idx or load_index())[0]]
+    pool, _ = _keyword_pool(q, shelves, depth, idx, docs)
+    return [(shelf, d["title"], None if shelf == "vault" else d["i"]) for _, shelf, d in pool]
+
+
+def combined_search(q, shelves, k):
+    """Text for a search over several shelves (`_keyword_pool`)."""
+    terms = query_terms(q)
+    pool, symptoms = _keyword_pool(q, shelves, k)
     if not pool:
         return "No match on %s. Try other words%s." % (", ".join(shelves), ", or action 'list' to browse the vault" if "vault" in shelves else "")
     out = ['Results for "%s" (%s):' % (q, ", ".join(shelves))]

@@ -256,5 +256,39 @@ class RagVaultTests(unittest.TestCase):
         self.assertIn("1. [guides] %s" % hits[1]["title"], out)
 
 
+class KeywordRankingTests(unittest.TestCase):
+    """rbxvault.keyword_ranking is the keyword search's own order, which the knowledge index fuses."""
+
+    def test_same_order_as_the_search_shows(self):
+        with mock.patch.dict(os.environ, {"FRIDAE_RAG_FILE": ""}):
+            for q in ("save player coins between sessions", "the zombie keeps walking into the wall"):
+                out = rbxvault.run("search", {"query": q, "shelf": "all", "k": 5})
+                shown = [json.loads(l.split("read: ", 1)[1])["title"] for l in out.splitlines() if l.strip().startswith("read: ")]
+                ranked = rbxvault.keyword_ranking(q, [s for s in rbxvault.SHELVES if s != "game"], 5)
+                self.assertEqual([t for _, t, _ in ranked], shown)
+                self.assertTrue(all((i is None) == (shelf == "vault") for shelf, _, i in ranked))
+                vault = rbxvault.keyword_ranking(q, ["vault"], 4)
+                self.assertEqual([t for _, t, _ in vault], [d["title"] for _, d in rbxvault.search(q, 4)[0]])
+
+    def test_the_service_ranker_keeps_its_indexes_and_takes_a_project(self):
+        from rbxrag.engine import KeywordRanker
+        now = [0.0]
+        kr = KeywordRanker(every=10.0, clock=lambda: now[0])
+        with mock.patch.object(rbxvault, "load_index", wraps=rbxvault.load_index) as li:
+            a = kr("datastore session lock", ["vault", "guides"], 5, "")
+            kr("datastore session lock", ["vault", "guides"], 5, "")
+            self.assertEqual(li.call_count, 1)
+            now[0] = 11.0
+            kr("datastore session lock", ["vault", "guides"], 5, "")
+            self.assertEqual(li.call_count, 2)
+        self.assertEqual(a, rbxvault.keyword_ranking("datastore session lock", ["vault", "guides"], 5))
+        proj = tempfile.mkdtemp(prefix="kw game ")
+        self.addCleanup(shutil.rmtree, proj, True)
+        with open(os.path.join(proj, "GAME.md"), "w", encoding="utf-8") as f:
+            f.write("# Glimmer\n\n## Pitch\n\nCollect glimmerstones in the zorblat caves.\n")
+        self.assertEqual(kr("zorblat glimmerstones", ["game"], 3, proj)[0][:2], ("game", "GAME.md"))
+        self.assertEqual(kr("zorblat glimmerstones", ["game"], 3, ""), [])
+
+
 if __name__ == "__main__":
     unittest.main()
