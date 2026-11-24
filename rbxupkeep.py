@@ -233,16 +233,23 @@ def conflicting_pairs(a, b, limit=SHOW_PAIRS):
     return out
 
 
-def is_duplicate(a, b):
-    """The Jaccard of two notes' words (1.0 for the same title) when they are near-duplicates, else None."""
-    if a.title.casefold() == b.title.casefold():
+def is_duplicate(a, b, by_title=True):
+    """The Jaccard of two notes' words (1.0 for the same title) when they are near-duplicates, else None. by_title
+    False: a's title was made from its first words, so only the two texts are compared."""
+    if by_title and a.title.casefold() == b.title.casefold():
         return 1.0
-    if min(len(a.words), len(b.words)) < DUP_MIN_WORDS:
+    wa, wb = (a.words, b.words) if by_title else (words(a.body), words(b.body))
+    if min(len(wa), len(wb)) < DUP_MIN_WORDS:
         return None
-    j = jaccard(a.words, b.words)
+    j = jaccard(wa, wb)
     if j < DUP_JACCARD or conflicting_pairs(a, b, 1):
         return None
     return j
+
+
+def near_copy(a, b):
+    """True when two notes' texts are near-duplicates (the same words, no fact that differs)."""
+    return is_duplicate(a, b, by_title=False) is not None
 
 
 def _related(a, b):
@@ -264,26 +271,44 @@ def _candidates(scope, project, skip=(), exclude=None):
     return out
 
 
-def find_duplicate(text, title, scope, project=None, skip=(), exclude=None):
-    """(the existing note a new one would duplicate, how alike, whether by its title) or None. skip: titles the new note supersedes;
-    exclude: the path of the note it updates."""
+def _replaced_here(scope, project):
+    """The titles (casefolded) of the notes for every game that this game's notes replace (its superseded.json)."""
+    if scope != "game" or not project:
+        return set()
+    return {" ".join(old.split()).casefold() for old, v in rbxnotes.sidecar_read(rbxnotes.game_notes(project)).items()
+            if v.get("shelf") == "yours"}
+
+
+def _current(n, replaced):
+    return not n.superseded_by and not (n.scope == "all" and n.title.casefold() in replaced)
+
+
+def find_duplicate(text, title, scope, project=None, skip=(), exclude=None, titled=True):
+    """(the existing note a new one would duplicate, how alike, whether by its title, whether its text is a near-copy)
+    or None. skip: titles the new note supersedes; exclude: the path of the note it updates; titled False: the title
+    was made from the text's first words, so only the texts are compared (two notes may start alike)."""
     new = make_note(title, (text or "").strip(), scope)
     best = None
+    replaced = _replaced_here(scope, project)
     for n in _candidates(scope, project, skip, exclude):
-        if n.superseded_by:
+        if not _current(n, replaced):
             continue
-        j = is_duplicate(new, n)
+        j = is_duplicate(new, n, titled)
         if j is not None and (best is None or j > best[1] or (j == best[1] and n.scope == scope != best[0].scope)):
-            best = (n, j, n.title.casefold() == new.title.casefold())
-    return best
+            best = (n, j, titled and n.title.casefold() == new.title.casefold())
+    if best is None:
+        return None
+    n, j, same = best
+    return n, j, same, j < 1.0 or near_copy(new, n)
 
 
 def find_conflicts(text, title, scope, project=None, skip=(), exclude=None):
     """[(note, [(new sentence, its sentence, why)])] for the current notes a new one may contradict, most first."""
     new = make_note(title, (text or "").strip(), scope)
     found = []
+    replaced = _replaced_here(scope, project)
     for n in _candidates(scope, project, skip, exclude):
-        if n.superseded_by or _related(new, n):
+        if not _current(n, replaced) or _related(new, n):
             continue
         pairs = conflicting_pairs(new, n)
         if pairs:
@@ -301,18 +326,21 @@ def _first_lines(n, count=3):
     return ["  " + (s if len(s) <= 200 else s[:199].rstrip() + "…") for s in lines] or ["  (no text)"]
 
 
-def duplicate_text(dup, scope):
-    """The answer when a note is not filed because it duplicates one."""
-    n, j, same = dup
+def duplicate_text(dup, scope, title=""):
+    """The answer when a note is not filed because it duplicates one: first supersedes and force (nothing is lost),
+    and replace (which overwrites the existing note) only when the two are a same-title near-copy."""
+    n, j, same, copy = dup
     how = "the same title" if same else "%d%% the same words" % round(100 * j)
-    same_scope = n.scope == scope
-    update = ("file again with replace: true and title '%s'" % n.title if same_scope else
-              "file again with scope '%s', replace: true and title '%s'" % (n.scope, n.title))
+    renamed = " under a new title" if (title or "").casefold() == n.title.casefold() else ""
+    advice = ("If your note replaces it, file again%s with supersedes: '%s' (the old note is kept, marked replaced). "
+              "To keep both, file again with force: true." % (renamed, n.title))
+    if same and copy:
+        where = "" if n.scope == scope else "scope '%s', " % n.scope
+        advice += (" If yours is only a corrected copy of it, file again with %sreplace: true and title '%s': this "
+                   "overwrites the existing note, no copy is kept." % (where, n.title))
     return "\n".join([
-        "Not saved: a note like this exists already (%s)." % how,
-        "Existing note '%s' (%s, %s):" % (n.title, _where(n), n.date or "no date")] + _first_lines(n) + [
-        "To update that note, %s. If your note replaces it under a new title, file again with supersedes: '%s'. "
-        "To keep both anyway, file again with force: true." % (update, n.title)])
+        "Not saved: nothing was filed, a note like this exists already (%s)." % how,
+        "Existing note '%s' (%s, %s):" % (n.title, _where(n), n.date or "no date")] + _first_lines(n) + [advice])
 
 
 def conflicts_text(found, title):
