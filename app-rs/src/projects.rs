@@ -86,7 +86,8 @@ pub fn describe(path: &str) -> Value {
     let entry = saved().into_iter().find(|p| same(p["path"].as_str().unwrap_or(""), path));
     let name = entry.as_ref().and_then(|p| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| paths::base_name(path));
     let kind = entry.as_ref().map_or("game", kind_of);
-    json!({"name": name, "path": path, "kind": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": dir.join("GAME.md").is_file()})
+    // `type` too: an agent's "project" event puts its own `kind` over this one
+    json!({"name": name, "path": path, "kind": kind, "type": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": dir.join("GAME.md").is_file()})
 }
 
 /// Known projects, most recently used first.

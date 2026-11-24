@@ -1547,7 +1547,9 @@ const isPage = (v) => v === "newproj" || v === "all";
 const isGameProj = (key) => !!key && kindOf(key) === "game";
 const gameTab = (v) => v === "ideas" || v === "promos";
 /* where a chat's start card goes once it has a project: a game with no GAME.md asks new or existing first */
-const startStep = (pr) => pr.bible || pr.kind === "plain" ? "ready" : "kind";
+/* a project's kind: `type` first, since a chat's "project" event carries its own `kind` ("project") */
+const plainProj = (pr) => !!pr && ((pr.type || pr.kind) === "plain" || (!!pr.path && kindOf(pr.path) === "plain"));
+const startStep = (pr) => pr.bible || plainProj(pr) ? "ready" : "kind";
 let homeProj = null;   /* the project last in front, for the place kept across restarts */
 function savePlace() {
   if (curProj !== null) { homeProj = curProj; if (!isPage(view)) lastTab[curProj] = view; }
@@ -1592,7 +1594,7 @@ function showDraft(key) {
      buttons make the chat first (`draft` in startCard) */
   const proxy = { draft: true, key, id: null, project: pr || null, seed: null };
   const wrap = helloEl(proxy);
-  if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = pr.bible ? "ready" : "kind"; proxy.start.paint(); }
+  if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = startStep(pr); proxy.start.paint(); }
   draftCol.replaceChildren(wrap); draftCol.hidden = false;
   paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide(); paintBoard();
 }
@@ -2221,7 +2223,7 @@ function startCard(p) {
         + '<div class="act"><button class="pill main" data-a="kn">New game</button><button class="pill" data-a="ke">Already working on it</button></div>'
         + '<p class="sub">New game: I ask about the idea before building. Already working on it: I read the place and the folder first.</p>';
     } else {
-      const game = !pr || pr.kind !== "plain";
+      const game = !plainProj(pr);
       h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (game && pr && pr.bible ? "The game's notes (GAME.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
         + (game ? '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>' : '<div class="act"><button class="pill" data-a="kp">Read through the project</button></div>');
     }
@@ -2305,7 +2307,7 @@ function openProject() {
   api("/api/projects").then((r) => { projects = r; const now = r.projects.find((x) => x.path === pr.path); if (now) $("pd-bible").hidden = !now.bible; });
 }
 function paintPdKind(pr) {
-  for (const b of $("pd-kind").querySelectorAll("button")) { const on = b.dataset.k === (pr.kind === "plain" ? "plain" : "game"); b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
+  for (const b of $("pd-kind").querySelectorAll("button")) { const on = b.dataset.k === (plainProj(pr) ? "plain" : "game"); b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
 }
 for (const b of $("pd-kind").querySelectorAll("button")) b.onclick = async () => {
   const pr = frontProj(); if (!pr) return;
@@ -2734,7 +2736,7 @@ function onEvent(e) {
     }
   } else if (e.kind === "project") {
     p.project = e; delete wantProj[p.id];
-    if (p.start) { p.start.step = e.bible ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
+    if (p.start) { p.start.step = startStep(e) === "ready" ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
     if (p.id === current && bootMark !== Infinity && curProj !== projKey(p)) { curProj = projKey(p); savePlace(); }
     paintProject(); paintSide();
   } else if (e.kind === "model") {
@@ -4021,7 +4023,7 @@ function paintPromoProjects() {
   $("pr-proj-field").hidden = !!curProj;
   sel.innerHTML = "";
   sel.appendChild(new Option("No project", ""));
-  list.filter((x) => x.kind !== "plain").forEach((x) => sel.appendChild(new Option(x.name, x.path)));
+  list.filter((x) => !plainProj(x)).forEach((x) => sel.appendChild(new Option(x.name, x.path)));
   sel.value = prForm.project;
   sel.onchange = () => { prForm.project = sel.value; };
 }
