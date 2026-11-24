@@ -535,7 +535,7 @@ fn login_command(ai: &str) -> Result<Command, String> {
             _ => &["acp"][..],
         });
         if !tool_env(&mut cmd, ai) {
-            return Err("The second account's folder is not there. Remove it in Setup and add it again.".to_string());
+            return Err("Fridae cannot use the second account's folder as it is. Remove it in Setup and add it again.".to_string());
         }
         Ok(cmd)
     }

@@ -236,7 +236,12 @@ struct Sending<'a>(&'a Agent);
 
 impl Drop for Sending<'_> {
     fn drop(&mut self) {
-        self.0.st.lock().unwrap().sending = false;
+        // (a turn that ended on the limit before `send` had returned holds the chat for its rollover, `turn_over_at`
+        // and `roll_over`: that hold is not this one's to let go)
+        let mut st = self.0.st.lock().unwrap();
+        if !st.roll_hold && !st.resend_due {
+            st.sending = false;
+        }
     }
 }
 
@@ -279,7 +284,7 @@ fn usage_limit(msg: &str) -> bool {
 /// line known). Not the app's line for a refused message, which may be a refusal to answer and no limit at all.
 fn account_limit_of(kind: &str, msg: &str) -> bool {
     match kind {
-        "gemini" => msg.to_lowercase().contains("quota reached"),
+        "gemini" => antigravity::quota_reached(msg),
         _ => account_limit(msg),
     }
 }
@@ -617,10 +622,31 @@ fn rollover_line(kind: &str, from: u8, back: Option<&str>) -> String {
     }
 }
 
+/// A process per message that ended without a result, saying in its error output that the account's quota is
+/// spent (agy: "Error: Individual quota reached. ... Resets in 2h6m48s."): the turn's end is made the failed turn
+/// it is, with the tool's line as its words, held back for the turn's end as a failed result's limit line is
+/// (`TurnEnd.held_back`). Then the account is marked used up and the chat may carry on with the AI's other
+/// account, exactly as when the limit comes as a result (`Agent::roll_over`); without that, the line is said once
+/// at the turn's end, as it always was.
+fn limit_in_error_output(kind: &str, t: &mut TurnEnd, err: &str) {
+    if kind != "gemini" || t.result_error {
+        return;
+    }
+    if let Some(line) = antigravity::quota_line(err) {
+        t.result_error = true;
+        t.result_said = true;
+        t.result_text = line;
+        t.held_back = true;
+    }
+}
+
 /// A second account is about to be removed (Setup): every turn running on it is stopped and every process kept for
 /// it closed, so nothing of the tool's writes its folder back after it is gone. The chats stay, and carry on with
 /// the user's own account from their next message (`turn_account`).
+/// Waits, but not for long (`REMOVE_WAIT`), until those turns have ended: a tool still running in the folder would
+/// write its files back after it was deleted.
 pub fn account_removed(ai: &str) {
+    let mut stopped: Vec<Arc<Agent>> = Vec::new();
     for a in agents() {
         let (on_it, working, live) = {
             let mut st = a.st.lock().unwrap();
@@ -629,13 +655,21 @@ pub fn account_removed(ai: &str) {
         };
         if on_it && working {
             a.stop();
+            stopped.push(a.clone());
         }
         if let Some(l) = live {
             retire(&mut a.st.lock().unwrap(), &l);
             l.close();
         }
     }
+    let until = std::time::Instant::now() + REMOVE_WAIT;
+    while stopped.iter().any(|a| a.st.lock().unwrap().running) && std::time::Instant::now() < until {
+        thread::sleep(Duration::from_millis(50));
+    }
 }
+
+/// How long Remove waits for the turns it stopped: a little longer than a turn gets to end when asked.
+const REMOVE_WAIT: Duration = if cfg!(test) { Duration::from_millis(300) } else { Duration::from_secs(8) };
 
 /// The account a turn runs on. A chat that has an account keeps it: there is no switching back mid-chat (only a limit
 /// moves it, `rolled`), unless its second account is gone. A chat from before there were accounts, which has a
@@ -1344,7 +1378,14 @@ fn conversation_saved(kind: &str, session: &str) -> bool {
 #[cfg(test)]
 thread_local! {
     static LOST_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests, when Some: `send` goes on as if its AI were installed, and each launch it would start is noted here
+    /// (the kept process's key, and the environment of the process per message) instead of being started.
+    static LAUNCHES_FOR_TEST: std::cell::RefCell<Option<Vec<LaunchForTest>>> = const { std::cell::RefCell::new(None) };
 }
+
+/// A launch as a test sees it: the kept process's key, and the environment of the process per message.
+#[cfg(test)]
+type LaunchForTest = (String, Vec<(String, Option<String>)>);
 
 /// A Cursor or OpenCode chat whose saved conversation is gone: forget it, and hand over the chat so far (without the
 /// message being sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
@@ -3230,8 +3271,12 @@ impl Agent {
             let went = with_handover(&st, &text);
             st.went_for_test.push(went);
         }
-        // tests never start an AI, whatever is installed on the computer running them
-        let found = if cfg!(test) { None } else { paths::find_ai(&kind) };
+        // tests never start an AI, whatever is installed on the computer running them (a test that wants to see what
+        // would be started has one "found", and `kept_turn` notes the launch in place of starting it)
+        #[cfg(test)]
+        let found = LAUNCHES_FOR_TEST.with(|l| l.borrow().is_some()).then(|| std::path::PathBuf::from("/bin/sh"));
+        #[cfg(not(test))]
+        let found = paths::find_ai(&kind);
         let Some(exe) = found else {
             let missing = match kind.as_str() {
                 // a chat saved on Cursor or OpenCode, reopened where they are not offered (Windows, for now)
@@ -3266,7 +3311,19 @@ impl Agent {
         // turn runs on the user's own account, and the chat says so
         let second_dir = (account == 2).then(|| crate::accounts::prepare(&kind)).flatten();
         if account == 2 && second_dir.is_none() {
-            self.st.lock().unwrap().account = 1;
+            // (as `turn_account` does for an account that was removed: the conversation was the second account's,
+            // so this message starts a new one on the user's own, with the chat so far)
+            {
+                let mut st = self.st.lock().unwrap();
+                st.account = 1;
+                st.account_name = None;
+                st.session = None;
+                let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
+                if st.handover.is_none() && st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text") {
+                    hand_over(&mut st, upto, ai_label(&kind), true);
+                    st.compact = None; // (the summary's moment has passed for this message: the newest part goes)
+                }
+            }
             self.put("account", json!({"account": 1}));
         }
         // the message without the chat so far or the standing instructions, for an AI whose fallback starts a new
@@ -3366,6 +3423,15 @@ impl Agent {
                 if agy_home.is_some() {
                     servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
                 }
+                // the second account's agy is given no Gemini key (`accounts::home`): the app's own tool server,
+                // whose textures may use one, gets them in its own entry (as OpenCode's launch gives them)
+                if second_dir.is_some() {
+                    for k in ["GEMINI_API_KEY", "GOOGLE_API_KEY"] {
+                        if let Some(v) = std::env::var(k).ok().filter(|v| !v.is_empty()) {
+                            servers["rbxkit"]["env"][k] = json!(v);
+                        }
+                    }
+                }
                 // the one list of what no file tool may write, as OpenCode's rules have it
                 let (mut protected, mut hidden_in) = (Vec::new(), Vec::new());
                 for place in paths::never_written(&paths::home_dir(), &[opencode::own_store()]) {
@@ -3463,6 +3529,14 @@ impl Agent {
     /// A turn of an AI that can be kept open (`caps.live`): on the chat's kept process when that works here, on a
     /// process of its own otherwise.
     fn kept_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) {
+        #[cfg(test)]
+        if LAUNCHES_FOR_TEST.with(|l| l.borrow().is_some()) {
+            let (cmd, _) = launch.per_turn(None, text);
+            let env: Vec<(String, Option<String>)> = cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect();
+            LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().as_mut().unwrap().push((launch.key(), env)));
+            self.put("done", json!({}));
+            return;
+        }
         if self.live_allowed() && launch.fits(self) && self.live_turn(launch, text) {
             return;
         }
@@ -4075,6 +4149,8 @@ impl Agent {
         crate::procs::forget(child.id());
         self.check_settings();
         self.put_list_back();
+        let mut t = t;
+        limit_in_error_output(kind, &mut t, &err);
         let stopped = self.turn_over_at(kind, &t);
         if tp.killed.load(Ordering::SeqCst) {
             self.put("error", json!({"text": paths::killed_message(ai_label(kind))}));
@@ -4515,6 +4591,8 @@ impl Agent {
             _ => None,
         } {
             self.put_failure(kind, &why);
+        } else if held_back {
+            // (the limit's line has just been said: the error output it came from is not said again)
         } else if (!got_result && !exit.map(|(ok, _)| ok).unwrap_or(true)) || (result_error && !result_said) {
             let tail: String = err.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
             let code = exit.map(|(_, c)| c).unwrap_or(-1);
@@ -7637,6 +7715,118 @@ mod tests {
         let mut t = TurnEnd::default();
         d.take(Out::Failed(quota.into()), &mut t);
         assert!(!t.held_back && d.st.lock().unwrap().log.iter().any(|e| e["kind"] == "error" && e["text"] == quota));
+    }
+
+    /// `send`, with its AI taken to be installed and each launch noted instead of started: (the kept process's key,
+    /// the environment of the process per message).
+    fn launches(a: &Arc<Agent>, text: &str) -> Vec<LaunchForTest> {
+        LAUNCHES_FOR_TEST.with(|l| *l.borrow_mut() = Some(Vec::new()));
+        a.send(text, &Ask::default());
+        LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().take()).unwrap()
+    }
+
+    fn env_of(launch: &LaunchForTest, key: &str) -> Option<Option<String>> {
+        launch.1.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn a_chat_on_the_second_account_is_started_in_that_accounts_folder_and_one_on_the_first_is_not() {
+        crate::accounts::stand_in(true, true);
+        let chat = |id: &str, ai: &str, account: u8| {
+            let a = chat_on_first(id);
+            let mut st = a.st.lock().unwrap();
+            st.ai = Some(ai.into());
+            st.account = account;
+            st.account_name = (account == 2).then(|| format!("{ai}-2-standin"));
+            drop(st);
+            a
+        };
+        let folder = |ai: &str| crate::accounts::base().join(format!("{ai}-2-standin")).to_string_lossy().to_string();
+        // Claude on the second account: its config folder, and the folder its sign-in is stored under, are the
+        // account's own, in what is started and in the kept process's key
+        let a = chat("c-launch-claude-2", "claude", 2);
+        let l = launches(&a, "Carry on");
+        assert_eq!(l.len(), 1, "one launch");
+        assert_eq!(env_of(&l[0], "CLAUDE_CONFIG_DIR"), Some(Some(folder("claude"))));
+        assert_eq!(env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR"), Some(Some(folder("claude"))));
+        assert!(l[0].0.contains("claude-2-standin"));
+        // Claude on the user's own: neither is set
+        let b = chat("c-launch-claude-1", "claude", 1);
+        let l = launches(&b, "Carry on");
+        assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
+        assert!(!l[0].0.contains("claude-2-standin"));
+        // Gemini on the second account: agy's HOME is the account's own home, no key reaches it, and the app's tool
+        // server has the app's own HOME back
+        let c = chat("c-launch-gemini-2", "gemini", 2);
+        let l = launches(&c, "Carry on");
+        assert_eq!(l.len(), 1);
+        assert_eq!(env_of(&l[0], "HOME"), Some(Some(folder("gemini"))));
+        for key in crate::accounts::KEPT_FROM_SECOND {
+            assert_eq!(env_of(&l[0], key), Some(None), "{key}");
+        }
+        assert!(l[0].0.contains("gemini-2-standin"));
+        let real = serde_json::to_string(&paths::home_dir().display().to_string()).unwrap();
+        assert!(l[0].0.contains(&format!("\\\"HOME\\\":{}", real.replace('"', "\\\""))), "the tool server's own entry has the app's HOME: {}", &l[0].0[..l[0].0.len().min(900)]);
+        // Gemini on the user's own: the app sets no HOME for agy and takes no key away
+        let d = chat("c-launch-gemini-1", "gemini", 1);
+        let l = launches(&d, "Carry on");
+        assert_eq!((env_of(&l[0], "HOME"), env_of(&l[0], "GEMINI_API_KEY")), (None, None));
+        assert!(!l[0].0.contains("gemini-2-standin"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_second_accounts_folder_that_is_not_usable_when_the_turn_starts_sends_the_chat_to_the_first_with_the_chat_so_far() {
+        // its folder has been swapped for a link (so nothing may run there), while the setting still names it
+        crate::accounts::stand_in_tagged("swappedm1");
+        let dir = crate::accounts::base().join("claude-2-swappedm1");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_file(&dir);
+        fs::create_dir_all(crate::accounts::base()).unwrap();
+        std::os::unix::fs::symlink(paths::test_dir("accounts-swapped-target"), &dir).unwrap();
+        assert_eq!(crate::accounts::state()["claude"]["broken"], true, "Setup is told that the app will not use it");
+        let a = chat_on_first("c-launch-swapped");
+        {
+            let mut st = a.st.lock().unwrap();
+            st.ai = Some("claude".into());
+            st.account = 2;
+            st.account_name = Some("claude-2-swappedm1".into());
+            st.session = Some("on the second".into());
+        }
+        let l = launches(&a, "Carry on");
+        let _ = fs::remove_file(&dir);
+        // started on the user's own account, with nothing of the second's
+        assert_eq!(l.len(), 1);
+        assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
+        // and not in the second account's conversation: a new one, handed the chat so far
+        let st = a.st.lock().unwrap();
+        assert_eq!((st.account, st.session.clone(), st.account_name.clone()), (1, None, None));
+        let chat = st.handover.clone().expect("the chat so far goes with the message");
+        assert!(chat.starts_with("[This chat carries on here in a new conversation") && chat.contains("User: Make a door") && !chat.contains("Carry on"), "{chat}");
+        assert_eq!(st.log.iter().rev().find(|e| e["kind"] == "account").map(|e| e["account"].clone()), Some(json!(1)));
+    }
+
+    #[test]
+    fn a_chat_held_for_its_rollover_is_not_let_go_when_the_send_that_started_the_turn_returns() {
+        let a = chat_on_first("c-roll-hold-drop");
+        let dropped = |hold: bool, due: bool| {
+            {
+                let mut st = a.st.lock().unwrap();
+                st.sending = true;
+                st.roll_hold = hold;
+                st.resend_due = due;
+            }
+            drop(Sending(&a));
+            let mut st = a.st.lock().unwrap();
+            let still = st.sending;
+            st.sending = false;
+            st.roll_hold = false;
+            st.resend_due = false;
+            still
+        };
+        assert!(!dropped(false, false), "an ordinary send: the chat is free once it returns");
+        assert!(dropped(true, false), "the turn ended on the limit before the send had returned: held for the rollover");
+        assert!(dropped(false, true), "the rollover has decided: held until the message is under way again");
     }
 
     #[test]

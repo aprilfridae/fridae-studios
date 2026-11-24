@@ -1244,10 +1244,15 @@ Nothing runs a tool's logout.
   the folder of all accounts, are used only when `symlink_metadata` says they are directories themselves. A link
   there: no status, sign-in or turn runs for the second account, and Remove takes the link away and nothing of
   what it led to.
-- **Remove** first ends a waiting sign-in, stops every turn running on the account and closes the processes kept
-  for it (`agents::account_removed`), then deletes the folder (links as links). The name is never used again. The
-  keychain entry of the removed folder stays ("Claude Code-credentials-" and 8 hex of the folder's path): the app
-  deletes nothing in the keychain.
+- **Remove** first ends a waiting sign-in, stops every turn running on the account, waits for them (eight seconds
+  at most) and closes the processes kept for it (`agents::account_removed`), then deletes the folder: links as
+  links, then the sign-in's own place (`.credentials.json`, `.claude.json`, agy's `.gemini`), then the rest; what
+  cannot be deleted for its mode (a folder a tool left read-only) is made writable and tried again. The folder is
+  looked at again 5 and 40 seconds later and deleted again if something that was still running wrote it back. When
+  it is still there after all, Setup says so with its place ("Removed, but its folder could not be deleted and may
+  still hold its sign-in"). Nothing is deleted when the accounts folder itself is a link. The name is never used
+  again. The keychain entry of a removed Claude folder stays ("Claude Code-credentials-" and 8 hex of the folder's
+  path): the app deletes nothing in the keychain.
 
 **Ready** (`accounts::second_signed_in`, `signin::second_ready`). A second account takes chats only when its tool
 says an account is signed in there, an account of its own: not a key or token from the environment (`by_key`: it
@@ -1260,8 +1265,9 @@ the user's own unless that is used up and the second is ready. A chat never move
 ending on the limit moves it. A chat on a second account that is not there for it any more carries on with the
 user's own, in a new conversation handed the chat so far: the account was removed, or removed and added again
 (another folder, which has none of its conversations), or its sign-in is known to be gone while the user's own
-account is not used up. The folder is read once per turn: gone at that very moment, the turn runs on the user's own
-and the chat says so.
+account is not used up. The folder is read once per turn: not usable at that very moment (removed, swapped for a
+link, a keychain in it), the turn runs on the user's own in a new conversation handed the chat so far, and the
+chat says so.
 
 **What counts as the limit.** `usage_limit` (a studio run pauses on it) is as it was, plus Claude Code's newer
 lines. `account_limit` is narrower and is what marks an account and moves a chat: "You've hit your ... limit",
@@ -1304,6 +1310,12 @@ for a waiting Lead, no "done", no carry-on, no pause of the run. The turn is not
 - Experts are chats, so the same holds for them. Both used up: nothing moves and everything is as before
   (`LIMIT_END` pauses a studio run).
 
+**Known and left.** A second account's sign-in is a file in its folder (Gemini's, and Claude's where it uses no
+keychain), and the lists that keep agents out of the accounts folder cover writing: in Full auto an agent's Read
+tool, or a shell command, can read it. The app's image tool starts agy from its tool server, which has the app's
+own HOME, so pictures are made on the first account also in a chat that has moved to the second. "Used up" is
+forgotten when the app is closed.
+
 **Stand-ins only.** No sign-in was completed, no second account was signed in, no limit was reached and no turn ran
 on a second account: all of the above is tested with `accounts::stand_in` (one test's own accounts, handed to the
 threads its chat's turns run on) and turn ends made up from the tool's known words; one test runs the whole path on
@@ -1326,6 +1338,21 @@ of the kept process's key. Nothing is set for account 1.
 - **The user's own sign-in cannot be reached from there.** It is one keychain entry, found through HOME alone
   (measured, see "what was measured first"): from the second home it is not found and cannot be written. The app
   itself never reads, copies or moves a token, and touches no keychain.
+- **That holds only while the home has no keychain, so one that has grown a keychain is not used**
+  (`accounts::no_keychain_in`). A link at `<home>/Library/Keychains` to the user's own brings their keychain back
+  for every command run with that home (measured by the reviewer: the entry is found again), and a sign-in made
+  there would be written into the user's own entry. A shell command of a turn on the second account could make
+  such a link. So before anything of Gemini's second account runs (status, sign-in, turn), `prepare` refuses the
+  home when `Library/Keychains` exists at all, as a folder or a link, when `Library` is not a folder of its own, or
+  when the home names a keychain list (`Library/Preferences/com.apple.security.plist`). Nothing of the app or of
+  agy puts any of these there (measured: status and the start of a sign-in leave no `Library` at all). Setup then
+  says "Fridae does not use this account" and offers only Remove; a chat that was on it carries on with the user's
+  own. Seen in the scratch app with a keychain folder made by hand: no sign-in started.
+- **No key stands in for a sign-in.** `GEMINI_API_KEY`, `GOOGLE_API_KEY` and `GOOGLE_APPLICATION_CREDENTIALS` are
+  taken out of every agy command of the second account (`KEPT_FROM_SECOND`), so an empty second home reads "Not
+  signed in." until the user signs in there, and no turn there is billed to a key. (Measured with made-up keys in
+  an empty home: `agy models` says "Please sign in" with each of them, so agy does not take one by itself there
+  today.) The app's tool server gets the two Gemini keys back in its own entry.
 - **Whether a sign-in made there is kept** rests on agy's file store for a sign-in made where the keychain cannot be
   written (read in its program's text). **Not measured.** The user's first real second sign-in shows it: Setup
   says "Signed in." afterwards, and still does after the app was closed and opened again.
@@ -1337,10 +1364,19 @@ of the kept process's key. Nothing is set for account 1.
 - agy's status names no account, so the app cannot tell when the second account is the same Google account as the
   first (Claude's can, `same_as_first`). The Guide tells the user to sign in with another one.
 
-**The limit.** For Gemini `account_limit_of` knows agy's own words, "Individual quota reached. ... Resets in
-2h6m48s." (the one line known, as it reaches a turn's end in "Gemini could not run this message: ..."). The app's
-line for a refused message is not taken for a limit: a refusal may be no limit at all. The line is held back for
-the rollover's one line as Claude's is (`Agent::take`).
+**The limit.** For Gemini `account_limit_of` knows agy's own words, "Individual quota reached. Please upgrade your
+subscription to increase your limits. Resets in 2h6m48s." (the user's chats of 22 November have exactly this, as a
+line of its own in a chat on a process per message). The app's line for a refused message is not taken for a
+limit: a refusal may be no limit at all. It becomes a failed turn, which is what a rollover needs, on every path:
+- the kept process (on request): agy's error answer, "Gemini could not run this message: ...", is `Out::Failed`;
+- a process per message (the default) whose result failed with those words: `antigravity::Turn::feed` hands it on
+  as `Out::Failed` (any other failed result stays a line in the chat, as before);
+- a process per message that ends with no result and the words in its error output: `limit_in_error_output`, in
+  `finish_turn` before the turn is over, makes the turn's end the same failed one (`antigravity::quota_line`).
+Which of the last two agy really does was not recorded (no recording of a quota failure exists); both are tested
+through the reader (`consume`) to the rollover. The line is held back for the rollover's one line as Claude's is
+(`TurnEnd.held_back`), and said once when the chat does not move. Claude needs none of this: its limit is always a
+result, on both of its paths.
 
 **Measured, and not.** In the scratch app (my dev binary, scratch HOME, a stand-in `open`): Add made the folder
 (mode 700), agy ran with it as HOME (its `.gemini` is inside), its sign-in started (the page it would open is on

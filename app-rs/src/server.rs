@@ -329,8 +329,9 @@ fn post(path: &str, body: Value) -> Reply {
                     // account, a process kept for one
                     crate::signin::forget(&id);
                     agents::account_removed(&ai);
-                    crate::accounts::remove(&ai);
-                    send_json(json!({"ok": true}))
+                    // (its folder could not be deleted: said, with its place)
+                    let left = crate::accounts::remove(&ai);
+                    send_json(json!({"ok": true, "left": left.map(|d| d.display().to_string())}))
                 }
                 _ => send_json(json!({"ok": false})),
             }

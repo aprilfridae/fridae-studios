@@ -2583,7 +2583,8 @@ function secondAccountRow(ai) {
   const id = ai + "2", acc = accountOf(ai), s = signInOf(id), line = signInLine(id), waiting = ((s.login || {}).state === "waiting");
   const row = el("div", "g-row oc-row");
   row.innerHTML = "<b>Second account</b><small></small><div class=\"act\"></div>";
-  row.querySelector("small").textContent = !acc.exists ? (sgError[id] || "None. Add one to carry on when the first runs out of usage.")
+  row.querySelector("small").textContent = !acc.exists ? (sgError[id] || (acc.left ? "Removed, but its folder could not be deleted and may still hold its sign-in. Delete it yourself: " + acc.left : "None. Add one to carry on when the first runs out of usage."))
+    : acc.broken ? "Fridae does not use this account: its folder was changed from outside (it is a link now, or a keychain has appeared in it). Remove it and add it again."
     : line.text ? line.text
     : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as your own, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
     : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
@@ -2592,7 +2593,8 @@ function secondAccountRow(ai) {
   const act = row.querySelector(".act");
   if (!acc.exists) act.appendChild(accountButton(ai, "Add", "add"));
   else {
-    line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
+    /* (an account the app will not use offers no sign-in: only Remove) */
+    if (!acc.broken) line.buttons.forEach(([label, action]) => act.appendChild(signInButton(id, label, action)));
     if (!waiting) act.appendChild(accountButton(ai, "Remove", "remove"));
   }
   return row;

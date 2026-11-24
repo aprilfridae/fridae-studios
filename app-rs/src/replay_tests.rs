@@ -354,3 +354,88 @@ fn full_auto_deny_rules_as_claude_and_antigravity_kept_them() {
     let text = said(&ev, "text").join("\n");
     assert!(text.contains("a/config.json refused") && text.contains("CONFIG.JSON ok") && text.contains("c/x.txt refused") && text.contains("other.txt ok"), "{text}");
 }
+
+/// A Gemini process per message, from its output to the turn's end, as `read` and `finish_turn` run them: the reader
+/// (`consume`), the limit looked for in the error output, the turn over, `after_turn`.
+fn gemini_per_message(a: &Arc<Agent>, out: &str, err: &str, exit: (bool, i32)) {
+    a.st.lock().unwrap().running = true;
+    let last = Mutex::new((std::time::Instant::now(), false, false));
+    let mut t = a.consume(out.as_bytes(), "gemini", &last, || {});
+    limit_in_error_output("gemini", &mut t, err);
+    let stopped = a.turn_over_at("gemini", &t);
+    a.after_turn("gemini", t, err, Some(exit), stopped);
+}
+
+/// A Gemini chat with one exchange on the user's own account, and a message under way (as `send` leaves it).
+fn gemini_chat(id: &str) -> Arc<Agent> {
+    let a = Agent::detached_for_test(id, None);
+    a.put("user", json!({"text": "Make a door"}));
+    a.put("text", json!({"text": "Done: the door opens."}));
+    a.put("done", json!({}));
+    a.put("user", json!({"text": "Make the icon"}));
+    let mut st = a.st.lock().unwrap();
+    st.ai = Some("gemini".into());
+    st.session = Some(C1.into());
+    st.account = 1;
+    st.sent = Some(("Make the icon".into(), "Make the icon".into(), Ask::default()));
+    drop(st);
+    a
+}
+
+#[test]
+fn a_gemini_process_per_message_that_hits_its_quota_carries_on_with_the_second_account() {
+    // agy's words, as the user's chats of 22 November 2026 have them from a process per message
+    let quota = "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h6m48s.";
+    // the two ways a process per message can say it: a result that failed (the recordings' shape for a result), or
+    // no result at all and the line in its error output
+    let init = format!("{{\"event\":\"init\",\"conversation_id\":\"{C1}\",\"init\":{{\"model\":\"gemini-4-hydrogen-high\",\"cwd\":\"/scratch\",\"tools\":[]}}}}\n");
+    let as_result = format!("{init}{{\"event\":\"result\",\"result\":{{\"conversation_id\":\"{C1}\",\"status\":\"ERROR\",\"error\":{{\"message\":\"{quota}\"}},\"usage\":{{}}}}}}\n");
+    let shapes = [("a-result", as_result.as_str(), String::new(), (true, 0)), ("the-error-output", "", format!("Fetching...\nError: {quota}\n"), (false, 1))];
+    for (shape, out, err, exit) in &shapes {
+        // with a second account that can take the chat: the account is used up until agy's time, the chat moves, and
+        // the same message goes again; one line, the app's
+        crate::accounts::stand_in(true, true);
+        let now = paths::now_secs();
+        let a = gemini_chat(&format!("replay-gemini-quota-{shape}"));
+        gemini_per_message(&a, out, err, *exit);
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.session.clone(), st.resent_for_test.len()), (2, None, 1), "{shape}: {:?}", st.log);
+            assert_eq!(st.resent_for_test[0].resend, Some(("Make the icon".to_string(), "Make the icon".to_string())), "{shape}");
+            assert_eq!(st.log.last().unwrap()["text"], "Your Gemini account ran out of usage (back in about 2 hours). Carrying on with the second account.", "{shape}");
+            assert!(!st.log.iter().any(|e| e["kind"] == "error"), "{shape}: {:?}", said(&st.log, "error"));
+            assert_eq!(st.log.iter().filter(|e| e["kind"] == "done").count(), 1, "{shape}: the earlier message's; this turn is not over");
+            assert!(working(&st), "{shape}: held for the message that goes again");
+        }
+        let until = crate::accounts::used_until("gemini", 1, now).expect("marked used up");
+        assert!((until - now - 7_608.0).abs() < 10.0, "{shape}: {}", until - now);
+        // a new Gemini chat now starts on the second account
+        assert_eq!(Agent::detached_for_test(&format!("replay-gemini-new-{shape}"), None).turn_account("gemini"), 2, "{shape}");
+        // without a second account everything is as it was: agy's line, once, and the turn is over
+        crate::accounts::stand_in(false, false);
+        let b = gemini_chat(&format!("replay-gemini-quota-alone-{shape}"));
+        gemini_per_message(&b, out, err, *exit);
+        let st = b.st.lock().unwrap();
+        assert_eq!(said(&st.log, "error"), [quota], "{shape}");
+        assert_eq!(st.log.last().unwrap()["kind"], "done", "{shape}");
+        assert!(st.resent_for_test.is_empty() && st.account == 1 && !working(&st), "{shape}");
+    }
+    // a result that failed for another reason, and another error output: said as before, and nothing moves
+    crate::accounts::stand_in(true, true);
+    let other = format!("{init}{{\"event\":\"result\",\"result\":{{\"conversation_id\":\"{C1}\",\"status\":\"ERROR\",\"error\":{{\"message\":\"Model unavailable\"}},\"usage\":{{}}}}}}\n");
+    let c = gemini_chat("replay-gemini-other-failure");
+    gemini_per_message(&c, &other, "", (true, 0));
+    {
+        let st = c.st.lock().unwrap();
+        assert_eq!(said(&st.log, "error"), ["Model unavailable"]);
+        assert!(st.resent_for_test.is_empty() && st.account == 1);
+    }
+    let d = gemini_chat("replay-gemini-other-error-output");
+    gemini_per_message(&d, "", "Error: something else went wrong\n", (false, 1));
+    let st = d.st.lock().unwrap();
+    assert_eq!(said(&st.log, "error"), ["Error: something else went wrong\n"]);
+    assert!(st.resent_for_test.is_empty() && crate::accounts::used_until("gemini", 1, paths::now_secs()).is_none());
+    // the line as agy prints it in its error output, read from there
+    assert_eq!(antigravity::quota_line(&format!("warning: x\nError: {quota}\n")).as_deref(), Some(quota));
+    assert_eq!(antigravity::quota_line("Error: Please sign in to view available models."), None);
+}

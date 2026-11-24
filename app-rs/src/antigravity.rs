@@ -522,7 +522,12 @@ impl Turn {
                 let status = r["status"].as_str().unwrap_or("");
                 if !matches!(status, "SUCCESS" | "") {
                     let why = r["error"]["message"].as_str().or(r["error"].as_str()).filter(|s| !s.is_empty());
-                    out.push(Out::Error(why.map(str::to_string).unwrap_or_else(|| format!("Gemini stopped: {}.", status.to_lowercase()))));
+                    match why.filter(|w| quota_reached(w)) {
+                        // the plan's quota: a failed turn (not just a line in the chat), so the account is marked used
+                        // up and the chat may carry on with Gemini's other account (`agents::roll_over`)
+                        Some(quota) => out.push(Out::Failed(quota.to_string())),
+                        None => out.push(Out::Error(why.map(str::to_string).unwrap_or_else(|| format!("Gemini stopped: {}.", status.to_lowercase())))),
+                    }
                 }
                 out.push(Out::Finished);
             }
@@ -530,6 +535,20 @@ impl Turn {
         }
         out
     }
+}
+
+/// Whether agy's words say that the plan's quota is spent: "Individual quota reached. Please upgrade your
+/// subscription to increase your limits. Resets in 2h6m48s." (as the user's chats of 22 November 2026 have it,
+/// from a process per message). The one line known.
+pub fn quota_reached(said: &str) -> bool {
+    said.to_lowercase().contains("quota reached")
+}
+
+/// That line in a turn's error output (where a process per message that fails before it has a result says why),
+/// without the "Error: " agy puts before what it prints there. None when the output holds no such line.
+pub fn quota_line(error_output: &str) -> Option<String> {
+    let line = error_output.lines().rev().map(str::trim).find(|l| quota_reached(l))?;
+    Some(line.strip_prefix("Error:").map(str::trim).unwrap_or(line).to_string())
 }
 
 /// What the chat is told when nobody is signed in to Antigravity: with the Sign in button beside it

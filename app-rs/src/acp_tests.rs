@@ -436,7 +436,7 @@ mod stand_in {
         // kept, and from where the user's keychain entry cannot be found), and nothing names another
         for cmd in [second.command(), second.per_turn(None, "hello").0] {
             assert_eq!(env(&cmd, "HOME"), Some(Some("/app/accounts/gemini-2-abcdef".to_string())));
-            for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
+            for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR", "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"] {
                 assert_eq!(env(&cmd, gone), Some(None), "{gone}");
             }
         }

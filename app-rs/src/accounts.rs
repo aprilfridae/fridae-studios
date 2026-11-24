@@ -73,7 +73,8 @@ fn folder_in(settings: &Map<String, Value>, ai: &str) -> Option<PathBuf> {
 pub fn folder(ai: &str) -> Option<PathBuf> {
     #[cfg(test)]
     if let Some(second) = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.second)) {
-        return (second && AIS.contains(&ai)).then(|| base().join(format!("{ai}-2-standin")));
+        let tag = STAND_IN.with(|s| s.borrow().as_ref().map(|s| s.tag).unwrap_or("standin"));
+        return (second && AIS.contains(&ai)).then(|| base().join(format!("{ai}-2-{tag}")));
     }
     folder_in(&paths::guarded_settings(), ai)
 }
@@ -113,6 +114,8 @@ pub struct StandIn {
     pub signed_in: bool,
     /// the second account's tool said that nobody is signed in
     pub out: bool,
+    /// the end of its folder's name ("standin" unless the test wants a folder of its own to do things to)
+    pub tag: &'static str,
     /// shared by every thread the test's chat works on (`stand_in_here`)
     pub used: std::sync::Arc<Mutex<HashMap<(String, u8), f64>>>,
 }
@@ -125,7 +128,13 @@ thread_local! {
 /// Tests: this test's accounts from here on (`StandIn`).
 #[cfg(test)]
 pub fn stand_in(second: bool, signed_in: bool) {
-    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second, signed_in, out: false, used: Default::default() }));
+    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second, signed_in, out: false, tag: "standin", used: Default::default() }));
+}
+
+/// Tests: the same, with a folder of the test's own (`<ai>-2-<tag>`).
+#[cfg(test)]
+pub fn stand_in_tagged(tag: &'static str) {
+    STAND_IN.with(|s| *s.borrow_mut() = Some(StandIn { second: true, signed_in: true, out: false, tag, used: Default::default() }));
 }
 
 /// Tests: the second account's tool says that nobody is signed in (or not known, again).
@@ -176,20 +185,58 @@ pub fn add(ai: &str) -> Result<PathBuf, String> {
 }
 
 /// Remove the second account: its folder is deleted (the app's own, under `base()`, by its checked name) and the
-/// setting cleared. Nothing of the tool's is run, and the first account is not touched.
-pub fn remove(ai: &str) {
+/// setting cleared. Nothing of the tool's is run, and the first account is not touched. The folder that could not
+/// be deleted, if any: Setup then says so with its place (`state`), since the sign-in may still be in it.
+///
+/// Whatever was still running there when it went (a status check on its way, a tool closing down) may write its
+/// files back: the folder is looked at again a few seconds later, and once more after the longest a status check
+/// may take, and deleted again.
+pub fn remove(ai: &str) -> Option<PathBuf> {
     let dir = folder(ai);
     paths::update_config(|cfg| {
         let mut all = cfg.get(SETTING).and_then(Value::as_object).cloned().unwrap_or_default();
         all.remove(ai);
         cfg.insert(SETTING.into(), Value::Object(all));
     });
-    if let Some(dir) = dir.filter(|d| d.parent() == Some(base().as_path())) {
-        remove_folder(&dir);
-    }
     if let Some(used) = USED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         used.remove(&(ai.to_string(), 2));
     }
+    // only a folder of its checked name, directly in the accounts folder, and only when that folder is the app's
+    // own (not a link to somewhere else, where a folder of the same name would be somebody else's)
+    let dir = dir.filter(|d| d.parent() == Some(base().as_path()) && real_folder(&base()))?;
+    let gone = remove_folder(&dir);
+    note_left(ai, (!gone).then(|| dir.clone()));
+    if cfg!(not(test)) {
+        let (ai, again) = (ai.to_string(), dir.clone());
+        std::thread::spawn(move || {
+            for wait in [5, 35] {
+                std::thread::sleep(std::time::Duration::from_secs(wait));
+                // (never one that has been made anew: names are not reused, and a new one would be in the settings)
+                if fs::symlink_metadata(&again).is_ok() && folder(&ai).as_deref() != Some(again.as_path()) {
+                    let gone = remove_folder(&again);
+                    note_left(&ai, (!gone).then(|| again.clone()));
+                }
+            }
+        });
+    }
+    (!gone).then_some(dir)
+}
+
+/// A removed account's folder that could not be deleted, by AI: said in Setup until the app closes or another
+/// account is added for that AI.
+static LEFT: Mutex<Option<HashMap<String, PathBuf>>> = Mutex::new(None);
+
+fn note_left(ai: &str, left: Option<PathBuf>) {
+    let mut g = LEFT.lock().unwrap_or_else(|e| e.into_inner());
+    let all = g.get_or_insert_with(HashMap::new);
+    match left {
+        Some(dir) => all.insert(ai.to_string(), dir),
+        None => all.remove(ai),
+    };
+}
+
+fn left(ai: &str) -> Option<PathBuf> {
+    LEFT.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(ai).cloned()).filter(|d| fs::symlink_metadata(d).is_ok())
 }
 
 /// Whether a path is a folder itself: there, a directory, and not a link to one. An account's folder that has been
@@ -199,19 +246,57 @@ fn real_folder(dir: &Path) -> bool {
     fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir())
 }
 
-/// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the rest.
-/// A folder that has been swapped for a link: the link is removed and nothing else, never what it leads to.
-fn remove_folder(dir: &Path) {
+/// Where a tool keeps an account's sign-in inside the account's folder: deleted before anything else, so that
+/// whatever else in the folder cannot be deleted, the sign-in is not what stays. Claude Code: its credentials file
+/// and its account file. agy: its data folder (`.gemini`), where a sign-in made without a keychain is kept.
+const SIGN_IN_PLACES: [&str; 3] = [".credentials.json", ".claude.json", ".gemini"];
+
+/// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the
+/// sign-in's own place, then the rest. A folder that has been swapped for a link: the link is removed and nothing
+/// else, never what it leads to. Something in it that cannot be deleted as it is (a folder a tool left read-only)
+/// is made the user's to write and tried once more. Whether it is gone.
+fn remove_folder(dir: &Path) -> bool {
     if !real_folder(dir) {
         let _ = fs::remove_file(dir);
-        return;
+        return fs::symlink_metadata(dir).is_err();
     }
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         if entry.file_type().is_ok_and(|t| t.is_symlink()) {
             let _ = fs::remove_file(entry.path());
         }
     }
-    let _ = fs::remove_dir_all(dir);
+    for place in SIGN_IN_PLACES {
+        remove_all(&dir.join(place));
+    }
+    remove_all(dir);
+    fs::symlink_metadata(dir).is_err()
+}
+
+/// A file or a folder and all in it, deleted; what cannot be deleted for its mode is made writable and tried again
+/// (links are never followed: a link is removed as a link).
+fn remove_all(path: &Path) {
+    let Ok(meta) = fs::symlink_metadata(path) else { return };
+    if !meta.file_type().is_dir() {
+        let _ = fs::remove_file(path);
+        return;
+    }
+    if fs::remove_dir_all(path).is_ok() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fn open_up(dir: &Path) {
+            let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+            for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    open_up(&e.path());
+                }
+            }
+        }
+        open_up(path);
+        let _ = fs::remove_dir_all(path);
+    }
 }
 
 /// What of the user's own Claude Code setup a turn on the second account gets as well, by links to it: settings
@@ -232,9 +317,22 @@ fn users_claude() -> PathBuf {
 pub fn prepare(ai: &str) -> Option<PathBuf> {
     let dir = folder(ai)?;
     match ai {
-        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED),
+        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED).filter(|d| no_keychain_in(d)),
         _ => prepare_in(&dir, &users_claude(), &CLAUDE_LINKED),
     }
+}
+
+/// Whether a home of the app's own (Gemini's second account) still has no keychain of any kind in it. The promise
+/// that the user's own sign-in cannot be reached from there rests on the home having none: a link at
+/// `Library/Keychains` to the user's own brings their keychain back for every command run with that home (measured:
+/// the entry is found again), and a sign-in made there would then be written into the user's own entry. Nothing of
+/// the app or of agy puts a keychain there (measured: agy's sign-in and status leave no `Library` at all), so a
+/// home that has grown one, as a folder or as a link, or whose `Library` is a link, or that names a keychain list
+/// of its own, is not used for anything: no status, no sign-in, no turn. Setup says so, and Remove takes it away.
+fn no_keychain_in(home: &Path) -> bool {
+    let library = home.join("Library");
+    let there = |p: &Path| fs::symlink_metadata(p).is_ok();
+    (!there(&library) || real_folder(&library)) && !there(&library.join("Keychains")) && !there(&library.join("Preferences").join("com.apple.security.plist"))
 }
 
 /// What of the user's own home a Gemini turn on the second account gets as well, by links: the git identity, so a
@@ -301,12 +399,20 @@ pub fn env(cmd: &mut std::process::Command, ai: &str, account: u8) -> bool {
 /// it inherits (measured). The variables that name other folders for agy, and the one that can name another home
 /// to the system's own libraries, are taken out all the same: nothing of a second account is ever to resolve to
 /// the first's.
+///
+/// And the keys that could stand in for a sign-in (`KEPT_FROM_SECOND`): agy lists "Gemini API key" and "Application
+/// Default Credentials" among its ways to sign in, so a second home is only ever signed in by the sign-in the user
+/// made in it, never by a key that happens to be in the app's environment (which would be billed per use). The
+/// app's own tool server gets the Gemini keys back in its own entry (its textures may use them).
 pub fn home(cmd: &mut std::process::Command, dir: &Path) {
     cmd.env("HOME", dir);
-    for k in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
+    for k in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"].into_iter().chain(KEPT_FROM_SECOND) {
         cmd.env_remove(k);
     }
 }
+
+/// The keys kept from every agy command of Gemini's second account (`home`).
+pub const KEPT_FROM_SECOND: [&str; 3] = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"];
 
 /// Claude Code told to keep everything of an account in `dir`: its config folder, and the folder its sign-in is
 /// stored under. Claude Code names the keychain entry (and finds the plain credentials file) by
@@ -467,7 +573,13 @@ pub fn state() -> Value {
     let now = paths::now_secs();
     let mut out = Map::new();
     for ai in AIS {
-        out.insert(ai.to_string(), json!({"offered": !cfg!(windows), "exists": folder(ai).is_some(), "used": [used_until(ai, 1, now), used_until(ai, 2, now)]}));
+        // `broken`: there is one, but its folder is not one the app will use (swapped for a link, or a keychain
+        // has appeared in it); `left`: a removed one's folder that could not be deleted, with its place
+        let exists = folder(ai).is_some();
+        out.insert(
+            ai.to_string(),
+            json!({"offered": !cfg!(windows), "exists": exists, "broken": exists && prepare(ai).is_none(), "left": left(ai).filter(|_| !exists).map(|d| d.display().to_string()), "used": [used_until(ai, 1, now), used_until(ai, 2, now)]}),
+        );
     }
     Value::Object(out)
 }
@@ -604,6 +716,95 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_gemini_home_that_has_grown_a_keychain_is_not_used_for_anything() {
+        let root = paths::test_dir("accounts-keychain");
+        let _ = fs::remove_dir_all(&root);
+        let (users, base) = (root.join("users"), root.join("accounts"));
+        fs::create_dir_all(users.join("Library").join("Keychains")).unwrap();
+        fs::write(users.join("Library").join("Keychains").join("login.keychain-db"), "the user's own keychain").unwrap();
+        let home = |name: &str| {
+            let h = base.join(name);
+            assert_eq!(prepare_in(&h, &users, &GEMINI_LINKED), Some(h.clone()));
+            h
+        };
+        // a clean home, and one where agy and a turn's commands have left their own things: used
+        let clean = home("gemini-2-aaaaaa");
+        assert!(no_keychain_in(&clean));
+        fs::create_dir_all(clean.join(".gemini").join("antigravity-cli")).unwrap();
+        fs::create_dir_all(clean.join("Library").join("Caches")).unwrap();
+        assert!(no_keychain_in(&clean), "a Library of its own with no keychain in it is nothing to refuse");
+        // the user's keychain folder linked in (what brings their sign-in back for every command there): refused
+        let linked = home("gemini-2-bbbbbb");
+        fs::create_dir_all(linked.join("Library")).unwrap();
+        std::os::unix::fs::symlink(users.join("Library").join("Keychains"), linked.join("Library").join("Keychains")).unwrap();
+        assert!(!no_keychain_in(&linked));
+        // a keychain folder of its own, with a link to the user's keychain file in it, or with nothing in it: refused
+        // all the same (a home that has no keychain never grows one)
+        let own = home("gemini-2-cccccc");
+        fs::create_dir_all(own.join("Library").join("Keychains")).unwrap();
+        assert!(!no_keychain_in(&own));
+        std::os::unix::fs::symlink(users.join("Library").join("Keychains").join("login.keychain-db"), own.join("Library").join("Keychains").join("login.keychain-db")).unwrap();
+        assert!(!no_keychain_in(&own));
+        // its whole Library a link to the user's, or a keychain list of its own: refused
+        let library = home("gemini-2-dddddd");
+        std::os::unix::fs::symlink(users.join("Library"), library.join("Library")).unwrap();
+        assert!(!no_keychain_in(&library));
+        let listed = home("gemini-2-eeeeee");
+        fs::create_dir_all(listed.join("Library").join("Preferences")).unwrap();
+        fs::write(listed.join("Library").join("Preferences").join("com.apple.security.plist"), "").unwrap();
+        assert!(!no_keychain_in(&listed));
+        // Remove still takes such a home away, and nothing of the user's with it
+        assert!(remove_folder(&linked) && remove_folder(&own) && remove_folder(&library));
+        assert_eq!(fs::read_to_string(users.join("Library").join("Keychains").join("login.keychain-db")).unwrap(), "the user's own keychain");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_an_account_deletes_its_sign_in_first_and_says_when_the_folder_stays() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = paths::test_dir("accounts-remove");
+        let _ = fs::remove_dir_all(&root);
+        // a home a turn's commands have written into: a folder left read-only (as a module cache is) holds a file
+        let dir = root.join("gemini-2-abcdef");
+        fs::create_dir_all(dir.join(".gemini").join("antigravity-cli")).unwrap();
+        fs::write(dir.join(".gemini").join("antigravity-cli").join("the-sign-in"), "kept in a file").unwrap();
+        fs::create_dir_all(dir.join("go").join("pkg")).unwrap();
+        fs::write(dir.join("go").join("pkg").join("module"), "x").unwrap();
+        fs::set_permissions(dir.join("go").join("pkg"), fs::Permissions::from_mode(0o500)).unwrap();
+        fs::set_permissions(dir.join("go"), fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(fs::remove_dir_all(dir.join("go")).is_err(), "as it is, it cannot be deleted");
+        assert!(remove_folder(&dir), "made the user's to write, then deleted");
+        assert!(fs::symlink_metadata(&dir).is_err());
+        // something that cannot be deleted at all (a file marked unchangeable): the sign-in is gone all the same,
+        // and the folder is reported, not passed over in silence
+        #[cfg(target_os = "macos")]
+        {
+            let dir = root.join("claude-2-abcdef");
+            fs::create_dir_all(dir.join("projects")).unwrap();
+            fs::write(dir.join(".credentials.json"), "the sign-in").unwrap();
+            fs::write(dir.join(".claude.json"), "the account").unwrap();
+            fs::write(dir.join("projects").join("stuck"), "x").unwrap();
+            let flag = |on: &str| {
+                use crate::paths::Start;
+                std::process::Command::new("/usr/bin/chflags").arg(on).arg(dir.join("projects").join("stuck")).start().and_then(|mut c| c.wait()).is_ok_and(|s| s.success())
+            };
+            if flag("uchg") {
+                assert!(!remove_folder(&dir), "still there");
+                assert!(!dir.join(".credentials.json").exists() && !dir.join(".claude.json").exists(), "the sign-in went first");
+                note_left("claude", Some(dir.clone()));
+                assert_eq!(left("claude"), Some(dir.clone()), "Setup is told where it is");
+                assert!(flag("nouchg"));
+                assert!(remove_folder(&dir));
+                assert_eq!(left("claude"), None, "and no longer once it is gone");
+                note_left("claude", None);
+            }
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_second_accounts_commands_keep_its_sign_in_in_its_own_folder_whatever_the_app_inherited() {
         stand_in(true, true);
@@ -627,6 +828,10 @@ mod tests {
         assert_eq!(get(&agy, "HOME"), Some(Some(home_dir)));
         for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
             assert_eq!(get(&agy, gone), Some(None), "{gone} is taken out");
+        }
+        // nor a key that could stand in for a sign-in: only the sign-in made in that home signs it in
+        for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"] {
+            assert_eq!(get(&agy, key), Some(None), "{key} is kept from the second account's agy");
         }
         let mut agy_first = std::process::Command::new("agy");
         assert!(env(&mut agy_first, "gemini", 1));
