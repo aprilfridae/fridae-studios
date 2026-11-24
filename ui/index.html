@@ -765,7 +765,8 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-why .linkish { margin-left: 4px; white-space: nowrap; }
 .rv-err, .rv-item .rv-err { margin: 8px 0 0; font-size: 14px; color: var(--text); }
 .rv-err:empty { display: none; }
-.rv-prog { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; margin-top: 12px; }
+/* the stage strip is not shown (the user, 2026-11-24: it named a stage the game was nowhere near); the cost sits right */
+.rv-prog { display: flex; justify-content: flex-end; margin-top: 12px; }
 .rv-cost { display: inline-flex; align-items: flex-end; gap: 8px; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rv-cost:empty { display: none; }
 .rv-cost .spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
@@ -1066,7 +1067,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         </div>
         <div id="rv-live" hidden>
           <div class="rv-state"><span class="dot" id="rv-dot"></span><b id="rv-state"></b><span class="rv-why" id="rv-why"></span><button class="pill" id="rv-toggle" hidden></button></div>
-          <div class="rv-prog"><div class="rv-stages" id="rv-stages"></div><span class="rv-cost"></span></div>
+          <div class="rv-prog"><div class="rv-stages" id="rv-stages" hidden></div><span class="rv-cost"></span></div>
           <details class="rv-set" id="rv-set">
             <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
             <span class="pr-label">Wait for my approval after</span>
@@ -4308,11 +4309,6 @@ function paintStage(s, run, id) {
   s.querySelector("small").textContent = gate && st.status !== "done" ? "asks you" : "";
   s.title = stageName(id) + ": " + (st.status === "done" ? "done" : now ? "working on it now" : "to do") + (gate ? ". Waits for your approval before it is done." : ".");
 }
-function stageStrip(run) {
-  const strip = el("div", "rv-stages");
-  STAGE_NAMES.forEach(([id, name]) => { const s = el("div", "rv-stage", "<i></i><span></span><small></small>"); s.querySelector("span").textContent = name; paintStage(s, run, id); strip.appendChild(s); });
-  return strip;
-}
 const runDot = (state) => "dot" + (state === "Working" ? " live" : state === "Finished" || state === "Waiting for you" ? " ok" : "");
 function paintRun(r) {
   const run = r && r.run && r.run.on ? r.run : null;
@@ -4616,7 +4612,6 @@ function apCard(x) {
   const state = run ? runState(r, run)[0] : st.working ? "Chats at work" : ended ? "Last run ended " + ago(ended) : "No studio run";
   const [dot, words] = c.querySelectorAll(".ap-state span");
   dot.className = run ? runDot(state) : "dot" + (st.working ? " live" : ""); words.textContent = state;
-  if (run) c.appendChild(stageStrip(run));
   const rows = nowRows(x.path, true);
   if (rows.length) { const d = el("div", "rv-now"); d.append(...rows); c.appendChild(d); }
   const needs = needsOf(r);
