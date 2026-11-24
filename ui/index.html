@@ -514,6 +514,97 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .saytip .linkish { margin-left: 8px; }
 .saytip.free { left: 24px; bottom: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
 
+/* ---------- the team board: beside a Lead's chat while its team works at the same time ----------
+   One ordered log of what the members say to each other, the Lead and the user. Each member keeps one soft colour
+   (its name, its mentions, its chip), so a busy board reads at a glance; everything else stays in the greyscale.
+   Collapsed it is a slim rail; in a narrow space it lies over the chat and folds to one small pill. */
+.body { position: relative; }
+.body.with-board { grid-template-columns: minmax(0, 1fr) auto; }
+.board { display: flex; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); }
+.bd-panel { width: 340px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; }
+.board.shut .bd-panel, .board:not(.shut) .bd-rail { display: none; }
+.bd-rail { position: relative; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
+.bd-rail:hover { background: var(--hover); color: var(--text); }
+.bd-rail:focus-visible { outline-offset: -2px; }
+.bd-rail-t { writing-mode: vertical-rl; font-size: 12px; letter-spacing: 0.02em; }
+.bd-unread { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; display: grid; place-items: center; font: 600 12px/1 var(--mono); background: var(--text); color: var(--ink); }
+.bd-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 8px; min-height: 44px; padding: 4px 8px 4px 16px; border-bottom: 1px solid var(--line); }
+.bd-head b { font-size: 14px; font-weight: 600; }
+.bd-head small { grid-column: 1; display: block; font-size: 12px; color: var(--faint); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-head small .linkish { font-size: 12px; color: var(--dim); }
+.bd-head small .linkish:hover { color: var(--text); }
+.bd-head .icon { grid-column: 2; grid-row: 1 / span 2; }
+/* the roster: one chip per member, which shows only what it said and what was said to it */
+.bd-tools { display: grid; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.bd-who { display: flex; flex-wrap: wrap; gap: 4px; }
+.bd-who:empty { display: none; }
+.bd-m { display: inline-flex; align-items: center; gap: 6px; height: 24px; max-width: 100%; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); font: 12px/1 var(--mono); color: var(--c, var(--text)); transition: background-color 140ms ease, border-color 140ms ease; }
+.bd-m > span:not(.dot) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-m:hover { background: var(--hover); }
+.bd-m[aria-pressed="true"] { background: var(--press); border-color: color-mix(in srgb, var(--c, #fff) 55%, transparent); }
+.bd-m .dot { width: 6px; height: 6px; }
+.bd-m.dim { opacity: 0.6; }
+.bd-turn { font: 500 12px/1 var(--sans); font-style: normal; color: var(--text); padding: 2px 6px; margin-right: -4px; border-radius: 999px; background: var(--press); }
+.bd-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.bd-filter .seg button .n { margin-left: 6px; font: 500 12px/1 var(--mono); color: var(--text); }
+.bd-only { font-size: 12px; color: var(--dim); white-space: nowrap; }
+.bd-only b { font: 500 12px var(--mono); color: var(--c, var(--text)); }
+.bd-only .linkish { font-size: 12px; margin-left: 4px; }
+/* the log: who, to whom, when; a short run of lines from one member reads as one block */
+.bd-log { overflow-y: auto; min-height: 0; padding: 8px 8px 16px; -webkit-user-select: text; user-select: text; overscroll-behavior: contain; }
+.bd-l { padding: 6px 8px; border-radius: var(--r-s); }
+.bd-l:not(.cont) { margin-top: 6px; }
+.bd-l.cont { padding-top: 0; }
+.bd-l.cont .bd-meta { display: none; }
+.bd-meta { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; color: var(--faint); line-height: 1.6; }
+.bd-from { flex: none; font: 500 12px var(--mono); color: var(--c, var(--text)); }
+.bd-to { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-meta time { margin-left: auto; flex: none; font: 12px var(--mono); color: var(--faint); }
+.bd-k { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); font: 12px/1 var(--mono); color: var(--dim); }
+.bd-k:empty { display: none; }
+.bd-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.bd-at { font-weight: 500; color: var(--c, var(--text)); }
+.bd-at.me { color: var(--text); background: var(--press); border-radius: 4px; padding: 0 3px; }
+.bd-l.tome { background: var(--hover); box-shadow: inset 2px 0 0 var(--text); }
+.bd-l.mine .bd-text { color: var(--dim); }
+.k-done .bd-k, .k-merged .bd-k { color: var(--text); }
+.k-merged .bd-k { background: var(--press); }
+.k-verify .bd-k { border-style: dashed; }
+.k-failed .bd-k { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.bd-l.k-failed { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--bad) 70%, transparent); }
+.bd-l.k-system { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; padding: 0 4px; font: 12px/1.5 var(--mono); color: var(--faint); text-align: center; }
+.bd-l.k-system::before, .bd-l.k-system::after { content: ""; flex: 1; min-width: 16px; height: 1px; background: var(--line); }
+.bd-l.k-system span { max-width: 85%; }
+.bd-empty { margin: 16px 8px; font-size: 13px; color: var(--faint); line-height: 1.5; }
+/* the box to post in, with @-names offered as you type */
+.bd-post { position: relative; padding: 8px 12px 12px; border-top: 1px solid var(--line); }
+.bd-box { display: flex; align-items: flex-end; gap: 8px; padding: 4px 4px 4px 12px; border-radius: var(--r-l); background: var(--bg); border: 1px solid var(--line-strong); transition: border-color 160ms ease; }
+.bd-box:focus-within { border-color: rgba(255, 255, 255, 0.4); }
+.bd-box textarea { flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: none; padding: 4px 0; min-height: var(--h-m); max-height: 120px; font-size: 13px; line-height: 1.5; -webkit-user-select: text; user-select: text; }
+.bd-box .send { width: var(--h-s); height: var(--h-s); }
+.bd-hint { margin: 6px 4px 0; font-size: 12px; color: var(--faint); line-height: 1.4; }
+.bd-hint.bad { color: var(--text); }
+.bd-ac { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px); z-index: 5; max-height: 240px; overflow-y: auto; padding: 4px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); display: none; }
+.bd-ac.on { display: block; }
+.bd-opt { display: grid; grid-template-columns: 8px auto minmax(0, 1fr); align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: var(--r-s); text-align: left; }
+.bd-opt:hover, .bd-opt.sel { background: var(--hover); }
+.bd-opt b { font: 500 13px var(--mono); color: var(--c, var(--text)); }
+.bd-opt small { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-opt .dot { width: 6px; height: 6px; }
+/* a narrow space: the board lies over the chat, and folds to one pill under the chat's bar */
+.board.narrow { position: absolute; z-index: 15; top: 0; right: 0; bottom: 0; max-width: 100%; border-left-color: var(--line-strong); box-shadow: -24px 0 60px rgba(0, 0, 0, 0.55); }
+.board.narrow .bd-panel { width: min(360px, 100%); }
+.board.narrow.shut { top: 52px; right: 16px; bottom: auto; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--raised); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+.board.narrow.shut .bd-rail { flex-direction: row; width: auto; height: var(--h-s); padding: 0 12px; gap: 8px; border-radius: 999px; }
+.board.narrow.shut .bd-rail-t { writing-mode: horizontal-tb; }
+/* a member's state, as a dot: being checked is a ring, parked is quieter still */
+.dot.verify { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text), 0 0 0 2.5px rgba(255, 255, 255, 0.12); }
+.dot.park { opacity: 0.6; }
+/* the member that holds the Studio turn: the only one changing the live place right now */
+.s-turn { display: none; }
+.s-row.sx.st-turn { grid-template-columns: 8px minmax(0, 1fr) auto; }
+.s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
+
 /* ---------- the other pages take the whole space under the project's bar ---------- */
 #review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
 body.review #review, body.promos #promos, body.newproj #newproj, body.all #allproj { display: block; }
@@ -937,12 +1028,28 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <p class="aigap" id="ai-gap" hidden></p>
       </div>
     </div>
+    <aside class="board" id="board" hidden aria-label="Team board">
+      <button class="bd-rail" id="bd-rail" aria-expanded="false" aria-controls="bd-panel" title="Show the team board"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg><span class="bd-unread" id="bd-unread" hidden></span><span class="bd-rail-t">Team board</span></button>
+      <div class="bd-panel" id="bd-panel">
+        <header class="bd-head"><b>Team board</b><button class="icon" id="bd-shut" aria-label="Hide the team board" title="Hide the team board"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></button><small id="bd-sum"></small></header>
+        <div class="bd-tools">
+          <div class="bd-who" id="bd-who" role="group" aria-label="Members: press one to see only its lines"></div>
+          <div class="bd-filter"><div class="seg" id="bd-seg"><button data-f="all">All</button><button data-f="me">To you</button></div><span class="bd-only" id="bd-only" hidden></span></div>
+        </div>
+        <div class="bd-log" id="bd-log" role="log" aria-label="What the team says"></div>
+        <div class="bd-post">
+          <div class="bd-ac" id="bd-ac" role="listbox" aria-label="Who to write to"></div>
+          <div class="bd-box"><textarea id="bd-say" rows="1" placeholder="@name or @all, then your message" aria-label="A message for the team" autocomplete="off" spellcheck="true"></textarea><button class="send" id="bd-send" aria-label="Post" title="Post" disabled><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></button></div>
+          <p class="bd-hint" id="bd-hint" role="status"></p>
+        </div>
+      </div>
+    </aside>
     </div>
 
     <div id="allproj"><div class="ov">
       <div class="o-graph">
         <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
-        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
+        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a game. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a game for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
         <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
@@ -1129,6 +1236,10 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
       <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your game, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
       <div id="xp-table" style="margin-top: 12px"></div>
+      <h3 id="sw-cap-title">Most experts working at once</h3>
+      <p class="sub">1 means one at a time; more get it done sooner and use up your plan's usage faster.</p>
+      <div class="seg" id="sw-cap" style="margin-top: 12px; max-width: 100%" role="group" aria-labelledby="sw-cap-title"></div>
+      <p class="sub" id="sw-cap-note" role="status" hidden></p>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -1402,7 +1513,7 @@ function select(id) {
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
   following = atBottom();
-  paintSide(); paintComposer(); paintProject(); if (view === "chat") box.focus();
+  paintSide(); paintComposer(); paintProject(); swarmFocus(p); if (view === "chat") box.focus();
 }
 /* a project chosen in the sidebar: its last tab, and in Chat its last conversation (or a new one) */
 function showProject(key, tab) {
@@ -1468,7 +1579,7 @@ function showDraft(key) {
   const wrap = helloEl(proxy);
   if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = pr.bible ? "ready" : "kind"; proxy.start.paint(); }
   draftCol.replaceChildren(wrap); draftCol.hidden = false;
-  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide();
+  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide(); paintBoard();
 }
 /* the first message of a game's chat: a new game is talked through first, an existing one is read */
 function kickoffChat(p, kind) {
@@ -1510,6 +1621,9 @@ const xpOld = new Set();   /* the chats whose earlier experts are shown */
 function expertsOf(p) {
   const all = new Map();
   const put = (id, more) => { const x = all.get(id) || { id }; for (const k in more) if (more[k] !== undefined && more[k] !== null && more[k] !== "") x[k] = more[k]; all.set(id, x); };
+  /* the members of its team's run, if it leads one: first, so what the chat itself knows of each wins */
+  const team = swarmOf(p.id);
+  if (team && team.run) for (const m of team.members || []) if (m && m.id) put(m.id, { name: m.name, expert: m.role, member: m });
   for (const x of Object.values(p.xps)) put(x.id, { name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at });
   for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai, plain: c.plain }); }
   for (const h of agents.values()) if (h.parent === p.id) put(h.id, { name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h });
@@ -1518,8 +1632,8 @@ function expertsOf(p) {
   for (const x of all.values()) x.when = xpWhen.get(x.id) || (x.pane && !x.pane.replay ? pageStart : 0);
   return [...all.values()].sort((a, b) => (bornAt(b.id) - bornAt(a.id)) || ((b.at || 0) - (a.at || 0)));
 }
-/* at work now, at work within the last half hour, or the chat in front */
-const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || x.id === current || now - x.when < XP_IDLE;
+/* at work now, at work within the last half hour, the chat in front, or a member of a team's run that is going */
+const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || !!x.member || x.id === current || now - x.when < XP_IDLE;
 /* an expert's state in a few words, and the class of its dot */
 function xpState(h) {
   const words = h.busy ? "working · " + (h.now || "starting") : h.last === "Stopped" ? "stopped" : h.last === "Needs attention" ? "stopped with an error" : h.last === "Needs you" ? "waiting for an answer" : h.started ? "finished" : "starting";
@@ -1622,21 +1736,26 @@ const xpTab = new Map();
 function sideExpert(used, x, lead, tab) {
   const key = "x:" + x.id;
   return sideRow(used, key, lead ? lead.id : "", () => {
-    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span></button>'), b = w.firstChild;
+    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span><span class="s-turn">Studio</span></button>'), b = w.firstChild;
     b.dataset.k = key; if (lead) b.dataset.of = "c:" + lead.id;
     b.onclick = () => openChatById(x.id);
     return w;
   }, (w) => {
     const b = w.firstChild, h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
-    const state = h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
-    const ai = x.runsOn || aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead)));
-    const plain = (h && h.plain) || x.plain || "";
-    putClass(b, "s-row sx" + (on ? " on" : "") + (h && h.busy ? " busy" : ""));
+    /* a member of a team's run says its state in the run (parked, being checked, merged...); while it works, what it
+       is doing, as any expert does */
+    const m = x.member || memberOf(x.id), sw = m && SW[m.status], doing = !!(h && h.busy && (!m || m.status === "working"));
+    const state = sw && !doing ? [sw.word, sw.dot] : h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
+    const ai = x.runsOn || (m && m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead))));
+    const plain = (h && h.plain) || x.plain || "", still = !!(m && (m.status === "working" || m.status === "parked" || m.status === "verifying"));
+    const turn = !!(m && m.studio_turn), thing = thingOf(lead ? projKey(lead) : curProj);
+    putClass(b, "s-row sx" + (on ? " on" : "") + (doing ? " busy" : "") + (turn ? " st-turn" : ""));
     putClass(b.firstChild, "dot" + state[1]);
     putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
     /* once the expert has finished, its row shows the plain-English line of what it did; while it works, its state */
-    putText(b.querySelector("small"), plain && !(h && h.busy) ? "In plain words: " + plain : state[0] + " · " + ai);
-    putTitle(b, [who, job, state[0], ai].filter(Boolean).join(" · ") + (plain ? ". In plain words: " + plain : "") + (lead ? "" : ". The chat that started it is closed."));
+    putText(b.querySelector("small"), plain && !(h && h.busy) && !still ? "In plain words: " + plain : state[0] + " · " + ai);
+    putTitle(b.lastChild, turn ? "It has the Studio turn: the only one changing the live place right now. The others carry on with their own copies." : "");
+    putTitle(b, [[who, job, state[0], ai].filter(Boolean).join(" · ") + ".", sw ? swTip(m.status, thing) : "", turn ? "It has the Studio turn." : "", plain ? "In plain words: " + plain : "", lead ? "" : "The chat that started it is closed."].filter(Boolean).join(" "));
     putAttr(b, "aria-current", on ? "true" : null);
     const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
   });
@@ -1846,7 +1965,7 @@ function paintHead() {
   const live = p && p.overnight && p.overnight > Date.now() / 1000;
   let text = "", review = false;
   if (!p) text = "";
-  else if (isHelper(p)) text = [p.runsOn || aiName(chatAi(p)), xpState(p)[0]].join(" · ");
+  else if (isHelper(p)) { const m = memberOf(p.id), sw = m && SW[m.status]; text = [p.runsOn || aiName(chatAi(p)), sw && !(p.busy && m.status === "working") ? sw.word : xpState(p)[0]].join(" · "); }
   else if (leadsRun(p)) { text = runState(r, run)[0]; review = true; }
   else if (p.studio && p.studioWaiting) { text = "Waiting for you"; review = true; }
   else if (p.busy) text = "Working";
@@ -2003,8 +2122,9 @@ function paintExpertBar(h) {
   const bar = $("xp-bar"), on = isHelper(h);
   bar.hidden = !on; bar.nextElementSibling.hidden = on;
   if (!on) return;
-  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert);
-  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
+  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert), m = memberOf(h.id);
+  /* a member of a team's run can be written to on its Lead's team board */
+  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (m && of ? "To tell it something, write @" + bdName(m.name) + " on the team board beside “" + of.name + "”." : of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
   $("xp-stop").hidden = !h.busy; $("xp-stop").onclick = () => api("/api/stop", { agent: h.id });
   $("xp-lead").hidden = !(of || chatKnown(h.parent)); $("xp-lead").textContent = of && leadsRun(of) ? "Open the Lead's chat" : "Open the chat that started it";
   $("xp-lead").onclick = () => openChatById(h.parent);
@@ -2557,6 +2677,7 @@ function onEvent(e) {
   if (e.kind === "promo") { onPromo(e); return; }
   if (e.kind === "review") { onReviewItem(e); return; }
   if (e.kind === "studio_run") { onStudioRun(e); return; }
+  if (e.kind === "swarm") { swarmSoon(e.lead); return; }   /* a Lead's team board changed: its newer lines are asked for */
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
@@ -3372,7 +3493,7 @@ let research = {}, researchPane = null;
 function setView(v) {
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
   if (v === "review" && !curProj) v = "chat";
-  view = v; savePlace(); paintView(); paintSide();
+  view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
   if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
@@ -4579,8 +4700,9 @@ function overviewWanted() {
   }
   if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
   for (const p of open) {
-    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name;
-    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
+    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name, m = helper && memberOf(p.id);
+    /* a member of a team's run: `swarm` is its state there (parked is drawn dimmer, being checked with a ring) */
+    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, swarm: (m && m.status) || "", weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
   }
   for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
   for (const p of open) {
@@ -4613,7 +4735,7 @@ function overviewSync() {
     }
   }
   og.links = links.filter((l) => og.nodes.has(l[0]) && og.nodes.has(l[1]));
-  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1)).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
+  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1) + "|" + (n.swarm || "")).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
   if (sig === og.sig) return false;
   og.sig = sig;
   const shape = [...want.values()].filter((n) => n.kind !== "step").map((n) => n.id).join("\n") + "\n" + og.links.filter((l) => !l[1].startsWith("step:")).map((l) => l[0] + ">" + l[1]).join("\n");
@@ -4710,7 +4832,8 @@ function overviewDraw(now) {
   const names = [];
   for (const n of og.nodes.values()) {
     const r = Math.max(radius(n), 1.5 / og.zoom), dim = lit(n.id) ? 1 : 0.18;   /* never under 1.5px on the screen */
-    const shade = n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85;
+    const parked = n.swarm === "parked" && !n.busy;   /* a parked member rests: drawn dimmer, its name too */
+    const shade = (n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85) * (parked ? 0.5 : 1);
     if (n.busy) { c.fillStyle = "rgba(255,255,255," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
     c.fillStyle = c.strokeStyle = "rgba(236,236,238," + shade * dim + ")";
     if (n.kind === "project" && ogLogo.complete && ogLogo.naturalWidth) {
@@ -4723,12 +4846,14 @@ function overviewDraw(now) {
       if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
       c.fill();
     }
+    /* a member whose work is being checked: one thin, still ring around it */
+    if (n.swarm === "verifying") { c.strokeStyle = "rgba(236,236,238," + 0.5 * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 3.5, 0, 6.283); c.stroke(); }
     /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
        step, the one its chat is on now (all of its last steps under the pointer or zoomed in). They are drawn after
        the dots, the more important first. */
     const wordy = named(n) || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id) && (n.newest || !!og.hover || og.zoom >= 1));
     if (!wordy) continue;
-    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : 0.62) * dim + ")",
+    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(236,236,238," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : parked ? 0.4 : 0.62) * dim + ")",
       rank: n === og.hover ? 0 : n.kind === "project" ? 1 : n.kind === "chat" ? (n.busy ? 2 : 3) : n.kind === "expert" ? 4 : n.kind === "step" ? (n.newest ? 5 : 6) : 7 };
     const chat = n.kind === "step" && og.nodes.get(n.of);
     if (chat) {
@@ -4780,6 +4905,7 @@ function overviewTick() {
 function overviewOpen() {
   /* the first time, the layout starts from scratch at full strength; coming back to it, only what changed stirs it */
   const first = !og.nodes.size;
+  swarmPrime();   /* parked and checked experts are drawn so: what each Lead's team is doing */
   if (overviewSync()) { if (first) { og.heat = 1; og.age = 0; og.asleep = false; og.calm = 0; } else overviewWake(); }
   og.last = 0; overviewPoke();
   if (!og.timer) og.timer = setInterval(overviewTick, 900);
@@ -4865,6 +4991,373 @@ function onReviewItem(e) {
   line.querySelector("button").onclick = () => openInReview(e.project, it.id);
   p.turn.appendChild(line); p.turn._steps = null;
   if (p.id === current) stick();
+}
+/* ---------- a Lead's team: members working at the same time, and the board they talk on ---------- */
+/* What the app knows of each Lead's team (GET /api/swarm), by the Lead's chat id: its run (null when none is going),
+   its members and the board's lines so far. A change comes as one "swarm" event on the bus, and then only the lines
+   newer than the last one here are asked for (`since`). */
+const swarm = new Map();
+const swarmOf = (lead) => (lead && swarm.get(lead)) || null;
+/* the member a chat is, in any Lead's run that is going */
+function memberOf(id) {
+  if (!id) return null;
+  for (const s of swarm.values()) if (s.run) { const m = (s.members || []).find((x) => x && x.id === id); if (m) return m; }
+  return null;
+}
+/* a member's state, in a word or two, with its dot */
+const SW = {
+  working: { word: "working", dot: " live" },
+  parked: { word: "parked", dot: " park" },
+  verifying: { word: "being checked", dot: " verify" },
+  merged: { word: "merged", dot: " ok" },
+  stopped: { word: "stopped", dot: "" },
+  failed: { word: "failed", dot: " bad" },
+};
+/* and in one sentence, for its tooltip */
+function swTip(status, thing) {
+  return status === "working" ? "Working on its part now, in its own copy of the " + thing + "."
+    : status === "parked" ? "Done for now, or waiting on someone. Parked costs nothing; a mention on the board wakes it."
+    : status === "verifying" ? "Its part is being checked before it goes into the " + thing + "."
+    : status === "merged" ? "Checked and added to the run's copy of the " + thing + ". It reaches your " + thing + " only with your yes."
+    : status === "stopped" ? "Stopped. Its copy of the " + thing + " was let go."
+    : status === "failed" ? "Its check did not pass. The board says what failed, and it is asked to fix it."
+    : "";
+}
+/* Game wording for a game, plain words for anything else (the plain projects spec): a project of another type says
+   "project". An older project with no type is a game; chats with no project say "project". */
+function kindOf(path) {
+  if (!path) return "plain";
+  const pr = (projects.projects || []).find((x) => x.path === path), t = pr && (pr.type || pr.kind);
+  return !t || t === "game" || t === "roblox" ? "game" : "plain";
+}
+const thingOf = (path) => (kindOf(path) === "game" ? "game" : "project");
+
+/* asked for soon (once, however many events say so), and never twice at the same time */
+const swTimers = new Map(), swBusy = new Map();
+function swarmSoon(lead) {
+  if (!lead || swTimers.has(lead)) return;
+  swTimers.set(lead, setTimeout(() => { swTimers.delete(lead); loadSwarm(lead); }, 120));
+}
+async function loadSwarm(lead) {
+  if (swBusy.has(lead)) { swBusy.set(lead, "again"); return; }
+  swBusy.set(lead, true);
+  let again = false;
+  try {
+    const had = swarm.get(lead), last = had && had.run && had.board.length ? had.board[had.board.length - 1].t : 0;
+    const r = await api("/api/swarm?lead=" + encodeURIComponent(lead) + (last ? "&since=" + last : ""));
+    if (!r || typeof r !== "object" || !("run" in r)) return;
+    /* a new run under the same Lead: its board is read from the start */
+    if (last && r.run !== had.run) { swarm.delete(lead); again = true; return; }
+    const s = had && had.run === r.run ? had : { board: [], seen: 0, gen: 0 };
+    s.run = r.run || null; s.ceiling = r.ceiling; s.members = Array.isArray(r.members) ? r.members.filter((m) => m && m.id) : [];
+    if (!s.run) { s.board = []; s.seen = 0; }
+    for (const l of (s.run && r.board) || []) {
+      if (!l || typeof l.t !== "number") continue;
+      if (l.t < last || (l.t === last && s.board.some((x) => x.t === l.t && x.from === l.from && x.text === l.text))) continue;
+      s.board.push(l);
+    }
+    if (s !== had) s.seen = s.board.length;   /* what was there when first read is not new; what comes after is */
+    /* the board keeps its newest 600 lines here */
+    if (s.board.length > 600) { const cut = s.board.length - 600; s.board.splice(0, cut); s.seen = Math.max(0, s.seen - cut); s.gen++; }
+    swarm.set(lead, s);
+    paintSideSoon(); if (bdLead() === lead) paintBoard();
+    if (view === "all") overviewTick();
+  } catch (e) {
+  } finally {
+    const more = swBusy.get(lead) === "again"; swBusy.delete(lead);
+    if (again || more) swarmSoon(lead);
+  }
+}
+/* the teams worth knowing now: each game's run Lead, every chat that started experts, and the chat in front */
+function swarmPrime() {
+  const leads = new Set();
+  for (const r of Object.values(rvAll)) if (r && r.run && r.run.lead) leads.add(r.run.lead);
+  for (const h of agents.values()) if (isHelper(h) && h.parent) leads.add(h.parent);
+  const p = agents.get(current); if (p) leads.add(isHelper(p) ? p.parent : p.id);
+  leads.forEach(swarmSoon);
+}
+/* a chat came to the front: its team (or, for a member, its Lead's) is asked for, and the board follows it */
+function swarmFocus(p) { if (p) swarmSoon(isHelper(p) ? p.parent : p.id); paintBoard(); }
+
+/* ---------- the team board ---------- */
+/* Open or folded: kept on this computer for a wide window; in a narrow space it lies over the chat, so it starts
+   folded there and is opened for a look. */
+let bdShut = false, bdNarrow = false, bdNarrowOpen = false;
+try { bdShut = localStorage.getItem("board-shut") === "1"; } catch (e) {}
+let bdFilter = { f: "all", name: "" };
+const bdDrawn = { sig: "", n: 0, prev: null, lead: "" };
+/* one soft colour per member, in the order the team lists them (a name it does not list gets one by its letters) */
+const BD_HUES = ["#8db4ff", "#f3a6c8", "#93dcae", "#f2c27a", "#bfa4ff", "#7fd3d6", "#ff9e86", "#d3d67c"];
+const bdName = (s) => String(s || "").trim().replace(/^@/, "").toLowerCase();
+const bdIsMe = (s) => ["you", "user", "me"].includes(bdName(s));
+const bdReEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function bdHue(s, name) {
+  const n = bdName(name); if (!n || bdIsMe(n) || ["all", "lead", "system", "app"].includes(n)) return "";
+  const i = ((s && s.members) || []).findIndex((m) => bdName(m.name) === n);
+  if (i >= 0) return BD_HUES[i % BD_HUES.length];
+  let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return BD_HUES[h % BD_HUES.length];
+}
+const bdStyle = (c) => (c ? ' style="--c:' + c + '"' : "");
+/* the chat whose board shows: the Lead in front */
+function bdLead() { const p = agents.get(current); return p && !isHelper(p) ? p.id : null; }
+/* a line written to the user, or naming them */
+const bdToMe = (l) => (l.to || []).some(bdIsMe) || /(^|[^\w-])@(you|user|me)\b/i.test(l.text || "");
+/* a line from a member, to it, or naming it */
+function bdHas(l, name) {
+  if (bdName(l.from) === name || (l.to || []).some((t) => bdName(t) === name)) return true;
+  return new RegExp("(^|[^\\w-])@" + (l.kind === "system" ? "?" : "") + bdReEsc(name) + "(?![\\w-])", "i").test(l.text || "");
+}
+const bdKeep = (l) => (bdFilter.f === "me" ? bdToMe(l) : bdFilter.f === "one" ? bdHas(l, bdFilter.name) : true);
+/* t is in seconds (milliseconds are taken too) */
+const bdTime = (t, long) => { const d = new Date(t > 1e12 ? t : t * 1000); return long ? d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit", second: "2-digit" }) : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+/* who wrote it, and to whom, in words */
+function bdWho(s, name) { const n = bdName(name); return bdIsMe(n) ? "You" : n === "lead" ? "Lead" : n === "all" ? "everyone" : n === "system" || n === "app" || !n ? "Fridae" : n; }
+function bdTo(s, l) {
+  const to = [...new Set((l.to || []).map(bdName).filter(Boolean))];
+  if (!to.length) return "";
+  if (to.includes("all")) return "to everyone";
+  return "to " + to.map((t) => (bdIsMe(t) ? "you" : t === "lead" ? "the Lead" : "@" + t)).join(", ");
+}
+/* the words of a line, escaped, with each @name in its member's colour (and @you marked) */
+function bdMarkup(s, text) {
+  return esc(String(text || "")).replace(/(^|[^\w-])@([\w][\w.-]*[\w]|[\w])/g, (all, pre, n) =>
+    pre + '<span class="bd-at' + (bdIsMe(n) ? " me" : "") + '"' + bdStyle(bdHue(s, n)) + ">@" + n + "</span>");
+}
+const BD_KINDS = { done: "done", verify: "checked", merged: "merged", failed: "failed" };
+function bdKindTip(kind, thing) {
+  return kind === "done" ? "It says its part is done. It is checked next."
+    : kind === "verify" ? "A checker's verdict: it ran the " + thing + "'s checks and read the change against the brief."
+    : kind === "merged" ? "Checked and added to the run's copy of the " + thing + "."
+    : kind === "failed" ? "A check did not pass. It goes back to the member with what failed."
+    : "";
+}
+function bdLine(s, l, prev, thing) {
+  const kind = l.kind === "system" || BD_KINDS[l.kind] ? l.kind : "msg";
+  if (kind === "system") {
+    const d = el("div", "bd-l k-system", "<span></span>"); d.firstChild.textContent = l.text || ""; d.title = bdTime(l.t, true);
+    return d;
+  }
+  const mine = bdIsMe(l.from);
+  const d = el("div", "bd-l k-" + kind + (mine ? " mine" : bdToMe(l) ? " tome" : ""));
+  /* a short run of plain lines from one member, to the same people, reads as one block */
+  const same = prev && prev.kind !== "system" && kind === "msg" && (prev.kind || "msg") === "msg" && bdName(prev.from) === bdName(l.from)
+    && (prev.to || []).map(bdName).join() === (l.to || []).map(bdName).join() && l.t - prev.t < 120;
+  if (same) d.classList.add("cont");
+  const meta = el("div", "bd-meta", '<b class="bd-from"' + bdStyle(bdHue(s, l.from)) + "></b><span class=\"bd-to\"></span><span class=\"bd-k\"></span><time></time>");
+  meta.querySelector(".bd-from").textContent = bdWho(s, l.from);
+  const to = bdTo(s, l); meta.querySelector(".bd-to").textContent = to; meta.querySelector(".bd-to").title = to;
+  const k = meta.querySelector(".bd-k");
+  if (BD_KINDS[kind]) {
+    k.innerHTML = kind === "done" || kind === "merged" ? '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="' + (kind === "done" ? "M1.5 4.8 3.6 6.8 7.5 2.2" : "M2.5 1.5v6M2.5 4.5c2.5 0 4-1 4-3") + '"/></svg>' : "";
+    k.append(BD_KINDS[kind]); k.title = bdKindTip(kind, thing);
+  }
+  const time = meta.querySelector("time"); time.textContent = bdTime(l.t); time.title = bdTime(l.t, true);
+  d.appendChild(meta);
+  d.appendChild(el("div", "bd-text", bdMarkup(s, l.text)));
+  return d;
+}
+/* Paint the board for the Lead in front: shown only while its team has a run going. New lines are added at the foot;
+   the whole log is drawn again only when the Lead, the run or the filter changes. */
+function paintBoard() {
+  const board = $("board"); if (!board) return;
+  const lead = bdLead(), s = swarmOf(lead), on = !!(s && s.run);
+  board.hidden = !on;
+  board.parentNode.classList.toggle("with-board", on && !bdNarrow);
+  if (!on) { $("bd-ac").classList.remove("on"); return; }
+  if (bdDrawn.lead !== lead) { bdDrawn.lead = lead; bdFilter = { f: "all", name: "" }; $("bd-say").value = ""; bdFit(); bdHint(""); }
+  const open = bdNarrow ? bdNarrowOpen : !bdShut, thing = thingOf(projKey(agents.get(lead)));
+  board.classList.toggle("narrow", bdNarrow); board.classList.toggle("shut", !open);
+  putAttr($("bd-rail"), "aria-expanded", open ? "true" : "false");
+  const members = s.members || [];
+  if (bdFilter.f === "one" && !members.some((m) => bdName(m.name) === bdFilter.name)) bdFilter = { f: "all", name: "" };
+  /* the line under the title: how many are at what, and how many may work at once */
+  const count = {}; members.forEach((m) => { count[m.status] = (count[m.status] || 0) + 1; });
+  const parts = ["working", "verifying", "parked", "merged", "failed", "stopped"].filter((k) => count[k]).map((k) => count[k] + " " + SW[k].word);
+  const cap = typeof s.ceiling === "number" ? s.ceiling : status.swarm_ceiling;
+  const sum = $("bd-sum"), ssig = parts.join() + "|" + cap;
+  if (sum.dataset.sig !== ssig) {
+    sum.dataset.sig = ssig;
+    sum.textContent = (parts.length ? parts.join(" · ") : "The team is getting ready") + (cap ? " · " : "");
+    if (cap) { const b = el("button", "linkish"); b.textContent = "up to " + cap + " at once"; b.title = "How many experts may work at the same time: Setup, Experts"; b.onclick = () => openSetup("experts"); sum.appendChild(b); }
+    sum.title = sum.textContent;
+  }
+  /* the roster: one chip per member; pressing one shows only its lines */
+  const who = $("bd-who"), wsig = members.map((m) => [m.id, m.name, m.role, m.status, m.ai, m.model, m.studio_turn ? 1 : 0].join("|")).join("\n") + "\n" + bdFilter.f + bdFilter.name;
+  if (who.dataset.sig !== wsig) {
+    who.dataset.sig = wsig;
+    who.replaceChildren(...members.map((m) => {
+      const n = bdName(m.name), sw = SW[m.status] || { word: m.status || "", dot: "" };
+      const c = el("button", "bd-m" + (m.status === "parked" || m.status === "stopped" ? " dim" : ""), '<span class="dot' + sw.dot + '"></span><span></span>');
+      c.style.setProperty("--c", bdHue(s, n)); c.lastChild.textContent = n;
+      if (m.studio_turn) c.appendChild(el("i", "bd-turn", "Studio"));
+      const ai = m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : "";
+      c.title = [["@" + n, m.role, sw.word, ai].filter(Boolean).join(" · ") + ".", swTip(m.status, thing), m.studio_turn ? "It has the Studio turn." : "", "Press to see only its lines."].filter(Boolean).join(" ");
+      const pressed = bdFilter.f === "one" && bdFilter.name === n;
+      c.setAttribute("aria-pressed", pressed ? "true" : "false");
+      c.onclick = () => { bdFilter = pressed ? { f: "all", name: "" } : { f: "one", name: n }; paintBoard(); };
+      return c;
+    }));
+  }
+  /* All, To you (with how many), and which member is picked */
+  const toMe = s.board.filter((l) => !bdIsMe(l.from) && bdToMe(l)).length;
+  $("bd-seg").querySelectorAll("button").forEach((b) => {
+    const isOn = bdFilter.f === b.dataset.f; b.classList.toggle("on", isOn); putAttr(b, "aria-pressed", isOn ? "true" : "false");
+    if (b.dataset.f === "me") { const t = "To you" + (toMe ? '<span class="n">' + toMe + "</span>" : ""); if (b.innerHTML !== t) b.innerHTML = t; b.title = "Only what the team wrote to you"; }
+  });
+  const only = $("bd-only"), m1 = bdFilter.f === "one" && members.find((m) => bdName(m.name) === bdFilter.name);
+  only.hidden = !m1;
+  if (m1 && only.dataset.sig !== m1.id + bdFilter.name) {
+    only.dataset.sig = m1.id + bdFilter.name;
+    only.innerHTML = "Only <b" + bdStyle(bdHue(s, bdFilter.name)) + ">@" + esc(bdFilter.name) + "</b>";
+    const go = el("button", "linkish", "Open its chat"); go.onclick = () => openChatById(m1.id); only.appendChild(go);
+  } else if (!m1) only.dataset.sig = "";
+  /* the log */
+  const log = $("bd-log"), fsig = lead + "|" + s.run + "|" + s.gen + "|" + bdFilter.f + "|" + bdFilter.name;
+  const wasDown = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  let fresh = false;
+  if (bdDrawn.sig !== fsig || s.board.length < bdDrawn.n) { log.replaceChildren(); bdDrawn.sig = fsig; bdDrawn.n = 0; bdDrawn.prev = null; fresh = true; }
+  const add = [];
+  for (let i = bdDrawn.n; i < s.board.length; i++) { const l = s.board[i]; if (!bdKeep(l)) continue; add.push(bdLine(s, l, bdDrawn.prev, thing)); bdDrawn.prev = l; }
+  bdDrawn.n = s.board.length;
+  if (add.length) { const e0 = log.querySelector(".bd-empty"); if (e0) e0.remove(); if (!fresh && open) add.forEach((n) => n.classList.add("enter")); log.append(...add); }
+  if (!log.querySelector(".bd-l")) {
+    const say0 = bdFilter.f === "me" ? "Nothing written to you yet. When a member needs you, it shows here."
+      : bdFilter.f === "one" ? "Nothing from or to @" + bdFilter.name + " yet."
+      : "Nothing on the board yet. The team writes here as it works on your " + thing + ": who is doing what, questions for each other, and every check.";
+    let e0 = log.querySelector(".bd-empty"); if (!e0) { e0 = el("p", "bd-empty"); log.appendChild(e0); } putText(e0, say0);
+  }
+  if (fresh || wasDown) log.scrollTop = log.scrollHeight;
+  /* what came while it was folded: the count on the rail */
+  if (open && !document.hidden && view === "chat") s.seen = s.board.length;
+  const unread = Math.max(0, s.board.length - s.seen), u = $("bd-unread");
+  u.hidden = !unread || open; putText(u, unread > 99 ? "99+" : String(unread));
+  putTitle($("bd-rail"), "Show the team board" + (unread ? " (" + unread + " new " + (unread === 1 ? "line" : "lines") + ")" : ""));
+  paintPost();
+}
+function bdOpen(on) {
+  if (bdNarrow) bdNarrowOpen = on;
+  else { bdShut = !on; try { localStorage.setItem("board-shut", on ? "0" : "1"); } catch (e) {} }
+  paintBoard();
+  if (on) { const log = $("bd-log"); log.scrollTop = log.scrollHeight; $("bd-say").focus({ preventScroll: true }); } else $("bd-rail").focus({ preventScroll: true });
+}
+$("bd-rail").onclick = () => bdOpen(true);
+$("bd-shut").onclick = () => bdOpen(false);
+$("bd-seg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; bdFilter = { f: b.dataset.f, name: "" }; paintBoard(); };
+/* over the chat in a narrow space, Escape folds it */
+$("board").addEventListener("keydown", (e) => { if (e.key === "Escape" && bdNarrow && bdNarrowOpen && !$("bd-ac").classList.contains("on")) { e.preventDefault(); bdOpen(false); } });
+/* narrow: under 760 px of the page's own space for the chat and the board together */
+new ResizeObserver(() => {
+  const w = document.querySelector(".body").offsetWidth, n = w > 0 && w < 760;
+  if (n !== bdNarrow) { bdNarrow = n; if (n) bdNarrowOpen = false; paintBoard(); }
+}).observe(document.querySelector(".body"));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) paintBoard(); });
+
+/* The box to post in. Who it goes to is in the words themselves: each @name of a member, or @all (and @lead). A post
+   with no one named, or only names nobody here has, is not sent: it says why. */
+function bdTargets(s, text) {
+  const valid = new Set(["all", "lead"].concat((s.members || []).map((m) => bdName(m.name))));
+  const got = [], unknown = [];
+  for (const m of String(text).matchAll(/(^|[^\w-])@([\w][\w.-]*[\w]|[\w])/g)) { const n = bdName(m[2]); (valid.has(n) ? got : unknown).push(n); }
+  return { to: got.includes("all") ? ["all"] : [...new Set(got)], unknown };
+}
+function bdHint(text, bad) { const h = $("bd-hint"); h.dataset.said = text ? "1" : ""; h.textContent = text || ""; h.classList.toggle("bad", !!bad); paintPost(); }
+function paintPost() {
+  const s = swarmOf(bdLead()), ta = $("bd-say"), text = ta.value.trim(), h = $("bd-hint");
+  if (!s) return;
+  const t = bdTargets(s, text);
+  $("bd-send").disabled = !text || !t.to.length || !!$("bd-send").dataset.busy;
+  if (h.dataset.said) return;   /* an answer from the app stays until the words change */
+  h.classList.remove("bad");
+  const naming = /(^|[^\w-])@[\w.-]*$/.test(ta.value.slice(0, ta.selectionStart));   /* a name still being typed */
+  h.textContent = text && !t.to.length && naming ? "Pick a name, or keep typing."
+    : text && !t.to.length ? (t.unknown.length ? "No one on this team is called @" + t.unknown[0] + ". Type @ to pick a name." : "Start with @ and a name, or @all, so it reaches someone.")
+    : t.to.includes("all") ? "Goes to everyone on the team. Enter posts."
+    : t.to.length ? "Goes to " + t.to.map((n) => (n === "lead" ? "the Lead" : "@" + n)).join(", ") + ", and wakes " + (t.to.length === 1 ? "it" : "them") + " if parked. Enter posts."
+    : "@name wakes one member, @all reaches everyone. The Lead reads it all.";
+}
+function bdFit() { const ta = $("bd-say"); ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 120) + "px"; }
+async function bdPost() {
+  const lead = bdLead(), s = swarmOf(lead), ta = $("bd-say"), text = ta.value.trim(), send = $("bd-send");
+  if (!s || !text || send.dataset.busy) return;
+  const { to } = bdTargets(s, text); if (!to.length) { paintPost(); return; }
+  send.dataset.busy = "1"; paintPost();
+  let r; try { r = await api("/api/swarm", { action: "post", lead, to, text }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  delete send.dataset.busy;
+  if (r && r.ok) { ta.value = ""; bdFit(); bdHint(""); if (bdFilter.f === "me") bdFilter = { f: "all", name: "" }; loadSwarm(lead); }
+  else bdHint((r && r.error) || "That did not post. Try again.", true);
+}
+$("bd-send").onclick = bdPost;
+/* @-names offered as they are typed: the team's members, @all and @lead */
+let bdAc = { items: [], at: 0, from: 0, q: null };
+function bdAcPaint() {
+  const ta = $("bd-say"), list = $("bd-ac"), s = swarmOf(bdLead());
+  const upto = ta.value.slice(0, ta.selectionStart), m = /(^|[^\w-])@([\w.-]*)$/.exec(upto);
+  const shut = () => { list.classList.remove("on"); bdAc.items = []; ta.removeAttribute("aria-activedescendant"); };
+  if (!s || !m || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return shut();
+  const q = m[2].toLowerCase(), members = s.members || [];
+  const all = [{ n: "all", what: "Everyone on the team", dot: "" }]
+    .concat(members.some((x) => bdName(x.name) === "lead") ? [] : [{ n: "lead", what: "The Lead, who sees everything", dot: "" }])
+    .concat(members.map((x) => ({ n: bdName(x.name), what: [x.role, (SW[x.status] || {}).word].filter(Boolean).join(" · "), dot: (SW[x.status] || {}).dot || "", c: bdHue(s, x.name) })));
+  const hits = all.filter((c) => c.n.startsWith(q)).concat(all.filter((c) => !c.n.startsWith(q) && c.n.includes(q)));
+  if (!hits.length || (hits.length === 1 && hits[0].n === q)) return shut();
+  bdAc = { items: hits, at: bdAc.q === q ? Math.min(bdAc.at, hits.length - 1) : 0, from: upto.length - m[2].length - 1, q };
+  list.replaceChildren(...hits.map((c, i) => {
+    const b = el("button", "bd-opt" + (i === bdAc.at ? " sel" : ""), '<span class="dot' + c.dot + '"' + (c.dot ? "" : ' style="visibility:hidden"') + "></span><b" + bdStyle(c.c) + ">@" + esc(c.n) + "</b><small></small>");
+    b.id = "bd-opt-" + i; b.setAttribute("role", "option"); b.setAttribute("aria-selected", i === bdAc.at ? "true" : "false"); b.tabIndex = -1;
+    b.querySelector("small").textContent = c.what;
+    b.onmousedown = (e) => { e.preventDefault(); bdPick(i); };
+    return b;
+  }));
+  list.classList.add("on"); ta.setAttribute("aria-activedescendant", "bd-opt-" + bdAc.at);
+  const sel = list.children[bdAc.at]; if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function bdPick(i) {
+  const ta = $("bd-say"), it = bdAc.items[i]; if (!it) return;
+  const end = ta.selectionStart, rest = ta.value.slice(end).replace(/^[\w.-]*/, "");
+  ta.value = ta.value.slice(0, bdAc.from) + "@" + it.n + " " + rest.replace(/^\s+/, "");
+  const at = bdAc.from + it.n.length + 2; ta.setSelectionRange(at, at);
+  $("bd-ac").classList.remove("on"); bdAc.items = [];
+  bdFit(); bdHint(""); ta.focus();
+}
+{
+  const ta = $("bd-say");
+  ta.setAttribute("aria-autocomplete", "list"); ta.setAttribute("aria-controls", "bd-ac");
+  ta.addEventListener("input", () => { bdFit(); bdHint(""); bdAcPaint(); });
+  ta.addEventListener("click", bdAcPaint);
+  ta.addEventListener("blur", () => setTimeout(bdAcPaint, 0));
+  ta.addEventListener("keyup", (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") bdAcPaint(); });
+  ta.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if ($("bd-ac").classList.contains("on") && bdAc.items.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); bdAc.at = (bdAc.at + (e.key === "ArrowDown" ? 1 : -1) + bdAc.items.length) % bdAc.items.length; bdAcPaint(); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); bdPick(bdAc.at); return; }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); $("bd-ac").classList.remove("on"); bdAc.items = []; return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); bdPost(); }
+  });
+}
+
+/* Setup, Experts: Most experts working at once, 1 to 8 (4 unless changed). The app's agent limit is 8. */
+let capWant = 0;
+{
+  const box0 = $("sw-cap");
+  for (let n = 1; n <= 8; n++) { const b = el("button"); b.textContent = n; b.dataset.n = n; b.setAttribute("aria-label", n === 1 ? "One at a time" : n + " at once"); box0.appendChild(b); }
+  box0.onclick = async (e) => {
+    const b = e.target.closest("button"); if (!b || capWant) return;
+    capWant = +b.dataset.n; paintCap();
+    let r; try { r = await api("/api/swarm", { action: "ceiling", value: capWant }); } catch (err) { r = { ok: false, error: "Could not reach the app." }; }
+    capWant = 0;
+    const note0 = $("sw-cap-note");
+    if (r && r.ok) { if (typeof r.ceiling === "number") status.swarm_ceiling = r.ceiling; note0.hidden = true; for (const s of swarm.values()) if (typeof r.ceiling === "number") s.ceiling = r.ceiling; paintBoard(); }
+    else { note0.textContent = (r && r.error) || "Could not change it."; note0.hidden = false; }
+    paintCap();
+  };
+}
+function paintCap() {
+  const v = capWant || (typeof status.swarm_ceiling === "number" ? status.swarm_ceiling : 4);
+  $("sw-cap").querySelectorAll("button").forEach((b) => { const on = +b.dataset.n === v; b.classList.toggle("on", on); putAttr(b, "aria-pressed", on ? "true" : "false"); });
+  $("sw-cap").setAttribute("aria-busy", capWant ? "true" : "false");
 }
 function onStudioRun(e) {
   if (rvAll[e.project]) { rvAll[e.project].run = e.run; if (view === "review" && e.project === rvPathNow()) paintReview(); }
@@ -5271,7 +5764,7 @@ async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   paintLimits();
   paintSide(); paintGemini(); $("env-keys").checked = !!status.env_keys;
-  paintSettingsNote(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintSwitch(); paintComposer(); } catch (e) {} }
+  paintSettingsNote(); paintUpdate(); paintPlugin(); paintAi(); paintSaved(); paintCommands(); paintSwitch(); paintComposer(); paintCap(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
@@ -5309,14 +5802,14 @@ const ONCE = new URLSearchParams(location.search).has("once");
 const SHOW = new URLSearchParams(location.search).get("show");
 let bootMark = Infinity;  /* agents created after the first batch get selected; replayed ones do not */
 async function poll() {
-  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
+  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); swarmPrime(); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
   for (;;) {
     try {
       const r = await api("/api/events?after=" + after);
       const first = after === 0;
       for (const e of r.events) { after = e.id; onEvent(e); overviewNote(e); }
       if (r.events.length > 40) calm(scroller);   /* a chat put back from its log is simply there: nothing fades in */
-      if (first) { bootMark = after; boot(); stick(true); }
+      if (first) { bootMark = after; boot(); stick(true); swarmPrime(); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
 }
