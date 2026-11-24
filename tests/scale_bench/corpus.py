@@ -201,18 +201,94 @@ def base_files():
 
 
 def gold_titles(questions, sets):
-    return {g for s in sets for q in questions[s] for g in q["gold"]}
+    out = set()
+    for s in sets:
+        for q in questions.get(s) or []:
+            out |= set(q.get("gold") or [])
+            out |= set(q.get("pair") or [])
+            if q.get("old"):
+                out.add(q["old"])
+    return out
+
+
+GOLD_SETS = ["paraphrase", "exact", "old33"]
+EXAM_SETS = ["typo", "multihop", "stale", "guide"]  # exam sets whose gold must be in every corpus (scope: game notes)
+
+
+def stale_note(spec, marked):
+    """The newer note of a stale pair (exam_questions.json "stale"): dated, with its changed fact. marked: it says so
+    in its front matter (`supersedes: "Old Title"`, as vault upkeep marks a replaced note); otherwise only its text
+    says it replaces the older note."""
+    new = spec["new"]
+    fm = ["---", "tags: [update]", "date: %s" % new["date"]]
+    if marked:
+        fm.append('supersedes: "%s"' % spec["old"])
+    fm.append("---")
+    body = new["body"]
+    if not marked:
+        body = "This note replaces the older note [[%s]] (dated %s). %s" % (spec["old"], new["date"], body)
+    return "\n".join(fm) + "\n# %s\n\n%s\n" % (new["title"], body)
+
+
+def stale_marked(i):
+    """Half the stale pairs carry the front-matter mark (the odd ones, S01, S03, ...), half only the text."""
+    return i % 2 == 0
+
+
+def mark_superseded(path, new_title):
+    """Add `superseded_by: "New Title"` to a note's front matter (making one when it has none)."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    line = 'superseded_by: "%s"\n' % new_title
+    if text.startswith("---\n") and "\n---" in text[4:]:
+        text = "---\n" + line + text[4:]
+    else:
+        text = "---\n" + line + "---\n" + text
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def write_exam_extras(root, exam):
+    """The exam's additions to a corpus: the stale pairs' newer notes in the vault, and the game project (game/: its
+    GAME.md and .fridae/notes). Returns their estimated chunks."""
+    est = 0
+    olds = {}
+    for dirpath, _, fs in os.walk(os.path.join(root, "vault")):
+        for f in fs:
+            if f.endswith(".md"):
+                olds.setdefault(f[:-3], os.path.join(dirpath, f))
+    for i, spec in enumerate(exam.get("stale") or []):
+        if stale_marked(i) and spec["old"] in olds:  # as vault upkeep leaves the pair: the old note points onward
+            mark_superseded(olds[spec["old"]], spec["new"]["title"])
+        folder = os.path.join(root, "vault", spec["new"]["folder"])
+        os.makedirs(folder, exist_ok=True)
+        text = stale_note(spec, stale_marked(i))
+        with open(os.path.join(folder, spec["new"]["title"] + ".md"), "w", encoding="utf-8") as f:
+            f.write(text)
+        est += est_chunks(text)
+    game = exam.get("game")
+    if game:
+        g = os.path.join(root, "game")
+        os.makedirs(os.path.join(g, ".fridae", "notes"), exist_ok=True)
+        with open(os.path.join(g, "GAME.md"), "w", encoding="utf-8") as f:
+            f.write(game["GAME.md"])
+        for name, text in sorted(game.get("notes", {}).items()):
+            with open(os.path.join(g, ".fridae", "notes", name), "w", encoding="utf-8") as f:
+                f.write(text)
+    return est
 
 
 def _is_gold(title, gold):
     return title in gold or any(title.endswith("/" + g) for g in gold)
 
 
-def input_hash(questions, scale, quick):
+def input_hash(questions, scale, quick, exam=None):
     """What decides a corpus: the generator, the gold titles, the repo's text and the parameters."""
     notes, guides, team = base_files()
     h = hashlib.sha256(("%s|%s|%s|%s" % (GEN_VERSION, scale, quick, sorted(gold_titles(
         questions, questions.keys() - {"_about"})))).encode())
+    if exam:
+        h.update(json.dumps(exam, sort_keys=True).encode())
     with open(os.path.abspath(__file__), "rb") as f:
         h.update(f.read())
     for name, p in notes + guides + team:
@@ -221,14 +297,19 @@ def input_hash(questions, scale, quick):
     return h.hexdigest()[:16]
 
 
-def build(out_dir, questions, scale=10, quick=False, seed=7, log=print):
-    """Write the corpus to out_dir (vault/, guides/, guides.json, team/, corpus.json). Returns its summary."""
+def build(out_dir, questions, scale=10, quick=False, seed=7, log=print, exam=None):
+    """Write the corpus to out_dir (vault/, guides/, guides.json, team/, corpus.json; with exam: the stale pairs'
+    newer notes and game/). Returns its summary."""
     rng = random.Random("%s|%s|%s" % (seed, scale, quick))
     sample = random.Random("sample|%s" % seed)  # the quick subset is the same at every scale
     notes, guides, team = base_files()
     sets = ["paraphrase", "exact"] if quick else ["paraphrase", "exact", "old33"]
-    gold = gold_titles(questions, sets)
-    all_gold = gold_titles(questions, ["paraphrase", "exact", "old33"])
+    gold = gold_titles(questions, sets) | (gold_titles(exam, EXAM_SETS) if exam else set())
+    all_gold = gold_titles(questions, GOLD_SETS) | (gold_titles(exam, EXAM_SETS) if exam else set())
+    if exam:  # the scope questions' general notes are in every corpus too
+        gold |= {g for q in exam.get("scope") or [] for g in q.get("general") or []}
+    if exam:  # the stale pairs' newer notes are written by write_exam_extras, not looked for in the repo
+        gold -= {s["new"]["title"] for s in exam.get("stale") or []}
     tmp = out_dir + ".tmp"
     shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp)
@@ -373,13 +454,16 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print):
             write(folder, title, tags, bullets if rng.random() < 0.4 else [], intro,
                   [(h, reword(b, rng) if rng.random() < 0.5 else b) for h, b in secs])
         made[kind] += 1
+    extra = write_exam_extras(tmp, exam) if exam else 0
+    est += extra
     # one mtime for everything, so a regenerated corpus matches a cached index
     for root, _, fs in os.walk(tmp):
         for f in fs:
             os.utime(os.path.join(root, f), (FIXED_MTIME, FIXED_MTIME))
     summary = {"scale": scale, "quick": quick, "base_notes": sum(1 for r, _ in base_notes if r.endswith(".md")),
                "base_guides": len(base_guides), "team": len(team), "base_est_chunks": base_est,
-               "est_chunks": est, "distractors": made, "files": sum(len(fs) for _, _, fs in os.walk(tmp))}
+               "est_chunks": est, "distractors": made, "files": sum(len(fs) for _, _, fs in os.walk(tmp)),
+               "exam_extras": bool(exam)}
     with open(os.path.join(tmp, "corpus.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=1)
     os.utime(os.path.join(tmp, "corpus.json"), (FIXED_MTIME, FIXED_MTIME))
@@ -389,13 +473,13 @@ def build(out_dir, questions, scale=10, quick=False, seed=7, log=print):
     return summary
 
 
-def ensure(cache_dir, questions, scale, quick, log=print):
+def ensure(cache_dir, questions, scale, quick, log=print, exam=None):
     """The corpus folder for these parameters, generated when it is not there yet. Returns (path, summary)."""
-    key = input_hash(questions, scale, quick)
+    key = input_hash(questions, scale, quick, exam)
     path = os.path.join(cache_dir, "corpus", "%s-%dx-%s" % ("quick" if quick else "full", scale, key))
     meta = os.path.join(path, "corpus.json")
     if not os.path.isfile(meta):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        build(path, questions, scale, quick, log=log)
+        build(path, questions, scale, quick, log=log, exam=exam)
     with open(meta, encoding="utf-8") as f:
         return path, json.load(f)

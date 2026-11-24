@@ -1206,7 +1206,7 @@ pub fn api_post(body: &Value) -> Value {
     }
 }
 
-mod librarian;
+pub(crate) mod librarian;
 
 #[cfg(test)]
 pub(crate) mod tests;

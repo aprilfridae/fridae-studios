@@ -2118,7 +2118,10 @@ fn servers(why: String) -> Failed {
 fn write_only_on(conn: &Conn, model: &str, prompt: &str, cancel: &AtomicBool, folder: &Path) -> Result<Written, Failed> {
     let _ = fs::create_dir_all(folder);
     let rules = vec![rule("*", "*", "deny")];
-    let reference = model_ref(model).ok_or_else(|| format!("{model} is not a model's name."))?;
+    let mut reference = model_ref(model).ok_or_else(|| format!("{model} is not a model's name."))?;
+    if let Some(v) = exam_variant() {
+        reference["variant"] = json!(v); // the knowledge exam's effort comparison only; never set in the app
+    }
     let body = json!({"title": WRITER_TITLE, "location": {"directory": folder}, "permissions": rules, "model": reference});
     let session = {
         let _one = WRITER_SETUP.lock().unwrap_or_else(|e| e.into_inner());
@@ -2157,6 +2160,7 @@ fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: 
     };
     let mut turn = Turn::new("", &json!({}), Some(model.to_string()));
     let (mut texts, mut failed): (Vec<String>, Option<String>) = (Vec::new(), None);
+    let mut tap = ExamTap::new(prompt, model);
     loop {
         if cancel.load(Ordering::SeqCst) {
             interrupt();
@@ -2175,6 +2179,9 @@ fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: 
             interrupt();
             return Err("The model tried to use a tool instead of writing.".into());
         }
+        if e["data"]["sessionID"] == session {
+            tap.saw(kind, &e);
+        }
         let step = turn.feed(session, &e);
         for o in step.outs {
             match o {
@@ -2188,6 +2195,7 @@ fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: 
         }
     }
     let usage = turn.finish().into_iter().find_map(|o| if let Out::Usage(u) = o { Some(u) } else { None }).unwrap_or_default();
+    tap.done();
     if let Some(f) = failed {
         return Err(f.into());
     }
@@ -2196,6 +2204,116 @@ fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: 
         return Err("It wrote nothing.".into());
     }
     Ok(Written { text, usage })
+}
+
+// ------------------------------------------------------------------ the knowledge exam's hooks
+// tests/scale_bench/exam.py runs the real Librarian through `fridae --librarian-exam` (crate::exam). These hooks are
+// off in the app: nothing is recorded and no variant is sent unless that mode turns them on.
+
+/// On only in the exam mode: each writer's events are timed and its reasoning tokens counted (`exam_stats`).
+pub static EXAM_TAP: AtomicBool = AtomicBool::new(false);
+/// What the tap recorded, by the prompt's digest (the exam's prompts are unique: each holds a random mark).
+static EXAM_STATS: Mutex<Vec<(String, Value)>> = Mutex::new(Vec::new());
+/// The exam's effort comparison: a model variant sent with the writer's model reference. None in the app.
+pub static EXAM_VARIANT: Mutex<Option<String>> = Mutex::new(None);
+
+fn exam_variant() -> Option<String> {
+    EXAM_VARIANT.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn digest(text: &str) -> String {
+    Sha256::digest(text.as_bytes()).iter().take(12).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Every writer call the tap saw for this prompt (oldest first), taken out of the record.
+pub fn exam_stats(prompt: &str) -> Vec<Value> {
+    let key = digest(prompt);
+    let mut all = EXAM_STATS.lock().unwrap_or_else(|e| e.into_inner());
+    let (mine, rest): (Vec<_>, Vec<_>) = all.drain(..).partition(|(k, _)| *k == key);
+    *all = rest;
+    mine.into_iter().map(|(_, v)| v).collect()
+}
+
+/// One writer call as the exam sees it: when each kind of event first came (seconds after the prompt was sent), and
+/// the tokens of its steps (OpenCode counts reasoning apart from output).
+struct ExamTap {
+    on: bool,
+    key: String,
+    model: String,
+    began: Instant,
+    first: Map<String, Value>,
+    tokens: [u64; 5], // input, output, reasoning, cache read, cache write
+}
+
+impl ExamTap {
+    fn new(prompt: &str, model: &str) -> ExamTap {
+        let on = EXAM_TAP.load(Ordering::SeqCst);
+        ExamTap { on, key: if on { digest(prompt) } else { String::new() }, model: model.to_string(), began: Instant::now(), first: Map::new(), tokens: [0; 5] }
+    }
+
+    fn saw(&mut self, kind: &str, e: &Value) {
+        if !self.on {
+            return;
+        }
+        if !self.first.contains_key(kind) {
+            self.first.insert(kind.to_string(), json!(self.began.elapsed().as_secs_f64()));
+        }
+        if kind == "session.step.ended" {
+            let t = &e["data"]["tokens"];
+            let n = |v: &Value| v.as_u64().unwrap_or(0);
+            for (i, v) in [&t["input"], &t["output"], &t["reasoning"], &t["cache"]["read"], &t["cache"]["write"]].into_iter().enumerate() {
+                self.tokens[i] += n(v);
+            }
+        }
+    }
+
+    fn done(self) {
+        if !self.on {
+            return;
+        }
+        let t = self.tokens;
+        let v = json!({"model": self.model, "variant": exam_variant(), "secs": self.began.elapsed().as_secs_f64(), "first": self.first,
+            "tokens": {"input": t[0], "output": t[1], "reasoning": t[2], "cache_read": t[3], "cache_write": t[4]}});
+        EXAM_STATS.lock().unwrap_or_else(|e| e.into_inner()).push((self.key, v));
+    }
+}
+
+/// For the exam: what the app's server says about these models (`/api/model`) and which of its request shapes take
+/// a `variant` (its own API description). Read only.
+pub fn exam_probe(ids: &[String]) -> Value {
+    let conn = match ensure() {
+        Ok(c) => c,
+        Err(e) => return json!({"error": e}),
+    };
+    let models = match call(&conn, "GET", "/api/model", None) {
+        Ok((200, v)) => v,
+        Ok((s, v)) => json!({"status": s, "body": v}),
+        Err(e) => json!({"error": e}),
+    };
+    let list: Vec<Value> = models["data"].as_array().or_else(|| models.as_array()).cloned().unwrap_or_default();
+    let mine: Vec<Value> = list
+        .into_iter()
+        .filter(|m| {
+            let p = m["providerID"].as_str().or_else(|| m["provider"]["id"].as_str()).unwrap_or("");
+            let id = m["id"].as_str().or_else(|| m["modelID"].as_str()).unwrap_or("");
+            ids.iter().any(|w| *w == format!("{p}/{id}") || w.ends_with(&format!("/{id}")))
+        })
+        .collect();
+    let api = request(&conn, "GET", "/openapi.json", None, Duration::from_secs(10)).ok().and_then(|(_, b)| serde_json::from_str::<Value>(&b).ok());
+    let mut with_variant: Vec<String> = Vec::new();
+    if let Some(schemas) = api.as_ref().and_then(|a| a["components"]["schemas"].as_object()) {
+        for (name, s) in schemas {
+            if s.to_string().contains("\"variant\"") {
+                with_variant.push(name.clone());
+            }
+        }
+    }
+    let shapes: Map<String, Value> = api
+        .as_ref()
+        .and_then(|a| a["components"]["schemas"].as_object())
+        .map(|s| s.iter().filter(|(n, _)| with_variant.contains(n)).map(|(n, v)| (n.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    json!({"models": mine, "schemas_with_variant": with_variant, "shapes": shapes})
 }
 
 /// Whether two folders' names are one folder (as written, or once links in them are followed).

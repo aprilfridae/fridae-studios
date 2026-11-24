@@ -15,6 +15,7 @@ mod board;
 mod caps;
 mod claude_live;
 mod codex;
+mod exam;
 mod cursor;
 mod expert_ai;
 mod github;
@@ -151,6 +152,10 @@ fn main() {
     widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)
     let args: Vec<String> = env::args().collect();
+    // the knowledge exam (tests/scale_bench/exam.py): the real Librarian on the exam's passages, no window (exam.rs)
+    if let Some(i) = args.iter().position(|a| a == "--librarian-exam") {
+        std::process::exit(exam::main(&args[i + 1..]));
+    }
     if let Some(i) = args.iter().position(|a| a == "--apply-update") {
         return splash::run(&args[i + 1..]);
     }

@@ -1,0 +1,1202 @@
+{
+ "_about": "Question sets for the knowledge exam (tests/scale_bench/exam.py), added to questions.json's paraphrase, exact and old33. Gold = exact note titles (a guide's gold may be its short name). typo: misspelled or one-line vague. negative: the answer is not in the knowledge base (no gold). multihop: needs two notes, the second linked from the first ([[link]]); 'pair' is [linking note, linked note]. stale: the corpus builder writes 'new' (a dated note that says it supersedes 'old' and changes one fact); the newer note should rank above the older. guide: a procedure whose right answer is a guide. scope: about this game's own notes (the corpus's game project, 'game'); asked with the game project set. 'answers' is the fixed end-to-end answer set: 2-4 key facts per question, each checked against the gold note, the wrong facts a distractor, the stale note or a sloppy reading would give, and what is expected ('answer', 'not_found' or 'guide').",
+ "typo": [
+  {
+   "id": "Y01",
+   "q": "sesion lockng so two servrs dont both save the same profle",
+   "gold": [
+    "Session Locking and Profile Libraries"
+   ]
+  },
+  {
+   "id": "Y02",
+   "q": "string.find failes on names with a dot in them",
+   "gold": [
+    "Strings Patterns and Formatting"
+   ]
+  },
+  {
+   "id": "Y03",
+   "q": "who ownes the boss npc physics, server or cleint",
+   "gold": [
+    "Network Ownership"
+   ]
+  },
+  {
+   "id": "Y04",
+   "q": "particle efects look dark in caves",
+   "gold": [
+    "Particle Emitters In Depth"
+   ]
+  },
+  {
+   "id": "Y05",
+   "q": "daily reward streak",
+   "gold": [
+    "Daily Rewards System End to End",
+    "Retention and Return Hooks"
+   ]
+  },
+  {
+   "id": "Y06",
+   "q": "bulets go thru walls with touched",
+   "gold": [
+    "Projectiles and Ballistics"
+   ]
+  },
+  {
+   "id": "Y07",
+   "q": "rope physics winch wont pull",
+   "gold": [
+    "Ropes Chains and Soft Bodies"
+   ]
+  },
+  {
+   "id": "Y08",
+   "q": "autoclickr spam on my sword remote",
+   "gold": [
+    "Autoclicker and Macro Detection for Combat Remotes"
+   ]
+  },
+  {
+   "id": "Y09",
+   "q": "highlihgt outline stops showing",
+   "gold": [
+    "Highlights and Selection Effects"
+   ]
+  },
+  {
+   "id": "Y10",
+   "q": "quest system",
+   "gold": [
+    "Quests and Objectives"
+   ]
+  },
+  {
+   "id": "Y11",
+   "q": "cframe rotaion wrong axis",
+   "gold": [
+    "Math Vectors and CFrames",
+    "Cookbook - Math CFrame and Vectors"
+   ]
+  },
+  {
+   "id": "Y12",
+   "q": "memmory leak from connections that never disconect",
+   "gold": [
+    "Events Signals and Connections"
+   ]
+  },
+  {
+   "id": "Y13",
+   "q": "terain undo broke",
+   "gold": [
+    "Terrain Tools and Terrain API"
+   ]
+  },
+  {
+   "id": "Y14",
+   "q": "npc brains",
+   "gold": [
+    "Behaviour Trees Utility AI and State Machines for NPCs",
+    "NPC AI and Behaviour"
+   ]
+  },
+  {
+   "id": "Y15",
+   "q": "report button abuse modrators",
+   "gold": [
+    "Player Reports and In-Game Moderation"
+   ]
+  }
+ ],
+ "negative": [
+  {
+   "id": "N01",
+   "q": "how do I turn on Nanite for foliage in Unreal Engine 5"
+  },
+  {
+   "id": "N02",
+   "q": "steps to upload a mod to the Steam Workshop"
+  },
+  {
+   "id": "N03",
+   "q": "validate StoreKit 2 receipts for my iOS app's in-app purchases"
+  },
+  {
+   "id": "N04",
+   "q": "how long should a sourdough starter ferment before baking"
+  },
+  {
+   "id": "N05",
+   "q": "which Kubernetes horizontal pod autoscaler settings should our game backend use"
+  },
+  {
+   "id": "N06",
+   "q": "set up Photon PUN room matchmaking in a Unity project"
+  },
+  {
+   "id": "N07",
+   "q": "how do I shrink the WebGL build size of my browser game"
+  },
+  {
+   "id": "N08",
+   "q": "what fails a Nintendo Switch lot check certification"
+  },
+  {
+   "id": "N09",
+   "q": "configure PhysX cloth simulation on a Unity character cape"
+  },
+  {
+   "id": "N10",
+   "q": "what did our 3 March 2025 playtest find about the fishing minigame"
+  },
+  {
+   "id": "N11",
+   "q": "what is our studio art director's email address"
+  },
+  {
+   "id": "N12",
+   "q": "what are the visitor center opening hours at Roblox headquarters"
+  }
+ ],
+ "multihop": [
+  {
+   "id": "M01",
+   "q": "when a player charges back a developer product, what should our purchase log hold, and where must the original grant have happened so it can be traced",
+   "gold": [
+    "Refunds Chargebacks and Purchase Support",
+    "Developer Products and ProcessReceipt"
+   ],
+   "pair": [
+    "Refunds Chargebacks and Purchase Support",
+    "Developer Products and ProcessReceipt"
+   ]
+  },
+  {
+   "id": "M02",
+   "q": "before we ban an exploiter what message should they see, and how many detection categories should agree before any consequence",
+   "gold": [
+    "Logging Bans and Appeals",
+    "False Positives Lag and Fair Enforcement"
+   ],
+   "pair": [
+    "Logging Bans and Appeals",
+    "False Positives Lag and Fair Enforcement"
+   ]
+  },
+  {
+   "id": "M03",
+   "q": "for custom snapshot replication, how far behind should clients render, and what must the first byte of each packed snapshot buffer be",
+   "gold": [
+    "Snapshot Interpolation for Custom Replication",
+    "Buffers and Binary Data"
+   ],
+   "pair": [
+    "Snapshot Interpolation for Custom Replication",
+    "Buffers and Binary Data"
+   ]
+  },
+  {
+   "id": "M04",
+   "q": "with instance streaming on, which streaming mode should interactable models use, and what must the server call before teleporting a player across the map",
+   "gold": [
+    "Instance Streaming",
+    "Level of Detail and Model Streaming"
+   ],
+   "pair": [
+    "Instance Streaming",
+    "Level of Detail and Model Streaming"
+   ]
+  },
+  {
+   "id": "M05",
+   "q": "for live config that every server reads, what are kill switches for, and how long should the MemoryStore entries behind it live",
+   "gold": [
+    "Global State and Live Config",
+    "MemoryStore Service"
+   ],
+   "pair": [
+    "Global State and Live Config",
+    "MemoryStore Service"
+   ]
+  },
+  {
+   "id": "M06",
+   "q": "what LightInfluence should VFX particle emitters use, and how should onlookers' effects be budgeted in a full server",
+   "gold": [
+    "Particle Emitters In Depth",
+    "VFX Performance Budgets and Culling"
+   ],
+   "pair": [
+    "Particle Emitters In Depth",
+    "VFX Performance Budgets and Culling"
+   ]
+  },
+  {
+   "id": "M07",
+   "q": "how should autosave relate to the session lock lease, and what does a profile library like ProfileStore do on a teleport",
+   "gold": [
+    "Session Locking and Profile Libraries",
+    "ProfileStore"
+   ],
+   "pair": [
+    "Session Locking and Profile Libraries",
+    "ProfileStore"
+   ]
+  },
+  {
+   "id": "M08",
+   "q": "how is the daily reward day boundary computed, and how many automatic pop-ups may greet a returning player at once",
+   "gold": [
+    "Daily Rewards System End to End",
+    "Retention and Return Hooks"
+   ],
+   "pair": [
+    "Daily Rewards System End to End",
+    "Retention and Return Hooks"
+   ]
+  },
+  {
+   "id": "M09",
+   "q": "who should own a vehicle while someone drives it, and how many clients do you need to debug an ownership bug",
+   "gold": [
+    "Network Ownership",
+    "Debugging Physics and Network Ownership"
+   ],
+   "pair": [
+    "Network Ownership",
+    "Debugging Physics and Network Ownership"
+   ]
+  },
+  {
+   "id": "M10",
+   "q": "where does an attack remote's click cadence cap come from, and what should the remote guard check before an expensive lookup",
+   "gold": [
+    "Autoclicker and Macro Detection for Combat Remotes",
+    "Remote Abuse Patterns and Rate Limiting in Practice"
+   ],
+   "pair": [
+    "Autoclicker and Macro Detection for Combat Remotes",
+    "Remote Abuse Patterns and Rate Limiting in Practice"
+   ]
+  }
+ ],
+ "stale": [
+  {
+   "id": "S01",
+   "q": "what is the maximum Range of a PointLight or SpotLight now",
+   "old": "Light Sources and Shadows",
+   "new": {
+    "folder": "07 Lighting VFX and Audio",
+    "title": "Light Range Cap Raised - November 2026 Update",
+    "date": "2026-11-12",
+    "fact_old": "Range is capped at 120 studs",
+    "fact_new": "Range is capped at 240 studs",
+    "body": "The engine update of 12 November 2026 raised the clamp on light Range. PointLight, SpotLight and SurfaceLight Range is now capped at 240 studs (it was 120). Brightness still does not extend reach; raise Range instead. Lights past 120 studs cost more on phones, so keep long-range lights to one or two hero lights per view."
+   }
+  },
+  {
+   "id": "S02",
+   "q": "what is the most players a place can have and still get voice chat",
+   "old": "Voice Chat and Safety Features",
+   "new": {
+    "folder": "26 Community and Moderation",
+    "title": "Voice Chat Server Size - November 2026 Change",
+    "date": "2026-11-05",
+    "fact_old": "voice needs max players at or below 100",
+    "fact_new": "voice works with max players up to 150",
+    "body": "Since 5 November 2026 voice chat is available in places with a maximum of up to 150 players (the old limit was 100). Above 150, voice is still silently absent and players report it as broken, so keep max players at or below 150 when voice is part of the game."
+   }
+  },
+  {
+   "id": "S03",
+   "q": "how many outbound HttpService requests per minute can one server make",
+   "old": "HttpService and External APIs",
+   "new": {
+    "folder": "04 Data and Persistence",
+    "title": "HttpService Request Limit - 2026 Revision",
+    "date": "2026-11-18",
+    "fact_old": "500 external requests per minute per server",
+    "fact_new": "1000 external requests per minute per server",
+    "body": "Roblox doubled the HttpService budget on 18 November 2026: a server may now send 1000 external requests per minute (it was 500). Open Cloud calls keep their separate 2500 per minute. Batch per-player events anyway: one request per player event still runs into the limit in a full server."
+   }
+  },
+  {
+   "id": "S04",
+   "q": "how many triangles can one mesh have before I have to split it",
+   "old": "Modeling Fundamentals for Games",
+   "new": {
+    "folder": "14 3D Modeling",
+    "title": "Mesh Triangle Limit - Raised in 2026",
+    "date": "2026-11-09",
+    "fact_old": "one mesh at most 20,000 triangles",
+    "fact_new": "one mesh at most 40,000 triangles",
+    "body": "From 9 November 2026 a single MeshPart may hold up to 40,000 triangles (it was 20,000). Above 40,000, split by material or body part, or decimate. The budget in the brief still decides the count: the limit is a ceiling, not a target."
+   }
+  },
+  {
+   "id": "S05",
+   "q": "how much of the frame should an item icon fill",
+   "old": "Icon and Thumbnail Rendering Pipeline",
+   "new": {
+    "folder": "17 Pipelines",
+    "title": "Icon Framing Standard - Revised",
+    "date": "2026-11-02",
+    "fact_old": "82% fill",
+    "fact_new": "76% fill",
+    "body": "The icon framing standard changed on 2 November 2026: icons now fill 76% of the frame (it was 82%), still on a 45-degree diagonal and centred, so the new rarity badge in the corner never overlaps the item. Fill is still computed from bounds, never framed by hand."
+   }
+  },
+  {
+   "id": "S06",
+   "q": "what Ackermann amount should our cars use",
+   "old": "Steering Geometry and Arcade Drifting - Ackermann, Slip and Grip Tuning",
+   "new": {
+    "folder": "25 Physics and Vehicles",
+    "title": "Ackermann Standard for Our Cars",
+    "date": "2026-11-15",
+    "fact_old": "Ackermann amount 0.6 to 1",
+    "fact_new": "Ackermann amount fixed at 0.8 for every car",
+    "body": "Decided on 15 November 2026 after the handling playtest: every car uses an Ackermann amount of exactly 0.8 (the old guidance allowed anything from 0.6 to 1). Lock still falls with speed and the steering angle stays rate-limited."
+   }
+  },
+  {
+   "id": "S07",
+   "q": "how many stacked water layers can fake water use",
+   "old": "Water Sky and Atmosphere Art",
+   "new": {
+    "folder": "06 World Building and Art",
+    "title": "Fake Water Layers - Phone Rule",
+    "date": "2026-11-20",
+    "fact_old": "two water layers max",
+    "fact_new": "one water layer only",
+    "body": "From 20 November 2026 fake water uses one layer only (it was two at most): the second layer doubled overdraw on phones in the profiling pass. Depth comes from a gradient on that one layer, ripples scroll on it, and foam and buried edges hide its border."
+   }
+  },
+  {
+   "id": "S08",
+   "q": "on a gamepad, which buttons switch menu tabs",
+   "old": "Gamepad and Console UX",
+   "new": {
+    "folder": "05 UI and UX",
+    "title": "Gamepad Tab Switching - New Mapping",
+    "date": "2026-11-11",
+    "fact_old": "shoulder buttons switch tabs",
+    "fact_new": "the D-pad left and right switch tabs; shoulder buttons zoom the camera",
+    "body": "New mapping, 11 November 2026: tabs in every menu are switched with D-pad left and right. The shoulder buttons (LB and RB) no longer switch tabs; they are kept for camera zoom. Initial selection, trapped navigation, B to close and focus restore are unchanged."
+   }
+  },
+  {
+   "id": "S09",
+   "q": "how long before the hit must a boss's tracking attack commit",
+   "old": "Boss Fight Design Patterns",
+   "new": {
+    "folder": "10 Game Design and Genres",
+    "title": "Boss Commit Window - Updated Minimum",
+    "date": "2026-11-08",
+    "fact_old": "commit at least 0.45 s before the hit",
+    "fact_new": "commit at least 0.6 s before the hit",
+    "body": "Raised on 8 November 2026 after phone playtests: a boss's tracking attack must lock and commit at least 0.6 s before the hit (it was 0.45 s). Phone players with 100 ms or more of latency could not react inside the old window."
+   }
+  },
+  {
+   "id": "S10",
+   "q": "what is the limit on how many Highlights can be on screen at once",
+   "old": "Highlights and Selection Effects",
+   "new": {
+    "folder": "07 Lighting VFX and Audio",
+    "title": "Highlight Limit - Current Budget",
+    "date": "2026-11-14",
+    "fact_old": "31 simultaneous highlights",
+    "fact_new": "the team budget is 16 simultaneous highlights",
+    "body": "Our budget since 14 November 2026: at most 16 Highlights at once in any view (old code budgeted against 31). Disabled Highlights still take a slot, so destroy unused ones, and flash a persistent Highlight's transparency instead of creating new ones."
+   }
+  }
+ ],
+ "guide": [
+  {
+   "id": "G01",
+   "q": "what are the steps to run my Luau tests inside a real Roblox server from CI",
+   "gold": [
+    "roblox-testing/cloud-test-runner",
+    "roblox-testing"
+   ]
+  },
+  {
+   "id": "G02",
+   "q": "walk me through verifying the signature on a Roblox webhook in an Express server",
+   "gold": [
+    "roblox-open-cloud/webhooks",
+    "roblox-open-cloud"
+   ]
+  },
+  {
+   "id": "G03",
+   "q": "procedure for importing an FBX model at the right scale, pivot and collision",
+   "gold": [
+    "roblox-asset-import"
+   ]
+  },
+  {
+   "id": "G04",
+   "q": "set up GitHub Actions CI for my Rojo project with stylua and selene",
+   "gold": [
+    "roblox-tooling/ci-workflow",
+    "roblox-tooling"
+   ]
+  },
+  {
+   "id": "G05",
+   "q": "what do I check on a fresh account in the first 60 seconds of the tutorial before scoring it",
+   "gold": [
+    "lihfolk-tutorial/ftue-checklist",
+    "lihfolk-tutorial"
+   ]
+  },
+  {
+   "id": "G06",
+   "q": "my game has low FPS for everyone, walk me through profiling it step by step",
+   "gold": [
+    "roblox-performance/profiling",
+    "roblox-performance"
+   ]
+  },
+  {
+   "id": "G07",
+   "q": "how do I write the GAME.md game bible for an existing place",
+   "gold": [
+    "game-bible"
+   ]
+  },
+  {
+   "id": "G08",
+   "q": "how should I research comparable games on the charts before designing mine",
+   "gold": [
+    "market-research"
+   ]
+  },
+  {
+   "id": "G09",
+   "q": "test a UI change live in a Studio playtest by clicking buttons with the MCP tools",
+   "gold": [
+    "playtest"
+   ]
+  },
+  {
+   "id": "G10",
+   "q": "review my Luau code for exploits, data loss and deprecated APIs with a severity-ranked checklist",
+   "gold": [
+    "roblox-code-review",
+    "roblox-code-review/deprecated-apis",
+    "roblox-security/checklist"
+   ]
+  }
+ ],
+ "scope": [
+  {
+   "id": "C01",
+   "q": "how often does our game autosave player data",
+   "gold": [
+    "Autosave Rules"
+   ],
+   "general": [
+    "Saving Correctly - Autosave and BindToClose"
+   ]
+  },
+  {
+   "id": "C02",
+   "q": "what are the odds of a mythic pet in our game and when does pity guarantee one",
+   "gold": [
+    "Pet Hatch Odds"
+   ],
+   "general": [
+    "Drop Tables Rarity and Pity Systems",
+    "Pity Timer"
+   ]
+  },
+  {
+   "id": "C03",
+   "q": "where does the coin counter sit on our HUD",
+   "gold": [
+    "HUD Layout Decisions"
+   ],
+   "general": [
+    "HUD Design"
+   ]
+  },
+  {
+   "id": "C04",
+   "q": "what is our sword's base damage and swing cooldown",
+   "gold": [
+    "Combat Numbers"
+   ],
+   "general": [
+    "Melee Combat System End to End"
+   ]
+  }
+ ],
+ "game": {
+  "name": "Skystone Isles",
+  "GAME.md": "# Skystone Isles\n\n## One-line pitch\nHop between floating islands, hatch pets and fight sky pirates with friends.\n\n## Pillars\n- Pets you hatch and evolve\n- Short island-hopping sessions on phones\n- Co-op pirate raids\n\n## Core loop\nCollect coins on islands, hatch eggs, raid pirate ships for gems, unlock the next island.\n",
+  "notes": {
+   "Autosave Rules.md": "---\nkind: rule\n---\n# Autosave Rules\n\nSkystone Isles autosaves every player profile every 90 seconds, and saves at once after every shop purchase and every egg hatch. The session lock lease is 5 minutes, so the 90 second autosave always renews it. On BindToClose we save every player in parallel and wait at most 25 seconds.\n",
+   "Pet Hatch Odds.md": "---\nkind: rule\n---\n# Pet Hatch Odds\n\nIn Skystone Isles a Mythic pet hatches with a 1 in 2,500 chance from a Sky Egg. Pity guarantees a Mythic on the 3,000th Sky Egg without one; the pity counter is saved in the profile and resets when any Mythic hatches. Legendary pets are 1 in 400.\n",
+   "HUD Layout Decisions.md": "---\nkind: rule\n---\n# HUD Layout Decisions\n\nThe coin counter sits top-left, 24 px inside the safe area. The gem counter sits under it. The quest tracker is on the right side and collapses to an icon on phones. Nothing goes bottom-centre: the jump button and the hotbar live there on phones.\n",
+   "Combat Numbers.md": "---\nkind: rule\n---\n# Combat Numbers\n\nThe starter sword deals 12 base damage, with a swing cooldown of 0.4 seconds. Critical hits multiply damage by 1.5 and happen on 10% of swings. Sky pirates have 120 health on the first island and 15% more on each later island.\n"
+  }
+ },
+ "answers": [
+  {
+   "id": "P08",
+   "expect": "answer",
+   "facts": [
+    "Kick the player from all servers and wait for the session lock to be released before removing data",
+    "Find every data store and key format the code uses, including legacy reads, so no copy survives",
+    "Dump the current values to disk before removing them"
+   ],
+   "wrong": [
+    "Simply call RemoveAsync while the player is online",
+    "Use SetAsync to overwrite the save with an empty table while they play"
+   ]
+  },
+  {
+   "id": "P09",
+   "expect": "answer",
+   "facts": [
+    "Use a server-side bounds sweep rather than relying only on Touched on a kill plane",
+    "Return players to a server-tracked last safe position",
+    "Put boundary walls in their own collision group so combat raycasts ignore them"
+   ],
+   "wrong": [
+    "Only rely on a Touched kill plane",
+    "Use thin invisible walls"
+   ]
+  },
+  {
+   "id": "P11",
+   "expect": "answer",
+   "facts": [
+    "Each hit has one strength value from which stop, trauma and kick are derived",
+    "Light hits get no hit-stop and no shake",
+    "Important stops should be 66 ms or more because 50 ms is only 1-2 frames at 30 fps"
+   ],
+   "wrong": [
+    "Every hit, including light hits, should freeze and shake"
+   ]
+  },
+  {
+   "id": "P12",
+   "expect": "answer",
+   "facts": [
+    "Use a pity system that guarantees the rare item after a number of failed tries",
+    "Keep drops in named, versioned drop tables as data",
+    "Keep weighted picks and independent chances in separate fields"
+   ],
+   "wrong": [
+    "Odds scattered in enemy scripts"
+   ]
+  },
+  {
+   "id": "P13",
+   "expect": "answer",
+   "facts": [
+    "Keep the counter in a DataStore key updated only with UpdateAsync, enforcing supply inside the transform",
+    "Every mint has a stable idempotency id (such as the PurchaseId)",
+    "MemoryStore may only mirror the counter, never be its authority"
+   ],
+   "wrong": [
+    "Use GetAsync then SetAsync for the counter",
+    "Use MemoryStore as the counter"
+   ]
+  },
+  {
+   "id": "P15",
+   "expect": "answer",
+   "facts": [
+    "Lower and cap AFK income",
+    "Detect activity on the server from several observable signals, not movement alone",
+    "Warn before an idle kick and exempt private and reserved servers"
+   ],
+   "wrong": [
+    "Kick anyone who has not moved, with no warning"
+   ]
+  },
+  {
+   "id": "P21",
+   "expect": "answer",
+   "facts": [
+    "Huge values lose precision; clamp and check isfinite before saving so inf and NaN never reach the profile",
+    "Every stored number needs a container type whose limit is above its design maximum",
+    "Scale rewards with progress so small bonuses are not lost below precision"
+   ],
+   "wrong": [
+    "Doubles are exact at any size"
+   ]
+  },
+  {
+   "id": "P26",
+   "expect": "answer",
+   "facts": [
+    "The server sends a seed, position and strike time so every client renders the identical bolt",
+    "The strike lasts under about 0.3 s with a flicker",
+    "Thunder is delayed after the flash"
+   ],
+   "wrong": [
+    "Each client randomises its own bolt"
+   ]
+  },
+  {
+   "id": "P33",
+   "expect": "answer",
+   "facts": [
+    "Intercept lethal damage in the damage core and down the player instead of letting Health reach 0",
+    "The server owns a LifeState attribute",
+    "Revives go through a ProximityPrompt with server checks, and bleed-out uses server timestamps"
+   ],
+   "wrong": [
+    "Let Health hit 0 and then undo the death",
+    "Let the client report the revive"
+   ]
+  },
+  {
+   "id": "P36",
+   "expect": "answer",
+   "facts": [
+    "Use attack tokens: a token budget per target with costs per attack type",
+    "A coordinator assigns roles such as pinner, flanker, suppressor and waiter",
+    "Tokens are released on every exit path"
+   ],
+   "wrong": [
+    "A flat token count with no costs or priority"
+   ]
+  },
+  {
+   "id": "P41",
+   "expect": "answer",
+   "facts": [
+    "Disable the built-in displays (DisplayDistanceType = None) where custom tags exist",
+    "Create tags with a client-side tag manager, not on the server",
+    "Use tiers, declutter and a slow refresh, and never show enemy tags through walls"
+   ],
+   "wrong": [
+    "Create nametags on the server",
+    "Give enemy tags AlwaysOnTop"
+   ]
+  },
+  {
+   "id": "P45",
+   "expect": "answer",
+   "facts": [
+    "Use the Developer Exchange (DevEx) to exchange earned Robux for real money",
+    "The standard rate is 0.0038 USD per earned Robux",
+    "Purchased Robux cannot be exchanged; you need a verified email and the right tax form"
+   ],
+   "wrong": [
+    "Any Robux you hold can be cashed out",
+    "The rate is 0.0054 USD for all Robux"
+   ]
+  },
+  {
+   "id": "E05",
+   "expect": "answer",
+   "facts": [
+    "Sliders use TranslateLine with bounds and constraint-based snapping",
+    "Slot drags use a custom response style with a top-level ghost and GetGuiObjectsAtPosition",
+    "Moves are server-validated intents"
+   ],
+   "wrong": [
+    "Snap after release instead of during the drag"
+   ]
+  },
+  {
+   "id": "E07",
+   "expect": "answer",
+   "facts": [
+    "Hide the HUD, chat bubbles and nametags, wait a frame, then capture",
+    "Save and share only from explicit buttons",
+    "Leash the free camera and restore it on every exit path"
+   ],
+   "wrong": [
+    "Capture with the toolbar visible"
+   ]
+  },
+  {
+   "id": "E11",
+   "expect": "answer",
+   "facts": [
+    "Do not rely only on the FallenPartsDestroyHeight kill plane or Touched; sweep player positions on the server",
+    "Recover players to a server-tracked last safe position"
+   ],
+   "wrong": [
+    "Only rely on a Touched kill plane"
+   ]
+  },
+  {
+   "id": "E12",
+   "expect": "answer",
+   "facts": [
+    "Grant only in ProcessReceipt, never from client signals like PromptProductPurchaseFinished",
+    "Save first, then return PurchaseGranted",
+    "Return NotProcessedYet when the player is not in the server, the product is unknown or the save failed"
+   ],
+   "wrong": [
+    "Grant in PromptProductPurchaseFinished",
+    "Return PurchaseGranted before saving"
+   ]
+  },
+  {
+   "id": "Y01",
+   "expect": "answer",
+   "facts": [
+    "Write and check the lease inside the same UpdateAsync as the data",
+    "Fence every save with a per-session token",
+    "The autosave interval is shorter than the lease and renews it"
+   ],
+   "wrong": [
+    "Use SetAsync for player saves"
+   ]
+  },
+  {
+   "id": "Y02",
+   "expect": "answer",
+   "facts": [
+    "Use plain mode: string.find(s, text, 1, true), because . and - are pattern characters",
+    "Alternatively escape the magic characters with % (for example %. matches a literal dot)"
+   ],
+   "wrong": [
+    "Escape nothing; dots match literally in Lua patterns"
+   ]
+  },
+  {
+   "id": "Y03",
+   "expect": "answer",
+   "facts": [
+    "Give boss NPCs server ownership with SetNetworkOwner(nil) after spawn",
+    "Anchored parts are always server-owned; do not call SetNetworkOwner on them"
+   ],
+   "wrong": [
+    "Leave boss NPCs on automatic ownership"
+   ]
+  },
+  {
+   "id": "Y04",
+   "expect": "answer",
+   "facts": [
+    "LightInfluence defaults to 1 on Studio insert, which darkens effects in caves",
+    "Set LightInfluence explicitly, usually to 0, on every VFX emitter"
+   ],
+   "wrong": [
+    "Raise Brightness to fix dark caves"
+   ]
+  },
+  {
+   "id": "Y06",
+   "expect": "answer",
+   "facts": [
+    "Simulate fast projectiles as points with swept casts, not unanchored parts with Touched",
+    "The server validates origin, time, line of sight and plausibility"
+   ],
+   "wrong": [
+    "Use an unanchored part with Touched for bullets",
+    "Trust the client to say who it hit"
+   ]
+  },
+  {
+   "id": "Y07",
+   "expect": "answer",
+   "facts": [
+    "WinchForce must be greater than mass times gravity, with headroom",
+    "Use a positive WinchSpeed and change WinchTarget to reel out"
+   ],
+   "wrong": [
+    "Use a negative WinchSpeed to reel out"
+   ]
+  },
+  {
+   "id": "Y10",
+   "expect": "answer",
+   "facts": [
+    "Quest definitions live in data with permanent ids, driven by a signal bus",
+    "Rewards are frozen when the quest is dealt",
+    "Resets use server UTC period keys"
+   ],
+   "wrong": [
+    "Compute rewards at claim time",
+    "Use the client's time for resets"
+   ]
+  },
+  {
+   "id": "Y12",
+   "expect": "answer",
+   "facts": [
+    "Disconnect connections to long-lived signals on teardown, for example with a cleanup bag",
+    "Disconnect per-character Heartbeat connections on death or CharacterRemoving and clear per-player tables on PlayerRemoving"
+   ],
+   "wrong": [
+    "Connections are garbage collected automatically when the object is gone"
+   ]
+  },
+  {
+   "id": "N01",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N03",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N05",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N06",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N08",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N10",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N11",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "N12",
+   "expect": "not_found",
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "M01",
+   "expect": "answer",
+   "facts": [
+    "The purchase log holds the purchase id, product key, real Robux spent, grant contents and time",
+    "The grant happens in ProcessReceipt only"
+   ],
+   "wrong": [
+    "Use the webhook's Robux amount as the revenue lost",
+    "Grant in PromptProductPurchaseFinished"
+   ]
+  },
+  {
+   "id": "M02",
+   "expect": "answer",
+   "facts": [
+    "Show a neutral ban message with a case id, not the specific detection",
+    "Consequences require two detection categories unless a certain signal fired"
+   ],
+   "wrong": [
+    "Tell them exactly what was detected, e.g. speed detected",
+    "Ban on the first signal from one detector"
+   ]
+  },
+  {
+   "id": "M03",
+   "expect": "answer",
+   "facts": [
+    "Render at a delay of 2 to 3 snapshot intervals",
+    "Every buffer format starts with a version byte"
+   ],
+   "wrong": [
+    "A delay of one interval",
+    "Set position on receipt"
+   ]
+  },
+  {
+   "id": "M04",
+   "expect": "answer",
+   "facts": [
+    "Interactable models are Atomic (Persistent only for tiny essentials)",
+    "Call RequestStreamAroundAsync on the destination before moving the player"
+   ],
+   "wrong": [
+    "Make many models Persistent",
+    "Turn streaming off"
+   ]
+  },
+  {
+   "id": "M05",
+   "expect": "answer",
+   "facts": [
+    "Kill switches turn off risky systems without a rollback",
+    "Every MemoryStore write gets the shortest sensible expiration, and processed items are removed"
+   ],
+   "wrong": [
+    "Use long TTLs just in case",
+    "Treat MemoryStore as durable"
+   ]
+  },
+  {
+   "id": "M06",
+   "expect": "answer",
+   "facts": [
+    "Set LightInfluence explicitly, usually 0",
+    "Use a governor with a global cap and give onlookers half or less of the caster's budget"
+   ],
+   "wrong": [
+    "Leave LightInfluence at the default 1"
+   ]
+  },
+  {
+   "id": "M07",
+   "expect": "answer",
+   "facts": [
+    "The autosave interval is shorter than the lease and renews it",
+    "With a session lock, the destination server waits until the source releases the lock"
+   ],
+   "wrong": [
+    "Autosave less often than the lease length"
+   ]
+  },
+  {
+   "id": "M08",
+   "expect": "answer",
+   "facts": [
+    "The day boundary is a server-side integer from UTC time with an explicit offset",
+    "Never more than one automatic pop-up at a time"
+   ],
+   "wrong": [
+    "Use the client's os.time() for the day",
+    "Compare timestamps instead of day indexes"
+   ]
+  },
+  {
+   "id": "M09",
+   "expect": "answer",
+   "facts": [
+    "The driver owns the vehicle: assign on sit and reset on exit",
+    "Test ownership bugs with two or more clients"
+   ],
+   "wrong": [
+    "Test ownership with one client",
+    "Keep the vehicle server-owned while driving"
+   ]
+  },
+  {
+   "id": "M10",
+   "expect": "answer",
+   "facts": [
+    "The cadence cap is derived from the weapon or ability data",
+    "Rate limit first, before any expensive lookup"
+   ],
+   "wrong": [
+    "Accept every click",
+    "Do the expensive lookup before the rate limit"
+   ]
+  },
+  {
+   "id": "S01",
+   "expect": "answer",
+   "facts": [
+    "Light Range is now capped at 240 studs (raised from 120 in the November 2026 update)",
+    "Brightness does not extend a light's reach; raise Range instead"
+   ],
+   "wrong": [
+    "Range is capped at 120 studs"
+   ]
+  },
+  {
+   "id": "S02",
+   "expect": "answer",
+   "facts": [
+    "Voice chat works in places with up to 150 max players (raised from 100)",
+    "Above 150 max players voice is silently absent, so keep max players at or below 150 when voice matters"
+   ],
+   "wrong": [
+    "Voice needs max players at or below 100"
+   ]
+  },
+  {
+   "id": "S03",
+   "expect": "answer",
+   "facts": [
+    "One server may send 1000 external HttpService requests per minute",
+    "Open Cloud calls have a separate 2500 per minute"
+   ],
+   "wrong": [
+    "500 external requests per minute per server"
+   ]
+  },
+  {
+   "id": "S04",
+   "expect": "answer",
+   "facts": [
+    "One mesh may now hold up to 40,000 triangles; split or decimate above that",
+    "Above the limit, split the mesh by material or body part, or decimate it"
+   ],
+   "wrong": [
+    "One mesh at most 20,000 triangles"
+   ]
+  },
+  {
+   "id": "S05",
+   "expect": "answer",
+   "facts": [
+    "Icons fill 76% of the frame",
+    "Fill is computed from bounds, centred on a 45-degree diagonal"
+   ],
+   "wrong": [
+    "Icons fill 82% of the frame"
+   ]
+  },
+  {
+   "id": "S06",
+   "expect": "answer",
+   "facts": [
+    "Every car uses an Ackermann amount of exactly 0.8",
+    "Steering lock still falls with speed and the steering angle stays rate-limited"
+   ],
+   "wrong": [
+    "An Ackermann amount anywhere from 0.6 to 1"
+   ]
+  },
+  {
+   "id": "S09",
+   "expect": "answer",
+   "facts": [
+    "Tracking attacks commit at least 0.6 s before the hit",
+    "The window was widened because phone players with 100 ms or more of latency could not react in time"
+   ],
+   "wrong": [
+    "Commit at least 0.45 s before the hit"
+   ]
+  },
+  {
+   "id": "S10",
+   "expect": "answer",
+   "facts": [
+    "The team budget is at most 16 Highlights at once",
+    "Destroy unused Highlights because disabled ones still take a slot"
+   ],
+   "wrong": [
+    "The budget is 31 simultaneous highlights"
+   ]
+  },
+  {
+   "id": "G01",
+   "expect": "guide",
+   "guide": [
+    "roblox-testing/cloud-test-runner",
+    "roblox-testing"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G02",
+   "expect": "guide",
+   "guide": [
+    "roblox-open-cloud/webhooks",
+    "roblox-open-cloud"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G03",
+   "expect": "guide",
+   "guide": [
+    "roblox-asset-import"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G04",
+   "expect": "guide",
+   "guide": [
+    "roblox-tooling/ci-workflow",
+    "roblox-tooling"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G06",
+   "expect": "guide",
+   "guide": [
+    "roblox-performance/profiling",
+    "roblox-performance"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G07",
+   "expect": "guide",
+   "guide": [
+    "game-bible"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G09",
+   "expect": "guide",
+   "guide": [
+    "playtest"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "G10",
+   "expect": "guide",
+   "guide": [
+    "roblox-code-review",
+    "roblox-code-review/deprecated-apis",
+    "roblox-security/checklist"
+   ],
+   "facts": [],
+   "wrong": []
+  },
+  {
+   "id": "C01",
+   "expect": "answer",
+   "facts": [
+    "Our game autosaves every 90 seconds",
+    "It also saves at once after every shop purchase and egg hatch"
+   ],
+   "wrong": [
+    "Autosave every 60 seconds"
+   ]
+  },
+  {
+   "id": "C02",
+   "expect": "answer",
+   "facts": [
+    "A Mythic pet is a 1 in 2,500 chance from a Sky Egg",
+    "Pity guarantees a Mythic on the 3,000th Sky Egg without one"
+   ],
+   "wrong": []
+  },
+  {
+   "id": "C04",
+   "expect": "answer",
+   "facts": [
+    "The starter sword deals 12 base damage",
+    "The swing cooldown is 0.4 seconds"
+   ],
+   "wrong": []
+  }
+ ]
+}
