@@ -13,7 +13,7 @@ Briefing an expert. Every brief says:
 An expert runs on your AI and model unless the user chose another for it in Setup > Experts (that always wins). You may
 pass `ai` and `model` to rbx_team spawn for work another AI is clearly better at, and to give a simple, well-specified
 job to a cheaper model on the user's plan: read its work before accepting, and never give it plans, hard builds or UI
-builds (studio guide, "Experts on another AI"; rbx_team `models` lists models). A model billed per use never runs.
+builds (studio guide, "Experts on another AI"; rbx_team `models` lists models). Only the user picks a model billed per use.
 Never run two experts that change the place at once. Experts that only read, test or work outside Studio may run
 beside one. Put each job on the board with rbx_board as doing when you hand it out.
 Image generation is allowed: any expert can call rbx_image, which makes a picture on the user's own Gemini plan
