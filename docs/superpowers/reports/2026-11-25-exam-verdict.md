@@ -2,8 +2,8 @@
 
 Plain-English verdict on the full exam of Fridae's knowledge system (search plus the Librarian), run 2026-11-24.
 
-- The numbers: [part 1 report](2026-11-25-knowledge-exam-part1.md).
-- Part 2 adds Heavy on a vault 10 times bigger.
+- The numbers: [full report](2026-11-25-knowledge-exam.md) (part 1 alone: [here](2026-11-25-knowledge-exam-part1.md)).
+- Part 2 added Heavy on a vault 10 times bigger.
 
 **Scales:**
 - **Today's size (1x):** the vault as it is, about 20,000 passages.
@@ -45,17 +45,21 @@ Plain-English verdict on the full exam of Fridae's knowledge system (search plus
    - finds the right note in the top 5 only 59% of the time;
    - takes 2.9 s per search;
    - takes 30 s to update after one note changes.
-5. **Heavy is the most accurate at today's size, but only a little.**
+5. **Heavy finds the right note more often, and the gap grows with the vault. It does not give better answers.**
 
-   | | Heavy | Light |
-   |---|---|---|
-   | Right note in top 5 | 86% | 84% |
-   | Right note first | 69% | 65% |
-   | Memory | about 1.5 GB more | – |
-   | Disk | about 0.8 GB | – |
-   | Time per search | 1.7 s | 0.25 s |
+   | | Heavy 1x | Light 1x | Heavy 10x | Light 10x |
+   |---|---|---|---|---|
+   | Right note in top 5 | 86% | 84% | 81% | 74% |
+   | Right note first | 69% | 65% | 59% | 55% |
+   | Engine time per search | 1.5 s | 0.02 s | 1.7 s | 0.09 s |
+   | Build from nothing | 21 min | 8 min | 2.0 h | 48 min |
+   | Disk | 0.8 GB | 45 MB | 1.8 GB | 350 MB |
 
-   Part 2 shows whether the gap grows at 10x.
+   - Heavy uses about 1.2–1.5 GB of memory plus its Qdrant database.
+   - Librarian answers with Heavy were no better: 25% right at today's size and 23% at 10x, against Light's 28% and 30%.
+   - Sonnet reading Heavy's 10x passages got 46%, against 48% with Light's.
+   - So the extra 7 points of retrieval at 10x get lost in the writer.
+   - At 10x, 3 of 160 Heavy searches through Fridae went over the 3 s limit and silently fell back to the keyword search. Part of that is the symptom-line slowdown, now fixed.
 6. **Guides work exactly as intended.** Every setup pointed to the right guide on all 8 guide questions. The "excerpt" tag and the "point, don't summarise" rule both held.
 7. **Gemini's "lower DeepSeek's effort" tip doesn't pay off here.**
    - At low effort the writer uses 17% fewer thinking tokens and is no faster.
@@ -115,9 +119,10 @@ Plain-English verdict on the full exam of Fridae's knowledge system (search plus
    - Measure the threshold on the exam's questions, so it doesn't start refusing answerable ones.
 3. **Leave DeepSeek's effort at the default.**
 4. **Have vault upkeep add `supersedes:` marks** when it files a note that replaces another. The text alone is not enough.
-5. **Decide Heavy after part 2.**
-   - If Heavy at 10x stays well ahead of Light at 10x (74% top-5), offer it as the "big vault" option.
-   - If not, Light alone is enough.
+5. **Keep Heavy as an option, not the default.**
+   - It finds more at 10x (81% against 74% top-5).
+   - That only pays once the writer improves.
+   - Until then it costs a 2-hour build, 1.8 GB of disk and seconds per search for no better answers.
 6. **Consider a stronger writer only for the answers that fail the checks.** This would be a second try, not the default. It would cut the 15–33 s tails and the "could not be checked" answers. Measure before deciding.
 
 ## Caveats
