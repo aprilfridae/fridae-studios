@@ -260,7 +260,7 @@ button.pname:hover { background: var(--hover); }
 
 /* ---------- the Chat tab ---------- */
 .body { display: grid; min-height: 0; min-width: 0; }
-.main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); min-width: 0; min-height: 0; }
 .chathead { display: flex; align-items: center; gap: 12px; padding: 4px 24px; min-height: 44px; border-bottom: 1px solid var(--line); }
 .title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 46ch; font-size: 14px; font-weight: 500; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); text-align: left; }
 .title span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -520,7 +520,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
    Collapsed it is a slim rail; in a narrow space it lies over the chat and folds to one small pill. */
 .body { position: relative; }
 .body.with-board { grid-template-columns: minmax(0, 1fr) auto; }
-.board { display: flex; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); }
+.board { display: flex; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--panel); }
 .bd-panel { width: 340px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; min-height: 0; }
 .board.shut .bd-panel, .board:not(.shut) .bd-rail { display: none; }
 .bd-rail { position: relative; width: 44px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
@@ -591,12 +591,13 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .bd-opt b { font: 500 13px var(--mono); color: var(--c, var(--text)); }
 .bd-opt small { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bd-opt .dot { width: 6px; height: 6px; }
-/* a narrow space: the board lies over the chat, and folds to one pill under the chat's bar */
-.board.narrow { position: absolute; z-index: 15; top: 0; right: 0; bottom: 0; max-width: 100%; border-left-color: var(--line-strong); box-shadow: -24px 0 60px rgba(0, 0, 0, 0.55); }
-.board.narrow .bd-panel { width: min(360px, 100%); }
-.board.narrow.shut { top: 52px; right: 16px; bottom: auto; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--raised); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
-.board.narrow.shut .bd-rail { flex-direction: row; width: auto; height: var(--h-s); padding: 0 12px; gap: 8px; border-radius: 999px; }
-.board.narrow.shut .bd-rail-t { writing-mode: horizontal-tb; }
+/* a narrow space: the board still sits beside the chat (never over it, the user, 2026-11-24), only slimmer, and it
+   starts folded to its rail */
+.board.narrow .bd-panel { width: clamp(240px, 42vw, 300px); }
+/* opening: the panel slides in from the right edge */
+@keyframes bd-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+.board:not(.shut) .bd-panel { animation: bd-in 280ms cubic-bezier(0.32, 0.72, 0, 1); }
+@media (prefers-reduced-motion: reduce) { .board:not(.shut) .bd-panel { animation: none; } }
 /* a member's state, as a dot: being checked is a ring, parked is quieter still */
 .dot.verify { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text), 0 0 0 2.5px rgba(255, 255, 255, 0.12); }
 .dot.park { opacity: 0.6; }
@@ -5158,7 +5159,7 @@ function paintBoard() {
   const board = $("board"); if (!board) return;
   const lead = bdLead(), s = swarmOf(lead), on = !!(s && s.run);
   board.hidden = !on;
-  board.parentNode.classList.toggle("with-board", on && !bdNarrow);
+  board.parentNode.classList.toggle("with-board", on);
   if (!on) { $("bd-ac").classList.remove("on"); return; }
   if (bdDrawn.lead !== lead) { bdDrawn.lead = lead; bdFilter = { f: "all", name: "" }; $("bd-say").value = ""; bdFit(); bdHint(""); }
   const open = bdNarrow ? bdNarrowOpen : !bdShut, thing = thingOf(projKey(agents.get(lead)));
@@ -5239,7 +5240,7 @@ function bdOpen(on) {
 $("bd-rail").onclick = () => bdOpen(true);
 $("bd-shut").onclick = () => bdOpen(false);
 $("bd-seg").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; bdFilter = { f: b.dataset.f, name: "" }; paintBoard(); };
-/* over the chat in a narrow space, Escape folds it */
+/* Escape folds it (in a narrow space, where it squeezes the chat most) */
 $("board").addEventListener("keydown", (e) => { if (e.key === "Escape" && bdNarrow && bdNarrowOpen && !$("bd-ac").classList.contains("on")) { e.preventDefault(); bdOpen(false); } });
 /* narrow: under 760 px of the page's own space for the chat and the board together */
 new ResizeObserver(() => {
