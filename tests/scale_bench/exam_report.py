@@ -452,7 +452,8 @@ def build(ex):
     pas = {}
     for name, _ in sets_:
         parts = name.split("-")
-        pas[name] = ex.cache.get("answers", ex.key("answers"), "passages-%s-%s" % (parts[1], parts[2])) or {}
+        suffix = "-k5" if name.endswith("-k5") else ""
+        pas[name] = ex.cache.get("answers", ex.key("answers"), "passages-%s-%s%s" % (parts[1], parts[2], suffix)) or {}
     n_ent = len(ex.entries)
     kinds = {}
     for e in ex.entries:
@@ -501,6 +502,25 @@ def build(ex):
                            L.f2(s["first_token_p50"], 1), "%s / %s" % (L.f2(s["p50"], 1), L.f2(s["p95"], 1))]
                           for x, s in (("default", a1), ("low", b1))]))
             w("")
+    pairs = [(a, b, why) for a, b, why in (
+        ("librarian-light-1x-default", "librarian-light-1x-rerun", "the same Librarian run twice (the writer's own noise)"),
+        ("librarian-light-1x-default", "librarian-light-1x-k5", "the Librarian with 5 passages a part instead of 3"),
+        ("reader-light-1x", "reader-light-1x-k5", "Sonnet with 5 passages a part instead of 3")) if a in summaries and b in summaries]
+    if pairs:
+        w("### Same questions, one thing changed")
+        w("")
+        rows = []
+        for a, b, why in pairs:
+            for name in (a, b):
+                s = summaries[name]
+                three = [x for x in answer_scores(ex, name, dict(sets_)[name], verdicts)
+                         if x[3] and x[0]["expect"] == "answer" and len(x[0]["facts"]) >= 3]
+                rows.append([why if name == a else "", name, L.pc(s["correct"]), L.pc(s["recall"]), L.pc(s["wrong"]),
+                             "%d/%d" % s["neg_abstained"], L.pc(s["false_not_found"]),
+                             "%d/%d" % (sum(1 for x in three if x[3]["correct"]), len(three)), L.f2(s["in"], 0)])
+        w(L.md_table(["comparison", "config", "correct", "fact recall", "wrong facts", "negatives abstained",
+                      "false not-found", "3-fact questions right", "tokens in"], rows))
+        w("")
     # spot-check sheet
     judged = [(k, v) for k, v in verdicts.items() if v.get("verdict")]
     random.Random(5).shuffle(judged)

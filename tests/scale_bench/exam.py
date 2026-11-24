@@ -761,6 +761,22 @@ def worker_main(argv):
 
 
 # ------------------------------------------------------------------ the orchestrator: helpers
+WRITER_VARIANT = {"k5": "default", "rerun": "default"}  # exam setups that run the writer at its default
+
+
+def lib_k(variant):
+    """Passages a part for a Librarian setup: "k5" gets 5, every other 3 (the app's own)."""
+    return 5 if variant == "k5" else 3
+
+
+def passages_name(m, sc, k=3):
+    return "passages-%s-%dx%s" % (m, sc, "" if k == 3 else "-k%d" % k)
+
+
+def reader_name(m, sc, k=3):
+    return "reader-%s-%dx%s" % (m, sc, "" if k == 3 else "-k%d" % k)
+
+
 class Exam:
     def __init__(self, a):
         self.a = a
@@ -793,7 +809,11 @@ class Exam:
                 (m, s, "default") not in lib]
         if "light" in a.methods:
             lib.append(("light", top, "low"))
-        reader = [(m, s) for m, s in units if s == (htop if m == "heavy" else top)]
+            lo = min(a.scales)
+            lib += [("light", lo, "k5"), ("light", lo, "rerun")]  # 5 passages a part; the same run again (noise)
+        reader = [(m, s, 3) for m, s in units if s == (htop if m == "heavy" else top)]
+        if "light" in a.methods:
+            reader.append(("light", min(a.scales), 5))
         return {"retrieval": units, "ablation_index": [("light", s, v) for s in a.ablation_scales for v in
                                                        INDEX_VARIANTS] if "light" in a.methods else [],
                 "librarian": lib, "reader": reader}
@@ -901,11 +921,11 @@ class Exam:
             n = len(self.entries)
             done_l = sum(len(self.cache.records("answers", self.key("answers"), "librarian-%s-%dx-%s" % u))
                          for u in p["librarian"])
-            done_r = sum(len(self.cache.records("answers", self.key("answers"), "reader-%s-%dx" % u))
+            done_r = sum(len(self.cache.records("answers", self.key("answers"), reader_name(*u)))
                          for u in p["reader"])
             s = (n * len(p["librarian"]) - done_l) * r["librarian_answer_s"]
             s += (n * len(p["reader"]) - done_r) * r["reader_answer_s"]
-            s += 60 * len(set((m, sc) for m, sc, _ in p["librarian"]) | set(p["reader"]))  # passages per index
+            s += 60 * len(set((m, sc, lib_k(v)) for m, sc, v in p["librarian"]) | set(p["reader"]))  # passages
             out["answers"] = s
         if "judge" in stages:
             n = len(self.entries) * (len(p["librarian"]) + len(p["reader"]))
@@ -1073,15 +1093,15 @@ class Exam:
         parts = json.loads(r.stdout)["parts"]
         return self.cache.put("answers", key, "split", {e["id"]: p for e, p in zip(self.entries, parts)})
 
-    def passages(self, key, m, sc, split):
-        name = "passages-%s-%dx" % (m, sc)
+    def passages(self, key, m, sc, split, k=3):
+        name = passages_name(m, sc, k)
         got = self.cache.get("answers", key, name)
         if got and all(e["id"] in got for e in self.entries):
             return got
         self.build_index(m, sc)
         items = [{"id": e["id"], "parts": split[e["id"]], "scope": e["scope"]} for e in self.entries]
         res = self.run_worker({"phase": "passages", "method": m, "corpus": self.corpus_for(sc)[0],
-                               "index": self.index_dir(m, sc), "ivariant": "base", "answers": items})
+                               "index": self.index_dir(m, sc), "ivariant": "base", "answers": items, "k": k})
         return self.cache.put("answers", key, name, res)
 
     def librarian(self, key, m, sc, variant, passages):
@@ -1096,7 +1116,7 @@ class Exam:
             parts = passages[e["id"]]["parts"]
             jobs.append(json.dumps({"id": e["id"], "question": e["question"],
                                     "parts": [{"question": p["question"], "hits": p["hits"]} for p in parts]}))
-        cmd = [FRIDAE_BIN, "--librarian-exam", "answer", "--jobs", str(self.a.jobs), "--variant", variant]
+        cmd = [FRIDAE_BIN, "--librarian-exam", "answer", "--jobs", str(self.a.jobs), "--variant", WRITER_VARIANT.get(variant, variant)]
         limit = (len(todo) // self.a.jobs + 1) * 120 + 180
         t0 = time.perf_counter()
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -1142,8 +1162,8 @@ class Exam:
         if n < len(todo):
             say("  %s: %d of %d answers came back (the rest are recorded as missing)" % (name, n, len(todo)))
 
-    def reader(self, key, m, sc, passages):
-        name = "reader-%s-%dx" % (m, sc)
+    def reader(self, key, m, sc, k, passages):
+        name = reader_name(m, sc, k)
         done = self.cache.records("answers", key, name)
         todo = [e for e in self.entries if e["id"] not in done]
         if not todo:
@@ -1163,7 +1183,7 @@ class Exam:
             L.write_json(os.path.join(raw_dir, "%s-%s.json" % (name, e["id"])), {"prompt": prompt, "out": r})
             rec = {"id": e["id"], "answer": r.get("text"), "secs": r.get("secs"), "usage": r.get("usage"),
                    "error": r.get("error"), "calls": 2 if r.get("retried") else 1, "cost_usd": r.get("cost"),
-                   "config": {"answerer": "reader", "method": m, "scale": sc, "variant": READER_MODEL}}
+                   "config": {"answerer": "reader", "method": m, "scale": sc, "variant": READER_MODEL, "k": k}}
             with lock:
                 self.cache.append("answers", key, name, rec)
             say("  %s %s %.1f s%s" % (name, e["id"], r.get("secs") or 0, " ERROR" if r.get("error") else ""))
@@ -1176,16 +1196,16 @@ class Exam:
         p = self.plan()
         split = self.splits(key)
         pas = {}
-        for m, sc, _ in p["librarian"]:
-            pas.setdefault((m, sc), None)
-        for m, sc in p["reader"]:
-            pas.setdefault((m, sc), None)
-        for m, sc in pas:
-            pas[(m, sc)] = self.passages(key, m, sc, split)
         for m, sc, v in p["librarian"]:
-            self.librarian(key, m, sc, v, pas[(m, sc)])
-        for m, sc in p["reader"]:
-            self.reader(key, m, sc, pas[(m, sc)])
+            pas.setdefault((m, sc, lib_k(v)), None)
+        for m, sc, k in p["reader"]:
+            pas.setdefault((m, sc, k), None)
+        for m, sc, k in pas:
+            pas[(m, sc, k)] = self.passages(key, m, sc, split, k)
+        for m, sc, v in p["librarian"]:
+            self.librarian(key, m, sc, v, pas[(m, sc, lib_k(v))])
+        for m, sc, k in p["reader"]:
+            self.reader(key, m, sc, k, pas[(m, sc, k)])
 
     # -------------------------------------------------------------- stage: judge
     def answer_sets(self):
@@ -1196,8 +1216,8 @@ class Exam:
         for m, sc, v in p["librarian"]:
             name = "librarian-%s-%dx-%s" % (m, sc, v)
             out.append((name, self.cache.records("answers", key, name)))
-        for m, sc in p["reader"]:
-            name = "reader-%s-%dx" % (m, sc)
+        for m, sc, k in p["reader"]:
+            name = reader_name(m, sc, k)
             out.append((name, self.cache.records("answers", key, name)))
         return out
 
