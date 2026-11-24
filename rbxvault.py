@@ -1014,7 +1014,8 @@ def read_file_section(shelf, key, heading, docs):
     if not s["level"] and p["description"]:
         body = "> " + p["description"] + "\n\n" + body.lstrip()
     sub = [(x["level"], x["heading"]) for x in p["sections"] if s["start"] < x["start"] < s["end"]]
-    return "%s › %s (%s)\n\n%s" % (head, s["heading"], size_text(s_size(p, s)), cap_text(body, sub, key, shelf))
+    out = "%s › %s (%s)\n\n%s" % (head, s["heading"], size_text(s_size(p, s)), cap_text(body, sub, key, shelf))
+    return out + ("\n\n" + guide_excerpt_tag(key) if shelf == "guides" else "")
 
 
 def s_size(p, s):
@@ -1128,6 +1129,13 @@ def _vault_note_lines(rank, d):
     return out
 
 
+def guide_excerpt_tag(title):
+    """The line under every piece of a guide that search or a section read hands out: a piece is for finding the
+    guide, and the agent loads the whole guide before acting on it."""
+    return ("[Excerpt from guide: %s — do not act on this snippet; call rbx_guide with topic `%s` for the full "
+            "procedure first.]" % (title, title))
+
+
 def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
     """One section: rank, shelf, title › heading, size, a snippet (or the given passage lines) and the arguments
     that read exactly it."""
@@ -1143,6 +1151,8 @@ def _section_lines(rank, shelf, d, p, s, terms, args=None, lines=None):
         if not s["level"] and p["description"]:
             text = p["description"] + "\n" + text
         out += ["   " + x for x in snippet(text, terms)]
+    if shelf == "guides":
+        out.append("   " + guide_excerpt_tag(d["title"]))
     if args is None:
         args = {"action": "read", "shelf": shelf, "title": d["title"], "heading": heading_arg(p, s) if s else d["heading"]}
     out.append("   read: " + json.dumps(args, ensure_ascii=False))

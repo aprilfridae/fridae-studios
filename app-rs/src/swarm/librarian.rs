@@ -223,6 +223,9 @@ pub fn fallback_text(parts: &[Part]) -> String {
         }
         for h in &p.hits {
             out += &format!("\n   - {}: {}", source(h), cut(&h.text, LINE_MAX));
+            if h.shelf == "guides" {
+                out += &format!("\n     {}", guide_excerpt_tag(&h.title));
+            }
         }
     }
     crate::compact::mask(&out)
@@ -378,6 +381,12 @@ fn first_words(text: &str, n: usize) -> String {
     if w.len() <= n { w.join(" ") } else { format!("{} …", w[..n].join(" ")) }
 }
 
+/// The line under a quote from one of Fridae's guides (the same words as rbxvault.guide_excerpt_tag): a piece is
+/// for finding the guide, and the asker loads the whole guide before acting on it.
+pub fn guide_excerpt_tag(title: &str) -> String {
+    format!("[Excerpt from guide: {title} — do not act on this snippet; call rbx_guide with topic `{title}` for the full procedure first.]")
+}
+
 /// The posted answer: each part's claims with their notes, then the quotes they rest on. `proposed`: the parts the
 /// writer made claims for (a part that had claims and lost them all was not supported by its passages).
 pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
@@ -394,6 +403,15 @@ pub fn render(parts: &[Part], kept: &[Claim], proposed: &[bool]) -> String {
             out.extend(mine.iter().map(|c| format!("- {} ({})", c.claim, c.note)));
             out.push("Quotes:".into());
             out.extend(mine.iter().map(|c| format!("> \"{}\" ({})", first_words(&c.quote, quote_words), c.note)));
+            let mut guides: Vec<&str> = Vec::new();
+            for c in &mine {
+                if let Some(h) = p.hits.iter().find(|h| h.shelf == "guides" && source(h) == c.note) {
+                    if !guides.contains(&h.title.as_str()) {
+                        guides.push(&h.title);
+                    }
+                }
+            }
+            out.extend(guides.iter().map(|g| guide_excerpt_tag(g)));
         }
         out.join("\n")
     };
@@ -676,6 +694,22 @@ mod tests {
         assert!(parse_claims(&line(7, "x", "y z w", "n"), 3).is_none());
         assert!(parse_claims(&line(1, "x", "", "n"), 3).is_none());
         assert!(parse_claims("1. Turn prompts off while dragging (Touch Drag Lessons).", 3).is_none());
+    }
+
+    #[test]
+    fn a_quote_from_a_guide_says_to_load_the_whole_guide() {
+        let guide = Hit { shelf: "guides".into(), title: "roblox-ui".into(), heading: "Safe area".into(), text: SAFE.into() };
+        let parts = vec![Part { question: "phone safe zones".into(), hits: vec![guide] }];
+        let said = checked_answer(&parts, &line(1, "Inset 24 px.", "24 px from each edge", "roblox-ui"), &|_| None);
+        assert!(said.contains("- Inset 24 px. (roblox-ui › Safe area)"), "{said}");
+        assert!(said.contains(&guide_excerpt_tag("roblox-ui")), "{said}");
+        assert!(guide_excerpt_tag("roblox-ui").contains("rbx_guide with topic `roblox-ui`"));
+        // a note from the vault or the game carries no such line
+        let said = checked_answer(&three(), &line(2, "Inset 24 px.", "24 px from each edge", "HUD Layout"), &|_| None);
+        assert!(!said.contains("[Excerpt from guide"), "{said}");
+        // with no writer, the passages are shown as they are, and a guide's still carries the line
+        assert!(fallback_text(&parts).contains(&guide_excerpt_tag("roblox-ui")));
+        assert!(!fallback_text(&three()).contains("[Excerpt from guide"));
     }
 
     #[test]

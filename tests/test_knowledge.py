@@ -188,6 +188,22 @@ class ShelfTests(unittest.TestCase):
             self.search(query="decision", shelf="game")
         self.assertIn("RBXKIT_PROJECT", str(cm.exception))
 
+    def test_guide_excerpts_say_to_load_the_whole_guide(self):
+        text = self.search(query="save player coins between sessions", k=8)
+        hits = re.findall(r"^\d+\. \[(\w+)\](?: \[lesson\])? (.+?)(?: \(.*?\))? › ", text, re.M)
+        guides = [t for s, t in hits if s == "guides"]
+        self.assertTrue(guides, text)
+        for title in guides:
+            self.assertIn(rbxvault.guide_excerpt_tag(title), text)
+        self.assertEqual(text.count("[Excerpt from guide: "), len(guides))
+        tag = rbxvault.guide_excerpt_tag("roblox-data-stores")
+        self.assertIn("rbx_guide", tag)
+        self.assertIn("roblox-data-stores", tag)
+        out = rbxvault.run("read", {"shelf": "guides", "title": "roblox-data-stores", "heading": "session locking"})
+        self.assertIn(tag, out)
+        team = rbxvault.run("search", {"query": "save player data", "shelf": "team"})
+        self.assertNotIn("[Excerpt from guide: ", team)
+
     def test_count_and_k(self):
         self.assertEqual(len(re.findall(r"^\d+\. ", self.search(query="leaderboard", shelf="guides", k=2), re.M)), 2)
         self.assertEqual(len(re.findall(r"^\d+\. ", self.search(query="leaderboard", shelf="guides", count=4), re.M)), 4)
