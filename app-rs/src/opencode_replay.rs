@@ -27,6 +27,10 @@ struct Twist {
     pending: Value,
     /// the session's rules read back changed from the second read on
     tamper: bool,
+    /// the session's rules never read back as written
+    wrong_rules: bool,
+    /// what `GET /api/session` lists (the sessions in a folder)
+    listed: Value,
 }
 
 /// A stand-in OpenCode serving `sse` as its event stream for session `session`. Returns its port and the calls seen.
@@ -63,11 +67,13 @@ fn stand_in_with(sse: String, session: String, twist: Twist) -> (u16, Seen) {
                 ("GET", p) if p == at => {
                     reads += 1;
                     let mut shown = rules.clone();
-                    if twist.tamper && reads > 1 {
+                    if (twist.tamper && reads > 1) || twist.wrong_rules {
                         shown = json!([{"action": "*", "resource": "*", "effect": "allow"}]);
                     }
                     json_ok(json!({"data": {"id": session, "permissions": shown}}))
                 }
+                ("GET", "/api/session") => json_ok(json!({"data": twist.listed.as_array().cloned().unwrap_or_default()})),
+                ("DELETE", p) if p.starts_with("/api/session/") => json_ok(Value::Null).with_status_code(204),
                 ("GET", p) if p == format!("{at}/permission") => json_ok(json!({"data": twist.pending.as_array().cloned().unwrap_or_default()})),
                 ("GET", "/api/session/active") => {
                     let a = if busy > 0 { json!({session.clone(): {}}) } else { json!({}) };
@@ -252,7 +258,7 @@ fn a_request_asked_while_the_stream_was_down_is_answered_after_it_is_back() {
         // stream carries the rest
         let cut = sse.find("\"permission.asked\"").map(|i| sse[..i].rfind("data: ").unwrap()).unwrap();
         let rest: String = sse[cut..].lines().filter(|l| !l.contains("\"permission.asked\"")).collect::<Vec<_>>().join("\n") + "\n";
-        Twist { pieces: vec![sse[..cut].to_string(), rest], busy: 1, pending: json!([asked_request(sse)]), tamper: false }
+        Twist { pieces: vec![sse[..cut].to_string(), rest], busy: 1, pending: json!([asked_request(sse)]), ..Default::default() }
     });
     assert!(ended.err.is_empty(), "{}", ended.err);
     assert!(outs.contains(&"blocked whoami".to_string()), "{outs:?}");
@@ -287,4 +293,86 @@ fn tool_servers_are_removed_when_a_turn_ends_early() {
     let put = calls.iter().filter(|(m, p, _)| m == "PUT" && p.starts_with("/api/experimental/mcp/")).count();
     let del = calls.iter().filter(|(m, p, _)| m == "DELETE" && p.starts_with("/api/experimental/mcp/")).count();
     assert!(put > 0 && put == del, "{put} added, {del} removed");
+}
+
+type Calls = Vec<(String, String, Value)>;
+
+/// A writer (`write_only_on`) against the stand-in serving `case`: what it gave back, and the calls it made.
+fn written(case: &str, twist: impl FnOnce(&str) -> Twist, cancelled: bool) -> (Result<String, String>, crate::usage::Turn, Calls) {
+    let (sse, session) = recording(case);
+    let twist = twist(&sse);
+    let (port, seen) = stand_in_with(sse, session, twist);
+    let conn = Conn { port, auth: "Basic dGVzdA==".into() };
+    let cancel = AtomicBool::new(cancelled);
+    let out = write_only_on(&conn, "mock/scripted", "Summarise: the user wants a door.", &cancel, &crate::paths::test_dir("opencode-writers"));
+    let calls = seen.lock().unwrap().clone();
+    match out {
+        Ok(w) => (Ok(w.text), w.usage, calls),
+        Err(e) => (Err(e), Default::default(), calls),
+    }
+}
+
+fn called(calls: &[(String, String, Value)], method: &str, end: &str) -> bool {
+    calls.iter().any(|(m, p, _)| m == method && p.ends_with(end))
+}
+
+#[test]
+fn a_writer_is_a_session_that_may_do_nothing_gets_the_text_once_and_is_removed() {
+    let (out, used, calls) = written("plain", |_| Twist::default(), false);
+    assert_eq!(out.as_deref(), Ok("OK: hello there"), "what the model wrote");
+    assert!(used.total() > 0, "and what writing it used, for the usage record");
+    // the session: every permission denied and nothing else, in the writers' own folder, under the writer's title
+    let made = calls.iter().find(|(m, p, _)| m == "POST" && p == "/api/session").expect("a session of its own");
+    assert_eq!(made.2["permissions"], json!([{"action": "*", "resource": "*", "effect": "deny"}]));
+    assert_eq!(made.2["title"], WRITER_TITLE);
+    assert!(made.2["location"]["directory"].as_str().is_some_and(|d| d.ends_with("opencode-writers")));
+    assert_eq!(made.2["model"], json!({"providerID": "mock", "id": "scripted"}));
+    // its rules are read back before anything is sent; the text goes once; then the session is removed
+    let pos = |m: &str, end: &str| calls.iter().position(|(cm, p, _)| cm == m && p.ends_with(end)).unwrap_or_else(|| panic!("{m} …{end} not in {calls:?}"));
+    let session = calls.iter().find(|(m, p, _)| m == "GET" && p.starts_with("/api/session/ses_fixture")).map(|(_, p, _)| p.clone()).expect("read back");
+    assert!(pos("POST", "/api/session") < pos("GET", &session) && pos("GET", &session) < pos("POST", "/prompt") && pos("POST", "/prompt") < pos("DELETE", &session));
+    assert_eq!(calls.iter().filter(|(_, p, _)| p.ends_with("/prompt")).count(), 1);
+    assert_eq!(calls.iter().find(|(_, p, _)| p.ends_with("/prompt")).unwrap().2["text"], "Summarise: the user wants a door.");
+    // nothing a chat's turn gets: no tool servers, no environment for commands, no standing instructions
+    assert!(!calls.iter().any(|(m, _, _)| m == "PUT" || m == "PATCH"), "{calls:?}");
+}
+
+#[test]
+fn a_writer_that_fails_or_does_anything_but_write_gives_nothing_and_is_removed_all_the_same() {
+    let removed = |calls: &[(String, String, Value)]| calls.iter().any(|(m, p, _)| m == "DELETE" && p.starts_with("/api/session/ses_fixture"));
+    // the model cannot be used (here: the free limit, as OpenCode really says it): the reason, for the next writer's turn
+    let (out, _, calls) = written("limit", |_| Twist::default(), false);
+    assert!(out.as_ref().is_err_and(|e| e.starts_with("Free usage limit reached")), "{out:?}");
+    assert!(removed(&calls));
+    // a model that calls a tool: ended there, never answered, nothing of what it wrote is used
+    let (out, _, calls) = written("tool", |_| Twist::default(), false);
+    assert_eq!(out, Err("The model tried to use a tool instead of writing.".to_string()));
+    assert!(called(&calls, "POST", "/interrupt") && removed(&calls));
+    // one that asks to run something: the same (nothing is ever answered "once")
+    let (out, _, calls) = written("refused", |_| Twist::default(), false);
+    assert_eq!(out, Err("The model tried to use a tool instead of writing.".to_string()));
+    assert!(!calls.iter().any(|(_, p, _)| p.contains("/permission/")) && removed(&calls));
+    // rules that do not read back as written: nothing is sent
+    let (out, _, calls) = written("plain", |_| Twist { wrong_rules: true, ..Default::default() }, false);
+    assert!(out.is_err_and(|e| e.contains("did not take the writer's rules")));
+    assert!(!called(&calls, "POST", "/prompt") && removed(&calls));
+    // given up on before it began (its time was up while the server started): nothing is sent
+    let (out, _, calls) = written("plain", |_| Twist::default(), true);
+    assert!(out.is_err());
+    assert!(!called(&calls, "POST", "/prompt") && removed(&calls));
+    // the stream ends before the answer: interrupted, removed
+    let (out, _, calls) = written("plain", |sse| Twist { pieces: vec![sse[..sse.find("\"session.text.ended\"").map(|i| sse[..i].rfind("data: ").unwrap()).unwrap()].to_string()], ..Default::default() }, false);
+    assert_eq!(out, Err("OpenCode's event stream ended before it had answered.".to_string()));
+    assert!(called(&calls, "POST", "/interrupt") && removed(&calls));
+}
+
+#[test]
+fn writers_left_behind_are_removed_by_the_next_and_nothing_else_is() {
+    let left = json!([{"id": "ses_left_behind", "title": WRITER_TITLE}, {"id": "ses_not_a_writer", "title": "A chat"}]);
+    let (out, _, calls) = written("plain", |_| Twist { listed: left, ..Default::default() }, false);
+    assert!(out.is_ok());
+    let listing = calls.iter().find(|(m, p, _)| m == "GET" && p == "/api/session").expect("the writers' folder is looked at");
+    let _ = listing;
+    assert!(called(&calls, "DELETE", "/api/session/ses_left_behind"));
+    assert!(!called(&calls, "DELETE", "/api/session/ses_not_a_writer"));
 }

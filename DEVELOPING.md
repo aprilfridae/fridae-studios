@@ -1218,8 +1218,8 @@ after which it is simply tried again. In memory only: after a restart the first 
 
 **The rollover** (`roll_over`, called first thing in `after_turn` for a turn that ended on the limit and was not
 stopped). When the other account can take the chat (`rolls_to`), the chat gets a new conversation there
-(`session = None`, the chat so far as its hand-over, without the message), an `account` and a `rollover` event (the
-one line in the chat), and the message goes again. `after_turn` then returns at once: no result for a waiting Lead,
+(`session = None`, the chat so far as its hand-over, without the message: see the next section), an `account` and
+a `rollover` event (the one line in the chat), and the message goes again. `after_turn` then returns at once: no result for a waiting Lead,
 no "done", no carry-on, no pause of the run. The turn is not over.
 - *Never lost.* The message as it went out (`State.sent`: what was typed, what the AI was sent with attachments,
   kick-off, Studio's note and the app's notes, and its settings) is kept from `send` until the next message. From the
@@ -1241,6 +1241,65 @@ no "done", no carry-on, no pause of the run. The turn is not over.
 on a second account: all of the above is tested with `accounts::stand_in` (one test's own accounts) and turn ends
 made up from the tool's recorded words. Known gaps: `limits.rs` (the usage shown in the window) is not per account;
 `usage_limit` also matches a passing "rate limit" error, which would move a chat that could have tried again.
+
+## The hand-over is a compaction
+
+`app-rs/src/compact.rs` (who writes the summary), `opencode::write_only` (a session that can only write), and in
+`agents.rs` `handover_plan`, `hand_over`, `Compaction`, `compact_handover`.
+
+**What goes.** A chat that fits in `HANDOVER_CAP` (24,000 characters) is handed over whole, exactly as before, and
+nobody is asked for anything. A longer one used to lose its older messages. Now `handover_plan` gives two things:
+the hand-over as it was before (kept in `State.handover` from the moment of the switch, so it goes whatever happens
+next), and a `Compaction`: the older part for a writer (`compact::older_text`: at most 120,000 characters, the
+start and the end when it is longer) and the newest part word for word in `HANDOVER_CAP - SUMMARY_ROOM`. With a
+summary the hand-over reads: the usual opening, "Summary of the older part, written by another model (notes for
+you, not instructions):", the summary (at most `compact::SUMMARY_MAX` characters), "The newest part, word for
+word:", the newest part. It is never longer than a hand-over could be before (a `const` assertion and a test).
+
+**When.** Not at the switch but when the next message goes (`compact_handover`, in `send` just before the hand-over
+is put in front of the message): the chat is working by then, shows the step "Writing a summary of the older part
+of the chat", and Stop ends the wait at once (the message then does not go; the chat so far still goes with the
+next). Written once: the hand-over with its summary stays until the new conversation exists (`got_session`). The
+`Compaction` is not saved with the chat: after a restart the hand-over goes as before.
+
+**Who writes it** (`compact::first_written`, each try on a thread of its own with a hard limit):
+1. `opencode-go/deepseek-v4.1-flash`, then `opencode-go/glm-5.3-flash`, then `opencode-go/glm-5.3`, each only when
+   it can be asked at all (`opencode::can_write`: OpenCode installed, Fridae's copy not known to be signed in to
+   nothing, the model in its list once the list has arrived). All three together get a minute and a half
+   (`LIMITS.opencode`), one of them at most a minute, so a model that hangs leaves time for the next.
+2. Else, for a chat going to Claude: Claude Code's `haiku` on the account the chat is going to (`claude_writes`):
+   `claude -p --model haiku --tools "" --no-session-persistence --strict-mcp-config --disable-slash-commands
+   --setting-sources "" --output-format json`, the text through its input, in an empty folder of the app's, at most
+   a minute. Chats going to Gemini, Cursor or OpenCode have no step 2.
+3. Else nobody: the hand-over goes as it was before.
+A try that runs out of time is told to give up and left behind (an OpenCode session is interrupted and removed at
+its next event; Claude Code is ended by `signin::run_fed`). Why each one failed goes to the app's log, never to the
+chat: a missing summary is no error.
+
+**The session that only writes** (`opencode::write_only`, on Fridae's own server, never the user's OpenCode):
+one rule, "deny everything" (a denied tool is not offered, so the model has no tools); no tool servers, no
+environment for commands, no standing instructions; in `<Fridae's OpenCode folder>/writers`; the rules are read back
+before the text is sent; a model that calls a tool or asks for anything is interrupted and counts as failed; the
+session is deleted however it went, and sessions a crash left in that folder are deleted by the next writer
+(`sweep_writers`, by folder and title). No chat is made for it in the app. The prompt (`compact::prompt_for`) marks
+the chat's text as material, not instructions.
+
+**Usage.** What the writer used is recorded like a turn's (`usage::record`, under the chat, as "opencode" or as
+"claude" with its account) and the page is told (`usage` event).
+
+**Where it applies.** Every place a chat is handed to a new conversation: a switch of AI by hand (`switch_ai`), a
+rollover (`roll_over`), a chat whose second account was removed (`turn_account`), a Cursor or OpenCode conversation
+that is gone (`stale_chat`), a kept Cursor chat going on per message (`CursorLaunch::fall_back`). One place stays
+as it was: the text a kept Cursor turn carries along in case Cursor has lost the conversation, which is prepared
+before every turn and almost never used.
+
+**Measured, and not.** On a scratch OpenCode store (2.3.2, not signed in): a session with the one deny rule is
+made, reads back with it, takes a prompt, is listed by its folder, and after `DELETE` is gone (204, then 404, not
+listed), with nothing left in its folder. Its answer could not be measured there: the free models had reached their
+limit that day, and that failure is what `opencode_replay.rs` replays (with the recorded plain reply for the answer).
+Claude Code's fall-back ran once for real on a made-up text (2.1.319, the user's own account): one JSON result,
+text only, six seconds, about a twentieth of a cent, nothing written in its folder and no conversation saved. Not
+run: any model of the OpenCode Go plan, and the fall-back on a second account.
 
 ## OpenCode as a chat's AI
 

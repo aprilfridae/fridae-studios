@@ -270,13 +270,24 @@ fn take_answer(e: &mut Entry, answer: Answer) -> bool {
 /// A command run to its end, but no longer than `limit`: what it printed (output, error output) and whether it ended
 /// well. In a group of its own and in the ledger while it runs, so one that hangs is ended, here or by the next start
 /// of the app. None when it could not be started or was ended for taking too long.
-pub fn run_limited(mut cmd: Command, limit: Duration) -> Option<(String, String, bool)> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+pub fn run_limited(cmd: Command, limit: Duration) -> Option<(String, String, bool)> {
+    run_fed(cmd, limit, None, "signin")
+}
+
+/// The same, with text for the command to read (`input`), noted in the ledger under `what`.
+pub fn run_fed(mut cmd: Command, limit: Duration, input: Option<String>, what: &str) -> Option<(String, String, bool)> {
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
     paths::own_group(&mut cmd);
     let mut child = cmd.start().ok()?;
     let pid = child.id();
-    procs::record("signin", pid);
+    procs::record(what, pid);
+    // written from a thread of its own (a command that does not read must not hold this one), then closed
+    if let (Some(text), Some(mut pipe)) = (input, child.stdin.take()) {
+        std::thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut pipe, text.as_bytes());
+        });
+    }
     fn read(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
         std::thread::spawn(move || {
             let mut all = Vec::new();

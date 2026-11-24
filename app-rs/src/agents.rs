@@ -734,6 +734,10 @@ struct State {
     told: Vec<String>,
     /// For the Lead waiting for this helper's result: the model it really ran on, when not the one set for it.
     model_note: Option<String>,
+    /// The hand-over waiting in `handover` is longer than a hand-over may be, so its older part was left out: what
+    /// it takes to put a summary in that place instead, written when the next message goes (`compact_handover`).
+    /// Not saved with the chat: after a restart the hand-over goes as it is.
+    compact: Option<Compaction>,
     /// The message of the turn under way, as it went out: what was typed, what the AI was sent (with attachments, the
     /// kick-off and Studio's note, before the chat so far and the standing instructions), and its settings. Sent
     /// again as it is when the account's usage limit ends the turn and the other account takes over (`roll_over`).
@@ -1273,7 +1277,7 @@ fn stale_chat(st: &mut State, from: &str, saved: impl Fn(&str) -> bool) {
     st.session = None;
     if st.handover.is_none() {
         let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-        st.handover = Some(handover_text(&st.log[..upto], from, HANDOVER_CAP));
+        hand_over(st, upto, from, false);
     }
 }
 
@@ -1304,12 +1308,20 @@ fn with_handover(st: &State, text: &str) -> String {
 fn got_session(st: &mut State, id: String) {
     st.session = Some(id);
     st.handover = None;
+    st.compact = None;
 }
 
 /// The chat so far as text, for the AI a started chat is switched to: the user's messages and the agent's replies,
 /// oldest first, without tool steps, pictures or the loop's own carry-on messages. When it is longer than `cap`
 /// characters the oldest messages are left out (and it says so); a single message longer than that keeps its end.
 fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
+    let lines = handover_lines(log, from);
+    let (kept, first) = newest_lines(&lines, cap);
+    handover_frame(from, &handover_body(&kept), first > 0, None)
+}
+
+/// The chat as lines, oldest first: "User: ..." and "<the AI's name>: ..." (see `handover_text` for what is in it).
+fn handover_lines(log: &[Value], from: &str) -> Vec<String> {
     // which AI wrote each reply: the one the chat began on, then each switch's new one
     let mut ai = log
         .iter()
@@ -1344,34 +1356,111 @@ fn handover_text(log: &[Value], from: &str, cap: usize) -> String {
             _ => {}
         }
     }
-    let lines: Vec<String> = lines.into_iter().map(|(who, text)| format!("{who}: {text}")).collect();
+    lines.into_iter().map(|(who, text)| format!("{who}: {text}")).collect()
+}
+
+/// The newest of `lines` that fit in `cap` characters, whole, and the place of the first of them (so many lines
+/// before it are left out; none: 0). A single message longer than `cap` keeps its end.
+fn newest_lines(lines: &[String], cap: usize) -> (Vec<String>, usize) {
     let mut kept: Vec<String> = Vec::new();
-    let mut size = 0;
-    let mut cut = false;
-    for line in lines.iter().rev() {
+    let (mut size, mut first) = (0, lines.len());
+    for (i, line) in lines.iter().enumerate().rev() {
         let n = line.chars().count() + 2;
         if size + n > cap {
-            cut = true;
             if kept.is_empty() {
                 // one very long message: its end, which is what was said last, still saying who said it
                 let who = line.split_once(": ").map(|(w, _)| w).unwrap_or("");
                 let room = cap.saturating_sub(who.chars().count() + 4);
                 let tail: String = line.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
                 kept.push(format!("{who}: …{}", tail.trim_start()));
+                first = i;
             }
             break;
         }
         size += n;
         kept.push(line.clone());
+        first = i;
     }
     kept.reverse();
-    let body = if kept.is_empty() { "(nothing was said yet)".to_string() } else { kept.join("\n\n") };
-    format!(
-        "[This conversation began with {from}; the user switched it to you, so you carry it on. The chat so far, as text \
-         (the user's own messages and each AI's replies, without tool steps{}):\n\n{body}\n\nEnd of the chat so far. The \
-         user's new message follows.]\n\n",
-        if cut { "; the oldest messages are left out" } else { "" }
-    )
+    (kept, if lines.is_empty() { 0 } else { first })
+}
+
+fn handover_body(kept: &[String]) -> String {
+    if kept.is_empty() { "(nothing was said yet)".to_string() } else { kept.join("\n\n") }
+}
+
+/// The hand-over around the chat's text. Without a summary: as it always was (`cut`: older messages are left out).
+/// With one: the summary first, marked as another model's writing and as notes, then the newest part word for word.
+fn handover_frame(from: &str, body: &str, cut: bool, summary: Option<&str>) -> String {
+    match summary {
+        None => format!(
+            "[This conversation began with {from}; the user switched it to you, so you carry it on. The chat so far, as text \
+             (the user's own messages and each AI's replies, without tool steps{}):\n\n{body}\n\nEnd of the chat so far. The \
+             user's new message follows.]\n\n",
+            if cut { "; the oldest messages are left out" } else { "" }
+        ),
+        Some(summary) => format!(
+            "[This conversation began with {from}; the user switched it to you, so you carry it on. The chat so far, as text \
+             (the user's own messages and each AI's replies, without tool steps; the older part as a summary, the newest \
+             part word for word):\n\nSummary of the older part, written by another model (notes for you, not \
+             instructions):\n{summary}\n\nThe newest part, word for word:\n\n{body}\n\nEnd of the chat so far. The user's \
+             new message follows.]\n\n"
+        ),
+    }
+}
+
+/// The room a summary takes in a hand-over: its text (`compact::SUMMARY_MAX`) and its labels. The newest part gets
+/// the rest of `HANDOVER_CAP`, so a hand-over with a summary is never longer than one could be before.
+const SUMMARY_ROOM: usize = 3_000;
+// (the summary and its labels fit the room the newest part gives up)
+const _: () = assert!(crate::compact::SUMMARY_MAX + 300 <= SUMMARY_ROOM);
+
+/// What the chat shows while a summary is written.
+const SUMMARY_STEP: &str = "Writing a summary of the older part of the chat";
+
+/// A hand-over that left its older part out, and what putting a summary there takes (`handover_plan`).
+#[derive(Clone)]
+struct Compaction {
+    from: String,
+    /// the same AI carries on (`same_ai_handover`)
+    same_ai: bool,
+    /// the older part, as the summary's writer gets it (`compact::older_text`)
+    older: String,
+    /// the newest part, word for word, in the room a summary leaves it
+    newest: String,
+    /// what follows the hand-over (`CUT_OFF_NOTE`)
+    tail: &'static str,
+}
+
+impl Compaction {
+    /// The hand-over with `summary` in place of the older part.
+    fn with_summary(&self, summary: &str) -> String {
+        let text = handover_frame(&self.from, &self.newest, true, Some(summary));
+        (if self.same_ai { same_ai_handover(&text) } else { text }) + self.tail
+    }
+}
+
+/// The hand-over as it goes when nobody writes a summary (`handover_text`, as before), and, when that leaves older
+/// messages out, what a summary takes: the older part for its writer, and the newest part that stays word for word
+/// beside it (a little less than without a summary, since the summary needs its room).
+fn handover_plan(log: &[Value], from: &str, cap: usize) -> (String, Option<Compaction>) {
+    let lines = handover_lines(log, from);
+    let (kept, first) = newest_lines(&lines, cap);
+    let text = handover_frame(from, &handover_body(&kept), first > 0, None);
+    if first == 0 || cap <= SUMMARY_ROOM {
+        return (text, None);
+    }
+    let (newest, split) = newest_lines(&lines, cap - SUMMARY_ROOM);
+    let due = Compaction { from: from.to_string(), same_ai: false, older: crate::compact::older_text(&lines[..split]), newest: handover_body(&newest), tail: "" };
+    (text, Some(due))
+}
+
+/// The chat up to `upto` is handed to its next conversation: as text now (so it goes whatever happens), and noted
+/// for a summary when it is too long to go whole. `same_ai`: its AI carries on, not another one.
+fn hand_over(st: &mut State, upto: usize, from: &str, same_ai: bool) {
+    let (text, due) = handover_plan(&st.log[..upto], from, HANDOVER_CAP);
+    st.handover = Some(if same_ai { same_ai_handover(&text) } else { text });
+    st.compact = due.map(|d| Compaction { same_ai, ..d });
 }
 
 /// A hand-over (`handover_text`) for the same AI carrying on in a new conversation of its own (a kept Cursor chat
@@ -2049,10 +2138,12 @@ impl Kept for CursorLaunch {
         let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
         let had = st.log[..upto].iter().any(|e| matches!(e["kind"].as_str(), Some("user") | Some("text")));
         if had && st.handover.is_none() {
-            st.handover = Some(same_ai_handover(&handover_text(&st.log[..upto], "Cursor", HANDOVER_CAP)));
+            hand_over(&mut st, upto, "Cursor", true);
         }
-        let text = antigravity::with_instructions(&self.prompt, &with_handover(&st, &self.body));
         drop(st);
+        // (Stop while its summary is written: the hand-over goes as it is, and the turn is stopped as any other)
+        let _ = a.compact_handover("cursor");
+        let text = antigravity::with_instructions(&self.prompt, &with_handover(&a.st.lock().unwrap(), &self.body));
         if had {
             a.put("error", json!({"text": CURSOR_HANDED_OVER}));
         }
@@ -2113,12 +2204,12 @@ fn kept_wanted_with(ai: &str, switch: Option<&str>) -> bool {
 /// Claude Code alone, which finds its sign-in through the home folder's keychain (as FRIDAE_CURSOR_HOME does for
 /// Cursor). The app's tool server gets the app's HOME back in its entry.
 #[cfg(debug_assertions)]
-fn claude_home() -> Option<std::path::PathBuf> {
+pub(crate) fn claude_home() -> Option<std::path::PathBuf> {
     std::env::var_os("FRIDAE_CLAUDE_HOME").filter(|v| !v.is_empty()).map(std::path::PathBuf::from)
 }
 
 #[cfg(not(debug_assertions))]
-fn claude_home() -> Option<std::path::PathBuf> {
+pub(crate) fn claude_home() -> Option<std::path::PathBuf> {
     None
 }
 
@@ -2459,7 +2550,8 @@ impl Agent {
                 return Ok(false);
             }
             // an earlier handover not yet sent is part of the log it is rebuilt from, so nothing is lost
-            st.handover = Some(handover_text(&st.log, ai_label(&from), HANDOVER_CAP));
+            let all = st.log.len();
+            hand_over(&mut st, all, ai_label(&from), false);
             st.session = None;
             st.ai = Some(kind.to_string());
             from
@@ -2982,6 +3074,9 @@ impl Agent {
         let kind = self.ai();
         #[cfg(test)]
         {
+            if !self.compact_handover(&kind) {
+                return self.stopped_before_start(was_left);
+            }
             let mut st = self.st.lock().unwrap();
             let went = with_handover(&st, &text);
             st.went_for_test.push(went);
@@ -3026,6 +3121,11 @@ impl Agent {
             let session = self.st.lock().unwrap().session.clone();
             let saved = session.as_deref().is_none_or(opencode::chat_saved);
             stale_chat(&mut self.st.lock().unwrap(), "OpenCode", |_| saved);
+        }
+        // a chat so far that is too long to go whole: its older part goes as a summary, written now (the chat shows
+        // the step). Stop meanwhile: the message does not go
+        if !self.compact_handover(&kind) {
+            return self.stopped_before_start(was_left);
         }
         // the message without the chat so far or the standing instructions, for an AI whose fallback starts a new
         // conversation and hands the chat over itself (`CursorLaunch::fall_back`)
@@ -3944,7 +4044,7 @@ impl Agent {
             if was == 2 && account == 1 {
                 // its conversation was the second account's: this message starts a new one, with the chat so far
                 let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-                st.handover = Some(same_ai_handover(&handover_text(&st.log[..upto], ai_label(kind), HANDOVER_CAP)));
+                hand_over(&mut st, upto, ai_label(kind), true);
                 st.session = None;
             }
             st.account = account;
@@ -3954,6 +4054,44 @@ impl Agent {
             self.put("account", json!({"account": account}));
         }
         account
+    }
+
+    /// The hand-over that waits to go with this message gets a summary in place of the older part it left out
+    /// (`Compaction`), when somebody can write one in time (`compact::summary`: a few seconds as a rule, never longer
+    /// than its limits). The chat shows a step meanwhile, and what the writing used is recorded as usage. Nobody could:
+    /// the hand-over goes as it is, the older part left out as before. False: Stop was pressed while it was written.
+    fn compact_handover(self: &Arc<Self>, kind: &str) -> bool {
+        let (due, account) = {
+            let mut st = self.st.lock().unwrap();
+            let due = st.compact.take().filter(|_| st.handover.is_some());
+            (due, st.account.max(1))
+        };
+        let Some(due) = due else { return true };
+        self.put("tool", json!({"label": SUMMARY_STEP, "app": true}));
+        let out = crate::compact::summary(&due.older, kind, account, &|| self.st.lock().unwrap().halted || shutting());
+        if let Some(s) = &out.summary {
+            usage::record(s.ai, s.account, &self.id, self.project().as_deref(), &s.usage, None);
+            self.put("usage", s.usage.json());
+            let mut st = self.st.lock().unwrap();
+            if st.handover.is_some() {
+                st.handover = Some(due.with_summary(&s.text));
+            }
+        }
+        !out.stopped
+    }
+
+    /// Stop was pressed while a message was being made ready (its hand-over's summary was being written): the turn
+    /// ends here as a stopped one, before any AI was started.
+    fn stopped_before_start(self: &Arc<Self>, was_left: Option<f64>) {
+        self.st.lock().unwrap().resend_due = false;
+        self.put("error", json!({"text": "Stopped."}));
+        team::finished(self, true);
+        self.st.lock().unwrap().jobs_lost = None;
+        self.put("done", json!({}));
+        if let Some(left) = was_left {
+            back_to_wait(&mut self.st.lock().unwrap(), left);
+            self.put("studio_waiting", json!({"value": true, "left": left.round()}));
+        }
     }
 
     /// A turn of this chat was ended by its account's usage limit. The account is marked used up until its reset time
@@ -3980,13 +4118,17 @@ impl Agent {
             // first message, or the first after a switch of AI) keeps what it was to be handed, or nothing
             let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
             if st.session.is_some() || (st.handover.is_none() && st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text")) {
-                st.handover = Some(same_ai_handover(&handover_text(&st.log[..upto], ai_label(kind), HANDOVER_CAP)));
+                hand_over(&mut st, upto, ai_label(kind), true);
             }
             // what the ended turn had begun is not in the hand-over: the AI is told that it may find work done
-            if st.log[upto..].iter().any(|e| e["kind"] == "tool")
+            // (the app's own step, a summary being written, is no work of the turn's)
+            if st.log[upto..].iter().any(|e| e["kind"] == "tool" && e["app"] != true)
                 && let Some(h) = st.handover.as_mut()
             {
                 *h += CUT_OFF_NOTE;
+                if let Some(c) = st.compact.as_mut() {
+                    c.tail = CUT_OFF_NOTE;
+                }
             }
             st.session = None;
             st.account = to;
@@ -6622,6 +6764,192 @@ mod tests {
         let ready = Have { first_used: true, second_ready: true };
         assert_eq!((rolls_to(ready, 1, false, true), rolls_to(ready, 1, true, true), rolls_to(ready, 1, false, false)), (Some(2), None, None));
         assert_eq!(rolls_to(Have { first_used: true, second_ready: false }, 2, false, true), None, "both used up");
+    }
+
+    /// A chat too long to hand over whole: 120 questions and answers of some 200 characters each.
+    fn long_chat() -> Vec<Value> {
+        (0..120).flat_map(|i| [json!({"kind": "user", "text": format!("Question {i} {}", "q".repeat(180))}), json!({"kind": "text", "text": format!("Answer {i} {}", "a".repeat(180))})]).collect()
+    }
+
+    /// In place of any model: the summary a test's writer "wrote", or nobody able to write one.
+    fn stand_in_summary(text: Option<&'static str>, stopped: bool) {
+        crate::compact::STAND_IN.with(|s| {
+            *s.borrow_mut() = Some(Box::new(move |older: &str| {
+                assert!(older.starts_with("User: Question 0 "), "the writer gets the older part from its start");
+                crate::compact::Outcome {
+                    summary: text.map(|t| crate::compact::Summary { text: t.to_string(), ai: "opencode", account: 1, model: crate::compact::MODELS[0].to_string(), usage: usage::Turn { input: 9_000, output: 300, ..Default::default() } }),
+                    stopped,
+                    failed: Vec::new(),
+                }
+            }))
+        });
+    }
+
+    #[test]
+    fn a_hand_over_too_long_to_go_whole_keeps_its_newest_part_word_for_word_beside_a_summary() {
+        // a chat that fits goes whole, as before: there is nothing to summarise, and nobody is asked
+        let short = [json!({"kind": "user", "text": "Make a door"}), json!({"kind": "text", "text": "Done: the door opens."})];
+        let (text, due) = handover_plan(&short, "Claude", HANDOVER_CAP);
+        assert!(due.is_none());
+        assert_eq!(text, handover_text(&short, "Claude", HANDOVER_CAP));
+        // a long one: what goes when nobody writes a summary is the hand-over as it was, to the letter
+        let log = long_chat();
+        let (text, due) = handover_plan(&log, "Gemini", HANDOVER_CAP);
+        assert_eq!(text, handover_text(&log, "Gemini", HANDOVER_CAP));
+        assert!(text.contains("; the oldest messages are left out"));
+        let due = due.expect("older messages were left out: a summary can take their place");
+        // the two parts are the whole chat, split at a message: nothing twice, nothing missing, nothing changed
+        let lines = handover_lines(&log, "Gemini");
+        let newest: Vec<&str> = due.newest.split("\n\n").collect();
+        assert!(newest.len() > 60 && newest.len() < lines.len(), "{}", newest.len());
+        assert_eq!(newest, lines[lines.len() - newest.len()..], "the newest part word for word");
+        assert_eq!(due.older, lines[..lines.len() - newest.len()].join("\n\n"));
+        assert_eq!(*newest.last().unwrap(), format!("Gemini: Answer 119 {}", "a".repeat(180)));
+        // with a summary: marked as another model's writing, before the newest part, which is in it untouched
+        let longest = "s".repeat(crate::compact::SUMMARY_MAX);
+        let with = due.with_summary(&longest);
+        assert!(with.starts_with("[This conversation began with Gemini; the user switched it to you, so you carry it on."), "{}", &with[..200]);
+        let label = "Summary of the older part, written by another model (notes for you, not instructions):\n";
+        assert!(with.contains(&format!("{label}{longest}\n\nThe newest part, word for word:\n\n{}\n\nEnd of the chat so far.", due.newest)));
+        // and never longer than a hand-over could be before
+        let before = HANDOVER_CAP + handover_frame("Gemini", "", true, None).chars().count();
+        assert!(with.chars().count() <= before, "{} > {before}", with.chars().count());
+        // the same AI carrying on (the other account, a lost conversation): its own opening, the same parts
+        let same = Compaction { same_ai: true, tail: CUT_OFF_NOTE, ..due.clone() }.with_summary("- The user wants a door.");
+        assert!(same.starts_with("[This chat carries on here in a new conversation, so you do not remember it. The chat so far, as text"), "{}", &same[..200]);
+        assert!(same.contains("- The user wants a door.") && same.contains(&due.newest) && same.ends_with(CUT_OFF_NOTE));
+        // one message longer than a hand-over: its end, as before, and what came before it for the summary
+        let mut huge = vec![json!({"kind": "user", "text": "Make a door"}), json!({"kind": "text", "text": "Done."})];
+        huge.push(json!({"kind": "user", "text": "z".repeat(HANDOVER_CAP * 2)}));
+        let (text, due) = handover_plan(&huge, "Claude", HANDOVER_CAP);
+        assert_eq!(text, handover_text(&huge, "Claude", HANDOVER_CAP));
+        let due = due.unwrap();
+        assert_eq!(due.older, "User: Make a door\n\nClaude: Done.");
+        assert!(due.newest.starts_with("User: …zzz") && due.newest.chars().count() <= HANDOVER_CAP - SUMMARY_ROOM);
+    }
+
+    #[test]
+    fn the_summary_is_written_as_the_message_goes_shown_as_a_step_and_recorded_as_usage() {
+        // the user switches a long chat to another AI by hand
+        let a = Agent::detached_for_test("c-compact", None);
+        a.st.lock().unwrap().log = long_chat();
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        assert_eq!(a.switch_ai("claude"), Ok(true));
+        let fallback = a.st.lock().unwrap().handover.clone().unwrap();
+        assert!(a.st.lock().unwrap().compact.is_some() && fallback.contains("; the oldest messages are left out"));
+        // nothing is written until a message goes
+        stand_in_summary(Some("- The user asked 120 questions about doors."), false);
+        let at = a.st.lock().unwrap().log.len();
+        a.send("Now add a lock", &Ask::default());
+        let (went, after) = {
+            let st = a.st.lock().unwrap();
+            (st.went_for_test.last().cloned().unwrap(), st.log[at..].to_vec())
+        };
+        assert!(went.contains("written by another model (notes for you, not instructions):\n- The user asked 120 questions about doors.\n\nThe newest part, word for word:\n\n"), "{}", &went[..600]);
+        assert!(went.contains(&format!("Gemini: Answer 119 {}", "a".repeat(180))) && went.ends_with("Now add a lock"));
+        assert!(!went.contains("Question 0 ") && !went.contains("the oldest messages are left out"));
+        // the chat shows the step, after the user's message, and what the writing used is recorded
+        let kinds: Vec<&str> = after.iter().filter_map(|e| e["kind"].as_str()).collect();
+        let step = after.iter().position(|e| e["kind"] == "tool" && e["label"] == SUMMARY_STEP).expect("the step");
+        assert!(kinds.iter().position(|k| *k == "user").is_some_and(|u| u < step) && after[step]["app"] == true, "{kinds:?}");
+        assert!(after[step + 1]["kind"] == "usage" && after[step + 1]["output"].as_u64().is_some_and(|o| o > 0), "{:?}", after[step + 1]);
+        // written once: the next message hands over the same text and asks nobody
+        stand_in_summary(Some("another"), false);
+        a.send("And a key", &Ask::default());
+        let st = a.st.lock().unwrap();
+        assert!(st.went_for_test.last().unwrap().contains("- The user asked 120 questions about doors.") && st.compact.is_none());
+        assert_eq!(st.log.iter().filter(|e| e["label"] == SUMMARY_STEP).count(), 1);
+    }
+
+    #[test]
+    fn with_nobody_to_write_a_summary_the_hand_over_goes_as_it_always_did_and_stop_ends_the_wait() {
+        // OpenCode missing, not signed in, every call failed or too slow, and no fall-back: the older part is dropped
+        let a = Agent::detached_for_test("c-compact-none", None);
+        a.st.lock().unwrap().log = long_chat();
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        assert_eq!(a.switch_ai("claude"), Ok(true));
+        let fallback = a.st.lock().unwrap().handover.clone().unwrap();
+        stand_in_summary(None, false);
+        a.send("Now add a lock", &Ask::default());
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!(*st.went_for_test.last().unwrap(), format!("{fallback}Now add a lock"), "to the letter what went before there were summaries");
+            assert!(st.log.iter().any(|e| e["label"] == SUMMARY_STEP) && !st.log.iter().any(|e| e["kind"] == "usage"));
+            assert!(st.log.iter().any(|e| e["kind"] == "done"), "the turn goes on to its AI (none in a test)");
+        }
+        // a short chat: no step, nobody asked
+        let b = Agent::detached_for_test("c-compact-short", None);
+        b.put("user", json!({"text": "Make a door"}));
+        b.put("text", json!({"text": "Done."}));
+        b.st.lock().unwrap().ai = Some("gemini".into());
+        assert_eq!(b.switch_ai("claude"), Ok(true));
+        crate::compact::STAND_IN.with(|s| *s.borrow_mut() = Some(Box::new(|_| panic!("nothing to summarise"))));
+        b.send("Now add a lock", &Ask::default());
+        assert!(!b.st.lock().unwrap().log.iter().any(|e| e["label"] == SUMMARY_STEP));
+        // Stop while the summary is written: the message does not go, and the turn ends as a stopped one
+        let c = Agent::detached_for_test("c-compact-stop", None);
+        c.st.lock().unwrap().log = long_chat();
+        c.st.lock().unwrap().ai = Some("gemini".into());
+        assert_eq!(c.switch_ai("claude"), Ok(true));
+        stand_in_summary(None, true);
+        let at = c.st.lock().unwrap().log.len();
+        c.send("Now add a lock", &Ask::default());
+        let st = c.st.lock().unwrap();
+        assert!(st.went_for_test.is_empty(), "not sent");
+        let tail: Vec<(&str, &str)> = st.log[at..].iter().map(|e| (e["kind"].as_str().unwrap_or(""), e["text"].as_str().unwrap_or(""))).filter(|(k, _)| *k == "error" || *k == "done").collect();
+        assert_eq!(tail, [("error", "Stopped."), ("done", "")]);
+        assert!(st.handover.is_some() && !working(&st), "the chat so far still goes with the next message");
+    }
+
+    #[test]
+    fn a_rollover_of_a_long_chat_hands_over_a_summary_too_and_never_fails_for_want_of_one() {
+        crate::accounts::stand_in(true, true);
+        let a = Agent::detached_for_test("c-roll-long", None);
+        {
+            let mut st = a.st.lock().unwrap();
+            st.log = long_chat().into_iter().map(|mut e| { if e["kind"] == "text" { e["text"] = json!(e["text"].as_str().unwrap().replace("Answer", "Reply")); } e }).collect();
+            st.session = Some("s1".into());
+            st.account = 1;
+        }
+        a.send("Now add a lock", &Ask::default());
+        a.put("tool", json!({"label": "Editing Door.luau"}));
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        let again = a.st.lock().unwrap().resent_for_test[0].clone();
+        // nobody can write the summary: the rollover goes on all the same, with the hand-over as it was before
+        stand_in_summary(None, false);
+        let fallback = a.st.lock().unwrap().handover.clone().unwrap();
+        assert!(fallback.ends_with(CUT_OFF_NOTE) && fallback.contains("; the oldest messages are left out"));
+        a.resend(&again);
+        assert_eq!(*a.st.lock().unwrap().went_for_test.last().unwrap(), format!("{fallback}Now add a lock"));
+        // with a writer: the summary, the newest part, the note that the turn was cut off, then the message, once
+        let b = Agent::detached_for_test("c-roll-long-2", None);
+        {
+            let mut st = b.st.lock().unwrap();
+            st.log = long_chat();
+            st.session = Some("s1".into());
+            st.account = 1;
+        }
+        b.send("Now add a lock", &Ask::default());
+        b.put("tool", json!({"label": "Editing Door.luau"}));
+        b.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        let again = b.st.lock().unwrap().resent_for_test[0].clone();
+        stand_in_summary(Some("- Doors, 120 of them."), false);
+        b.resend(&again);
+        let went = b.st.lock().unwrap().went_for_test.last().cloned().unwrap();
+        assert!(went.starts_with("[This chat carries on here in a new conversation") && went.contains("- Doors, 120 of them.") && went.ends_with(&format!("{CUT_OFF_NOTE}Now add a lock")), "{}", &went[went.len() - 400..]);
+        assert_eq!(went.matches("Now add a lock").count(), 1);
+        // the summary's own step is no work of a turn: a later rollover does not take it for one
+        let c = Agent::detached_for_test("c-roll-long-3", None);
+        {
+            let mut st = c.st.lock().unwrap();
+            st.log = long_chat();
+            st.session = Some("s1".into());
+            st.account = 1;
+        }
+        c.send("Now add a lock", &Ask::default());
+        c.put("tool", json!({"label": SUMMARY_STEP, "app": true}));
+        c.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert!(!c.st.lock().unwrap().handover.clone().unwrap().ends_with(CUT_OFF_NOTE));
     }
 
     #[test]

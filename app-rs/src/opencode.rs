@@ -1969,6 +1969,146 @@ fn shell_environment() -> Map<String, Value> {
     out
 }
 
+// ------------------------------------------------------------ a writer only
+
+/// What a model wrote, and what writing it used.
+pub struct Written {
+    pub text: String,
+    pub usage: crate::usage::Turn,
+}
+
+/// The title of a session that only writes (`write_only`).
+const WRITER_TITLE: &str = "Fridae: summary";
+
+/// The sessions that only write and are running now, so a sweep never removes one at work.
+static WRITING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The folder the sessions that only write are made in: the app's own, empty, used for nothing else. Nothing is
+/// written there (the session may do nothing), and a session left in it is removed by the next writer (`sweep_writers`).
+#[cfg_attr(test, allow(dead_code))]
+fn writers_folder() -> PathBuf {
+    store().join("writers")
+}
+
+/// Whether a model of the user's plan can be asked to write now: OpenCode is there, Fridae's copy is not known to be
+/// signed in to nothing, and it lists the model (when its list has arrived; before that the call itself tells).
+#[cfg_attr(test, allow(dead_code))]
+pub fn can_write(model: &str) -> bool {
+    if cfg!(windows) || paths::find_opencode().is_none() || free_only() {
+        return false;
+    }
+    let list = models();
+    list.is_empty() || list.iter().any(|(id, _)| id == model)
+}
+
+/// Text from one of OpenCode's models and nothing else: a session on Fridae's own server whose every permission is
+/// denied (a denied tool is not offered, so the model has no tools at all), in a folder of the app's own, sent
+/// `prompt` once. It is no chat of the user's (no chat is made for it in the app, and the app's server is not the
+/// user's OpenCode), and it is removed when it has answered, failed or been cancelled. A model that calls a tool or
+/// asks for anything all the same is ended and counts as failed. `cancel`: set by the caller when it has waited
+/// long enough; the session is then interrupted and removed at its next event (a heartbeat at the latest).
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_only(model: &str, prompt: &str, cancel: &AtomicBool) -> Result<Written, String> {
+    // among the running turns meanwhile, so the idle watch and a sign-in's restart never end the server under it
+    let key = format!("writer-{}", paths::random_hex(1));
+    let me = Arc::new(Active::default());
+    active().as_mut().unwrap().insert(key.clone(), me.clone());
+    let out = ensure().and_then(|conn| write_only_on(&conn, model, prompt, cancel, &writers_folder()));
+    leave(&key, &me);
+    out
+}
+
+/// See `write_only`: on a running server (the real one, or in the tests a stand-in).
+fn write_only_on(conn: &Conn, model: &str, prompt: &str, cancel: &AtomicBool, folder: &Path) -> Result<Written, String> {
+    let _ = fs::create_dir_all(folder);
+    sweep_writers(conn, folder);
+    let rules = vec![rule("*", "*", "deny")];
+    let reference = model_ref(model).ok_or_else(|| format!("{model} is not a model's name."))?;
+    let body = json!({"title": WRITER_TITLE, "location": {"directory": folder}, "permissions": rules, "model": reference});
+    let session = match call(conn, "POST", "/api/session", Some(&body)) {
+        Ok((200, v)) if v["data"]["id"].is_string() => v["data"]["id"].as_str().unwrap().to_string(),
+        Ok((s, v)) => return Err(format!("OpenCode could not start the writer ({s}): {}", said(&v))),
+        Err(e) => return Err(e),
+    };
+    WRITING.lock().unwrap_or_else(|e| e.into_inner()).push(session.clone());
+    let out = written_in(conn, &session, &rules, model, prompt, cancel);
+    // removed, however it went (one that cannot be removed now is swept by the next writer)
+    let _ = request(conn, "DELETE", &format!("/api/session/{}", quote(&session)), None, Duration::from_secs(10));
+    WRITING.lock().unwrap_or_else(|e| e.into_inner()).retain(|s| s != &session);
+    out
+}
+
+fn written_in(conn: &Conn, session: &str, rules: &[Value], model: &str, prompt: &str, cancel: &AtomicBool) -> Result<Written, String> {
+    // the rules must be the ones written: nothing is sent to a session that could do anything
+    if !rules_intact(conn, session, rules) {
+        return Err("OpenCode did not take the writer's rules, so nothing was sent to it.".to_string());
+    }
+    if cancel.load(Ordering::SeqCst) {
+        return Err("It was not started in time.".to_string());
+    }
+    let mut events = Events::open(conn)?;
+    match call(conn, "POST", &format!("/api/session/{}/prompt", quote(session)), Some(&json!({"text": prompt}))) {
+        Ok((200, _)) => {}
+        Ok((s, v)) => return Err(format!("OpenCode did not take the text ({s}): {}", said(&v))),
+        Err(e) => return Err(e),
+    }
+    let interrupt = || {
+        let _ = request(conn, "POST", &format!("/api/session/{}/interrupt", quote(session)), None, Duration::from_secs(5));
+    };
+    let mut turn = Turn::new("", &json!({}), Some(model.to_string()));
+    let (mut texts, mut failed): (Vec<String>, Option<String>) = (Vec::new(), None);
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            interrupt();
+            return Err("It took too long.".to_string());
+        }
+        let e = match events.next() {
+            Ok(Some(e)) => e,
+            Ok(None) | Err(_) => {
+                interrupt();
+                return Err("OpenCode's event stream ended before it had answered.".to_string());
+            }
+        };
+        // it may only write: a tool it calls, or anything it asks to do, ends it there
+        let kind = e["type"].as_str().unwrap_or("");
+        if e["data"]["sessionID"] == session && (kind.starts_with("session.tool.") || kind == "permission.asked") {
+            interrupt();
+            return Err("The model tried to use a tool instead of writing.".to_string());
+        }
+        let step = turn.feed(session, &e);
+        for o in step.outs {
+            match o {
+                Out::Text(t) => texts.push(t),
+                Out::Failed(f) => failed = Some(f),
+                _ => {}
+            }
+        }
+        if step.ended {
+            break;
+        }
+    }
+    let usage = turn.finish().into_iter().find_map(|o| if let Out::Usage(u) = o { Some(u) } else { None }).unwrap_or_default();
+    if let Some(f) = failed {
+        return Err(f);
+    }
+    let text = texts.join("\n\n").trim().to_string();
+    if text.is_empty() {
+        return Err("It wrote nothing.".to_string());
+    }
+    Ok(Written { text, usage })
+}
+
+/// Sessions a writer left in its folder (the app was closed, or the server ended, before it could remove its own):
+/// removed, except those at work now. Only sessions in the writers' own folder are looked at.
+fn sweep_writers(conn: &Conn, folder: &Path) {
+    let path = format!("/api/session?limit=100&directory={}", quote(&folder.display().to_string()));
+    let Ok((200, v)) = call(conn, "GET", &path, None) else { return };
+    let at_work = WRITING.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    for id in v["data"].as_array().into_iter().flatten().filter(|s| s["title"] == WRITER_TITLE).filter_map(|s| s["id"].as_str()).filter(|id| !at_work.iter().any(|w| w == id)) {
+        let _ = request(conn, "DELETE", &format!("/api/session/{}", quote(id)), None, Duration::from_secs(10));
+    }
+}
+
 /// Stop a chat's turn: OpenCode is asked to end it; if it has not within STOP_WAIT, the server is ended (with every
 /// OpenCode turn running), and the turn says so. A chat whose turn the app no longer follows still has its saved
 /// session interrupted (so "press Stop" after a busy answer is true). Blocks until then: call it off the page's thread.
