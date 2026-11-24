@@ -3544,6 +3544,9 @@ impl Agent {
         prompt += &team_prompt(self);
         // a member of a swarm: its name, its own copy, the board, the Studio turn, parking (`swarm::member_prompt`)
         prompt += &crate::swarm::member_prompt(&self.id);
+        // the user's skills, for every AI (`skills`): the list and how to load one with rbx_skill. For Claude only
+        // what Claude Code does not list itself (on a second account, by that account's own synced skills)
+        prompt += &crate::skills::catalog(&kind, project.as_deref(), second_dir.as_deref().filter(|_| kind == "claude"));
         // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
         prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);

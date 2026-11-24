@@ -28,6 +28,7 @@ mod accounts;
 mod compact;
 mod opencode;
 mod signin;
+mod skills;
 mod paths;
 mod plugin;
 mod procs;

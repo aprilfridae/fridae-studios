@@ -381,6 +381,23 @@ def _guide_cap():
     return GUIDE_CAP if (os.environ.get("RBXKIT_AGENT_ROLE") or "").strip() else GUIDE_CAP_CHAT
 
 
+def t_skill(a):
+    """The user's skills, the same for every AI (rbxskills)."""
+    import rbxskills  # lazy: only this tool needs it
+    project = os.environ.get("RBXKIT_PROJECT") or None
+    action = str(a.get("action") or ("load" if a.get("name") else "list")).strip().lower()
+    try:
+        if action == "list":
+            return result(rbxskills.listing(project), True, False)
+        if action == "load":
+            return result(rbxskills.load(str(a.get("name") or ""), project), True, False)
+        if action == "read":
+            return result(rbxskills.read_file(str(a.get("name") or ""), str(a.get("path") or ""), project), True, False)
+    except (LookupError, OSError) as e:
+        return result(str(e), False)
+    return result("Unknown action '%s': use list, load or read." % action, False)
+
+
 def t_guide(a):
     """One or several guides in a single call."""
     wanted = [str(t).strip().lower() for t in (a.get("topics") or [])]
@@ -786,7 +803,7 @@ LIFE_MARGIN = 20.0           # past a tool's own time limit, so the tool can say
 OWN_LIMIT = {"rbx_doctor": 120, "rbx_texture": 600, "rbx_check_images": 600, "rbx_icon": 600, "rbx_video": 600,
              "rbx_animation": 600, "rbx_vfx_package": 600, "rbx_generate_texture": 720, "rbx_image": 600}
 # answered by this process itself: instant, or tied to this process (the lock's owner, the promo renders it keeps)
-INLINE = ("rbx_guide", "rbx_studio_snippet", "rbx_studio_lock", "rbx_board")
+INLINE = ("rbx_guide", "rbx_skill", "rbx_studio_snippet", "rbx_studio_lock", "rbx_board")
 PROMO_INLINE = (None, "", "job", "render", "install")
 # The tools that may run beside any other job, each with why. Everything else takes its turn: tools share files
 # (two texture calls write one folder's _check.png; Blender, a package and an icon read and write one model's files;
@@ -1319,6 +1336,15 @@ TOOLS = [
              "whole": {"type": "boolean", "description": "true returns large guides in full instead of their outline"},
              "outline": {"type": "boolean", "description": "true returns each guide's outline (opening, rules sections in "
                                                           "full, section table) whatever its size"}}), t_guide),
+    ("rbx_skill", "The user's skills: packaged instructions for particular kinds of work (UI/UX design, debugging, "
+     "test-driven development, planning, documents, Roblox systems and more), the same for every AI. Your standing "
+     "instructions list them under Skills. When one fits the task, load it before you start and follow it. 'load' (name) "
+     "returns its instructions, its folder and its files; 'read' (name, path) returns one of its files; 'list' names "
+     "every skill.",
+     schema({"action": {"type": "string", "enum": ["list", "load", "read"]},
+             "name": {"type": "string", "description": "load, read: the skill's name as listed, such as ui-ux-pro-max or superpowers:systematic-debugging"},
+             "path": {"type": "string", "description": "read: a file inside the skill's folder, as 'load' lists it, such as references/quick-reference.md"}},
+            ["action"]), t_skill),
     ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "
      "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
      "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "

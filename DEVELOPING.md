@@ -2032,6 +2032,33 @@ the Lead's texts say to save one for every Change in Review. Setup, General, You
 folder (`GET /api/notes`, `POST /api/notes-open`, token-protected, known folders only). `docs/house-rules-example.md`
 is an example the user can paste into their own House rules.
 
+## Skills for every AI
+
+The user's skills (folders with a `SKILL.md`) reach every agent on every AI, game or plain project alike. Claude
+Code loads some of them by itself; Gemini, Cursor, OpenCode and Codex load none (Fridae turns off OpenCode's Claude
+Code compatibility and denies its own `skill` tool). So:
+
+- `rbxskills.py` finds them all, first found wins for a name: the project's `.claude/skills` and `.agents/skills`;
+  Claude Code's `~/.claude/skills` and its enabled plugins (`installed_plugins.json`); what the Claude apps synced from
+  claude.ai for every signed-in account (`~/.claude/plugins/synced/<..>_<account>/<plugin>/skills`,
+  `~/.claude/skills/synced/<..>_<account>`, the newest copy of a skill wins); and other tools' folders
+  (`~/.agents/skills`, `~/.codex/skills`, `~/.cursor/skills`, `~/.config/opencode/skill(s)`, `~/.gemini/skills`).
+  A plugin's skill is `<plugin>:<skill>`. Seven synced skills that only work with the Claude desktop app's own tools
+  (browser pane, Chrome, computer use, docs, Google Workspace, morning brief, memory import) are left out (`APP_ONLY`).
+- `rbx_skill` (tool server, every AI): `list`, `load` (its SKILL.md with `${CLAUDE_SKILL_DIR}` and
+  `${CLAUDE_PLUGIN_ROOT}` filled in, its folder and its files), `read` (one file inside the skill's folder only).
+- Every agent's standing instructions carry a `## Skills` catalog, one line per skill (`skills::catalog`, made by
+  `rbx skills catalog` so the list and the tool always agree), just before the house rules. Claude's leaves out what
+  Claude Code lists itself: its folder, its plugins, and what it synced for the account the turn runs on (the account
+  id from `.claude.json`, of the second account's folder on a second account); with nothing left it is empty.
+- The catalog costs a Python start (0.05 s from source, about 0.5 s through the bundled program), so it is kept until
+  a watched skills folder changes or for ten minutes.
+- Measured 2026-11-24: Cursor (auto model) read the catalog, found `rbx_skill` and loaded the right skill for a Roblox
+  shop menu. OpenCode's DeepSeek picked the right skill but first reached for its own `skill` tool (hence the
+  catalog's line about it; in the app that tool is denied). A plain `opencode run` cannot be given tool servers in
+  OpenCode 2.x (the app adds them through the server's API), so OpenCode was not measured with `rbx_skill` itself.
+- Tests: `python3 -m unittest tests.test_skills`; `cargo test skills::`.
+
 ## Folders
 
 - `rbx.py`, `rbx*.py`, `blender/` - the tools.
