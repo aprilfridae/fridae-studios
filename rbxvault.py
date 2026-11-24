@@ -151,8 +151,13 @@ def parse_symptoms():
     return out
 
 
+VAULT_INDEX_FORMAT = 2  # rbxkit: bump when parse() adds or changes a field (2: labels, links, supersedes)
+
+
 def signature(files):
-    h = hashlib.sha1(rbxpaths.VERSION.encode())  # the packaged app has no rbxvault.py on disk to stat
+    # the packaged app has no rbxvault.py on disk to stat, and an update may keep the notes' file times: the format
+    # number makes a cache from before a change of fields stale
+    h = hashlib.sha1(("%s|format %d" % (rbxpaths.VERSION, VAULT_INDEX_FORMAT)).encode())
     for p in files + [os.path.join(KB, "SYMPTOMS.md"), os.path.abspath(__file__)]:
         if os.path.exists(p):
             st = os.stat(p)

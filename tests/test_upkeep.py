@@ -223,6 +223,22 @@ class KeywordSearchTests(UpkeepCase):
         self.assertIn("[game] Lantern colour here", out)
         self.assertNotIn("[yours] Lantern colour ›", out.split("[game] Lantern colour here")[0])
 
+    def test_a_vault_cache_from_before_the_labels_is_rebuilt(self):
+        # an updated app keeps the vault files' times: a cache signed the old way (version and file times only) must
+        # not be read as current (review finding 8)
+        h = hashlib.sha1(rbxpaths.VERSION.encode())
+        for p in rbxvault.note_files() + [os.path.join(rbxvault.KB, "SYMPTOMS.md"), os.path.abspath(rbxvault.__file__)]:
+            if os.path.exists(p):
+                st = os.stat(p)
+                h.update(f"{p}|{st.st_mtime_ns}|{st.st_size}".encode())
+        write(rbxvault.cache_path(), json.dumps({"sig": h.hexdigest(), "symptoms": [], "docs": [
+            {"title": "Label-less note", "path": "Label-less note.md", "tags": [], "tldr": "", "summary": "", "kb": 1,
+             "tf": {f: {} for f in rbxvault.FIELDS}, "len": {f: 0 for f in rbxvault.FIELDS}}]}))
+        idx = rbxvault.load_index()
+        self.assertNotIn("Label-less note", [d["title"] for d in idx["docs"]])
+        self.assertTrue(all("labels" in d and "links" in d for d in idx["docs"]))
+        self.assertEqual(rbxvault.load_index()["sig"], idx["sig"], "rebuilt once, then read")
+
     def test_a_shipped_vault_note_marked_in_the_sidecar(self):
         idx = rbxvault.load_index()
         d = next(d for d in idx["docs"] if len(d["title"].split()) >= 3 and d["tldr"])
