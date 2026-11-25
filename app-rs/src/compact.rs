@@ -716,11 +716,13 @@ pub fn librarian_check(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
 
 // ------------------------------------------------------- skill recommendations
 
-/// The budget for one skill recommendation (`skill_advice`): 60 seconds in all, one model at most 45 of them, and
-/// 20 kept back for the default AI's fall-back when it has one (Claude Code's cheapest model). It runs in the
-/// background (`skills::advise_open`); nobody waits on it.
+/// The budget for one skill recommendation (`skill_advice`): four minutes in all, one model at most two of them, and
+/// the last minute kept back for the default AI's fall-back when it has one (Claude Code's cheapest model). It runs in
+/// the background (`skills::advise_open`) and nobody waits on it, so it is long enough for the plan's models to read
+/// two whole skills and write a merged one (measured: 89 s for a merge on GLM flash; at 60 s in all the plan's models
+/// ran out and Claude wrote every one).
 #[cfg_attr(test, allow(dead_code))]
-pub const ADVICE_LIMITS: Limits = Limits { all: Duration::from_secs(60), one: Duration::from_secs(45), reserve: Duration::from_secs(20) };
+pub const ADVICE_LIMITS: Limits = Limits { all: Duration::from_secs(240), one: Duration::from_secs(120), reserve: Duration::from_secs(60) };
 
 /// A recommendation on two overlapping skills (keep, replace or merge, as JSON: `skills::parse_advice` reads it),
 /// from `prompt` (made and masked by `skills::advice_prompt`). Written once with no tools by the user's OpenCode plan
@@ -821,6 +823,19 @@ mod tests {
 
     fn usage(output: u64) -> usage::Turn {
         usage::Turn { output, ..Default::default() }
+    }
+
+    /// Measured 2026-11-24 on the skill-creator / writing-skills pair (47k characters): DeepSeek flash 27 s answering
+    /// keep, and over 40 s in the app; GLM flash 89 s answering merge (a whole SKILL.md). Nobody waits on a
+    /// recommendation, so one model gets two minutes, the plan has room for a second after it, and Claude's fall-back
+    /// keeps a share of its own after the plan's.
+    #[test]
+    fn a_skill_recommendation_has_time_for_a_merge_on_the_plan() {
+        let l = ADVICE_LIMITS;
+        assert!(l.one >= Duration::from_secs(120), "one model writes a merge in 89 s, measured");
+        let plan = l.all.saturating_sub(l.reserve);
+        assert!(plan >= l.one + Duration::from_secs(60), "a second plan model is tried after a slow first");
+        assert!(l.reserve >= Duration::from_secs(45), "Claude's fall-back has time for a merge too");
     }
 
     type Asked = Arc<Mutex<Vec<String>>>;
