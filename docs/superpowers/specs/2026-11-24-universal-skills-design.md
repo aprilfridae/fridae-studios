@@ -226,6 +226,59 @@ ignore").
 3. **Distribution and community.** With the unified vault's download and submissions: skills in the manifest and
    updates, skill submissions, the inbox's comparison view, and the overlap check on notes from updates and
    submissions. The GitHub repo is created only with the user's yes.
+   - **As built** (phase 3, branch `feature/skills-vault`; DEVELOPING.md's "The Fridae vault" describes it in full):
+     - The vault is a public GitHub repo, `aprilfridae/fridae-vault`. It is **not made yet** and its first release is
+       not published: both are the user's presses in their own Fridae, after the branch is merged with their word.
+     - **Getting skills.** Setup › Skills › Fridae vault has Download and Check for updates (and a quiet daily check). A
+       release's manifest lists every file with its hash and size. Only changed files are fetched, each checked against
+       the manifest, in a staging folder that is handed on only when every file is right (otherwise nothing changes).
+       Staging is kept complete, so what did not change is copied from the user's file or the base copy and fetched only
+       when its bytes differ. A manifest must name its tag as its release, and the tag must start with `vault-` and
+       may hold only letters, digits, dots, dashes and underscores. The path rules are checked on both the Python and
+       the Rust side, with the same test cases; skills live in folders, so `Skills/<file>` is refused, and every part
+       of a path must be a name every system can hold (no `:`, no Windows device name such as `CON` or `COM1`, no
+       trailing dot or space). Each staged file's place is checked to be inside the staging folder before it is
+       written.
+     - **Updates never override the user.** Each file is compared three ways (the last installed copy, the user's file,
+       the new file). Untouched files are replaced; edits on both sides are merged when that is clean, otherwise the
+       user's file stays and the new one is saved beside it (shown as "kept"); deleted files stay deleted; what the vault
+       dropped is moved aside, never deleted. A skill kept under another name still merges later updates. A symlink
+       below `Knowledge/Skills` or the record is refused (the `Knowledge` folder itself may be one). A vault skill is
+       known by its folder's name, whatever its front matter says.
+     - **A new vault skill meets the library.** Names of Fridae's own skills are declined for good. A skill saying what
+       one already does is skipped, and looked at again next release. An overlap waits in a decision with the usual four
+       choices. Replace moves a user's skill to `.replaced/` and the vault's own to `removed/`; Merge makes the merged
+       text the user's own new skill, so updates never touch it; Keep both adds it as `<name>-community`.
+       The library is read once for a whole update, however many skills are new.
+     - **Sharing.** Only skills the user made, not imports, not named like Fridae's, not near copies (0.85) of any skill
+       Fridae can see, with text files only, within 40 files and 1 MB. Off, check each batch, or automatic (once a
+       day); the setting is guarded so an agent cannot turn it on. The user agrees to CC BY 4.0 and MIT first. Files are
+       masked (keys, emails, the home folder and the login name; on Windows whatever the capitals and slashes) and the
+       user sees exactly the masked bytes that are sent, scripts first; a script where something was hidden is held
+       until read. Send makes a branch in the user's fork and a pull request. Its link, like the inbox's and the
+       release's, opens the system browser through the app, which builds the address itself. The page's routes add
+       the lists it needs (ready, held, sent), a reveal for a file a report names (only under `Knowledge/Skills`) and
+       one merged status route.
+     - **The maintainer's inbox.** Shown only to the vault repo's maintainer. Each open pull request's skills, scripts
+       first, compared with the vault's own skills, with an AI's recommendation. A request that cannot be read says so
+       and never hides the others. Each skill gets Add, Edit then add or Reject; **Add asks first** (a card that says
+       what it will do), like Create the vault repo and Publish vault release, because the spec's "click and confirm" is
+       binding. Add sets the skill's `name` to its folder and removes only what the submission removed. Reject says
+       that its reason is posted where anyone can read it. A submission is read only up to 8 MiB. Publish checks every
+       skill (a `name` that differs from its folder is refused) and makes the manifest and release, or lists the
+       problems.
+     - **The vault's licence file** names CC BY 4.0 exactly (SPDX `CC-BY-4.0`, with its address) and holds the full MIT
+       text, rather than the long Creative Commons legal code typed from memory; the maintainer may paste the official
+       text later.
+     - Wording says "your computer", not "your Mac": the app ships on Windows too. The pages use the existing Setup
+       styles only.
+   - **Known limits (phase 3).**
+     - Notes are not in the vault yet; only skills.
+     - Edited imports and edited community skills cannot be shared.
+     - A three-way conflict is a row line ("kept"), not a card.
+     - A declined vault skill cannot be taken back from the page yet.
+     - Contributors' GitHub sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub
+       also creates private repos.
 
 ## Testing
 
@@ -245,6 +298,9 @@ ignore").
   losers are kept, never deleted: skills in `<library>/.replaced/`, notes in the notes folder's `.trash`; they go
   back by hand until then.
 - Phase 2: the card shows neither each side's "last change" nor "how often each was loaded here".
+- Phase 3: notes are not in the vault yet; edited imports and edited community skills cannot be shared; a three-way
+  conflict is a row line, not a card; a declined vault skill cannot be taken back from the page yet; contributors' GitHub
+  sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also creates private repos.
 
 ## Left to the builder
 

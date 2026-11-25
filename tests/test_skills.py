@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import rbxpaths
 import rbxskills
 
 
@@ -238,6 +239,91 @@ class SkillsTests(unittest.TestCase):
             hit = [s for s in rbxskills.library(project) if s["id"] == "critic"]
             self.assertEqual([(s["description"], s["origin"]) for s in hit], [("The app's.", "app")])
 
+    # ---- the Fridae vault's skills (Knowledge/Skills)
+    def vault(self, name, extra_fm="", desc="Shared."):
+        know = os.path.join(self.home, "Knowledge")
+        if not hasattr(self, "_know_patch"):
+            self._know_patch = mock.patch.object(rbxpaths, "KNOWLEDGE_DIR", know)
+            self._know_patch.start()
+            self.addCleanup(self._know_patch.stop)
+        d = os.path.join(know, "Skills", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\ndescription: %s\n%s---\n\nBody.\n" % (name, desc, extra_fm))
+        return d
+
+    def vault_base(self, data):
+        folder = os.path.join(self.home, "Knowledge", ".fridae-vault")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "base.json"), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def test_vault_skill_is_listed_as_community(self):
+        self.vault("tidy", "credit: someone\n")
+        got = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual((got["tidy"]["origin"], got["tidy"]["owner"], got["tidy"]["credit"]),
+                         ("vault", "community", "someone"))
+        self.assertEqual(rbxskills.vault_dir(), os.path.join(self.home, "Knowledge", "Skills"))
+        self.assertIn("credit", rbxskills.INDEX_FIELDS)
+        self.assertIn("the Fridae vault (shared by someone)", rbxskills.load_head(got["tidy"]))
+        self.vault("anon")
+        anon = {s["id"]: s for s in rbxskills.library()}["anon"]
+        self.assertTrue(rbxskills.load_head(anon).startswith("# Skill anon (the Fridae vault)"))
+
+    def test_vault_skips_update_and_dot_folders(self):
+        self.vault("tidy (update)")
+        self.vault(".hidden")
+        self.assertEqual([s["id"] for s in rbxskills.library() if s["origin"] == "vault"], [])
+
+    def test_vault_front_matter_cannot_pin_hide_or_claim(self):
+        self.kit_skill("vault/Fridae/Guides/Core", "critic", "owner: app\n")
+        self.kit_skill("vault/Fridae/Guides/LihFolk", "level-design")
+        self.vault("tidy", "core: true\nsupersedes: [critic, level-design]\nowner: app\n")
+        got = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual((got["tidy"]["core"], got["tidy"]["supersedes"], got["tidy"]["owner"]), (False, [], "community"))
+        self.assertIn("level-design", got)
+        self.assertIn("critic", got)
+
+    def test_vault_skill_is_known_by_its_folder_not_its_front_matter_name(self):
+        self.kit_skill("vault/Fridae/Guides/LihFolk", "level-design", desc="Fridae's own.")
+        for folder in ("tidy-desk", "tidy-shelf"):
+            d = self.vault(folder)
+            with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: level-design\ndescription: Not Fridae's.\n---\n\nBody.\n")
+        got = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual((got["level-design"]["origin"], got["level-design"]["description"]), ("shipped", "Fridae's own."))
+        self.assertEqual([(got[n]["origin"], got[n]["name"]) for n in ("tidy-desk", "tidy-shelf")],
+                         [("vault", "tidy-desk"), ("vault", "tidy-shelf")])
+
+    def test_vault_patch_supersedes_hides_shipped(self):
+        self.kit_skill("vault/Fridae/Guides/LihFolk", "level-design")
+        self.vault("tidy")
+        self.vault_base({"patch": {"tidy": {"supersedes": ["level-design"]}}})
+        got = {s["id"]: s for s in rbxskills.library()}
+        self.assertNotIn("level-design", got)
+        self.assertEqual(got["tidy"]["supersedes"], ["level-design"])
+
+    def test_user_skill_takes_vault_name(self):
+        self.kit_skill("vault/Fridae/Guides/Core", "critic", "owner: app\n", desc="The app's.")
+        self.vault("tidy", desc="Vault's.")
+        self.vault("critic", desc="Vault critic.")
+        skill(os.path.join(self.user, "tidy"), "tidy", "Mine.")
+        got = [(s["id"], s["description"], s["origin"]) for s in rbxskills.library() if s["id"] in ("tidy", "critic")]
+        self.assertEqual(sorted(got), [("critic", "The app's.", "app"), ("tidy", "Mine.", "user")])
+
+    def test_read_base_gives_empty_values_for_a_missing_or_broken_file(self):
+        import rbxvaultsync
+        empty = {"format": 1, "release": "", "files": {}, "deleted": [], "declined": [], "renamed": {}, "waiting": {},
+                 "patch": {}}
+        self.vault("tidy")
+        self.assertEqual(rbxvaultsync.read_base(), empty)
+        self.vault_base({"release": "vault-2026.11.24", "files": [1], "patch": {"a": {}}})
+        got = rbxvaultsync.read_base()
+        self.assertEqual((got["release"], got["files"], got["patch"]), ("vault-2026.11.24", {}, {"a": {}}))
+        with open(os.path.join(self.home, "Knowledge", ".fridae-vault", "base.json"), "w") as f:
+            f.write("{broken")
+        self.assertEqual(rbxvaultsync.read_base(), empty)
+
     def test_later_roots_take_shipped_names_and_the_project_wins(self):
         self.kit_skill("vault/Fridae/Guides/LihFolk", "style", desc="Shipped.")
         skill(os.path.join(self.user, "style"), "style", "User's.")
@@ -270,7 +356,7 @@ class SkillsTests(unittest.TestCase):
     def test_meta_defaults(self):
         self.assertEqual(rbxskills.meta({}, "x", "user"),
                          {"name": "x", "description": "", "examples": [], "applies": "both", "core": False,
-                          "owner": "user", "source": "", "licence": "", "supersedes": [], "updated": ""})
+                          "owner": "user", "source": "", "licence": "", "supersedes": [], "updated": "", "credit": ""})
 
     def test_meta_reads_every_field_and_rejects_bad_values(self):
         m = rbxskills.meta({"name": "n", "description": "a  b", "examples": ["x", "y"], "applies": "game",

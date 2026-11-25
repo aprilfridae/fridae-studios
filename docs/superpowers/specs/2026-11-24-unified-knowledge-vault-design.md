@@ -69,6 +69,7 @@ own."
 - Seeding: a fresh install with no network can still work through keyword search on the user's own notes, and offers
   the download when online. The first-run move (above) treats the user's existing copy as both base and local, so
   nothing they have is overwritten.
+- Built for `Skills/` in universal skills phase 3; notes join later.
 
 ## Community vault: everyone's notes come back as submissions the maintainer reviews (user, 2026-11-24)
 
@@ -109,6 +110,8 @@ They chose GitHub over a hosted server.
 
 Open for the build: the GitHub OAuth app (the user registers it once; a device-flow client id is public), the
 fork/PR scopes needed, and how the inbox signs in as the maintainer.
+
+- Built for `Skills/` in universal skills phase 3; notes join later.
 
 ## Anti-goals
 

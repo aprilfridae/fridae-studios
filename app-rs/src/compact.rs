@@ -159,6 +159,55 @@ fn known_secrets() -> Vec<String> {
     out
 }
 
+/// `mask`, and what else would say who a person is when text leaves the machine for a public place: email addresses
+/// become `[email]`, the home folder (as the start of a path) becomes `~`, and the login name (`USER`, else
+/// `USERNAME`, else the home folder's last part), where it stands as a word of its own and has 3 or more characters,
+/// becomes `[user]`. On Windows the home folder is found whatever the case and with either slash (`C:\Users\x\n`,
+/// `C:/Users/x/n`, `c:\users\x\n` and the doubled slashes of a JSON string all become `~` and the rest as written).
+/// Text with none of these is unchanged.
+pub fn mask_for_sharing(text: &str) -> String {
+    let home = paths::home_dir().to_string_lossy().to_string();
+    let user = login_name(std::env::var("USER").ok(), std::env::var("USERNAME").ok(), &home);
+    mask_for_sharing_with(text, &home, &user)
+}
+
+/// The login name: `USER` when set, else `USERNAME` (Windows), else the home folder's last part.
+fn login_name(user: Option<String>, username: Option<String>, home: &str) -> String {
+    let set = |v: Option<String>| v.filter(|u| !u.trim().is_empty());
+    set(user).or_else(|| set(username)).unwrap_or_else(|| home.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("").to_string())
+}
+
+/// Whether a home folder is written the Windows way (a drive letter or a backslash): those are matched without case.
+fn windows_style(home: &str) -> bool {
+    home.contains('\\') || home.as_bytes().get(1) == Some(&b':')
+}
+
+fn mask_for_sharing_with(text: &str, home: &str, user: &str) -> String {
+    static EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+").unwrap());
+    let masked = mask(text);
+    let mut out = EMAIL.replace_all(&masked, "[email]").to_string();
+    let windows = windows_style(home);
+    // the home folder first, so `/Users/angela/x` is `~/x` and not `/Users/[user]/x`
+    let home = home.trim_end_matches(['/', '\\']);
+    if !home.is_empty() {
+        let body = if windows {
+            // each part of the path, joined by a slash of either kind (one or more: a JSON string doubles them)
+            let parts: Vec<String> = home.split(['/', '\\']).filter(|p| !p.is_empty()).map(regex::escape).collect();
+            format!(r"(?i){}", parts.join(r"[/\\]+"))
+        } else {
+            regex::escape(home)
+        };
+        let re = Regex::new(&format!(r"{body}(/|\\|[^A-Za-z0-9_.-]|$)")).unwrap();
+        out = re.replace_all(&out, "~$1").to_string();
+    }
+    let user = user.trim();
+    if user.chars().count() >= 3 {
+        let re = Regex::new(&format!(r"\b{}\b", regex::escape(user))).unwrap();
+        out = re.replace_all(&out, "[user]").to_string();
+    }
+    out
+}
+
 const MASK: &str = "[masked]";
 
 fn mask_with(text: &str, secrets: &[String]) -> String {
@@ -830,6 +879,67 @@ fn claude_writes(exe: &Path, account: Option<String>, prompt: String, limit: Dur
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn sharing_masks_email_home_and_user() {
+        let out = mask_for_sharing_with("see /Users/angela/x.txt, mail me at a.b@c.io, angela's build", "/Users/angela", "angela");
+        assert_eq!(out, "see ~/x.txt, mail me at [email], [user]'s build");
+    }
+
+    #[test]
+    fn sharing_keeps_ordinary_text() {
+        assert_eq!(mask_for_sharing_with("run ./scripts/go.sh --fast", "/Users/angela", "angela"), "run ./scripts/go.sh --fast");
+        assert_eq!(mask_for_sharing_with("ui design", "/Users/ui", "ui"), "ui design");
+        assert_eq!(mask_for_sharing_with("/Users/angelax/y and angelas", "/Users/angela", "angela"), "/Users/angelax/y and angelas");
+    }
+
+    #[test]
+    fn sharing_masks_a_windows_home_in_any_form() {
+        let home = r"C:\Users\Angela";
+        for (text, want) in [
+            (r"C:\Users\Angela\notes", r"~\notes"),
+            ("C:/Users/Angela/notes", "~/notes"),
+            (r"c:\users\angela\notes", r"~\notes"),
+            (r"C:\\Users\\Angela\\notes", r"~\\notes"),
+            (r"see C:\Users\Angela, then C:\Users\Angela!", r"see ~, then ~!"),
+            (r"C:\Users\Angelax\notes", r"C:\Users\Angelax\notes"),
+            (r"D:\Users\Angela\notes", r"D:\Users\[user]\notes"),
+        ] {
+            assert_eq!(mask_for_sharing_with(text, home, "Angela"), want, "{text}");
+        }
+        // the name on its own as it is written (the name mask keeps its case), and a home written with the other slash
+        assert_eq!(mask_for_sharing_with("made by Angela, not angela", home, "Angela"), "made by [user], not angela");
+        assert_eq!(mask_for_sharing_with(r"C:\Users\Angela\a", "C:/Users/Angela/", "Angela"), r"~\a");
+    }
+
+    #[test]
+    fn sharing_on_a_mac_still_matches_case_and_slash_exactly() {
+        assert_eq!(mask_for_sharing_with("/users/angela/x", "/Users/angela", "angela"), "/users/[user]/x");
+        assert_eq!(mask_for_sharing_with(r"\Users\angela\x", "/Users/angela", "angela"), r"\Users\[user]\x");
+    }
+
+    #[test]
+    fn login_name_comes_from_user_then_username_then_home() {
+        let name = |u: Option<&str>, w: Option<&str>, h: &str| login_name(u.map(str::to_string), w.map(str::to_string), h);
+        assert_eq!(name(Some("a"), Some("b"), "/h/c"), "a");
+        assert_eq!(name(None, Some("b"), "/h/c"), "b");
+        assert_eq!(name(Some(" "), Some("b"), "/h/c"), "b");
+        assert_eq!(name(None, None, "/h/c"), "c");
+        assert_eq!(name(None, None, r"C:\Users\d\"), "d");
+    }
+
+    #[test]
+    fn the_name_mask_keeps_its_case_on_every_platform() {
+        let home = r"C:\Users\User";
+        assert_eq!(mask_for_sharing_with(r"the user at C:\Users\User\x, an Admin and a User", home, "User"), r"the user at ~\x, an Admin and a [user]");
+        assert_eq!(mask_for_sharing_with("the user and the owner", r"C:\Users\Owner", "Owner"), "the user and the owner");
+    }
+
+    #[test]
+    fn sharing_masks_keys_too() {
+        let text = format!("token = ghp_{}", "a".repeat(30));
+        assert!(mask_for_sharing_with(&text, "/Users/angela", "angela").contains(MASK));
+    }
 
     fn usage(output: u64) -> usage::Turn {
         usage::Turn { output, ..Default::default() }

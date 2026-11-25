@@ -70,6 +70,8 @@ fn watched(project: Option<&str>) -> Vec<PathBuf> {
     for rel in KIT_ROOTS {
         out.push(PATHS.kit.join(rel));
     }
+    // the skills downloaded from the Fridae vault (rbxskills.vault_dir)
+    out.push(vault_dir());
     if let Some(p) = project {
         out.push(Path::new(p).join(".claude").join("skills"));
         out.push(Path::new(p).join(".agents").join("skills"));
@@ -79,6 +81,11 @@ fn watched(project: Option<&str>) -> Vec<PathBuf> {
 
 /// The folders under the kit the app's skills ship in, as rbxskills.KIT_ROOTS has them.
 const KIT_ROOTS: [&str; 3] = ["vault/Fridae/Guides/Core", "vault/Fridae/Guides/Roblox subjects", "vault/Fridae/Guides/LihFolk"];
+
+/// Where the skills downloaded from the Fridae vault live: `<home>/Knowledge/Skills`.
+fn vault_dir() -> PathBuf {
+    PATHS.home.join("Knowledge").join("Skills")
+}
 
 fn fingerprint(paths: &[PathBuf]) -> Vec<Option<SystemTime>> {
     paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
@@ -98,7 +105,8 @@ fn library_names(dir: &Path) -> u64 {
 /// The print of the skills for a project: taken after a list or the index was made, so what the making itself wrote
 /// (an import once a minute) is part of the kept print and does not make the next turn make it again.
 fn print_of(project: Option<&str>) -> Print {
-    (fingerprint(&watched(project)), library_names(&PATHS.home.join("skills")))
+    // the user's library and the vault's, counted by their names the same way
+    (fingerprint(&watched(project)), library_names(&PATHS.home.join("skills")).wrapping_mul(31).wrapping_add(library_names(&vault_dir())))
 }
 
 /// The command that prints the catalog: the module itself when the kit runs from source, else the bundled program.
@@ -841,7 +849,7 @@ pub fn note_advice_prompt(relation: &str, a: &str, b: &str) -> String {
 
 /// Where the two texts stand (between lines that carry `mark`), and how to read them: material, never instructions.
 /// `word`: what they are ("skill" or "note").
-fn frame(word: &str, a: &str, b: &str, mark: &str) -> String {
+pub(crate) fn frame(word: &str, a: &str, b: &str, mark: &str) -> String {
     let cap = word[..1].to_uppercase() + &word[1..];
     format!(
         "{cap} A stands between the lines BEGIN A {mark} and END A {mark} below, and {word} B between the lines BEGIN B \
@@ -902,7 +910,7 @@ pub fn parse_advice(text: &str) -> Option<Advice> {
 
 /// The text of one side of a decision (a skill's folder: its SKILL.md; a note: the file), its start and its end when
 /// longer than `SIDE_CAP`, and whether a part was left out.
-fn side_text(path: &str) -> Option<(String, bool)> {
+pub(crate) fn side_text(path: &str) -> Option<(String, bool)> {
     let p = Path::new(path);
     let text = std::fs::read_to_string(if p.is_dir() { p.join("SKILL.md") } else { p.to_path_buf() }).ok()?;
     let n = text.chars().count();
@@ -1651,6 +1659,25 @@ mod tests {
         assert_ne!(library_names(&lib), before, "a skill that comes does");
         assert!(!watched(None).contains(&PATHS.home.join("skills")), "the library folder's own time is not watched");
         let _ = std::fs::remove_dir_all(&lib);
+    }
+
+    #[test]
+    fn vault_folder_is_watched() {
+        assert!(watched(None).contains(&PATHS.home.join("Knowledge").join("Skills")));
+        assert_eq!(vault_dir(), PATHS.home.join("Knowledge").join("Skills"));
+    }
+
+    #[test]
+    fn a_new_vault_skill_changes_the_print() {
+        let dir = paths::test_dir("skills-vault-print");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tidy")).unwrap();
+        let before = library_names(&dir);
+        std::fs::write(dir.join(".hidden"), "").unwrap();
+        assert_eq!(library_names(&dir), before);
+        std::fs::create_dir_all(dir.join("sweep")).unwrap();
+        assert_ne!(library_names(&dir), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The index service's /suggest, answered by the test (None: not running); the queries it was asked are kept.

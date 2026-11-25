@@ -2173,6 +2173,156 @@ time. Keep, replace and merge move notes to the notes `.trash`, never delete the
 Tests: `python3 -m unittest tests.test_skills tests.test_upkeep tests.test_rag_engine tests.test_rag_serve`;
 `cargo test skills::`.
 
+**The Fridae vault: getting and sharing skills.** The vault is a public GitHub repository, `aprilfridae/fridae-vault` (`paths::VAULT_REPO`), that holds skills people
+made and the maintainer reviewed. Nothing in it reaches a computer until the person presses Download or Check for
+updates, and nothing leaves a computer until its owner turns sharing on. The repo is **not made yet**: the maintainer
+makes it from their own Fridae (Create the vault repo, below) after the branch is merged. Until then the vault's
+calls say plainly that there is no release.
+
+**The repository.** `Skills/<skill>/...` (one folder per skill, with a `SKILL.md` and sometimes scripts),
+`manifest.json` (written by each release), `README.md`, `Skills/README.md`, `LICENSE.md` and `CONTRIBUTING.md`.
+`LICENSE.md` names CC BY 4.0 by its address and holds the full MIT text (the long Creative Commons legal code was not
+typed in from memory; the maintainer may paste the official text later). `Skills/README.md` is not a skill (a skill's
+file has three path parts) and is never in a manifest. Notes are not in the vault yet; phase 3 is skills only.
+The manifest is `{format: 1, release, made, files: [{path, sha256, size}]}`. A release is a GitHub release named
+`vault-YYYY.MM.DD` (then `.2`, `.3`) at the commit that holds that manifest, and the manifest's `release` is that tag.
+
+**Getting skills** (Setup › Skills › Fridae vault; `vault_sync.rs`; no sign-in needed). Download and Check for updates
+read the latest release, fetch the manifest and only the files whose hash changed, and check each against the manifest
+(path rules, at most 5,000 files, 1 MiB each, 100 MiB in all, `release` equal to the tag). The files go to a staging
+folder in the app's own folder. Only when every one is right is the folder handed to `rbx skills vault-apply`
+(`rbxvaultsync.apply`); anything wrong or cut off removes the staging folder and changes nothing ("This vault update
+looked wrong, so nothing was changed."). Staging is kept complete: a file that did not change is copied in from the
+user's file or the base copy when its bytes match the manifest, and fetched only otherwise. The app checks quietly a
+minute after launch and then once a day while it is open, and it only downloads. The path rule (`check_path`, the same
+cases in Python and Rust, and the inbox's too) is: under `Skills/`, inside a skill's folder, no leading slash, and each
+part a name every system can hold: not empty or dot-started, at most 255 bytes, no `:` or `<>"|?*\`, no control
+character, no trailing dot or space or leading space, and none of Windows' device names (`CON`, `PRN`, `AUX`, `NUL`,
+`CONIN$`, `CONOUT$`, `COM0`-`COM9`, `LPT0`-`LPT9`, also with `¹²³`) in any case, with or without an extension. Before
+each staged file is written, its place is checked to be inside the staging folder, and a release's name must start
+with `vault-`. The limits bind Python as well as Rust.
+
+**The update rules.** The vault lands in `<Knowledge>/Skills`. `<Knowledge>/.fridae-vault/` holds the record:
+`base.json` (`release`, `files`: the hash of each file as last installed, `deleted`, `declined`, `renamed`, `waiting`,
+`patch`), `base/<path>` (a copy of each file as installed, for three-way merges), `incoming/<skill>/` (a new skill
+waiting for a decision) and `removed/<release>/` (what an update took out; never deleted). Per file, comparing the base
+copy, the user's file and the new file:
+- no base record and no file of the user's: added. A file of the user's already there: the new one is saved beside it
+  as `<name> (Fridae update)` (then `(Fridae update 2)`, and so on).
+- the user's file already equals the new one: only recorded.
+- the user's file is unchanged since the base: replaced. Changed by the user but not upstream: the edit stands.
+- changed on both sides: a three-way text merge when it is clean; otherwise the user's file stays and the new one is
+  saved beside it. These show as "kept" in the report, each with Reveal. The merge is `git merge-file`; on a computer
+  without `git`, every file changed on both sides is kept this way (safe, just never merged).
+- a file the user deleted is remembered and never brought back; a file the vault dropped is moved to
+  `removed/<release>/` only if the user never changed it.
+Every file is written to a temporary file and renamed. A symlink below `Knowledge/Skills` or the record is refused (the
+`Knowledge` folder itself may be one). A vault skill is known in the library by its folder's name, whatever its front
+matter's `name` says, so it can never take the place of one of Fridae's skills or of another vault skill. One update
+runs at a time under a lock on the vault's record; the user's library is locked after it, never before. A vault skill
+kept under another name (Keep both) keeps merging: the new upstream `SKILL.md` gets the local name before it is
+compared, and its base copy holds those bytes.
+
+**Newcomers and vault decisions** (`rbxvaultnew.py`). A skill that is new to this computer (no base record, no local
+folder) is looked at before it is installed. One named like Fridae's own is declined for good. The user's own earlier
+share coming back from the vault is installed and the user's copy set aside. One whose text says what a library skill's
+says already is skipped (not remembered, so it is looked at again next release). One whose `similar()` to a library
+skill is at least `OVERLAP` waits in `incoming/<skill>/` and opens a decision (`from: vault`) in Setup › Skills.
+Anything else is installed. The choices are the same four as in phase 1. Keep: the waiting copy goes to `removed/` and
+the name is declined. Replace: the waiting copy moves in; a skill of the user's goes to `.replaced/`, one of the
+vault's own goes to `removed/`, and Fridae's own skills cannot be replaced. Merge: the merged text becomes a new skill
+of the user's, so updates never touch it, and the vault copy is removed and declined. Keep both: it joins as
+`<name>-community` (or the next free name). A newer release while a decision is open swaps the waiting copy for it.
+
+**What may be shared, and why** (`rbxshare.shareable`). Only a skill the user made, and only when it passes every test:
+- It is not an import (an imported skill is credited to where it came from) and is not named like one of Fridae's.
+- It has no licence of its own other than CC BY 4.0 / MIT (text is shared under CC BY 4.0, scripts under MIT).
+- Its files are text, no links, at most 40 files, 200 KB a file and 1 MB a skill.
+- It is not a near copy (the keyword cosine of the two `SKILL.md` bodies, `COPY_MIN` 0.85) of any skill Fridae can see:
+  Fridae's, the vault's, the user's imports or another candidate. It was not already sent with the same folder hash.
+`ready` skills can be sent, `held` ones say why, `sent` ones name their pull request. The sender's `owner`, `core` and
+`supersedes` are dropped when a skill is packed (those pins are the sender's own, not the vault's). A skill edited after
+it was sent is `ready` again.
+
+**Masking.** Every file is masked by `compact::mask_for_sharing` before the user sees it and before it is sent: keys and
+tokens, email addresses (`[email]`), the home folder (`~`; on Windows whatever the capitals and with either slash) and
+the login name as a word of its own, three letters or more (`[user]`). The credit line keeps the sender's GitHub name
+(the licence needs it, and it is in the title, commit and branch anyway). A script where something was hidden is held
+until the user has read it ("Fridae hid something in a script; check it in Setup › Skills before it is sent."), and
+what is sent is exactly the masked bytes the user was shown.
+
+**Sharing** (`share.rs`; Setup › Skills › Share your skills). The setting `share_skills` is `off`, `review` or `auto`
+(missing counts as off). It is a guarded setting, so an agent's edit cannot turn it on, and no tool of the MCP server
+reaches any route here. Turning it on asks for a yes to CC BY 4.0 (text) and MIT (scripts), and GitHub must be
+connected. Share runs `rbx skills pack` into the app's `outbox` (at most 20 skills; a batch nobody sends is removed
+after 7 days), masks it and shows the batch, scripts first. Send makes the user's fork (once), a branch
+`skills-<login>-<date>-<hour and minute>-<4 random hex>`, one commit `Skills from <login>: a, b` holding those exact
+bytes, and a pull request titled `Skills from <login>: a, b, c +2 more` whose body has one line for each skill (its
+description, with `scripts: yes` when it has some). Then `mark-shared` writes `.fridae-shared.json` into each skill.
+Under Send automatically a batch goes at most once a day. The vault's pull request, release and repo links on these
+pages are buttons that open the system browser through `POST /api/github/open` (`what: "pr"` with its number,
+`"release"` with its tag, `"vault"`): the app builds the address from `VAULT_REPO`, and the page never gives one.
+
+**The pull request's shape.** Only `Skills/<skill>/...` files, one folder for each skill. The inbox reads nothing else.
+
+**The maintainer's inbox** (`vault_inbox.rs`; Setup › Skills › Submissions, shown only when the signed-in GitHub name
+has push access to the vault repo; kept for 10 minutes). It lists the open pull requests (at most 50), each skill in
+them with its files (at most 300 files, 200 KB a file and 8 MiB a request: past 8 MiB nothing more is fetched and the
+rest say "Not shown: this submission is too big to read in full."; a file GitHub gives back that is not whole is an
+error, never an empty file; scripts first, headed "Runs on everyone's computer: read it"), a comparison with the vault's
+own skills (a mirror of `main`; never with the maintainer's own library) and a recommendation an AI writes in the
+background. Everything in a pull request is a stranger's text: each path is checked before it becomes a path on disk
+(the download's path rule above), text is shown as text, and nothing a submission says is followed as an instruction. A
+request that cannot be read shows its own sentence and never hides the others. Each skill gets **Add**, **Edit then
+add** or **Reject**. Add asks first, with a card that says what it will do, like Create and Publish. Add commits that
+skill's files to the vault's `main` (with `name` set to the skill's folder, `owner: community`, `credit`, `licence`,
+`source` and `updated`, and no `core` or `supersedes`), and it removes only what the submission removed, never files the
+submitter left as they were. Reject records the decision; its reason (optional) goes in the closing comment, which
+anyone can read, and the card says so. On a request's last undecided skill, Add, Edit then add and Reject each say that
+the pull request will be thanked and closed. Decisions are remembered by request, skill and head commit, so a request
+that changed asks again. When every skill in a request is decided, Fridae thanks the sender in a comment and closes it.
+
+**Create the vault repo** (the maintainer's click and confirm; only for the account that owns `aprilfridae`, and only
+when the repo does not exist). It makes the public repo with the four text files above. Nothing else ever makes it.
+**The real repo is not made yet and the first release is not published**: both are the user's presses in their own
+Fridae, after the branch is merged with their word.
+
+**Publish vault release** (the maintainer's click and confirm, each time). It reads `main` and checks every skill: a
+`SKILL.md`, an `owner` of `community` or `shipped`, a `licence`, a `source`, no `core: true`, a `name` equal to its
+folder's ("<name>: name differs from its folder"), no two names alike in any capitals, and the manifest limits above. If
+something is wrong it lists the problems and publishes nothing. Otherwise it writes `manifest.json` to `main` (and
+refuses if `main` moved meanwhile) and makes the release, with notes of the skills new, changed and removed since the
+last one.
+
+**Config keys** (`<home>/config.json`): `vault_release` (the release last downloaded), `vault_checked_at` and
+`vault_last` (the last check and its report), `share_skills` (`off`, `review`, `auto`; guarded), `share_agreed_at`,
+`share_last_sent` (the automatic send's clock) and `share_held`. The vault's record is
+`<Knowledge>/.fridae-vault/base.json`; the app's own `fridae-vault/` folder holds `staging/`, `outbox/`, `inbox/` and
+`main/` (the mirror).
+
+**The CLI and routes.** `rbx skills`: `vault-apply --staged <folder> --manifest <file>` (what Download runs),
+`shareable` (the ready, held and sent lists as JSON), `pack <skill...> --out <folder> --login <name>`, `mark-shared
+<skill> --hash <h> --pr <url>`, `compare --new <folder> --against <folder>`, and `decide`, which now settles vault
+decisions too. Routes (the page's own; none is an agent's): `GET /api/vault/status` (download and sharing together,
+with `role`), `GET /api/vault/share`, `GET /api/vault/inbox`; `POST /api/vault/download`, `check`, `share_mode`,
+`prepare`, `send`, `reveal` (shows a file a report names, only under `Knowledge/Skills`), `create_repo` and `publish`
+(both need `confirm: true`), `inbox` and `inbox_decide`.
+
+**Known limits** (the vault).
+- Notes are not in the vault yet; only skills.
+- Edited imports and edited community skills cannot be shared.
+- A three-way conflict is a row line ("kept", the new file saved beside it), not a card.
+- A declined vault skill cannot be taken back from the page yet (its name stays in `declined` in `base.json`).
+- Contributors' GitHub sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also
+  makes private repos.
+- A Windows junction below `Knowledge/Skills` is not seen as a link.
+- Skills whose names differ only in capitals (`Tidy`, `tidy`) can collide on Windows and macOS.
+
+**Tests:** `python3 -m unittest tests.test_vaultsync tests.test_share tests.test_skills tests.test_upkeep`;
+`cargo test --manifest-path app-rs/Cargo.toml` (add `vault_sync::`, `vault_git::`, `share::` or `vault_inbox::` for one
+part). No test contacts github.com or installs anything: GitHub is a local stand-in. On a Windows computer without
+the symlink privilege, five tests in `tests.test_vaultsync` (links) and one (a file made unreadable with `chmod`) fail.
+
 ## Folders
 
 - `rbx.py`, `rbx*.py`, `blender/` - the tools.

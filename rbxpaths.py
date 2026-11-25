@@ -19,6 +19,7 @@ else:
 
 WORK = os.environ.get("RBXKIT_WORK") or os.path.join(HOME_DIR, "work")
 CONFIG = os.path.join(HOME_DIR, "config.json")
+KNOWLEDGE_DIR = os.path.join(HOME_DIR, "Knowledge")  # the shared Fridae vault's files (Skills/) and its base record
 
 
 def _cli_exe():

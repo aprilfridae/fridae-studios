@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 import uuid
 
@@ -50,7 +51,7 @@ APP_ONLY = {"built-in-browser", "chrome-browser", "computer-use", "docs", "googl
 
 ORIGIN_LABEL = {"app": "built into Fridae", "shipped": "shipped with Fridae", "user": "your library",
                 "project": "this project", "claude": "Claude Code", "claude-plugin": "a Claude Code plugin",
-                "synced": "synced from Claude", "synced-plugin": "a plugin synced from Claude", "other": "another AI tool"}
+                "vault": "the Fridae vault", "synced": "synced from Claude", "synced-plugin": "a plugin synced from Claude", "other": "another AI tool"}
 # the origins Claude Code loads by itself (its Skill tool already lists them), besides its own account's synced ones
 CLAUDE_NATIVE = {"project", "claude", "claude-plugin"}
 
@@ -190,6 +191,17 @@ def user_dir():
     return os.path.join(rbxpaths.HOME_DIR, "skills")
 
 
+def vault_dir():
+    """Where the skills downloaded from the Fridae vault live."""
+    return os.path.join(rbxpaths.KNOWLEDGE_DIR, "Skills")
+
+
+def vault_state_dir():
+    """The vault's base record and what it moved aside."""
+    import rbxvaultsync  # here, not at the top: rbxvaultsync imports this module lazily too
+    return rbxvaultsync.state_dir()
+
+
 def _list(val):
     if isinstance(val, list):
         return [str(x).strip() for x in val if str(x).strip()]
@@ -218,10 +230,10 @@ def meta(fm, folder, default_owner):
             "examples": _list(fm.get("examples")), "applies": applies if applies in APPLIES else "both",
             "core": str(fm.get("core")).strip().lower() in ("true", "yes", "1"),
             "owner": owner if owner in OWNERS else default_owner, "source": text("source"), "licence": text("licence"),
-            "supersedes": _list(fm.get("supersedes")), "updated": text("updated")}
+            "supersedes": _list(fm.get("supersedes")), "updated": text("updated"), "credit": text("credit")}
 
 
-def _entry(d, origin, default_owner, kit=False):
+def _entry(d, origin, default_owner, kit=False, patch=None):
     try:
         fm, _ = front(_read(os.path.join(d, "SKILL.md"), 8000))
     except (OSError, ValueError):
@@ -241,6 +253,17 @@ def _entry(d, origin, default_owner, kit=False):
         m["supersedes"] = _list(patch.get("supersedes"))
         if m["owner"] in ("app", "shipped"):
             m["owner"] = "user"
+    if origin == "vault":
+        # a vault skill is trusted like an import: it is known by its folder (its own front-matter name never takes
+        # another skill's place), its own core and supersedes never count, only the base record's patch (what Fridae
+        # wrote), and its owner is only community or shipped
+        m["id"] = m["name"] = os.path.basename(d.rstrip("/\\"))
+        p = patch.get(m["id"]) if isinstance(patch, dict) else None
+        p = p if isinstance(p, dict) else {}
+        m["core"] = False
+        m["supersedes"] = _list(p.get("supersedes"))
+        if m["owner"] not in ("community", "shipped"):
+            m["owner"] = "community"
     return m
 
 
@@ -261,19 +284,23 @@ def library(project=None):
     the app's skills, those it ships, the user's, then the project's. One per name; a later one takes an earlier
     name, except an app skill's, which nothing can take. A shipped skill a user skill supersedes is left out, and so
     are the APP_ONLY names and an update waiting for a decision (<name> (update))."""
+    import rbxvaultsync  # here, not at the top: it is read only when a library is made
     kit = kit_skills()
+    patch = rbxvaultsync.read_base()["patch"]
     roots = [(os.path.join(project, sub, "skills"), "project") for sub in (".claude", ".agents")] if project else []
     found = sorted(kit, key=lambda e: e["origin"] != "app") + \
+        [_entry(d, "vault", "community", patch=patch) for d in _skill_dirs(vault_dir())
+         if not d.endswith(UPDATE_SUFFIX) and not os.path.basename(d).startswith(".")] + \
         [_entry(d, "user", "user") for d in _skill_dirs(user_dir()) if not d.endswith(UPDATE_SUFFIX)] + \
         [_entry(d, o, "user") for r, o in roots[::-1] for d in _skill_dirs(r)]  # .agents, then .claude: .claude wins
     out = {}
     for e in found:
         key = e["id"].casefold()
-        if e["origin"] in ("user", "project") and key in APP_ONLY:
+        if e["origin"] in ("user", "project", "vault") and key in APP_ONLY:
             continue
         if key not in out or out[key]["owner"] != "app":
             out[key] = e
-    gone = {n.casefold() for e in out.values() if e["origin"] == "user" for n in e["supersedes"]}
+    gone = {n.casefold() for e in out.values() if e["origin"] in ("user", "vault") for n in e["supersedes"]}
     return [e for e in out.values() if not (e["origin"] == "shipped" and e["id"].casefold() in gone)]
 
 
@@ -509,7 +536,10 @@ def load_head(s):
     directory, when to use it and its files. rbx_skill load frames every skill but the app's own guides so."""
     files = [f for f in _files(s["dir"]) if f != "SKILL.md"]
     more = " (and more)" if len(files) >= FILES_MAX else ""
-    head = ["# Skill %s (%s)" % (s["id"], ORIGIN_LABEL.get(s["origin"], s["origin"])),
+    origin = ORIGIN_LABEL.get(s["origin"], s["origin"])
+    if s["origin"] == "vault" and s.get("credit"):
+        origin += " (shared by %s)" % s["credit"]
+    head = ["# Skill %s (%s)" % (s["id"], origin),
             "Base directory: %s" % s["dir"]]
     if s["description"]:
         head.append("When to use: %s" % s["description"])
@@ -562,6 +592,7 @@ IMPORT_EVERY = 60       # seconds: catalog() and index() import at most this oft
 LOCK_WAIT, LOCK_STALE = 5.0, 120.0
 SOURCE_FILE = ".fridae-source.json"   # in an imported copy: its import link
 DECISIONS = ".decisions.json"
+SHARED_FILE = ".fridae-shared.json"   # in a library skill the user sent to the vault: {"sent": [{name, hash, pr, at}]}
 INCOMING, REPLACED = ".incoming", ".replaced"
 STAMP = ".imported"                   # touched after each import
 UPDATE_SUFFIX = " (update)"           # <name> (update): a source's new version beside the user's edited copy
@@ -689,7 +720,11 @@ def _free(parent, name, sep):
 def _set_front(path, updates):
     """Set front matter keys of a SKILL.md (a list as [a, b]), replacing each key's old lines; adds front matter
     when it has none."""
-    text = _read(path)
+    _write_text(path, front_with(_read(path), updates))
+
+
+def front_with(text, updates):
+    """text with these front matter keys set (see _set_front)."""
     lines = []
     for k, v in updates.items():
         if isinstance(v, list):
@@ -699,8 +734,7 @@ def _set_front(path, updates):
             lines.append("%s: %s" % (k, json.dumps(v) if _BAD_NAME.match(v) or ": " in v or v != v.strip() else v))
     m = re.match(r"^(﻿?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*(?:\r?\n|$))", text, re.S)
     if not m:
-        _write_text(path, "---\n%s\n---\n\n%s" % ("\n".join(lines), text))
-        return
+        return "---\n%s\n---\n\n%s" % ("\n".join(lines), text)
     keep, skipping = [], False
     for line in m.group(2).splitlines():
         km = re.match(r"^([A-Za-z_][\w.-]*):", line)
@@ -713,7 +747,7 @@ def _set_front(path, updates):
         else:
             skipping = False
         keep.append(line)
-    _write_text(path, m.group(1) + "\n".join(keep + lines) + m.group(3) + text[m.end():])
+    return m.group(1) + "\n".join(keep + lines) + m.group(3) + text[m.end():]
 
 
 def _place(src, dst, rec=None, patch=None):
@@ -1000,7 +1034,13 @@ def pending():
 
 def _waiting(d):
     """Whether a skill decision's newcomer is still waiting in its folder."""
-    return isinstance(d.get("b_dir"), str) and bool(d["b_dir"]) and os.path.isdir(d["b_dir"])
+    if not (isinstance(d.get("b_dir"), str) and bool(d["b_dir"]) and os.path.isdir(d["b_dir"])):
+        return False
+    if d.get("from") == "vault":  # a vault newcomer waits only in the vault's incoming folder
+        import rbxvaultsync
+        return rbxvaultsync._inside(d["b_dir"], rbxvaultsync.incoming_dir()) \
+            and os.path.realpath(d["b_dir"]) != os.path.realpath(rbxvaultsync.incoming_dir())
+    return True
 
 
 def _close_gone(ids):
@@ -1371,6 +1411,55 @@ def _stale_merge(dec, merged_text):
         side_hash(dec.get("a_dir")), side_hash(dec.get("b_dir")))
 
 
+def _merge_skill(root, a, a_dir, a_kit, merged_text, b, differ, update=False, upstream=None):
+    """The merge of a decision: merged_text becomes the SKILL.md of the skill in use (a, in a_dir; a copy of one of the
+    app's own skills when a_kit, which is then the user's), its old copy saved in .replaced/. Fridae's own fields the
+    old SKILL.md had are kept, and the loser b is named in supersedes when the names differ. Returns the folder holding
+    the merged skill. Shared by the user library's decide and the vault's decide_vault."""
+    a_text = _read(os.path.join(a_dir, "SKILL.md")) if os.path.isfile(os.path.join(a_dir, "SKILL.md")) else ""
+    if a_kit:
+        target = _free(root, _safe(a), "-")
+        shutil.copytree(a_dir, target, ignore=_ignore)
+    else:
+        target = a_dir
+        shutil.copytree(a_dir, _free(os.path.join(root, REPLACED), _safe(a), " "), ignore=_ignore)
+    path = os.path.join(target, "SKILL.md")
+    _write_text(path, merged_text)
+    fm, _ = front(merged_text)
+    a_fm, _ = front(a_text)
+    # the merged text drops none of the Fridae fields the skill in use had (its own keys win); a copy of one
+    # of the app's skills is the user's now, so it takes no owner from it
+    carry = [k for k in MERGE_KEEPS if k in a_fm and k not in fm and not (a_kit and k == "owner")]
+    if carry:
+        _add_front(path, _front_lines(a_text, carry))
+    patch = {} if _fm_name(fm, target) == os.path.basename(target) else {"name": os.path.basename(target)}
+    have = _list(fm.get("supersedes"))
+    have += [n for n in _list(a_fm.get("supersedes")) if n not in have]
+    if differ and b not in have:
+        have.append(b)
+    if have:
+        patch["supersedes"] = have
+    if patch:
+        _set_front(path, patch)
+    rec = _record(target)
+    if rec is not None:
+        if "supersedes" in patch:  # Fridae wrote it: an imported copy honours only those (_entry)
+            rec["patch"] = dict(rec.get("patch") or {}, supersedes=patch["supersedes"])
+        if update:  # merged: an edited copy now, settled for this version of the source
+            rec["upstream"] = upstream
+        _write_json(os.path.join(target, SOURCE_FILE), rec)
+    return target
+
+
+def _refuse_stale(decs, dec, choice, merged_text):
+    """A merge from a recommendation made before either side changed: the recommendation is cleared and saved (decs is
+    the whole store, dec one of them), and STALE raised."""
+    if choice == "merge" and _stale_merge(dec, merged_text):
+        dec["recommendation"] = None
+        _save_decisions(decs)
+        raise ValueError(STALE)
+
+
 def decide(id, choice, merged_text=None):
     """Settle an open decision (a note decision: _decide_note). A merge from a recommendation made before either side
     changed is refused (STALE): the decision stays open and its recommendation is cleared, to be written again. choice:
@@ -1382,16 +1471,19 @@ def decide(id, choice, merged_text=None):
     Refuses (ValueError) a choice that would change an owner: app skill. Returns the decision, now state "done"."""
     if choice not in CHOICES:
         raise ValueError("Choose keep, replace, merge or keep_both.")
+    # a decision about a skill from the Fridae vault is settled there, which takes the vault's lock first and then the
+    # library's: the one fixed order (this function must not hold the library's lock when it calls it)
+    peek = next((d for d in _decisions() if d.get("id") == id and d.get("state") == "open"), None)
+    if peek is not None and peek.get("from") == "vault" and peek.get("kind", "skill") == "skill":
+        import rbxvaultsync
+        return rbxvaultsync.decide_vault(peek, choice, merged_text)
     root = user_dir()
     with _locked(root):
         decs = _decisions()
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
-        if choice == "merge" and _stale_merge(dec, merged_text):
-            dec["recommendation"] = None
-            _save_decisions(decs)
-            raise ValueError(STALE)
+        _refuse_stale(decs, dec, choice, merged_text)
         if dec.get("kind", "skill") == "note":
             _decide_note(dec, choice, merged_text)
             dec.update(state="done", choice=choice, decided=_now())
@@ -1442,38 +1534,7 @@ def decide(id, choice, merged_text=None):
             if patch:
                 _mark(target, patch)
         elif choice == "merge":
-            a_text = _read(os.path.join(a_dir, "SKILL.md")) if os.path.isfile(os.path.join(a_dir, "SKILL.md")) else ""
-            if a_kit:
-                target = _free(root, _safe(a), "-")
-                shutil.copytree(a_dir, target, ignore=_ignore)
-            else:
-                target = a_dir
-                shutil.copytree(a_dir, _free(os.path.join(root, REPLACED), _safe(a), " "), ignore=_ignore)
-            path = os.path.join(target, "SKILL.md")
-            _write_text(path, merged_text)
-            fm, _ = front(merged_text)
-            a_fm, _ = front(a_text)
-            # the merged text drops none of the Fridae fields the skill in use had (its own keys win); a copy of one
-            # of the app's skills is the user's now, so it takes no owner from it
-            carry = [k for k in MERGE_KEEPS if k in a_fm and k not in fm and not (a_kit and k == "owner")]
-            if carry:
-                _add_front(path, _front_lines(a_text, carry))
-            patch = {} if _fm_name(fm, target) == os.path.basename(target) else {"name": os.path.basename(target)}
-            have = _list(fm.get("supersedes"))
-            have += [n for n in _list(a_fm.get("supersedes")) if n not in have]
-            if differ and b not in have:
-                have.append(b)
-            if have:
-                patch["supersedes"] = have
-            if patch:
-                _set_front(path, patch)
-            rec = _record(target)
-            if rec is not None:
-                if "supersedes" in patch:  # Fridae wrote it: an imported copy honours only those (_entry)
-                    rec["patch"] = dict(rec.get("patch") or {}, supersedes=patch["supersedes"])
-                if update:  # merged: an edited copy now, settled for this version of the source
-                    rec["upstream"] = upstream
-                _write_json(os.path.join(target, SOURCE_FILE), rec)
+            _merge_skill(root, a, a_dir, a_kit, merged_text, b, differ, update, upstream)
             _aside(b_dir, b)
         else:  # keep_both
             taken = {e["id"].casefold() for e in library()}
@@ -1529,7 +1590,7 @@ def advise(id, rec):
 
 # ---- what Claude Code lists itself, and the index the app reads
 INDEX_FIELDS = ("id", "name", "description", "examples", "applies", "core", "owner", "source", "licence",
-                "supersedes", "updated", "dir", "origin")
+                "supersedes", "updated", "credit", "dir", "origin")
 
 
 def native_ids(project=None, config=None):
@@ -1571,11 +1632,20 @@ def index(project=None, config=None):
 # ------------------------------------------------------------------ rbx skills (the app asks for the catalog)
 def register(sub):
     p = sub.add_parser("skills", help="the user's skills, for every AI: catalog, list, load, read, import, pending, "
-                                      "decide, index")
-    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index"])
-    p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id")
+                                      "decide, index, vault-apply, shareable, pack, mark-shared, compare")
+    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply",
+                                      "shareable", "pack", "mark-shared", "compare"])
+    p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id; "
+                                                       "mark-shared: the skill; pack: the skills")
     p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
                                                        "(advise: only store an AI's recommendation, from --json-file)")
+    p.add_argument("more", nargs="*", help="pack: more skills")
+    p.add_argument("--out", default="", help="pack: the folder to write Skills/<name>/ into")
+    p.add_argument("--login", default="", help="pack: the sender's GitHub login, for the credit")
+    p.add_argument("--new", default="", help="compare: the submitted skill's folder")
+    p.add_argument("--against", default="", help="compare: the folder of the vault's skills")
+    p.add_argument("--hash", default="", help="mark-shared: the skill's folder hash when it was sent")
+    p.add_argument("--pr", default="", help="mark-shared: the pull request's address")
     p.add_argument("--ai", default="", help="catalog: the AI it is for (claude leaves out what Claude Code loads itself)")
     p.add_argument("--project", default="", help="the project folder, for its own skills")
     p.add_argument("--claude-config", default="", help="catalog, index: the Claude config folder of a second account")
@@ -1584,6 +1654,8 @@ def register(sub):
                         "are left out")
     p.add_argument("--no-import", action="store_true",
                    help="catalog: do not import other tools' skills first (the app's call on a turn)")
+    p.add_argument("--staged", default="", help="vault-apply: the folder holding the fetched files")
+    p.add_argument("--manifest", default="", help="vault-apply: the release's manifest file")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
     p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
@@ -1607,6 +1679,28 @@ def _decide_cli(a):
     return "Decided: %s (%s / %s)." % (dec["choice"], dec["a"], dec["b"])
 
 
+def _share_cli(a):
+    import rbxshare
+    try:
+        if a.action == "shareable":
+            return json.dumps(rbxshare.shareable(), ensure_ascii=False)
+        if a.action == "pack":
+            names = [n for n in [a.name, a.path] + list(a.more) if n]
+            if not names or not a.out or not a.login:
+                raise ValueError("pack needs skill names, --out and --login.")
+            return json.dumps(rbxshare.pack(names, a.out, a.login), ensure_ascii=False)
+        if not a.name or not a.hash or not a.pr:
+            raise ValueError("mark-shared needs a skill name, --hash and --pr.")
+        rbxshare.mark_shared(a.name, a.hash, a.pr)
+        return json.dumps({"ok": True}, ensure_ascii=False)
+    except (ValueError, LookupError) as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(2)
+    except (OSError, rbxpaths.KitError) as e:
+        print("Sharing could not be prepared: %s" % e, file=sys.stderr)
+        raise SystemExit(1)
+
+
 def cmd_skills(a):
     project = a.project or None
     try:
@@ -1625,6 +1719,25 @@ def cmd_skills(a):
             out = json.dumps(items, ensure_ascii=False) if a.json else (
                 "\n".join("%s: %s / %s (%s)" % (d["id"], d["a"], d["b"], d.get("reason", "")) for d in items)
                 or "No skill decisions are waiting.")
+        elif a.action == "vault-apply":
+            import rbxvaultsync
+            try:
+                if not a.staged:
+                    raise ValueError(rbxvaultsync.BAD)
+                out = json.dumps(rbxvaultsync.apply(a.staged, _read_json(a.manifest, {})), ensure_ascii=False)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                raise SystemExit(2)
+            except (OSError, rbxpaths.KitError) as e:
+                print("The vault update could not be applied: %s" % e, file=sys.stderr)
+                raise SystemExit(1)
+        elif a.action == "compare":
+            import rbxshare
+            if not a.new or not a.against:
+                raise SystemExit("compare needs --new and --against.")
+            out = json.dumps(rbxshare.compare(a.new, a.against), ensure_ascii=False)
+        elif a.action in ("shareable", "pack", "mark-shared"):
+            out = _share_cli(a)
         elif a.action == "index":
             out = json.dumps(index(project, a.claude_config or None), ensure_ascii=False)
         else:

@@ -38,6 +38,7 @@ mod promo_tab;
 mod rag;
 mod research;
 mod server;
+mod share;
 mod splash;
 mod studio_run;
 mod studio_undo;
@@ -46,6 +47,9 @@ mod swarm;
 mod team;
 mod textures;
 mod update;
+mod vault_git;
+mod vault_inbox;
+mod vault_sync;
 mod usage;
 
 use crate::paths::Start;
@@ -191,6 +195,7 @@ fn main() {
         thread::spawn(update::run_forever);
     }
     let url = server::start(paths::random_hex(3));
+    thread::spawn(vault_sync::watch); // the shared skill vault: a check once a day, after the first Download
 
     let event_loop = EventLoopBuilder::<()>::with_user_event().build();
     let icon = window_icon();
