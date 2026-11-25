@@ -350,7 +350,7 @@ class Engine:
         restamped = False
         for path, (shelf, title) in files.items():
             try:
-                st = os.stat(path)
+                st = os.stat(chunks.real_path(path))
             except OSError:
                 continue
             proj = project if path in mine else ""
@@ -359,7 +359,7 @@ class Engine:
                     and prev.get("project", "") == proj):
                 new_entries[path] = prev
                 continue
-            digest = _sha1(path)
+            digest = _sha1(chunks.real_path(path))
             if prev and digest and prev.get("sha1") == digest and prev.get("project", "") == proj:
                 # touched but not changed (a sync tool, a checkout, an editor's save): nothing to embed
                 new_entries[path] = dict(prev, mtime_ns=st.st_mtime_ns, size=st.st_size)
@@ -461,7 +461,7 @@ class Engine:
         """Make the link graph from the manifest's entries (every indexed file's [[links]]) and the files' shelves and
         titles: once per sync, so a query only looks it up."""
         names = dict(self._names)
-        names.update({p: v for p, v in files.items()})
+        names.update({p: v for p, v in files.items() if v[0] != "skills"})  # skills are no notes: no links, no replacement
         names = {p: v for p, v in names.items() if p in entries}
         links = {p: e["links"] for p, e in entries.items() if e.get("links")}
         targets = {}
@@ -637,7 +637,7 @@ class Engine:
         out, seen = [], set()
         sup = self._superseded(project)
         for c, sc in zip(fused, scores):
-            key = (c["path"], c["i"])
+            key = (c["shelf"], c["path"], c["i"])
             if key in seen:
                 continue
             seen.add(key)

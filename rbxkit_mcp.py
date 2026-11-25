@@ -419,6 +419,15 @@ def t_skill(a):
     try:
         if action == "list":
             return result(rbxskills.listing(project), True, False)
+        if action == "search":
+            import rbxvault
+            q = str(a.get("query") or "").strip()
+            if not q:
+                return result("search needs a query: the task in plain words.", False)
+            kind = str(a.get("kind") or "").strip().lower()
+            if kind not in ("", "game", "plain"):
+                return result("kind must be game or plain.", False)
+            return result(rbxvault.skills_answer(q, _search_k(a), kind), True, False)
         if action == "load":
             return _load(a.get("name"), a.get("names"), a, "rbx_skill")
         if action == "read":
@@ -426,7 +435,14 @@ def t_skill(a):
             return result(rbxskills.read_file(name, str(a.get("path") or ""), project), True, False)
     except (LookupError, OSError) as e:
         return result(str(e), False)
-    return result("Unknown action '%s': use list, load or read." % action, False)
+    return result("Unknown action '%s': use list, search, load or read." % action, False)
+
+
+def _search_k(a):
+    try:
+        return max(1, min(int(a.get("k") or 5), 10))
+    except (TypeError, ValueError):
+        return 5
 
 
 def t_guide(a):
@@ -1385,10 +1401,13 @@ TOOLS = [
      "instructions and its files; a skill over 12 KB comes as its opening, its rules and a list of its sections (except "
      "workflow, studio, critic, producer, game-bible): then ask for a section with `section`. 'name/ref' loads its "
      "references/ref.md. One answer holds about 30 KB at most for a helper agent (120 KB for a chat): skills left out "
-     "are named. 'read' (name, path) returns one of its files; 'list' names every skill.",
-     schema({"action": {"type": "string", "enum": ["list", "load", "read"]},
+     "are named. 'read' (name, path) returns one of its files; 'list' names every skill; 'search' (query: the task in plain words; kind: game or plain, to leave out skills for the other) finds the ones that fit it.",
+     schema({"action": {"type": "string", "enum": ["list", "search", "load", "read"]},
              "name": {"type": "string", "description": "load, read: the skill's name as listed, such as ui-ux-pro-max, workflow or superpowers:systematic-debugging; load also takes 'skill/reference'"},
              "names": {"type": "array", "items": {"type": "string"}, "description": "load: several skills in one call"},
+             "query": {"type": "string", "description": "search: the task or problem in plain words"},
+             "kind": {"type": "string", "enum": ["game", "plain"], "description": "search: this project's kind; skills that apply only to the other kind are left out"},
+             "k": {"type": "integer", "description": "search: results (default 5, at most 10)"},
              "section": {"type": "string", "description": "load: heading words; return only that section of the skill in `name` (or the first of `names`)"},
              "whole": {"type": "boolean", "description": "load: true returns large skills in full instead of their outline"},
              "outline": {"type": "boolean", "description": "load: true returns each skill's outline whatever its size"},
@@ -1417,7 +1436,7 @@ TOOLS = [
      schema({"action": {"type": "string", "enum": ["search", "read", "sections", "list", "api", "note", "notes",
                                                    "forget", "rule_edit", "upkeep"]},
              "query": {"type": "string", "description": "search: the task or bug in plain words"},
-             "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game", "yours"],
+             "shelf": {"type": "string", "enum": ["all", "vault", "guides", "team", "game", "yours", "skills"],
                        "description": "search/read/sections: where to look; default all (game only when the chat has a game project)"},
              "text": {"type": "string", "description": "note: what you were doing, what the user wants instead and why "
                       "(their words where you can); rule_edit: the rule's new wording, empty to remove it"},

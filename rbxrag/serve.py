@@ -202,7 +202,7 @@ def make_handler(service, token):
             if path != "/query":
                 return self._send(404, {"error": "not found"})
             q = str(data.get("q") or "").strip()
-            shelves = [s for s in (data.get("shelves") or rbxvault.SHELVES) if s in rbxvault.SHELVES]
+            shelves = [s for s in (data.get("shelves") or rbxvault.KNOWLEDGE) if s in rbxvault.SHELVES]
             try:
                 k = max(1, min(int(data.get("k") or 5), 20))
             except (TypeError, ValueError):

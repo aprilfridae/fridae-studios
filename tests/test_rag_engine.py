@@ -136,6 +136,25 @@ class EngineCases:
                       "# Filler %d\n\n## Events\n\nConnect to an event and react when the property changes.\n" % i)
             self.files.append(("vault", "Filler %d" % i, p))
 
+    def test_a_skill_is_on_the_skills_shelf_beside_its_guide_chunks(self):
+        # the same SKILL.md is a guide (body chunks) and a skill (one summary): two index keys, one file
+        sk = write(os.path.join(self.tmp, "kit", "SKILL.md"),
+                   "---\nname: Alpha\ndescription: Collect shiny coins.\nexamples: [make coins sparkle]\n---\n"
+                   "# Alpha\n\n## Wallet\n\nStore the zebra balance in a wallet module.\n")
+        self.files = [("guides", "Alpha", sk), ("skills", "Alpha", sk + chunks.SKILL_KEY)]
+        eng = self.engine()
+        eng.sync()
+        hits = eng.query("make coins sparkle", ["skills"], 5, None)
+        self.assertEqual([(h["shelf"], h["title"]) for h in hits], [("skills", "Alpha")])
+        self.assertEqual(hits[0]["path"], sk)
+        self.assertNotIn("zebra", hits[0]["text"])
+        body = eng.query("zebra wallet", ["guides"], 5, None)
+        self.assertEqual({h["shelf"] for h in body}, {"guides"})
+        both = eng.query("coins", ["skills", "guides"], 8, None)
+        self.assertEqual({h["shelf"] for h in both}, {"skills", "guides"})
+        eng.sync()  # nothing changed: nothing embedded again
+        self.assertEqual(eng.sync()["embedded"], 0)
+
     def test_superseded_ranks_below_its_replacement(self):
         # Bravo matches the query best by its words; a newer note says it supersedes Bravo
         new = write(os.path.join(self.tmp, "kit", "Bravo two.md"),

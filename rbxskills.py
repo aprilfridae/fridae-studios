@@ -239,6 +239,104 @@ def library(project=None):
     return list(out.values())
 
 
+def summary(s):
+    """The one entry a skill has on the skills search shelf: "<name>\n<description>\nFor: <examples joined by '; '>"
+    (no For line when it has no examples). s: a library entry, or its meta fields."""
+    lines = [s["name"], s["description"]]
+    if s.get("examples"):
+        lines.append("For: " + "; ".join(s["examples"]))
+    return "\n".join(lines)
+
+
+WHY_MAX = 60  # characters of "why it matched"
+SEARCH_FIELDS = {"title": 2.0, "desc": 1.5, "examples": 3.0}
+
+
+def _fits(s, kind):
+    return kind not in ("game", "plain") or s["applies"] in ("both", kind)
+
+
+def _cut(text, n=WHY_MAX):
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[:n - 3].rstrip() + "..."
+
+
+def _why(s, terms):
+    """The example (else the description) that shares most words with the query, at most 60 characters."""
+    import rbxvault
+    best, hit = 0, ""
+    for text in list(s["examples"]) + [s["description"]]:
+        n = sum(1 for t in set(rbxvault.ptokens(text)) if t in terms)
+        if n > best:
+            best, hit = n, text
+    return _cut(hit or s["description"])
+
+
+def keyword_search(q, kind="", k=5, project=None):
+    """[{id, description, why, score}] best first: BM25F over each skill's name, description and examples (the same
+    words as its summary). score is the share of the query's words the skill holds (0 to 1); only skills holding at
+    least one of them are returned."""
+    import collections
+
+    import rbxvault
+    terms = rbxvault.pquery_terms(q)
+    pool = [s for s in library(project) if _fits(s, kind)]
+    if not terms or not pool:
+        return []
+    docs = []
+    for s in pool:
+        f = {"title": rbxvault.ptokens(s["id"].replace("-", " ").replace(":", " ") + " " + s["name"]),
+             "desc": rbxvault.ptokens(s["description"]), "examples": rbxvault.ptokens(" ".join(s["examples"]))}
+        tf = {key: collections.Counter(v) for key, v in f.items()}
+        docs.append({"tf": tf, "len": {key: sum(c.values()) for key, c in tf.items()}})
+    total = sum(terms.values()) or 1
+    out = []
+    for score, s, d in zip(rbxvault.bm25f(terms, docs, SEARCH_FIELDS), pool, docs):
+        if score <= 0:
+            continue
+        cover = sum(w for t, w in terms.items() if any(d["tf"][f].get(t) for f in SEARCH_FIELDS)) / total
+        out.append((score, {"id": s["id"], "description": s["description"], "why": _why(s, terms),
+                            "score": round(min(cover, 1.0), 3)}))
+    out.sort(key=lambda x: -x[0])
+    return [h for _, h in out[:k]]
+
+
+def search(q, kind="", k=5, project=None):
+    """[{id, description, why, score}] the skills that fit q, best first: the knowledge index's skills shelf when the
+    app runs it, else the keyword search over the skills' summaries. kind: "game" or "plain" drops the skills that
+    apply only to the other. The score is the index's own (higher is better) or, for the keyword search, the share of
+    the query's words the skill holds."""
+    import rbxvault
+    q = (q or "").strip()
+    if not q:
+        return []
+    kind = kind if kind in ("game", "plain") else ""
+    end = rbxvault.rag_endpoint()
+    if end:
+        try:
+            hits = rbxvault._rag_hits(end, q, ["skills"], max(k * 3, 10))
+            lib = {s["id"].casefold(): s for s in library(project)}
+            terms = rbxvault.pquery_terms(q)
+            out, seen = [], set()
+            for h in hits or []:
+                s = lib.get(str(h.get("title") or "").casefold()) if isinstance(h, dict) and h.get("shelf") == "skills" else None
+                if s is None or s["id"] in seen or not _fits(s, kind):
+                    continue
+                seen.add(s["id"])
+                out.append({"id": s["id"], "description": s["description"], "why": _why(s, terms),
+                            "score": round(float(h.get("score") or 0), 4)})
+            if out:
+                return out[:k]
+        except Exception as e:  # never an error from here: the keyword search answers
+            rbxvault._close_quietly(e)
+    return keyword_search(q, kind, k, project)
+
+
+def pointer(h):
+    """One search result as a line an agent can act on."""
+    return "- %s: %s (load with rbx_skill load %s)" % (h["id"], short(h["description"]), h["id"])
+
+
 def skills(project=None):
     """Every skill in the library, for the project."""
     return library(project)

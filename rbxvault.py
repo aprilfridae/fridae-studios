@@ -567,7 +567,10 @@ def _list(folder):
 #   team    the Studio team's expert files (vault/Fridae/Team/*.md, a game's .fridae/team/experts/ overrides them)
 #   game    this game's GAME.md, lessons and notes (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
 #   yours   the user's notes for everything (<home>/notes, rbxnotes.py); indexed on the fly, works with no project
-SHELVES = ("vault", "guides", "team", "game", "yours")
+#   skills  one summary entry per skill of the library (app, shipped, user, project): what it is for and what to ask
+#           it for. Not notes: no sections, never in an ordinary search, found by rbx_skill search (rbxskills.search)
+SHELVES = ("vault", "guides", "team", "game", "yours", "skills")
+KNOWLEDGE = tuple(s for s in SHELVES if s != "skills")  # the shelves of ordinary searches, reads and the Librarian
 PERSONAL = ("game", "yours")  # the user's own shelves: short notes are fine there, and words are folded more
 SECTION_FIELDS = {"title": 2.0, "tldr": 1.0, "heads": 3.0, "body": 1.0}
 READ_CAP = 12000  # bytes one read returns at most
@@ -1262,6 +1265,15 @@ def _parse_section_docs(shelf, title, path, rel, label_hint="", project=""):
     return out
 
 
+def skill_docs(project=None):
+    """One doc per skill of the library for the project: {shelf: "skills", title: the skill's id, text: "<name>\n
+    <description>\nFor: <examples joined by '; '>" (no For line without examples), applies, owner}. The text is what
+    the skills shelf of the knowledge index holds as the skill's one chunk (rbxskills.summary)."""
+    import rbxskills
+    return [{"shelf": "skills", "title": s["id"], "text": rbxskills.summary(s), "applies": s["applies"],
+             "owner": s["owner"]} for s in rbxskills.library(project)]
+
+
 def guide_files():
     """[(title, absolute path)] for every Markdown guide the app ships (KIT_GUIDES), plus each guide folder's
     references/*.md."""
@@ -1607,7 +1619,8 @@ def _keyword_pool(q, shelves, k, idx=None, docs=None, filters=None, links=False,
     from different shelves are not comparable, coverage is). filters (normalize_filters) keep only the notes whose
     labels pass; links adds up to two notes the first results link to (_linked_pool). A superseded note gives its place
     to its replacement and follows it (place_superseded); info (a dict), when given, gets the superseded map
-    ("sup")."""
+    ("sup"). The skills shelf holds no notes and is never searched here."""
+    shelves = [s for s in shelves if s != "skills"]
     terms = query_terms(q)
     pool = []
     symptoms = []
@@ -1968,7 +1981,7 @@ def _rag_hit_lines(rank, hit, terms, budget=0):
     """The lines for one hit of the knowledge index, or None when the file or section is no longer there. With a
     budget (characters) and the hit's chunk text, the matched passage is shown instead of a snippet."""
     shelf, title, path = hit.get("shelf"), hit.get("title"), hit.get("path")
-    if shelf not in SHELVES or not title or not isinstance(path, str) or not path.endswith(".md"):
+    if shelf not in KNOWLEDGE or not title or not isinstance(path, str) or not path.endswith(".md"):
         return None
     try:
         text = _reader_text({"shelf": shelf, "path": path})
@@ -2070,7 +2083,7 @@ LOOKUP_CHARS = 600  # one passage at most
 
 
 def _shelves_now():
-    return [s for s in SHELVES if s != "game" or project_dir()]
+    return [s for s in KNOWLEDGE if s != "game" or project_dir()]
 
 
 def _rag_passages(end, q, shelves, k):
@@ -2082,7 +2095,7 @@ def _rag_passages(end, q, shelves, k):
         return None
     out = []
     for hit in (hits or [])[:k]:
-        if not isinstance(hit, dict) or hit.get("shelf") not in SHELVES or not hit.get("title"):
+        if not isinstance(hit, dict) or hit.get("shelf") not in KNOWLEDGE or not hit.get("title"):
             continue
         text = hit.get("text") if isinstance(hit.get("text"), str) else ""
         lines = passage(text, LOOKUP_CHARS) if text.strip() else []
@@ -2196,10 +2209,12 @@ def _list(folder):
     return "\n".join(x for x in out if x) or "(empty)"
 
 
-def _shelf_arg(a):
+def _shelf_arg(a, action_reads=False):
     shelf = str(a.get("shelf") or "all").strip().lower()
     if shelf not in SHELVES + ("all",):
         raise KitError("shelf must be one of: all, %s." % ", ".join(SHELVES))
+    if shelf == "skills" and action_reads:
+        raise KitError("Skills are not notes to read here: load one with rbx_skill load <name> (find one with rbx_skill search).")
     return shelf
 
 
@@ -2236,7 +2251,7 @@ def run(action, a):
             sys.argv = ["vault", "--api"] + str(a.get("names") or a.get("query") or "").split()
             main()
         return _vault_call(api) or "No API names given."
-    shelf = _shelf_arg(a)
+    shelf = _shelf_arg(a, action in ("read", "sections"))
     if action in ("read", "sections"):
         title = (a.get("title") or "").strip()
         if not title:
@@ -2257,12 +2272,48 @@ def run(action, a):
         k = max(1, min(int(kk), 8)) if kk else (3 if shelf == "vault" else 5)
     except (TypeError, ValueError):
         raise KitError("k must be a whole number from 1 to 8.")
-    shelves = list(SHELVES) if shelf == "all" else [shelf]
+    if shelf == "skills":  # one summary per skill, not notes: the skills search answers
+        return skills_answer(q, k)
+    shelves = list(KNOWLEDGE) if shelf == "all" else [shelf]
     if shelf == "game" and not project_dir():
         raise KitError("This chat has no game project (RBXKIT_PROJECT), so there are no game notes to search.")
     if shelf == "all" and not project_dir():
         shelves.remove("game")
     filters = normalize_filters(a, project_dir())
+    text = _search_answer(q, shelf, shelves, k, filters)
+    if shelf in ("all", "guides"):
+        text += skill_pointers(q)
+    return text
+
+
+def skills_answer(q, k, kind=""):
+    """Lines for rbx_skill search and rbx_vault's skills shelf: "- <id>: <description> (load with rbx_skill load <id>)"."""
+    import rbxskills
+    hits = rbxskills.search(q, kind, k, project_dir())
+    if not hits:
+        return 'No skill matches "%s". Try other words, or rbx_skill action \'list\' for every skill.' % q
+    return "\n".join(rbxskills.pointer(h) for h in hits)
+
+
+POINTER_AT = 0.5  # a skill is pointed at when it holds at least this share of the query's words
+POINTERS = 2  # skills pointed at in one answer at most
+
+
+def skill_pointers(q):
+    """The end of a knowledge search's answer: up to two skills that fit the question (the keyword search over their
+    summaries, which costs nothing; never a call to the index service), or ""."""
+    try:
+        import rbxskills
+        hits = [h for h in rbxskills.keyword_search(q, "", POINTERS, project_dir()) if h["score"] >= POINTER_AT]
+    except Exception:  # a pointer is only a help: never an error from here
+        return ""
+    if not hits:
+        return ""
+    return "\n\nSkills that may apply (a skill is instructions for this kind of work; load it before you start):\n" + \
+        "\n".join(rbxskills.pointer(h) for h in hits)
+
+
+def _search_answer(q, shelf, shelves, k, filters):
     text = rag_search(q, shelves, k, filters)  # the knowledge index, when the app runs it; None: the keyword search
     if text is not None:
         return text

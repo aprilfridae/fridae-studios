@@ -391,5 +391,122 @@ class GuideSkillTests(unittest.TestCase):
         self.assertNotIn("roblox-ui-design", listed)
 
 
+def skill_with(folder, name, desc, examples, applies="both", body="Do the thing."):
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "SKILL.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: %s\ndescription: %s\nexamples:\n%s\napplies: %s\n---\n\n%s\n" % (
+            name, desc, "".join("  - %s\n" % e for e in examples), applies, body))
+
+
+class SkillsShelfTests(unittest.TestCase):
+    """The `skills` search shelf: one summary entry per skill, found by what it is for."""
+
+    def setUp(self):
+        import rbxkit_mcp
+        import rbxvault
+        self.mcp, self.vault = rbxkit_mcp, rbxvault
+        self.user = tempfile.mkdtemp(prefix="user skills shelf é ")
+        self.addCleanup(shutil.rmtree, self.user, True)
+        for p in (mock.patch.object(rbxskills, "user_dir", lambda: self.user),
+                  mock.patch.object(rbxvault, "rag_endpoint", lambda: None),
+                  mock.patch.dict(os.environ, {"RBXKIT_PROJECT": "", "RBXKIT_AGENT_ROLE": "", "FRIDAE_RAG_FILE": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+        skill_with(os.path.join(self.user, "menu-polish"), "menu-polish", "Make menus feel good.",
+                   ["make a shop menu feel juicy", "polish the settings screen"])
+        skill_with(os.path.join(self.user, "tax-notes"), "tax-notes", "Keep a tidy tax folder.",
+                   ["file my receipts"], applies="plain")
+        skill_with(os.path.join(self.user, "spawn-tuning"), "spawn-tuning", "Tune enemy spawns.",
+                   ["enemies spawn too fast"], applies="game")
+
+    def test_search_finds_skill_by_example(self):
+        hits = rbxskills.search("shop menu feels flat")
+        self.assertEqual(hits[0]["id"], "menu-polish")
+        self.assertEqual(set(hits[0]), {"id", "description", "why", "score"})
+        self.assertLessEqual(len(hits[0]["why"]), 60)
+        self.assertIn("shop menu", hits[0]["why"])
+
+    def test_search_respects_kind(self):
+        self.assertIn("spawn-tuning", [h["id"] for h in rbxskills.search("enemies spawn too fast", kind="game")])
+        self.assertNotIn("spawn-tuning", [h["id"] for h in rbxskills.search("enemies spawn too fast", kind="plain")])
+        self.assertNotIn("tax-notes", [h["id"] for h in rbxskills.search("file my receipts", kind="game")])
+        self.assertIn("tax-notes", [h["id"] for h in rbxskills.search("file my receipts", kind="plain")])
+
+    def test_search_uses_the_index_service_when_it_runs(self):
+        hits = [{"shelf": "skills", "title": "tax-notes", "score": 0.9}, {"shelf": "skills", "title": "gone", "score": 0.8},
+                {"shelf": "skills", "title": "menu-polish", "score": 0.5}]
+        with mock.patch.object(self.vault, "rag_endpoint", lambda: ("http://127.0.0.1:1", "t")), \
+                mock.patch.object(self.vault, "_rag_hits", lambda end, q, shelves, k, filters=None: hits) as m:
+            got = rbxskills.search("anything", kind="plain")
+        self.assertEqual([h["id"] for h in got], ["tax-notes", "menu-polish"])
+        self.assertEqual(got[0]["score"], 0.9)
+        self.assertEqual(got[0]["description"], "Keep a tidy tax folder.")
+
+    def test_search_falls_back_when_the_service_fails(self):
+        def boom(*a, **k):
+            raise OSError("down")
+        with mock.patch.object(self.vault, "rag_endpoint", lambda: ("http://127.0.0.1:1", "t")), \
+                mock.patch.object(self.vault, "_rag_hits", boom):
+            self.assertEqual(rbxskills.search("shop menu feels flat")[0]["id"], "menu-polish")
+
+    def test_skill_docs_are_one_summary_each(self):
+        docs = {d["title"]: d for d in self.vault.skill_docs()}
+        d = docs["menu-polish"]
+        self.assertEqual(d["shelf"], "skills")
+        self.assertEqual(d["text"], "menu-polish\nMake menus feel good.\nFor: make a shop menu feel juicy; polish the settings screen")
+        self.assertEqual((d["applies"], d["owner"]), ("both", "user"))
+        self.assertEqual(docs["tax-notes"]["applies"], "plain")
+        self.assertIn("workflow", docs, "the app's own guides are on the shelf too")
+
+    def test_skill_chunk_is_one_summary(self):
+        from rbxrag import chunks
+        folder = os.path.join(self.user, "huge")
+        skill_with(folder, "huge", "A big one.", ["do the huge thing"], body="Paragraph of words.\n\n" * 2000 + "## Part\n\nMore.\n")
+        path = os.path.join(folder, "SKILL.md")
+        self.assertGreater(os.path.getsize(path), 40000)
+        out = chunks.chunks_for_file("skills", "huge", path, chunks.make_token_counter())
+        self.assertEqual(len(out), 1)
+        self.assertTrue(out[0]["text"].startswith("huge\n"))
+        self.assertEqual(out[0]["shelf"], "skills")
+        self.assertNotIn("Paragraph of words", out[0]["text"])
+
+    def test_corpus_has_one_skills_entry_per_skill_and_guides_keep_their_bodies(self):
+        from rbxrag import chunks
+        files = chunks.corpus_files(None)
+        mine = [f for f in files if f[0] == "skills"]
+        self.assertIn("menu-polish", [t for _, t, _ in mine])
+        self.assertEqual(len({t for _, t, _ in mine}), len(mine))
+        keys = [p for _, _, p in files]
+        self.assertEqual(len(keys), len(set(keys)), "no index key twice (a guide's SKILL.md is on both shelves)")
+        self.assertTrue(any(s == "guides" and t == "workflow" for s, t, _ in files))
+        for _, t, p in mine:
+            self.assertTrue(os.path.isfile(chunks.real_path(p)), t)
+
+    def test_skills_are_not_in_ordinary_searches(self):
+        self.assertNotIn("skills", self.vault.KNOWLEDGE)
+        self.assertIn("skills", self.vault.SHELVES)
+        text = self.vault.run("search", {"query": "enemies spawn too fast", "shelf": "guides"})
+        self.assertNotIn("spawn-tuning", text.split("Skills that may apply")[0])
+
+    def test_vault_search_points_at_skill(self):
+        res = self.mcp.t_vault({"action": "search", "query": "shop menu feels flat"})
+        text = res["content"][0]["text"]
+        self.assertFalse(res["isError"], text)
+        self.assertIn("rbx_skill load menu-polish", text)
+
+    def test_vault_search_on_the_skills_shelf_lists_skills(self):
+        text = self.vault.run("search", {"query": "shop menu feels flat", "shelf": "skills"})
+        self.assertIn("- menu-polish:", text)
+
+    def test_rbx_skill_search_answers_lines(self):
+        res = self.mcp.t_skill({"action": "search", "query": "shop menu feels flat"})
+        text = res["content"][0]["text"]
+        self.assertFalse(res["isError"], text)
+        self.assertIn("- menu-polish: Make menus feel good. (load with rbx_skill load menu-polish)", text)
+        self.assertTrue(self.mcp.t_skill({"action": "search"})["isError"])
+        res = self.mcp.t_skill({"action": "search", "query": "file my receipts", "kind": "game"})
+        self.assertNotIn("tax-notes", res["content"][0]["text"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,22 @@ def _team(project):
     return [(t, p, False) for t, p in kit if t not in ids] + [(t, p, True) for t, p in mine]
 
 
+SKILL_KEY = "#skill"  # a skill's index key is its SKILL.md's path plus this: a guide's SKILL.md is also on the guides shelf
+
+
+def real_path(key):
+    """The file behind a corpus path (a skill's index key without its suffix)."""
+    return key[:-len(SKILL_KEY)] if key.endswith(SKILL_KEY) else key
+
+
+def _skills(project):
+    """[(id, index key, from the game?)] for the skills shelf: one entry per skill of the library (the project's own
+    skills only with a project)."""
+    import rbxskills
+    return [(s["id"], os.path.join(s["dir"], "SKILL.md") + SKILL_KEY, s["origin"] == "project")
+            for s in rbxskills.library(project or None) if os.path.isfile(os.path.join(s["dir"], "SKILL.md"))]
+
+
 def corpus_files(project):
     """(shelf, title, path) for everything the index holds: the vault notes, Fridae's guides, the team files (with the
     game's overrides when a project is given), the user's notes and, with a project, the game's own notes. Nothing
@@ -62,6 +78,7 @@ def corpus_files(project):
     out += [("yours", t, p) for t, p in rbxvault.yours_files()]
     if project:
         out += [("game", t, p) for t, p in rbxvault.game_files(project)]
+    out += [("skills", t, k) for t, k, _ in _skills(project)]
     return out
 
 
@@ -69,7 +86,8 @@ def project_files(project):
     """The paths of corpus_files(project) that belong to the game (its notes and its team overrides)."""
     if not project:
         return set()
-    return {p for _, p, mine in _team(project) if mine} | {p for _, p in rbxvault.game_files(project)}
+    return ({p for _, p, mine in _team(project) if mine} | {p for _, p in rbxvault.game_files(project)}
+            | {k for _, k, mine in _skills(project) if mine})
 
 
 # ------------------------------------------------------------------ chunks
@@ -190,7 +208,9 @@ def _prefix(shelf, title, label, s, labels, gist, count_tokens, limit):
 def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project="", meta=None):
     """The chunks of one file: one per section with text, split by tokens when a section is too long for the model,
     each with its context lines and labels. meta (a dict), when given, gets the file's [[links]] ("links"). An
-    unreadable or non-UTF-8 file gives no chunks."""
+    unreadable or non-UTF-8 file gives no chunks. A skill (shelf skills) is one chunk, its summary, whatever its size."""
+    if shelf == "skills":
+        return _skill_chunks(title, real_path(path), count_tokens, limit, project)
     try:
         text = rbxvault.read(path)
     except (OSError, UnicodeDecodeError):
@@ -227,3 +247,20 @@ def chunks_for_file(shelf, title, path, count_tokens, limit=LIMIT, project="", m
             c.update({k: lab.get(k) or "" for k in LABEL_KEYS})
             out.append(c)
     return out
+
+
+def _skill_chunks(title, path, count_tokens, limit, project=""):
+    """The skills shelf's one chunk for a skill: its summary (rbxskills.summary), never the body of its SKILL.md."""
+    import rbxskills
+    try:
+        fm, _ = rbxskills.front(rbxskills._read(path, 16000))
+    except (OSError, ValueError):
+        return []
+    m = rbxskills.meta(fm, os.path.dirname(path), "user")
+    text = rbxskills.summary(m)
+    while count_tokens(text) > limit and len(text) > 40:  # a freak front matter must not outgrow the window
+        text = text[:int(len(text) * 0.8)].rstrip()
+    c = {"id": chunk_id("skills", path, 0, 0), "shelf": "skills", "title": title, "heading": "", "path": path,
+         "rel": path, "i": 0, "part": 0, "text": text, "project": project or ""}
+    c.update({k: "" for k in LABEL_KEYS})
+    return [c]

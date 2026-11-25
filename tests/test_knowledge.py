@@ -421,7 +421,7 @@ class GuideToolTests(unittest.TestCase):
         v = tools["rbx_vault"]["inputSchema"]["properties"]
         for k in ("action", "query", "shelf", "k", "count", "title", "heading", "folder", "names"):
             self.assertIn(k, v)
-        self.assertEqual(v["shelf"]["enum"], ["all", "vault", "guides", "team", "game", "yours"])
+        self.assertEqual(v["shelf"]["enum"], ["all", "vault", "guides", "team", "game", "yours", "skills"])
 
 
 class VaultUnchangedTests(unittest.TestCase):
