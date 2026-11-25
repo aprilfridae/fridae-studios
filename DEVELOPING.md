@@ -2192,8 +2192,12 @@ folder in the app's own folder. Only when every one is right is the folder hande
 looked wrong, so nothing was changed."). Staging is kept complete: a file that did not change is copied in from the
 user's file or the base copy when its bytes match the manifest, and fetched only otherwise. The app checks quietly a
 minute after launch and then once a day while it is open, and it only downloads. The path rule (`check_path`, the same
-cases in Python and Rust) is: under `Skills/`, inside a skill's folder, no empty or dot-started part, no backslash,
-NUL or leading slash, each part at most 255 bytes. The limits bind Python as well as Rust.
+cases in Python and Rust, and the inbox's too) is: under `Skills/`, inside a skill's folder, no leading slash, and each
+part a name every system can hold: not empty or dot-started, at most 255 bytes, no `:` or `<>"|?*\`, no control
+character, no trailing dot or space or leading space, and none of Windows' device names (`CON`, `PRN`, `AUX`, `NUL`,
+`CONIN$`, `CONOUT$`, `COM0`-`COM9`, `LPT0`-`LPT9`, also with `¹²³`) in any case, with or without an extension. Before
+each staged file is written, its place is checked to be inside the staging folder, and a release's name must start
+with `vault-`. The limits bind Python as well as Rust.
 
 **The update rules.** The vault lands in `<Knowledge>/Skills`. `<Knowledge>/.fridae-vault/` holds the record:
 `base.json` (`release`, `files`: the hash of each file as last installed, `deleted`, `declined`, `renamed`, `waiting`,
@@ -2205,13 +2209,16 @@ copy, the user's file and the new file:
 - the user's file already equals the new one: only recorded.
 - the user's file is unchanged since the base: replaced. Changed by the user but not upstream: the edit stands.
 - changed on both sides: a three-way text merge when it is clean; otherwise the user's file stays and the new one is
-  saved beside it. These show as "kept" in the report, each with Reveal.
+  saved beside it. These show as "kept" in the report, each with Reveal. The merge is `git merge-file`; on a computer
+  without `git`, every file changed on both sides is kept this way (safe, just never merged).
 - a file the user deleted is remembered and never brought back; a file the vault dropped is moved to
   `removed/<release>/` only if the user never changed it.
 Every file is written to a temporary file and renamed. A symlink below `Knowledge/Skills` or the record is refused (the
-`Knowledge` folder itself may be one). One update runs at a time under a lock on the vault's record; the user's
-library is locked after it, never before. A vault skill kept under another name (Keep both) keeps merging: the new
-upstream `SKILL.md` gets the local name before it is compared, and its base copy holds those bytes.
+`Knowledge` folder itself may be one). A vault skill is known in the library by its folder's name, whatever its front
+matter's `name` says, so it can never take the place of one of Fridae's skills or of another vault skill. One update
+runs at a time under a lock on the vault's record; the user's library is locked after it, never before. A vault skill
+kept under another name (Keep both) keeps merging: the new upstream `SKILL.md` gets the local name before it is
+compared, and its base copy holds those bytes.
 
 **Newcomers and vault decisions** (`rbxvaultnew.py`). A skill that is new to this computer (no base record, no local
 folder) is looked at before it is installed. One named like Fridae's own is declined for good. The user's own earlier
@@ -2246,26 +2253,31 @@ what is sent is exactly the masked bytes the user was shown.
 reaches any route here. Turning it on asks for a yes to CC BY 4.0 (text) and MIT (scripts), and GitHub must be
 connected. Share runs `rbx skills pack` into the app's `outbox` (at most 20 skills; a batch nobody sends is removed
 after 7 days), masks it and shows the batch, scripts first. Send makes the user's fork (once), a branch
-`skills-<login>-<date>-<hour>`, one commit `Skills from <login>: a, b` holding those exact bytes, and a pull request
-titled `Skills from <login>: a, b, c +2 more` whose body has one line for each skill (its description, with `scripts:
-yes` when it has some). Then `mark-shared` writes `.fridae-shared.json` into each skill. Under Send automatically a
-batch goes at most once a day.
+`skills-<login>-<date>-<hour and minute>-<4 random hex>`, one commit `Skills from <login>: a, b` holding those exact
+bytes, and a pull request titled `Skills from <login>: a, b, c +2 more` whose body has one line for each skill (its
+description, with `scripts: yes` when it has some). Then `mark-shared` writes `.fridae-shared.json` into each skill.
+Under Send automatically a batch goes at most once a day. The vault's pull request, release and repo links on these
+pages are buttons that open the system browser through `POST /api/github/open` (`what: "pr"` with its number,
+`"release"` with its tag, `"vault"`): the app builds the address from `VAULT_REPO`, and the page never gives one.
 
 **The pull request's shape.** Only `Skills/<skill>/...` files, one folder for each skill. The inbox reads nothing else.
 
 **The maintainer's inbox** (`vault_inbox.rs`; Setup › Skills › Submissions, shown only when the signed-in GitHub name
 has push access to the vault repo; kept for 10 minutes). It lists the open pull requests (at most 50), each skill in
-them with its files (at most 300 files and 8 MiB a request; scripts first, headed "Runs on everyone's computer: read
-it"), a comparison with the vault's own skills (a mirror of `main`; never with the maintainer's own library) and a
-recommendation an AI writes in the background. Everything in a pull request is a stranger's text: each path is checked
-before it becomes a path on disk (no `:`, device names, trailing dots or spaces), text is shown as text, and nothing a
-submission says is followed as an instruction. A request that cannot be read shows its own sentence and never hides the
-others. Each skill gets **Add**, **Edit then add** or **Reject**. Add asks first, with a card that says what it will
-do, like Create and Publish. Add commits that skill's files to the vault's `main` (with `owner: community`, `credit`,
-`licence`, `source` and `updated`, and no `core` or `supersedes`), and it removes only what the submission removed,
-never files the submitter left as they were. Reject only records the decision. Decisions are remembered by request,
-skill and head commit, so a request that changed asks again. When every skill in a request is decided, Fridae thanks
-the sender in a comment and closes it.
+them with its files (at most 300 files, 200 KB a file and 8 MiB a request: past 8 MiB nothing more is fetched and the
+rest say "Not shown: this submission is too big to read in full."; a file GitHub gives back that is not whole is an
+error, never an empty file; scripts first, headed "Runs on everyone's computer: read it"), a comparison with the vault's
+own skills (a mirror of `main`; never with the maintainer's own library) and a recommendation an AI writes in the
+background. Everything in a pull request is a stranger's text: each path is checked before it becomes a path on disk
+(the download's path rule above), text is shown as text, and nothing a submission says is followed as an instruction. A
+request that cannot be read shows its own sentence and never hides the others. Each skill gets **Add**, **Edit then
+add** or **Reject**. Add asks first, with a card that says what it will do, like Create and Publish. Add commits that
+skill's files to the vault's `main` (with `name` set to the skill's folder, `owner: community`, `credit`, `licence`,
+`source` and `updated`, and no `core` or `supersedes`), and it removes only what the submission removed, never files the
+submitter left as they were. Reject records the decision; its reason (optional) goes in the closing comment, which
+anyone can read, and the card says so. On a request's last undecided skill, Add, Edit then add and Reject each say that
+the pull request will be thanked and closed. Decisions are remembered by request, skill and head commit, so a request
+that changed asks again. When every skill in a request is decided, Fridae thanks the sender in a comment and closes it.
 
 **Create the vault repo** (the maintainer's click and confirm; only for the account that owns `aprilfridae`, and only
 when the repo does not exist). It makes the public repo with the four text files above. Nothing else ever makes it.
@@ -2273,10 +2285,11 @@ when the repo does not exist). It makes the public repo with the four text files
 Fridae, after the branch is merged with their word.
 
 **Publish vault release** (the maintainer's click and confirm, each time). It reads `main` and checks every skill: a
-`SKILL.md`, an `owner` of `community` or `shipped`, a `licence`, a `source`, no `core: true`, no two names alike in any
-capitals, and the manifest limits above. If something is wrong it lists the problems and publishes nothing. Otherwise
-it writes `manifest.json` to `main` (and refuses if `main` moved meanwhile) and makes the release, with notes of the
-skills new, changed and removed since the last one.
+`SKILL.md`, an `owner` of `community` or `shipped`, a `licence`, a `source`, no `core: true`, a `name` equal to its
+folder's ("<name>: name differs from its folder"), no two names alike in any capitals, and the manifest limits above. If
+something is wrong it lists the problems and publishes nothing. Otherwise it writes `manifest.json` to `main` (and
+refuses if `main` moved meanwhile) and makes the release, with notes of the skills new, changed and removed since the
+last one.
 
 **Config keys** (`<home>/config.json`): `vault_release` (the release last downloaded), `vault_checked_at` and
 `vault_last` (the last check and its report), `share_skills` (`off`, `review`, `auto`; guarded), `share_agreed_at`,
@@ -2299,10 +2312,6 @@ with `role`), `GET /api/vault/share`, `GET /api/vault/inbox`; `POST /api/vault/d
 - A declined vault skill cannot be taken back from the page yet (its name stays in `declined` in `base.json`).
 - Contributors' GitHub sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also
   makes private repos.
-- Pull request links open as ordinary links and may not open the system browser; a proper open route (only for the
-  vault's own pull requests) is left for later.
-- The inbox refuses names Windows cannot hold safely (`:`, `CON`, `NUL`, `COM1`, a trailing dot or space), but the
-  download's own path rule (Python and Rust) does not refuse them yet. No skill has such a name, but a manifest could.
 - A Windows junction below `Knowledge/Skills` is not seen as a link.
 - Skills whose names differ only in capitals (`Tidy`, `tidy`) can collide on Windows and macOS.
 

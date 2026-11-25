@@ -233,14 +233,18 @@ ignore").
        release's manifest lists every file with its hash and size. Only changed files are fetched, each checked against
        the manifest, in a staging folder that is handed on only when every file is right (otherwise nothing changes).
        Staging is kept complete, so what did not change is copied from the user's file or the base copy and fetched only
-       when its bytes differ. A manifest must name its tag as its release, and the tag may hold only letters, digits,
-       dots, dashes and underscores. The path rules are checked on both the Python and the Rust side, with the same
-       test cases; skills live in folders, so `Skills/<file>` is refused.
+       when its bytes differ. A manifest must name its tag as its release, and the tag must start with `vault-` and
+       may hold only letters, digits, dots, dashes and underscores. The path rules are checked on both the Python and
+       the Rust side, with the same test cases; skills live in folders, so `Skills/<file>` is refused, and every part
+       of a path must be a name every system can hold (no `:`, no Windows device name such as `CON` or `COM1`, no
+       trailing dot or space). Each staged file's place is checked to be inside the staging folder before it is
+       written.
      - **Updates never override the user.** Each file is compared three ways (the last installed copy, the user's file,
        the new file). Untouched files are replaced; edits on both sides are merged when that is clean, otherwise the
        user's file stays and the new one is saved beside it (shown as "kept"); deleted files stay deleted; what the vault
        dropped is moved aside, never deleted. A skill kept under another name still merges later updates. A symlink
-       below `Knowledge/Skills` or the record is refused (the `Knowledge` folder itself may be one).
+       below `Knowledge/Skills` or the record is refused (the `Knowledge` folder itself may be one). A vault skill is
+       known by its folder's name, whatever its front matter says.
      - **A new vault skill meets the library.** Names of Fridae's own skills are declined for good. A skill saying what
        one already does is skipped, and looked at again next release. An overlap waits in a decision with the usual four
        choices. Replace moves a user's skill to `.replaced/` and the vault's own to `removed/`; Merge makes the merged
@@ -251,15 +255,18 @@ ignore").
        day); the setting is guarded so an agent cannot turn it on. The user agrees to CC BY 4.0 and MIT first. Files are
        masked (keys, emails, the home folder and the login name; on Windows whatever the capitals and slashes) and the
        user sees exactly the masked bytes that are sent, scripts first; a script where something was hidden is held
-       until read. Send makes a branch in the user's fork and a pull request. The page's routes add the lists it needs
-       (ready, held, sent), a reveal for a file a report names (only under `Knowledge/Skills`) and one merged
-       status route.
+       until read. Send makes a branch in the user's fork and a pull request. Its link, like the inbox's and the
+       release's, opens the system browser through the app, which builds the address itself. The page's routes add
+       the lists it needs (ready, held, sent), a reveal for a file a report names (only under `Knowledge/Skills`) and
+       one merged status route.
      - **The maintainer's inbox.** Shown only to the vault repo's maintainer. Each open pull request's skills, scripts
        first, compared with the vault's own skills, with an AI's recommendation. A request that cannot be read says so
        and never hides the others. Each skill gets Add, Edit then add or Reject; **Add asks first** (a card that says
        what it will do), like Create the vault repo and Publish vault release, because the spec's "click and confirm" is
-       binding. Add removes only what the submission removed. Publish checks every skill and makes the manifest and
-       release, or lists the problems.
+       binding. Add sets the skill's `name` to its folder and removes only what the submission removed. Reject says
+       that its reason is posted where anyone can read it. A submission is read only up to 8 MiB. Publish checks every
+       skill (a `name` that differs from its folder is refused) and makes the manifest and release, or lists the
+       problems.
      - **The vault's licence file** names CC BY 4.0 exactly (SPDX `CC-BY-4.0`, with its address) and holds the full MIT
        text, rather than the long Creative Commons legal code typed from memory; the maintainer may paste the official
        text later.
@@ -272,10 +279,6 @@ ignore").
      - A declined vault skill cannot be taken back from the page yet.
      - Contributors' GitHub sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub
        also creates private repos.
-     - Pull request links open as ordinary links and may not open the system browser; a proper open route is left for
-       later.
-     - Refusing `:` and Windows' reserved names (`CON`, `NUL`, a trailing dot) in the download's path rule is not done
-       yet (the inbox refuses them already).
 
 ## Testing
 
@@ -297,9 +300,7 @@ ignore").
 - Phase 2: the card shows neither each side's "last change" nor "how often each was loaded here".
 - Phase 3: notes are not in the vault yet; edited imports and edited community skills cannot be shared; a three-way
   conflict is a row line, not a card; a declined vault skill cannot be taken back from the page yet; contributors' GitHub
-  sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also creates private repos;
-  pull request links may not open the system browser; the download's path rule does not yet refuse `:` and Windows'
-  reserved names.
+  sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also creates private repos.
 
 ## Left to the builder
 
