@@ -1,6 +1,6 @@
 ---
 name: critic
-description: "Instructions for an agent spawned as a reviewer of finished work. Instructions for an agent spawned as a reviewer - judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work."
+description: "For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work."
 examples:
   - "Review the finished shop as a new phone player"
   - "Find exploits in the new trading system"

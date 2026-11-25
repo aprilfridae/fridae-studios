@@ -2058,14 +2058,17 @@ the app's own guides open with the Roblox Studio `PREFACE`, every other skill wi
 name, origin, base directory and files), `read` (one file inside the skill's folder). `rbx_guide` is an alias of
 `load`. `rbx_vault` hits point at skills ("load with rbx_skill").
 
-**Import, never a second library** (`import_external`, run by `catalog` and `index` at most once a minute, under
-`<library>/.lock`). The sources are only ever read: Claude Code's `~/.claude/skills` and enabled plugins
+**Import, never a second library** (`import_external`, run by `index` and the CLI's `catalog` at most once a minute,
+under `<library>/.lock`; the app's catalog call on a turn passes `--no-import`, so a turn never waits on an import). The sources are only ever read: Claude Code's `~/.claude/skills` and enabled plugins
 (`installed_plugins.json`), what the Claude apps synced for every account (`~/.claude/plugins/synced/...`,
 `~/.claude/skills/synced/...`), `~/.agents/skills`, `~/.codex/skills`, `~/.cursor/skills`,
 `~/.config/opencode/skill(s)`, `~/.gemini/skills`. Each skill is copied into the user's library once, with its link in
 `<skill>/.fridae-source.json`. A plugin's skill takes its bare name (`superpowers:brainstorming` is `brainstorming`).
-An unedited copy follows its source; an edited one is never overwritten (the source's new version waits beside it as
-`<name> (update)`, a decision). Byte-identical copies and the copies `install.py` put in `~/.claude/skills` (its
+An unedited copy follows its source (the dot-files, `.venv`, `__pycache__` and `node_modules` the user added, which
+the copy's hash leaves out, are moved into the refreshed copy); an edited one is never overwritten (the source's new
+version waits beside it as `<name> (update)`, a decision). An imported copy's own front matter never pins it, hides
+another skill or makes it Fridae's: `core` and `supersedes` count only as Fridae wrote them (the link's `patch`), and
+its owner is never `shipped` or `app`. Byte-identical copies and the copies `install.py` put in `~/.claude/skills` (its
 `.fridae-installed.json`, or an old copy under a Claude install name at similar() 0.9 or more) link to the existing
 skill with no decision. The seven Claude-desktop-only skills (`APP_ONLY`) are never imported or listed. On this Mac
 the first import added 56 skills and opened 8 decisions in 1.3 s.
@@ -2081,14 +2084,20 @@ closest pairs that are not duplicates scored 0.546 (ux-validate, insight-synthes
 design). 0.55 sat 0.004 above the first of those.
 - Setup › Skills shows one decision at a time: each side's name, owner, source, licence, description and a scripts
   cue first, then Keep / Replace / Merge / Keep both, and Accept all recommendations for a first-run pile. The loser
-  goes to `<library>/.replaced/` (never deleted) with `supersedes` on the winner.
+  goes to `<library>/.replaced/` (never deleted) with `supersedes` on the winner; a losing note goes to the notes
+  `.trash`. Nothing puts one back from the card yet (phase 2): move it back by hand. A merge keeps the Fridae fields
+  of the skill in use (`applies`, `examples`, `core`, `source`, `licence`, `owner`, `supersedes`) that the merged text
+  lacks.
+- `decide` moves or writes only folders inside the user's library (the app's own skills are only read): one another
+  copy of the app wrote (its own kit's path) is refused for replace and merge ("check them again"). A decision whose
+  waiting folder was removed by hand is closed ("gone") by the next `pending`; keep and keep both close it too.
 - A cheap model writes a recommendation (keep, replace or merge, a why, and for a merge the merged SKILL.md;
   `skills::advise_open`): the OpenCode plan's models, else Claude's cheapest (haiku) when Claude is the default AI.
   Both texts are masked and framed as material, not instructions. The recommendation carries a hash of both sides;
   a merge is refused once either side changed since ("check them again").
 
 **Pinned core plus suggestions.** Every agent's instructions carry a `## Skills` part (`rbx skills catalog --kind`,
-`skills::catalog`, kept until a watched folder changes or for ten minutes): one line per pinned skill that fits the
+`skills::catalog`, kept until a watched folder changes or for ten minutes; `--no-import`): one line per pinned skill that fits the
 project's kind (`rbxskills.CORE`: brainstorming, systematic-debugging, test-driven-development,
 verification-before-completion, writing-plans, ui-ux-pro-max; for games also workflow, playtest, ui-design,
 game-bible, game-design, critic; or `core: true`), then "Other skills: search with rbx_skill..." and, for Claude, "When
@@ -2103,7 +2112,8 @@ unchanged imports of skills Claude Code lists itself. Measured (tokens by the Li
 For each message of the user's, `skills::suggest_for` adds at most three more as one line on the turn text sent to the
 AI (never the stored message, never on a resend, a carry-on or a wake message): `[Skills that may fit: a (why), b
 (why)]`, the why being the message's own words the skill holds. It never waits: the index (`rbx skills index --json`)
-is cached and made behind; a message that finds none goes without.
+is cached and made behind (`skills::warm`: started when the server starts and when a chat is made, reopened or given a
+project); a message that finds none goes without.
 - The gate: fewer than 3 content words (no stopwords; no word of two letters or less except ui, ux, 2d, 3d, ai, db,
   qa, ci) gets nothing, so "looks good, run it" never gets a suggestion.
 - The index service (`POST /suggest`, 300 ms): skills ranked by the dense cosine of the message against each skill's
@@ -2146,7 +2156,10 @@ time. Keep, replace and merge move notes to the notes `.trash`, never delete the
 - Recommendations come only from the OpenCode plan or, when Claude is the default AI, Claude's cheapest model. With a
   Gemini, Cursor or Codex default and no OpenCode plan, a decision shows both sides with no recommendation.
 - Heavy's suggestion thresholds are Light's, unmeasured (above).
-- Right after launch the index is cold: the first message or two go without suggestions while it is made.
+- The index is made behind from launch (`skills::warm`), which takes a few seconds (longer when the first import of
+  the day runs); a message sent before it is ready goes without suggestions.
+- A decision card has no "Put back" yet, and shows neither each side's last change nor how often each was loaded
+  (phase 2).
 
 **The quick check:** `.venv/bin/python tests/skills_bench.py --models <folder holding BAAI/bge-small-en-v1.5>`
 (about 10 seconds, plus a Rust test build the first time). It imports this Mac's skills into a scratch library

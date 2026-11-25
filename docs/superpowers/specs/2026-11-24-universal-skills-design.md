@@ -241,6 +241,10 @@ ignore").
 - Phase 1's recommender is the OpenCode plan, then Claude's cheapest model only when Claude is the default AI. With a
   Gemini, Cursor or Codex default and no OpenCode plan, a decision card shows both sides with no recommendation
   (one-shot writers for those AIs are later work).
+- Phase 2 (ruled 2026-11-24, after the final review): a decision card has no "Put back" from its history yet. The
+  losers are kept, never deleted: skills in `<library>/.replaced/`, notes in the notes folder's `.trash`; they go
+  back by hand until then.
+- Phase 2: the card shows neither each side's "last change" nor "how often each was loaded here".
 
 ## Left to the builder
 

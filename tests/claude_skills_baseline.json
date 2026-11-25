@@ -10,7 +10,7 @@
   "files": {
    "SKILL.md": "7c87b89661a196b46093f901ccaa301c0665909c"
   },
-  "frontmatter": "name: critic\ndescription: \"Instructions for an agent spawned as a reviewer of finished work. Instructions for an agent spawned as a reviewer - judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work.\"\nexamples:\n  - \"Review the finished shop as a new phone player\"\n  - \"Find exploits in the new trading system\"\n  - \"Check the build against GAME.md and rank the defects\"\napplies: game\ncore: true\nowner: app"
+  "frontmatter": "name: critic\ndescription: \"For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work.\"\nexamples:\n  - \"Review the finished shop as a new phone player\"\n  - \"Find exploits in the new trading system\"\n  - \"Check the build against GAME.md and rank the defects\"\napplies: game\ncore: true\nowner: app"
  },
  "economy-design": {
   "files": {

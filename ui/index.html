@@ -5673,7 +5673,7 @@ $("ap-sk-go").onclick = () => openSetup("skills");
 function skPaintCount() {
   const n = skOpen().length, nav = $("sk-nav-n");
   nav.hidden = !n; nav.textContent = n; nav.title = n + (n === 1 ? " decision waits" : " decisions wait");
-  $("ap-sk").hidden = !n; $("ap-sk-go").textContent = n + (n === 1 ? " skill decision waits" : " skill decisions wait");
+  $("ap-sk").hidden = !n; $("ap-sk-go").textContent = n + (n === 1 ? " decision waits" : " decisions wait"); // skills' and notes
 }
 function skPaintList() {
   const box0 = $("sk-list");

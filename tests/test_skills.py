@@ -356,6 +356,17 @@ class GuideSkillTests(unittest.TestCase):
         for n in ("workflow", "game-design", "roblox-luau", "lihfolk-vfx"):
             self.assertEqual(kit[n]["applies"], "game", n)
 
+    def test_no_description_repeats_its_opening(self):
+        """A pinned skill's catalog line is its description cut at DESC_MAX: a repeated opening fills it with nothing."""
+        for s in rbxskills.kit_skills():
+            words = s["description"].split()
+            head = " ".join(words[:5])
+            self.assertEqual(s["description"].count(head), 1, s["id"])
+        critic = next(s for s in rbxskills.kit_skills() if s["id"] == "critic")
+        line = rbxskills.short(critic["description"])
+        for what in ("reviewer", "phone player", "exploiter"):
+            self.assertIn(what, line, "the pinned line says what the critic does")
+
     def test_guides_table_is_built_from_the_library(self):
         kit = rbxskills.kit_skills()
         self.assertGreater(len(kit), 50)
@@ -1259,6 +1270,20 @@ class ImportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OverviewWordingTests(unittest.TestCase):
+    def test_the_overview_count_is_called_what_it_counts(self):
+        """The count of open decisions (skOpen) holds note decisions too: the Overview's line must not call them all
+        skill decisions."""
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "index.html"),
+                  encoding="utf-8") as f:
+            ui = f.read()
+        paint = ui[ui.index("function skPaintCount()"):]
+        paint = paint[:paint.index("\n}\n")]
+        self.assertIn("skOpen().length", paint)
+        self.assertNotIn("skill decision", paint)
+        self.assertIn('" decisions wait"', paint)
 
 
 class NoteDecideTests(unittest.TestCase):
