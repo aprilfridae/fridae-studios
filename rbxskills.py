@@ -1192,6 +1192,33 @@ def decide(id, choice, merged_text=None):
         return dec
 
 
+ADVICE = ("keep", "replace", "merge")
+
+
+def advise(id, rec):
+    """Store an AI's recommendation on an open decision, and nothing else: no folder moves, the decision stays open
+    for the user. rec: {choice: keep|replace|merge, why, merged (the merged SKILL.md), by (who wrote it)}. An unknown
+    choice, or a merge without its text, is stored with no choice (the why still shows); a recommendation to replace
+    or merge one of Fridae's own skills is stored as keep. Returns the decision."""
+    rec = rec if isinstance(rec, dict) else {}
+    text = lambda k: rec[k] if isinstance(rec.get(k), str) else ""
+    choice = rec.get("choice") if rec.get("choice") in ADVICE else None
+    merged = text("merged") if choice == "merge" else ""
+    if choice == "merge" and not merged.strip():
+        choice, merged = None, ""
+    with _locked(user_dir()):
+        decs = _decisions()
+        dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
+        if dec is None:
+            raise LookupError("No open decision '%s'." % id)
+        if choice in ("replace", "merge") and _kit_owner(dec.get("a_dir") or "")[0] == "app":
+            choice, merged = "keep", ""
+        dec["recommendation"] = {"choice": choice, "why": text("why").strip(), "merged": merged,
+                                 "by": text("by").strip(), "made": _now()}
+        _save_decisions(decs)
+        return dec
+
+
 # ---- what Claude Code lists itself, and the index the app reads
 INDEX_FIELDS = ("id", "name", "description", "examples", "applies", "core", "owner", "source", "licence",
                 "supersedes", "updated", "dir", "origin")
@@ -1237,17 +1264,23 @@ def register(sub):
                                       "decide, index")
     p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index"])
     p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id")
-    p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both")
+    p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
+                                                       "(advise: only store an AI's recommendation, from --json-file)")
     p.add_argument("--ai", default="", help="catalog: the AI it is for (claude leaves out what Claude Code loads itself)")
     p.add_argument("--project", default="", help="the project folder, for its own skills")
     p.add_argument("--claude-config", default="", help="catalog, index: the Claude config folder of a second account")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
+    p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
     p.set_defaults(fn=cmd_skills)
 
 
 def _decide_cli(a):
     try:
+        if a.path == "advise":
+            dec = advise(a.name, _read_json(a.json_file, {}) if a.json_file else {})
+            return json.dumps({"ok": True, "decision": dec}, ensure_ascii=False) if a.json else \
+                "Recommendation stored for %s / %s." % (dec["a"], dec["b"])
         merged = _read(a.merged_file) if a.merged_file else None
         dec = decide(a.name, a.path, merged)
     except (LookupError, ValueError, OSError, rbxpaths.KitError) as e:

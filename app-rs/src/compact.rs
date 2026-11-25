@@ -378,6 +378,12 @@ pub struct Try {
 /// nothing more is started. `starting`: told each writer as its turn comes (the chat's step names it). A try that
 /// has not answered when its time is up is told to give up and left to end by itself: nobody waits for it.
 pub fn first_written(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, starting: &dyn Fn(&Try)) -> Outcome {
+    first_kept(tries, limits, stop, starting, &|text| tidy(text, SUMMARY_MAX))
+}
+
+/// `first_written`, with what is kept of an answer made by `keep` (an empty result counts as nothing written): the
+/// hand-over's `tidy`, or the answer whole for one that is read as data (`skill_advice`).
+fn first_kept(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, starting: &dyn Fn(&Try), keep: &dyn Fn(&str) -> String) -> Outcome {
     let mut out = Outcome::default();
     let began_all = Instant::now();
     let mut server_down = false;
@@ -422,8 +428,8 @@ pub fn first_written(tries: Vec<Try>, limits: &Limits, stop: &dyn Fn() -> bool, 
             }
         };
         match answer {
-            Some(Ok((text, usage))) if !tidy(&text, SUMMARY_MAX).is_empty() => {
-                out.summary = Some(Summary { text: tidy(&text, SUMMARY_MAX), ai: t.ai, account: t.account, model: t.model, usage });
+            Some(Ok((text, usage))) if !keep(&text).is_empty() => {
+                out.summary = Some(Summary { text: keep(&text), ai: t.ai, account: t.account, model: t.model, usage });
                 return out;
             }
             Some(Ok(_)) => out.failed.push((t.model, "It wrote nothing.".to_string())),
@@ -706,6 +712,36 @@ pub fn librarian_check(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
     return opencode_once(prompt, &LIBRARIAN_CHECK_LIMITS, stop, "check");
     #[cfg(test)]
     opencode_once(prompt, &LIMITS, stop, "check")
+}
+
+// ------------------------------------------------------- skill recommendations
+
+/// The budget for one skill recommendation (`skill_advice`): 60 seconds in all, one model at most 45 of them, and
+/// 20 kept back for the default AI's fall-back when it has one (Claude Code's cheapest model). It runs in the
+/// background (`skills::advise_open`); nobody waits on it.
+#[cfg_attr(test, allow(dead_code))]
+pub const ADVICE_LIMITS: Limits = Limits { all: Duration::from_secs(60), one: Duration::from_secs(45), reserve: Duration::from_secs(20) };
+
+/// A recommendation on two overlapping skills (keep, replace or merge, as JSON: `skills::parse_advice` reads it),
+/// from `prompt` (made and masked by `skills::advice_prompt`). Written once with no tools by the user's OpenCode plan
+/// first, then the user's default AI's fall-back (`tries` adds one for Claude only: its cheapest model, never one
+/// billed per use). The answer is kept whole (no `tidy`): it is data, and a merged SKILL.md may be long and hold
+/// brackets.
+pub fn skill_advice(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
+    #[cfg(test)]
+    let (means, limits) = STAND_IN.with(|s| s.borrow_mut().take()).unwrap_or_else(|| (Means::none(), LIMITS));
+    #[cfg(not(test))]
+    let (means, limits) = (means(), ADVICE_LIMITS);
+    // the default AI as the target, so its fall-back (if it has one) comes after the plan's models
+    let tries = tries(&paths::default_ai(), (1, None), prompt, &means, &limits);
+    let out = first_kept(tries, &limits, stop, &|_| {}, &|text| text.trim().to_string());
+    for (model, why) in &out.failed {
+        eprintln!("skill advice: {model} did not answer: {}", why.chars().take(300).collect::<String>());
+    }
+    if let Some(s) = &out.summary {
+        eprintln!("skill advice: written by {} ({})", s.model, s.ai);
+    }
+    out
 }
 
 /// `prompt` written once by the first of the plan's models that answers within `limits` (a test's stand-in in tests).

@@ -905,6 +905,44 @@ class ImportTests(unittest.TestCase):
         bad = json.loads(self.cli("decide", "nope", "keep", "--json"))
         self.assertFalse(bad["ok"])
 
+    def advice_file(self, rec):
+        path = os.path.join(self.home, "advice.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+        return path
+
+    def test_advise_only_stores_the_recommendation(self):
+        d = self.overlap()
+        before = sorted(os.listdir(self.user))
+        rec = {"choice": "replace", "why": "The newcomer covers more.", "merged": "", "by": "GLM 5 Flash"}
+        out = json.loads(self.cli("decide", d["id"], "advise", "--json-file", self.advice_file(rec), "--json"))
+        self.assertTrue(out["ok"])
+        [p] = rbxskills.pending()
+        self.assertEqual(p["state"], "open", "still waiting for the user")
+        self.assertEqual({k: p["recommendation"][k] for k in ("choice", "why", "merged", "by")}, rec)
+        self.assertTrue(p["recommendation"]["made"])
+        self.assertEqual(sorted(os.listdir(self.user)), before, "no folder moved")
+        self.assertEqual(self.ids(), ["brainstorm-ideas"])
+        # a merge without its text, or an unknown choice, keeps the why but no choice
+        out = json.loads(self.cli("decide", d["id"], "advise", "--json-file",
+                                  self.advice_file({"choice": "merge", "why": "Both.", "merged": " "}), "--json"))
+        self.assertEqual((out["ok"], rbxskills.pending()[0]["recommendation"]["choice"]), (True, None))
+        rbxskills.advise(d["id"], {"choice": "delete", "why": "Gone."})
+        self.assertIsNone(rbxskills.pending()[0]["recommendation"]["choice"])
+        bad = json.loads(self.cli("decide", "nope", "advise", "--json-file", self.advice_file(rec), "--json"))
+        self.assertFalse(bad["ok"])
+
+    def test_advise_never_recommends_changing_an_app_skill(self):
+        app = self.kit_skill("critic", "Review the game with a critical eye.", owner="app", body="The app's critic.")
+        skill(os.path.join(self.agents, "critic"), "critic", "Review the game with a critical eye.", "Another critic.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        for choice in ("replace", "merge"):
+            rbxskills.advise(d["id"], {"choice": choice, "why": "Mine is better.", "merged": "---\nname: critic\n---\nX"})
+            rec = rbxskills.pending()[0]["recommendation"]
+            self.assertEqual((rec["choice"], rec["merged"]), ("keep", ""), "dropped to keep")
+        self.assertIn("The app's critic.", read(os.path.join(app, "SKILL.md")))
+
 
 if __name__ == "__main__":
     unittest.main()
