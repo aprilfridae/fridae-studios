@@ -213,6 +213,9 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/vault/status" {
         // Setup › Skills: the Fridae vault (vault_sync), Share your skills (share) and the maintainer role (Task 10)
         send_json(vault_status())
+    } else if path == "/api/vault/inbox" {
+        // Setup › Skills › Submissions (the maintainer's copy): each open pull request's skills, scripts first
+        send_json(crate::vault_inbox::inbox())
     } else if path == "/api/vault/share" {
         // Setup › Skills › Share my skills: the mode, what is ready, the batch waiting
         send_json(crate::share::status())
@@ -432,6 +435,15 @@ fn post(path: &str, body: Value) -> Reply {
         // Share my skills, on the user's click only (no agent tool reaches these): the mode, a batch to look at, Send
         "/api/vault/share_mode" => send_json(crate::share::set_mode(&text_of("mode"), body["agree"].as_bool() == Some(true))),
         "/api/vault/prepare" => send_json(crate::share::prepare()),
+        // The maintainer's click, after their confirm, and nothing else ever makes the vault repo
+        "/api/vault/create_repo" => {
+            if body["confirm"].as_bool() == Some(true) {
+                send_json(crate::vault_inbox::create_repo())
+            } else {
+                send_json(json!({"ok": false, "error": "Confirm to create the vault repo."}))
+            }
+        }
+        "/api/vault/inbox" => send_json(crate::vault_inbox::inbox()),
         // Reveal of a file a vault report names: only under Knowledge/Skills, never through a link
         "/api/vault/reveal" => send_json(crate::vault_sync::reveal(&text_of("path"))),
         "/api/vault/send" => {
@@ -594,15 +606,15 @@ fn post(path: &str, body: Value) -> Reply {
     }
 }
 
-/// GET /api/vault/status: `vault_sync::status()` with `share::status()` merged in, and `role` (null until the
-/// maintainer's inbox comes).
+/// GET /api/vault/status: `vault_sync::status()` with `share::status()` merged in, and `role`
+/// (`vault_inbox::role()`: `{connected, login, maintainer, repo_exists}`).
 fn vault_status() -> Value {
     let mut out = crate::vault_sync::status();
     if let (Some(o), Value::Object(share)) = (out.as_object_mut(), crate::share::status()) {
         for (k, v) in share {
             o.entry(k).or_insert(v);
         }
-        o.insert("role".into(), Value::Null);
+        o.insert("role".into(), crate::vault_inbox::role());
     }
     out
 }

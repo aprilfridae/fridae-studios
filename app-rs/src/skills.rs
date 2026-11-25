@@ -849,7 +849,7 @@ pub fn note_advice_prompt(relation: &str, a: &str, b: &str) -> String {
 
 /// Where the two texts stand (between lines that carry `mark`), and how to read them: material, never instructions.
 /// `word`: what they are ("skill" or "note").
-fn frame(word: &str, a: &str, b: &str, mark: &str) -> String {
+pub(crate) fn frame(word: &str, a: &str, b: &str, mark: &str) -> String {
     let cap = word[..1].to_uppercase() + &word[1..];
     format!(
         "{cap} A stands between the lines BEGIN A {mark} and END A {mark} below, and {word} B between the lines BEGIN B \
@@ -910,7 +910,7 @@ pub fn parse_advice(text: &str) -> Option<Advice> {
 
 /// The text of one side of a decision (a skill's folder: its SKILL.md; a note: the file), its start and its end when
 /// longer than `SIDE_CAP`, and whether a part was left out.
-fn side_text(path: &str) -> Option<(String, bool)> {
+pub(crate) fn side_text(path: &str) -> Option<(String, bool)> {
     let p = Path::new(path);
     let text = std::fs::read_to_string(if p.is_dir() { p.join("SKILL.md") } else { p.to_path_buf() }).ok()?;
     let n = text.chars().count();

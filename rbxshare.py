@@ -226,3 +226,39 @@ def mark_shared(name, hash, pr_url):
         rbxskills._write_json(path, rec)
         return
     raise LookupError("There is no skill called %s in your library." % name)
+
+
+def _folder_name(d):
+    return os.path.basename(os.path.normpath(d))
+
+
+def compare(new_dir, against):
+    """How a submitted skill stands next to the vault's: {"same_name", "closest": {"id", "score", "dir"} | None,
+    "diff"}. `against` is the folder of the vault's skills (<against>/<name>/SKILL.md). same_name: the vault has a skill
+    of the same name; diff is then the unified diff of its SKILL.md against the submission's (vault first), else None.
+    closest is the skill the submission's body is most like, by the keyword cosine used for copies, among the vault's
+    skills and everything else Fridae can see (_corpus); None when there is nothing to compare."""
+    import difflib
+    name = _folder_name(new_dir)
+    key = name.casefold()
+    theirs = rbxskills._skill_dirs(against)
+    corpus = _corpus([new_dir])
+    seen = {os.path.realpath(c[3]) for c in corpus}
+    for d in theirs:
+        if os.path.realpath(d) not in seen:
+            corpus.append((_folder_name(d), "vault", _body(d), d))
+    mine = _body(new_dir)
+    idf = rbxskills._idf([mine] + [c[2] for c in corpus])
+    closest = None
+    for sid, _label, text, d in corpus:
+        s = rbxskills._cosine(mine, text, idf)
+        if s > 0 and (closest is None or s > closest["score"]):
+            closest = {"id": sid, "score": s, "dir": d}
+    same = next((d for d in theirs if _folder_name(d).casefold() == key), None)
+    diff = None
+    if same:
+        def lines(d):
+            return rbxskills._read(os.path.join(d, "SKILL.md")).replace("\r\n", "\n").splitlines(keepends=True)
+        diff = "".join(difflib.unified_diff(lines(same), lines(new_dir), "vault/%s/SKILL.md" % name,
+                                            "submission/%s/SKILL.md" % name))
+    return {"same_name": bool(same), "closest": closest, "diff": diff}

@@ -211,6 +211,44 @@ class ShareTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             rbxshare.mark_shared("nothing", "abc", "u")
 
+    def test_compare_same_name_and_closest(self):
+        import argparse
+        import contextlib
+        import io
+        import json
+        vault = os.path.join(self.root, "vault copy")
+        skill(os.path.join(vault, "tidy"), "tidy", "Put things back where they live.\nWipe the bench.")
+        skill(os.path.join(vault, "debug-vault"), "debug-vault", FRESH)
+        new = os.path.join(self.root, "incoming")
+        skill(os.path.join(new, "tidy"), "tidy", "Put things back where they live.\nWipe the bench twice.")
+        out = rbxshare.compare(os.path.join(new, "tidy"), vault)
+        self.assertTrue(out["same_name"])
+        self.assertIn("-Wipe the bench.", out["diff"])
+        self.assertIn("+Wipe the bench twice.", out["diff"])
+        self.assertEqual(out["closest"]["id"], "tidy")
+        # a near-duplicate under another name: no same name, no diff, and its closest is the vault's skill
+        lines = FRESH.strip("\n").split("\n")
+        lines[5:6] = NEW_PARAGRAPH[:1]
+        skill(os.path.join(new, "chasing-faults"), "chasing-faults", "\n".join(lines))
+        out = rbxshare.compare(os.path.join(new, "chasing-faults"), vault)
+        self.assertFalse(out["same_name"])
+        self.assertIsNone(out["diff"])
+        self.assertEqual(out["closest"]["id"], "debug-vault")
+        self.assertGreaterEqual(out["closest"]["score"], rbxskills.OVERLAP)
+        self.assertEqual(os.path.realpath(out["closest"]["dir"]), os.path.realpath(os.path.join(vault, "debug-vault")))
+        # something else entirely: nothing near
+        skill(os.path.join(new, "gardening"), "gardening", "Water the soil early. Prune roses in late winter.")
+        far = rbxshare.compare(os.path.join(new, "gardening"), vault)
+        self.assertLess((far["closest"] or {"score": 0})["score"], rbxskills.OVERLAP)
+        # the program
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+        buf = io.StringIO()
+        a = ap.parse_args(["skills", "compare", "--new", os.path.join(new, "tidy"), "--against", vault, "--json"])
+        with contextlib.redirect_stdout(buf):
+            a.fn(a)
+        self.assertTrue(json.loads(buf.getvalue())["same_name"])
+
     def test_cli_prints_json(self):
         import argparse
         import contextlib

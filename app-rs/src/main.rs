@@ -48,6 +48,7 @@ mod team;
 mod textures;
 mod update;
 mod vault_git;
+mod vault_inbox;
 mod vault_sync;
 mod usage;
 

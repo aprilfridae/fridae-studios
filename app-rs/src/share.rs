@@ -152,7 +152,7 @@ fn kit(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn kit_json(args: &[&str]) -> Result<Value, String> {
+pub(crate) fn kit_json(args: &[&str]) -> Result<Value, String> {
     serde_json::from_str(&kit(args)?).map_err(|_| NOT_RUN.to_string())
 }
 
@@ -173,7 +173,7 @@ fn ready() -> Result<Vec<(String, String)>, String> {
 
 // ------------------------------------------------------------------------------------------------- the files
 /// Whether a file is a script: under `scripts/`, one of the script endings, or beginning `#!`.
-fn is_script(rel: &str, bytes: &[u8]) -> bool {
+pub(crate) fn is_script(rel: &str, bytes: &[u8]) -> bool {
     let ext = rel.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
     rel.starts_with("scripts/") || SCRIPT_EXT.contains(&ext.as_str()) || bytes.starts_with(b"#!")
 }
