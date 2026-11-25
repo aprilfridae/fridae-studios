@@ -210,6 +210,8 @@ fn get(path: &str, url: &str) -> Reply {
         // the swarm of a Lead's chat: its members and its board (the last 200 posts, or those after `since`)
         let since = query(url, "since").and_then(|v| v.parse::<f64>().ok());
         send_json(crate::swarm::api_get(&unescape(&query(url, "lead").unwrap_or_default()), since))
+    } else if path == "/api/vault/status" {
+        send_json(crate::vault_sync::status())
     } else if path == "/api/skills" {
         // Setup › Skills: the library's index and the decisions waiting (`skills::api_get`)
         send_json(crate::skills::api_get())
@@ -420,6 +422,9 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/swarm" => send_json(crate::swarm::api_post(&body)),
         // Setup › Skills, on the user's click only: decide one, accept all recommendations, or import now
         "/api/skills" => send_json(crate::skills::api_post(&body)),
+        // Setup > Skills > the Fridae vault, on the user's click only: Download, Check for updates
+        "/api/vault/download" => send_json(crate::vault_sync::start(true)),
+        "/api/vault/check" => send_json(crate::vault_sync::start(false)),
         "/api/experts" => {
             // Setup > Experts: with an expert, save its row (AI "" or "lead" for Same as the Lead); always the listing
             if body["expert"].is_string() {
