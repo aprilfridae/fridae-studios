@@ -62,9 +62,9 @@ def copy_filled(src, dst):
                 shutil.copyfile(s, d)
 
 
-# Claude Code gets Fridae's core guides as skills. They live in the vault (vault/Fridae/Guides/Core/<guide>/, the guide
-# itself as <guide>.md); Claude Code wants ~/.claude/skills/<skill>/SKILL.md, so the skill folders are built from the
-# vault at install time, with the same folder names, files and front matter they had when they were skills/<skill>/.
+# Claude Code gets Fridae's core guides as skills. They live in the vault as skill folders
+# (vault/Fridae/Guides/Core/<guide>/SKILL.md); the folders in ~/.claude/skills are built from them at install time,
+# with the skill names they had when they were skills/<skill>/ (CLAUDE_SKILL_NAMES) and their placeholders filled.
 CORE_GUIDES = os.path.join(KIT, "vault", "Fridae", "Guides", "Core")
 CLAUDE_SKILL_NAMES = {"workflow": "roblox-studio-workflow", "playtest": "roblox-playtest", "ui-design": "roblox-ui-design",
                       "sim-ui": "roblox-sim-ui", "vfx": "roblox-vfx", "promo": "roblox-promo"}  # else the guide's name
@@ -75,7 +75,7 @@ def claude_skills(core=CORE_GUIDES):
     out = {}
     for guide in sorted(os.listdir(core)):
         folder = os.path.join(core, guide)
-        main = os.path.join(folder, guide + ".md")
+        main = os.path.join(folder, "SKILL.md")
         if not os.path.isfile(main):
             continue
         files = {}

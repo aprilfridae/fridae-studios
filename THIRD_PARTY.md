@@ -2,8 +2,8 @@
 
 ## Design guides from open-design
 
-These folders under `vault/Fridae/Guides/Core/` are copied unchanged (each `SKILL.md` renamed to
-`<folder>.md`) from https://github.com/nexu-io/open-design (`skills/`), which is licensed
+These folders under `vault/Fridae/Guides/Core/` are copied unchanged (Fridae's skill fields added to
+each `SKILL.md`'s front matter, its description led by a short label) from https://github.com/nexu-io/open-design (`skills/`), which is licensed
 Apache-2.0 (`licenses/open-design-LICENSE.txt`). Folders that carry their own
 `LICENSE` file are under that licence instead (MIT); each folder's
 `SOURCES.md` or front matter names its upstream author.
@@ -18,7 +18,7 @@ Apache-2.0 (`licenses/open-design-LICENSE.txt`). Folders that carry their own
 
 ## Roblox subject guides from roblox-skills
 
-`vault/Fridae/Guides/Roblox subjects/` is copied unchanged (each `SKILL.md` renamed to `<folder>.md`) from
+`vault/Fridae/Guides/Roblox subjects/` is copied unchanged (Fridae's skill fields added to each `SKILL.md`'s front matter) from
 https://github.com/EL4CTEO/roblox-skills (version 1.1.2), MIT licensed
 (`licenses/roblox-skills-LICENSE.txt`). 22 guides (its `roblox-studio-mcp`
 guide is left out because rbxkit's own workflow guide covers the same ground): Luau, architecture,
@@ -51,7 +51,7 @@ DataStore safety, performance audit, monetization compliance, UI builder). The L
 
 ## unslop
 
-`vault/Fridae/Guides/Core/unslop/` (its guide, `unslop.md`, and references) is from unslop by Damir Sokolovsky (@heydamir),
+`vault/Fridae/Guides/Core/unslop/` (its guide, `SKILL.md`, and references) is from unslop by Damir Sokolovsky (@heydamir),
 https://github.com/heydamir/unslop, licensed CC BY 4.0 (`licenses/unslop-LICENSE.txt`). Changes: an
 "In Roblox" section was added near the top; its Node snapshot and story-video scripts and its HTML examples are
 not included.

@@ -172,7 +172,7 @@ exists, that the user's table wins, and to use it sparingly.
 
 **The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `vault/Fridae/Team/lead.md` (the project's
 `.fridae/team/experts/lead.md` first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
-from the kit at run time. The `studio` guide is `vault/Fridae/Guides/Core/studio/studio.md` (registered in `rbxkit_mcp.GUIDES`).
+from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/Core/studio/SKILL.md` (listed in `rbxkit_mcp.GUIDES`).
 
 **The app side** (`app-rs/src`):
 - `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step` / `ended_step` /
@@ -1991,9 +1991,12 @@ promo maker); the rest are asked for as outlines in one call, then searched and 
 Everything else in the guides is craft knowledge that is fine to find by search. When you add a rule that must
 always apply, put it in one of those places, never only in a large guide or a vault note.
 
-**Adding a guide so it is found.** Register it in `GUIDES` in `rbxkit_mcp.py` (or add a folder `<name>/` holding
-`<name>.md` to `vault/Fridae/Guides/Roblox subjects/` or `vault/Fridae/Guides/LihFolk/`, which register themselves;
-a guide in `vault/Fridae/Guides/Core/` is also installed as a Claude Code skill by `install.py`). Give it front matter with a `description`
+**Adding a guide so it is found.** Guides are skills: add a folder `<name>/` holding `SKILL.md` to
+`vault/Fridae/Guides/Core/`, `Roblox subjects/` or `LihFolk/`, and it is the guide `<name>` (`rbxkit_mcp.GUIDES` is
+built from the skill library; a file that is not a skill goes in `GUIDE_FILES`). A guide in `vault/Fridae/Guides/Core/`
+is also installed as a Claude Code skill by `install.py`. `rbx_skill load` and `rbx_guide` serve it the same way. Give
+it the skill front matter (`name`, `description`, `examples`, `applies`, and `owner`/`core` where they apply; see
+`rbxskills.meta`) with a `description`
 (it is searched with every section of that guide), a `#` title, and `##`/`###` headings that say what each part is
 for in plain words ("Saving player data", not "Notes"): headings weigh most in the ranking. Put long material in
 `references/*.md` beside it; those are indexed too. Name it in `routing.txt` and in the expert files that need it.

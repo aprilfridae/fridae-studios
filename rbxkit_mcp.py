@@ -62,36 +62,14 @@ WEB_GUIDES = {"emil-design-eng", "motion-design", "redesign-skill", "reference-d
 WEB_NOTE = ("> This guide was written for websites. For Roblox, take its judgement and translate its CSS with the "
             "`web-to-roblox` guide (rbx_guide topic web-to-roblox)." + chr(10) + chr(10))
 
-GUIDES = {
-    "workflow": ("vault/Fridae/Guides/Core/workflow/workflow.md", "Start here: tools, ground rules, 3D models, animations, icons, uploads"),
-    "playtest": ("vault/Fridae/Guides/Core/playtest/playtest.md", "Running a playtest and acting like a player"),
-    "ui-design": ("vault/Fridae/Guides/Core/ui-design/ui-design.md", "Building and checking Roblox UI"),
+# Guides are skills: each folder <name>/ holding SKILL.md under the app's skill folders (rbxskills.KIT_ROOTS) is the
+# guide <name>, listed in GUIDES from the skill library below. These are the guides that are files, not skills.
+GUIDE_FILES = {
     "ui-helpers": ("vault/Fridae/Guides/Core/ui-design/helpers.lua", "Luau UI builder functions to paste into a builder"),
     "ui-audit": ("vault/Fridae/Guides/Core/ui-design/audit.lua", "Luau UI defect check to run in Studio"),
-    "sim-ui": ("vault/Fridae/Guides/Core/sim-ui/sim-ui.md", "The chunky simulator / tycoon UI look"),
-    "vfx": ("vault/Fridae/Guides/Core/vfx/vfx.md", "Visual effects: modules, capture, textures, meshes"),
     "vfx-basics": ("vault/Fridae/Guides/Core/vfx/references/vfx-basics.md", "VFX craft notes: layers, timing, brightness, budgets"),
     "tester": ("agents/roblox-tester.md", "Instructions for a sub-agent that only runs playtests"),
     "web-to-roblox": ("vault/Fridae/Guides/Core/ui-design/web-to-roblox.md", "How to apply the design guides below in Roblox (CSS to Roblox table)"),
-    "emil-design-eng": ("vault/Fridae/Guides/Core/emil-design-eng/emil-design-eng.md", "Design: UI polish and when and how to animate"),
-    "motion-design": ("vault/Fridae/Guides/Core/motion-design/motion-design.md", "Design: motion craft, beat maps, pacing"),
-    "redesign-skill": ("vault/Fridae/Guides/Core/redesign-skill/redesign-skill.md", "Design: audit and upgrade existing UI"),
-    "reference-design-contract": ("vault/Fridae/Guides/Core/reference-design-contract/reference-design-contract.md", "Design: turn references into a design contract"),
-    "unslop": ("vault/Fridae/Guides/Core/unslop/unslop.md", "Design: turn sloppy, AI-looking or vibecoded UI into designed UI (audit, direction, nine passes)"),
-    "soft-skill": ("vault/Fridae/Guides/Core/soft-skill/soft-skill.md", "Style: soft premium look"),
-    "minimalist-skill": ("vault/Fridae/Guides/Core/minimalist-skill/minimalist-skill.md", "Style: clean minimal look"),
-    "brutalist-skill": ("vault/Fridae/Guides/Core/brutalist-skill/brutalist-skill.md", "Style: raw industrial look"),
-    "game-brainstorm": ("vault/Fridae/Guides/Core/game-brainstorm/game-brainstorm.md", "Game: interview the user about a new idea and write GAME.md"),
-    "game-bible": ("vault/Fridae/Guides/Core/game-bible/game-bible.md", "Game: the GAME.md format and rules; writing one for an existing game"),
-    "game-design": ("vault/Fridae/Guides/Core/game-design/game-design.md", "Game: core loop, first five minutes, feedback, pacing, fair retention, failure modes"),
-    "economy-design": ("vault/Fridae/Guides/Core/economy-design/economy-design.md", "Game: prices, rewards, cost curves, drop odds, checking numbers with rbx_economy"),
-    "player-testing": ("vault/Fridae/Guides/Core/player-testing/player-testing.md", "Game: testing like a new player; feel, performance budgets, devices, multi-player"),
-    "sound-design": ("vault/Fridae/Guides/Core/sound-design/sound-design.md", "Game: sounds and music by measurement; timing, levels, SoundGroups, rolloff"),
-    "market-research": ("vault/Fridae/Guides/Core/market-research/market-research.md", "Game: comparable live experiences with rbx_market and what to learn from them"),
-    "critic": ("vault/Fridae/Guides/Core/critic/critic.md", "Instructions for an agent spawned as a reviewer of finished work"),
-    "producer": ("vault/Fridae/Guides/Core/producer/producer.md", "Splitting a large request between parallel agents with rbx_team"),
-    "studio": ("vault/Fridae/Guides/Core/studio/studio.md", "Studio mode, for the Lead: stages, gates, briefing experts, review items, decisions, waiting"),
-    "promo": ("vault/Fridae/Guides/Core/promo/promo.md", "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo"),
 }
 
 
@@ -159,51 +137,83 @@ def t_doctor(a):
     return result(text, True, False)
 
 
-def _describe(path):
-    """First sentence of a skill's description, from its front matter."""
-    try:
-        head = open(path, encoding="utf-8").read(1600)
-    except OSError:
-        return ""
-    m = re.search(r"^description:\s*[>|]?-?\s*(.+?)(?=\n[A-Za-z_.-]+:|\n---)", head, re.S | re.M)
-    text = " ".join(m.group(1).split()).strip("\"'") if m else ""
-    return (text[:110] + "...") if len(text) > 110 else text
-
-
-GUIDE_GROUPS = (("vault/Fridae/Guides/Roblox subjects", "Roblox: "), ("vault/Fridae/Guides/LihFolk", "LihFolk: "))
+GUIDE_GROUPS = {"vault/Fridae/Guides/Roblox subjects": "Roblox: ", "vault/Fridae/Guides/LihFolk": "LihFolk: "}
 LIHFOLK_GUIDES = "vault/Fridae/Guides/LihFolk/"
+KIT_ORIGINS = ("app", "shipped")  # library origins of the skills the app ships (its guides)
 
 
-def _register_roblox_skills():
-    """The vault's subject guides: each folder <name>/ holding <name>.md registers itself as a guide."""
-    # LihFolk's guides (CC BY 4.0): ones whose subject rbxkit already covered were left out when they were copied in
-    for rel, prefix in GUIDE_GROUPS:
-        base = os.path.join(KIT, rel)
-        for name in sorted(os.listdir(base)) if os.path.isdir(base) else []:
-            path = os.path.join(base, name, name + ".md")
-            if os.path.exists(path) and name not in GUIDES:
-                GUIDES[name] = ("%s/%s/%s.md" % (rel, name, name), prefix + _describe(path))
+def _register_skills():
+    """GUIDES, {topic: (path under KIT, description)}: the app's skills from the library, each by its folder name
+    (a few skills' front-matter names differ: GUIDE_ALIASES), then GUIDE_FILES."""
+    import rbxskills
+    out = {}
+    for s in rbxskills.library():
+        if s["origin"] not in KIT_ORIGINS:
+            continue
+        rel = os.path.relpath(s["dir"], KIT).replace("\\", "/")
+        desc = s["description"]
+        desc = (desc[:110] + "...") if len(desc) > 110 else desc
+        out[os.path.basename(s["dir"])] = (rel + "/SKILL.md", GUIDE_GROUPS.get(os.path.dirname(rel), "") + desc)
+    for name, entry in GUIDE_FILES.items():
+        out.setdefault(name, entry)
+    return out
 
 
-_register_roblox_skills()
+GUIDES = _register_skills()
+
+
+def _topic_file(topic):
+    """The SKILL.md behind a topic: one of the app's guides (GUIDES), else a skill in the user's or the project's
+    library by its exact name; None when there is none."""
+    if topic in GUIDES:
+        return os.path.join(KIT, GUIDES[topic][0])
+    import rbxskills
+    for s in rbxskills.library(os.environ.get("RBXKIT_PROJECT") or None):
+        if s["origin"] not in KIT_ORIGINS and s["id"].casefold() == topic.casefold():
+            return os.path.join(s["dir"], "SKILL.md")
+    return None
+
+
+def _canonical(topic):
+    """A topic as the guide code knows it: a guide's name for one of the app's skills named any way the library
+    knows it (or loosely, as rbxskills.find matches), the library name for any other skill, else as given."""
+    head, sep, rest = topic.partition("/")
+    if _topic_file(head):
+        return topic
+    import rbxskills
+    try:
+        s = rbxskills.find(head, os.environ.get("RBXKIT_PROJECT") or None)
+    except LookupError:
+        return topic
+    name = os.path.basename(s["dir"]) if s["origin"] in KIT_ORIGINS else s["id"]
+    return name + sep + rest
 
 
 def _guide_path(topic):
     """The file behind a guide topic or a reference topic like 'roblox-luau/type-system', or None."""
-    if topic in GUIDES:
-        return os.path.join(KIT, GUIDES[topic][0])
+    path = _topic_file(topic)
+    if path:
+        return path
     if "/" not in topic:
         return None
     skill, ref = topic.split("/", 1)
-    if skill not in GUIDES:
+    base = _topic_file(skill)
+    if not base:
         return None
-    folder = os.path.join(os.path.dirname(os.path.join(KIT, GUIDES[skill][0])), "references")
+    folder = os.path.join(os.path.dirname(base), "references")
     ref = os.path.basename(ref)
     for cand in (ref, ref + ".md"):
         path = os.path.join(folder, cand)
         if os.path.isfile(path):
             return path
     return None
+
+
+def _read_filled(path):
+    """A guide or skill file with its install paths filled in: {{RBXKIT}}, and a skill's ${CLAUDE_SKILL_DIR}."""
+    with open(path, encoding="utf-8") as f:
+        text = fill(f.read())
+    return text.replace("${CLAUDE_SKILL_DIR}", os.path.dirname(path).replace("\\", "/"))
 
 
 def _reference(topic):
@@ -213,15 +223,15 @@ def _reference(topic):
     path = _guide_path(topic)
     if not path:
         return None
-    with open(path, encoding="utf-8") as f:
-        return fill(f.read())
+    return _read_filled(path)
 
 
 def _guide_extras(topic):
-    """What follows a guide's own text: where its reference files and other files are, and its credit."""
-    if topic not in GUIDES:
+    """What follows a guide's own text: where its reference files and other files are, and its credit. A skill that
+    is not one of the app's (the user's, the project's) also names its folder and files, as LihFolk's guides do."""
+    path = _topic_file(topic)
+    if not path:
         return ""
-    path = os.path.join(KIT, GUIDES[topic][0])
     text = ""
     refs = os.path.join(os.path.dirname(path), "references")
     if topic != "vfx" and os.path.isdir(refs):
@@ -230,25 +240,30 @@ def _guide_extras(topic):
             text += "\n\nReference files for this guide (load with rbx_guide topic `%s/<name>`): %s" % (topic, ", ".join(files))
     if topic == "vfx" and os.path.isdir(refs):
         text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
-    if GUIDES[topic][0].startswith(LIHFOLK_GUIDES):
+    lihfolk = topic in GUIDES and GUIDES[topic][0].startswith(LIHFOLK_GUIDES)
+    if lihfolk or topic not in GUIDES:
         # its code (Luau modules, examples, Blender scripts, rubrics) is read straight from the folder
         folder = os.path.dirname(path)
-        files = sorted(os.path.relpath(os.path.join(r, f), folder).replace("\\", "/")
-                       for r, _, fs in os.walk(folder) for f in fs if os.path.join(r, f) != path)
+        if lihfolk:
+            files = sorted(os.path.relpath(os.path.join(r, f), folder).replace("\\", "/")
+                           for r, _, fs in os.walk(folder) for f in fs if os.path.join(r, f) != path)
+        else:
+            import rbxskills
+            files = [f for f in rbxskills._files(folder) if f != "SKILL.md"]  # dot-files left out, the list capped
         text += "\n\nThis guide's folder is %s" % folder.replace("\\", "/")
         if files:
             text += "; read its files from there: " + ", ".join(files)
+    if lihfolk:
         text += ("\n\n(From LihFolk Vault V2 by LihFolk, CC BY 4.0. Search the full vault with rbx_vault. Where a step "
                  "names a slash command or agent from the LihFolk plugin, do that step yourself.)")
     return text
 
 
 def _one_guide(topic):
-    path = os.path.join(KIT, GUIDES[topic][0])
-    if not os.path.exists(path):
+    path = _topic_file(topic)
+    if not path or not os.path.exists(path):
         return None
-    with open(path, encoding="utf-8") as f:
-        text = fill(f.read())
+    text = _read_filled(path)
     if text.startswith("---"):
         text = text.split("---", 2)[2].lstrip()  # drop the skill front matter
     if topic in WEB_GUIDES:
@@ -342,8 +357,7 @@ def _guide_section(topic, heading):
     path = _guide_path(topic)
     if not path or not os.path.exists(path):
         return None
-    with open(path, encoding="utf-8") as f:
-        raw = fill(f.read())
+    raw = _read_filled(path)
     p, lines = rbxvault.sections_listing(raw, "guides", topic)
     s = rbxvault.find_section(p, heading)
     if s is None:
@@ -359,7 +373,7 @@ def _guide_section(topic, heading):
 def guide_text(topic, whole=False, outline=False):
     """What rbx_guide returns for one topic: the whole guide, or its outline when asked for one or when it is large
     and not on ALWAYS_WHOLE."""
-    text = _one_guide(topic) if topic in GUIDES else _reference(topic)
+    text = _reference(topic) if "/" in topic else _one_guide(topic)
     if text is None or whole:
         return text
     if not outline and (topic in ALWAYS_WHOLE or len(text.encode("utf-8")) <= OUTLINE_OVER):
@@ -367,9 +381,7 @@ def guide_text(topic, whole=False, outline=False):
     path = _guide_path(topic)
     if not path.endswith(".md"):
         return text
-    with open(path, encoding="utf-8") as f:
-        raw = fill(f.read())
-    outline = _guide_outline(topic, raw)
+    outline = _guide_outline(topic, _read_filled(path))
     return text if outline is None else outline + _guide_extras(topic)
 
 
@@ -382,15 +394,15 @@ def _guide_cap():
 
 
 def t_skill(a):
-    """The user's skills, the same for every AI (rbxskills)."""
-    import rbxskills  # lazy: only this tool needs it
+    """Every skill in the library, the same for every AI: list, load (what rbx_guide did, for every skill), read."""
+    import rbxskills
     project = os.environ.get("RBXKIT_PROJECT") or None
-    action = str(a.get("action") or ("load" if a.get("name") else "list")).strip().lower()
+    action = str(a.get("action") or ("load" if a.get("name") or a.get("names") else "list")).strip().lower()
     try:
         if action == "list":
             return result(rbxskills.listing(project), True, False)
         if action == "load":
-            return result(rbxskills.load(str(a.get("name") or ""), project), True, False)
+            return _load(a.get("name"), a.get("names"), a, "rbx_skill")
         if action == "read":
             return result(rbxskills.read_file(str(a.get("name") or ""), str(a.get("path") or ""), project), True, False)
     except (LookupError, OSError) as e:
@@ -399,12 +411,22 @@ def t_skill(a):
 
 
 def t_guide(a):
-    """One or several guides in a single call."""
-    wanted = [str(t).strip().lower() for t in (a.get("topics") or [])]
-    if a.get("topic"):
-        wanted.insert(0, str(a["topic"]).strip().lower())
-    wanted = list(dict.fromkeys(resolve_alias(t) for t in wanted if t))
+    """One or several guides in a single call: rbx_skill load under its old name and arguments."""
+    return _load(a.get("topic"), a.get("topics"), a, "rbx_guide")
+
+
+def _load(name, names, a, tool):
+    """One or several skills or guides (name, then names), whole, as an outline or one section (a's section,
+    whole, outline), within the size cap."""
+    wanted = [str(t).strip().lower() for t in (names if isinstance(names, list) else [])]
+    if name:
+        wanted.insert(0, str(name).strip().lower())
+    wanted = list(dict.fromkeys(_canonical(resolve_alias(t)) for t in wanted if t))
+    missing = (". Call rbx_guide with no arguments to list the topics." if tool == "rbx_guide" else
+               ". Call rbx_skill with action 'list' (or 'search') to find one.")
     if not wanted:
+        if tool == "rbx_skill":
+            return result("Give 'name' (or several in 'names'): the skill to load" + missing, False)
         lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
         return result("\n".join(lines), True, False)
     section = str(a.get("section") or "").strip()
@@ -415,7 +437,7 @@ def t_guide(a):
         except KitError as e:
             return result(str(e), False)
         if text is None:
-            return result("No such guide: %s. Call rbx_guide with no arguments to list the topics." % topic, False)
+            return result("No such guide: %s%s" % (topic, missing), False)
         note = ("\n\n(`section` reads one guide; not loaded: %s.)" % ", ".join(wanted[1:])) if len(wanted) > 1 else ""
         return result(PREFACE + "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text + note, True, False)
     whole = a.get("whole") is True or str(a.get("whole")).lower() == "true"
@@ -436,7 +458,7 @@ def t_guide(a):
         out.append(part)
         size += n
     if not out:
-        return result("No such guide: " + ", ".join(unknown) + ". Call rbx_guide with no arguments to list the topics.", False)
+        return result("No such guide: " + ", ".join(unknown) + missing, False)
     body = PREFACE + "\n\n".join(out)
     if left:
         body += ("\n\n(Left out to keep this answer under %d KB: %s. Ask for them in another rbx_guide call, two topics "
@@ -1323,7 +1345,8 @@ TOOLS = [
      "comes as its opening plus a list of its sections with sizes (except workflow, studio, critic, producer, game-bible, "
      "which always come whole): then ask for the sections the task needs with `section`. For anything else, look it up "
      "with rbx_vault (shelf guides) and read only the sections that apply. One answer holds about 30 KB at most for a "
-     "helper agent (120 KB for a chat): topics left out are named. With no arguments, lists the topics.",
+     "helper agent (120 KB for a chat): topics left out are named. With no arguments, lists the topics. Guides are skills: "
+     "this is rbx_skill action 'load' under its old name.",
      schema({"topics": {"type": "array", "items": {"type": "string"},
                         "description": "Guide names: workflow, playtest, ui-design, ui-helpers, ui-audit, sim-ui, vfx, vfx-basics, tester, web-to-roblox, "
                                        "emil-design-eng, motion-design, redesign-skill, reference-design-contract, "
@@ -1338,11 +1361,18 @@ TOOLS = [
                                                           "full, section table) whatever its size"}}), t_guide),
     ("rbx_skill", "The user's skills: packaged instructions for particular kinds of work (UI/UX design, debugging, "
      "test-driven development, planning, documents, Roblox systems and more), the same for every AI. Your standing "
-     "instructions list them under Skills. When one fits the task, load it before you start and follow it. 'load' (name) "
-     "returns its instructions, its folder and its files; 'read' (name, path) returns one of its files; 'list' names "
-     "every skill.",
+     "instructions list them under Skills; Fridae's guides (workflow, ui-design, roblox-luau, ...) are skills too. When "
+     "one fits the task, load it before you start and follow it. 'load' (name, or several in names) returns its "
+     "instructions and its files; a skill over 12 KB comes as its opening, its rules and a list of its sections (except "
+     "workflow, studio, critic, producer, game-bible): then ask for a section with `section`. 'name/ref' loads its "
+     "references/ref.md. One answer holds about 30 KB at most for a helper agent (120 KB for a chat): skills left out "
+     "are named. 'read' (name, path) returns one of its files; 'list' names every skill.",
      schema({"action": {"type": "string", "enum": ["list", "load", "read"]},
-             "name": {"type": "string", "description": "load, read: the skill's name as listed, such as ui-ux-pro-max or superpowers:systematic-debugging"},
+             "name": {"type": "string", "description": "load, read: the skill's name as listed, such as ui-ux-pro-max, workflow or superpowers:systematic-debugging; load also takes 'skill/reference'"},
+             "names": {"type": "array", "items": {"type": "string"}, "description": "load: several skills in one call"},
+             "section": {"type": "string", "description": "load: heading words; return only that section of the skill in `name` (or the first of `names`)"},
+             "whole": {"type": "boolean", "description": "load: true returns large skills in full instead of their outline"},
+             "outline": {"type": "boolean", "description": "load: true returns each skill's outline whatever its size"},
              "path": {"type": "string", "description": "read: a file inside the skill's folder, as 'load' lists it, such as references/quick-reference.md"}},
             ["action"]), t_skill),
     ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "

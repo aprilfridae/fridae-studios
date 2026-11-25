@@ -219,5 +219,121 @@ class SkillsTests(unittest.TestCase):
         self.assertEqual(body, "body")
 
 
+# The rbx_guide topics before guides became skills (frozen): every one still loads, the same through either tool.
+OLD_GUIDES = [
+    "workflow", "playtest", "ui-design", "ui-helpers", "ui-audit", "sim-ui", "vfx", "vfx-basics", "tester",
+    "web-to-roblox", "emil-design-eng", "motion-design", "redesign-skill", "reference-design-contract", "unslop",
+    "soft-skill", "minimalist-skill", "brutalist-skill", "game-brainstorm", "game-bible", "game-design",
+    "economy-design", "player-testing", "sound-design", "market-research", "critic", "producer", "studio", "promo",
+    "roblox-analytics-liveops", "roblox-architecture", "roblox-audio", "roblox-characters-animation",
+    "roblox-code-review", "roblox-data-stores", "roblox-game-systems", "roblox-input", "roblox-luau",
+    "roblox-monetization", "roblox-networking", "roblox-npc-ai", "roblox-open-cloud", "roblox-performance",
+    "roblox-physics", "roblox-security", "roblox-teleport-matchmaking", "roblox-testing", "roblox-text-chat",
+    "roblox-tooling", "roblox-ui", "roblox-world-building", "lihfolk-figma", "lihfolk-sfx", "lihfolk-systems",
+    "lihfolk-tutorial", "lihfolk-vfx", "lihfolk-worldbuilding", "quality-score", "roblox-asset-import",
+    "roblox-blender-modeling", "roblox-debugging", "roblox-system-builder", "roblox-trend-game"]
+
+
+class GuideSkillTests(unittest.TestCase):
+    """The app's guides are skills (<name>/SKILL.md) in the real kit; rbx_skill load serves them as rbx_guide did."""
+
+    def setUp(self):
+        import rbxkit_mcp
+        self.mcp = rbxkit_mcp
+        self.user = tempfile.mkdtemp(prefix="user skills é ")
+        self.addCleanup(shutil.rmtree, self.user, True)
+        for p in (mock.patch.object(rbxskills, "user_dir", lambda: self.user),
+                  mock.patch.dict(os.environ, {"RBXKIT_PROJECT": "", "RBXKIT_AGENT_ROLE": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def text(self, res):
+        return res["content"][0]["text"]
+
+    def guide(self, **a):
+        return self.mcp.t_guide(a)
+
+    def load(self, **a):
+        return self.mcp.t_skill(dict(action="load", **a))
+
+    def test_guides_are_skill_folders(self):
+        for rel, _ in rbxskills.KIT_ROOTS:
+            root = os.path.join(rbxskills.KIT, *rel.split("/"))
+            for name in os.listdir(root):
+                d = os.path.join(root, name)
+                if os.path.isdir(d):
+                    self.assertTrue(os.path.isfile(os.path.join(d, "SKILL.md")), name)
+                    self.assertFalse(os.path.exists(os.path.join(d, name + ".md")), name)
+
+    def test_front_matter(self):
+        kit = {os.path.basename(s["dir"]): s for s in rbxskills.library() if s["origin"] in ("app", "shipped")}
+        self.assertEqual(sorted(n for n, s in kit.items() if s["owner"] == "app"),
+                         ["critic", "producer", "promo", "studio", "workflow"])
+        self.assertEqual(sorted(n for n, s in kit.items() if s["core"]),
+                         ["critic", "game-bible", "game-design", "playtest", "ui-design", "workflow"])
+        for n, s in kit.items():
+            self.assertTrue(s["description"], n)
+            self.assertTrue(3 <= len(s["examples"]) <= 5, (n, s["examples"]))
+            lihfolk = "/LihFolk/" in s["dir"].replace(os.sep, "/")
+            self.assertEqual((s["source"], s["licence"]) if lihfolk else ("", ""),
+                             ("LihFolk Vault V2", "CC BY 4.0") if lihfolk else ("", ""), n)
+            self.assertIn(s["applies"], ("both", "game"), n)
+        for n in ("unslop", "soft-skill", "emil-design-eng", "motion-design"):
+            self.assertEqual(kit[n]["applies"], "both", n)
+        for n in ("workflow", "game-design", "roblox-luau", "lihfolk-vfx"):
+            self.assertEqual(kit[n]["applies"], "game", n)
+
+    def test_guides_table_is_built_from_the_library(self):
+        for s in rbxskills.library():
+            if s["origin"] in ("app", "shipped"):
+                name = os.path.basename(s["dir"])
+                rel = os.path.relpath(os.path.join(s["dir"], "SKILL.md"), self.mcp.KIT).replace(os.sep, "/")
+                self.assertEqual(self.mcp.GUIDES[name][0], rel, name)
+        for name in ("ui-helpers", "ui-audit", "tester"):
+            self.assertIn(name, self.mcp.GUIDE_FILES)
+
+    def test_every_old_guide_name_still_loads(self):
+        for name in OLD_GUIDES:
+            g, s = self.guide(topic=name), self.load(name=name)
+            self.assertFalse(g["isError"], name)
+            self.assertEqual(self.text(g), self.text(s), name)
+        g = self.guide(topics=["playtest", "unslop", "roblox-ui"])
+        self.assertEqual(self.text(g), self.text(self.load(names=["playtest", "unslop", "roblox-ui"])))
+
+    def test_load_section_and_outline(self):
+        res = self.load(name="workflow", section="Ground rules")
+        text = self.text(res)
+        self.assertFalse(res["isError"], text)
+        self.assertIn("Section 'Ground rules", text)
+        self.assertNotIn("## Sections of this guide", text)
+        self.assertEqual(text, self.text(self.guide(topic="workflow", section="Ground rules")))
+        whole = self.mcp._one_guide("workflow")
+        self.assertLess(len(text), len(whole) // 2, "only that section")
+        big = self.text(self.load(name="unslop"))
+        self.assertGreater(len(self.mcp._one_guide("unslop").encode("utf-8")), self.mcp.OUTLINE_OVER)
+        self.assertIn("## Sections of this guide", big)
+
+    def test_reference_topic(self):
+        a, b = self.load(name="roblox-luau/type-system"), self.guide(topic="roblox-luau/type-system")
+        self.assertFalse(a["isError"], self.text(a))
+        self.assertEqual(self.text(a), self.text(b))
+        ref = os.path.join(os.path.dirname(self.mcp._guide_path("roblox-luau")), "references", "type-system.md")
+        with open(ref, encoding="utf-8") as f:
+            self.assertIn(f.read()[:300], self.text(a))
+
+    def test_a_user_skill_loads_with_its_folder_and_files(self):
+        d = os.path.join(self.user, "my-style")
+        skill(d, "my-style", "My own style.", "Run ${CLAUDE_SKILL_DIR}/scripts/go.py\n\n## Colours\n\nWarm.",
+              {"scripts/go.py": "print(1)", "references/palette.md": "# Palette\n\nOrange."})
+        text = self.text(self.load(name="my-style"))
+        self.assertIn("Run %s/scripts/go.py" % d, text)
+        self.assertIn(d, text)
+        self.assertIn("scripts/go.py", text)
+        self.assertNotIn("name: my-style", text, "front matter dropped")
+        self.assertIn("Warm.", self.text(self.load(name="my-style", section="Colours")))
+        self.assertIn("Orange.", self.text(self.load(name="my-style/palette")))
+        self.assertTrue(self.load(name="no-such-skill-here")["isError"])
+
+
 if __name__ == "__main__":
     unittest.main()

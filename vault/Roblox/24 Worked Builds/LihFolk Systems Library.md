@@ -17,7 +17,7 @@ tags: [worked-build, library, drop-in, luau, strict, datastore, remotes, monetiz
 
 The LihFolk Systems Library is a set of drop-in, strict Luau modules (data, remotes, currency, shop, receipts, inventory, eggs, codes, daily rewards, rebirth, quests, leaderboards) that agents install and configure instead of writing these systems from scratch. The Worked Builds in this folder teach each system end to end; the library is the same knowledge packaged as reusable modules with one shared data layer, one remote layer and one receipt router, so a game built from several systems still has exactly one of each.
 
-Guide: [lihfolk-systems](../../Fridae/Guides/LihFolk/lihfolk-systems/lihfolk-systems.md). Command: `/lihfolk:new-system <system>`.
+Guide: [lihfolk-systems](../../Fridae/Guides/LihFolk/lihfolk-systems/SKILL.md). Command: `/lihfolk:new-system <system>`.
 
 **Trust label:** all library code is **reviewed, not run** in Studio. It passed a structural checker (blocks, brackets, string interpolation, deprecated APIs), parsed with zero syntax errors in Roblox LSP, and built into a place with Rojo 7.7. Its 18 spec modules have not been executed. API facts are Roblox docs (as of October 2026); policy facts must be rechecked before shipping.
 
