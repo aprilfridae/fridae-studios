@@ -444,6 +444,16 @@ fn post(path: &str, body: Value) -> Reply {
             }
         }
         "/api/vault/inbox" => send_json(crate::vault_inbox::inbox()),
+        // The maintainer's click on one skill: Add, Edit then add, or Reject. Never reachable by an agent.
+        "/api/vault/inbox_decide" => send_json(crate::vault_inbox::decide(body["pr"].as_u64().unwrap_or(0), &text_of("skill"), &text_of("choice"), body["text"].as_str(), body["why"].as_str())),
+        // The maintainer's click, after their confirm, each time: Publish vault release
+        "/api/vault/publish" => {
+            if body["confirm"].as_bool() == Some(true) {
+                send_json(crate::vault_inbox::publish())
+            } else {
+                send_json(json!({"ok": false, "error": "Confirm to publish the vault release."}))
+            }
+        }
         // Reveal of a file a vault report names: only under Knowledge/Skills, never through a link
         "/api/vault/reveal" => send_json(crate::vault_sync::reveal(&text_of("path"))),
         "/api/vault/send" => {
