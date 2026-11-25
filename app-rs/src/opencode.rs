@@ -1706,8 +1706,18 @@ pub fn chat_saved(session: &str) -> bool {
 
 /// A model id ("opencode-go/glm-5.3") as OpenCode's model reference.
 fn model_ref(id: &str) -> Option<Value> {
+    // `provider/model#variant` (OpenCode's own way to name a model with its thinking setting)
+    let (id, variant) = match id.split_once('#') {
+        Some((_, "")) => return None,
+        Some((id, v)) => (id, Some(v)),
+        None => (id, None),
+    };
     let (p, m) = id.split_once('/').filter(|(p, m)| !p.is_empty() && !m.is_empty())?;
-    Some(json!({"providerID": p, "id": m}))
+    let mut r = json!({"providerID": p, "id": m});
+    if let Some(v) = variant {
+        r["variant"] = json!(v);
+    }
+    Some(r)
 }
 
 /// Run one turn, handing what happens to `put` as it comes. Returns once the turn has ended.
@@ -2083,6 +2093,37 @@ fn writers_from(listed: &[String]) -> Vec<String> {
         let pick = listed.iter().find(|id| id.as_str() == *wanted).or_else(|| listed.iter().find(of_family));
         if let Some(id) = pick.filter(|id| !out.contains(id)) {
             out.push(id.clone());
+        }
+    }
+    out
+}
+
+/// The writers asked first for a skill recommendation (`compact::skill_advice`), each with its thinking setting.
+/// Measured 24 November 2026 on the user's 8 open decisions (two skills, up to 30k characters each): GLM flash on low
+/// 8/8 usable, 22 s typical, 64 s at most, its merges never shorter than the skill in use; Claude Haiku on the plan
+/// with no thinking 8/8, 19 s typical, 26 s at most. DeepSeek flash thought for about 85 s before writing a word and
+/// took 89-116 s in all, past the limit in the app, so it comes after them.
+pub const ADVICE_WRITERS: [&str; 2] = ["opencode-go/glm-5.3-flash#low", "opencode-go/claude-haiku-5-5#none"];
+
+/// The writers for a skill recommendation, in order: `ADVICE_WRITERS` that OpenCode lists, then `writers` (each model
+/// once). Empty when the plan cannot be used (as `writers`).
+pub fn advice_writers() -> Vec<String> {
+    let general = writers();
+    if general.is_empty() {
+        return Vec::new();
+    }
+    let listed: Vec<String> = models().into_iter().map(|(id, _)| id).collect();
+    advice_writers_from(&listed, &general)
+}
+
+/// See `advice_writers`: from OpenCode's list of model ids (empty: not arrived yet, so all of `ADVICE_WRITERS`) and
+/// the general writers.
+fn advice_writers_from(listed: &[String], general: &[String]) -> Vec<String> {
+    let base = |m: &str| m.split('#').next().unwrap_or(m).to_string();
+    let mut out: Vec<String> = ADVICE_WRITERS.iter().filter(|w| listed.is_empty() || listed.contains(&base(w))).map(|w| w.to_string()).collect();
+    for g in general {
+        if !out.iter().any(|o| base(o) == base(g)) {
+            out.push(g.clone());
         }
     }
     out
@@ -3075,6 +3116,31 @@ mod tests {
         assert_eq!(model_setting("{\"theme\": \"x\"}"), None);
         assert_eq!(model_ref("opencode-go/glm-5.3"), Some(json!({"providerID": "opencode-go", "id": "glm-5.3"})));
         assert_eq!(model_ref("nonsense"), None);
+    }
+
+    /// A writer's thinking setting goes with its model as OpenCode's own `provider/model#variant` says it, and reaches
+    /// the session as the model's `variant` (measured, v2.3.2: the session and its answer then carry it).
+    #[test]
+    fn a_writers_variant_goes_on_the_session_model() {
+        assert_eq!(model_ref("opencode-go/glm-5.3-flash#low"), Some(json!({"providerID": "opencode-go", "id": "glm-5.3-flash", "variant": "low"})));
+        assert_eq!(model_ref("opencode-go/glm-5.3-flash#"), None);
+        assert_eq!(model_ref("#low"), None);
+    }
+
+    /// Skill recommendations: GLM flash thinking little, then Claude Haiku on the plan thinking not at all, then the
+    /// other writers; only models OpenCode lists, each model once; the list as it is before OpenCode has answered.
+    #[test]
+    fn skill_advice_asks_the_quick_writers_first() {
+        let general: Vec<String> = WRITERS.iter().map(|m| m.to_string()).collect();
+        let listed: Vec<String> = ["opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3-flash", "opencode-go/glm-5.3", "opencode-go/claude-haiku-5-5"].map(String::from).to_vec();
+        assert_eq!(
+            advice_writers_from(&listed, &general),
+            ["opencode-go/glm-5.3-flash#low", "opencode-go/claude-haiku-5-5#none", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]
+        );
+        let no_haiku: Vec<String> = listed[..3].to_vec();
+        assert_eq!(advice_writers_from(&no_haiku, &general), ["opencode-go/glm-5.3-flash#low", "opencode-go/deepseek-v4.1-flash", "opencode-go/glm-5.3"]);
+        assert_eq!(advice_writers_from(&[], &general)[..2], ["opencode-go/glm-5.3-flash#low", "opencode-go/claude-haiku-5-5#none"]);
+        assert!(advice_writers_from(&listed, &[]).len() == 2, "no plan writers at all (free only): only what is listed");
     }
 
     /// What the user's own signed-in OpenCode listed on 23 November 2026 (`opencode models`, v2.3.2, an OpenCode Go

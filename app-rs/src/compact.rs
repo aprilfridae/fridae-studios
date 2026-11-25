@@ -303,17 +303,25 @@ pub fn writer_name(ai: &str, model: &str) -> String {
     if ai == "claude" {
         return format!("Claude {}", capital(model));
     }
-    let name = model.rsplit('/').next().unwrap_or(model);
-    name.split('-')
-        .filter(|w| !w.is_empty())
-        .map(|w| match w {
+    // (the thinking setting after `#` is not part of the name)
+    let name = model.split('#').next().unwrap_or(model);
+    let name = name.rsplit('/').next().unwrap_or(name);
+    let mut words: Vec<String> = Vec::new();
+    for w in name.split('-').filter(|w| !w.is_empty()) {
+        let word = match w {
             "deepseek" => "DeepSeek".to_string(),
             "glm" => "GLM".to_string(),
             v if v.starts_with('v') && v[1..].starts_with(|c: char| c.is_ascii_digit()) => v[1..].to_string(),
             other => capital(other),
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        };
+        // a version written in parts ("haiku-5-5") reads as one ("Haiku 5.5")
+        let number = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+        match words.last_mut() {
+            Some(last) if number(w) && number(last) => last.push_str(&format!(".{w}")),
+            _ => words.push(word),
+        }
+    }
+    words.join(" ")
 }
 
 fn capital(w: &str) -> String {
@@ -733,7 +741,7 @@ pub fn skill_advice(prompt: &str, stop: &dyn Fn() -> bool) -> Outcome {
     #[cfg(test)]
     let (means, limits) = STAND_IN.with(|s| s.borrow_mut().take()).unwrap_or_else(|| (Means::none(), LIMITS));
     #[cfg(not(test))]
-    let (means, limits) = (means(), ADVICE_LIMITS);
+    let (means, limits) = (Means { plan: crate::opencode::advice_writers(), ..means() }, ADVICE_LIMITS);
     // the default AI as the target, so its fall-back (if it has one) comes after the plan's models
     let tries = tries(&paths::default_ai(), (1, None), prompt, &means, &limits);
     let out = first_kept(tries, &limits, stop, &|_| {}, &|text| text.trim().to_string());
@@ -1020,6 +1028,8 @@ mod tests {
         assert_eq!(writer_name("opencode", MODELS[1]), "GLM 5.3 Flash");
         assert_eq!(writer_name("opencode", MODELS[2]), "GLM 5.3");
         assert_eq!(writer_name("claude", "haiku"), "Claude Haiku");
+        assert_eq!(writer_name("opencode", "opencode-go/glm-5.3-flash#low"), "GLM 5.3 Flash", "the thinking setting is not part of the name");
+        assert_eq!(writer_name("opencode", "opencode-go/claude-haiku-5-5#none"), "Claude Haiku 5.5");
     }
 
     #[test]
