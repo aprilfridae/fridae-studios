@@ -2235,6 +2235,17 @@ runs at a time under a lock on the vault's record; the user's library is locked 
 kept under another name (Keep both) keeps merging: the new upstream `SKILL.md` gets the local name before it is
 compared, and its base copy holds those bytes.
 
+**Clashes** (`rbxvaultsync.clashes`, `decide_clash`; `rbx skills vault-clashes`, `vault-clash --unit --choice`). Each
+waiting unit is listed with its name, both sides' size and date, how many lines each side changed against the version
+both started from (none for a same-name newcomer or a picture or model), and a short view of both changes (unified
+diffs, or both texts when there is no common version; at most 300 lines a side). A skill is decided as a whole folder,
+a guide or other file on its own. **Keep the vault's** moves every file of the user's that is not the vault's (for a
+skill, every file in its folder, extra ones included) to `.fridae-vault/replaced/<YYYYMMDD-HHMMSS>/<path>` (never
+deleted) and writes and records the vault's, so a skill folder ends up exactly the vault's. **Keep mine** leaves the
+user's files and records the vault's version as the base: the same release never asks again, and later vault changes
+to that file combine instead of asking each release. Both remove the waiting copy and the entry under the vault's lock;
+a unit that is no longer waiting says "That choice is not waiting any more."
+
 **Newcomers and vault decisions** (`rbxvaultnew.py`). A skill that is new to this computer (no base record, no local
 folder) is looked at before it is installed. One named like Fridae's own is declined for good. The user's own earlier
 share coming back from the vault is installed and the user's copy set aside. One whose text says what a library skill's

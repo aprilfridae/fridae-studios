@@ -1632,9 +1632,10 @@ def index(project=None, config=None):
 # ------------------------------------------------------------------ rbx skills (the app asks for the catalog)
 def register(sub):
     p = sub.add_parser("skills", help="the user's skills, for every AI: catalog, list, load, read, import, pending, "
-                                      "decide, index, vault-apply, shareable, pack, mark-shared, compare")
+                                      "decide, index, vault-apply, vault-clashes, vault-clash, shareable, pack, "
+                                      "mark-shared, compare")
     p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply",
-                                      "shareable", "pack", "mark-shared", "compare"])
+                                      "vault-clashes", "vault-clash", "shareable", "pack", "mark-shared", "compare"])
     p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id; "
                                                        "mark-shared: the skill; pack: the skills")
     p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
@@ -1656,6 +1657,8 @@ def register(sub):
                    help="catalog: do not import other tools' skills first (the app's call on a turn)")
     p.add_argument("--staged", default="", help="vault-apply: the folder holding the fetched files")
     p.add_argument("--manifest", default="", help="vault-apply: the release's manifest file")
+    p.add_argument("--unit", default="", help="vault-clash: the waiting unit (Skills/<name>, or a file's path)")
+    p.add_argument("--choice", default="", help="vault-clash: vault (Keep the vault's) or mine (Keep mine)")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
     p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
@@ -1731,6 +1734,21 @@ def cmd_skills(a):
             except (OSError, rbxpaths.KitError) as e:
                 print("The vault update could not be applied: %s" % e, file=sys.stderr)
                 raise SystemExit(1)
+        elif a.action == "vault-clashes":
+            import rbxvaultsync
+            out = json.dumps(rbxvaultsync.clashes(), ensure_ascii=False)
+        elif a.action == "vault-clash":
+            import rbxvaultsync
+            try:
+                out = json.dumps(dict({"ok": True}, **rbxvaultsync.decide_clash(a.unit, a.choice)), ensure_ascii=False)
+            except LookupError as e:
+                out = json.dumps({"ok": False, "error": str(e.args[0]) if e.args else rbxvaultsync.NOT_WAITING},
+                                 ensure_ascii=False)
+            except (ValueError, rbxpaths.KitError) as e:
+                out = json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False)
+            except OSError as e:
+                out = json.dumps({"ok": False, "error": "Fridae could not put the files in place: %s" % e},
+                                 ensure_ascii=False)
         elif a.action == "compare":
             import rbxshare
             if not a.new or not a.against:

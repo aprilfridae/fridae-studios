@@ -1,6 +1,7 @@
 """The shared Fridae vault: what was downloaded from it, as the base record remembers it, and applying an update
 without overriding the user (replace what is untouched, combine what both changed, otherwise keep the user's file and
 open a clash that waits for their choice). A skill is decided as one folder, any other file on its own."""
+import difflib
 import hashlib
 import json
 import os
@@ -16,6 +17,8 @@ BASE_NAME = "base.json"
 # the code's own data under Roblox/: it stays in the app and never travels (vault_sync::CODE_DATA)
 CODE_DATA = ("Roblox/_tools/", "Roblox/_data/")
 BAD = "This vault update looked wrong, so nothing was changed."
+NOT_WAITING = "That choice is not waiting any more."
+SHOW_MAX = 300  # the most lines of each side a clash card shows
 SAVE_EVERY = 50  # the base record is saved after this many files outside Skills/ (and after each skill folder)
 # at most 20,000 files, 8 MiB each, 256 MiB in all (vault_sync's limits: the guides are 1,352 files and 21 MB)
 MAX_FILES, MAX_FILE, MAX_TOTAL = 20_000, 8 << 20, 256 << 20
@@ -250,6 +253,40 @@ def clash_dir():
     return os.path.join(state_dir(), "clash")
 
 
+def replaced_dir():
+    """Where the user's files go when they choose Keep the vault's (replaced/<time>/<local path>; never deleted)."""
+    return os.path.join(state_dir(), "replaced")
+
+
+def _copy_of(p):
+    """The vault's waiting copy of p (a file, or a skill unit's folder) under clash/."""
+    path = os.path.join(clash_dir(), *p.split("/"))
+    if not _target_ok(path, clash_dir()):
+        raise OSError("outside the vault record")
+    return path
+
+
+def _prune(d, root):
+    """Remove d and its parents while they are empty and inside root (never root itself)."""
+    top = os.path.realpath(root)
+    while os.path.realpath(d).startswith(top + os.sep):
+        try:
+            os.rmdir(d)  # only an empty folder goes
+        except OSError:
+            break
+        d = os.path.dirname(d)
+
+
+def _remove_copy(unit):
+    """The vault's waiting copy of a unit removed, and the folders it leaves empty."""
+    path = _copy_of(unit)
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    elif os.path.lexists(path):
+        os.remove(path)
+    _prune(os.path.dirname(path), clash_dir())
+
+
 def incoming_dir():
     """Where a new vault skill waits while the user decides about it."""
     return os.path.join(state_dir(), "incoming")
@@ -386,26 +423,7 @@ def _apply(staged, manifest, base):
         except OSError as e:
             failed_on(p, e)
 
-    def copy_of(p):
-        path = os.path.join(clash_dir(), *p.split("/"))
-        if not _target_ok(path, clash_dir()):
-            raise OSError("outside the vault record")
-        return path
-
-    def remove_copy(unit):
-        """The vault's waiting copy of a unit (a file, or a skill's folder) removed, and folders it leaves empty."""
-        path = copy_of(unit)
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
-        elif os.path.lexists(path):
-            os.remove(path)
-        d, top = os.path.dirname(path), os.path.realpath(clash_dir())
-        while os.path.realpath(d).startswith(top + os.sep):
-            try:
-                os.rmdir(d)  # only an empty folder goes
-            except OSError:
-                break
-            d = os.path.dirname(d)
+    copy_of, remove_copy = _copy_of, _remove_copy
 
     def open_clash(unit, kind, paths):
         """The unit waits for the user's choice: the vault's copy of it under clash/, its entry in the record. The
@@ -592,3 +610,172 @@ def _apply(staged, manifest, base):
     res["clashes"] = sorted(clashes)
     _save_base(base)
     return res
+
+
+# ---- the clashes waiting for the user's choice: Keep the vault's / Keep mine
+def _cut(lines):
+    if len(lines) > SHOW_MAX:
+        lines = lines[:SHOW_MAX] + ["\u2026 (%d more lines)" % (len(lines) - SHOW_MAX)]
+    return "\n".join(lines)
+
+
+def _changed(before, after):
+    """How many lines were added or removed between two texts."""
+    return sum(1 for x in difflib.ndiff(before.splitlines(), after.splitlines()) if x.startswith(("+ ", "- ")))
+
+
+def _safe_read(path):
+    try:
+        return _read_existing(path)
+    except OSError:
+        return None
+
+
+def _unit_local(unit, renamed):
+    """A unit's path as this machine keeps it (a renamed skill in its new folder)."""
+    if unit.startswith("Skills/") and unit.count("/") == 1:
+        return _local_path(unit + "/x", renamed).rsplit("/", 1)[0]
+    return _local_path(unit, renamed)
+
+
+def clashes():
+    """The units waiting for the user's choice, each with what a card shows: the name, both sides' size, how many
+    lines each changed against the version both started from, and a short view of both changes."""
+    import rbxmerge
+    base = read_base()
+    out = []
+    for unit, c in sorted(base["clashes"].items()):
+        if not isinstance(c, dict):
+            continue
+        paths = [p for p in c.get("paths", []) if isinstance(p, str) and check_path(p)]
+        if not paths:
+            continue
+        skill = unit != paths[0] or unit_of(paths[0]) != paths[0]
+        local_unit = _unit_local(unit, base["renamed"])
+        both_new = not any(p in base["files"] for p in paths)
+        binary = c.get("kind") == "binary"
+        mine = {"path": local_unit, "changed": None if both_new else 0, "size": 0, "modified": None}
+        vault = {"changed": None if both_new else 0, "size": 0}
+        show = {"mine": [], "vault": []}
+        files = []
+        for p in paths:
+            lp = _local_path(p, base["renamed"])
+            local = _safe_read(os.path.join(rbxpaths.KNOWLEDGE_DIR, *lp.split("/")))
+            theirs = _read(os.path.join(clash_dir(), *p.split("/")))
+            before = _read(_base_copy(p)) if p in base["files"] else None
+            mine["size"] += len(local or b"")
+            vault["size"] += len(theirs or b"")
+            if skill and local != theirs:
+                files.append(p.split("/", 2)[2])
+            sides = [d for d in (local, theirs, before) if d is not None]
+            if binary or any(rbxmerge.is_binary(p, d) for d in sides):
+                mine["changed"] = vault["changed"] = None
+                continue
+            m = (local or b"").decode("utf-8")
+            v = (theirs or b"").decode("utf-8")
+            head = ["%s:" % p.split("/", 2)[2]] if skill and len(paths) > 1 else []
+            if both_new:
+                show["mine"] += head + m.splitlines()
+                show["vault"] += head + v.splitlines()
+                continue
+            b = (before or b"").decode("utf-8")
+            if mine["changed"] is not None:
+                mine["changed"] += _changed(b, m)
+                vault["changed"] += _changed(b, v)
+            for side, text in (("mine", m), ("vault", v)):
+                show[side] += list(difflib.unified_diff(b.splitlines(), text.splitlines(), p, p, lineterm=""))
+        if binary:
+            show = {"mine": [], "vault": []}
+        try:
+            mine["modified"] = os.path.getmtime(os.path.join(rbxpaths.KNOWLEDGE_DIR, *local_unit.split("/")))
+        except OSError:
+            pass
+        name = local_unit.rsplit("/", 1)[-1]
+        title = name if skill else (name[:-3] if name.lower().endswith(".md") else name)
+        out.append({"unit": unit, "kind": c.get("kind", "file"), "title": title, "release": c.get("release", ""),
+                    "made": c.get("made", ""), "both_new": both_new, "mine": mine, "vault": vault,
+                    "files": files if skill else [], "show": {k: _cut(v) for k, v in show.items()}})
+    return out
+
+
+def decide_clash(unit, choice):
+    """Settle one waiting unit. "vault": the user's files that differ from the vault's (for a skill, every file in its
+    folder that is not the vault's) move to replaced/<time>/, and the vault's are written and recorded. "mine": the
+    user's files stay, and the vault's version becomes the starting point (recorded as the base), so its later changes
+    combine instead of asking again. Either way the waiting copy and the entry go."""
+    import rbxskills
+    if choice not in ("vault", "mine"):
+        raise ValueError("Choose vault or mine.")
+    with rbxskills._locked(state_dir()):
+        base = read_base()
+        c = base["clashes"].get(unit)
+        paths = c.get("paths") if isinstance(c, dict) else None
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and check_path(p) for p in paths) \
+                or any(unit_of(p) != unit for p in paths):
+            raise LookupError(NOT_WAITING)
+        copies = {p: _read(_copy_of(p)) for p in paths}
+        if any(d is None for d in copies.values()):
+            raise LookupError(NOT_WAITING)
+        _no_symlinks(sorted({p.split("/")[0] for p in paths}))
+        renamed = base["renamed"]
+        name = _skill(paths[0])
+
+        def bytes_of(p):
+            """(as written locally, upstream's): a renamed skill's SKILL.md carries its local name."""
+            data = copies[p]
+            if name in renamed and p == "Skills/%s/SKILL.md" % name:
+                return rename_front(data, renamed[name]), data
+            return data, data
+
+        def target(lp):
+            t = os.path.join(rbxpaths.KNOWLEDGE_DIR, *lp.split("/"))
+            if not _target_ok(t, _top(lp)):
+                raise OSError("outside the Knowledge folder")
+            return t
+
+        replaced = None
+        if choice == "vault":
+            wanted = {_local_path(p, renamed): bytes_of(p)[0] for p in paths}
+            mine = []  # (Knowledge-relative path, full path) of the user's files to set aside
+            if name:
+                folder = target(_unit_local(unit, renamed) + "/x")[:-2]
+                for r, ds, fs in os.walk(folder):
+                    for f in fs:
+                        full = os.path.join(r, f)
+                        rel = os.path.relpath(full, rbxpaths.KNOWLEDGE_DIR).replace(os.sep, "/")
+                        mine.append((rel, full))
+            else:
+                lp = _local_path(unit, renamed)
+                if os.path.lexists(target(lp)):
+                    mine.append((lp, target(lp)))
+            aside = [(rel, full) for rel, full in mine if rel not in wanted or _safe_read(full) != wanted[rel]]
+            if aside:
+                root = os.path.join(replaced_dir(), time.strftime("%Y%m%d-%H%M%S"))
+                if os.path.lexists(root):
+                    root += "-" + uuid.uuid4().hex[:6]
+                for rel, full in aside:
+                    dest = os.path.join(root, *rel.split("/"))
+                    if not _target_ok(dest, state_dir()):
+                        raise OSError("outside the vault record")
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    shutil.move(full, dest)
+                replaced = os.path.relpath(root, rbxpaths.KNOWLEDGE_DIR).replace(os.sep, "/")
+                if name:  # folders left empty inside the skill go too
+                    folder = target(_unit_local(unit, renamed) + "/x")[:-2]
+                    for r, ds, fs in os.walk(folder, topdown=False):
+                        if r != folder and not os.listdir(r):
+                            os.rmdir(r)
+            for p in paths:
+                data, up = bytes_of(p)
+                _write(target(_local_path(p, renamed)), data)
+                _record_base(base, p, data, up if up != data else None)
+                if p in base["deleted"]:
+                    base["deleted"].remove(p)
+        else:
+            for p in paths:
+                data, up = bytes_of(p)
+                _record_base(base, p, data, up if up != data else None)
+        _remove_copy(unit)
+        del base["clashes"][unit]
+        _save_base(base)
+    return {"unit": unit, "choice": choice, "replaced": replaced}

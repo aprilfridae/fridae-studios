@@ -1060,5 +1060,154 @@ class VaultSyncTests(unittest.TestCase):
         self.assertEqual(rbxvaultsync.state_dir(), rbxskills.vault_state_dir())
 
 
+class ClashTests(VaultSyncTests):
+    """Listing and settling clashes: Keep the vault's / Keep mine."""
+    X = "Skills/x"  # the unit of P: a skill is decided whole
+    R1 = "a\ntheirs\nc\nd\n"
+
+    def clash(self):
+        self.seed(self.P, "a\nb\nc\nd\n", "a\nmine\nc\nd\n")
+        r = self.apply({self.P: self.R1})
+        self.assertEqual(r["clashes"], [self.X])
+
+    def replaced(self, rel):
+        import glob
+        return glob.glob(os.path.join(rbxvaultsync.replaced_dir(), "*", *rel.split("/")))
+
+    def test_keep_the_vaults_sets_mine_aside_and_records_the_base(self):
+        self.clash()
+        out = rbxvaultsync.decide_clash(self.X, "vault")
+        self.assertEqual((out["unit"], out["choice"]), (self.X, "vault"))
+        self.assertTrue(out["replaced"])
+        self.assertEqual(self.get(self.P), self.R1)
+        (aside,) = self.replaced(self.P)
+        with open(aside, encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), "a\nmine\nc\nd\n")
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["files"][self.P], sha(self.R1))
+        self.assertEqual(base["clashes"], {})
+        self.assertEqual(rbxvaultsync.clashes(), [])
+        self.assertFalse(os.path.exists(os.path.join(rbxvaultsync.clash_dir(), "Skills", "x")))
+
+    def test_keep_mine_makes_the_vaults_version_the_base_so_later_changes_combine(self):
+        self.clash()
+        out = rbxvaultsync.decide_clash(self.X, "mine")
+        self.assertEqual(out["replaced"], None)
+        self.assertEqual(self.get(self.P), "a\nmine\nc\nd\n")
+        self.assertEqual(rbxvaultsync.read_base()["files"][self.P], sha(self.R1))
+        r = self.apply({self.P: "a\ntheirs\nc\nD\n"}, release="vault-2026.02.01")
+        self.assertEqual(r["merged"], [self.P])
+        self.assertEqual(self.get(self.P), "a\nmine\nc\nD\n")
+        self.assertEqual(r["clashes"], [])
+
+    def test_keep_mine_is_not_asked_again_for_the_same_release(self):
+        self.clash()
+        rbxvaultsync.decide_clash(self.X, "mine")
+        r = self.apply({self.P: self.R1})
+        self.assertEqual(r["clashes"], [])
+        self.assertEqual(self.get(self.P), "a\nmine\nc\nd\n")
+
+    def test_skill_decided_as_a_whole_folder(self):
+        self.put("Skills/x/notes.md", "my notes")
+        self.clash()
+        rbxvaultsync.decide_clash(self.X, "vault")
+        self.assertEqual(sorted(os.listdir(self.local("Skills/x"))), ["SKILL.md"])
+        (aside,) = self.replaced("Skills/x/notes.md")
+        with open(aside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "my notes")
+
+    def test_binary_clash_lists_name_size_and_date(self):
+        rig = "Roblox/18 Rigs/R.fbx"
+        self.seed(rig, "a\nb\nc\n", "A\nb\nc\n")
+        self.apply({rig: "a\nb\nC\nmore\n"})
+        (c,) = rbxvaultsync.clashes()
+        self.assertEqual((c["unit"], c["kind"], c["title"]), (rig, "binary", "R.fbx"))
+        self.assertEqual((c["mine"]["size"], c["vault"]["size"]), (6, 11))
+        self.assertEqual(c["mine"]["path"], rig)
+        self.assertIsInstance(c["mine"]["modified"], float)
+        self.assertEqual(c["show"], {"mine": "", "vault": ""})
+        self.assertEqual((c["mine"]["changed"], c["vault"]["changed"]), (None, None))
+
+    def test_clash_listing_summarises_both_sides(self):
+        self.clash()
+        (c,) = rbxvaultsync.clashes()
+        self.assertEqual((c["unit"], c["kind"], c["title"], c["both_new"]), (self.X, "skill", "x", False))
+        self.assertEqual(c["release"], "vault-2026.01.01")
+        self.assertTrue(c["made"])
+        self.assertEqual((c["mine"]["changed"], c["vault"]["changed"]), (2, 2))
+        self.assertEqual(c["files"], ["SKILL.md"])
+        self.assertIn("+theirs", c["show"]["vault"])
+        self.assertIn("+mine", c["show"]["mine"])
+        self.assertEqual(c["mine"]["path"], "Skills/x")
+
+    def test_long_sides_are_cut_to_300_lines(self):
+        self.put(self.G, "".join("mine %d\n" % i for i in range(400)))
+        self.apply({self.G: "theirs\n"})
+        (c,) = rbxvaultsync.clashes()
+        lines = c["show"]["mine"].split("\n")
+        self.assertEqual(len(lines), 301)
+        self.assertEqual(lines[-1], "\u2026 (100 more lines)")
+        self.assertEqual(c["title"], "A")
+
+    def test_same_name_clash_is_both_new(self):
+        self.put(self.G, "mine\n")
+        self.apply({self.G: "theirs\n"})
+        (c,) = rbxvaultsync.clashes()
+        self.assertTrue(c["both_new"])
+        self.assertEqual((c["mine"]["changed"], c["vault"]["changed"]), (None, None))
+        self.assertEqual((c["kind"], c["files"]), ("file", []))
+        self.assertIn("mine", c["show"]["mine"])
+        self.assertIn("theirs", c["show"]["vault"])
+
+    def test_deciding_a_clash_that_is_not_waiting_says_so(self):
+        with self.assertRaises(LookupError) as cm:
+            rbxvaultsync.decide_clash("Roblox/none.md", "vault")
+        self.assertEqual(str(cm.exception.args[0]), rbxvaultsync.NOT_WAITING)
+        self.clash()
+        with self.assertRaises(ValueError) as cm:
+            rbxvaultsync.decide_clash(self.X, "merge")
+        self.assertEqual(str(cm.exception), "Choose vault or mine.")
+        shutil.rmtree(os.path.join(rbxvaultsync.clash_dir(), "Skills", "x"))  # its copy is gone
+        with self.assertRaises(LookupError):
+            rbxvaultsync.decide_clash(self.X, "vault")
+        self.assertEqual(self.get(self.P), "a\nmine\nc\nd\n")
+
+    def test_decide_clash_takes_the_vault_lock(self):
+        import contextlib
+        self.clash()
+        roots, real = [], rbxskills._locked
+
+        @contextlib.contextmanager
+        def spy(root):
+            roots.append(root)
+            with real(root):
+                yield
+        with mock.patch.object(rbxskills, "_locked", spy):
+            rbxvaultsync.decide_clash(self.X, "mine")
+        self.assertIn(rbxvaultsync.state_dir(), roots)
+
+    def run_cli(self, *args):
+        import argparse
+        import contextlib
+        import io
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+        a = ap.parse_args(["skills"] + list(args))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            a.fn(a)
+        return json.loads(out.getvalue())
+
+    def test_cli_vault_clashes_and_vault_clash_print_json(self):
+        self.clash()
+        listed = self.run_cli("vault-clashes", "--json")
+        self.assertEqual([c["unit"] for c in listed], [self.X])
+        out = self.run_cli("vault-clash", "--unit", self.X, "--choice", "mine", "--json")
+        self.assertEqual((out["ok"], out["unit"], out["choice"]), (True, self.X, "mine"))
+        self.assertEqual(self.run_cli("vault-clashes", "--json"), [])
+        out = self.run_cli("vault-clash", "--unit", self.X, "--choice", "mine", "--json")
+        self.assertEqual(out, {"ok": False, "error": rbxvaultsync.NOT_WAITING})
+
+
 if __name__ == "__main__":
     unittest.main()
