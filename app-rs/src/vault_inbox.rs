@@ -778,7 +778,9 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
         None => String::from_utf8(read(&md_path).map_err(|_| NO_SKILL_MD.to_string())?).map_err(|_| NOT_READ.to_string())?,
     };
     let (day, _) = today();
+    // the vault knows a skill by its folder: a front-matter name that differs could take another skill's place
     let set = [
+        ("name", name.to_string()),
         ("owner", "community".to_string()),
         ("credit", clean(author)),
         ("licence", LICENCE.to_string()),
@@ -823,7 +825,8 @@ fn check_limits(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
 }
 
 /// Each skill's front matter against what a release needs: an `owner` of `community` or `shipped`, a `licence` and a
-/// `source`, no `core: true`, a `SKILL.md`, and a name no other has in any capitals.
+/// `source`, no `core: true`, a `name` that is its folder's, a `SKILL.md`, and a folder name no other has in any
+/// capitals.
 fn preflight(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
     let mut names: BTreeMap<String, ()> = BTreeMap::new();
     for p in files.keys() {
@@ -845,6 +848,9 @@ fn preflight(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
                 }
                 if front_value(&text, "core").is_some_and(|c| ["true", "yes"].contains(&c.to_lowercase().as_str())) {
                     problems.push(format!("{}: core must not be true", shown(name)));
+                }
+                if front_value(&text, "name").as_deref() != Some(name.as_str()) {
+                    problems.push(format!("{}: name differs from its folder", shown(name)));
                 }
             }
         }
@@ -1486,6 +1492,19 @@ mod tests {
     }
 
     #[test]
+    fn add_and_edit_set_the_name_to_the_folder() {
+        // a submission in tidy/ whose front matter names one of Fridae's own skills
+        let named = "---\nname: level-design\ndescription: Put things away.\n---\n\nPut things away.\n";
+        for (choice, text) in [("add", None), ("edit", Some(named))] {
+            let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", named)], vec![], vec![], None));
+            let out = decide(5, "tidy", choice, text, None);
+            assert_eq!(out["ok"], true, "{choice}: {out}");
+            let md = blobs_sent(&s).into_iter().find(|b| b.contains("owner: community")).unwrap();
+            assert!(md.lines().any(|l| l == "name: tidy") && !md.contains("level-design"), "{choice}: {md:?}");
+        }
+    }
+
+    #[test]
     fn add_never_deletes_a_file_the_submission_left_unchanged() {
         // go.sh is identical in the vault and the submitter's copy: not in the PR's changed files, but in its head tree
         let inner = maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/scripts/go.sh", "echo\n"), ("Skills/tidy/old.md", "stale")], vec![], None);
@@ -1586,7 +1605,13 @@ mod tests {
         let (_g, _s) = setup("o", maint(vec![], vec![("Skills/c/SKILL.md", core), ("Skills/a/SKILL.md", GOOD), ("Skills/A/SKILL.md", GOOD), ("Skills/z/SKILL.md", other), ("Skills/n/notes.md", "no skill file")], vec![], None));
         let out = publish();
         let problems: Vec<&str> = out["problems"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
-        assert_eq!(problems, vec!["a: same name as A", "c: core must not be true", "n: SKILL.md", "z: owner"], "{out}");
+        assert_eq!(problems, vec!["A: name differs from its folder", "a: same name as A", "c: core must not be true", "n: SKILL.md", "z: owner"], "{out}");
+        drop(_g);
+        // a front-matter name that is not the folder's (it could take one of Fridae's own skills' place)
+        let shadow = "---\nname: level-design\nowner: community\nlicence: L\nsource: s\n---\n";
+        let (_g, s) = setup("o", maint(vec![], vec![("Skills/tidy/SKILL.md", shadow), ("Skills/a/SKILL.md", GOOD)], vec![], None));
+        assert_eq!(publish(), json!({"ok": false, "problems": ["tidy: name differs from its folder"]}));
+        assert!(sent(&s, "POST", "/repos/o/r/releases").is_empty());
     }
 
     fn manifest_sent(s: &Stub) -> Value {

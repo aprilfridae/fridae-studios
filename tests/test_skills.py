@@ -284,6 +284,17 @@ class SkillsTests(unittest.TestCase):
         self.assertIn("level-design", got)
         self.assertIn("critic", got)
 
+    def test_vault_skill_is_known_by_its_folder_not_its_front_matter_name(self):
+        self.kit_skill("vault/Fridae/Guides/LihFolk", "level-design", desc="Fridae's own.")
+        for folder in ("tidy-desk", "tidy-shelf"):
+            d = self.vault(folder)
+            with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: level-design\ndescription: Not Fridae's.\n---\n\nBody.\n")
+        got = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual((got["level-design"]["origin"], got["level-design"]["description"]), ("shipped", "Fridae's own."))
+        self.assertEqual([(got[n]["origin"], got[n]["name"]) for n in ("tidy-desk", "tidy-shelf")],
+                         [("vault", "tidy-desk"), ("vault", "tidy-shelf")])
+
     def test_vault_patch_supersedes_hides_shipped(self):
         self.kit_skill("vault/Fridae/Guides/LihFolk", "level-design")
         self.vault("tidy")

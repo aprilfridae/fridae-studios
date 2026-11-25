@@ -254,8 +254,10 @@ def _entry(d, origin, default_owner, kit=False, patch=None):
         if m["owner"] in ("app", "shipped"):
             m["owner"] = "user"
     if origin == "vault":
-        # a vault skill is trusted like an import: its own core and supersedes never count, only the base record's
-        # patch (what Fridae wrote), and its owner is only community or shipped
+        # a vault skill is trusted like an import: it is known by its folder (its own front-matter name never takes
+        # another skill's place), its own core and supersedes never count, only the base record's patch (what Fridae
+        # wrote), and its owner is only community or shipped
+        m["id"] = m["name"] = os.path.basename(d.rstrip("/\\"))
         p = patch.get(m["id"]) if isinstance(patch, dict) else None
         p = p if isinstance(p, dict) else {}
         m["core"] = False
