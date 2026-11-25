@@ -5616,7 +5616,14 @@ async function skDecide(d, choice, card, said) {
   if (choice === "merge") body.merged = d.recommendation.merged;
   let r; try { r = await api("/api/skills", body); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   skSetBusy(false);
-  if (!r || !r.ok) { err.textContent = (r && r.error) || "That did not work."; return; }
+  if (!r || !r.ok) {
+    /* a refused merge (a side changed since the suggestion) clears the suggestion: show the card as it is now, so its
+       old merge is not offered again, and keep the reason on it */
+    const msg = (r && r.error) || "That did not work.";
+    err.textContent = msg;
+    if (choice === "merge") { await loadSkills(); const c = skCards.get(d.id); if (c) c.el.querySelector(".rv-err").textContent = msg; }
+    return;
+  }
   skFold(d.id, said); skPaint(); loadSkills();
 }
 $("sk-all").onclick = async () => {

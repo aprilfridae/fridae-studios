@@ -864,17 +864,25 @@ pub fn advise_open() {
     });
 }
 
+/// What a decision was tried with: its id and both sides' hashes (pending's `a_hash`, `b_hash`), so a decision whose
+/// recommendation was cleared because a side changed is tried again at once, and the same texts not within `RETRY`.
+fn tried_key(d: &Value) -> String {
+    format!("{}\u{0}{}\u{0}{}", d["id"].as_str().unwrap_or(""), d["a_hash"].as_str().unwrap_or(""), d["b_hash"].as_str().unwrap_or(""))
+}
+
 /// One step of `advise_open`: the first open decision without a recommendation (and not tried within `RETRY`) is
-/// given one by `advise` and stored with `rbx skills decide <id> advise --json-file`. False when none is left to try.
+/// given one by `advise` and stored with `rbx skills decide <id> advise --json-file`, with the hashes pending gave for
+/// both sides (read just before the texts the recommender gets, so they describe those texts: a merge from it is
+/// refused once either side changed). False when none is left to try.
 fn advise_next(advise: &dyn Fn(&str) -> crate::compact::Outcome, tried: &mut HashMap<String, Instant>) -> bool {
     let Some(open) = open_decisions() else { return false };
     let fresh = |d: &&Value| {
         let id = d["id"].as_str().unwrap_or("");
-        !id.is_empty() && d["recommendation"].is_null() && tried.get(id).is_none_or(|t| t.elapsed() >= RETRY)
+        !id.is_empty() && d["recommendation"].is_null() && tried.get(&tried_key(d)).is_none_or(|t| t.elapsed() >= RETRY)
     };
     let Some(dec) = open.iter().find(fresh) else { return false };
     let id = dec["id"].as_str().unwrap_or("").to_string();
-    tried.insert(id.clone(), Instant::now());
+    tried.insert(tried_key(dec), Instant::now());
     let (Some((a, cut_a)), Some((b, cut_b))) = (side_text(dec["a_dir"].as_str().unwrap_or("")), side_text(dec["b_dir"].as_str().unwrap_or(""))) else {
         return true;
     };
@@ -889,7 +897,12 @@ fn advise_next(advise: &dyn Fn(&str) -> crate::compact::Outcome, tried: &mut Has
     let partial = cut_a || cut_b || crate::compact::mask(&a) != a || crate::compact::mask(&b) != b;
     let file = paths::work("skills").join(format!("advice-{}.json", paths::random_hex(1)));
     let _ = std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")));
-    let rec = to_store(&adv, partial, &crate::compact::writer_name(s.ai, &s.model));
+    let mut rec = to_store(&adv, partial, &crate::compact::writer_name(s.ai, &s.model));
+    for k in ["a_hash", "b_hash"] {
+        if dec[k].is_string() {
+            rec[k] = dec[k].clone();
+        }
+    }
     if std::fs::write(&file, rec.to_string()).is_ok() {
         let path = file.display().to_string();
         if cli(&["decide", &id, "advise", "--json-file", &path, "--json"]).is_none() {
@@ -1349,6 +1362,68 @@ mod tests {
         assert!(!upkeep_due(Some(now - 30.0 * 86400.0), now, true), "due, but an agent works");
         assert!(upkeep_due(Some(now + 86400.0 * 3.0), now, false), "a time in the future (the clock went back): run");
         assert_eq!(UPKEEP_KEY, "skills_upkeep_at");
+    }
+
+    #[test]
+    fn a_recommendation_carries_the_hashes_of_what_was_read() {
+        let dir = paths::test_dir("skills-advise-hash");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("One.md"), dir.join("Two.md"));
+        std::fs::write(&a, "one").unwrap();
+        std::fs::write(&b, "two").unwrap();
+        let hashes = Rc::new(RefCell::new(("h-a1", "h-b1")));
+        let now = hashes.clone();
+        let stored = Rc::new(RefCell::new(Vec::<Value>::new()));
+        let got = stored.clone();
+        let (pa, pb) = (a.clone(), b.clone());
+        calls(move |args| match args[0].as_str() {
+            "pending" => {
+                let (ha, hb) = *now.borrow();
+                Some(json!([{"id": "n1", "kind": "note", "relation": "duplicate", "a": "One", "b": "Two", "a_dir": pa, "b_dir": pb,
+                             "state": "open", "recommendation": null, "a_hash": ha, "b_hash": hb}]).to_string())
+            }
+            _ => {
+                let file = &args[args.iter().position(|a| a == "--json-file").unwrap() + 1];
+                got.borrow_mut().push(serde_json::from_str(&std::fs::read_to_string(file).unwrap()).unwrap());
+                Some(json!({"ok": true}).to_string())
+            }
+        });
+        let advise = |_: &str| crate::compact::Outcome {
+            summary: Some(crate::compact::Summary { text: r#"{"choice":"merge","why":"Both.","merged":"one two"}"#.into(), ai: "opencode", account: 1, model: "opencode-go/glm-5-flash".into(), usage: Default::default() }),
+            ..Default::default()
+        };
+        let mut tried = HashMap::new();
+        assert!(advise_next(&advise, &mut tried));
+        assert_eq!((stored.borrow()[0]["a_hash"].as_str(), stored.borrow()[0]["b_hash"].as_str()), (Some("h-a1"), Some("h-b1")));
+        assert!(!advise_next(&advise, &mut tried), "the same texts are not asked about again at once");
+        // a stale merge was refused and its recommendation cleared: the texts changed, so it is written again now
+        *hashes.borrow_mut() = ("h-a2", "h-b1");
+        assert!(advise_next(&advise, &mut tried), "changed texts get a fresh recommendation");
+        assert_eq!(stored.borrow()[1]["a_hash"], "h-a2");
+    }
+
+    #[test]
+    fn accept_all_reports_a_merge_refused_as_stale() {
+        let pending = json!([
+            {"id": "ab", "kind": "note", "a": "A", "a_dir": "/n/A.md", "state": "open", "recommendation": {"choice": "merge", "why": "x", "merged": "A+B"}},
+            {"id": "ac", "kind": "note", "a": "A", "a_dir": "/n/A.md", "state": "open", "recommendation": {"choice": "merge", "why": "x", "merged": "A+C"}},
+        ])
+        .to_string();
+        let texts = Rc::new(RefCell::new(Vec::new()));
+        let got = texts.clone();
+        calls(move |args| match args[0].as_str() {
+            "pending" => Some(pending.clone()),
+            "index" => Some(index()),
+            _ => {
+                let file = &args[args.iter().position(|a| a == "--merged-file").unwrap() + 1];
+                got.borrow_mut().push(std::fs::read_to_string(file).unwrap());
+                Some(if args[1] == "ac" { json!({"ok": false, "error": "One of them changed since the suggestion; check them again."}) } else { json!({"ok": true}) }.to_string())
+            }
+        });
+        let out = api_post(&json!({"action": "accept_all"}));
+        assert_eq!(*texts.borrow(), vec!["A+B".to_string(), "A+C".into()], "each merge is handed its own recommendation's text");
+        assert_eq!(out["done"], json!(["ab"]));
+        assert_eq!(out["failed"], json!([{"id": "ac", "error": "One of them changed since the suggestion; check them again."}]));
     }
 
     #[test]

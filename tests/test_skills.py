@@ -1031,6 +1031,44 @@ class ImportTests(unittest.TestCase):
         bad = json.loads(self.cli("decide", "nope", "advise", "--json-file", self.advice_file(rec), "--json"))
         self.assertFalse(bad["ok"])
 
+    def recommend_merge(self, d, merged):
+        p = next(x for x in rbxskills.pending() if x["id"] == d["id"])
+        self.assertTrue(p["a_hash"] and p["b_hash"], "pending gives each side's hash as it is now")
+        rbxskills.advise(d["id"], {"choice": "merge", "why": "Both.", "merged": merged, "by": "GLM",
+                                   "a_hash": p["a_hash"], "b_hash": p["b_hash"]})
+        rec = next(x for x in rbxskills.pending() if x["id"] == d["id"])["recommendation"]
+        self.assertEqual((rec["a_hash"], rec["b_hash"]), (p["a_hash"], p["b_hash"]), "stored as the advisor read them")
+
+    def test_a_recommended_merge_is_refused_when_a_skill_changed(self):
+        d = self.overlap()
+        merged = "---\nname: brainstorm-ideas\ndescription: Both, merged.\n---\n\nMerged body.\n"
+        self.recommend_merge(d, merged)
+        mine = os.path.join(self.user, "brainstorm-ideas", "SKILL.md")
+        with open(mine, "a", encoding="utf-8") as f:
+            f.write("\nA step the user added after the suggestion.\n")
+        with self.assertRaises(ValueError) as e:
+            rbxskills.decide(d["id"], "merge", merged)
+        self.assertIn("changed since the suggestion", str(e.exception))
+        [p] = rbxskills.pending()
+        self.assertEqual((p["state"], p["recommendation"]), ("open", None), "open, and the suggestion is written again")
+        self.assertIn("A step the user added", read(mine), "nothing was overwritten")
+        self.assertFalse(os.path.isdir(os.path.join(self.user, ".replaced")))
+
+    def test_an_unchanged_skill_pair_merges_from_the_recommendation(self):
+        d = self.overlap()
+        merged = "---\nname: brainstorm-ideas\ndescription: Both, merged.\n---\n\nMerged body.\n"
+        self.recommend_merge(d, merged)
+        self.assertEqual(rbxskills.decide(d["id"], "merge", merged)["state"], "done")
+        self.assertIn("Merged body.", read(os.path.join(self.user, "brainstorm-ideas", "SKILL.md")))
+
+    def test_the_users_own_merge_text_is_not_held_to_the_suggestion(self):
+        d = self.overlap()
+        self.recommend_merge(d, "---\nname: brainstorm-ideas\ndescription: Suggested.\n---\nSuggested.\n")
+        with open(os.path.join(self.user, "brainstorm-ideas", "SKILL.md"), "a", encoding="utf-8") as f:
+            f.write("\nEdited.\n")
+        mine = "---\nname: brainstorm-ideas\ndescription: My own merge.\n---\nMine, written now.\n"
+        self.assertEqual(rbxskills.decide(d["id"], "merge", mine)["state"], "done")
+
     def test_advise_never_recommends_changing_an_app_skill(self):
         app = self.kit_skill("critic", "Review the game with a critical eye.", owner="app", body="The app's critic.")
         skill(os.path.join(self.agents, "critic"), "critic", "Review the game with a critical eye.", "Another critic.")
@@ -1133,6 +1171,54 @@ class NoteDecideTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rbxskills.decide(self.id, "keep")
         self.assertTrue(os.path.isfile(elsewhere))
+
+    def advise_merge(self, id, merged):
+        p = next(x for x in rbxskills.pending() if x["id"] == id)
+        rbxskills.advise(id, {"choice": "merge", "why": "Both.", "merged": merged, "by": "GLM",
+                              "a_hash": p["a_hash"], "b_hash": p["b_hash"]})
+
+    def test_sibling_merges_never_drop_the_first_merge(self):
+        """Three copies give a-b and a-c; Accept all settles both merges in turn. The second's text was written
+        from the old a, so it is refused and a keeps what the first merge put in it."""
+        c = self.note("Hit freeze heavy", "hit freeze 150 ms on heavy hits")
+        rbxskills.add_note_decisions([{
+            "kind": "note", "relation": "conflict", "a": "Hit freeze", "b": "Hit freeze heavy", "a_dir": self.a,
+            "b_dir": c, "reason": "numbers differ", "lines": {}, "source_key": "note:conflict:a|c"}])
+        ac = next(d["id"] for d in rbxskills.pending() if d["b"] == "Hit freeze heavy")
+        self.advise_merge(self.id, "Light hits freeze 66 ms (B's fact); heavy ones 80-150 ms.")
+        self.advise_merge(ac, "Heavy hits freeze 150 ms (C's fact); others 80-150 ms.")
+        # Accept all, in the order the decisions are listed
+        for d in rbxskills.pending():
+            try:
+                rbxskills.decide(d["id"], "merge", d["recommendation"]["merged"])
+            except ValueError as e:
+                self.assertEqual(d["id"], ac)
+                self.assertIn("changed since the suggestion", str(e))
+        self.assertIn("B's fact", self.read(self.a), "the first merge stays in the live note")
+        self.assertNotIn("C's fact", self.read(self.a))
+        [left] = rbxskills.pending()
+        self.assertEqual((left["id"], left["recommendation"]), (ac, None), "asked again, with a fresh suggestion")
+        self.assertTrue(os.path.isfile(c), "the third note was not trashed")
+
+    def test_a_hand_edit_after_the_suggestion_refuses_its_merge(self):
+        self.advise_merge(self.id, "Both, merged.")
+        with open(self.a, "a", encoding="utf-8") as f:
+            f.write("An agent's replace, after the suggestion.\n")
+        with self.assertRaises(ValueError):
+            rbxskills.decide(self.id, "merge", "Both, merged.")
+        self.assertIn("An agent's replace", self.read(self.a))
+        self.assertTrue(os.path.isfile(self.b))
+        self.assertIsNone(rbxskills.pending()[0]["recommendation"])
+
+    def test_an_unchanged_note_pair_merges_from_the_suggestion(self):
+        self.advise_merge(self.id, "Both, merged.")
+        self.assertEqual(rbxskills.decide(self.id, "merge", "Both, merged.")["state"], "done")
+        self.assertIn("Both, merged.", self.read(self.a))
+
+    def test_a_suggestion_stored_without_hashes_takes_them_when_stored(self):
+        rbxskills.advise(self.id, {"choice": "keep", "why": "x"})
+        rec = rbxskills.pending()[0]["recommendation"]
+        self.assertEqual(rec["a_hash"], rbxskills.side_hash(self.a))
 
     def test_advice_on_a_note_is_stored(self):
         dec = rbxskills.advise(self.id, {"choice": "merge", "why": "Both hold.", "merged": "Both.", "by": "GLM"})

@@ -934,6 +934,16 @@ def side_meta(d):
             "scripts": has_scripts(d)}
 
 
+def side_hash(path):
+    """What one side of a decision is now, as a hash: a skill folder's folder_hash, a note file's text (sha256), or
+    None when it is gone."""
+    if not isinstance(path, str) or not path:
+        return None
+    if os.path.isdir(path):
+        return folder_hash(path)
+    return hashlib.sha256(_bytes(path)).hexdigest() if os.path.isfile(path) else None
+
+
 def _note_there(d):
     """Whether both notes of a note decision are still in place."""
     return all(isinstance(d.get(k), str) and os.path.isfile(d[k]) for k in ("a_dir", "b_dir"))
@@ -945,7 +955,9 @@ def pending():
     a_meta and b_meta (side_meta, read now, never stored). A note decision (kind "note", from the notes upkeep) has
     the two notes' titles as a and b, their files as a_dir and b_dir (a the older), relation ("duplicate" or
     "conflict") and lines ({a, b}: the sentences that differ, or each note's first); one whose note is gone (moved or
-    trashed since) is left out, and closed by the next upkeep (add_note_decisions)."""
+    trashed since) is left out, and closed by the next upkeep (add_note_decisions). Every decision also carries a_hash
+    and b_hash (side_hash, now): the advisor hands them back with its recommendation, so they describe the texts it
+    read."""
     out = []
     for d in _decisions():
         if d.get("state") != "open":
@@ -954,6 +966,7 @@ def pending():
             d["a_meta"], d["b_meta"] = side_meta(d.get("a_dir")), side_meta(d.get("b_dir"))
         elif d.get("kind") == "note" and not _note_there(d):
             continue
+        d["a_hash"], d["b_hash"] = side_hash(d.get("a_dir")), side_hash(d.get("b_dir"))
         out.append(d)
     return out
 
@@ -1255,8 +1268,25 @@ def _decide_note(dec, choice, merged_text):
         rbxnotes.forget(title(b_path), "all")
 
 
+STALE = "One of them changed since the suggestion; check them again."
+
+
+def _stale_merge(dec, merged_text):
+    """True when a merge's text is the recommendation's and either side changed since the recommender read them (its
+    a_hash / b_hash differ from side_hash now, or it has none). Settling it would write text made from an older copy
+    over the newer one: after a sibling decision's merge on the same note, or an edit since. A merge text of the user's
+    own is not held to it."""
+    rec = dec.get("recommendation") or {}
+    suggested = rec.get("merged") if isinstance(rec.get("merged"), str) else ""
+    if not suggested.strip() or (merged_text or "").strip() != suggested.strip():
+        return False
+    return not rec.get("a_hash") or not rec.get("b_hash") or (rec.get("a_hash"), rec.get("b_hash")) != (
+        side_hash(dec.get("a_dir")), side_hash(dec.get("b_dir")))
+
+
 def decide(id, choice, merged_text=None):
-    """Settle an open decision (a note decision: _decide_note). choice:
+    """Settle an open decision (a note decision: _decide_note). A merge from a recommendation made before either side
+    changed is refused (STALE): the decision stays open and its recommendation is cleared, to be written again. choice:
       keep       the skill in use stays; the newcomer goes to .replaced/ and the winner gains supersedes;
       replace    the newcomer takes over; the old one goes to .replaced/ (a shipped one stays in the app, superseded);
       merge      merged_text becomes the winner's SKILL.md (the one in use keeps its name); the old SKILL.md's folder
@@ -1271,6 +1301,10 @@ def decide(id, choice, merged_text=None):
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
+        if choice == "merge" and _stale_merge(dec, merged_text):
+            dec["recommendation"] = None
+            _save_decisions(decs)
+            raise ValueError(STALE)
         if dec.get("kind", "skill") == "note":
             _decide_note(dec, choice, merged_text)
             dec.update(state="done", choice=choice, decided=_now())
@@ -1350,7 +1384,8 @@ ADVICE = ("keep", "replace", "merge")
 
 def advise(id, rec):
     """Store an AI's recommendation on an open decision, and nothing else: no folder moves, the decision stays open
-    for the user. rec: {choice: keep|replace|merge, why, merged (the merged SKILL.md), by (who wrote it)}. An unknown
+    for the user. rec: {choice: keep|replace|merge, why, merged (the merged SKILL.md), by (who wrote it), a_hash,
+    b_hash (the sides as the recommender read them: pending()'s hashes, handed back; side_hash now when missing)}. An unknown
     choice, or a merge without its text, is stored with no choice (the why still shows); a recommendation to replace
     or merge one of Fridae's own skills is stored as keep. Returns the decision."""
     rec = rec if isinstance(rec, dict) else {}
@@ -1368,7 +1403,9 @@ def advise(id, rec):
                 and _kit_owner(dec.get("a_dir") or "")[0] == "app"):
             choice, merged = "keep", ""
         dec["recommendation"] = {"choice": choice, "why": text("why").strip(), "merged": merged,
-                                 "by": text("by").strip(), "made": _now()}
+                                 "by": text("by").strip(), "made": _now(),
+                                 "a_hash": text("a_hash") or side_hash(dec.get("a_dir")),
+                                 "b_hash": text("b_hash") or side_hash(dec.get("b_dir"))}
         _save_decisions(decs)
         return dec
 
