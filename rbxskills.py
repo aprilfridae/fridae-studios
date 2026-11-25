@@ -50,7 +50,7 @@ APP_ONLY = {"built-in-browser", "chrome-browser", "computer-use", "docs", "googl
 
 ORIGIN_LABEL = {"app": "built into Fridae", "shipped": "shipped with Fridae", "user": "your library",
                 "project": "this project", "claude": "Claude Code", "claude-plugin": "a Claude Code plugin",
-                "synced": "synced from Claude", "synced-plugin": "a plugin synced from Claude", "other": "another AI tool"}
+                "vault": "the Fridae vault", "synced": "synced from Claude", "synced-plugin": "a plugin synced from Claude", "other": "another AI tool"}
 # the origins Claude Code loads by itself (its Skill tool already lists them), besides its own account's synced ones
 CLAUDE_NATIVE = {"project", "claude", "claude-plugin"}
 
@@ -190,6 +190,16 @@ def user_dir():
     return os.path.join(rbxpaths.HOME_DIR, "skills")
 
 
+def vault_dir():
+    """Where the skills downloaded from the Fridae vault live."""
+    return os.path.join(rbxpaths.KNOWLEDGE_DIR, "Skills")
+
+
+def vault_state_dir():
+    """The vault's base record and what it moved aside."""
+    return os.path.join(rbxpaths.KNOWLEDGE_DIR, ".fridae-vault")
+
+
 def _list(val):
     if isinstance(val, list):
         return [str(x).strip() for x in val if str(x).strip()]
@@ -218,10 +228,10 @@ def meta(fm, folder, default_owner):
             "examples": _list(fm.get("examples")), "applies": applies if applies in APPLIES else "both",
             "core": str(fm.get("core")).strip().lower() in ("true", "yes", "1"),
             "owner": owner if owner in OWNERS else default_owner, "source": text("source"), "licence": text("licence"),
-            "supersedes": _list(fm.get("supersedes")), "updated": text("updated")}
+            "supersedes": _list(fm.get("supersedes")), "updated": text("updated"), "credit": text("credit")}
 
 
-def _entry(d, origin, default_owner, kit=False):
+def _entry(d, origin, default_owner, kit=False, patch=None):
     try:
         fm, _ = front(_read(os.path.join(d, "SKILL.md"), 8000))
     except (OSError, ValueError):
@@ -241,6 +251,15 @@ def _entry(d, origin, default_owner, kit=False):
         m["supersedes"] = _list(patch.get("supersedes"))
         if m["owner"] in ("app", "shipped"):
             m["owner"] = "user"
+    if origin == "vault":
+        # a vault skill is trusted like an import: its own core and supersedes never count, only the base record's
+        # patch (what Fridae wrote), and its owner is only community or shipped
+        p = patch.get(m["id"]) if isinstance(patch, dict) else None
+        p = p if isinstance(p, dict) else {}
+        m["core"] = False
+        m["supersedes"] = _list(p.get("supersedes"))
+        if m["owner"] not in ("community", "shipped"):
+            m["owner"] = "community"
     return m
 
 
@@ -261,9 +280,13 @@ def library(project=None):
     the app's skills, those it ships, the user's, then the project's. One per name; a later one takes an earlier
     name, except an app skill's, which nothing can take. A shipped skill a user skill supersedes is left out, and so
     are the APP_ONLY names and an update waiting for a decision (<name> (update))."""
+    import rbxvaultsync  # here, not at the top: it is read only when a library is made
     kit = kit_skills()
+    patch = rbxvaultsync.read_base()["patch"]
     roots = [(os.path.join(project, sub, "skills"), "project") for sub in (".claude", ".agents")] if project else []
     found = sorted(kit, key=lambda e: e["origin"] != "app") + \
+        [_entry(d, "vault", "community", patch=patch) for d in _skill_dirs(vault_dir())
+         if not d.endswith(UPDATE_SUFFIX) and not os.path.basename(d).startswith(".")] + \
         [_entry(d, "user", "user") for d in _skill_dirs(user_dir()) if not d.endswith(UPDATE_SUFFIX)] + \
         [_entry(d, o, "user") for r, o in roots[::-1] for d in _skill_dirs(r)]  # .agents, then .claude: .claude wins
     out = {}
@@ -273,7 +296,7 @@ def library(project=None):
             continue
         if key not in out or out[key]["owner"] != "app":
             out[key] = e
-    gone = {n.casefold() for e in out.values() if e["origin"] == "user" for n in e["supersedes"]}
+    gone = {n.casefold() for e in out.values() if e["origin"] in ("user", "vault") for n in e["supersedes"]}
     return [e for e in out.values() if not (e["origin"] == "shipped" and e["id"].casefold() in gone)]
 
 
@@ -509,7 +532,10 @@ def load_head(s):
     directory, when to use it and its files. rbx_skill load frames every skill but the app's own guides so."""
     files = [f for f in _files(s["dir"]) if f != "SKILL.md"]
     more = " (and more)" if len(files) >= FILES_MAX else ""
-    head = ["# Skill %s (%s)" % (s["id"], ORIGIN_LABEL.get(s["origin"], s["origin"])),
+    origin = ORIGIN_LABEL.get(s["origin"], s["origin"])
+    if s["origin"] == "vault" and s.get("credit"):
+        origin += " (shared by %s)" % s["credit"]
+    head = ["# Skill %s (%s)" % (s["id"], origin),
             "Base directory: %s" % s["dir"]]
     if s["description"]:
         head.append("When to use: %s" % s["description"])
@@ -1523,7 +1549,7 @@ def advise(id, rec):
 
 # ---- what Claude Code lists itself, and the index the app reads
 INDEX_FIELDS = ("id", "name", "description", "examples", "applies", "core", "owner", "source", "licence",
-                "supersedes", "updated", "dir", "origin")
+                "supersedes", "updated", "credit", "dir", "origin")
 
 
 def native_ids(project=None, config=None):
