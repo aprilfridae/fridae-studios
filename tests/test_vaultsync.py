@@ -241,12 +241,6 @@ class VaultSyncTests(unittest.TestCase):
                 rbxvaultsync.apply(staged, man)
             self.assertEqual(self.snapshot(), before, bad)
 
-    def test_merge_runs_git_without_a_console_window(self):
-        done = mock.Mock(returncode=0, stdout=b"merged")
-        with mock.patch.object(rbxvaultsync.subprocess, "run", return_value=done) as run:
-            self.assertEqual(rbxvaultsync._merge(b"a", b"b", b"c"), b"merged")
-        self.assertEqual(run.call_args.kwargs.get("creationflags"), rbxpaths.no_window())
-
     def test_bad_manifest_and_tampered_staged_file(self):
         staged, man = self.stage({self.P: "v"})
         for broken in (dict(man, format=2), dict(man, release=""), dict(man, files="x"),

@@ -5,11 +5,10 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
-import tempfile
 import unicodedata
 import uuid
 
+import rbxmerge
 import rbxpaths
 
 BASE_NAME = "base.json"
@@ -17,7 +16,6 @@ BASE_NAME = "base.json"
 CODE_DATA = ("Roblox/_tools/", "Roblox/_data/")
 BESIDE = " (Fridae update)"
 BAD = "This vault update looked wrong, so nothing was changed."
-MERGE_MAX = 1 << 20
 # the longest file name accepted: room for " (Fridae update 99)" in the same folder (temp files have short names)
 NAME_MAX = 255 - len(" (Fridae update 99)")
 # at most 20,000 files, 8 MiB each, 256 MiB in all (vault_sync's limits: the guides are 1,352 files and 21 MB)
@@ -150,28 +148,11 @@ def _beside(path):
 
 
 def _merge(local, base, new):
-    """The clean three-way merge of three byte strings, or None (conflicts, binary, too big, no base, no git)."""
+    """The clean three-way merge of three byte strings (rbxmerge.merge3, no git), or None (a clash, binary, too big,
+    no base)."""
     if base is None or local is None:
         return None
-    for d in (local, base, new):
-        if len(d) > MERGE_MAX or b"\0" in d:
-            return None
-        try:
-            d.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-    with tempfile.TemporaryDirectory(prefix="vaultmerge") as tmp:
-        names = []
-        for n, d in (("local", local), ("base", base), ("new", new)):
-            names.append(os.path.join(tmp, n))
-            with open(names[-1], "wb") as f:
-                f.write(d)
-        try:
-            r = subprocess.run(["git", "merge-file", "-p"] + names, capture_output=True, timeout=30,
-                               creationflags=rbxpaths.no_window())
-        except (OSError, subprocess.SubprocessError):
-            return None
-    return r.stdout if r.returncode == 0 else None
+    return rbxmerge.merge3(local, base, new)
 
 
 def _skill(path):

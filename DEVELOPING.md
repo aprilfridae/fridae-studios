@@ -2214,8 +2214,9 @@ copy, the user's file and the new file:
 - the user's file already equals the new one: only recorded.
 - the user's file is unchanged since the base: replaced. Changed by the user but not upstream: the edit stands.
 - changed on both sides: a three-way text merge when it is clean; otherwise the user's file stays and the new one is
-  saved beside it. These show as "kept" in the report, each with Reveal. The merge is `git merge-file`; on a computer
-  without `git`, every file changed on both sides is kept this way (safe, just never merged).
+  saved beside it. These show as "kept" in the report, each with Reveal. The merge is Fridae's own
+  (`rbxmerge.merge3`), so no git is needed; changes that touch the same or neighbouring lines are a clash, never
+  conflict marks.
 - a file the user deleted is remembered and never brought back; a file the vault dropped is moved to
   `removed/<release>/` only if the user never changed it.
 Every file is written to a temporary file and renamed. A symlink below `Knowledge/Skills` or the record is refused (the
