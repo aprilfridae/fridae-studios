@@ -211,7 +211,8 @@ fn get(path: &str, url: &str) -> Reply {
         let since = query(url, "since").and_then(|v| v.parse::<f64>().ok());
         send_json(crate::swarm::api_get(&unescape(&query(url, "lead").unwrap_or_default()), since))
     } else if path == "/api/vault/status" {
-        send_json(crate::vault_sync::status())
+        // Setup › Skills: the Fridae vault (vault_sync), Share your skills (share) and the maintainer role (Task 10)
+        send_json(vault_status())
     } else if path == "/api/vault/share" {
         // Setup › Skills › Share my skills: the mode, what is ready, the batch waiting
         send_json(crate::share::status())
@@ -431,6 +432,8 @@ fn post(path: &str, body: Value) -> Reply {
         // Share my skills, on the user's click only (no agent tool reaches these): the mode, a batch to look at, Send
         "/api/vault/share_mode" => send_json(crate::share::set_mode(&text_of("mode"), body["agree"].as_bool() == Some(true))),
         "/api/vault/prepare" => send_json(crate::share::prepare()),
+        // Reveal of a file a vault report names: only under Knowledge/Skills, never through a link
+        "/api/vault/reveal" => send_json(crate::vault_sync::reveal(&text_of("path"))),
         "/api/vault/send" => {
             let drop: Vec<String> = body["drop"].as_array().into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
             send_json(crate::share::send(&text_of("batch"), &drop))
@@ -589,6 +592,19 @@ fn post(path: &str, body: Value) -> Reply {
         }
         _ => not_found(),
     }
+}
+
+/// GET /api/vault/status: `vault_sync::status()` with `share::status()` merged in, and `role` (null until the
+/// maintainer's inbox comes).
+fn vault_status() -> Value {
+    let mut out = crate::vault_sync::status();
+    if let (Some(o), Value::Object(share)) = (out.as_object_mut(), crate::share::status()) {
+        for (k, v) in share {
+            o.entry(k).or_insert(v);
+        }
+        o.insert("role".into(), Value::Null);
+    }
+    out
 }
 
 fn handle(mut req: Request, token: &str) {

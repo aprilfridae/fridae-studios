@@ -255,11 +255,31 @@ pub fn set_mode(mode: &str, agree: bool) -> Value {
     json!({"ok": true, "mode": mode})
 }
 
-/// `{mode, asked, agreed, connected, login, shareable, batch?, last_sent, held_masked}`.
+/// `{mode, asked, agreed, connected, login, shareable, ready, held, sent, batch?, last_sent, held_masked}`: while
+/// sharing is on and GitHub connected, `rbx skills shareable` is run once for `ready: [{id, scripts}]` (a skill held
+/// by the last automatic batch is held, not ready), `held: [{id, why}]` (the kit's, then `held_masked`, each name
+/// once) and `sent: [{id, pr, at}]`; otherwise the three lists are empty.
 pub fn status() -> Value {
     let c = paths::load_config();
     let (mode, connected) = (mode(), github::connected());
-    let shareable = if mode != "off" && connected { ready().map(|r| r.len()).unwrap_or(0) } else { 0 };
+    let held_masked = c.get(HELD_KEY).cloned().unwrap_or(json!([]));
+    let listed = if mode != "off" && connected { kit_json(&["shareable"]).ok() } else { None };
+    let list = |v: &Value, key: &str| v[key].as_array().cloned().unwrap_or_default();
+    let (mut ready, mut held, mut sent, mut shareable) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    if let Some(v) = &listed {
+        let mut seen = std::collections::HashSet::new();
+        for h in list(v, "held").iter().chain(held_masked.as_array().into_iter().flatten()) {
+            if let Some(id) = h["id"].as_str().filter(|id| seen.insert(id.to_string())) {
+                held.push(json!({"id": id, "why": h["why"].as_str().unwrap_or("")}));
+            }
+        }
+        // the same names `ready()` keeps
+        let all: Vec<Value> = list(v, "ready").into_iter().filter(|r| r["id"].as_str().is_some_and(|n| !n.is_empty() && !n.starts_with('-'))).collect();
+        shareable = all.len();
+        ready = all.iter().filter(|r| !r["id"].as_str().is_some_and(|id| seen.contains(id))).map(|r| json!({"id": r["id"], "scripts": r["scripts"] == true})).collect();
+        ready.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        sent = list(v, "sent").iter().map(|s| json!({"id": s["id"], "pr": s["pr"], "at": s["at"]})).collect();
+    }
     let mut out = json!({
         "mode": mode,
         "asked": paths::setting(MODE_KEY).is_string(),
@@ -267,8 +287,11 @@ pub fn status() -> Value {
         "connected": connected,
         "login": github::user()["login"].clone(),
         "shareable": shareable,
+        "ready": ready,
+        "held": held,
+        "sent": sent,
         "last_sent": c.get(LAST_KEY).cloned().unwrap_or(Value::Null),
-        "held_masked": c.get(HELD_KEY).cloned().unwrap_or(json!([])),
+        "held_masked": held_masked,
     });
     // a batch made and not sent yet (the newest)
     let newest = fs::read_dir(outbox()).into_iter().flatten().flatten().filter(|e| e.path().join(META).is_file()).max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
@@ -754,6 +777,37 @@ x [user]");
         paths::update_config(|c| c.insert(LAST_KEY.into(), json!(vault_sync::now() - DAY - 5)));
         auto_tick();
         assert!(!requests(&s).is_empty(), "a day later it sends");
+    }
+
+    #[test]
+    fn status_lists_ready_held_and_sent() {
+        let (_g, _s) = setup();
+        skill("alpha", ALPHA, &[]);
+        mode_is("review");
+        let made = prepare();
+        assert_eq!(send(made["batch"].as_str().unwrap(), &[])["ok"], true);
+        skill("beta", BETA, &[("scripts/go.sh", "#!/bin/sh\necho hi\n")]);
+        skill("gamma", "Fold the linen napkins into swans for the lighthouse keeper's anniversary supper out on the pier.", &[]);
+        let owned = library().join("owned");
+        fs::create_dir_all(&owned).unwrap();
+        fs::write(owned.join("SKILL.md"), "---\nname: owned\ndescription: Owned by a shop.\nlicence: Proprietary\n---\n\nSweep the bakery floor twice before the ovens are lit.\n").unwrap();
+        // held by the last automatic batch: gamma, and owned again (listed once, with the kit's reason)
+        paths::update_config(|c| c.insert(HELD_KEY.into(), json!([{"id": "gamma", "why": HELD_WHY}, {"id": "owned", "why": HELD_WHY}])));
+        let st = status();
+        assert_eq!(st["ready"], json!([{"id": "beta", "scripts": true}]), "{st}");
+        let held = st["held"].as_array().unwrap();
+        let ids: Vec<&str> = held.iter().map(|h| h["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["owned", "gamma"], "{st}");
+        assert!(held[0]["why"].as_str().unwrap().contains("Proprietary"), "the kit's own reason: {st}");
+        assert_eq!(held[1]["why"], HELD_WHY);
+        assert_eq!(st["sent"][0]["id"], "alpha");
+        assert_eq!(st["sent"][0]["pr"], "https://example.test/o/r/pull/7");
+        assert!(st["sent"][0]["at"].is_string(), "{st}");
+        assert_eq!(st["shareable"], 2, "the kit's count stands: {st}");
+        // off: the lists are there and empty
+        mode_is("off");
+        let st = status();
+        assert_eq!((st["ready"].clone(), st["held"].clone(), st["sent"].clone()), (json!([]), json!([]), json!([])));
     }
 
     #[test]

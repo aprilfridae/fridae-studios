@@ -145,6 +145,67 @@ fn local_path(path: &str, base: &Value) -> String {
     parts.join("/")
 }
 
+const NOT_SHOWN: &str = "Fridae can only show files in your skills folder.";
+const GONE: &str = "That file is not there any more.";
+
+/// What Reveal shows for a vault path from a report: the new copy saved beside the user's file when there is one,
+/// else the file, else its folder. Only under `Knowledge/Skills` (a renamed skill in its new folder), never through
+/// a link.
+pub fn reveal_target(path: &str) -> Result<PathBuf, String> {
+    let local = local_path(path, &read_base());
+    if !check_path(path) || !check_path(&local) || local.contains(':') {
+        return Err(NOT_SHOWN.to_string());
+    }
+    let know = knowledge();
+    let mut at = know.clone();
+    let mut parts = local.split('/').peekable();
+    while let Some(part) = parts.next() {
+        at.push(part);
+        match fs::symlink_metadata(&at) {
+            Ok(m) if m.file_type().is_symlink() => return Err(NOT_SHOWN.to_string()),
+            Ok(m) if parts.peek().is_some() && !m.is_dir() => return Err(GONE.to_string()),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    let target = join(&know, &local);
+    if !target.starts_with(know.join("Skills")) {
+        return Err(NOT_SHOWN.to_string());
+    }
+    let plain = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+    let name = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name.as_str(), ""),
+    };
+    let beside = target.with_file_name(format!("{stem} (Fridae update){ext}"));
+    if plain(&beside) {
+        return Ok(beside);
+    }
+    if plain(&target) {
+        return Ok(target);
+    }
+    match target.parent() {
+        Some(dir) if dir != know.join("Skills") && fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) => Ok(dir.to_path_buf()),
+        _ => Err(GONE.to_string()),
+    }
+}
+
+/// POST /api/vault/reveal {path}: show a file of the vault's in Finder or Explorer.
+pub fn reveal(path: &str) -> Value {
+    match reveal_target(path) {
+        Ok(p) => {
+            let (cmd, args) = crate::promo::reveal_cmd(&p.display().to_string());
+            let mut c = std::process::Command::new(cmd);
+            c.args(args);
+            paths::quiet(&mut c);
+            use paths::Start;
+            if c.start().is_ok() { json!({"ok": true}) } else { fail("Fridae could not open the folder.") }
+        }
+        Err(e) => fail(e),
+    }
+}
+
 /// An ordinary file's bytes (a link or a folder is nothing), when it is there and small enough to matter.
 fn read_plain(path: &Path) -> Option<Vec<u8>> {
     let meta = fs::symlink_metadata(path).ok()?;
@@ -774,5 +835,54 @@ Words: {words}. {body}.
         assert_eq!(status()["running"], true);
         release_claim();
         assert_eq!(status()["running"], false);
+    }
+
+    /// A link to a folder (a junction where Windows refuses a symlink); false when this machine allows neither.
+    fn link_dir(to: &Path, at: &Path) -> bool {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(to, at).is_ok();
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_dir(to, at).is_ok() {
+                return true;
+            }
+            let ok = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(at).arg(to).output().is_ok_and(|o| o.status.success());
+            return ok && fs::symlink_metadata(at).is_ok_and(|m| m.file_type().is_symlink());
+        }
+        #[allow(unreachable_code)]
+        false
+    }
+
+    #[test]
+    fn reveal_stays_in_the_skills_folder() {
+        let (_g, _s) = setup();
+        let skills = knowledge().join("Skills");
+        fs::create_dir_all(skills.join("vault-alpha")).unwrap();
+        fs::write(skills.join("vault-alpha").join("SKILL.md"), "mine").unwrap();
+        assert_eq!(reveal_target(ALPHA), Ok(skills.join("vault-alpha").join("SKILL.md")));
+        // the new copy saved beside the user's is what is shown
+        fs::write(skills.join("vault-alpha").join("SKILL (Fridae update).md"), "new").unwrap();
+        assert_eq!(reveal_target(ALPHA), Ok(skills.join("vault-alpha").join("SKILL (Fridae update).md")));
+        // a missing file: its folder
+        assert_eq!(reveal_target(ALPHA_REF), Ok(skills.join("vault-alpha")));
+        // a skill the user renamed lives in its new folder
+        fs::create_dir_all(skills.join("my-beta")).unwrap();
+        fs::write(skills.join("my-beta").join("SKILL.md"), "mine").unwrap();
+        write_atomic(&base_file(), br#"{"renamed": {"vault-beta": "my-beta"}}"#).unwrap();
+        assert_eq!(reveal_target(BETA), Ok(skills.join("my-beta").join("SKILL.md")));
+        for bad in ["Skills/../x/SKILL.md", "Skills/vault-alpha/../../x.md", "/etc/passwd", "C:/Windows/win.ini", "Skills/C:/x/y.md",
+                    "Skills/x:y/SKILL.md", "Skills\\vault-alpha\\SKILL.md", "Notes/x/y.md", "Skills/vault-gone/SKILL.md", ""] {
+            assert!(reveal_target(bad).is_err(), "{bad}");
+        }
+        // a link inside the skills folder is never followed
+        let outside = paths::test_dir("vault-outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("SKILL.md"), "elsewhere").unwrap();
+        if link_dir(&outside, &skills.join("linked")) {
+            assert!(reveal_target("Skills/linked/SKILL.md").is_err());
+        } else {
+            eprintln!("no folder links on this machine: the link case was not run");
+        }
+        let _ = fs::remove_dir_all(&outside);
     }
 }
