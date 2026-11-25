@@ -236,17 +236,14 @@ def compare(new_dir, against):
     """How a submitted skill stands next to the vault's: {"same_name", "closest": {"id", "score", "dir"} | None,
     "diff"}. `against` is the folder of the vault's skills (<against>/<name>/SKILL.md). same_name: the vault has a skill
     of the same name; diff is then the unified diff of its SKILL.md against the submission's (vault first), else None.
-    closest is the skill the submission's body is most like, by the keyword cosine used for copies, among the vault's
-    skills and everything else Fridae can see (_corpus); None when there is nothing to compare."""
+    closest is the skill of `against` (the vault's, never the user's own or Fridae's) the submission's body is most
+    like, by the keyword cosine used for copies; None when there is nothing to compare."""
     import difflib
     name = _folder_name(new_dir)
     key = name.casefold()
     theirs = rbxskills._skill_dirs(against)
-    corpus = _corpus([new_dir])
-    seen = {os.path.realpath(c[3]) for c in corpus}
-    for d in theirs:
-        if os.path.realpath(d) not in seen:
-            corpus.append((_folder_name(d), "vault", _body(d), d))
+    corpus = [(_folder_name(d), "vault", _body(d), d) for d in theirs
+              if os.path.realpath(d) != os.path.realpath(new_dir)]
     mine = _body(new_dir)
     idf = rbxskills._idf([mine] + [c[2] for c in corpus])
     closest = None

@@ -159,18 +159,11 @@ The scripts in this vault are licensed under the MIT License, whose full text fo
 
 Copyright (c) the contributors to fridae-vault
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of these scripts and associated
-documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the
-rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
-persons to whom the Software is furnished to do so, subject to the following conditions:
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the
-Software.
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ";
 
 const CONTRIBUTING: &str = "# Contributing
@@ -406,7 +399,7 @@ fn read_advice() -> Map<String, Value> {
 }
 
 /// The inbox: every open pull request with its skills.
-/// `{ok, prs: [{n, url, author, title, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill,
+/// `{ok, prs: [{n, url, author, title, error?, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill,
 /// same_name, closest: {id, score}|null, diff, recommendation: {choice, why, merged}|null, decided}]}]}`.
 /// `decided` is the maintainer's choice on the skill, which the decisions (Task 11) fill in; null here.
 pub fn inbox() -> Value {
@@ -428,7 +421,21 @@ fn inbox_in() -> Result<Value, String> {
     for pr in open.iter().take(PRS_MAX) {
         let (Some(n), Some(head)) = (pr["number"].as_u64(), pr["head"]["sha"].as_str().filter(|s| sha_ok(s))) else { continue };
         live.push(format!("pr-{n}"));
-        let (files, other) = fetch_pr(&repo, n, head)?;
+        let header = |error: Option<&str>, skills: Vec<Value>, other: &[String]| {
+            let mut v = json!({"n": n, "url": pr["html_url"].as_str().unwrap_or(""), "author": pr["user"]["login"].as_str().unwrap_or(""), "title": pr["title"].as_str().unwrap_or(""), "not_skill": other, "skills": skills});
+            if let Some(e) = error {
+                v["error"] = json!(e);
+            }
+            v
+        };
+        // one submission that cannot be read is shown with its reason; the others are still listed
+        let (files, other) = match fetch_pr(&repo, n, head) {
+            Ok(x) => x,
+            Err(e) => {
+                prs.push(header(Some(&e), Vec::new(), &[]));
+                continue;
+            }
+        };
         let dir = inbox_dir().join(format!("pr-{n}")).join(head);
         // the skills' files by the skill's folder name
         let mut by_skill: BTreeMap<String, Vec<&Fetched>> = BTreeMap::new();
@@ -479,10 +486,7 @@ fn inbox_in() -> Result<Value, String> {
                 "recommendation": recommendation, "decided": Value::Null,
             }));
         }
-        prs.push(json!({
-            "n": n, "url": pr["html_url"].as_str().unwrap_or(""), "author": pr["user"]["login"].as_str().unwrap_or(""),
-            "title": pr["title"].as_str().unwrap_or(""), "not_skill": other, "skills": skills,
-        }));
+        prs.push(header(None, skills, &other));
     }
     // the folders of pull requests that are not open any more
     for old in fs::read_dir(inbox_dir()).into_iter().flatten().flatten() {
@@ -702,6 +706,7 @@ mod tests {
         assert!(blobs[0].contains("CC-BY-4.0") && blobs[0].contains("https://creativecommons.org/licenses/by/4.0/legalcode") && blobs[0].contains("MIT License"), "{}", blobs[0]);
         assert!(blobs[0].contains("Copyright (c) the contributors to fridae-vault"));
         assert!(blobs[1].contains("Scripts are read before anything is added"));
+        assert!(blobs[0].contains("a copy of this software and associated documentation files (the \"Software\"), to deal in the Software"), "the canonical MIT text");
     }
 
     #[test]
@@ -861,6 +866,32 @@ mod tests {
         assert_eq!(calls(&s).iter().filter(|c| c.contains("/git/blobs/bbbb")).count(), 1);
         assert!(!vault_sync::vault_app().join("evil").exists() && !inbox_dir().join("evil").exists());
         assert!(inbox_dir().join("pr-5").join("abc1234").join("Skills").join("tidy").join("ok.md").is_file());
+    }
+
+    #[test]
+    fn one_bad_submission_never_hides_the_others() {
+        let answer = vault(vec![("Skills/tidy/SKILL.md", TIDY)], vec![]);
+        let (_g, _s) = setup(
+            "o",
+            Box::new(move |m, p, b| match p {
+                "/repos/o/r/pulls?state=open&per_page=50" => (
+                    200,
+                    r#"[{"number":6,"html_url":"https://example.test/o/r/pull/6","title":"Huge","user":{"login":"bob"},"head":{"sha":"def5678"}},{"number":5,"html_url":"https://example.test/o/r/pull/5","title":"Share tidy","user":{"login":"ada"},"head":{"sha":"abc1234"}}]"#.into(),
+                ),
+                "/repos/o/r/pulls/6/files?per_page=100&page=1" => (500, r#"{"message":"raw GitHub text"}"#.into()),
+                _ => answer(m, p, b),
+            }),
+        );
+        let out = inbox();
+        assert_eq!(out["ok"], true, "{out}");
+        let prs = out["prs"].as_array().unwrap();
+        assert_eq!(prs.len(), 2);
+        assert_eq!(prs[0]["n"], 6);
+        assert_eq!(prs[0]["skills"], json!([]));
+        let e = prs[0]["error"].as_str().unwrap();
+        assert!(e.starts_with("GitHub would not") && !e.contains("raw GitHub text"), "{e}");
+        assert_eq!(prs[1]["skills"][0]["name"], "tidy");
+        assert!(prs[1]["error"].is_null());
     }
 
     #[test]

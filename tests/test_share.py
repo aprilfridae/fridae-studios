@@ -249,6 +249,18 @@ class ShareTests(unittest.TestCase):
             a.fn(a)
         self.assertTrue(json.loads(buf.getvalue())["same_name"])
 
+    def test_compare_closest_is_only_ever_the_vaults(self):
+        vault = os.path.join(self.root, "vault copy")
+        skill(os.path.join(vault, "gardening"), "gardening", "Water the soil early. Prune roses in late winter.")
+        # a near copy that is not in the vault: the maintainer's own, and one downloaded
+        skill(os.path.join(self.user, "mine-debug"), "mine-debug", FRESH)
+        skill(os.path.join(rbxskills.vault_dir(), "downloaded-debug"), "downloaded-debug", FRESH)
+        new = os.path.join(self.root, "incoming")
+        skill(os.path.join(new, "chasing"), "chasing", FRESH)
+        out = rbxshare.compare(os.path.join(new, "chasing"), vault)
+        self.assertLess((out["closest"] or {"score": 0})["score"], rbxskills.OVERLAP, out)
+        self.assertNotIn((out["closest"] or {}).get("id"), ("mine-debug", "downloaded-debug"))
+
     def test_cli_prints_json(self):
         import argparse
         import contextlib
