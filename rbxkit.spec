@@ -2,13 +2,15 @@
 # This builds fridae-cli.exe: the tool server and command line that agents start.
 # Run build_app.py (or build_exe.bat), which also builds the window and puts the two together.
 import os
+import sys
 
 HERE = os.path.abspath(os.getcwd())
+sys.path.insert(0, HERE)
+import build_datas  # noqa: E402
+
 datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "agents", "rigs", "ui", "licenses")]
-# the vault file by file, leaving out dot-folders and dot-files (Obsidian's .obsidian/ and .trash/, .DS_Store)
-for folder, dirs, files in os.walk(os.path.join(HERE, "vault")):
-    dirs[:] = sorted(d for d in dirs if not d.startswith("."))
-    datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if not f.startswith(".")]
+# the vault file by file, leaving out dot-folders, dot-files and vault/Roblox (the guides come from the Fridae vault)
+datas += build_datas.vault_datas(HERE)
 datas.append((os.path.join(HERE, "README.md"), "."))
 datas.append((os.path.join(HERE, "routing.txt"), "."))
 datas.append((os.path.join(HERE, "THIRD_PARTY.md"), "."))

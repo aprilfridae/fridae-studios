@@ -2367,8 +2367,10 @@ the symlink privilege, five tests in `tests.test_vaultsync` (links) and one (a f
 - `rbx.py`, `rbx*.py`, `blender/` - the tools.
 - `rbxkit_mcp.py` - the MCP server agents connect to.
 - `studio/` - Luau that runs in Roblox Studio.
-- `vault/` - the one knowledge vault (Obsidian-readable): `Roblox/` (LihFolk notes), `Fridae/Guides/` (the guides,
-  one folder per guide: `Core/`, `Roblox subjects/`, `LihFolk/`), `Fridae/Team/` (the Studio roster and expert notes).
+- `vault/` - Fridae's own knowledge (Obsidian-readable): `Fridae/Guides/` (the guides, one folder per guide: `Core/`,
+  `Roblox subjects/`, `LihFolk/`), `Fridae/Team/` (the Studio roster and expert notes) and `Fridae/Data/` (the code's
+  own data: the Roblox API snapshot). The build bundles these (`build_datas.vault_datas`) and never `vault/Roblox`: the
+  Roblox guides come from the Fridae vault into `<home>/Knowledge/Roblox` (git-ignored when running from source).
 - `agents/` - the Claude Code tester agent (also the `tester` guide).
 - `rbxpromo/`, `promo/` - the promo maker: the Python side, and the Remotion project the engine renders with.
 - `engine/` - the promo engine when running from source (not in git).

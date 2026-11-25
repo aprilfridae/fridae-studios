@@ -33,10 +33,13 @@ Clean Roblox by diggofun / TemporaryLooker22 (MIT). See
 
 ## LihFolk Vault V2
 
-`vault/Roblox/` (a trimmed copy: 1,308 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender build scripts in
-`45 Procedural Blender Assets/scripts`, the dated API snapshot) and `vault/Fridae/Guides/LihFolk/` (12 guides with their Luau
-modules, examples, scripts and rubrics) are from LihFolk Vault V2 by LihFolk,
-https://github.com/lihfolk-cy/v2-vault, licensed CC BY 4.0 (`licenses/lihfolk-vault-LICENSE.md`).
+The Roblox guides (a trimmed copy: 1,308 notes plus the symptom table, the rigs in `18 Rigs and Skeletons`, the Blender
+build scripts in `45 Procedural Blender Assets/scripts`) are no longer in the app: they arrive with the Fridae vault, in
+its `Roblox/` folder, where they are credited to LihFolk (its `LICENSE.md` and `Roblox/LICENSE.md`), and Fridae puts them
+in `<home>/Knowledge/Roblox`. In the app, `vault/Fridae/Data/roblox_api.json` and `api_overrides.json` (LihFolk's dated
+API snapshot, which the code reads) and `vault/Fridae/Guides/LihFolk/` (12 guides with their Luau modules, examples,
+scripts and rubrics) are from LihFolk Vault V2 by LihFolk, https://github.com/lihfolk-cy/v2-vault, licensed CC BY 4.0
+(`licenses/lihfolk-vault-LICENSE.md`).
 Changes: each guide's `SKILL.md` is now `<folder>.md` inside Fridae's one vault; guide text that pointed at the Claude Code plugin's folders now points at the `rbx_vault` tool;
 mentions of LihFolk guides left out (because rbxkit already had one on the subject) point at rbxkit's.
 `rbxvault.py` is LihFolk's `_tools/vault.py` search, reading from rbxkit's folders, with rbxkit's section search
