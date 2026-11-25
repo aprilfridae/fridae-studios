@@ -911,6 +911,42 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .rag-hits span { color: var(--dim); }
 .rag-hits:empty, #rag-q-note:empty { display: none; }
 @media (max-width: 520px) { .rag-seg .rag-x { display: none; } }
+/* Setup, Skills: the decisions waiting (Review-style cards, the two skills side by side, the suggestion in its plain
+   words box) and the library, one line per skill */
+.su-n { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 8px; border-radius: 999px; background: var(--text); color: var(--ink); font: 600 11px/1 var(--mono); vertical-align: 1px; }
+#ap-sk-go { font-size: inherit; }
+.sk-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; white-space: pre-line; }
+.sk-err:empty { display: none; }
+.su-body h3.sk-h { display: flex; align-items: center; gap: 8px; margin-top: 32px; }
+.sk-h > span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
+.sk-h .pill { margin-left: auto; font-weight: 400; }
+.sk-decs { margin-top: 12px; }
+.sk-dec h4 { font-size: 15px; }
+.sk-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 12px 0 0; }
+.sk-side { min-width: 0; padding: 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line); }
+.sk-side em { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+.sk-side b { display: block; font-size: 14px; font-weight: 600; word-break: break-word; }
+.sk-side .sk-who { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
+.ask .sk-side p.sk-desc { margin: 8px 0 0; font-size: 13px; color: var(--text); line-height: 1.5; }
+.sk-side code { display: block; margin: 8px 0 0; font: 12px/1.5 var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sk-rec { margin: 12px 0 0; max-width: none; }
+.sk-rec.none { border-left-color: var(--quiet); }
+.sk-by { display: block; margin-top: 4px; font-size: 12px; color: var(--faint); }
+.sk-by:empty { display: none; }
+.sk-rec.none p { color: var(--dim); }
+.sk-dec .act { margin-top: 12px; }
+.sk-dec .sk-own { margin: 8px 0 0; font-size: 13px; }
+.sk-merged { margin: 8px 0 0; }
+.sk-merged pre { margin: 8px 0 0; max-height: 220px; }
+.sk-list { margin-top: 4px; border-top: 1px solid var(--line); }
+.sk-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.sk-row b { font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sk-row b span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-row b svg { flex: none; color: var(--text); }
+.sk-row em { font-style: normal; font-size: 12px; color: var(--faint); white-space: nowrap; }
+.sk-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sk-row small:empty { display: none; }
+.sk-list > .sub { padding: 8px 0; margin: 0; }
 .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
 .scale-row output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
 .scale-row input[type=range] { flex: 1; min-width: 120px; max-width: 280px; accent-color: #ececed; }
@@ -1053,7 +1089,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
-        <div class="ap-head"><p class="sub grow" id="ap-totals"></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
+        <div class="ap-head"><p class="sub grow"><span id="ap-totals"></span><span id="ap-sk" hidden> · <button class="linkish" id="ap-sk-go" title="Open Setup, Skills"></button></span></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
         <div class="ap-cards" id="ap-cards"></div>
       </div>
     </div></div>
@@ -1167,6 +1203,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <button data-s="general" class="on">General</button>
     <button data-s="connections">Connections</button>
     <button data-s="experts">Experts</button>
+    <button data-s="skills">Skills<span class="su-n" id="sk-nav-n" hidden></span></button>
     <button data-s="permissions">Permissions</button>
     <button data-s="images">Images</button>
     <button data-s="chats">Chats</button>
@@ -1248,6 +1285,21 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <p class="sub">1 means one at a time; more get it done sooner and use up your plan's usage faster.</p>
       <div class="seg" id="sw-cap" style="margin-top: 12px; max-width: 100%" role="group" aria-labelledby="sw-cap-title"></div>
       <p class="sub" id="sw-cap-note" role="status" hidden></p>
+    </section>
+    <section data-s="skills">
+      <h3>Skills</h3>
+      <p class="sub">One library of skills that every AI here uses: Fridae's own, the ones it ships, and the ones found in your other AI tools.</p>
+      <details class="moreinfo"><summary>More</summary><p>Fridae looks in Claude Code, its plugins, and the skill folders of Codex, Cursor, OpenCode and Gemini now and then (Import now does it at once), and brings in what is new. When a newcomer covers much the same as a skill you already have, it waits here for you, and the one in use keeps working meanwhile. A cheap AI reads both and suggests what to do. Nothing is deleted: the one you don't keep is set aside in the library's .replaced folder. Pinned skills are in every AI's instructions; the rest are found by search when a chat needs them.</p></details>
+      <div class="act"><button class="pill" id="sk-import">Import now</button><span class="sub" id="sk-import-note" role="status"></span></div>
+      <p class="sub sk-err" id="sk-err" role="status"></p>
+      <div id="sk-dec-wrap" hidden>
+        <h3 class="sk-h">Needs your decision <span id="sk-dec-n"></span><button class="pill sm" id="sk-all" hidden>Accept all recommendations</button></h3>
+        <p class="sub sk-err" id="sk-all-err" role="status"></p>
+        <div class="rv-list sk-decs" id="sk-decs"></div>
+      </div>
+      <h3 class="sk-h">Your skills <span id="sk-n"></span></h3>
+      <div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, games" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div>
+      <div class="sk-list" id="sk-list"><p class="sub">Loading...</p></div>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -4614,8 +4666,8 @@ $("rv-all").onclick = async () => {
 /* ---------- Overview: the live graph of every game, and beside it one card per game and one to start a new game ---------- */
 let apTimer = 0;
 function openAll() {
-  loadHistory(); paintAll(); overviewOpen(); loadReview(); loadRvUsage(true);
-  clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); loadRvUsage(); } else clearInterval(apTimer); }, 5000);
+  loadHistory(); paintAll(); overviewOpen(); loadReview(); loadRvUsage(true); skCount();
+  clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); loadRvUsage(); skCount(); } else clearInterval(apTimer); }, 5000);
 }
 /* what needs the user on a game: items the run waits for, then to-dos only they can do. The one count of it: the
    sidebar, the Review tab, Review's Needs you and the Overview cards all use this. */
@@ -5399,7 +5451,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); }
+function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); if (!skillsVisible()) skCount(); else if (typeof section !== "string") loadSkills(true); }
 /* Setup, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
@@ -5420,7 +5472,228 @@ function setupSection(name) {
   document.querySelector(".su-body").scrollTop = 0;
   if (name === "experts") loadExperts();
   if (name === "connections") loadRag();
+  if (name === "skills") loadSkills(true);
 }
+/* ---------- Setup, Skills: the decisions waiting for the user, the library, Import now ----------
+   GET /api/skills gives the library's index and the open decisions. A decision is about two skills (kind "skill") or
+   two of the user's notes (kind "note"): a is the one in use, b the newcomer waiting beside it, with their folders,
+   why it was asked (reason: "update" when the user's edited copy's source changed, else an overlap), the newcomer's
+   source folder, and a cheap AI's recommendation once written ({choice: keep|replace|merge|null, why, merged, by}).
+   Every change is the user's click: POST {action: decide | accept_all | import}. Replace and Merge are never offered
+   on one of Fridae's own skills (owner app; the app refuses them too), and Merge only with the merged text. */
+let skData = null, skLoading = null, skAgain = false, skAt = 0, skPollT = 0, skPollUntil = 0;
+const skCards = new Map();   /* decision id -> {el, sig} */
+const skDone = new Map();    /* decision id -> what was decided, folded to one line until Skills is opened again */
+const SK_OWNER = { app: "Fridae's own", shipped: "Shipped with Fridae", community: "Community", user: "Yours" };
+const SK_APPLIES = { game: "Games", plain: "Projects", both: "Games and projects" };
+const SK_DONE = { keep: "Kept", replace: "Using the new one", merge: "Merged", keep_both: "Kept both" };
+const SK_DONE_NOTE = { keep: "Kept the first", replace: "Kept the second", merge: "Merged", keep_both: "Kept both" };
+const PIN = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Pinned"><title>Pinned: in every AI\'s instructions</title><path d="M4.5 1.5h3M5 1.5v3L3 7h6L7 4.5v-3M6 7v3.5"/></svg>';
+function skillsVisible() { return document.body.classList.contains("setup") && !!document.querySelector('.su-body section[data-s="skills"].on'); }
+const skOpen = () => ((skData && skData.pending) || []).filter((d) => !skDone.has(d.id));
+const skPinned = (s) => !!(s.pinned || s.core);
+/* where a newcomer came from, told by its source folder (the folders rbxskills._roots looks in) */
+function skFrom(path) {
+  const p = (path || "").replace(/\\/g, "/");
+  if (/\/\.claude\/plugins\/synced\//.test(p)) return "a plugin synced from Claude";
+  if (/\/\.claude\/skills\/synced\//.test(p)) return "synced from Claude";
+  if (/\/\.claude\/plugins\//.test(p)) return "a Claude Code plugin";
+  if (/\/\.claude\/skills\//.test(p)) return "Claude Code";
+  if (/\/\.codex\//.test(p)) return "Codex";
+  if (/\/\.cursor\//.test(p)) return "Cursor";
+  if (/\/opencode\//.test(p)) return "OpenCode";
+  if (/\/\.gemini\//.test(p)) return "Gemini";
+  if (/\/\.agents\//.test(p)) return "another AI tool";
+  return "";
+}
+const skHome = (p) => (p || "").replace(/^\/(Users|home)\/[^/]+\//, "~/");
+/* the library's entry for a side: the one in use by its folder or its name; the newcomer only by its folder (an update
+   has the same name as the copy in use) */
+function skEntry(name, dir, byName) {
+  const list = (skData && skData.skills) || [];
+  return list.find((s) => dir && s.dir === dir) || (byName && name ? list.find((s) => (s.id || "").toLowerCase() === name.toLowerCase()) : null) || null;
+}
+function skLabels(d, a) {
+  if (d.kind === "note") return { keep: "Keep the first", replace: "Keep the second", merge: "Merge them", keep_both: "Keep both" };
+  const owner = a && a.owner;
+  return { keep: owner === "app" || owner === "shipped" ? "Keep Fridae's" : owner === "community" ? "Keep the one in use" : "Keep yours", replace: "Use the new one", merge: "Merge them", keep_both: "Keep both" };
+}
+function skHeadline(d) {
+  if (d.kind === "note") return /conflict|contradict/i.test(d.reason || "") ? "Two notes disagree" : "Two notes say much the same";
+  if (d.reason === "update") return "“" + d.b + "” has a new version, and you changed your copy";
+  return (d.a || "").toLowerCase() === (d.b || "").toLowerCase() ? "Two skills called “" + d.a + "”" : "“" + d.b + "” covers much the same as “" + d.a + "”";
+}
+/* one side of a decision: in use or new, its name, whose it is and where it came from, what it does, its folder */
+function skSide(tag, name, who, desc, where, whereTitle) {
+  const s = el("div", "sk-side", '<em></em><b></b><p class="sk-who"></p><p class="sk-desc"></p><code></code>');
+  s.querySelector("em").textContent = tag;
+  s.querySelector("b").textContent = name || "Untitled";
+  const w = s.querySelector(".sk-who"); if (who) w.textContent = who; else w.remove();
+  const p = s.querySelector(".sk-desc"); if (desc) p.textContent = desc; else p.remove();
+  const c = s.querySelector("code"); if (where) { c.textContent = where; c.title = whereTitle || where; } else c.remove();
+  return s;
+}
+function skCard(d) {
+  const note = d.kind === "note", a = note ? null : skEntry(d.a, d.a_dir, true), b = note ? null : skEntry(d.b, d.b_dir, false);
+  const app = !note && !!a && a.owner === "app", labels = skLabels(d, a), rec = d.recommendation || null;
+  const canMerge = !app && !!(rec && typeof rec.merged === "string" && rec.merged.trim());
+  const from = note ? "" : skFrom(d.source);
+  const card = el("div", "ask rv-item sk-dec enter", '<div class="meta"></div><h4></h4><div class="sk-sides"></div><div class="plain-words sk-rec"><b></b><p></p><small class="sk-by"></small></div><div class="act"></div><p class="sub sk-own" hidden>This is one of Fridae\'s own skills, so it stays as it is: keep it, or keep both.</p><p class="rv-err"></p><div class="rv-said"></div>');
+  card.dataset.id = d.id;
+  const made = d.made ? Date.parse(d.made) : NaN;
+  card.querySelector(".meta").textContent = [note ? "Note" : "Skill", isNaN(made) ? "" : ago(made / 1000)].filter(Boolean).join("  ·  ");
+  card.querySelector("h4").textContent = skHeadline(d);
+  const sides = card.querySelector(".sk-sides");
+  if (note) {
+    sides.append(skSide("First", d.a, "", "", skHome(d.a_dir), d.a_dir), skSide("Second", d.b, "", "", skHome(d.b_dir), d.b_dir));
+  } else {
+    const aWho = a ? [SK_OWNER[a.owner] || a.owner, a.origin === "project" ? "this project's" : "", a.licence ? "licence " + a.licence : ""].filter(Boolean).join(" · ") : "";
+    const bWho = b ? [SK_OWNER[b.owner] || b.owner, from ? "from " + from : ""].filter(Boolean).join(" · ") : from ? "From " + from : "";
+    sides.append(
+      skSide("In use", d.a, aWho, a && a.description, a ? a.source || skHome(a.dir) : skHome(d.a_dir), a ? [a.source, a.dir].filter(Boolean).join("\n") : d.a_dir),
+      skSide("New", d.b, bWho, b && b.description, skHome(d.source || d.b_dir), d.source || d.b_dir));
+  }
+  /* the suggestion, in the plain-words box Review uses */
+  const rb = card.querySelector(".sk-rec"), rt = rb.querySelector("b"), rp = rb.querySelector("p");
+  const pick = rec && rec.choice && labels[rec.choice] && !(app && rec.choice !== "keep") && (rec.choice !== "merge" || canMerge) ? rec.choice : "";
+  if (!rec) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI reads both and suggests one when one is connected (Setup, Connections). You can decide without it."; }
+  else {
+    rt.textContent = pick ? "Suggested: " + labels[pick] : "No clear pick";
+    if (rec.by) rb.querySelector(".sk-by").textContent = "by " + rec.by;
+    if (!pick) rb.classList.add("none");
+    if (rec.why) rp.textContent = rec.why; else rp.remove();
+  }
+  if (canMerge) {
+    const m = el("details", "moreinfo sk-merged", "<summary>See the merged version</summary><pre></pre>");
+    m.querySelector("pre").textContent = rec.merged;
+    rb.after(m);
+  }
+  const act = card.querySelector(".act");
+  ["keep", "replace", "merge", "keep_both"].forEach((choice) => {
+    if (app && (choice === "replace" || choice === "merge")) return;
+    if (choice === "merge" && !canMerge) return;
+    const btn = el("button", "pill" + (choice === pick ? " main" : ""));
+    btn.textContent = labels[choice];
+    if (choice === pick) btn.title = "The suggestion";
+    btn.onclick = () => skDecide(d, choice, card, (note ? SK_DONE_NOTE : SK_DONE)[choice] + ": “" + (choice === "replace" ? d.b : d.a) + "”");
+    act.appendChild(btn);
+  });
+  card.querySelector(".sk-own").hidden = !app;
+  return card;
+}
+function skFold(id, said) {
+  skDone.set(id, said);
+  const c = skCards.get(id); if (!c) return;
+  c.el.querySelector(".rv-said").textContent = said; c.el.classList.add("done");
+}
+async function skDecide(d, choice, card, said) {
+  const btns = card.querySelectorAll(".act .pill"), err = card.querySelector(".rv-err");
+  btns.forEach((b) => (b.disabled = true)); err.textContent = "";
+  const body = { action: "decide", id: d.id, choice };
+  if (choice === "merge") body.merged = d.recommendation.merged;
+  let r; try { r = await api("/api/skills", body); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  if (!r || !r.ok) { btns.forEach((b) => (b.disabled = false)); err.textContent = (r && r.error) || "That did not work."; return; }
+  skFold(d.id, said); skPaint(); loadSkills();
+}
+$("sk-all").onclick = async () => {
+  const btn = $("sk-all"), err = $("sk-all-err"), open = skOpen();
+  btn.disabled = true; err.textContent = "";
+  let r; try { r = await api("/api/skills", { action: "accept_all" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  btn.disabled = false;
+  if (!r || !r.ok) { err.textContent = (r && r.error) || "Could not accept them."; return; }
+  const byId = new Map(open.map((d) => [d.id, d]));
+  (r.done || []).forEach((id) => {
+    const d = byId.get(id), c = d && d.recommendation && d.recommendation.choice;
+    skFold(id, d ? "Suggestion taken: " + (skLabels(d, skEntry(d.a, d.a_dir, true))[c] || c) + " (“" + d.a + "”)" : "Suggestion taken");
+  });
+  const failed = (r.failed || []).map((f) => { const d = byId.get(f.id); return (d ? "“" + d.a + "”" : f.id) + ": " + (f.error || "It could not be settled."); });
+  if (failed.length) err.textContent = (failed.length === 1 ? "One was not settled:" : failed.length + " were not settled:") + "\n" + failed.join("\n");
+  else if (!(r.done || []).length) err.textContent = "There are no suggestions to take yet.";
+  skPaint(); loadSkills();
+};
+$("sk-import").onclick = async () => {
+  const btn = $("sk-import"), note = $("sk-import-note");
+  btn.disabled = true; note.textContent = "Looking in your other AI tools..."; $("sk-err").textContent = "";
+  let r; try { r = await api("/api/skills", { action: "import" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  btn.disabled = false;
+  if (!r || !r.ok) { note.textContent = ""; $("sk-err").textContent = (r && r.error) || "The import could not run."; return; }
+  const f = r.import || {}, n = (k) => (Array.isArray(f[k]) ? f[k].length : 0);
+  const parts = [n("added") ? n("added") + " new" : "", n("refreshed") ? n("refreshed") + " updated" : "", n("pending") ? n("pending") + (n("pending") === 1 ? " waits for your decision" : " wait for your decision") : ""].filter(Boolean);
+  note.textContent = parts.length ? parts.join(", ") + "." : "Nothing new: your library is up to date.";
+  loadSkills();
+};
+$("sk-filter").oninput = () => skPaintList();
+$("ap-sk-go").onclick = () => openSetup("skills");
+/* the count of open decisions: Setup's Skills button and the Overview's totals line */
+function skPaintCount() {
+  const n = skOpen().length, nav = $("sk-nav-n");
+  nav.hidden = !n; nav.textContent = n; nav.title = n + (n === 1 ? " decision waits" : " decisions wait");
+  $("ap-sk").hidden = !n; $("ap-sk-go").textContent = n + (n === 1 ? " skill decision waits" : " skill decisions wait");
+}
+function skPaintList() {
+  const box0 = $("sk-list");
+  if (!skData) { box0.innerHTML = '<p class="sub">Loading...</p>'; return; }
+  const all = (skData.skills || []).slice().sort((x, y) => (skPinned(y) - skPinned(x)) || (x.name || x.id || "").localeCompare(y.name || y.id || ""));
+  const words = $("sk-filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = (s) => [s.name, s.id, s.description, SK_OWNER[s.owner], s.owner, SK_APPLIES[s.applies], skPinned(s) ? "pinned" : "", (s.examples || []).join(" ")].join(" ").toLowerCase();
+  const shown = words.length ? all.filter((s) => { const h = hay(s); return words.every((w) => h.includes(w)); }) : all;
+  $("sk-n").textContent = shown.length === all.length ? String(all.length) : shown.length + " of " + all.length;
+  const sig = JSON.stringify([words.join(" "), shown.map((s) => [s.id, s.name, s.owner, s.applies, skPinned(s), s.description])]);
+  if (box0.dataset.sig === sig) return;
+  box0.dataset.sig = sig;
+  if (!shown.length) { const p = el("p", "sub"); p.textContent = all.length ? "No skill matches “" + words.join(" ") + "”." : "No skills yet."; box0.replaceChildren(p); return; }
+  box0.replaceChildren(...shown.map((s) => {
+    const row = el("div", "sk-row", "<b><span></span></b><em></em><small></small>");
+    row.querySelector("b span").textContent = s.name || s.id;
+    if (skPinned(s)) row.querySelector("b").insertAdjacentHTML("beforeend", PIN);
+    row.querySelector("em").textContent = [SK_OWNER[s.owner] || s.owner, SK_APPLIES[s.applies] || ""].filter(Boolean).join(" · ");
+    const sm = row.querySelector("small"); sm.textContent = s.description || ""; if (s.description) sm.title = s.description;
+    return row;
+  }));
+}
+/* the decision cards: one per open decision (kept while it says the same, so a half-read card does not jump), then
+   the ones just decided, folded to one line */
+function skPaint() {
+  skPaintCount();
+  const open = skOpen(), wrap = $("sk-dec-wrap"), box0 = $("sk-decs");
+  const seen = new Set();
+  const cards = open.map((d) => {
+    const a = d.kind === "note" ? null : skEntry(d.a, d.a_dir, true), b = d.kind === "note" ? null : skEntry(d.b, d.b_dir, false);
+    const sig = JSON.stringify([d, a && [a.owner, a.description, a.source, a.licence, a.origin], b && [b.owner, b.description]]);
+    let c = skCards.get(d.id);
+    if (!c || c.sig !== sig) { const had = !!c; c = { el: skCard(d), sig }; if (had) c.el.classList.remove("enter"); skCards.set(d.id, c); }
+    seen.add(d.id);
+    return c.el;
+  });
+  for (const id of skDone.keys()) { const c = skCards.get(id); if (c) { seen.add(id); cards.push(c.el); } }
+  for (const id of [...skCards.keys()]) if (!seen.has(id)) skCards.delete(id);
+  if (cards.length !== box0.children.length || cards.some((c, i) => c !== box0.children[i])) box0.replaceChildren(...cards);
+  wrap.hidden = !cards.length;
+  $("sk-dec-n").textContent = open.length ? String(open.length) : "";
+  $("sk-all").hidden = open.length < 2;
+  $("sk-all").title = open.some((d) => d.recommendation && d.recommendation.choice) ? "Take every suggestion; those without one stay here" : "No suggestions yet";
+  skPaintList();
+  /* a suggestion still being written: look again in a while, as long as Skills is open */
+  clearTimeout(skPollT);
+  if (open.some((d) => !d.recommendation) && Date.now() < skPollUntil) skPollT = setTimeout(() => { if (skillsVisible()) loadSkills(); }, 15000);
+}
+/* fresh: Skills was just opened, so the lines of what was decided before go, and suggestions are looked for again */
+async function loadSkills(fresh) {
+  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-all-err").textContent = ""; }
+  if (skLoading) { skAgain = true; return skLoading; }
+  skLoading = (async () => {
+    do {
+      skAgain = false; skAt = Date.now();
+      let r; try { r = await api("/api/skills"); } catch (e) { r = null; }
+      if (r && Array.isArray(r.skills) && Array.isArray(r.pending)) skData = r;
+      $("sk-err").textContent = !r ? "Could not reach the app." : r.error || "";
+      skPaint();
+    } while (skAgain);
+  })();
+  try { await skLoading; } finally { skLoading = null; }
+}
+/* the Overview and Setup ask for the count now and then (it runs the skills tool, so not on every repaint) */
+function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills(); }
 /* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
 let xpList = null;
