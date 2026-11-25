@@ -158,7 +158,8 @@ def _merge(local, base, new):
             with open(names[-1], "wb") as f:
                 f.write(d)
         try:
-            r = subprocess.run(["git", "merge-file", "-p"] + names, capture_output=True, timeout=30)
+            r = subprocess.run(["git", "merge-file", "-p"] + names, capture_output=True, timeout=30,
+                               creationflags=rbxpaths.no_window())
         except (OSError, subprocess.SubprocessError):
             return None
     return r.stdout if r.returncode == 0 else None
