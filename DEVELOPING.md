@@ -2039,30 +2039,121 @@ is an example the user can paste into their own House rules.
 
 ## Skills for every AI
 
-The user's skills (folders with a `SKILL.md`) reach every agent on every AI, game or plain project alike. Claude
-Code loads some of them by itself; Gemini, Cursor, OpenCode and Codex load none (Fridae turns off OpenCode's Claude
-Code compatibility and denies its own `skill` tool). So:
+A skill is a folder with a `SKILL.md` (front matter: `name`, `description`, `examples`, `applies` game/plain/both,
+`owner`, `source`, `licence`, `supersedes`...; then the instructions) and any files it uses. Every agent on every AI
+(Claude, Gemini, Cursor, OpenCode, Codex), game or plain project, reaches the same skills through one tool server.
+Claude Code still loads its own skills by itself; the others load none (Fridae turns off OpenCode's Claude Code
+compatibility and denies its own `skill` tool).
 
-- `rbxskills.py` finds them all, first found wins for a name: the project's `.claude/skills` and `.agents/skills`;
-  Claude Code's `~/.claude/skills` and its enabled plugins (`installed_plugins.json`); what the Claude apps synced from
-  claude.ai for every signed-in account (`~/.claude/plugins/synced/<..>_<account>/<plugin>/skills`,
-  `~/.claude/skills/synced/<..>_<account>`, the newest copy of a skill wins); and other tools' folders
-  (`~/.agents/skills`, `~/.codex/skills`, `~/.cursor/skills`, `~/.config/opencode/skill(s)`, `~/.gemini/skills`).
-  A plugin's skill is `<plugin>:<skill>`. Seven synced skills that only work with the Claude desktop app's own tools
-  (browser pane, Chrome, computer use, docs, Google Workspace, morning brief, memory import) are left out (`APP_ONLY`).
-- `rbx_skill` (tool server, every AI): `list`, `load` (its SKILL.md with `${CLAUDE_SKILL_DIR}` and
-  `${CLAUDE_PLUGIN_ROOT}` filled in, its folder and its files), `read` (one file inside the skill's folder only).
-- Every agent's standing instructions carry a `## Skills` catalog, one line per skill (`skills::catalog`, made by
-  `rbx skills catalog` so the list and the tool always agree), just before the house rules. Claude's leaves out what
-  Claude Code lists itself: its folder, its plugins, and what it synced for the account the turn runs on (the account
-  id from `.claude.json`, of the second account's folder on a second account); with nothing left it is empty.
-- The catalog costs a Python start (0.05 s from source, about 0.5 s through the bundled program), so it is kept until
-  a watched skills folder changes or for ten minutes.
-- Measured 2026-11-24: Cursor (auto model) read the catalog, found `rbx_skill` and loaded the right skill for a Roblox
-  shop menu. OpenCode's DeepSeek picked the right skill but first reached for its own `skill` tool (hence the
-  catalog's line about it; in the app that tool is denied). A plain `opencode run` cannot be given tool servers in
-  OpenCode 2.x (the app adds them through the server's API), so OpenCode was not measured with `rbx_skill` itself.
-- Tests: `python3 -m unittest tests.test_skills`; `cargo test skills::`.
+**One library** (`rbxskills.library`), one skill per id (its folder name), a later root taking an earlier one's id:
+1. the app's own skills (`owner: app`, the Core guides; nothing can take their names, replace or merge them) and the
+   skills it ships (the other guides): `vault/Fridae/Guides/{Core,Roblox subjects,LihFolk}/<skill>/SKILL.md`;
+2. the user's library: `<HOME_DIR>/skills/<skill>` (`~/Documents/Fridae Studios/skills` in the app);
+3. the project's `.agents/skills`, then `.claude/skills` (for that project only).
+
+`rbx_skill` (every AI): `search` (the index service's `skills` shelf, one entry per skill: name, description,
+examples; keyword search when the service is off), `list`, `load` (SKILL.md with `${CLAUDE_SKILL_DIR}` and
+`${CLAUDE_PLUGIN_ROOT}` filled in, its folder and files), `read` (one file inside the skill's folder). `rbx_guide` is
+an alias of `load`. `rbx_vault` hits point at skills ("load with rbx_skill").
+
+**Import, never a second library** (`import_external`, run by `catalog` and `index` at most once a minute, under
+`<library>/.lock`). The sources are only ever read: Claude Code's `~/.claude/skills` and enabled plugins
+(`installed_plugins.json`), what the Claude apps synced for every account (`~/.claude/plugins/synced/...`,
+`~/.claude/skills/synced/...`), `~/.agents/skills`, `~/.codex/skills`, `~/.cursor/skills`,
+`~/.config/opencode/skill(s)`, `~/.gemini/skills`. Each skill is copied into the user's library once, with its link in
+`<skill>/.fridae-source.json`. A plugin's skill takes its bare name (`superpowers:brainstorming` is `brainstorming`).
+An unedited copy follows its source; an edited one is never overwritten (the source's new version waits beside it as
+`<name> (update)`, a decision). Byte-identical copies and the copies `install.py` put in `~/.claude/skills` (its
+`.fridae-installed.json`, or an old copy under a Claude install name at similar() 0.9 or more) link to the existing
+skill with no decision. The seven Claude-desktop-only skills (`APP_ONLY`) are never imported or listed. On this Mac
+the first import added 56 skills and opened 8 decisions in 1.3 s.
+
+**Overlaps become decisions.** A newcomer whose `similar()` to a library skill is at least `OVERLAP` waits in
+`<library>/.incoming` and opens a decision (`<library>/.decisions.json`). `similar()` is the larger of the names'
+likeness (same name 1.0, else the share of name words) and the keyword cosine (IDF over the library) of the two
+summaries. It does not ask the index service: `/query` scores are fused ranks (at most 2/61 with RRF k=60), never a
+likeness. `OVERLAP = 0.60`, from the real import: the true overlaps scored 1.0 (the six roblox-dev plugin guides
+against the shipped ones) and 0.71 / 0.68 (writing-skills against skill-creator, runpodctl against runpod-mcp); the
+closest pairs that are not duplicates scored 0.546 (ux-validate, insight-synthesizer), 0.533, 0.532
+(subagent-driven-development, executing-plans) and many 0.50s that share one of two name words (design-review and
+design). 0.55 sat 0.004 above the first of those.
+- Setup › Skills shows one decision at a time: each side's name, owner, source, licence, description and a scripts
+  cue first, then Keep / Replace / Merge / Keep both, and Accept all recommendations for a first-run pile. The loser
+  goes to `<library>/.replaced/` (never deleted) with `supersedes` on the winner.
+- A cheap model writes a recommendation (keep, replace or merge, a why, and for a merge the merged SKILL.md;
+  `skills::advise_open`): the OpenCode plan's models, else Claude's cheapest (haiku) when Claude is the default AI.
+  Both texts are masked and framed as material, not instructions. The recommendation carries a hash of both sides;
+  a merge is refused once either side changed since ("check them again").
+
+**Pinned core plus suggestions.** Every agent's instructions carry a `## Skills` part (`rbx skills catalog --kind`,
+`skills::catalog`, kept until a watched folder changes or for ten minutes): one line per pinned skill that fits the
+project's kind (`rbxskills.CORE`: brainstorming, systematic-debugging, test-driven-development,
+verification-before-completion, writing-plans, ui-ux-pro-max; for games also workflow, playtest, ui-design,
+game-bible, game-design, critic; or `core: true`), then "Other skills: search with rbx_skill..." and, for Claude, "When
+a Fridae skill (rbx_skill) and a Claude Code skill cover the same thing, use the Fridae one." Claude's leaves out the
+unchanged imports of skills Claude Code lists itself. Measured (tokens by the Light model's tokenizer):
+
+| AI | before (fb64721: every skill) | after, game | after, plain |
+|---|---|---|---|
+| Claude | 1,198 tokens (4,577 chars) | 398 (1,556) | 116 (460) |
+| Gemini, Cursor, OpenCode, Codex | 3,210 tokens (12,821 chars) | 713 (2,867) | 431 (1,772) |
+
+For each message of the user's, `skills::suggest_for` adds at most three more as one line on the turn text sent to the
+AI (never the stored message, never on a resend, a carry-on or a wake message): `[Skills that may fit: a (why), b
+(why)]`, the why being the message's own words the skill holds. It never waits: the index (`rbx skills index --json`)
+is cached and made behind; a message that finds none goes without.
+- The gate: fewer than 3 content words (no stopwords; no word of two letters or less except ui, ux, 2d, 3d, ai, db,
+  qa, ci) gets nothing, so "looks good, run it" never gets a suggestion.
+- The index service (`POST /suggest`, 300 ms): skills ranked by the dense cosine of the message against each skill's
+  summary, nothing else. Kept: cosine >= `SUGGEST_MIN` and within `SUGGEST_REL` of the best.
+- Without the service, the keywords in Rust: the IDF-weighted share of the message's words a skill holds, from at
+  least `KEYWORD_WORDS` held words, >= `KEYWORD_MIN` and within `KEYWORD_REL` of the best. Light stems (one stem for
+  shape/shapes/shaping/shaped) on both sides.
+- Pinned skills, skills loaded in the chat (an `rbx_skill load` or `rbx_guide` call that did not fail) and, for
+  Claude, Claude Code's own are dropped before the best three are taken.
+
+Thresholds, chosen 2026-11-24 with `tests/skills_bench.py` on 40 messages (34 asking for skill-shaped work, 6 short
+follow-ups) over this Mac's 114-skill library. The aim was the lowest floor with under one off-target suggestion in
+three turns and no follow-up suggested. Off-target is by the cases' labels, which are strict (new-system for "build
+the round based pvp mode", or finishing-a-development-branch for "go over this PR before I merge", count as wrong).
+
+| path | thresholds | hit (top 3) | shown a turn | off-target a turn | follow-ups | per message |
+|---|---|---|---|---|---|---|
+| dense, Light (bge-small-en-v1.5) | min 0.60, rel 0.02 | 23/34 | 1.44 | 0.71 | 0/6 | about 4 ms |
+| dense, Light, before (Task 6) | min 0.60, rel 0.04 | 23/34 | 1.74 | 0.91 | 0/6 | |
+| keyword | min 0.30, rel 0.10, 3 words | 7/34 | 0.47 | 0.26 | 0/6 | 0.25 ms |
+| keyword, before | min 0.35, rel 0.04, 2 words | 4/34 | 0.26 | 0.15 | 1/6 | |
+
+- Dense: no floor meets the aim with useful hits (0.67 does, at 9/34); precision hardly moves with the floor (about
+  half the shown skills are wanted at every floor), so the floor only trades how many show. 0.59 lets a follow-up
+  through. Narrowing the band from 0.04 to 0.02 cut off-target by a fifth for the same hits, so that is the trade-off
+  kept. Heavy (Ollama's mxbai-embed-large) is **unmeasured**: Ollama is never installed where the bench runs, so it
+  uses Light's values (`skills::THRESHOLDS`).
+- Keyword: two held words let "fix that typo in the header" through at every useful floor; three held words and a
+  0.30 floor meet the aim. It is a fallback for when the service is off: 7/34.
+- 3 of the 34 want only pinned skills (already in the instructions), so 31 is the most suggestions can hit.
+- Misses come mostly from thin descriptions (systematic-debugging never mentions browsers or buttons; skill-creator
+  never says "checklist"): richer examples in phase 2's starter library are the lever.
+
+**Notes upkeep** (`rbxupkeep`): near-duplicate and contradicting notes in the user's own notes become decisions in the
+same store (`rbx upkeep --decisions`), with the same recommender and cards. It runs once a week while the app is open
+and idle (`skills::upkeep_watch`) and from Setup › Skills ("Check notes now"); at most 20 note decisions are open at a
+time. Keep, replace and merge move notes to the notes `.trash`, never delete them.
+
+**Known limits.**
+- Recommendations come only from the OpenCode plan or, when Claude is the default AI, Claude's cheapest model. With a
+  Gemini, Cursor or Codex default and no OpenCode plan, a decision shows both sides with no recommendation.
+- Heavy's suggestion thresholds are Light's, unmeasured (above).
+- Right after launch the index is cold: the first message or two go without suggestions while it is made.
+
+**The quick check:** `.venv/bin/python tests/skills_bench.py --models <folder holding BAAI/bge-small-en-v1.5>`
+(about 10 seconds, plus a Rust test build the first time). It imports this Mac's skills into a scratch library
+(reading the real folders only), ranks with the real `Engine.suggest` and runs the Rust half
+(`skills::tests::skills_bench`, ignored by default) so both paths are the shipped code. Cases:
+`tests/skills_bench_cases.json`.
+
+Tests: `python3 -m unittest tests.test_skills tests.test_upkeep tests.test_rag_engine tests.test_rag_serve`;
+`cargo test skills::`.
 
 ## Folders
 

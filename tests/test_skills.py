@@ -956,7 +956,7 @@ class ImportTests(unittest.TestCase):
         self.assertLess(rbxskills.similar(a, far), rbxskills.OVERLAP)
         near = dict(far, id="tax-folder", name="tax-folder")
         self.assertGreaterEqual(rbxskills.similar(far, near), rbxskills.OVERLAP, "same description")
-        self.assertEqual(rbxskills.OVERLAP, 0.55)
+        self.assertEqual(rbxskills.OVERLAP, 0.60)
 
     def test_catalog_imports_at_most_once_a_minute(self):
         p = mock.patch.object(rbxskills, "CORE", ("first", "second"))

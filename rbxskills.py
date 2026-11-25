@@ -533,7 +533,12 @@ def listing(project=None):
 
 
 # ------------------------------------------------------------------ import, the overlap check, the decision store
-OVERLAP = 0.55          # similar() at or above this: a newcomer waits for the user's decision (Task 9 sets it)
+# similar() at or above this: a newcomer waits for the user's decision. Measured on the real import (Task 9): its
+# true overlaps scored 1.0 (six roblox-dev guides against the shipped ones) and 0.68-0.71 (writing-skills against
+# skill-creator, runpodctl against runpod-mcp); the closest pairs that are not duplicates scored 0.55 and below
+# (ux-validate against insight-synthesizer 0.546, subagent-driven-development against executing-plans 0.532, and
+# the many 0.50s that share one of two name words, like design-review and design). 0.60 sits between.
+OVERLAP = 0.60
 IMPORT_EVERY = 60       # seconds: catalog() and index() import at most this often
 LOCK_WAIT, LOCK_STALE = 5.0, 120.0
 SOURCE_FILE = ".fridae-source.json"   # in an imported copy: its import link
@@ -828,9 +833,6 @@ class _FridaeCopies:
 
 
 # ---- the overlap check
-_SERVICE = {}   # one import's knowledge index answers: {"down": True} after a failure, {summary text: hits}
-
-
 def _idf(texts):
     """Word weights over the library's summaries (smoothed idf): a word most skills share counts for little."""
     import collections
@@ -862,41 +864,11 @@ def _name_key(s):
     return re.sub(r"[-_\s]+", "-", name.strip().casefold())
 
 
-def _service_score(a, b):
-    """The knowledge index's score for a among the skills like b (0 to 1), 0.0 when a is not among them, None when the
-    index is not running or fails (then once per import)."""
-    import rbxvault
-    if _SERVICE.get("down"):
-        return None
-    end = rbxvault.rag_endpoint()
-    if not end:
-        return None
-    q = summary(b)
-    hits = _SERVICE.get(q)
-    if hits is None:
-        try:
-            hits = rbxvault._rag_hits(end, q, ["skills"], 10) or []
-        except Exception as e:
-            rbxvault._close_quietly(e)
-            _SERVICE["down"] = True
-            return None
-        _SERVICE[q] = hits
-    want = str(a.get("id") or a.get("name") or "").casefold()
-    for h in hits:
-        if isinstance(h, dict) and h.get("shelf") == "skills" and str(h.get("title") or "").casefold() == want:
-            try:
-                sc = float(h.get("score") or 0)
-            except (TypeError, ValueError):
-                return 0.0
-            return sc if 0.0 <= sc <= 1.0 else 0.0  # another scale (fused ranks, reranker logits) says nothing here
-    return 0.0
-
-
 def similar(a, b, idf=None):
     """How much two skills (library entries or their meta fields) overlap, 0 to 1: the larger of their names' likeness
     (the same name is 1; else the share of name words they share) and the keyword cosine of their skill_docs text
-    (summary), or the knowledge index's score for the pair when it runs and scores higher. idf: word weights
-    (_idf) over the library."""
+    (summary). idf: word weights (_idf) over the library. The knowledge index is not asked: its /query scores are
+    fused ranks (at most 2/61 with RRF k=60), never a likeness a threshold can be set on (Task 9)."""
     import rbxvault
     if _name_key(a) == _name_key(b):
         return 1.0
@@ -904,8 +876,7 @@ def similar(a, b, idf=None):
     wb = set(rbxvault.ptokens(_name_key(b).replace("-", " ")))
     name = len(wa & wb) / len(wa | wb) if wa and wb else 0.0
     text = _cosine(summary(a), summary(b), idf)
-    service = _service_score(a, b)
-    return round(min(1.0, max(name, text, service or 0.0)), 4)
+    return round(min(1.0, max(name, text)), 4)
 
 
 # ---- the decision store: <user_dir>/.decisions.json
@@ -1030,7 +1001,6 @@ class _Importer:
         self.lib = library()
         self.idf = _idf([summary(e) for e in self.lib])
         self.heads = {}      # library dir -> its SKILL.md's bytes hash (the identical check reads few folders whole)
-        _SERVICE.clear()
 
     def run(self):
         seen = set()

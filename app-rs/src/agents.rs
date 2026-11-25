@@ -7533,7 +7533,7 @@ mod tests {
 
     #[test]
     fn a_suggestion_goes_on_the_turn_text_never_on_the_stored_message() {
-        let mut index = vec![json!({"id": "menu-polish", "description": "Make menus feel good.", "examples": ["make a shop menu feel juicy"],
+        let mut index = vec![json!({"id": "menu-polish", "description": "Make flat menus feel good.", "examples": ["make a shop menu feel juicy"],
                                     "applies": "both", "pinned": false, "claude_native": false})];
         for (id, desc) in [("tax-notes", "Keep a tidy tax folder."), ("spawn-tuning", "Tune enemy spawns."), ("sound-design", "Pick sounds."), ("trailers", "Cut a trailer.")] {
             index.push(json!({"id": id, "description": desc, "examples": [], "applies": "both", "pinned": false, "claude_native": false}));
@@ -7544,7 +7544,7 @@ mod tests {
         {
             let st = a.st.lock().unwrap();
             let went = &st.went_for_test[0];
-            assert!(went.starts_with("my shop menu looks flat") && went.ends_with("\n\n[Skills that may fit: menu-polish (shop menu)]"), "{went}");
+            assert!(went.starts_with("my shop menu looks flat") && went.ends_with("\n\n[Skills that may fit: menu-polish (shop menu flat)]"), "{went}");
             let user = st.log.iter().find(|e| is_user(e)).expect("the user's message");
             assert_eq!(user["text"], "my shop menu looks flat", "the stored message is the user's words alone");
         }

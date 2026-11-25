@@ -192,25 +192,32 @@ pub fn catalog(ai: &str, kind: &str, project: Option<&str>, claude_config: Optio
 // thresholds that belong to the embedding model (`thresholds`). Without the service (off, not ready, slow) the
 // keywords answer in Rust over the cached index (`keyword_hits`). Pinned skills, ones loaded in the chat and, for
 // Claude, the ones Claude Code lists itself are dropped before the best three are taken; never padded to three.
-// Thresholds measured on 40 real messages over the real 114-skill library (Ruling 13; Task 9 calibrates them).
+// Thresholds chosen in Task 9 on 40 messages (34 asking for skill-shaped work, 6 short follow-ups) over the real
+// 114-skill library: tests/skills_bench.py, numbers in DEVELOPING.md ("Skills for every AI").
 
 /// The most skills one message names.
 const SUGGEST_MAX: usize = 3;
-/// A message with fewer content words (stopwords and words of two letters or less left out) gets no suggestion.
+/// A message with fewer content words (`surface_words`: no stopwords, no words of two letters but `SHORT_WORDS`) gets
+/// no suggestion.
 const GATE_WORDS: usize = 3;
 /// How long the index service may take to answer before the keywords do.
 #[cfg_attr(test, allow(dead_code))]
 const SUGGEST_WAIT: Duration = Duration::from_millis(300);
 /// Light's (BAAI/bge-small-en-v1.5) floor and band: a hit's cosine at least this, and within this of the best one.
+/// Measured: 23/34 hit, 1.44 shown and 0.71 off-target a turn, 0/6 follow-ups. No floor met the aim of under one
+/// off-target in three turns with useful hits (0.67 does at 9/34), so this is the trade-off: 0.59 lets a follow-up
+/// through, and a band of 0.02 shows a fifth fewer off-target skills than 0.04 for the same hits.
 const SUGGEST_MIN: f64 = 0.60;
-const SUGGEST_REL: f64 = 0.04;
-/// Per dense model (a part of the name the service reports): (floor, band). Heavy's is set in Task 9; until then
-/// it uses Light's, as does a model not listed.
+const SUGGEST_REL: f64 = 0.02;
+/// Per dense model (a part of the name the service reports): (floor, band). Heavy's (Ollama's mxbai-embed-large)
+/// has not been measured (no Ollama where the bench runs) and uses Light's, as does a model not listed.
 const THRESHOLDS: [(&str, f64, f64); 2] = [("bge-small-en-v1.5", SUGGEST_MIN, SUGGEST_REL), ("mxbai-embed-large", SUGGEST_MIN, SUGGEST_REL)];
 /// The keyword fallback: IDF-weighted share of the message's content words a skill holds, at least this, from at
-/// least `KEYWORD_WORDS` matched words (and within `SUGGEST_REL` of the best).
-const KEYWORD_MIN: f64 = 0.35;
-const KEYWORD_WORDS: usize = 2;
+/// least `KEYWORD_WORDS` matched words, and within `KEYWORD_REL` of the best. Measured: 7/34 hit, 0.26 off-target a
+/// turn, 0/6 follow-ups (two matched words let "fix that typo in the header" through at every useful floor).
+const KEYWORD_MIN: f64 = 0.30;
+const KEYWORD_REL: f64 = 0.10;
+const KEYWORD_WORDS: usize = 3;
 /// How many hits the service is asked for: room for the ones dropped before the best three are taken.
 const SUGGEST_ASK: usize = 10;
 /// The longest "why" after a suggested skill's name.
@@ -222,7 +229,7 @@ const STOP: &[&str] = &[
     "would", "will", "just", "get", "got", "make", "made", "use", "using", "want", "need", "like", "looks", "look", "good", "fine", "ok", "okay", "yes", "yeah", "go", "ahead",
     "run", "rerun", "nice", "perfect", "please", "thanks", "thank", "also", "some", "any", "all", "into", "out", "up", "down", "about", "over", "more", "most", "very", "really",
     "one", "two", "new", "last", "that's", "it's", "i'm", "don't", "can't", "let", "let's", "how", "what", "when", "where", "why", "which", "who", "there", "here", "now",
-    "still", "again", "ship", "lgtm", "sure", "great", "cool",
+    "still", "again", "ship", "lgtm", "sure", "great", "cool", "not",
 ];
 
 /// One skill of the index, as the suggestions read it.
@@ -281,25 +288,51 @@ impl Index {
     }
 }
 
-/// A word's light stem: -ing, -ed, -es or -s off a word longer than four letters.
-fn stem(w: &str) -> String {
-    for suf in ["ing", "ed", "es", "s"] {
-        if w.len() > 4 && w.ends_with(suf) {
-            return w[..w.len() - suf.len()].to_string();
-        }
-    }
-    w.to_string()
+/// Words of two letters that do say what a task is about (all other words that short are left out).
+const SHORT_WORDS: &[&str] = &["ui", "ux", "2d", "3d", "ai", "db", "qa", "ci"];
+
+fn has_vowel(w: &str) -> bool {
+    w.chars().any(|c| "aeiouy".contains(c))
 }
 
-/// The content words of a text as written (lower case, in order): no stopword, none of two letters or less.
+/// A word's light stem, the same for its common forms, so a message and a skill meet on any of them: -ies to y
+/// ("enemies" -> enemy), a plural s ("shapes", "boxes"), -ing or -ed when a vowel is left ("string" stays) with a
+/// doubled letter undone ("planning" -> plan), then a final e: "shape", "shapes", "shaping" and "shaped" are all
+/// "shap", "boxes" and "box" both "box".
+fn stem(w: &str) -> String {
+    let n = w.len();
+    let mut s = if n > 4 && w.ends_with("ies") {
+        format!("{}y", &w[..n - 3])
+    } else if n > 3 && w.ends_with('s') && !w.ends_with("ss") {
+        w[..n - 1].to_string()
+    } else if (n > 5 && w.ends_with("ing") && has_vowel(&w[..n - 3])) || (n > 4 && w.ends_with("ed") && !w.ends_with("eed") && has_vowel(&w[..n - 2])) {
+        let mut s = w[..n - if w.ends_with("ing") { 3 } else { 2 }].to_string();
+        let b = s.as_bytes();
+        // "planning" -> plan, "bugged" -> bug; words that end doubled keep it ("killed", "passing", "added", "stuffed")
+        if b.len() > 2 && b[b.len() - 1] == b[b.len() - 2] && !b"aeiouylszdf".contains(&b[b.len() - 1]) {
+            s.pop();
+        }
+        s
+    } else {
+        w.to_string()
+    };
+    if s.len() > 3 && s.ends_with('e') {
+        s.pop();
+    }
+    s
+}
+
+/// The content words of a text as written (lower case, in order): no stopword, none of two letters or less but the
+/// `SHORT_WORDS`.
 fn surface_words(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
+    let content = |w: &str| (w.len() > 2 || SHORT_WORDS.contains(&w)) && !STOP.contains(&w);
     lower
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '\''))
         .map(|w| w.trim_matches('\''))
-        .filter(|w| w.len() > 2 && !STOP.contains(w))
+        .filter(|w| content(w))
         .map(|w| w.replace('\'', ""))
-        .filter(|w| w.len() > 2 && !STOP.contains(&w.as_str()))
+        .filter(|w| content(w))
         .collect()
 }
 
@@ -493,27 +526,50 @@ pub fn suggest(text: &str, kind: &str, ai: &str, already: &[String]) -> Option<S
 
 /// `suggest` for a chat's project and (Claude on a second account) Claude config folder.
 pub fn suggest_for(text: &str, kind: &str, ai: &str, already: &[String], project: Option<&str>, claude_config: Option<&Path>) -> Option<String> {
+    if !passes_gate(text) {
+        return None;
+    }
+    let index = index_for(project, claude_config)?;
+    suggest_in(&index, text, kind, ai, already, || service_hits(text, kind))
+}
+
+/// Whether a message has enough content words (`GATE_WORDS`) to be given suggestions at all.
+fn passes_gate(text: &str) -> bool {
+    words(text).into_iter().collect::<HashSet<_>>().len() >= GATE_WORDS
+}
+
+/// Whether a skill may be suggested: of the project's kind (or either), not pinned, not loaded in the chat (`loaded`,
+/// lower case) and, for Claude, not one Claude Code lists itself.
+fn usable(e: &Entry, kind: &str, ai: &str, loaded: &HashSet<String>) -> bool {
+    (kind.is_empty() || e.applies.is_empty() || e.applies == "both" || e.applies == kind) && !e.pinned && !loaded.contains(&e.id.to_lowercase()) && !(ai == "claude" && e.native)
+}
+
+/// The service's hits that may be suggested, as [(index of the entry, cosine)] best first, one per skill.
+fn service_found(index: &Index, hits: &[(String, f64)], keep: &dyn Fn(&Entry) -> bool) -> Vec<(usize, f64)> {
+    let by_id: HashMap<String, usize> = index.entries.iter().enumerate().map(|(i, e)| (e.id.to_lowercase(), i)).collect();
+    let mut found: Vec<(usize, f64)> = hits.iter().filter_map(|(id, sc)| by_id.get(&id.to_lowercase()).map(|i| (*i, *sc))).filter(|(i, _)| keep(&index.entries[*i])).collect();
+    found.sort_by(|a, b| b.1.total_cmp(&a.1));
+    found.dedup_by_key(|h| h.0);
+    found
+}
+
+/// `suggest_for` over an index in hand: the gate, then the service's ranking (`service`, asked only past the gate)
+/// or, without one, the keywords.
+fn suggest_in(index: &Index, text: &str, kind: &str, ai: &str, already: &[String], service: impl FnOnce() -> Option<(String, Vec<(String, f64)>)>) -> Option<String> {
     let surface = surface_words(text);
     let query: HashSet<String> = surface.iter().map(|w| stem(w)).collect();
     if query.len() < GATE_WORDS {
         return None;
     }
-    let index = index_for(project, claude_config)?;
     let kind = if matches!(kind, "game" | "plain") { kind } else { "" };
     let loaded: HashSet<String> = already.iter().map(|s| s.trim().to_lowercase()).collect();
-    let keep = |e: &Entry| {
-        (kind.is_empty() || e.applies.is_empty() || e.applies == "both" || e.applies == kind) && !e.pinned && !loaded.contains(&e.id.to_lowercase()) && !(ai == "claude" && e.native)
-    };
-    let picked = match service_hits(text, kind) {
+    let keep = |e: &Entry| usable(e, kind, ai, &loaded);
+    let picked = match service() {
         Some((model, hits)) => {
             let (min, rel) = thresholds(&model);
-            let by_id: HashMap<String, usize> = index.entries.iter().enumerate().map(|(i, e)| (e.id.to_lowercase(), i)).collect();
-            let mut found: Vec<(usize, f64)> = hits.iter().filter_map(|(id, sc)| by_id.get(&id.to_lowercase()).map(|i| (*i, *sc))).filter(|(i, _)| keep(&index.entries[*i])).collect();
-            found.sort_by(|a, b| b.1.total_cmp(&a.1));
-            found.dedup_by_key(|h| h.0);
-            within(found, min, rel)
+            within(service_found(index, &hits, &keep), min, rel)
         }
-        None => within(keyword_hits(&index, &query, &keep), KEYWORD_MIN, SUGGEST_REL),
+        None => within(keyword_hits(index, &query, &keep), KEYWORD_MIN, KEYWORD_REL),
     };
     let items: Vec<(String, String)> = picked
         .iter()
@@ -1451,8 +1507,8 @@ mod tests {
 
     fn fixture_index() -> Value {
         json!([
-            entry("menu-polish", "Make menus feel good.", &["make a shop menu feel juicy", "polish the settings screen"], "both", false, false),
-            entry("tax-notes", "Keep a tidy tax folder.", &["file my receipts"], "plain", false, false),
+            entry("menu-polish", "Make flat menus feel good.", &["make a shop menu feel juicy", "polish the settings screen"], "both", false, false),
+            entry("tax-notes", "Keep a tidy tax folder.", &["file my receipts somewhere safe"], "plain", false, false),
             entry("spawn-tuning", "Tune enemy spawns.", &["enemies spawn too fast"], "game", false, false),
             entry("ui-design", "Design shop menus and HUD screens.", &["shop menu layout looks flat"], "game", true, false),
             entry("menu-sounds", "Add click sounds to shop menus.", &["shop menu clicks"], "both", false, true),
@@ -1566,13 +1622,13 @@ mod tests {
         let line = suggest("my shop menu looks flat", "game", "cursor", &[]);
         assert!(began.elapsed() < Duration::from_millis(50), "took {:?}", began.elapsed());
         let line = line.expect("a suggestion");
-        assert!(line.contains("menu-polish (shop menu)"), "{line}");
+        assert!(line.contains("menu-polish (shop menu flat)"), "{line}");
         assert!(!line.contains("ui-design"), "pinned: already in the instructions");
         assert_eq!(asked.borrow().len(), 1, "the service was asked first");
         // no service at all (no endpoint): the keywords answer the same
         SERVICE.with(|s| *s.borrow_mut() = None);
         assert!(suggest("my shop menu looks flat", "game", "cursor", &[]).unwrap().contains("menu-polish"));
-        // one matched word is not enough, and words of the other kind's skills never count
+        // fewer than KEYWORD_WORDS matched words are not enough, and words of the other kind's skills never count
         assert_eq!(suggest("my shop is flat and dull today", "game", "cursor", &[]), None);
         assert_eq!(suggest("please file my receipts somewhere", "game", "cursor", &[]), None);
         assert!(suggest("please file my receipts somewhere", "plain", "cursor", &[]).unwrap().contains("tax-notes"));
@@ -1589,18 +1645,19 @@ mod tests {
         assert_eq!(line, "Skills that may fit: spawn-tuning (enemies spawn too fast)");
         // another AI: the three best that are left, all within SUGGEST_REL of the best
         let line = suggest(q, "game", "cursor", &[]).unwrap();
-        assert_eq!(line, "Skills that may fit: menu-polish (shop menu), menu-sounds (shop menu), spawn-tuning (enemies spawn too fast)");
+        assert_eq!(line, "Skills that may fit: menu-polish (shop menu flat), menu-sounds (shop menu), spawn-tuning (enemies spawn too fast)");
         // below SUGGEST_MIN, or further than SUGGEST_REL from the best: left out
         service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![("menu-polish", 0.59)])));
         assert_eq!(suggest(q, "game", "cursor", &[]), None);
         service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![("menu-polish", 0.75), ("spawn-tuning", 0.70)])));
-        assert_eq!(suggest(q, "game", "cursor", &[]).unwrap(), "Skills that may fit: menu-polish (shop menu)");
+        assert_eq!(suggest(q, "game", "cursor", &[]).unwrap(), "Skills that may fit: menu-polish (shop menu flat)");
         // the service answered with nothing good enough: no keyword guess on top of it
         service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![])));
         assert_eq!(suggest(q, "game", "cursor", &[]), None);
         assert_eq!(thresholds("light4:BAAI/bge-small-en-v1.5/256"), (SUGGEST_MIN, SUGGEST_REL));
-        assert_eq!(thresholds("heavy:ollama/mxbai-embed-large+Qdrant/bm25"), (0.60, 0.04), "Light's until Task 9 sets Heavy's");
-        assert_eq!((SUGGEST_MIN, SUGGEST_REL), (0.60, 0.04));
+        assert_eq!(thresholds("heavy:ollama/mxbai-embed-large+Qdrant/bm25"), (0.60, 0.02), "Heavy: Light's, unmeasured");
+        assert_eq!((SUGGEST_MIN, SUGGEST_REL), (0.60, 0.02));
+        assert_eq!((KEYWORD_MIN, KEYWORD_REL, KEYWORD_WORDS), (0.30, 0.10, 3));
     }
 
     #[test]
@@ -1611,6 +1668,37 @@ mod tests {
             assert_eq!(suggest(q, "game", "cursor", &[]), None, "{q}");
         }
         assert!(asked.borrow().is_empty(), "the service is not asked for a short follow-up");
+    }
+
+    #[test]
+    fn a_words_forms_share_one_stem() {
+        for forms in [
+            &["shape", "shapes", "shaping", "shaped"][..],
+            &["box", "boxes"],
+            &["enemy", "enemies"],
+            &["plan", "plans", "planning", "planned"],
+            &["bug", "bugs", "bugged"],
+            &["add", "adds", "added", "adding"],
+            &["kill", "kills", "killed", "killing"],
+            &["cache", "caches", "cached", "caching"],
+            &["match", "matches", "matching"],
+            &["string", "strings"],
+            &["class", "classes"],
+            &["save", "saves", "saved", "saving"],
+        ] {
+            let stems: HashSet<String> = forms.iter().map(|w| stem(w)).collect();
+            assert_eq!(stems.len(), 1, "{forms:?} -> {stems:?}");
+        }
+        assert_ne!(stem("speed"), stem("spe"));
+        assert_eq!(stem("thing"), "thing");
+    }
+
+    #[test]
+    fn short_domain_words_count() {
+        assert_eq!(surface_words("Fix the UI on my 3D map, is it ok"), vec!["fix", "ui", "3d", "map"]);
+        assert_eq!(words("the UX of a QA db in CI for 2D AI"), vec!["ux", "qa", "db", "ci", "2d", "ai"]);
+        assert!(passes_gate("the ui looks off in 3d"), "ui, 3d and off are three content words");
+        assert!(!passes_gate("is it ok"));
     }
 
     #[test]
@@ -1630,6 +1718,53 @@ mod tests {
         assert!(skill_loads("rbx_skill", &json!({"action": "search", "query": "x"})).is_empty());
         assert_eq!(skill_loads("rbx_guide", &json!({"topic": "workflow", "topics": ["critic"]})), vec!["workflow", "critic"]);
         assert!(skill_loads("Read", &json!({"name": "x"})).is_empty());
+    }
+
+    /// The skills bench's Rust half (tests/skills_bench.py runs it): reads FRIDAE_SKILLS_BENCH, a JSON
+    /// {"index": <rbx skills index --json>, "ai": "...", "cases": [{"q", "kind", "dense": {"model", "hits": [[id, cosine]]}}]},
+    /// and writes FRIDAE_SKILLS_BENCH_OUT: per case whether it passes the gate, the keyword fallback's scored hits and
+    /// the service's usable hits (both best first, the drops done; a keyword hit also says how many of the message's
+    /// words it holds), and the shipped lines of both paths with the time
+    /// each took. Run: cargo test skills_bench -- --ignored (a debug build: its times are an upper bound)
+    #[test]
+    #[ignore]
+    fn skills_bench() {
+        let Ok(input) = std::env::var("FRIDAE_SKILLS_BENCH") else { return };
+        let out_path = std::env::var("FRIDAE_SKILLS_BENCH_OUT").expect("FRIDAE_SKILLS_BENCH_OUT");
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(input).unwrap()).unwrap();
+        let index = Index::from_json(&v["index"]);
+        let ai = v["ai"].as_str().unwrap_or("cursor").to_string();
+        let ids = |hits: &[(usize, f64)]| -> Value { json!(hits.iter().take(10).map(|(i, s)| json!([index.entries[*i].id, s])).collect::<Vec<_>>()) };
+        let mut out = Vec::new();
+        for c in v["cases"].as_array().unwrap() {
+            let q = c["q"].as_str().unwrap();
+            let kind = c["kind"].as_str().unwrap_or("");
+            let model = c["dense"]["model"].as_str().unwrap_or("").to_string();
+            let dense: Vec<(String, f64)> = c["dense"]["hits"].as_array().into_iter().flatten().map(|h| (h[0].as_str().unwrap().to_string(), h[1].as_f64().unwrap())).collect();
+            let query: HashSet<String> = words(q).into_iter().collect();
+            let k = if matches!(kind, "game" | "plain") { kind } else { "" };
+            let none = HashSet::new();
+            let keep = |e: &Entry| usable(e, k, &ai, &none);
+            let began = Instant::now();
+            let keyword_line = suggest_in(&index, q, kind, &ai, &[], || None);
+            let keyword_us = began.elapsed().as_secs_f64() * 1e6;
+            let began = Instant::now();
+            let dense_line = suggest_in(&index, q, kind, &ai, &[], || Some((model.clone(), dense.clone())));
+            let dense_us = began.elapsed().as_secs_f64() * 1e6;
+            out.push(json!({
+                "q": q, "gate": passes_gate(q), "words": query.iter().cloned().collect::<Vec<_>>(),
+                "keyword": json!(keyword_hits(&index, &query, &keep).iter().take(10).map(|(i, s)| {
+                    let e = &index.entries[*i];
+                    json!([e.id, s, query.iter().filter(|w| e.words.contains(*w)).count()])
+                }).collect::<Vec<_>>()),
+                "dense": ids(&service_found(&index, &dense, &keep)),
+                "keyword_line": keyword_line, "dense_line": dense_line, "keyword_us": keyword_us, "dense_rust_us": dense_us,
+            }));
+        }
+        let (min, rel) = thresholds(v["cases"][0]["dense"]["model"].as_str().unwrap_or(""));
+        let report = json!({"cases": out, "keyword_min": KEYWORD_MIN, "keyword_rel": KEYWORD_REL, "keyword_words": KEYWORD_WORDS,
+                            "dense_min": min, "dense_rel": rel, "max": SUGGEST_MAX, "gate_words": GATE_WORDS});
+        std::fs::write(out_path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     }
 
     #[test]

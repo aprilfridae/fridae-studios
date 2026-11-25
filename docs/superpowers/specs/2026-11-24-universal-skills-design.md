@@ -236,6 +236,12 @@ ignore").
 - **Overnight, a few hours, stated up front when scheduled.** The same at 10x library size (padded with look-alike
   skills), plus a live check that Claude, Gemini, Cursor and OpenCode each load a suggested skill.
 
+## Known limits
+
+- Phase 1's recommender is the OpenCode plan, then Claude's cheapest model only when Claude is the default AI. With a
+  Gemini, Cursor or Codex default and no OpenCode plan, a decision card shows both sides with no recommendation
+  (one-shot writers for those AIs are later work).
+
 ## Left to the builder
 
 - Exact thresholds for overlap and for suggestions (set from the quick check).
