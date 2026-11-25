@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -28,9 +28,13 @@ const LIMIT: Duration = Duration::from_secs(8);
 
 struct Kept {
     made: Instant,
-    print: Vec<Option<SystemTime>>,
+    print: Print,
     text: String,
 }
+
+/// What says the skills may have changed: the watched paths' times, and the names in the user's own library (its
+/// folder's own time changes with the import's `.lock` every minute, so only the names that are no dot file count).
+type Print = (Vec<Option<SystemTime>>, u64);
 
 static CACHE: Mutex<Option<HashMap<(String, String, String), Kept>>> = Mutex::new(None);
 
@@ -61,8 +65,8 @@ fn watched(project: Option<&str>) -> Vec<PathBuf> {
     for rel in [".agents/skills", ".codex/skills", ".cursor/skills", ".config/opencode/skills", ".config/opencode/skill", ".gemini/skills"] {
         out.push(home.join(rel));
     }
-    // the user's own library (rbxskills.user_dir) and the folders the app's skills ship in (rbxskills.KIT_ROOTS)
-    out.push(PATHS.home.join("skills"));
+    // the folders the app's skills ship in (rbxskills.KIT_ROOTS); the user's own library is read by its names
+    // (`library_names`), never by its folder's time
     for rel in KIT_ROOTS {
         out.push(PATHS.kit.join(rel));
     }
@@ -78,6 +82,23 @@ const KIT_ROOTS: [&str; 3] = ["vault/Fridae/Guides/Core", "vault/Fridae/Guides/R
 
 fn fingerprint(paths: &[PathBuf]) -> Vec<Option<SystemTime>> {
     paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
+}
+
+/// The names in a skills library folder that are no dot file, as one number: a skill that comes, goes or is renamed
+/// changes it; the import's `.lock`, `.imported`, `.decisions.json` and `.incoming` never do.
+fn library_names(dir: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut names: Vec<String> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| !n.starts_with('.')).collect();
+    names.sort();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    names.hash(&mut h);
+    h.finish()
+}
+
+/// The print of the skills for a project: taken after a list or the index was made, so what the making itself wrote
+/// (an import once a minute) is part of the kept print and does not make the next turn make it again.
+fn print_of(project: Option<&str>) -> Print {
+    (fingerprint(&watched(project)), library_names(&PATHS.home.join("skills")))
 }
 
 /// The command that prints the catalog: the module itself when the kit runs from source, else the bundled program.
@@ -148,15 +169,15 @@ pub fn catalog(ai: &str, kind: &str, project: Option<&str>, claude_config: Optio
     let who = if ai == "claude" { "claude" } else { "other" };
     let kind = if matches!(kind, "game" | "plain") { kind } else { "" };
     let key = (format!("{who}/{kind}"), project.unwrap_or("").to_string(), claude_config.map(|p| p.display().to_string()).unwrap_or_default());
-    let print = fingerprint(&watched(project));
     if let Some(k) = CACHE.lock().unwrap().as_ref().and_then(|c| c.get(&key)) {
-        if k.print == print && k.made.elapsed() < KEEP {
+        if k.print == print_of(project) && k.made.elapsed() < KEEP {
             return k.text.clone();
         }
     }
     let Some(text) = make(who, kind, project, claude_config) else {
         return String::new();
     };
+    let print = print_of(project);
     CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, Kept { made: Instant::now(), print, text: text.clone() });
     text
 }
@@ -340,44 +361,100 @@ fn service_hits(q: &str, kind: &str) -> Option<(String, Vec<(String, f64)>)> {
     crate::rag::suggest(q, kind, SUGGEST_ASK, SUGGEST_WAIT)
 }
 
-/// Kept index reads, as the catalog is kept: per (project, Claude config folder).
-#[cfg_attr(test, allow(dead_code))]
+/// One kept index read.
 struct KeptIndex {
     made: Instant,
-    print: Vec<Option<SystemTime>>,
-    index: std::sync::Arc<Index>,
+    print: Print,
+    index: Arc<Index>,
+}
+
+type IndexKey = (String, String);
+type IndexLoad = Box<dyn FnOnce() -> Option<Index> + Send>;
+type PrintOf = Arc<dyn Fn() -> Print + Send + Sync>;
+
+/// The index reads for suggestions, per (project, Claude config folder). Reading never waits for a load: a kept read
+/// is used (also a stale one, while a new one is made), and a missing or stale one is made on a thread of its own, one
+/// per key at a time. A message that finds none goes without suggestions.
+struct IndexCache {
+    kept: Mutex<HashMap<IndexKey, KeptIndex>>,
+    loading: Mutex<HashSet<IndexKey>>,
+}
+
+impl IndexCache {
+    fn new() -> Arc<IndexCache> {
+        Arc::new(IndexCache { kept: Mutex::new(HashMap::new()), loading: Mutex::new(HashSet::new()) })
+    }
+
+    /// The kept index for `key` (None when there is none yet), at once; a new one is made behind when it is missing,
+    /// older than `KEEP` or its print changed. The print is taken again after the load.
+    fn get(self: &Arc<Self>, key: IndexKey, print: PrintOf, load: IndexLoad) -> Option<Arc<Index>> {
+        let (hit, fresh) = match self.kept.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            Some(k) => (Some(k.index.clone()), k.made.elapsed() < KEEP && k.print == print()),
+            None => (None, false),
+        };
+        if !fresh {
+            self.refresh(key, print, load);
+        }
+        hit
+    }
+
+    fn refresh(self: &Arc<Self>, key: IndexKey, print: PrintOf, load: IndexLoad) {
+        if !self.loading.lock().unwrap_or_else(|e| e.into_inner()).insert(key.clone()) {
+            return; // one is being made
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            if let Some(index) = load() {
+                let kept = KeptIndex { made: Instant::now(), print: print(), index: Arc::new(index) };
+                me.kept.lock().unwrap_or_else(|e| e.into_inner()).insert(key.clone(), kept);
+            }
+            me.loading.lock().unwrap_or_else(|e| e.into_inner()).remove(&key);
+        });
+    }
 }
 
 #[cfg_attr(test, allow(dead_code))]
-static INDEX: Mutex<Option<HashMap<(String, String), KeptIndex>>> = Mutex::new(None);
+static INDEX: std::sync::LazyLock<Arc<IndexCache>> = std::sync::LazyLock::new(IndexCache::new);
 
-/// The index for suggestions: kept while none of the watched folders changes and for at most `KEEP` (tests read the
-/// stand-in CLI every time).
-fn index_for(project: Option<&str>, claude_config: Option<&Path>) -> Option<std::sync::Arc<Index>> {
+/// Tests: where `index_for` reads the index. None: the stand-in CLI, read at once (a kept index); Some: a cache of the
+/// test's own with its own load (the real path, never waiting).
+#[cfg(test)]
+type TestCache = (Arc<IndexCache>, Arc<dyn Fn() -> Option<Index> + Send + Sync>);
+#[cfg(test)]
+thread_local! {
+    static TEST_CACHE: std::cell::RefCell<Option<TestCache>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The index for suggestions, never waited for (`IndexCache`): `rbx skills index --json` for the project.
+fn index_for(project: Option<&str>, claude_config: Option<&Path>) -> Option<Arc<Index>> {
     let config = claude_config.map(|p| p.display().to_string()).unwrap_or_default();
-    let mut args = vec!["index", "--json", "--project", project.unwrap_or("")];
+    let mut args: Vec<String> = ["index", "--json", "--project", project.unwrap_or("")].iter().map(|a| a.to_string()).collect();
     if !config.is_empty() {
-        args.extend_from_slice(&["--claude-config", &config]);
+        args.extend(["--claude-config".to_string(), config.clone()]);
     }
+    let key = (project.unwrap_or("").to_string(), config);
+    let owned = project.map(str::to_string);
+    let print: PrintOf = Arc::new(move || print_of(owned.as_deref()));
     #[cfg(test)]
     {
-        let v: Value = serde_json::from_str(cli(&args)?.trim()).ok()?;
-        Some(std::sync::Arc::new(Index::from_json(&v)))
+        if let Some((cache, load)) = TEST_CACHE.with(|c| c.borrow().clone()) {
+            return cache.get(key, print, Box::new(move || load()));
+        }
+        let _ = (key, print);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let v: Value = serde_json::from_str(cli(&refs)?.trim()).ok()?;
+        Some(Arc::new(Index::from_json(&v)))
     }
     #[cfg(not(test))]
-    {
-        let key = (project.unwrap_or("").to_string(), config.clone());
-        let print = fingerprint(&watched(project));
-        if let Some(k) = INDEX.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&key)) {
-            if k.print == print && k.made.elapsed() < KEEP {
-                return Some(k.index.clone());
-            }
-        }
-        let v: Value = serde_json::from_str(run(command(&args), LIMIT)?.trim()).ok()?;
-        let index = std::sync::Arc::new(Index::from_json(&v));
-        INDEX.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, KeptIndex { made: Instant::now(), print, index: index.clone() });
-        Some(index)
-    }
+    INDEX.get(
+        key,
+        print,
+        Box::new(move || {
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            let v: Value = serde_json::from_str(run(command(&refs), LIMIT)?.trim()).ok()?;
+            Some(Index::from_json(&v))
+        }),
+    )
 }
 
 /// The keyword fallback: [(index of the entry, score)] best first, over the skills `keep` lets through.
@@ -1076,7 +1153,12 @@ mod tests {
 
     /// The index the suggestion tests read: `rbx skills index --json` answered from a fixture.
     fn suggest_index() {
-        let index = json!([
+        let index = fixture_index().to_string();
+        calls(move |args| (args[0] == "index").then(|| index.clone()));
+    }
+
+    fn fixture_index() -> Value {
+        json!([
             entry("menu-polish", "Make menus feel good.", &["make a shop menu feel juicy", "polish the settings screen"], "both", false, false),
             entry("tax-notes", "Keep a tidy tax folder.", &["file my receipts"], "plain", false, false),
             entry("spawn-tuning", "Tune enemy spawns.", &["enemies spawn too fast"], "game", false, false),
@@ -1084,8 +1166,91 @@ mod tests {
             entry("menu-sounds", "Add click sounds to shop menus.", &["shop menu clicks"], "both", false, true),
             entry("brainstorming", "Explore ideas before building.", &[], "both", true, false),
         ])
-        .to_string();
-        calls(move |args| (args[0] == "index").then(|| index.clone()));
+    }
+
+    fn wait_until(what: impl Fn() -> bool) -> bool {
+        let began = Instant::now();
+        while began.elapsed() < Duration::from_secs(5) {
+            if what() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        what()
+    }
+
+    #[test]
+    fn a_cold_index_never_waits_and_is_made_behind() {
+        use std::sync::atomic::AtomicUsize;
+        let cache = IndexCache::new();
+        let loads = Arc::new(AtomicUsize::new(0));
+        let count = loads.clone();
+        let load = move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(400)); // a slow `rbx skills index` (it may take up to LIMIT)
+            Some(Index::from_json(&fixture_index()))
+        };
+        TEST_CACHE.with(|c| *c.borrow_mut() = Some((cache.clone(), Arc::new(load))));
+        service(None);
+        let q = "my shop menu looks flat";
+        let began = Instant::now();
+        assert_eq!(suggest(q, "game", "cursor", &[]), None, "no index yet: this message goes without");
+        assert_eq!(suggest(q, "game", "cursor", &[]), None);
+        assert!(began.elapsed() < Duration::from_millis(50), "never waits for the index: {:?}", began.elapsed());
+        assert!(wait_until(|| cache.kept.lock().unwrap().len() == 1), "made behind");
+        assert_eq!(loads.load(Ordering::SeqCst), 1, "one load at a time for a key");
+        let began = Instant::now();
+        assert!(suggest(q, "game", "cursor", &[]).expect("the next message has it").contains("menu-polish"));
+        assert!(began.elapsed() < Duration::from_millis(50));
+        assert_eq!(loads.load(Ordering::SeqCst), 1, "a fresh index is not made again");
+    }
+
+    #[test]
+    fn a_stale_index_is_used_while_a_new_one_is_made() {
+        use std::sync::atomic::AtomicU64;
+        let cache = IndexCache::new();
+        let stamp = Arc::new(AtomicU64::new(1));
+        let at = stamp.clone();
+        let print: PrintOf = Arc::new(move || (Vec::new(), at.load(Ordering::SeqCst)));
+        let key = ("".to_string(), "".to_string());
+        let slow = |v: Value| -> IndexLoad {
+            Box::new(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                Some(Index::from_json(&v))
+            })
+        };
+        assert!(cache.get(key.clone(), print.clone(), slow(fixture_index())).is_none());
+        assert!(wait_until(|| cache.kept.lock().unwrap().contains_key(&key)));
+        stamp.store(2, Ordering::SeqCst); // a skill came or went
+        let began = Instant::now();
+        let stale = cache.get(key.clone(), print.clone(), slow(json!([entry("only-one", "One.", &[], "both", false, false)])));
+        assert!(began.elapsed() < Duration::from_millis(50));
+        assert_eq!(stale.expect("the stale one, at once").entries.len(), 6);
+        assert!(wait_until(|| cache.kept.lock().unwrap()[&key].index.entries.len() == 1), "the new one replaces it");
+        // a load that fails keeps what was there
+        stamp.store(3, Ordering::SeqCst);
+        assert!(cache.get(key.clone(), print.clone(), Box::new(|| None)).is_some());
+        assert!(wait_until(|| cache.loading.lock().unwrap().is_empty()));
+        assert_eq!(cache.kept.lock().unwrap()[&key].index.entries.len(), 1);
+    }
+
+    #[test]
+    fn the_imports_lock_file_does_not_change_the_print() {
+        let lib = paths::test_dir("skills-print");
+        let _ = std::fs::remove_dir_all(&lib);
+        std::fs::create_dir_all(lib.join("menu-polish")).unwrap();
+        let before = library_names(&lib);
+        std::fs::write(lib.join(".lock"), "").unwrap(); // the import's lock, taken and let go once a minute
+        assert_eq!(library_names(&lib), before);
+        std::fs::remove_file(lib.join(".lock")).unwrap();
+        std::fs::write(lib.join(".imported"), "").unwrap();
+        std::fs::write(lib.join(".decisions.json"), "{}").unwrap();
+        std::fs::create_dir_all(lib.join(".incoming").join("x")).unwrap();
+        assert_eq!(library_names(&lib), before, "the import's own dot files never count");
+        std::fs::create_dir_all(lib.join("tax-notes")).unwrap();
+        assert_ne!(library_names(&lib), before, "a skill that comes does");
+        assert!(!watched(None).contains(&PATHS.home.join("skills")), "the library folder's own time is not watched");
+        let _ = std::fs::remove_dir_all(&lib);
     }
 
     /// The index service's /suggest, answered by the test (None: not running); the queries it was asked are kept.

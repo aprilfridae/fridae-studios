@@ -3447,6 +3447,9 @@ impl Agent {
         if !notes.is_empty() {
             text += &format!("\n\n[{}]", notes.join("\n"));
         }
+        // the chat shows it is working before the suggestion is looked for (at most the index service's 300 ms; the
+        // skill index is never made on the turn: `skills::index_for`)
+        self.put("busy", json!({"value": true}));
         // up to three skills that may fit the user's words (`skills::suggest`), after them on the text the AI gets:
         // never on the stored message (put above), and not on the app's own carry-on or wake messages. (A message sent
         // again after a rollover has it in its text already.) For Claude on a second account, what Claude Code lists
@@ -3463,7 +3466,6 @@ impl Agent {
         if !resend {
             self.st.lock().unwrap().sent = Some((raw, text.clone(), ask.clone()));
         }
-        self.put("busy", json!({"value": true}));
         let kind = self.ai();
         // tests start no AI, so they stop a few lines below: what a message goes through before it goes
         // (`before_it_goes`) is run here for them, and the message noted as it would have gone
