@@ -6127,7 +6127,7 @@ function sbCard(pr, s) {
   const against = sbAgainst(s), diff = typeof s.diff === "string" && s.diff ? s.diff : "";
   const rec = s.recommendation && typeof s.recommendation === "object" ? s.recommendation : null;
   const merged = rec && rec.choice === "merge" && typeof rec.merged === "string" && rec.merged.trim() ? rec.merged : "";
-  const card = el("div", "ask rv-item sk-dec", '<div class="meta"></div><h4></h4><div class="sb-scripts"></div><div class="sb-files"></div><div class="plain-words sk-rec"><b></b><p></p></div><div class="act"></div><div class="sb-add" hidden><p></p><div class="act"><button class="pill main">Add it</button><button class="pill">Cancel</button></div></div><div class="sb-edit" hidden><textarea spellcheck="false" aria-label="SKILL.md, as it will be added"></textarea><div class="act"><button class="pill main">Add this version</button><button class="pill">Cancel</button></div></div><div class="sb-reject" hidden><div class="keyrow"><input type="text" maxlength="200" placeholder="Why, in one line (optional)" autocomplete="off" aria-label="Why it is rejected (optional)"></div><div class="act"><button class="pill main">Reject it</button><button class="pill">Cancel</button></div></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const card = el("div", "ask rv-item sk-dec", '<div class="meta"></div><h4></h4><div class="sb-scripts"></div><div class="sb-files"></div><div class="plain-words sk-rec"><b></b><p></p></div><div class="act"></div><div class="sb-add" hidden><p></p><div class="act"><button class="pill main">Add it</button><button class="pill">Cancel</button></div></div><div class="sb-edit" hidden><p hidden></p><textarea spellcheck="false" aria-label="SKILL.md, as it will be added"></textarea><div class="act"><button class="pill main">Add this version</button><button class="pill">Cancel</button></div></div><div class="sb-reject" hidden><p></p><div class="keyrow"><input type="text" maxlength="200" placeholder="Why, in one line (optional; the sender sees it on GitHub)" autocomplete="off" aria-label="Why it is rejected (optional; the sender sees it on GitHub)"></div><div class="act"><button class="pill main">Reject it</button><button class="pill">Cancel</button></div></div><p class="rv-err"></p><div class="rv-said"></div>');
   card.querySelector(".meta").textContent = s.same_name ? "Skill · the vault has one of this name" : against ? "Skill · close to the vault's “" + against + "”" : "Skill · new to the vault";
   card.querySelector("h4").textContent = s.name || "Untitled";
   card.querySelector(".sb-scripts").append(...scripts.map((f) => sbFile(f)));
@@ -6160,11 +6160,11 @@ function sbCard(pr, s) {
   const edit = card.querySelector(".sb-edit"), rej = card.querySelector(".sb-reject"), add = card.querySelector(".sb-add"), err = card.querySelector(".rv-err");
   const ta = edit.querySelector("textarea"), reason = rej.querySelector("input");
   const act = card.querySelector(".act");
-  /* Add's confirm: what happens, said plainly; on the submission's last undecided skill, that it is closed too */
-  const addSay = () => {
-    const last = vtList(pr, "skills").every((x) => x === s || (x.decided && x.decided.choice));
-    return "Add “" + (s.name || "Untitled") + "” to the vault?" + (last ? " This is the last skill in this submission, so the pull request also gets a thank-you comment and is closed." : "") + " Nothing reaches people until you publish a release.";
-  };
+  /* what each step does, said plainly; on the submission's last undecided skill, that the pull request is closed too */
+  const lastSay = () => vtList(pr, "skills").every((x) => x === s || (x.decided && x.decided.choice))
+    ? "This is the last skill in this submission, so the pull request also gets a thank-you comment and is closed." : "";
+  const addSay = () => "Add “" + (s.name || "Untitled") + "” to the vault?" + (lastSay() ? " " + lastSay() : "") + " Nothing reaches people until you publish a release.";
+  const rejectSay = () => "Your reason goes in the comment Fridae leaves on the pull request when it is closed, where anyone can read it." + (lastSay() ? " " + lastSay() : "");
   [["add", "Add"], ["edit", "Edit then add"], ["reject", "Reject"]].forEach(([choice, label]) => {
     const btn = el("button", "pill" + (choice === pick ? " main" : ""));
     btn.textContent = label; btn.disabled = sbBusy;
@@ -6174,8 +6174,10 @@ function sbCard(pr, s) {
       const box = choice === "add" ? add : choice === "edit" ? edit : rej;
       [add, edit, rej].forEach((x) => (x.hidden = x !== box));
       if (choice === "add") { add.querySelector("p").textContent = addSay(); add.querySelector(".pill.main").focus(); return; }
-      if (choice === "edit") { if (!ta.value) ta.value = merged || (md && typeof md.text === "string" ? md.text : ""); ta.focus(); }
-      else reason.focus();
+      if (choice === "edit") {
+        const say = edit.querySelector("p"); say.textContent = lastSay(); say.hidden = !say.textContent;
+        if (!ta.value) ta.value = merged || (md && typeof md.text === "string" ? md.text : ""); ta.focus();
+      } else { rej.querySelector("p").textContent = rejectSay(); reason.focus(); }
     };
     act.appendChild(btn);
   });
