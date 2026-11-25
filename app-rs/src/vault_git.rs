@@ -5,7 +5,10 @@
 //! Nothing calls these yet but the tests; the tasks that use them (downloads, sharing, the inbox, releases) come next.
 #![allow(dead_code)]
 
-use std::{io::Read, time::Duration};
+use std::{
+    io::Read,
+    time::{Duration, Instant},
+};
 
 use base64::Engine;
 use serde_json::{Value, json};
@@ -23,8 +26,11 @@ const PR_FILES_PAGES: u32 = 3;
 const FORK_POLL: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const FORK_POLL: Duration = Duration::from_millis(10);
-/// 30 polls, 2 s apart: up to 60 s.
-const FORK_TRIES: u32 = 30;
+/// The most the wait for a new fork may take, in all: 60 s.
+#[cfg(not(test))]
+const FORK_WAIT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const FORK_WAIT: Duration = Duration::from_millis(300);
 
 /// The vault's repository ("owner/name"); in tests the stand-in's, empty when none.
 pub(crate) fn vault_repo() -> String {
@@ -71,9 +77,17 @@ pub(crate) fn get(path: &str, auth: bool) -> Result<(u16, Value), String> {
 
 /// An authenticated call that must succeed; its JSON answer.
 fn call(method: &str, path: &str, body: Option<Value>, what: &str) -> Result<Value, String> {
+    call_as(method, path, body, what, &[])
+}
+
+/// `call`, where some answers have a sentence of their own (never GitHub's own words): (status, sentence).
+fn call_as(method: &str, path: &str, body: Option<Value>, what: &str, own: &[(u16, &str)]) -> Result<Value, String> {
     let token = github::read_token().ok_or_else(|| NOT_CONNECTED.to_string())?;
     let (code, v) = github::api(method, path, &token, body)?;
-    if (200..300).contains(&code) { Ok(v) } else { Err(sentence(what, code, &v)) }
+    if (200..300).contains(&code) {
+        return Ok(v);
+    }
+    Err(own.iter().find(|(c, _)| *c == code).map(|(_, s)| s.to_string()).unwrap_or_else(|| sentence(what, code, &v)))
 }
 
 fn unreadable(what: &str) -> String {
@@ -132,46 +146,57 @@ pub(crate) fn commit_files(repo: &str, branch: &str, files: &[(String, Vec<u8>)]
     let tree_sha = made["sha"].as_str().ok_or_else(|| unreadable("the new files"))?;
     let new = call("POST", &format!("/repos/{repo}/git/commits"), Some(json!({"message": message, "tree": tree_sha, "parents": [head]})), "make the commit")?;
     let sha = new["sha"].as_str().ok_or_else(|| unreadable("the commit"))?.to_string();
-    call("PATCH", &format!("/repos/{repo}/git/refs/heads/{}", enc(branch)), Some(json!({"sha": sha, "force": false})), "move the branch to the new commit")?;
+    let changed = "The vault changed while Fridae was saving. Try again.";
+    call_as("PATCH", &format!("/repos/{repo}/git/refs/heads/{}", enc(branch)), Some(json!({"sha": sha, "force": false})), "move the branch to the new commit", &[(409, changed), (422, changed)])?;
     Ok(sha)
 }
 
-/// The user's fork of `upstream`: made when they have none (waiting up to 60 s for GitHub to finish), then brought up
-/// to date with the upstream's main. Returns "login/name".
+/// The user's fork of `upstream`: made when they have none (waiting up to `FORK_WAIT` in all for GitHub to finish,
+/// asking the name GitHub gave the fork), then brought up to date with the upstream's main. Returns "login/name".
 pub(crate) fn ensure_fork(upstream: &str) -> Result<String, String> {
     let name = upstream.split_once('/').map(|x| x.1).filter(|n| !n.is_empty()).ok_or_else(|| "The vault's address is not valid.".to_string())?;
     let login = match github::user()["login"].as_str() {
         Some(l) => l.to_string(),
         None => call("GET", "/user", None, "say who is signed in")?["login"].as_str().ok_or_else(|| unreadable("who is signed in"))?.to_string(),
     };
-    let fork = format!("{login}/{name}");
+    let mut fork = format!("{login}/{name}");
     if get(&format!("/repos/{fork}"), true)?.0 != 200 {
-        call("POST", &format!("/repos/{upstream}/forks"), Some(json!({})), "make a copy of the vault for you")?;
-        let mut ready = false;
-        for _ in 0..FORK_TRIES {
+        let made = call("POST", &format!("/repos/{upstream}/forks"), Some(json!({})), "make a copy of the vault for you")?;
+        if let Some(given) = made["full_name"].as_str().filter(|n| fork_name_ok(n)) {
+            fork = given.to_string();
+        }
+        let deadline = Instant::now() + FORK_WAIT;
+        loop {
             if get(&format!("/repos/{fork}"), true)?.0 == 200 {
-                ready = true;
                 break;
             }
-            std::thread::sleep(FORK_POLL);
-        }
-        if !ready {
-            return Err("GitHub is still making your copy of the vault. Try again in a minute.".to_string());
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err("GitHub is still making your copy of the vault. Try again in a minute.".to_string());
+            }
+            std::thread::sleep(FORK_POLL.min(left));
         }
     }
     call("POST", &format!("/repos/{fork}/merge-upstream"), Some(json!({"branch": "main"})), "bring your copy of the vault up to date")?;
     Ok(fork)
 }
 
+/// "owner/name" as GitHub writes one: letters, digits, `-`, `_` and `.`.
+fn fork_name_ok(n: &str) -> bool {
+    n.split_once('/').is_some_and(|(o, r)| [o, r].iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))))
+}
+
 /// A new branch at `sha`.
 pub(crate) fn new_branch(repo: &str, branch: &str, sha: &str) -> Result<(), String> {
-    call("POST", &format!("/repos/{repo}/git/refs"), Some(json!({"ref": format!("refs/heads/{branch}"), "sha": sha})), "make the branch")?;
+    let taken = "A branch for this send already exists. Wait a minute and try again.";
+    call_as("POST", &format!("/repos/{repo}/git/refs"), Some(json!({"ref": format!("refs/heads/{branch}"), "sha": sha})), "make the branch", &[(422, taken)])?;
     Ok(())
 }
 
 /// A pull request into the upstream's main; `head` is "login:branch". Returns its number and web address.
 pub(crate) fn open_pr(upstream: &str, head: &str, title: &str, body: &str) -> Result<(u64, String), String> {
-    let v = call("POST", &format!("/repos/{upstream}/pulls"), Some(json!({"title": title, "head": head, "base": "main", "body": body})), "open the pull request")?;
+    let refused = "GitHub would not open the pull request. Try again later.";
+    let v = call_as("POST", &format!("/repos/{upstream}/pulls"), Some(json!({"title": title, "head": head, "base": "main", "body": body})), "open the pull request", &[(422, refused)])?;
     match (v["number"].as_u64(), v["html_url"].as_str()) {
         (Some(n), Some(url)) => Ok((n, url.to_string())),
         _ => Err(unreadable("the pull request")),
@@ -366,6 +391,74 @@ mod tests {
         assert!(calls.contains(&"POST /repos/o/r/forks".to_string()), "{calls:?}");
         assert_eq!(calls.last().unwrap(), "POST /repos/me/r/merge-upstream");
         assert_eq!(serde_json::from_str::<Value>(&r.last().unwrap().2).unwrap()["branch"], "main");
+    }
+
+    #[test]
+    fn fork_is_polled_by_the_name_github_gave() {
+        let (_g, s) = setup(
+            Box::new(|m, p, _, seen| match (m, p) {
+                ("GET", "/user") => (200, r#"{"login":"me"}"#.into()),
+                ("GET", "/repos/me/r") => (404, r#"{"message":"Not Found"}"#.into()),
+                ("POST", "/repos/o/r/forks") => (202, r#"{"full_name":"me/r-1"}"#.into()),
+                ("GET", "/repos/me/r-1") if seen <= 1 => (404, "{}".into()),
+                ("GET", "/repos/me/r-1") => (200, "{}".into()),
+                ("POST", "/repos/me/r-1/merge-upstream") => (200, "{}".into()),
+                _ => (404, "{}".into()),
+            }),
+            true,
+        );
+        assert_eq!(ensure_fork("o/r"), Ok("me/r-1".to_string()));
+        let calls: Vec<String> = requests(&s).iter().map(|x| format!("{} {}", x.0, x.1)).collect();
+        assert_eq!(calls.iter().filter(|c| *c == "GET /repos/me/r-1").count(), 2, "{calls:?}");
+        assert_eq!(calls.iter().filter(|c| *c == "GET /repos/me/r").count(), 1, "the first look only: {calls:?}");
+    }
+
+    #[test]
+    fn fork_gives_up_at_the_deadline_without_a_last_sleep() {
+        let (_g, s) = setup(
+            Box::new(|m, p, _, _| match (m, p) {
+                ("GET", "/user") => (200, r#"{"login":"me"}"#.into()),
+                ("POST", "/repos/o/r/forks") => (202, "{}".into()),
+                _ => (404, "{}".into()),
+            }),
+            true,
+        );
+        let started = std::time::Instant::now();
+        let err = ensure_fork("o/r").unwrap_err();
+        let took = started.elapsed();
+        assert_eq!(err, "GitHub is still making your copy of the vault. Try again in a minute.");
+        assert!(took >= FORK_WAIT && took < FORK_WAIT * 3, "{took:?}");
+        let polls = requests(&s).iter().filter(|x| x.1 == "/repos/me/r").count();
+        assert!(polls >= 3 && polls <= (FORK_WAIT.as_millis() / FORK_POLL.as_millis()) as usize + 3, "{polls}");
+        assert!(!requests(&s).iter().any(|x| x.1.ends_with("merge-upstream")));
+    }
+
+    #[test]
+    fn errors_a_send_can_hit_are_plain_sentences() {
+        let raw = r#"{"message":"Reference update failed: raw GitHub text"}"#;
+        let (_g, _s) = setup(
+            Box::new(move |m, p, _, _| match (m, p) {
+                ("GET", "/repos/o/r/git/ref/heads/main") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
+                ("GET", "/repos/o/r/git/commits/head1") => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
+                ("POST", "/repos/o/r/git/blobs") => (201, r#"{"sha":"blob1"}"#.into()),
+                ("POST", "/repos/o/r/git/trees") => (201, r#"{"sha":"tree1"}"#.into()),
+                ("POST", "/repos/o/r/git/commits") => (201, r#"{"sha":"commit2"}"#.into()),
+                ("PATCH", "/repos/o/r/git/refs/heads/main") => (409, raw.into()),
+                ("PATCH", "/repos/o/r/git/refs/heads/other") => (422, raw.into()),
+                ("POST", "/repos/o/r/pulls") => (422, r#"{"message":"Validation Failed: raw GitHub text","errors":[{"message":"x"}]}"#.into()),
+                ("POST", "/repos/o/r/git/refs") => (422, raw.into()),
+                _ => (404, "{}".into()),
+            }),
+            true,
+        );
+        let files = [("Skills/a.md".to_string(), b"hi".to_vec())];
+        let changed = "The vault changed while Fridae was saving. Try again.";
+        assert_eq!(commit_files("o/r", "main", &files, &[], "m"), Err(changed.to_string()));
+        assert_eq!(open_pr("o/r", "me:b", "t", "b"), Err("GitHub would not open the pull request. Try again later.".to_string()));
+        assert_eq!(new_branch("o/r", "b", "sha"), Err("A branch for this send already exists. Wait a minute and try again.".to_string()));
+        for e in [commit_files("o/r", "main", &files, &[], "m").unwrap_err(), open_pr("o/r", "me:b", "t", "b").unwrap_err()] {
+            assert!(!e.contains("raw GitHub text"), "{e}");
+        }
     }
 
     #[test]
