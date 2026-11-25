@@ -721,6 +721,36 @@ class ImportTests(unittest.TestCase):
         [d] = rbxskills.pending()
         return d
 
+    def test_pending_shows_each_side_from_its_own_folder(self):
+        """a_meta and b_meta: read from each side's folder, the waiting newcomer's too; scripts is true for a
+        non-empty scripts/ folder or an executable file, false for a skill that is only text."""
+        skill(os.path.join(self.user, "brainstorm-ideas"), "brainstorm-ideas",
+              "Turn rough ideas into designs before building anything.", "Mine.")
+        theirs = os.path.join(self.agents, "brainstorming")
+        os.makedirs(theirs)
+        with open(os.path.join(theirs, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: brainstorming\ndescription: Turn rough ideas into designs before building anything.\n"
+                    "owner: community\nlicence: MIT\nsource: github.com/someone/skills\n---\n\nTheirs.\n")
+        os.makedirs(os.path.join(theirs, "scripts"))
+        with open(os.path.join(theirs, "scripts", "go.sh"), "w") as f:
+            f.write("echo hi\n")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        self.assertTrue(d["b_dir"].startswith(os.path.join(self.user, ".incoming")))
+        self.assertEqual(d["a_meta"], {"description": "Turn rough ideas into designs before building anything.",
+                                       "owner": "user", "licence": "", "source": "", "scripts": False})
+        self.assertEqual(d["b_meta"], {"description": "Turn rough ideas into designs before building anything.",
+                                       "owner": "community", "licence": "MIT", "source": "github.com/someone/skills",
+                                       "scripts": True})
+        self.assertNotIn("a_meta", json.loads(read(os.path.join(self.user, rbxskills.DECISIONS)))[0], "never stored")
+        tool = os.path.join(self.user, "brainstorm-ideas", "tool")
+        with open(tool, "w") as f:
+            f.write("#!/bin/sh\n")
+        os.chmod(tool, 0o755)
+        self.assertTrue(rbxskills.pending()[0]["a_meta"]["scripts"], "an executable file counts")
+        shutil.rmtree(os.path.join(self.user, "brainstorm-ideas"))
+        self.assertIsNone(rbxskills.pending()[0]["a_meta"], "a folder that is gone has no meta")
+
     def test_decide_replace_moves_loser_and_marks_supersedes(self):
         d = self.overlap()
         out = rbxskills.decide(d["id"], "replace")

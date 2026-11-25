@@ -917,10 +917,32 @@ def _save_decisions(decs):
     _write_json(os.path.join(user_dir(), DECISIONS), decs)
 
 
+def has_scripts(d):
+    """Whether a skill folder holds code that would run on the user's Mac: a non-empty scripts/ folder, or any
+    executable file (dot-files left out)."""
+    return any(rel.startswith("scripts/") or os.access(full, os.X_OK) for rel, full in _tree(d))
+
+
+def side_meta(d):
+    """What Setup shows of one side of a skill decision, read from its own folder (the newcomer's too, waiting in
+    .incoming or as "<name> (update)"): {description, owner, licence, source, scripts}. None when the folder is gone."""
+    if not d or not os.path.isfile(os.path.join(d, "SKILL.md")):
+        return None
+    owner, kit = _kit_owner(d)
+    e = _entry(d, "user", owner if kit else "user", kit=kit)
+    return {"description": e["description"], "owner": e["owner"], "licence": e["licence"], "source": e["source"],
+            "scripts": has_scripts(d)}
+
+
 def pending():
     """The open decisions: [{id, kind, a, b, a_dir, b_dir, made, recommendation, state, reason, source}]. a is the
-    skill in use, b the newcomer waiting (in .incoming, or beside a as "<a> (update)")."""
-    return [d for d in _decisions() if d.get("state") == "open"]
+    skill in use, b the newcomer waiting (in .incoming, or beside a as "<a> (update)"). A skill decision also carries
+    a_meta and b_meta (side_meta, read now, never stored)."""
+    out = [d for d in _decisions() if d.get("state") == "open"]
+    for d in out:
+        if d.get("kind", "skill") == "skill":
+            d["a_meta"], d["b_meta"] = side_meta(d.get("a_dir")), side_meta(d.get("b_dir"))
+    return out
 
 
 # ---- import
