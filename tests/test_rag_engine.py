@@ -155,6 +155,31 @@ class EngineCases:
         eng.sync()  # nothing changed: nothing embedded again
         self.assertEqual(eng.sync()["embedded"], 0)
 
+    def test_suggest_ranks_skills_by_dense_cosine_only(self):
+        def sk(name, desc, examples, applies="both"):
+            path = write(os.path.join(self.tmp, "skills", name, "SKILL.md"),
+                         "---\nname: %s\ndescription: %s\nexamples: [%s]\napplies: %s\n---\nBody.\n"
+                         % (name, desc, examples, applies))
+            self.files.append(("skills", name, path + chunks.SKILL_KEY))
+        sk("menu-polish", "Make shop menus feel juicy.", "shop menu looks flat")
+        sk("spawn-tuning", "Tune enemy spawns.", "enemies spawn too fast", "game")
+        sk("tax-notes", "Keep a tidy tax folder.", "file my receipts", "plain")
+        # a keyword ranker that would put tax-notes first: the suggestion ranking never fuses it
+        eng = self.engine(keyword=lambda q, shelves, depth, project: [("skills", "tax-notes", None)])
+        eng.sync()
+        got = eng.suggest("shop menu looks flat", "", 5)
+        self.assertEqual(got[0]["id"], "menu-polish")
+        self.assertEqual(set(got[0]), {"id", "score"})
+        self.assertGreater(got[0]["score"], 0.3, "a cosine, not an RRF score")
+        self.assertLessEqual(got[0]["score"], 1.0001)
+        self.assertEqual([g["score"] for g in got], sorted((g["score"] for g in got), reverse=True))
+        self.assertEqual(len(eng.suggest("shop menu looks flat", "", 1)), 1)
+        self.assertNotIn("Alpha", [g["id"] for g in got], "only the skills shelf")
+        self.assertNotIn("tax-notes", [g["id"] for g in eng.suggest("file my receipts", "game", 5)])
+        self.assertNotIn("spawn-tuning", [g["id"] for g in eng.suggest("enemies spawn too fast", "plain", 5)])
+        self.assertEqual(eng.suggest("enemies spawn too fast", "game", 5)[0]["id"], "spawn-tuning")
+        self.assertEqual(eng.suggest("  ", "", 5), [])
+
     def test_superseded_ranks_below_its_replacement(self):
         # Bravo matches the query best by its words; a newer note says it supersedes Bravo
         new = write(os.path.join(self.tmp, "kit", "Bravo two.md"),

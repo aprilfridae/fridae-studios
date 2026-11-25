@@ -3,13 +3,14 @@
 //! A skill is a folder with a SKILL.md. Claude Code loads its own (its skills folder, its enabled plugins, what it
 //! synced for the account it runs on); Gemini, Cursor, OpenCode and Codex load none of them. So the tool server
 //! serves every skill to every AI (`rbx_skill`, `rbxskills.py`), and each agent's instructions carry a short list of
-//! them, made by the same Python (`rbx skills catalog`), so the list and the tool always agree. For Claude the list
-//! leaves out what Claude Code already lists itself.
+//! them, made by the same Python (`rbx skills catalog`), so the list and the tool always agree: the dozen pinned
+//! skills (rbxskills.CORE) that fit the project's kind; the rest are found by search or suggested on each message
+//! (`suggest`). For Claude the list leaves out what Claude Code already lists itself.
 //!
 //! Making the list costs a Python start (about 0.05 s, 0.5 s through the bundled program), so it is kept and made
 //! again only when a folder skills live in changes, or after `KEEP`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -60,12 +61,20 @@ fn watched(project: Option<&str>) -> Vec<PathBuf> {
     for rel in [".agents/skills", ".codex/skills", ".cursor/skills", ".config/opencode/skills", ".config/opencode/skill", ".gemini/skills"] {
         out.push(home.join(rel));
     }
+    // the user's own library (rbxskills.user_dir) and the folders the app's skills ship in (rbxskills.KIT_ROOTS)
+    out.push(PATHS.home.join("skills"));
+    for rel in KIT_ROOTS {
+        out.push(PATHS.kit.join(rel));
+    }
     if let Some(p) = project {
         out.push(Path::new(p).join(".claude").join("skills"));
         out.push(Path::new(p).join(".agents").join("skills"));
     }
     out
 }
+
+/// The folders under the kit the app's skills ship in, as rbxskills.KIT_ROOTS has them.
+const KIT_ROOTS: [&str; 3] = ["vault/Fridae/Guides/Core", "vault/Fridae/Guides/Roblox subjects", "vault/Fridae/Guides/LihFolk"];
 
 fn fingerprint(paths: &[PathBuf]) -> Vec<Option<SystemTime>> {
     paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
@@ -88,9 +97,12 @@ fn command(args: &[&str]) -> std::process::Command {
     }
 }
 
-fn make(ai: &str, project: Option<&str>, claude_config: Option<&Path>) -> Option<String> {
+fn make(ai: &str, kind: &str, project: Option<&str>, claude_config: Option<&Path>) -> Option<String> {
     let config = claude_config.map(|p| p.display().to_string()).unwrap_or_default();
     let mut args = vec!["catalog", "--ai", ai, "--project", project.unwrap_or("")];
+    if !kind.is_empty() {
+        args.extend_from_slice(&["--kind", kind]);
+    }
     if !config.is_empty() {
         args.extend_from_slice(&["--claude-config", &config]);
     }
@@ -126,24 +138,340 @@ fn run(mut cmd: std::process::Command, limit: Duration) -> Option<String> {
     }
 }
 
-/// The skills part of an agent's standing instructions for this AI ("claude" leaves out Claude Code's own) and
-/// project; `claude_config`: a second Claude account's folder. Empty when there are no skills to list or the list
-/// could not be made (the turn goes on without it; `rbx_skill` still lists them).
-pub fn catalog(ai: &str, project: Option<&str>, claude_config: Option<&Path>) -> String {
+/// The skills part of an agent's standing instructions for this AI ("claude" leaves out Claude Code's own), project
+/// and its kind ("game" or "plain": the pinned skills that apply only to the other are left out; "" for no project);
+/// `claude_config`: a second Claude account's folder. Only the pinned skills are listed, then how to find the others.
+/// Empty when there are no skills or the list could not be made (the turn goes on without it; `rbx_skill` still
+/// lists them).
+pub fn catalog(ai: &str, kind: &str, project: Option<&str>, claude_config: Option<&Path>) -> String {
     // every AI but Claude gets the same list
     let who = if ai == "claude" { "claude" } else { "other" };
-    let key = (who.to_string(), project.unwrap_or("").to_string(), claude_config.map(|p| p.display().to_string()).unwrap_or_default());
+    let kind = if matches!(kind, "game" | "plain") { kind } else { "" };
+    let key = (format!("{who}/{kind}"), project.unwrap_or("").to_string(), claude_config.map(|p| p.display().to_string()).unwrap_or_default());
     let print = fingerprint(&watched(project));
     if let Some(k) = CACHE.lock().unwrap().as_ref().and_then(|c| c.get(&key)) {
         if k.print == print && k.made.elapsed() < KEEP {
             return k.text.clone();
         }
     }
-    let Some(text) = make(who, project, claude_config) else {
+    let Some(text) = make(who, kind, project, claude_config) else {
         return String::new();
     };
     CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, Kept { made: Instant::now(), print, text: text.clone() });
     text
+}
+
+// ------------------------------------------------------- suggestions on each message
+//
+// About a dozen skills are pinned in every agent's instructions (`rbx skills catalog`: rbxskills.CORE and `core:
+// true`); the rest are found by search, and for each message of the user's the app names up to three that fit
+// (`suggest`), on the turn text sent to the AI only. A message needs `GATE_WORDS` content words, so a short follow-up
+// ("looks good, run it") never gets one. The index service ranks the skills' summaries by dense cosine alone
+// (`POST /suggest`, within `SUGGEST_WAIT`); a hit is kept at `SUGGEST_MIN` or more and within `SUGGEST_REL` of the best,
+// thresholds that belong to the embedding model (`thresholds`). Without the service (off, not ready, slow) the
+// keywords answer in Rust over the cached index (`keyword_hits`). Pinned skills, ones loaded in the chat and, for
+// Claude, the ones Claude Code lists itself are dropped before the best three are taken; never padded to three.
+// Thresholds measured on 40 real messages over the real 114-skill library (Ruling 13; Task 9 calibrates them).
+
+/// The most skills one message names.
+const SUGGEST_MAX: usize = 3;
+/// A message with fewer content words (stopwords and words of two letters or less left out) gets no suggestion.
+const GATE_WORDS: usize = 3;
+/// How long the index service may take to answer before the keywords do.
+#[cfg_attr(test, allow(dead_code))]
+const SUGGEST_WAIT: Duration = Duration::from_millis(300);
+/// Light's (BAAI/bge-small-en-v1.5) floor and band: a hit's cosine at least this, and within this of the best one.
+const SUGGEST_MIN: f64 = 0.60;
+const SUGGEST_REL: f64 = 0.04;
+/// Per dense model (a part of the name the service reports): (floor, band). Heavy's is set in Task 9; until then
+/// it uses Light's, as does a model not listed.
+const THRESHOLDS: [(&str, f64, f64); 2] = [("bge-small-en-v1.5", SUGGEST_MIN, SUGGEST_REL), ("mxbai-embed-large", SUGGEST_MIN, SUGGEST_REL)];
+/// The keyword fallback: IDF-weighted share of the message's content words a skill holds, at least this, from at
+/// least `KEYWORD_WORDS` matched words (and within `SUGGEST_REL` of the best).
+const KEYWORD_MIN: f64 = 0.35;
+const KEYWORD_WORDS: usize = 2;
+/// How many hits the service is asked for: room for the ones dropped before the best three are taken.
+const SUGGEST_ASK: usize = 10;
+/// The longest "why" after a suggested skill's name.
+const WHY_MAX: usize = 40;
+/// Words that say nothing about the task, conversational filler included (the bench's list).
+const STOP: &[&str] = &[
+    "a", "an", "the", "and", "or", "but", "if", "then", "so", "to", "of", "in", "on", "at", "for", "with", "from", "by", "as", "is", "are", "was", "were", "be", "been", "it",
+    "its", "this", "that", "these", "those", "i", "me", "my", "you", "your", "we", "our", "they", "them", "he", "she", "do", "does", "did", "done", "can", "could", "should",
+    "would", "will", "just", "get", "got", "make", "made", "use", "using", "want", "need", "like", "looks", "look", "good", "fine", "ok", "okay", "yes", "yeah", "go", "ahead",
+    "run", "rerun", "nice", "perfect", "please", "thanks", "thank", "also", "some", "any", "all", "into", "out", "up", "down", "about", "over", "more", "most", "very", "really",
+    "one", "two", "new", "last", "that's", "it's", "i'm", "don't", "can't", "let", "let's", "how", "what", "when", "where", "why", "which", "who", "there", "here", "now",
+    "still", "again", "ship", "lgtm", "sure", "great", "cool",
+];
+
+/// One skill of the index, as the suggestions read it.
+struct Entry {
+    id: String,
+    description: String,
+    examples: Vec<String>,
+    applies: String,
+    pinned: bool,
+    native: bool,
+    /// Its content words (stemmed): the id's words, the description's and the examples'.
+    words: HashSet<String>,
+}
+
+/// The index (`rbx skills index --json`) read for suggestions, with each word's document frequency.
+struct Index {
+    entries: Vec<Entry>,
+    df: HashMap<String, usize>,
+}
+
+impl Index {
+    fn from_json(v: &Value) -> Index {
+        let text = |e: &Value, k: &str| e[k].as_str().unwrap_or("").to_string();
+        let entries: Vec<Entry> = v
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["id"].as_str().is_some_and(|i| !i.is_empty()))
+            .map(|e| {
+                let examples: Vec<String> = e["examples"].as_array().into_iter().flatten().filter_map(|x| x.as_str()).map(str::to_string).collect();
+                let id = text(e, "id");
+                let all = format!("{} {} {}", id.replace(['-', ':', '_'], " "), text(e, "description"), examples.join(" "));
+                Entry {
+                    words: words(&all).into_iter().collect(),
+                    id,
+                    description: text(e, "description"),
+                    examples,
+                    applies: text(e, "applies"),
+                    pinned: e["pinned"] == true,
+                    native: e["claude_native"] == true,
+                }
+            })
+            .collect();
+        let mut df = HashMap::new();
+        for e in &entries {
+            for w in &e.words {
+                *df.entry(w.clone()).or_insert(0) += 1;
+            }
+        }
+        Index { entries, df }
+    }
+
+    fn idf(&self, w: &str) -> f64 {
+        let n = self.entries.len() as f64;
+        ((n + 1.0) / (*self.df.get(w).unwrap_or(&0) as f64 + 0.5)).ln()
+    }
+}
+
+/// A word's light stem: -ing, -ed, -es or -s off a word longer than four letters.
+fn stem(w: &str) -> String {
+    for suf in ["ing", "ed", "es", "s"] {
+        if w.len() > 4 && w.ends_with(suf) {
+            return w[..w.len() - suf.len()].to_string();
+        }
+    }
+    w.to_string()
+}
+
+/// The content words of a text as written (lower case, in order): no stopword, none of two letters or less.
+fn surface_words(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    lower
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '\''))
+        .map(|w| w.trim_matches('\''))
+        .filter(|w| w.len() > 2 && !STOP.contains(w))
+        .map(|w| w.replace('\'', ""))
+        .filter(|w| w.len() > 2 && !STOP.contains(&w.as_str()))
+        .collect()
+}
+
+/// The content words of a text, stemmed.
+fn words(text: &str) -> Vec<String> {
+    surface_words(text).iter().map(|w| stem(w)).collect()
+}
+
+/// (floor, band) for the dense model the service named.
+fn thresholds(model: &str) -> (f64, f64) {
+    THRESHOLDS.iter().find(|(name, _, _)| model.contains(name)).map(|(_, min, rel)| (*min, *rel)).unwrap_or((SUGGEST_MIN, SUGGEST_REL))
+}
+
+/// Text cut to `WHY_MAX` characters at a word, with "..." when cut.
+fn cut_why(text: &str) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= WHY_MAX {
+        return text;
+    }
+    let head: String = text.chars().take(WHY_MAX - 3).collect();
+    let head = match head.rfind(' ') {
+        Some(i) if i > 0 => head[..i].to_string(),
+        _ => head,
+    };
+    format!("{}...", head.trim_end_matches([',', ';', ':', '.', '-']))
+}
+
+/// Why a skill may fit, in at most `WHY_MAX` characters: the message's words it holds (as the user wrote them), else
+/// its first example, else its description.
+fn why_of<S: AsRef<str>>(examples: &[S], description: &str, skill_words: &HashSet<String>, query: &[String]) -> String {
+    let mut seen = HashSet::new();
+    let held: Vec<&str> = query.iter().filter(|w| skill_words.contains(&stem(w)) && seen.insert(stem(w))).map(String::as_str).collect();
+    if !held.is_empty() {
+        return cut_why(&held.join(" "));
+    }
+    cut_why(examples.first().map(|e| e.as_ref()).unwrap_or(description))
+}
+
+/// The line the AI gets after the user's words: `Skills that may fit: a (why), b (why)`, at most `SUGGEST_MAX`.
+fn suggestion_line(items: &[(String, String)]) -> Option<String> {
+    let parts: Vec<String> = items.iter().take(SUGGEST_MAX).map(|(id, why)| if why.is_empty() { id.clone() } else { format!("{id} ({why})") }).collect();
+    (!parts.is_empty()).then(|| format!("Skills that may fit: {}", parts.join(", ")))
+}
+
+/// Tests: the index service's /suggest, answered by the test (None: no service).
+#[cfg(test)]
+type StandInService = Box<dyn Fn(&str, &str, usize) -> Option<(String, Vec<(String, f64)>)>>;
+#[cfg(test)]
+thread_local! {
+    static SERVICE: std::cell::RefCell<Option<StandInService>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The index service's dense ranking of the skills: (its model, [(id, cosine)]), or None when it does not run, is not
+/// ready or does not answer within `SUGGEST_WAIT`.
+fn service_hits(q: &str, kind: &str) -> Option<(String, Vec<(String, f64)>)> {
+    #[cfg(test)]
+    return SERVICE.with(|s| s.borrow().as_ref().and_then(|f| f(q, kind, SUGGEST_ASK)));
+    #[cfg(not(test))]
+    crate::rag::suggest(q, kind, SUGGEST_ASK, SUGGEST_WAIT)
+}
+
+/// Kept index reads, as the catalog is kept: per (project, Claude config folder).
+#[cfg_attr(test, allow(dead_code))]
+struct KeptIndex {
+    made: Instant,
+    print: Vec<Option<SystemTime>>,
+    index: std::sync::Arc<Index>,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+static INDEX: Mutex<Option<HashMap<(String, String), KeptIndex>>> = Mutex::new(None);
+
+/// The index for suggestions: kept while none of the watched folders changes and for at most `KEEP` (tests read the
+/// stand-in CLI every time).
+fn index_for(project: Option<&str>, claude_config: Option<&Path>) -> Option<std::sync::Arc<Index>> {
+    let config = claude_config.map(|p| p.display().to_string()).unwrap_or_default();
+    let mut args = vec!["index", "--json", "--project", project.unwrap_or("")];
+    if !config.is_empty() {
+        args.extend_from_slice(&["--claude-config", &config]);
+    }
+    #[cfg(test)]
+    {
+        let v: Value = serde_json::from_str(cli(&args)?.trim()).ok()?;
+        Some(std::sync::Arc::new(Index::from_json(&v)))
+    }
+    #[cfg(not(test))]
+    {
+        let key = (project.unwrap_or("").to_string(), config.clone());
+        let print = fingerprint(&watched(project));
+        if let Some(k) = INDEX.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|c| c.get(&key)) {
+            if k.print == print && k.made.elapsed() < KEEP {
+                return Some(k.index.clone());
+            }
+        }
+        let v: Value = serde_json::from_str(run(command(&args), LIMIT)?.trim()).ok()?;
+        let index = std::sync::Arc::new(Index::from_json(&v));
+        INDEX.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(key, KeptIndex { made: Instant::now(), print, index: index.clone() });
+        Some(index)
+    }
+}
+
+/// The keyword fallback: [(index of the entry, score)] best first, over the skills `keep` lets through.
+fn keyword_hits(index: &Index, query: &HashSet<String>, keep: &dyn Fn(&Entry) -> bool) -> Vec<(usize, f64)> {
+    let total: f64 = query.iter().map(|w| index.idf(w)).sum();
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let mut out: Vec<(usize, f64)> = index
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| keep(e))
+        .filter_map(|(i, e)| {
+            let held: Vec<&String> = query.iter().filter(|w| e.words.contains(*w)).collect();
+            (held.len() >= KEYWORD_WORDS).then(|| (i, held.iter().map(|w| index.idf(w)).sum::<f64>() / total))
+        })
+        .collect();
+    out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    out
+}
+
+/// The hits at `min` or more and within `rel` of the best, at most `SUGGEST_MAX` (best first already).
+fn within(hits: Vec<(usize, f64)>, min: f64, rel: f64) -> Vec<(usize, f64)> {
+    let Some(top) = hits.first().map(|h| h.1) else { return hits };
+    hits.into_iter().filter(|(_, s)| *s >= min && *s >= top - rel - 1e-9).take(SUGGEST_MAX).collect()
+}
+
+/// The suggestion line for one message of the user's (`text`), or None: up to three skills that fit it, for a
+/// project of `kind` ("game", "plain"; anything else: either), for the AI `ai` ("claude" leaves out what Claude Code
+/// lists itself), leaving out the skills in `already` (loaded in this chat). The user's own library, no project.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn suggest(text: &str, kind: &str, ai: &str, already: &[String]) -> Option<String> {
+    suggest_for(text, kind, ai, already, None, None)
+}
+
+/// `suggest` for a chat's project and (Claude on a second account) Claude config folder.
+pub fn suggest_for(text: &str, kind: &str, ai: &str, already: &[String], project: Option<&str>, claude_config: Option<&Path>) -> Option<String> {
+    let surface = surface_words(text);
+    let query: HashSet<String> = surface.iter().map(|w| stem(w)).collect();
+    if query.len() < GATE_WORDS {
+        return None;
+    }
+    let index = index_for(project, claude_config)?;
+    let kind = if matches!(kind, "game" | "plain") { kind } else { "" };
+    let loaded: HashSet<String> = already.iter().map(|s| s.trim().to_lowercase()).collect();
+    let keep = |e: &Entry| {
+        (kind.is_empty() || e.applies.is_empty() || e.applies == "both" || e.applies == kind) && !e.pinned && !loaded.contains(&e.id.to_lowercase()) && !(ai == "claude" && e.native)
+    };
+    let picked = match service_hits(text, kind) {
+        Some((model, hits)) => {
+            let (min, rel) = thresholds(&model);
+            let by_id: HashMap<String, usize> = index.entries.iter().enumerate().map(|(i, e)| (e.id.to_lowercase(), i)).collect();
+            let mut found: Vec<(usize, f64)> = hits.iter().filter_map(|(id, sc)| by_id.get(&id.to_lowercase()).map(|i| (*i, *sc))).filter(|(i, _)| keep(&index.entries[*i])).collect();
+            found.sort_by(|a, b| b.1.total_cmp(&a.1));
+            found.dedup_by_key(|h| h.0);
+            within(found, min, rel)
+        }
+        None => within(keyword_hits(&index, &query, &keep), KEYWORD_MIN, SUGGEST_REL),
+    };
+    let items: Vec<(String, String)> = picked
+        .iter()
+        .map(|(i, _)| {
+            let e = &index.entries[*i];
+            (e.id.clone(), why_of(&e.examples, &e.description, &e.words, &surface))
+        })
+        .collect();
+    suggestion_line(&items)
+}
+
+/// The skills an `rbx_skill load` (or its old name `rbx_guide`) call loads, lower case: its name and names (topic
+/// and topics). Empty for any other tool or action. The tool's name may carry a server's prefix.
+pub fn skill_loads(tool: &str, input: &Value) -> Vec<String> {
+    let short = tool.rsplit("__").next().unwrap_or(tool);
+    let (one, many) = if short.ends_with("rbx_skill") {
+        let has_name = !input["name"].is_null() || !input["names"].is_null();
+        let action = input["action"].as_str().map(|a| a.trim().to_lowercase()).unwrap_or_else(|| if has_name { "load".into() } else { String::new() });
+        if action != "load" {
+            return Vec::new();
+        }
+        ("name", "names")
+    } else if short.ends_with("rbx_guide") {
+        ("topic", "topics")
+    } else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    let names = input[one].as_str().into_iter().chain(input[many].as_array().into_iter().flatten().filter_map(|v| v.as_str()));
+    for n in names.map(|n| n.trim().trim_start_matches('/').to_lowercase()).filter(|n| !n.is_empty()) {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
 }
 
 // ------------------------------------------------------- decisions, recommendations and /api/skills
@@ -173,6 +501,13 @@ type StandInCli = Box<dyn Fn(&[String]) -> Option<String>>;
 #[cfg(test)]
 thread_local! {
     static CLI: std::cell::RefCell<Option<StandInCli>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Tests of other modules: `rbx skills index --json` answers with `index` (and every other call fails).
+#[cfg(test)]
+pub fn stand_in_index(index: Value) {
+    let text = index.to_string();
+    CLI.with(|c| *c.borrow_mut() = Some(Box::new(move |args: &[String]| (args[0] == "index").then(|| text.clone()))));
 }
 
 /// What `rbx skills <args>` printed (None when it failed or took longer than `CLI_LIMIT`).
@@ -730,6 +1065,114 @@ mod tests {
         crate::compact::STAND_IN.with(|s| *s.borrow_mut() = Some((crate::compact::writes(text), crate::compact::LIMITS)));
         let out = crate::compact::skill_advice("the prompt", &|| false);
         assert_eq!(out.summary.map(|s| s.text), Some(long));
+    }
+
+    // ---- suggestions on each message
+
+    fn entry(id: &str, desc: &str, examples: &[&str], applies: &str, pinned: bool, native: bool) -> Value {
+        json!({"id": id, "name": id, "description": desc, "examples": examples, "applies": applies, "core": false,
+               "owner": "user", "origin": "user", "dir": format!("/lib/{id}"), "claude_native": native, "pinned": pinned})
+    }
+
+    /// The index the suggestion tests read: `rbx skills index --json` answered from a fixture.
+    fn suggest_index() {
+        let index = json!([
+            entry("menu-polish", "Make menus feel good.", &["make a shop menu feel juicy", "polish the settings screen"], "both", false, false),
+            entry("tax-notes", "Keep a tidy tax folder.", &["file my receipts"], "plain", false, false),
+            entry("spawn-tuning", "Tune enemy spawns.", &["enemies spawn too fast"], "game", false, false),
+            entry("ui-design", "Design shop menus and HUD screens.", &["shop menu layout looks flat"], "game", true, false),
+            entry("menu-sounds", "Add click sounds to shop menus.", &["shop menu clicks"], "both", false, true),
+            entry("brainstorming", "Explore ideas before building.", &[], "both", true, false),
+        ])
+        .to_string();
+        calls(move |args| (args[0] == "index").then(|| index.clone()));
+    }
+
+    /// The index service's /suggest, answered by the test (None: not running); the queries it was asked are kept.
+    fn service(answer: Option<(&'static str, Vec<(&'static str, f64)>)>) -> Rc<RefCell<Vec<String>>> {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let log = asked.clone();
+        SERVICE.with(|s| {
+            *s.borrow_mut() = Some(Box::new(move |q: &str, _kind: &str, _k: usize| {
+                log.borrow_mut().push(q.to_string());
+                answer.clone().map(|(m, hits)| (m.to_string(), hits.into_iter().map(|(id, sc)| (id.to_string(), sc)).collect()))
+            }))
+        });
+        asked
+    }
+
+    #[test]
+    fn suggest_falls_back_to_keywords_quickly() {
+        suggest_index();
+        let asked = service(None);
+        let began = Instant::now();
+        let line = suggest("my shop menu looks flat", "game", "cursor", &[]);
+        assert!(began.elapsed() < Duration::from_millis(50), "took {:?}", began.elapsed());
+        let line = line.expect("a suggestion");
+        assert!(line.contains("menu-polish (shop menu)"), "{line}");
+        assert!(!line.contains("ui-design"), "pinned: already in the instructions");
+        assert_eq!(asked.borrow().len(), 1, "the service was asked first");
+        // no service at all (no endpoint): the keywords answer the same
+        SERVICE.with(|s| *s.borrow_mut() = None);
+        assert!(suggest("my shop menu looks flat", "game", "cursor", &[]).unwrap().contains("menu-polish"));
+        // one matched word is not enough, and words of the other kind's skills never count
+        assert_eq!(suggest("my shop is flat and dull today", "game", "cursor", &[]), None);
+        assert_eq!(suggest("please file my receipts somewhere", "game", "cursor", &[]), None);
+        assert!(suggest("please file my receipts somewhere", "plain", "cursor", &[]).unwrap().contains("tax-notes"));
+    }
+
+    #[test]
+    fn suggest_drops_pinned_and_loaded() {
+        suggest_index();
+        let hits = vec![("ui-design", 0.72), ("menu-polish", 0.70), ("menu-sounds", 0.69), ("spawn-tuning", 0.68), ("tax-notes", 0.67), ("unknown", 0.9)];
+        service(Some(("light4:BAAI/bge-small-en-v1.5/256", hits.clone())));
+        let q = "the shop menu layout looks flat";
+        // Claude, menu-polish loaded: pinned, loaded, Claude's own, the other kind's and unknown ones go before the top 3
+        let line = suggest(q, "game", "claude", &["Menu-Polish".to_string()]).expect("one left");
+        assert_eq!(line, "Skills that may fit: spawn-tuning (enemies spawn too fast)");
+        // another AI: the three best that are left, all within SUGGEST_REL of the best
+        let line = suggest(q, "game", "cursor", &[]).unwrap();
+        assert_eq!(line, "Skills that may fit: menu-polish (shop menu), menu-sounds (shop menu), spawn-tuning (enemies spawn too fast)");
+        // below SUGGEST_MIN, or further than SUGGEST_REL from the best: left out
+        service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![("menu-polish", 0.59)])));
+        assert_eq!(suggest(q, "game", "cursor", &[]), None);
+        service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![("menu-polish", 0.75), ("spawn-tuning", 0.70)])));
+        assert_eq!(suggest(q, "game", "cursor", &[]).unwrap(), "Skills that may fit: menu-polish (shop menu)");
+        // the service answered with nothing good enough: no keyword guess on top of it
+        service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![])));
+        assert_eq!(suggest(q, "game", "cursor", &[]), None);
+        assert_eq!(thresholds("light4:BAAI/bge-small-en-v1.5/256"), (SUGGEST_MIN, SUGGEST_REL));
+        assert_eq!(thresholds("heavy:ollama/mxbai-embed-large+Qdrant/bm25"), (0.60, 0.04), "Light's until Task 9 sets Heavy's");
+        assert_eq!((SUGGEST_MIN, SUGGEST_REL), (0.60, 0.04));
+    }
+
+    #[test]
+    fn short_followups_get_no_suggestion() {
+        suggest_index();
+        let asked = service(Some(("light4:BAAI/bge-small-en-v1.5/256", vec![("menu-polish", 0.9)])));
+        for q in ["looks good, run it", "fix that typo", "yes", "ok do it"] {
+            assert_eq!(suggest(q, "game", "cursor", &[]), None, "{q}");
+        }
+        assert!(asked.borrow().is_empty(), "the service is not asked for a short follow-up");
+    }
+
+    #[test]
+    fn suggestion_line_format() {
+        let items: Vec<(String, String)> = [("menu-polish", "shop menu"), ("a", "b"), ("c", ""), ("d", "e")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        assert_eq!(suggestion_line(&items[..1]).unwrap(), "Skills that may fit: menu-polish (shop menu)");
+        assert_eq!(suggestion_line(&items).unwrap(), "Skills that may fit: menu-polish (shop menu), a (b), c", "at most 3");
+        assert_eq!(suggestion_line(&[]), None);
+        let long = why_of(&["a very long example that says a great many things about menus and shops"], "x", &HashSet::new(), &[]);
+        assert!(long.chars().count() <= WHY_MAX, "{long}");
+    }
+
+    #[test]
+    fn skill_loads_are_read_from_the_tool_calls() {
+        assert_eq!(skill_loads("mcp__rbxkit__rbx_skill", &json!({"action": "load", "name": "Menu-Polish", "names": ["tax-notes"]})), vec!["menu-polish", "tax-notes"]);
+        assert_eq!(skill_loads("rbxkit_rbx_skill", &json!({"name": "x"})), vec!["x"], "load is the default with a name");
+        assert!(skill_loads("rbx_skill", &json!({"action": "search", "query": "x"})).is_empty());
+        assert_eq!(skill_loads("rbx_guide", &json!({"topic": "workflow", "topics": ["critic"]})), vec!["workflow", "critic"]);
+        assert!(skill_loads("Read", &json!({"name": "x"})).is_empty());
     }
 
     #[test]

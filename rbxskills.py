@@ -399,16 +399,34 @@ def short(desc, limit=DESC_MAX):
     return cut + "..."
 
 
-def catalog(ai="", project=None, config=None):
-    """The skills part of an agent's standing instructions: how to use rbx_skill and one line per skill. For Claude,
-    only the skills Claude Code does not load by itself (native_ids; config: its config folder for a second account).
-    Empty when there is nothing to list. Imports other tools' skills first (at most once a minute)."""
+# The skills every agent's instructions list (by id, ignoring case), besides any with `core: true` in its front matter:
+# a name missing from the library is skipped, and each is listed only where its `applies` fits. The rest are found by
+# search (rbx_skill search) or suggested on the user's messages (the app's skills::suggest).
+CORE = ("brainstorming", "systematic-debugging", "test-driven-development", "verification-before-completion",
+        "writing-plans", "ui-ux-pro-max",                                             # applies both
+        "workflow", "playtest", "ui-design", "game-bible", "game-design", "critic")   # applies game
+OTHER_SKILLS = ("Other skills: search with rbx_skill (action search) when a task needs know-how you do not have; the "
+                "app also suggests matching skills on your messages.")
+CLAUDE_PREFERS = "When a Fridae skill (rbx_skill) and a Claude Code skill cover the same thing, use the Fridae one."
+
+
+def pinned(s):
+    """Whether a library skill is in every agent's instructions: named in CORE, or `core: true`."""
+    return bool(s.get("core")) or s["id"].casefold() in CORE
+
+
+def catalog(ai="", project=None, config=None, kind=""):
+    """The skills part of an agent's standing instructions: how to use rbx_skill, one line per pinned skill (pinned)
+    whose applies fits kind ("game", "plain"; anything else: every one), then how to find the others. For Claude it
+    leaves out the unchanged imports of skills Claude Code lists itself (native_ids; config: its config folder for a
+    second account). Empty when the library is. Imports other tools' skills first (at most once a minute)."""
     maybe_import()
     claude = ai == "claude"
-    native = native_ids(project, config) if claude else set()
-    items = [s for s in skills(project) if s["id"].casefold() not in native]
-    if not items:
+    every = skills(project)
+    if not every:
         return ""
+    native = native_ids(project, config) if claude else set()
+    items = [s for s in every if pinned(s) and _fits(s, kind) and s["id"].casefold() not in native]
     lines = ["", "", "## Skills", ""]
     if claude:
         lines.append("Besides the skills your Skill tool lists, these skills are installed. They are not in your Skill "
@@ -423,7 +441,12 @@ def catalog(ai="", project=None, config=None):
                      "where it names a tool you do not have (TodoWrite, Task, AskUserQuestion and the like), use your "
                      "nearest equivalent or skip that step.")
     lines.append("")
-    lines += ["- %s: %s" % (s["id"], short(s["description"]) or "(no description)") for s in items]
+    if items:
+        lines += ["- %s: %s" % (s["id"], short(s["description"]) or "(no description)") for s in items]
+        lines.append("")
+    lines.append(OTHER_SKILLS)
+    if claude:
+        lines.append(CLAUDE_PREFERS)
     return "\n".join(lines) + "\n"
 
 
@@ -1251,11 +1274,13 @@ def native_ids(project=None, config=None):
 
 
 def index(project=None, config=None):
-    """Every library skill's fields (INDEX_FIELDS) plus claude_native: whether Claude Code lists it itself. Imports
+    """Every library skill's fields (INDEX_FIELDS) plus claude_native (whether Claude Code lists it itself) and pinned
+    (in every agent's instructions: pinned()). Imports
     other tools' skills first (at most once a minute)."""
     maybe_import()
     native = native_ids(project, config)
-    return [dict({k: s[k] for k in INDEX_FIELDS}, claude_native=s["id"].casefold() in native) for s in library(project)]
+    return [dict({k: s[k] for k in INDEX_FIELDS}, claude_native=s["id"].casefold() in native, pinned=pinned(s))
+            for s in library(project)]
 
 
 # ------------------------------------------------------------------ rbx skills (the app asks for the catalog)
@@ -1269,6 +1294,9 @@ def register(sub):
     p.add_argument("--ai", default="", help="catalog: the AI it is for (claude leaves out what Claude Code loads itself)")
     p.add_argument("--project", default="", help="the project folder, for its own skills")
     p.add_argument("--claude-config", default="", help="catalog, index: the Claude config folder of a second account")
+    p.add_argument("--kind", default="", choices=["", "game", "plain"],
+                   help="catalog: the project's kind (game or plain); the pinned skills that apply only to the other "
+                        "are left out")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
     p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
@@ -1296,7 +1324,7 @@ def cmd_skills(a):
     project = a.project or None
     try:
         if a.action == "catalog":
-            out = catalog(a.ai, project, a.claude_config or None)
+            out = catalog(a.ai, project, a.claude_config or None, a.kind)
         elif a.action == "list":
             out = listing(project)
         elif a.action == "load":

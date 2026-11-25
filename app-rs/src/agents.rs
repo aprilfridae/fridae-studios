@@ -812,6 +812,10 @@ struct State {
     log: Vec<Value>,
     session: Option<String>,
     tools: HashMap<String, String>,
+    /// The skills loaded in this chat (`rbx_skill load`, `rbx_guide`), lower case: never suggested again here
+    /// (`skills::suggest`). Claude's calls wait in `skill_calls` (by tool call id) until their result is no error.
+    loaded_skills: Vec<String>,
+    skill_calls: HashMap<String, Vec<String>>,
     /// The game project folder this chat belongs to.
     project: Option<String>,
     /// "worker" or "critic" for an agent another agent started, with the id of that request.
@@ -1462,6 +1466,22 @@ fn with_handover(st: &State, text: &str) -> String {
     match &st.handover {
         Some(chat) => chat.clone() + text,
         None => text.to_string(),
+    }
+}
+
+/// Skills loaded in this chat (`State::loaded_skills`), each once.
+fn note_loaded(st: &mut State, names: Vec<String>) {
+    for n in names {
+        if !st.loaded_skills.contains(&n) {
+            st.loaded_skills.push(n);
+        }
+    }
+}
+
+/// Claude's tool call `id` ended: a skill load it made counts unless it ended in an error.
+fn loaded_if_ok(st: &mut State, id: &str, error: bool) {
+    if let Some(names) = st.skill_calls.remove(id).filter(|_| !error) {
+        note_loaded(st, names);
     }
 }
 
@@ -3427,6 +3447,18 @@ impl Agent {
         if !notes.is_empty() {
             text += &format!("\n\n[{}]", notes.join("\n"));
         }
+        // up to three skills that may fit the user's words (`skills::suggest`), after them on the text the AI gets:
+        // never on the stored message (put above), and not on the app's own carry-on or wake messages. (A message sent
+        // again after a rollover has it in its text already.) For Claude on a second account, what Claude Code lists
+        // itself is read for the user's own account: the turn's account is settled further down
+        if !resend && !auto && !ask.wake {
+            let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
+            let sort = project.as_deref().map(|p| if projects::is_game(p) { "game" } else { "plain" }).unwrap_or("");
+            let loaded = self.st.lock().unwrap().loaded_skills.clone();
+            if let Some(line) = crate::skills::suggest_for(&raw, sort, &self.ai(), &loaded, project.as_deref(), None) {
+                text += &format!("\n\n[{line}]");
+            }
+        }
         // kept for the turn: should the account's usage limit end it, this goes out again on the other account
         if !resend {
             self.st.lock().unwrap().sent = Some((raw, text.clone(), ask.clone()));
@@ -3546,7 +3578,8 @@ impl Agent {
         prompt += &crate::swarm::member_prompt(&self.id);
         // the user's skills, for every AI (`skills`): the list and how to load one with rbx_skill. For Claude only
         // what Claude Code does not list itself (on a second account, by that account's own synced skills)
-        prompt += &crate::skills::catalog(&kind, project.as_deref(), second_dir.as_deref().filter(|_| kind == "claude"));
+        let sort = project.as_deref().map(|p| if projects::is_game(p) { "game" } else { "plain" }).unwrap_or("");
+        prompt += &crate::skills::catalog(&kind, sort, project.as_deref(), second_dir.as_deref().filter(|_| kind == "claude"));
         // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
         prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);
@@ -4227,7 +4260,13 @@ impl Agent {
                                     let full = b["name"].as_str().unwrap_or("");
                                     let short = full.rsplit("__").next().unwrap_or("").to_string();
                                     if let Some(id) = b["id"].as_str() {
-                                        self.st.lock().unwrap().tools.insert(id.to_string(), short.clone());
+                                        let mut st = self.st.lock().unwrap();
+                                        st.tools.insert(id.to_string(), short.clone());
+                                        // a skill load counts once its result is no error (below)
+                                        let loads = crate::skills::skill_loads(full, &b["input"]);
+                                        if !loads.is_empty() {
+                                            st.skill_calls.insert(id.to_string(), loads);
+                                        }
                                     }
                                     if progress_call(full, &b["input"]) {
                                         self.st.lock().unwrap().turn_progress = true;
@@ -4240,6 +4279,11 @@ impl Agent {
                     }
                     "user" => {
                         for b in e["message"]["content"].as_array().into_iter().flatten() {
+                            if b["type"] == "tool_result" {
+                                if let Some(id) = b["tool_use_id"].as_str() {
+                                    loaded_if_ok(&mut self.st.lock().unwrap(), id, b["is_error"] == true);
+                                }
+                            }
                             let Some(parts) = b["content"].as_array().filter(|_| b["type"] == "tool_result") else { continue };
                             let tool = b["tool_use_id"].as_str().and_then(|id| self.st.lock().unwrap().tools.get(id).cloned()).unwrap_or_default();
                             // only pictures from our own tools and Studio screenshots are shown
@@ -4406,6 +4450,11 @@ impl Agent {
             Out::ToolArgs(name, input) => {
                 if progress_call(&name, &input) {
                     self.st.lock().unwrap().turn_progress = true;
+                }
+                // these AIs do not say how a call ended: a skill load counts when it is made
+                let loads = crate::skills::skill_loads(&name, &input);
+                if !loads.is_empty() {
+                    note_loaded(&mut self.st.lock().unwrap(), loads);
                 }
                 let short = name.rsplit("__").next().unwrap_or(&name).to_string();
                 self.show_tool(&short, studio_tool(&name))
@@ -7478,6 +7527,38 @@ mod tests {
         assert!(result.exists());
         assert!(a.st.lock().unwrap().result_written);
         let _ = fs::remove_file(&result);
+    }
+
+    #[test]
+    fn a_suggestion_goes_on_the_turn_text_never_on_the_stored_message() {
+        let mut index = vec![json!({"id": "menu-polish", "description": "Make menus feel good.", "examples": ["make a shop menu feel juicy"],
+                                    "applies": "both", "pinned": false, "claude_native": false})];
+        for (id, desc) in [("tax-notes", "Keep a tidy tax folder."), ("spawn-tuning", "Tune enemy spawns."), ("sound-design", "Pick sounds."), ("trailers", "Cut a trailer.")] {
+            index.push(json!({"id": id, "description": desc, "examples": [], "applies": "both", "pinned": false, "claude_native": false}));
+        }
+        crate::skills::stand_in_index(json!(index));
+        let a = Agent::detached_for_test("c-suggest", None);
+        a.send("my shop menu looks flat", &Ask::default());
+        {
+            let st = a.st.lock().unwrap();
+            let went = &st.went_for_test[0];
+            assert!(went.starts_with("my shop menu looks flat") && went.ends_with("\n\n[Skills that may fit: menu-polish (shop menu)]"), "{went}");
+            let user = st.log.iter().find(|e| is_user(e)).expect("the user's message");
+            assert_eq!(user["text"], "my shop menu looks flat", "the stored message is the user's words alone");
+        }
+        // Claude's load of it ended in an error: still suggested; once it loads, never again in this chat
+        let mut st = a.st.lock().unwrap();
+        st.skill_calls.insert("t1".into(), crate::skills::skill_loads("mcp__rbxkit__rbx_skill", &json!({"action": "load", "name": "menu-polish"})));
+        loaded_if_ok(&mut st, "t1", true);
+        assert!(st.loaded_skills.is_empty() && st.skill_calls.is_empty());
+        st.skill_calls.insert("t2".into(), vec!["menu-polish".into()]);
+        loaded_if_ok(&mut st, "t2", false);
+        assert_eq!(st.loaded_skills, ["menu-polish"]);
+        drop(st);
+        a.send("the shop menu still looks flat", &Ask::default());
+        let st = a.st.lock().unwrap();
+        assert_eq!(st.went_for_test.len(), 2);
+        assert!(!st.went_for_test[1].contains("Skills that may fit"), "{}", st.went_for_test[1]);
     }
 
     #[test]

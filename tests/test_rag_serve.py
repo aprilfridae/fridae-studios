@@ -206,6 +206,33 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(" 401 ", out.split("\r\n")[0])
         self.assertIn("Connection: close", out)
 
+    def test_suggest_answers_cosines_from_the_skills_shelf(self):
+        from rbxrag import chunks
+        kit = Kit(self)
+        menu = write(os.path.join(kit.tmp, "skills", "menu-polish", "SKILL.md"),
+                     "---\nname: menu-polish\ndescription: Make shop menus feel juicy.\nexamples: [shop menu looks flat]\n"
+                     "---\nBody.\n")
+        tax = write(os.path.join(kit.tmp, "skills", "tax-notes", "SKILL.md"),
+                    "---\nname: tax-notes\ndescription: Keep a tidy tax folder.\napplies: plain\n---\nBody.\n")
+        kit.files += [("skills", "menu-polish", menu + chunks.SKILL_KEY), ("skills", "tax-notes", tax + chunks.SKILL_KEY)]
+        kit.gate = threading.Event()
+        svc = serve.Service("light", kit.engine)
+        base = self.start(svc)
+        svc.start()
+        self.assertEqual(call(base, "/suggest", {"q": "shop menu looks flat"}, token=None)[0], 401)
+        self.assertEqual(call(base, "/suggest", {"q": "shop menu looks flat", "kind": "game", "k": 3})[0], 503)
+        kit.gate.set()
+        self.assertTrue(wait_for(lambda: svc.ready))
+        code, body = call(base, "/suggest", {"q": "shop menu looks flat", "kind": "game", "k": 3})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["model"], "fake-64", "the model, so the app picks its thresholds")
+        self.assertEqual(body["hits"][0]["id"], "menu-polish")
+        self.assertGreater(body["hits"][0]["score"], 0.3)
+        self.assertNotIn("tax-notes", [h["id"] for h in body["hits"]], "applies plain: not in a game")
+        self.assertEqual(call(base, "/suggest", {"q": " "})[0], 400)
+        self.assertEqual(call(base, "/suggest", {"q": "x", "k": "many"})[0], 400)
+        self.assertEqual(call(base, "/suggest", {"q": "x", "kind": "nope"})[0], 400)
+
     def test_quick_sync_never_rebuilds(self):
         kit = Kit(self)
         clock = [100.0]

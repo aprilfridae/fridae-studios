@@ -222,6 +222,31 @@ def _rrf(rankings, k0):
     return [first[key] for key in order], [score[key] for key in order]
 
 
+_APPLIES = {}  # SKILL.md path -> ((mtime_ns, size), applies)
+
+
+def _applies(path):
+    """A skill's `applies` (game, plain or both) from its SKILL.md's front matter, read again only when it changed;
+    "both" when it cannot be read."""
+    import rbxskills
+    path = chunks.real_path(path)
+    try:
+        st = os.stat(path)
+    except OSError:
+        return "both"
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _APPLIES.get(path)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    try:
+        fm, _ = rbxskills.front(rbxskills._read(path, 8000))
+    except (OSError, ValueError):
+        fm = {}
+    val = fm.get("applies") if fm.get("applies") in rbxskills.APPLIES else "both"
+    _APPLIES[path] = (stamp, val)
+    return val
+
+
 class NeedsRebuild(Exception):
     """A quick sync found the index unusable (it never rebuilds itself)."""
 
@@ -596,6 +621,27 @@ class Engine:
         found.sort(key=lambda f: (-f[0], -f[1]))
         linked = [dict(pay, score=float(sim), linked_from=frm) for sim, _, pay, frm in found[:rbxvault.LINKED_MAX]]
         return rbxvault.place_linked(out, linked, k, cut, lambda h: (h["shelf"], h["title"])) if linked else out
+
+    def suggest(self, q, kind, k):
+        """[{id, score}] the k skills nearest q, best first, by dense cosine alone: the query's vector (with the
+        model's query prefix) against each skill's summary on the skills shelf. No keyword ranking, no RRF, no
+        reranker, so the score is a cosine a threshold can be set on (the app's skills::suggest). kind: "game" or
+        "plain" leaves out the skills whose front matter applies only to the other."""
+        if not q.strip() or k < 1:
+            return []
+        dv = [float(x) for x in self.emb.dense_query(q)]
+        flt = self._filter(["skills"], None)
+        # the nearest few by the store's dense ranking, then each one's cosine (both stores answer best_parts)
+        near, _, _ = self.store.rankings(dv, ([], []), flt, (), limit=max(k * 3, 20))
+        titles = list(dict.fromkeys(p["title"] for p in near if p.get("shelf") == "skills"))
+        parts = self.store.best_parts(dv, flt, [("skills", t, None) for t in titles])
+        out = []
+        for (_, title, _), (sim, pay) in parts.items():
+            if kind in ("game", "plain") and _applies(pay.get("path") or "") not in ("both", kind):
+                continue
+            out.append({"id": title, "score": round(float(sim), 4)})
+        out.sort(key=lambda h: -h["score"])
+        return out[:k]
 
     def query(self, q, shelves, k, project, filters=None):
         """The k best sections for q on the given shelves (a game's chunks only for its own project), as the plan

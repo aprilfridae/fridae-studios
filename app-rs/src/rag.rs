@@ -876,6 +876,21 @@ fn call(url: &str, token: &str, method: &str, path: &str, body: Option<&Value>, 
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
 }
 
+/// The skills nearest a message by dense cosine alone (the service's `POST /suggest {q, kind, k}`): (the dense model's
+/// name, [(skill id, cosine)]) best first, or None when no service is ready or it does not answer well within `limit`
+/// (`skills::suggest` then scores keywords itself).
+#[cfg_attr(test, allow(dead_code))]
+pub fn suggest(q: &str, kind: &str, k: usize, limit: Duration) -> Option<(String, Vec<(String, f64)>)> {
+    let (url, token) = lock(&STATE).running.as_ref().filter(|r| r.ready).map(|r| (r.url.clone(), r.token.clone()))?;
+    match call(&url, &token, "POST", "/suggest", Some(&json!({"q": q, "kind": kind, "k": k})), limit) {
+        Ok((200, v)) => {
+            let hits = v["hits"].as_array()?.iter().filter_map(|h| Some((h["id"].as_str()?.to_string(), h["score"].as_f64()?))).collect();
+            Some((v["model"].as_str().unwrap_or("").to_string(), hits))
+        }
+        _ => None,
+    }
+}
+
 /// The service's own `/status`, or Null when it does not answer. A ready answer makes it ready for the tools.
 fn service_status(url: &str, token: &str) -> Value {
     match call(url, token, "GET", "/status", None, Duration::from_secs(2)) {

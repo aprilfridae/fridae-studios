@@ -4,6 +4,9 @@
   GET  /status   {"mode", "ready", "building", "progress": {"step", "fraction"}, "chunks", "error"}
   POST /query    {"q", "shelves", "k", "project", "filters"} -> {"hits": [...]}; 503 until the first full sync has
                  finished. filters (optional): {"game", "kind", "source", "since"} (rbxvault.normalize_filters)
+  POST /suggest  {"q", "kind", "k"} -> {"model", "hits": [{"id", "score"}]}: the skills nearest q by dense cosine alone
+                 (Engine.suggest), for the app's per-message suggestions; 503 until ready. No re-sync first: it must
+                 answer within the app's 300 ms (a /query keeps the index in step)
   POST /rebuild  {"started": bool}
 
 On start it binds, prints {"listening": port}, then loads the models and builds or syncs the index in a background
@@ -134,6 +137,13 @@ class Service:
             self._refresh(project)
         return eng.query(q, shelves, k, project, filters) if filters else eng.query(q, shelves, k, project)
 
+    def suggest(self, q, kind, k):
+        """(the dense model's name, [{id, score}]): Engine.suggest over the index as it is."""
+        if not self.ready or self.engine is None:
+            raise NotReady()
+        eng = self.engine
+        return str(getattr(eng.emb, "model", "") or ""), eng.suggest(q, kind, k)
+
 
 def _project_arg(p):
     p = str(p or "").strip()
@@ -199,6 +209,8 @@ def make_handler(service, token):
                 return self._send(400, {"error": str(e)}, close=True)
             if path == "/rebuild":
                 return self._send(200, {"started": service.start(full=True)})
+            if path == "/suggest":
+                return self._suggest(data)
             if path != "/query":
                 return self._send(404, {"error": "not found"})
             q = str(data.get("q") or "").strip()
@@ -226,6 +238,26 @@ def make_handler(service, token):
                 traceback.print_exc(file=sys.stderr)
                 return self._send(500, {"error": str(e) or type(e).__name__})
             self._send(200, {"hits": hits})
+
+        def _suggest(self, data):
+            q = str(data.get("q") or "").strip()
+            kind = str(data.get("kind") or "").strip()
+            try:
+                k = max(1, min(int(data.get("k") or 3), 20))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "k must be a whole number"}, close=True)
+            if not q:
+                return self._send(400, {"error": "q is empty"}, close=True)
+            if kind not in ("", "game", "plain"):
+                return self._send(400, {"error": "kind must be game or plain"}, close=True)
+            try:
+                model, hits = service.suggest(q, kind, k)
+            except NotReady:
+                return self._send(503, {"error": "the knowledge index is not ready yet", "status": service.status()})
+            except Exception as e:
+                traceback.print_exc(file=sys.stderr)
+                return self._send(500, {"error": str(e) or type(e).__name__})
+            self._send(200, {"model": model, "hits": hits})
 
     return Handler
 

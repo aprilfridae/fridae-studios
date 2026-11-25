@@ -89,18 +89,73 @@ class SkillsTests(unittest.TestCase):
         s = {s["id"]: s for s in rbxskills.skills(project=game)}["ui-ux-pro-max"]
         self.assertEqual((s["origin"], s["description"]), ("project", "The game's own."))
 
-    def test_other_ais_get_every_skill_in_the_catalog(self):
+    def pin(self, *names):
+        """Pin these skills by name, as the CORE list does, for one test."""
+        p = mock.patch.object(rbxskills, "CORE", tuple(names))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_other_ais_get_the_pinned_skills_in_the_catalog(self):
+        self.pin("ui-ux-pro-max", "tdd", "debugging", "pods", "pdf", "codex-only")
         text = rbxskills.catalog("gemini")  # the catalog imports first
         for want in ("## Skills", "rbx_skill", "- ui-ux-pro-max:", "- tdd:", "- debugging:", "- pods:", "- pdf:",
                      "- codex-only:"):
             self.assertIn(want, text)
+        self.assertTrue(text.endswith("\n" + rbxskills.OTHER_SKILLS + "\n"), text)
+        self.assertNotIn(rbxskills.CLAUDE_PREFERS, text, "only Claude has a skill tool of its own")
 
     def test_claude_gets_only_what_claude_code_does_not_load(self):
+        self.pin("ui-ux-pro-max", "tdd", "debugging", "pods", "pdf", "codex-only")
         text = rbxskills.catalog("claude")
         for native in ("ui-ux-pro-max", "- tdd:", "- debugging:", "- pdf:"):
             self.assertNotIn(native, text, "Claude Code lists its own, and its own account's synced skills")
         self.assertIn("- pods:", text, "another account's synced skill")
         self.assertIn("- codex-only:", text, "another tool's skill")
+        self.assertTrue(text.endswith("\n" + rbxskills.OTHER_SKILLS + "\n" + rbxskills.CLAUDE_PREFERS + "\n"), text)
+
+    def test_catalog_is_core_only_and_kind_filtered(self):
+        p = mock.patch.object(rbxskills, "maybe_import", lambda: None)
+        p.start()
+        self.addCleanup(p.stop)
+        for i in range(20):
+            fm = {0: "core: true\n", 1: "core: true\n", 2: "core: true\napplies: game\n"}.get(i, "")
+            d = os.path.join(self.user, "skill-%02d" % i)
+            os.makedirs(d)
+            with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+                f.write("---\nname: skill-%02d\ndescription: Skill number %d.\n%s---\nBody.\n" % (i, i, fm))
+        text = rbxskills.catalog("gemini", kind="plain")
+        lines = [l for l in text.splitlines() if l.startswith("- ")]
+        self.assertEqual(lines, ["- skill-00: Skill number 0.", "- skill-01: Skill number 1."])
+        self.assertEqual(text.splitlines()[-1], rbxskills.OTHER_SKILLS)
+        self.assertEqual(rbxskills.OTHER_SKILLS, "Other skills: search with rbx_skill (action search) when a task "
+                         "needs know-how you do not have; the app also suggests matching skills on your messages.")
+        self.assertEqual(rbxskills.CLAUDE_PREFERS, "When a Fridae skill (rbx_skill) and a Claude Code skill cover "
+                         "the same thing, use the Fridae one.")
+        game = [l for l in rbxskills.catalog("gemini", kind="game").splitlines() if l.startswith("- ")]
+        self.assertEqual(len(game), 3, "a game gets the game-only core skill too")
+        # the pinned set by name: one in the library is pinned, one missing is skipped
+        d = os.path.join(self.user, "writing-plans")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: writing-plans\ndescription: Plans.\n---\nBody.\n")
+        self.assertIn("- writing-plans: Plans.", rbxskills.catalog("gemini", kind="plain"))
+        self.assertNotIn("brainstorming", rbxskills.catalog("gemini", kind="plain"))
+        index = {s["id"]: s for s in rbxskills.index()}
+        self.assertEqual({i for i, s in index.items() if s["pinned"]}, {"skill-00", "skill-01", "skill-02", "writing-plans"})
+        # the CLI passes the kind on
+        import argparse, contextlib, io
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+        a = ap.parse_args(["skills", "catalog", "--ai", "cursor", "--kind", "plain"])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            a.fn(a)
+        self.assertEqual(buf.getvalue(), rbxskills.catalog("cursor", kind="plain"))
+
+    def test_the_pinned_names(self):
+        self.assertEqual(set(rbxskills.CORE), {
+            "brainstorming", "systematic-debugging", "test-driven-development", "verification-before-completion",
+            "writing-plans", "ui-ux-pro-max", "workflow", "playtest", "ui-design", "game-bible", "game-design", "critic"})
 
     def test_claude_gets_an_edited_import_of_its_own_skill(self):
         rbxskills.import_external()
@@ -113,13 +168,23 @@ class SkillsTests(unittest.TestCase):
         os.makedirs(second)
         with open(os.path.join(second, ".claude.json"), "w") as f:
             json.dump({"oauthAccount": {"accountUuid": "acct-b"}}, f)
+        self.pin("debugging", "pods")
         text = rbxskills.catalog("claude", config=second)
         self.assertIn("- debugging:", text)
         self.assertNotIn("- pods:", text)
 
-    def test_nothing_to_list_is_empty(self):
+    def test_nothing_pinned_still_says_how_to_find_skills(self):
+        self.pin("ui-ux-pro-max", "tdd", "debugging", "pdf")
         shutil.rmtree(os.path.join(self.home, ".agents"))
         shutil.rmtree(os.path.join(self.claude, "plugins", "synced", "org_acct-b"))
+        text = rbxskills.catalog("claude")
+        self.assertNotIn("\n- ", text, "every pinned skill is one Claude Code lists itself")
+        self.assertTrue(text.endswith(rbxskills.OTHER_SKILLS + "\n" + rbxskills.CLAUDE_PREFERS + "\n"), text)
+
+    def test_an_empty_library_is_empty(self):
+        p = mock.patch.object(rbxskills, "maybe_import", lambda: None)
+        p.start()
+        self.addCleanup(p.stop)
         self.assertEqual(rbxskills.catalog("claude"), "")
 
     def test_load_fills_paths_and_lists_files(self):
@@ -198,7 +263,8 @@ class SkillsTests(unittest.TestCase):
         got = {s["id"]: s for s in rbxskills.library()}
         self.assertEqual(sorted(got), ["bin", "nothing", "oops"])
         self.assertEqual((got["oops"]["name"], got["oops"]["description"]), ("oops", ""))
-        self.assertIn("- oops: (no description)", rbxskills.catalog("gemini"))
+        with mock.patch.object(rbxskills, "CORE", ("oops",)):
+            self.assertIn("- oops: (no description)", rbxskills.catalog("gemini"))
         self.assertIn("oops", rbxskills.listing())
 
     def test_meta_defaults(self):
@@ -863,6 +929,9 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(rbxskills.OVERLAP, 0.55)
 
     def test_catalog_imports_at_most_once_a_minute(self):
+        p = mock.patch.object(rbxskills, "CORE", ("first", "second"))
+        p.start()
+        self.addCleanup(p.stop)
         skill(os.path.join(self.agents, "first"), "first", "Fold paper cranes.")
         self.assertIn("- first:", rbxskills.catalog("gemini"))
         skill(os.path.join(self.agents, "second"), "second", "Brew green tea.")
@@ -892,7 +961,7 @@ class ImportTests(unittest.TestCase):
         index = {s["id"]: s for s in json.loads(self.cli("index", "--json"))}
         self.assertTrue(index["notes"]["claude_native"], "an unedited import of Claude Code's own skill")
         for key in ("id", "name", "description", "examples", "applies", "core", "owner", "source", "licence",
-                    "supersedes", "updated", "dir", "origin"):
+                    "supersedes", "updated", "dir", "origin", "pinned"):
             self.assertIn(key, index["notes"])
         merged = os.path.join(self.home, "merged.md")
         with open(merged, "w", encoding="utf-8") as f:
