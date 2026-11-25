@@ -2278,6 +2278,18 @@ of the user's, so updates never touch it, and the vault copy is removed and decl
 `supersedes` are dropped when a skill is packed (those pins are the sender's own, not the vault's). A skill edited after
 it was sent is `ready` again.
 
+Of Knowledge (`rbxshare.knowledge_changes`, under `knowledge` in `rbx skills shareable`): every guide or note (a file
+outside `Skills/` that travels: never `House rules.md`, a dot-folder or `Roblox/_tools/`, `_data/`) that the base record
+does not know (`new`) or whose bytes differ from what the vault gave; and every folder of `Knowledge/Skills` with a file
+changed or new, as one unit under its vault name (`Skills/<upstream>`, undoing a rename). Held, with the reason shown:
+a picture or model ("Pictures and models cannot be shared yet."), a note over 200 KB, a skill over 40 files or 1 MB,
+and anything with a clash still waiting ("Decide the vault's change to it first, above."). `rbx skills pack-knowledge
+--out <dir> <unit...>` writes a note byte for byte at its path and a skill at `Skills/<upstream>/` with only its
+`name` set back to the vault's (the vault keeps its credit; the inbox adds the sender's). What was sent is recorded in
+`<Knowledge>/.fridae-vault/shared.json` (`{unit: [{hash, pr, at}]}`, `rbx skills mark-shared --unit <u> --hash <h> --pr
+<url>`); a later edit makes it `ready` again. Nobody's own Knowledge is left out, the maintainer's included: her
+changes reach the vault through her own inbox like anyone's.
+
 **Masking.** Every file is masked by `compact::mask_for_sharing` before the user sees it and before it is sent: keys and
 tokens, email addresses (`[email]`), the home folder (`~`; on Windows whatever the capitals and with either slash) and
 the login name as a word of its own, three letters or more (`[user]`). The credit line keeps the sender's GitHub name

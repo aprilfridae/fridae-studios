@@ -309,5 +309,165 @@ class ShareTests(unittest.TestCase):
         self.assertEqual([e["id"] for e in run("shareable", "--json")["sent"]], ["tidy"])
 
 
+def _sha(data):
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+class KnowledgeShareTests(unittest.TestCase):
+    """What of Knowledge may be shared: guides the user changed or added, and vault skills they edited."""
+    setUp = ShareTests.setUp
+
+    def know(self, path):
+        return os.path.join(rbxpaths.KNOWLEDGE_DIR, *path.split("/"))
+
+    def put(self, path, data):
+        full = self.know(path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as f:
+            f.write(data if isinstance(data, bytes) else data.encode("utf-8"))
+
+    def seed(self, path, data, local=None, **base_fields):
+        """The base record knows path at data (as test_vaultsync.seed does); the local file holds local (default:
+        the same bytes)."""
+        import rbxvaultsync
+        data = data if isinstance(data, bytes) else data.encode("utf-8")
+        b = rbxvaultsync.read_base()
+        b["files"][path] = _sha(data)
+        b["release"] = "vault-2026.11.24"
+        b.update(base_fields)
+        os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+        rbxskills._write_json(rbxvaultsync.base_path(), b)
+        bc = os.path.join(rbxvaultsync.state_dir(), "base", *path.split("/"))
+        os.makedirs(os.path.dirname(bc), exist_ok=True)
+        with open(bc, "wb") as f:
+            f.write(data)
+        self.put(path, data if local is None else local)
+
+    def changes(self):
+        return rbxshare.knowledge_changes()
+
+    def ready(self):
+        return {e["unit"]: e for e in self.changes()["ready"]}
+
+    def held(self):
+        return {e["unit"]: e["why"] for e in self.changes()["held"]}
+
+    def test_changed_and_new_guides_are_ready(self):
+        self.seed("Roblox/Glossary.md", "# Glossary\n", "# Glossary\n\nMore.\n")
+        self.put("Roblox/02 Luau/New.md", "# New\n")
+        r = self.ready()
+        self.assertEqual(sorted(r), ["Roblox/02 Luau/New.md", "Roblox/Glossary.md"])
+        g = r["Roblox/Glossary.md"]
+        self.assertEqual((g["kind"], g["title"], g["new"], g["files"]), ("note", "Glossary", False, 1))
+        self.assertEqual(g["hash"], _sha(b"# Glossary\n\nMore.\n"))
+        self.assertIs(r["Roblox/02 Luau/New.md"]["new"], True)
+        self.assertEqual(r["Roblox/02 Luau/New.md"]["title"], "New")
+
+    def test_unchanged_guide_is_not_listed(self):
+        self.seed("Roblox/Glossary.md", "# Glossary\n")
+        out = self.changes()
+        self.assertEqual((out["ready"], out["held"], out["sent"]), ([], [], []))
+
+    def test_binary_guide_is_held(self):
+        self.put("Roblox/18 Rigs/R.fbx", b"Kaydara FBX binary")
+        self.put("Roblox/Big.md", "x" * (rbxshare.FILE_MAX + 1))
+        h = self.held()
+        self.assertEqual(h["Roblox/18 Rigs/R.fbx"], "Pictures and models cannot be shared yet.")
+        self.assertEqual(h["Roblox/Big.md"], "Over 200 KB.")
+        self.assertEqual(self.ready(), {})
+
+    def test_guide_with_open_clash_is_held(self):
+        self.seed("Roblox/Glossary.md", "# Glossary\n", "# Glossary\n\nMine.\n",
+                  clashes={"Roblox/Glossary.md": {"paths": ["Roblox/Glossary.md"], "kind": "file"}})
+        self.assertEqual(self.held(), {"Roblox/Glossary.md": "Decide the vault's change to it first, above."})
+        self.assertEqual(self.ready(), {})
+
+    def test_sent_guide_is_ready_again_only_when_changed(self):
+        self.seed("Roblox/Glossary.md", "# Glossary\n", "# Glossary\n\nMore.\n")
+        h = self.ready()["Roblox/Glossary.md"]["hash"]
+        rbxshare.mark_shared_unit("Roblox/Glossary.md", h, "https://example.test/pr/7")
+        out = self.changes()
+        self.assertEqual(out["ready"], [])
+        self.assertEqual(len(out["sent"]), 1)
+        self.assertEqual((out["sent"][0]["unit"], out["sent"][0]["title"], out["sent"][0]["pr"]),
+                         ("Roblox/Glossary.md", "Glossary", "https://example.test/pr/7"))
+        self.assertTrue(out["sent"][0]["at"])
+        self.put("Roblox/Glossary.md", "# Glossary\n\nMore, again.\n")
+        self.assertIn("Roblox/Glossary.md", self.ready())
+        self.assertEqual(self.changes()["sent"], [])
+
+    def test_edited_vault_skill_is_ready_under_its_vault_name(self):
+        upstream = "---\nname: x\ndescription: X.\ncredit: alice\n---\n\nDo x.\n"
+        local = upstream.replace("name: x", "name: x-community")
+        self.seed("Skills/x/SKILL.md", local, renamed={"x": "x-community"})
+        os.rename(self.know("Skills/x"), self.know("Skills/x-community"))
+        self.seed("Skills/x/ref.md", "Ref.\n", renamed={"x": "x-community"})
+        os.makedirs(self.know("Skills/x-community"), exist_ok=True)
+        os.replace(self.know("Skills/x/ref.md"), self.know("Skills/x-community/ref.md"))
+        shutil.rmtree(self.know("Skills/x"))
+        self.assertEqual(self.ready(), {}, "untouched: nothing to share")
+        self.put("Skills/x-community/SKILL.md", local.replace("Do x.", "Do x, carefully."))
+        self.put("Skills/x-community/more.md", "More.\n")
+        r = self.ready()
+        self.assertEqual(list(r), ["Skills/x"])
+        e = r["Skills/x"]
+        self.assertEqual((e["kind"], e["title"], e["new"], e["files"]), ("skill", "x", False, 3))
+        self.assertEqual(e["hash"], rbxskills.folder_hash(self.know("Skills/x-community")))
+        out = os.path.join(self.root, "pack out")
+        self.assertEqual(rbxshare.pack_knowledge(["Skills/x"], out), {"Skills/x": e["hash"]})
+        with open(os.path.join(out, "Skills", "x", "SKILL.md"), encoding="utf-8", newline="") as f:
+            md = f.read()
+        self.assertEqual(md, upstream.replace("Do x.", "Do x, carefully."), "only the name goes back")
+        self.assertEqual(sorted(os.listdir(os.path.join(out, "Skills", "x"))), ["SKILL.md", "more.md", "ref.md"])
+
+    def test_pack_knowledge_writes_exact_bytes_at_their_paths(self):
+        data = b"# Glossary\r\n\r\nCaf\xc3\xa9 \xe2\x80\x94 words.\r\n"
+        self.put("Roblox/02 Luau/Glossary.md", data)
+        out = os.path.join(self.root, "pack out")
+        got = rbxshare.pack_knowledge(["Roblox/02 Luau/Glossary.md"], out)
+        self.assertEqual(got, {"Roblox/02 Luau/Glossary.md": _sha(data)})
+        with open(os.path.join(out, "Roblox", "02 Luau", "Glossary.md"), "rb") as f:
+            self.assertEqual(f.read(), data)
+        with self.assertRaises(ValueError) as e:
+            rbxshare.pack_knowledge(["Roblox/Nope.md"], out)
+        self.assertIn("Not ready to share", str(e.exception))
+
+    def test_code_data_house_rules_and_dot_folders_are_never_offered(self):
+        self.put("House rules.md", "Mine.\n")
+        self.put(".obsidian/a.json", "{}")
+        self.put("Roblox/_tools/x.json", "{}")
+        self.put("Roblox/_data/f.json", "{}")
+        self.put("Roblox/.trash/old.md", "old")
+        out = self.changes()
+        self.assertEqual((out["ready"], out["held"], out["sent"]), ([], [], []))
+
+    def test_cli_shareable_lists_knowledge(self):
+        import argparse
+        import contextlib
+        import io
+        import json
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+
+        def run(*argv):
+            buf = io.StringIO()
+            a = ap.parse_args(["skills"] + list(argv))
+            with contextlib.redirect_stdout(buf):
+                a.fn(a)
+            return json.loads(buf.getvalue())
+
+        self.put("Roblox/New.md", "# New\n")
+        listed = run("shareable", "--json")["knowledge"]
+        self.assertEqual([e["unit"] for e in listed["ready"]], ["Roblox/New.md"])
+        out = os.path.join(self.root, "cli out")
+        hashes = run("pack-knowledge", "--out", out, "Roblox/New.md")
+        self.assertEqual(hashes, {"Roblox/New.md": _sha(b"# New\n")})
+        self.assertTrue(os.path.isfile(os.path.join(out, "Roblox", "New.md")))
+        self.assertEqual(run("mark-shared", "--unit", "Roblox/New.md", "--hash", hashes["Roblox/New.md"],
+                             "--pr", "https://example.test/pr/9"), {"ok": True})
+        self.assertEqual([e["unit"] for e in run("shareable", "--json")["knowledge"]["sent"]], ["Roblox/New.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

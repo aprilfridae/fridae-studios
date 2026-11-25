@@ -1,6 +1,8 @@
-"""What of the user's skills may be shared with the Fridae vault, and packing a batch to send.
-Only skills the user made are shareable: never an import, never one named like Fridae's, never a near copy of any
-skill Fridae can see. Nothing here sends anything; the app does, on the user's yes."""
+"""What of the user's skills and Knowledge may be shared with the Fridae vault, and packing a batch to send.
+Of the library, only skills the user made are shareable: never an import, never one named like Fridae's, never a near
+copy of any skill Fridae can see. Of Knowledge, guides the user changed or added and vault skills they edited
+(knowledge_changes). Nothing here sends anything; the app does, on the user's yes."""
+import hashlib
 import os
 import shutil
 import time
@@ -226,6 +228,183 @@ def mark_shared(name, hash, pr_url):
         rbxskills._write_json(path, rec)
         return
     raise LookupError("There is no skill called %s in your library." % name)
+
+
+# ------------------------------------------------------------------ Knowledge: guides and the vault's skills
+SHARED_UNITS = "shared.json"  # in rbxvaultsync.state_dir(): {unit: [{hash, pr, at}]}
+HELD_BINARY = "Pictures and models cannot be shared yet."
+HELD_BIG_NOTE = "Over 200 KB."
+HELD_BIG_SKILL = "Too big to share (over 1 MB or 40 files)."
+HELD_CLASH = "Decide the vault's change to it first, above."
+
+
+def _shared_units():
+    import rbxvaultsync
+    data = rbxskills._read_json(os.path.join(rbxvaultsync.state_dir(), SHARED_UNITS), {})
+    return {u: [m for m in v if isinstance(m, dict)] for u, v in data.items() if isinstance(v, list)}
+
+
+def _note_title(path):
+    name = path.rsplit("/", 1)[-1]
+    return name[:-3] if name.lower().endswith(".md") and len(name) > 3 else name
+
+
+def _regular(full):
+    return not os.path.islink(full) and os.path.isfile(full)
+
+
+def _knowledge_units():
+    """[(unit, kind, title, local path or folder, new, [(vault path, full path)])] of what in Knowledge differs from
+    what the vault gave (by the base record) or is not from the vault at all: notes per file (outside Skills/), and
+    each folder of Knowledge/Skills as one skill under its vault (upstream) name."""
+    import rbxpaths
+    import rbxvaultsync
+    know = rbxpaths.KNOWLEDGE_DIR
+    base = rbxvaultsync.read_base()
+    out = []
+    if not os.path.isdir(know):
+        return out, base
+
+    def changed(p, full):
+        data = rbxvaultsync._read(full)
+        return data is None or p not in base["files"] or rbxvaultsync._sha(data) != rbxvaultsync._cmp_hash(base, p)
+
+    for top in sorted(os.listdir(know)):
+        top_dir = os.path.join(know, top)
+        if top.startswith(".") or top == "Skills" or os.path.islink(top_dir) or not os.path.isdir(top_dir):
+            continue
+        for root, dirs, files in os.walk(top_dir):
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(root, d)))
+            for f in sorted(files):
+                full = os.path.join(root, f)
+                p = os.path.relpath(full, know).replace(os.sep, "/")
+                if not rbxvaultsync.check_path(p) or not _regular(full) or not changed(p, full):
+                    continue
+                out.append((p, "note", _note_title(p), full, p not in base["files"], [(p, full)]))
+    skills_dir = os.path.join(know, "Skills")
+    if os.path.isdir(skills_dir) and not os.path.islink(skills_dir):
+        upstream_of = {v: k for k, v in base["renamed"].items() if isinstance(v, str)}
+        for local in sorted(os.listdir(skills_dir)):
+            d = os.path.join(skills_dir, local)
+            if local.startswith(".") or os.path.islink(d) or not os.path.isdir(d):
+                continue
+            name = upstream_of.get(local, local)
+            files = [("Skills/%s/%s" % (name, rel), full) for rel, full in rbxskills._tree(d)
+                     if _regular(full)]
+            files = [(p, full) for p, full in files if rbxvaultsync.check_path(p)]
+            if not files or not any(changed(p, full) for p, full in files):
+                continue
+            new = not any(p.startswith("Skills/%s/" % name) for p in base["files"])
+            out.append(("Skills/" + name, "skill", name, d, new, files))
+    return out, base
+
+
+def _unit_hash(kind, where):
+    if kind == "skill":
+        return rbxskills.folder_hash(where)
+    with open(where, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _held_why(unit, kind, files, base):
+    import rbxmerge
+    if unit in base["clashes"]:
+        return HELD_CLASH
+    sizes = [os.path.getsize(full) for _p, full in files]
+    if kind == "skill" and (len(files) > FILES_MAX or sum(sizes) > TOTAL_MAX):
+        return HELD_BIG_SKILL
+    for (p, full), size in zip(files, sizes):
+        with open(full, "rb") as f:
+            data = f.read(FILE_MAX + 1)
+        if rbxmerge.is_binary(p, data[:FILE_MAX]):
+            return HELD_BINARY
+        if size > FILE_MAX:
+            return HELD_BIG_NOTE
+    return None
+
+
+def knowledge_changes():
+    """{"ready": [{unit, kind: "note" | "skill", title, hash, new, files}], "held": [{unit, title, why}],
+    "sent": [{unit, title, pr, at}]}: what of Knowledge may go to the vault. A note is a file outside Skills/ that
+    travels and that the base record does not know or whose bytes differ from what the vault gave; a skill is a folder
+    of Knowledge/Skills with a file changed or new, by its vault name (Skills/<upstream name>). Sent: its present hash
+    went out already (shared.json). Nobody's own Knowledge is left out, the maintainer's included."""
+    ready, held, sent = [], [], []
+    units, base = _knowledge_units()
+    shared = _shared_units()
+    for unit, kind, title, where, new, files in units:
+        try:
+            h = _unit_hash(kind, where)
+        except OSError:
+            continue
+        marks = [m for m in shared.get(unit, []) if m.get("hash") == h]
+        if marks:
+            sent.append({"unit": unit, "title": title, "pr": str(marks[-1].get("pr") or ""),
+                         "at": str(marks[-1].get("at") or "")})
+            continue
+        try:
+            why = _held_why(unit, kind, files, base)
+        except OSError:
+            continue
+        if why:
+            held.append({"unit": unit, "title": title, "why": why})
+        else:
+            ready.append({"unit": unit, "kind": kind, "title": title, "hash": h, "new": new, "files": len(files)})
+    return {"ready": ready, "held": held, "sent": sent}
+
+
+def pack_knowledge(units, out_dir):
+    """Write each ready unit under out_dir as the vault would hold it: a note byte for byte at out_dir/<path>, a skill
+    at out_dir/Skills/<upstream name>/ with its SKILL.md front matter name set to that name and nothing else changed.
+    Refuses any unit not in knowledge_changes()["ready"]. Returns {unit: hash}."""
+    found, _base = _knowledge_units()
+    by_unit = {u[0]: u for u in found}
+    ready = {e["unit"]: e for e in knowledge_changes()["ready"]}
+    bad = [u for u in units if u not in ready]
+    if bad:
+        raise ValueError("Not ready to share: %s." % ", ".join(bad))
+    if os.path.islink(out_dir):
+        raise OSError("The folder to pack into is a link.")
+    out = {}
+    for unit in units:
+        _u, kind, title, where, _new, files = by_unit[unit]
+        for p, full in files:
+            dst = os.path.join(out_dir, *p.split("/"))
+            if kind == "skill" and p == unit + "/SKILL.md":
+                with open(full, encoding="utf-8", newline="") as f:
+                    text = f.read()
+                if rbxskills.front(text)[0].get("name") != title:
+                    text = _set_name(text, title)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                rbxskills._write_text(dst, text)
+            else:
+                _copy_file(full, dst)
+        out[unit] = ready[unit]["hash"]
+    return out
+
+
+def _set_name(text, name):
+    """text with its front matter's name line set to name in place (every other line as it was); front_with when the
+    front matter has no name line."""
+    import re
+    m = re.match(r"^(﻿?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*(?:\r?\n|$))", text, re.S)
+    if m:
+        front, n = re.subn(r"(?m)^name:[^\r\n]*", lambda _m: "name: %s" % name, m.group(2), count=1)
+        if n:
+            return m.group(1) + front + m.group(3) + text[m.end():]
+    return rbxskills.front_with(text, {"name": name})
+
+
+def mark_shared_unit(unit, hash, pr_url):
+    """Record that this unit of Knowledge, as it was at this hash, went out in this pull request."""
+    import rbxvaultsync
+    path = os.path.join(rbxvaultsync.state_dir(), SHARED_UNITS)
+    if os.path.islink(path) or os.path.islink(rbxvaultsync.state_dir()):
+        raise OSError("%s is a link." % SHARED_UNITS)
+    rec = _shared_units()
+    rec.setdefault(unit, []).append({"hash": hash, "pr": pr_url, "at": rbxskills._now()})
+    os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+    rbxskills._write_json(path, rec)
 
 
 def _folder_name(d):

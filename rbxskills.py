@@ -1633,15 +1633,16 @@ def index(project=None, config=None):
 def register(sub):
     p = sub.add_parser("skills", help="the user's skills, for every AI: catalog, list, load, read, import, pending, "
                                       "decide, index, vault-apply, vault-clashes, vault-clash, shareable, pack, "
-                                      "mark-shared, compare")
+                                      "pack-knowledge, mark-shared, compare")
     p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply",
-                                      "vault-clashes", "vault-clash", "shareable", "pack", "mark-shared", "compare"])
+                                      "vault-clashes", "vault-clash", "shareable", "pack", "pack-knowledge", "mark-shared", "compare"])
     p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id; "
                                                        "mark-shared: the skill; pack: the skills")
     p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
                                                        "(advise: only store an AI's recommendation, from --json-file)")
-    p.add_argument("more", nargs="*", help="pack: more skills")
-    p.add_argument("--out", default="", help="pack: the folder to write Skills/<name>/ into")
+    p.add_argument("more", nargs="*", help="pack, pack-knowledge: more skills or units")
+    p.add_argument("--out", default="", help="pack: the folder to write Skills/<name>/ into; pack-knowledge: the "
+                                           "folder to write each unit into at its vault path")
     p.add_argument("--login", default="", help="pack: the sender's GitHub login, for the credit")
     p.add_argument("--new", default="", help="compare: the submitted skill's folder")
     p.add_argument("--against", default="", help="compare: the folder of the vault's skills")
@@ -1657,7 +1658,8 @@ def register(sub):
                    help="catalog: do not import other tools' skills first (the app's call on a turn)")
     p.add_argument("--staged", default="", help="vault-apply: the folder holding the fetched files")
     p.add_argument("--manifest", default="", help="vault-apply: the release's manifest file")
-    p.add_argument("--unit", default="", help="vault-clash: the waiting unit (Skills/<name>, or a file's path)")
+    p.add_argument("--unit", default="", help="vault-clash: the waiting unit (Skills/<name>, or a file's path); "
+                                            "mark-shared: the unit of Knowledge that was sent")
     p.add_argument("--choice", default="", help="vault-clash: vault (Keep the vault's) or mine (Keep mine)")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
@@ -1686,7 +1688,17 @@ def _share_cli(a):
     import rbxshare
     try:
         if a.action == "shareable":
-            return json.dumps(rbxshare.shareable(), ensure_ascii=False)
+            return json.dumps(dict(rbxshare.shareable(), knowledge=rbxshare.knowledge_changes()), ensure_ascii=False)
+        if a.action == "pack-knowledge":
+            units = [n for n in [a.name, a.path] + list(a.more) if n]
+            if not units or not a.out:
+                raise ValueError("pack-knowledge needs units and --out.")
+            return json.dumps(rbxshare.pack_knowledge(units, a.out), ensure_ascii=False)
+        if a.unit:
+            if not a.hash or not a.pr:
+                raise ValueError("mark-shared --unit needs --hash and --pr.")
+            rbxshare.mark_shared_unit(a.unit, a.hash, a.pr)
+            return json.dumps({"ok": True}, ensure_ascii=False)
         if a.action == "pack":
             names = [n for n in [a.name, a.path] + list(a.more) if n]
             if not names or not a.out or not a.login:
@@ -1754,7 +1766,7 @@ def cmd_skills(a):
             if not a.new or not a.against:
                 raise SystemExit("compare needs --new and --against.")
             out = json.dumps(rbxshare.compare(a.new, a.against), ensure_ascii=False)
-        elif a.action in ("shareable", "pack", "mark-shared"):
+        elif a.action in ("shareable", "pack", "pack-knowledge", "mark-shared"):
             out = _share_cli(a)
         elif a.action == "index":
             out = json.dumps(index(project, a.claude_config or None), ensure_ascii=False)
