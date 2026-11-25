@@ -62,8 +62,24 @@ def read_json(path):
         return None
 
 
+def replace(src, dst, wait=2.0):
+    """os.replace, which on Windows fails with "Access is denied" while another thread or process has `dst` open or
+    is replacing it too (Unix lets both happen): retried there for up to `wait` seconds before giving up."""
+    if os.name != "nt":
+        return os.replace(src, dst)
+    import time
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
 def write_json(path, data, **options):
     """Write JSON beside the file and rename it into place, so a reader never finds half a file."""
     with open(path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(data, f, **options)
-    os.replace(path + ".tmp", path)
+    replace(path + ".tmp", path)

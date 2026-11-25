@@ -20,6 +20,7 @@ import tempfile
 import threading
 from typing import Callable, Protocol
 
+import rbxpaths
 from rbxrag import chunks
 from rbxrag.stores import FUSED, PREFETCH, MemStore, QdrantStore  # noqa: F401 (re-exported)
 
@@ -302,7 +303,7 @@ class Engine:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(man, f)
-            os.replace(tmp, self.manifest_path)
+            rbxpaths.replace(tmp, self.manifest_path)
         except BaseException:
             try:
                 os.remove(tmp)

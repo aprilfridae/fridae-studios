@@ -480,17 +480,19 @@ impl Means {
     }
 }
 
-/// Claude Code's fall-back may run: not on Windows, and not while the user lets Claude use an API key from the
-/// environment (the turn would be billed per use on a model the app picked).
-fn claude_allowed(windows: bool, keys_on: bool) -> bool {
-    !windows && !keys_on
+/// Claude Code's fall-back may run: not while the user lets Claude use an API key from the environment (the turn
+/// would be billed per use on a model the app picked). On Windows too: it is one `claude.exe -p` per summary, the text
+/// through its input, a second account by `CLAUDE_CONFIG_DIR`, and ended by `taskkill /T` (`signin::run_fed`). None of
+/// it needs the kept process whose interrupt was never measured there.
+fn claude_allowed(keys_on: bool) -> bool {
+    !keys_on
 }
 
 #[cfg_attr(test, allow(dead_code))]
 fn means() -> Means {
     Means {
         plan: crate::opencode::writers(),
-        claude: claude_allowed(cfg!(windows), paths::env_keys_on()).then(|| paths::find_ai("claude")).flatten(),
+        claude: claude_allowed(paths::env_keys_on()).then(|| paths::find_ai("claude")).flatten(),
         plan_writes: Arc::new(|model, prompt, cancel| crate::opencode::write_only(model, prompt, cancel).map(|w| (w.text, w.usage))),
         claude_writes: Arc::new(claude_writes),
     }
@@ -1003,8 +1005,8 @@ mod tests {
         // no model of the plan can be asked (OpenCode missing, not signed in, none listed): the fall-back alone, or nobody
         assert_eq!(order("claude", (1, None), &[], true), [("claude", 1, "haiku".to_string())]);
         assert!(order("gemini", (1, None), &[], true).is_empty() && order("claude", (1, None), &[], false).is_empty());
-        // the fall-back is not offered where it would be billed per use, or on Windows
-        assert!(claude_allowed(false, false) && !claude_allowed(false, true) && !claude_allowed(true, false));
+        // the fall-back is not offered where it would be billed per use (on Windows too, now)
+        assert!(claude_allowed(false) && !claude_allowed(true));
         // each try hands its own model and the same text to the writer, and the fall-back its account and its limit
         let seen: Asked = Arc::default();
         let (a, b) = (seen.clone(), seen.clone());

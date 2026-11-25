@@ -1358,6 +1358,7 @@ mod tests {
     }
 
     /// The endpoint file's contents and mode, when it is there.
+    #[cfg(unix)]
     fn endpoint_on_disk() -> Option<(Value, u32)> {
         use std::os::unix::fs::PermissionsExt;
         let text = fs::read_to_string(endpoint_file()).ok()?;

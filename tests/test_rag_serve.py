@@ -8,6 +8,7 @@ import socket
 import tarfile
 import tempfile
 import threading
+import sys
 import time
 import unittest
 import urllib.error
@@ -615,6 +616,7 @@ class SetupTests(unittest.TestCase):
                  "find_app": lambda: app}
         return state, apps, hooks
 
+    @unittest.skipUnless(sys.platform == "darwin", "Fridae installs Ollama itself on a Mac only")
     def test_ollama_install_verifies_then_moves_whole_app(self):
         state, apps, hooks = self.ollama_world()
         lines = []
@@ -625,6 +627,7 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(os.listdir(apps), ["Ollama.app"])
         self.assertEqual(os.listdir(os.path.join(self.data, "downloads")), [])
 
+    @unittest.skipUnless(sys.platform == "darwin", "Fridae installs Ollama itself on a Mac only")
     def test_ollama_install_never_leaves_a_bad_app(self):
         for kind in ("codesign", "incomplete"):
             data = tempfile.mkdtemp(prefix="rag ollama ")
@@ -641,6 +644,7 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(os.listdir(os.path.join(data, "downloads")), [], kind)
             self.assertFalse(state["opened"])
 
+    @unittest.skipUnless(sys.platform == "darwin", "Fridae installs Ollama itself on a Mac only")
     def test_ollama_install_uses_the_users_own_ollama(self):
         for cli, app in (("/opt/homebrew/bin/ollama", None), (None, "/Applications/Ollama.app")):
             state, apps, hooks = self.ollama_world(cli=cli, app=app)

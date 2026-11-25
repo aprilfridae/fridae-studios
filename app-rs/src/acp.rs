@@ -159,11 +159,18 @@ fn resolve(path: &str, base: Option<&Path>) -> Option<PathBuf> {
 
 fn inside(p: &Path, dir: &Path) -> bool {
     let dir = paths::real_as_far_as_exists(dir);
-    !dir.as_os_str().is_empty() && p.starts_with(&dir)
+    if dir.as_os_str().is_empty() {
+        return false;
+    }
+    // Windows: `\` or `/`, any case of letters, with or without `\\?\`, are all one place there
+    if cfg!(windows) {
+        return under(&low(p), &low(&dir));
+    }
+    p.starts_with(&dir)
 }
 
 fn low(p: &Path) -> String {
-    p.to_string_lossy().to_lowercase()
+    paths::compare_key(p)
 }
 
 /// `p` is `q` or inside it, in any case of letters.

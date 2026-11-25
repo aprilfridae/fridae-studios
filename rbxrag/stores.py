@@ -31,6 +31,8 @@ import threading
 import uuid
 import warnings
 
+import rbxpaths
+
 LABEL_FIELDS = ("kind", "source")  # payload labels a filter can ask for by value
 
 
@@ -433,7 +435,7 @@ class MemStore:
         try:
             with os.fdopen(fd, "wb") as f:
                 write(f)
-            os.replace(tmp, self._p(name))
+            rbxpaths.replace(tmp, self._p(name))
         except BaseException:
             try:
                 os.remove(tmp)

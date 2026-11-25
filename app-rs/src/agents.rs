@@ -6039,6 +6039,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_switch_drops_the_old_ais_model_and_a_pick_counts_at_once() {
         // the user's case: a run's Lead on OpenCode's DeepSeek, switched to Gemini with Neon (High) picked, kept
         // waking on "deepseek", which Gemini does not offer, so it ran on Gemini's default (Carbon)
@@ -6066,6 +6067,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_chat_switches_to_cursor_and_back() {
         let a = Agent::detached_for_test("switch-cursor", None);
         assert_eq!(a.switch_ai("claude"), Ok(false));
@@ -6422,7 +6424,8 @@ mod tests {
         // the GitHub sign-in, the settings (the Gemini key), the second accounts and Fridae's OpenCode sign-in
         for p in paths::app_secrets() {
             let p = p.display().to_string();
-            assert!(denied.contains(&format!("Read(/{p})")) && denied.contains(&format!("Read(/{p}/**)")), "{p}: {denied:?}");
+            let (file, dir) = (claude_rule("Read", &p, false, cfg!(windows)), claude_rule("Read", &p, true, cfg!(windows)));
+            assert!(denied.contains(&file) && denied.contains(&dir), "{p}: {denied:?}");
         }
         for must in [crate::github::folder(), paths::config_file()] {
             assert!(paths::app_secrets().contains(&must), "{}", must.display());
@@ -6433,7 +6436,7 @@ mod tests {
         let s = ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &denied, full: true, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false };
         let args: Vec<String> = ClaudeLaunch::new(&s).args.iter().map(|a| a.to_string_lossy().to_string()).collect();
         let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
-        assert!(args[at..].contains(&format!("Read(/{}/**)", crate::github::folder().display())));
+        assert!(args[at..].contains(&claude_rule("Read", &crate::github::folder().display().to_string(), true, cfg!(windows))));
     }
 
     #[test]
@@ -6441,7 +6444,9 @@ mod tests {
         crate::accounts::stand_in_tagged("rd");
         let denied = claude_denied();
         let blocked = |path: &std::path::Path| {
-            let path = path.display().to_string();
+            // as Claude Code reads the rule: the path in its POSIX form (`//c/Users/...` on Windows)
+            let path = claude_rule("Read", &path.display().to_string(), false, cfg!(windows));
+            let path = path.strip_prefix("Read(/").and_then(|p| p.strip_suffix(')')).unwrap_or_default().to_string();
             denied.iter().filter_map(|r| r.strip_prefix("Read(/").and_then(|r| r.strip_suffix(')'))).any(|p| match p.strip_suffix("/**") {
                 Some(dir) => path.starts_with(&format!("{dir}/")),
                 None => path == p,
@@ -7245,6 +7250,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn an_opencode_turn_says_under_the_message_which_model_ran_and_why() {
         // the wiring in `send`, without an AI (tests find none: the message is noted, then "not installed"): Fridae's
         // OpenCode as it was on 23 November 2026, signed in to nothing, and a chat set to a model it does not list
@@ -7287,6 +7293,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_runs_lead_on_deepseek_or_glm_runs_on_the_plans_strong_model_and_says_so_once() {
         // the wiring in `send`: Fridae's OpenCode signed in to the plan, with Kimi on it and Claude's Opus billed per use
         let _state = opencode::TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -7450,6 +7457,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_chat_goes_back_to_the_users_own_account_only_when_the_second_runs_out() {
         crate::accounts::stand_in(true, true);
         let a = chat_on_first("c-roll-back");
@@ -8332,6 +8340,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_chat_on_the_second_account_is_started_in_that_accounts_folder_and_one_on_the_first_is_not() {
         crate::accounts::stand_in(true, true);
         let chat = |id: &str, ai: &str, account: u8| {

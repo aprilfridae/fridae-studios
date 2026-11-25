@@ -543,10 +543,11 @@ pub fn child_env_with(cmd: &mut Command, ai: &str, keys_switch: bool) {
 /// Ends each process (started with `own_group`) and everything it started, and returns once they are gone.
 /// Unix: SIGTERM to each process group, then SIGKILL to any group still there after `STOP_GRACE`. A pid that is
 /// not a group of its own is never signalled as a group of the app's: the app's own pid and pids 0/1 are skipped.
-/// Windows: `taskkill /T /F`, as always.
+/// Windows: `taskkill /T /F`, with the same pids skipped (`taskkill /T` of the app's own pid ends the app and
+/// everything it started).
 pub fn end_trees(pids: &[u32]) {
     #[cfg(windows)]
-    for pid in pids {
+    for pid in pids.iter().copied().filter(|&p| p > 1 && p != std::process::id()) {
         let mut kill = Command::new("taskkill");
         kill.args(["/T", "/F", "/PID", &pid.to_string()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         quiet(&mut kill);
@@ -1428,6 +1429,23 @@ pub fn blender_ok(p: &Path) -> bool {
     !roots.iter().any(|r| p.starts_with(real_as_far_as_exists(r)))
 }
 
+/// A path as text that compares the way the disk does, for "is this inside that" checks: on Windows without the
+/// `\\?\` prefix `canonicalize` adds, with `/` for every `\` (Windows takes both, so `C:\a\b/c` is `C:/a/b/c`) and in
+/// lower case (its disks ignore case); elsewhere only in lower case, as the callers have always compared.
+pub fn compare_key(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    if cfg!(windows) {
+        let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else {
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        };
+        s.replace('\\', "/").to_lowercase()
+    } else {
+        s.to_lowercase()
+    }
+}
+
 /// `p` with its longest existing start made real (links and `/var` → `/private/var` followed) and the rest kept, so a
 /// path that does not exist yet compares the same way as one that does.
 pub fn real_as_far_as_exists(p: &Path) -> PathBuf {
@@ -2172,10 +2190,15 @@ mod tests {
         write_config(&st.config, v.as_object().unwrap());
     }
 
+    /// A game folder as a full path on this system (`/g/obby` is not one on Windows: there it is `C:/g/obby`).
+    fn full(p: &str) -> String {
+        if cfg!(windows) { format!("C:{p}") } else { p.to_string() }
+    }
+
     #[test]
     fn a_restart_puts_a_changed_file_back_and_says_what_changed_and_a_route_change_survives() {
         let st = home_store("restart");
-        put(&st, serde_json::json!({"allowed_commands": ["git"], "projects": [{"name": "Obby", "path": "/g/obby"}], "chat_ai": "claude"}));
+        put(&st, serde_json::json!({"allowed_commands": ["git"], "projects": [{"name": "Obby", "path": full("/g/obby")}], "chat_ai": "claude"}));
         // a first run with no copy takes the file as it is
         let mut g = start_in(&st);
         assert!(g.at_start.is_none() && g.known.get("allowed_commands") == Some(&serde_json::json!(["git"])));
@@ -2246,17 +2269,17 @@ mod tests {
     #[test]
     fn taking_the_file_takes_only_what_the_notice_named_checked_and_never_an_unreadable_file() {
         let st = home_store("take-file");
-        put(&st, serde_json::json!({"allowed_commands": ["git"], "projects": [{"name": "Obby", "path": "/g/obby"}], "expert_ai": {"ui": {"ai": "claude", "model": "sonnet"}}}));
+        put(&st, serde_json::json!({"allowed_commands": ["git"], "projects": [{"name": "Obby", "path": full("/g/obby")}], "expert_ai": {"ui": {"ai": "claude", "model": "sonnet"}}}));
         let _ = start_in(&st);
         // changed while closed: a bad program entry, the game moved to the home folder, the UI expert's model
-        put(&st, serde_json::json!({"allowed_commands": ["git", "*", "ls", "rm -rf /", "x\u{202e}y"], "projects": [{"name": "Obby", "path": "/Users/x"}], "expert_ai": {"ui": {"ai": "claude", "model": "opus"}}}));
+        put(&st, serde_json::json!({"allowed_commands": ["git", "*", "ls", "rm -rf /", "x\u{202e}y"], "projects": [{"name": "Obby", "path": full("/Users/x")}], "expert_ai": {"ui": {"ai": "claude", "model": "opus"}}}));
         let mut g = start_in(&st);
         let said = g.at_start.as_ref().unwrap().changes.iter().map(|(_, w)| w.clone()).collect::<Vec<_>>().join("\n");
-        assert!(said.contains("Obby pointed to a different folder, /Users/x; it was put back to /g/obby"), "{said}");
+        assert!(said.contains(&format!("Obby pointed to a different folder, {}; it was put back to {}", full("/Users/x"), full("/g/obby"))), "{said}");
         assert!(said.contains("ui: the file said claude opus, put back to claude sonnet"), "{said}");
         assert!(said.contains("not taken even from the file") && said.contains("rm -rf /") && said.contains("\u{27e8}U+202E\u{27e9}"), "{said}");
         // after start, a game is added through the app: taking the file keeps it
-        update_in(&mut g, &st, |c| c.insert("projects".into(), serde_json::json!([{"name": "Obby", "path": "/g/obby"}, {"name": "New", "path": "/g/new"}])));
+        update_in(&mut g, &st, |c| c.insert("projects".into(), serde_json::json!([{"name": "Obby", "path": full("/g/obby")}, {"name": "New", "path": full("/g/new")}])));
         assert!(answer_in(&mut g, &st, true));
         assert_eq!(g.known.get("allowed_commands"), Some(&serde_json::json!(["git", "ls"])), "only bare program names");
         assert_eq!(g.known.get("projects").and_then(Value::as_array).map(Vec::len), Some(2), "changed through the app since start: kept");

@@ -194,7 +194,8 @@ fn a_conflict_resumes_the_member_whose_branch_conflicts() {
     assert!(sent_to(&vid).last().unwrap().contains("Check again"));
     verdict(&lead.id, "beta", "PASS");
     assert_eq!(state(&lead.id, "beta"), "merged");
-    assert_eq!(with_run(&lead.id, |r| fs::read_to_string(r.int_tree.join("a.txt")).unwrap()), "one\nALPHA and BETA\nthree\n");
+    // (git may check it out with CRLF: core.autocrlf, as Git for Windows sets it)
+    assert_eq!(with_run(&lead.id, |r| fs::read_to_string(r.int_tree.join("a.txt")).unwrap().replace("\r\n", "\n")), "one\nALPHA and BETA\nthree\n");
     done(&lead.id);
 }
 

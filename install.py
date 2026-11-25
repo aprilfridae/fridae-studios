@@ -56,7 +56,7 @@ def copy_filled(src, dst):
             if name.lower().endswith((".md", ".lua", ".txt")):
                 with open(s, encoding="utf-8") as f:
                     text = fill(f.read())
-                with open(d, "w", encoding="utf-8") as f:
+                with open(d, "w", encoding="utf-8", newline="") as f:  # LF on Windows too, as in the vault
                     f.write(text)
             else:
                 shutil.copyfile(s, d)
@@ -122,7 +122,7 @@ def build_claude_skills(dest, core=CORE_GUIDES):
             if src.lower().endswith((".md", ".lua", ".txt")):
                 with open(src, encoding="utf-8") as f:
                     text = built_text(src, f.read())
-                with open(out, "w", encoding="utf-8") as f:
+                with open(out, "w", encoding="utf-8", newline="") as f:  # LF on Windows too, as in the vault
                     f.write(text)
             else:
                 shutil.copyfile(src, out)

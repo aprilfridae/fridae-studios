@@ -30,7 +30,14 @@ def rust_env():
     env.update(RUSTUP_HOME=os.path.join(home, "rustup"), CARGO_HOME=os.path.join(home, "cargo"), CARGO_TARGET_DIR=target)
     paths = [os.path.join(home, "cargo", "bin")]
     gnu = glob.glob(os.path.join(home, "rustup", "toolchains", "*-pc-windows-gnu", "lib", "rustlib", "*-pc-windows-gnu", "bin"))
-    if gnu:
+    mingw = os.path.join(home, "mingw64", "bin")
+    if gnu and os.path.isfile(os.path.join(mingw, "dlltool.exe")):
+        # a full MinGW-w64 (e.g. WinLibs unpacked to <home>/mingw64): its dlltool and linker, as `cargo test` uses
+        # them. Its own target folder, so nothing linked the shim's way below is reused.
+        target = os.path.join(home, "target-mingw")
+        env["CARGO_TARGET_DIR"] = target
+        paths.append(mingw)
+    elif gnu:
         # the GNU toolchain's own linker mishandles the import libraries rustc makes here; rust-lld does not
         lld = os.path.join(gnu[0], "rust-lld.exe").replace("\\", "/")
         env["RUSTFLAGS"] = "-C linker-flavor=ld.lld -C linker=%s -C link-self-contained=yes" % lld

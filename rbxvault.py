@@ -85,6 +85,15 @@ def read(path):
         return f.read()
 
 
+def rel_to(path, start):
+    """`path` under `start` with "/" between its parts; `path` itself when there is no such path (Windows: another
+    drive, where os.path.relpath raises), as the guides shelf has always kept a file outside the kit."""
+    try:
+        return os.path.relpath(path, start).replace(os.sep, "/")
+    except ValueError:
+        return path
+
+
 def note_files():
     files = []
     for root, dirs, fs in os.walk(KB):
@@ -1361,7 +1370,7 @@ def load_sections():
         pass
     docs = []
     for shelf, t, p in files:
-        docs += _section_docs(shelf, t, p, os.path.relpath(p, KIT).replace(os.sep, "/"),
+        docs += _section_docs(shelf, t, p, rel_to(p, KIT),
                               _team_label(t) if shelf == "team" else "")
     for d in docs:
         if d["shelf"] == "team":
@@ -1373,7 +1382,7 @@ def load_sections():
         fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"sig": sig, "docs": docs}, f)
-        os.replace(tmp, path)
+        rbxpaths.replace(tmp, path)
     except OSError:
         if tmp:
             try:

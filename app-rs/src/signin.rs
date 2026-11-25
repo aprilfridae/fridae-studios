@@ -1124,6 +1124,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_second_account_takes_chats_only_with_an_account_of_its_own() {
         let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::accounts::stand_in_many(&[("standin", true), ("third", true)]);

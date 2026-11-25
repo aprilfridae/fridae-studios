@@ -23,6 +23,7 @@
 import argparse, glob, importlib, json, os, shutil, subprocess, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rbxpaths
 from rbxpaths import KIT, WORK, CONFIG, FROZEN, KitError, no_window
 
 
@@ -58,7 +59,7 @@ def save_config(cfg):
     tmp = "%s.%d.tmp" % (CONFIG, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=1)
-    os.replace(tmp, CONFIG)
+    rbxpaths.replace(tmp, CONFIG)
 
 
 def _registry_blender():

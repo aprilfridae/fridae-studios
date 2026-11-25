@@ -367,6 +367,7 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
 }
 
 #[test]
+#[cfg_attr(windows, ignore = "Windows always runs a process per message (the kept process's interrupt was not measured there)")]
 fn the_switch_that_forces_a_process_per_message_is_per_ai() {
     // (an AI of no chat's, so no other test's turn reads this switch)
     assert!(!per_turn_forced("testai"));

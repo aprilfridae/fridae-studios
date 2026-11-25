@@ -36,7 +36,7 @@ def _write_atomic(path, write):
     tmp = "%s.%d.%s.tmp" % (path, os.getpid(), uuid.uuid4().hex[:8])
     try:
         write(tmp)
-        os.replace(tmp, path)
+        rbxpaths.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)

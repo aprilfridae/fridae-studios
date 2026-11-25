@@ -411,6 +411,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_model_opencode_lacks_runs_on_its_twin_and_the_lead_is_told_which_and_why() {
         // last night: the Lead asked for a paid model of a copy that is not signed in
         let w = opencode_not_signed_in();
@@ -437,6 +438,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn the_lead_is_told_when_the_users_table_won_over_what_it_asked_for() {
         let w = world_with(&["claude", "cursor"]);
         let table = Want { ai: Some("cursor"), model: Some("auto") };
@@ -449,6 +451,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_model_whose_only_twin_is_billed_per_use_runs_on_the_default_and_the_lead_is_told_why() {
         // the Lead asks for a plan model the plan does not have; OpenCode Zen has it, billed per use. As OpenCode
         // answers then (`opencode::nearest_model`, `opencode::caveat`): no twin to take, and why
@@ -473,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_leads_request_never_spends_the_users_money_only_the_users_own_choice_does() {
         // OpenCode lists a model billed per use; the plan's kimi-k3 is the default
         let per_use = |_: &str, m: &str| m == "opencode/claude-opus-5-5";
@@ -546,6 +550,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn the_users_table_wins_over_the_leads_request() {
         let w = world_with(&["claude", "cursor"]);
         let table = Want { ai: Some("cursor"), model: Some("gpt-5.3-codex") };
@@ -559,6 +564,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn the_leads_request_is_used_when_the_table_has_nothing() {
         let w = world_with(&["claude", "cursor"]);
         let asked = Want { ai: Some("Cursor"), model: None };
@@ -572,6 +578,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn a_missing_ai_is_refused_with_a_reason_and_never_moved_elsewhere() {
         let w = world_with(&["claude"]);
         let asked = Want { ai: Some("gemini"), model: None };
@@ -586,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn an_unknown_model_falls_back_to_that_ais_default_and_says_so() {
         let w = world_with(&["claude", "cursor"]);
         let asked = Want { ai: Some("cursor"), model: Some("newest-astra") };
@@ -599,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn with_the_switch_off_the_leads_pick_is_refused_but_the_table_still_applies() {
         let mut w = world_with(&["claude", "cursor"]);
         w.lead_may_pick = false;

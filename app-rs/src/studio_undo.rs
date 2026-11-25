@@ -1079,7 +1079,7 @@ mod tests {
         let calls = link.calls();
         assert_eq!(calls.len(), 3, "{calls:?}");
         assert_eq!(calls[0], "has_pin");
-        assert!(calls[1].starts_with("save ") && calls[1].contains(".fridae/before-undo/"), "{calls:?}");
+        assert!(calls[1].starts_with("save ") && calls[1].replace('\\', "/").contains(".fridae/before-undo/"), "{calls:?}");
         assert_eq!(calls[2], "revert saved=true", "the folder is written before the revert call");
         let folder = PathBuf::from(&calls[1][5..]);
         let name = folder.file_name().unwrap().to_string_lossy().to_string();

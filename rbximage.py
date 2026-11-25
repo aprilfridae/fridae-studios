@@ -23,6 +23,7 @@ project saves under the app's work folder instead. An existing file is never rep
 import io, json, os, re, sys, time, warnings
 
 import rbxgen
+import rbxpaths
 from rbxpaths import KitError, write_json
 
 WORK = rbxgen.WORK
@@ -412,7 +413,7 @@ def _write(img, path):
             img.convert("RGB").save(tmp, format="JPEG", quality=92)
         else:
             img.save(tmp, format="PNG")
-        os.replace(tmp, path)
+        rbxpaths.replace(tmp, path)
     except OSError:
         try:
             os.remove(tmp)

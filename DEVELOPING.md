@@ -1623,7 +1623,10 @@ second try at a summary.
    writers' folder. `--safe-mode` is the flag whose help says it keeps CLAUDE.md, skills, plugins, hooks and the
    user's other customisations out while the sign-in works as usual (checked: a CLAUDE.md planted in its folder
    was not followed); `--setting-sources ""` goes with it, so no settings file is read for anything else either. Not when "Use API keys from my environment" is on: the app never picks a model that would be billed
-   per use, so nobody writes then. Chats going to Gemini, Cursor or OpenCode have no step 2.
+   per use, so nobody writes then. Chats going to Gemini, Cursor or OpenCode have no step 2. On Windows too
+   (measured 25 November 2026, Claude Code 2.1.326, Windows 11: these flags accepted, answered in 5 s on
+   `claude-haiku-5-5`, nothing left in its folder; a run stopped with `taskkill /T /F` was gone with its child in
+   about 0.1 s). There is no OpenCode on Windows yet, so there it is the only writer of summaries and advice.
 3. Else nobody: the hand-over goes as it was before.
 One wall-clock limit for everything, two minutes (`LIMITS.all`), 45 seconds for one try, Stop looked at before the
 first try. When there is a fall-back, half a minute of the two is its own (`LIMITS.reserve`): OpenCode's models

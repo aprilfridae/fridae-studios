@@ -61,8 +61,15 @@ def folder(scope, project):
 
 def _where_expected(root, base):
     """True when root, followed through any links, is still base's own sub-folder of the same name."""
-    want = os.path.join(os.path.realpath(base), os.path.relpath(root, base))
-    return os.path.realpath(root) == os.path.normpath(want)
+    tries = 5 if os.name == "nt" else 1  # Windows resolves a folder wrongly for an instant while another writer is in it
+    for n in range(tries):
+        want = os.path.join(os.path.realpath(base), os.path.relpath(root, base))
+        if os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.normpath(want)):
+            return True
+        if n + 1 < tries:
+            import time
+            time.sleep(0.01)
+    return False
 
 
 def scope_arg(a, project, default=True):
@@ -111,7 +118,15 @@ def _inside(root, path):
 
 def _note_path(root, name):
     path = os.path.join(root, name)
-    if not _inside(root, path) or os.path.dirname(os.path.realpath(path)) != os.path.realpath(root):
+    if os.name == "nt":
+        # Windows cannot resolve a file for the moment another writer replaces it ("Access is denied"), so the same
+        # two things are checked without resolving the file: a plain name directly in root (no separator, no ".." and
+        # no ":" stream), and no link in its place
+        ok = (name not in ("", ".", "..") and not any(c in name for c in '/\\:') and not os.path.islink(path)
+              and _where_expected(os.path.dirname(path), root))
+    else:
+        ok = _inside(root, path) and os.path.dirname(os.path.realpath(path)) == os.path.realpath(root)
+    if not ok:
         raise KitError("That title cannot be used as a note name.")
     return path
 
@@ -123,7 +138,7 @@ def _atomic_write(path, text):
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-        os.replace(tmp, path)
+        rbxpaths.replace(tmp, path)
     except BaseException:
         try:
             os.remove(tmp)
@@ -231,7 +246,7 @@ def migrate_lessons():
     if os.path.isfile(old) and not os.path.exists(new):
         try:
             os.makedirs(home_notes(), exist_ok=True)
-            os.replace(old, new)
+            rbxpaths.replace(old, new)
         except OSError:
             pass
 
@@ -605,7 +620,7 @@ def forget(title, scope, project=None):
             text = f.read()
     except (OSError, UnicodeDecodeError):
         text = ""
-    os.replace(src, dest)
+    rbxpaths.replace(src, dest)
     unmark_superseded(text, base, scope, project)
     return base
 

@@ -627,7 +627,7 @@ def _write_text(path, text):
     tmp = "%s.%s.tmp" % (path, uuid.uuid4().hex[:8])
     with open(tmp, "w", encoding="utf-8", newline="") as f:
         f.write(text)
-    os.replace(tmp, path)
+    rbxpaths.replace(tmp, path)
 
 
 def _write_json(path, data):
@@ -933,9 +933,15 @@ def _save_decisions(decs):
 
 
 def has_scripts(d):
-    """Whether a skill folder holds code that would run on the user's Mac: a non-empty scripts/ folder, or any
-    executable file (dot-files left out)."""
+    """Whether a skill folder holds code that would run on the user's computer: a non-empty scripts/ folder, or any
+    executable file (dot-files left out). Windows has no executable bit (every file passes os.X_OK), so there a file
+    counts by its kind."""
+    if os.name == "nt":
+        return any(rel.startswith("scripts/") or rel.lower().endswith(_WINDOWS_RUNNABLE) for rel, _ in _tree(d))
     return any(rel.startswith("scripts/") or os.access(full, os.X_OK) for rel, full in _tree(d))
+
+
+_WINDOWS_RUNNABLE = (".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".msi", ".scr", ".sh")
 
 
 def side_meta(d):

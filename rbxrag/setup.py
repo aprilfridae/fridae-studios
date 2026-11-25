@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 
+import rbxpaths
 from rbxrag import models
 from rbxrag.net import LOOPBACK
 
@@ -99,7 +100,7 @@ def download(url, dest, on_fraction=None, timeout=60):
                     on_fraction(min(1.0, got / total))
         if total and got != total:
             raise SetupError("The download of %s stopped early (%d of %d bytes). Try again." % (url, got, total))
-        os.replace(part, dest)
+        rbxpaths.replace(part, dest)
     except SetupError:
         _remove(part)
         raise
@@ -313,7 +314,7 @@ def step_qdrant_install(mode, data, progress, fetch=download, url=None, sha256=N
         except tarfile.TarError as e:
             raise SetupError("The Qdrant download is damaged (%s). Try again." % e)
         os.chmod(tmp, 0o755)
-        os.replace(tmp, out)
+        rbxpaths.replace(tmp, out)
         with open(qdrant_version_file(data), "w", encoding="utf-8") as f:
             f.write(QDRANT_VERSION + "\n")
     finally:

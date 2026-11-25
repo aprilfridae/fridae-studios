@@ -12,6 +12,7 @@ that say how to use it all.
 import base64, json, os, re, subprocess, sys, tempfile, threading, time, uuid
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import rbxpaths
 from rbxpaths import KIT, VERSION, KitError, cli, mcp_command, no_window
 MAX_IMAGE = 1_500_000
 MAX_IMAGES = 4
@@ -1352,11 +1353,15 @@ def t_test_slow(a):
                 f.write("%s:%s\n" % (what, word))
     log("start")
     if a.get("child_pidfile"):      # something the job starts that will not go when asked (a shell: also in a packaged build)
-        p = subprocess.Popen(["/bin/sh", "-c", 'trap "" TERM; while :; do sleep 600; done'],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if os.name == "nt":  # no /bin/sh; a child that ends by itself, so a test run never leaves one behind
+            cmd = [sys.executable, "-c", "import time; time.sleep(300)"]
+        else:
+            cmd = ["/bin/sh", "-c", 'trap "" TERM; while :; do sleep 600; done']
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=no_window())
         with open(a["child_pidfile"] + ".tmp", "w") as f:
             f.write(str(p.pid))
-        os.replace(a["child_pidfile"] + ".tmp", a["child_pidfile"])
+        rbxpaths.replace(a["child_pidfile"] + ".tmp", a["child_pidfile"])
     time.sleep(seconds)
     log("end")
     if a.get("fail"):

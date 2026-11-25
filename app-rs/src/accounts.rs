@@ -1251,6 +1251,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn what_is_done_for_an_account_goes_by_its_name_and_the_list_is_never_longer_than_the_app_keeps() {
         // a command is pointed at the account that is named, wherever it stands: the third's folder for the third
         stand_in_many(&[("b", true), ("c", true), ("d", true)]);
@@ -1787,6 +1788,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_second_accounts_commands_keep_its_sign_in_in_its_own_folder_whatever_the_app_inherited() {
         stand_in(true, true);
         let get = |cmd: &std::process::Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));

@@ -670,7 +670,9 @@ class SweepTests(UpkeepCase):
         res = rbxupkeep.sweep(now=time.mktime(time.strptime("2026-11-24", "%Y-%m-%d")))
         took = time.time() - start
         print("\nupkeep sweep over %d notes: %.1f s (%s)" % (n + 20, took, res["counts"]))
-        self.assertLess(took, 30.0)
+        # Windows: opening each fresh file costs ~3 ms (the virus scanner checks it), ~28 s of a 10,000-note run; the
+        # sweep itself takes ~10 s there too
+        self.assertLess(took, 60.0 if os.name == "nt" else 30.0)
         self.assertGreaterEqual(res["counts"]["near_duplicates"], 20)
         self.assertGreater(res["counts"]["broken_links"], 0)
 

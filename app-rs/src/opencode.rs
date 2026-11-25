@@ -1209,9 +1209,15 @@ struct Conn {
 /// A password nobody can guess: 24 random bytes from the system's random source, as hex. None when that cannot be
 /// read: the server is then not started (no guessable fallback).
 fn password() -> Option<String> {
-    let mut bytes = [0u8; 24];
-    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).ok()?;
-    Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    #[cfg(unix)]
+    {
+        let mut bytes = [0u8; 24];
+        fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).ok()?;
+        Some(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    }
+    // Windows has no /dev/urandom: the same 48 hex characters from RandomState, which the system seeds (as rag's token)
+    #[cfg(not(unix))]
+    Some(paths::random_hex(3))
 }
 
 /// The port in the line the server prints once it listens ("server listening on http://127.0.0.1:58866").
@@ -3538,6 +3544,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn same_shaped_folders_are_given_back_by_their_exact_names() {
         if !case_blind() {
             return;

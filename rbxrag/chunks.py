@@ -97,7 +97,7 @@ def chunk_id(shelf, path, i, part):
 
 def _rel(shelf, path):
     if shelf == "vault":
-        return os.path.relpath(path, rbxvault.KB).replace(os.sep, "/")
+        return rbxvault.rel_to(path, rbxvault.KB)
     if shelf in ("guides", "team"):
         try:
             if os.path.commonpath([os.path.abspath(KIT), os.path.abspath(path)]) == os.path.abspath(KIT):

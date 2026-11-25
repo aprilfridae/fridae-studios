@@ -412,7 +412,7 @@ class GuideSkillTests(unittest.TestCase):
         skill(d, "my-style", "My own style.", "Run ${CLAUDE_SKILL_DIR}/scripts/go.py\n\n## Colours\n\nWarm.",
               {"scripts/go.py": "print(1)", "references/palette.md": "# Palette\n\nOrange."})
         text = self.text(self.load(name="my-style"))
-        self.assertIn("Run %s/scripts/go.py" % d, text)
+        self.assertIn("Run %s/scripts/go.py" % d.replace(os.sep, "/"), text)
         self.assertIn(d, text)
         self.assertIn("scripts/go.py", text)
         self.assertNotIn("name: my-style", text, "front matter dropped")
@@ -784,7 +784,7 @@ class ImportTests(unittest.TestCase):
                                        "owner": "community", "licence": "MIT", "source": "github.com/someone/skills",
                                        "scripts": True})
         self.assertNotIn("a_meta", json.loads(read(os.path.join(self.user, rbxskills.DECISIONS)))[0], "never stored")
-        tool = os.path.join(self.user, "brainstorm-ideas", "tool")
+        tool = os.path.join(self.user, "brainstorm-ideas", "tool.cmd" if os.name == "nt" else "tool")  # Windows: by kind
         with open(tool, "w") as f:
             f.write("#!/bin/sh\n")
         os.chmod(tool, 0o755)

@@ -8,6 +8,7 @@ import os
 import time
 import uuid
 
+import rbxpaths
 from rbxpaths import KitError
 
 COLUMNS = {"todo": "To do", "doing": "Working on", "needs": "Needs you", "done": "Done"}
@@ -44,7 +45,7 @@ def save(project, data):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=1)
-    os.replace(tmp, path)
+    rbxpaths.replace(tmp, path)
 
 
 def _find(data, card_id):

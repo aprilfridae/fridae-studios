@@ -300,6 +300,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(windows, ignore = "the process ledger is kept on Unix only; Windows ends a turn's tree with taskkill /T (DEVELOPING.md)")]
     fn a_crashed_runs_processes_are_ended_at_start_up_and_this_runs_are_kept() {
         // a ledger folder of its own: every test that starts an AI records into the one the tests share
         let dir = crate::paths::test_dir("procs-ledger-test");
