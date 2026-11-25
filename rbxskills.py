@@ -230,8 +230,17 @@ def _entry(d, origin, default_owner, kit=False):
     if m["owner"] == "app" and not kit:
         m["owner"] = default_owner  # only the app's own skills are app-owned
     m.update(id=m["name"], dir=d, origin=origin, plugin="", plugin_root="", bucket="")
-    if origin == "user":  # an imported plugin skill keeps its plugin's folder for ${CLAUDE_PLUGIN_ROOT}
-        m["plugin_root"] = str((_record(d) or {}).get("plugin_root") or "")
+    rec = _record(d) if origin == "user" else None
+    if rec is not None:
+        # an imported copy: its plugin's folder for ${CLAUDE_PLUGIN_ROOT}; and another tool's front matter never
+        # pins it, hides one of Fridae's skills or claims to be Fridae's: core and supersedes count only as Fridae
+        # wrote them (the import link's patch), and it is never shipped or app-owned
+        m["plugin_root"] = str(rec.get("plugin_root") or "")
+        patch = rec.get("patch") if isinstance(rec.get("patch"), dict) else {}
+        m["core"] = str(patch.get("core")).strip().lower() in ("true", "yes", "1")
+        m["supersedes"] = _list(patch.get("supersedes"))
+        if m["owner"] in ("app", "shipped"):
+            m["owner"] = "user"
     return m
 
 
@@ -722,13 +731,38 @@ def _place(src, dst, rec=None, patch=None):
         if os.path.lexists(dst):
             old = os.path.join(parent, ".tmp-" + uuid.uuid4().hex[:10])
             os.rename(dst, old)
-            os.rename(tmp, dst)
+            moved = []
+            try:
+                _carry(old, tmp, moved)
+                os.rename(tmp, dst)
+            except BaseException:
+                for a, b in reversed(moved):  # the user's files go back where they were, then the old copy
+                    os.rename(b, a)
+                os.rename(old, dst)
+                raise
             shutil.rmtree(old, ignore_errors=True)
         else:
             os.rename(tmp, dst)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
+
+
+def _carry(old, new, moved):
+    """Move what folder_hash leaves out of an old copy (dot-files and dot-folders such as a .env or .venv the user
+    added, __pycache__, node_modules: at any depth) into its new copy, where the new copy has nothing of that name. A
+    refreshed copy that counts as unedited so keeps them. moved: [(from, to)] appended as each is moved."""
+    for root, dirs, files in os.walk(old):
+        rel = os.path.relpath(root, old)
+        there = new if rel == "." else os.path.join(new, rel)
+        for n in dirs + files:
+            if n.startswith(".") or n in SKIP_DIRS:
+                a, b = os.path.join(root, n), os.path.join(there, n)
+                if not os.path.lexists(b):
+                    os.makedirs(there, exist_ok=True)
+                    os.rename(a, b)
+                    moved.append((a, b))
+        dirs[:] = [x for x in dirs if not (x.startswith(".") or x in SKIP_DIRS)]
 
 
 def _key(c):
@@ -936,18 +970,47 @@ def pending():
     "conflict") and lines ({a, b}: the sentences that differ, or each note's first); one whose note is gone (moved or
     trashed since) is left out, and closed by the next upkeep (add_note_decisions). Every decision also carries a_hash
     and b_hash (side_hash, now): the advisor hands them back with its recommendation, so they describe the texts it
-    read."""
-    out = []
+    read. A skill decision whose waiting folder is gone (removed by hand since) is left out and closed now (state
+    "gone"), as the notes upkeep closes a note decision whose note is gone."""
+    out, gone = [], set()
     for d in _decisions():
         if d.get("state") != "open":
             continue
         if d.get("kind", "skill") == "skill":
+            if not _waiting(d):
+                gone.add(d.get("id"))
+                continue
             d["a_meta"], d["b_meta"] = side_meta(d.get("a_dir")), side_meta(d.get("b_dir"))
         elif d.get("kind") == "note" and not _note_there(d):
             continue
         d["a_hash"], d["b_hash"] = side_hash(d.get("a_dir")), side_hash(d.get("b_dir"))
         out.append(d)
+    if gone:
+        _close_gone(gone)
     return out
+
+
+def _waiting(d):
+    """Whether a skill decision's newcomer is still waiting in its folder."""
+    return isinstance(d.get("b_dir"), str) and bool(d["b_dir"]) and os.path.isdir(d["b_dir"])
+
+
+def _close_gone(ids):
+    """Close these open skill decisions as "gone" while their waiting folder is still gone. Skipped (left to the next
+    call) when another task holds the library."""
+    try:
+        with _locked(user_dir()):
+            decs = _decisions()
+            changed = False
+            for d in decs:
+                if d.get("id") in ids and d.get("state") == "open" and d.get("kind", "skill") == "skill" \
+                        and not _waiting(d):
+                    d.update(state="gone", decided=_now())
+                    changed = True
+            if changed:
+                _save_decisions(decs)
+    except (rbxpaths.KitError, OSError):
+        pass
 
 
 NOTE_OPEN_MAX = 20  # note decisions open at once at most (each costs a recommendation); the rest come on a later run
@@ -1166,8 +1229,19 @@ def _kit_owner(d):
     return "user", False
 
 
+def _mine(d):
+    """Whether folder d is inside the user's library (resolved, so a link out of it does not count)."""
+    if not isinstance(d, str) or not d:
+        return False
+    root, real = os.path.realpath(user_dir()), os.path.realpath(d)
+    return real != root and os.path.commonpath([root, real]) == root
+
+
 def _aside(d, name):
-    """Move a losing skill folder to <user_dir>/.replaced/<name>/ (never deleted)."""
+    """Move a losing skill folder to <user_dir>/.replaced/<name>/ (never deleted). Only a folder in the user's
+    library: any other is refused (NOT_MINE), never moved."""
+    if not _mine(d):
+        raise ValueError(NOT_MINE)
     if os.path.isdir(d):
         dst = _free(os.path.join(user_dir(), REPLACED), _safe(name), " ")
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -1247,6 +1321,33 @@ def _decide_note(dec, choice, merged_text):
 
 
 STALE = "One of them changed since the suggestion; check them again."
+NOT_MINE = "One of them is not in your skills library; check them again."
+MERGE_KEEPS = ("applies", "examples", "core", "source", "licence", "owner")  # kept from the skill in use by a merge
+
+
+def _front_lines(text, keys):
+    """The front matter lines of these keys in text, as written (a key's list items and folded lines with it)."""
+    m = re.match(r"^\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|$)", text, re.S)
+    out, taking = [], False
+    for line in (m.group(1).splitlines() if m else []):
+        km = re.match(r"^([A-Za-z_][\w.-]*):", line)
+        if km:
+            taking = km.group(1) in keys
+        elif not (line[:1] in (" ", "\t") or re.match(r"^-[ \t]", line)):
+            taking = False
+        if taking:
+            out.append(line)
+    return out
+
+
+def _add_front(path, lines):
+    """Add lines at the end of a SKILL.md's front matter (front matter made when it has none)."""
+    text = _read(path)
+    m = re.match(r"^(\ufeff?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*(?:\r?\n|$))", text, re.S)
+    if not m:
+        _write_text(path, "---\n%s\n---\n\n%s" % ("\n".join(lines), text))
+        return
+    _write_text(path, m.group(1) + "\n".join([m.group(2)] + lines) + m.group(3) + text[m.end():])
 
 
 def _stale_merge(dec, merged_text):
@@ -1296,18 +1397,31 @@ def decide(id, choice, merged_text=None):
             raise ValueError(APP_SKILL)
         if choice == "merge" and not (merged_text or "").strip():
             raise ValueError("A merge needs the merged SKILL.md.")
-        if not os.path.isdir(b_dir):
+        b_there = os.path.isdir(b_dir)
+        if not b_there and choice in ("replace", "merge"):
             raise LookupError("The waiting skill's folder is missing: %s" % b_dir)
+        # a side that is neither this app's own skill nor in the user's library (a decision another copy of the app
+        # wrote, naming its own kit) is never moved or written
+        a_mine = not a_kit and _mine(a_dir)
+        if not a_kit and not a_mine and choice in ("replace", "merge"):
+            raise ValueError(NOT_MINE)
+        if b_there and not _mine(b_dir) and choice != "keep":
+            raise ValueError(NOT_MINE)
+        if not b_there:  # nothing waits any more: keep and keep both only close it
+            dec.update(state="done", choice=choice, decided=_now())
+            _save_decisions(decs)
+            return dec
         update = dec.get("reason") == "update"
         upstream = (_record(b_dir) or {}).get("upstream")
         differ = a.casefold() != b.casefold()
         if choice == "keep":
-            _aside(b_dir, b)
-            rec = _record(a_dir) if update else None
+            if _mine(b_dir):
+                _aside(b_dir, b)
+            rec = _record(a_dir) if update and a_mine else None
             if rec is not None:
                 rec["upstream"] = upstream  # this version of the source is settled: not asked about again
                 _write_json(os.path.join(a_dir, SOURCE_FILE), rec)
-            if not a_kit and differ and os.path.isdir(a_dir):
+            if a_mine and differ and os.path.isdir(a_dir):
                 _mark(a_dir, {"supersedes": [b]})
         elif choice == "replace":
             if not a_kit:
@@ -1320,6 +1434,7 @@ def decide(id, choice, merged_text=None):
             if patch:
                 _mark(target, patch)
         elif choice == "merge":
+            a_text = _read(os.path.join(a_dir, "SKILL.md")) if os.path.isfile(os.path.join(a_dir, "SKILL.md")) else ""
             if a_kit:
                 target = _free(root, _safe(a), "-")
                 shutil.copytree(a_dir, target, ignore=_ignore)
@@ -1329,15 +1444,27 @@ def decide(id, choice, merged_text=None):
             path = os.path.join(target, "SKILL.md")
             _write_text(path, merged_text)
             fm, _ = front(merged_text)
+            a_fm, _ = front(a_text)
+            # the merged text drops none of the Fridae fields the skill in use had (its own keys win); a copy of one
+            # of the app's skills is the user's now, so it takes no owner from it
+            carry = [k for k in MERGE_KEEPS if k in a_fm and k not in fm and not (a_kit and k == "owner")]
+            if carry:
+                _add_front(path, _front_lines(a_text, carry))
             patch = {} if _fm_name(fm, target) == os.path.basename(target) else {"name": os.path.basename(target)}
-            if differ:
-                have = _list(fm.get("supersedes"))
-                patch["supersedes"] = have + ([b] if b not in have else [])
+            have = _list(fm.get("supersedes"))
+            have += [n for n in _list(a_fm.get("supersedes")) if n not in have]
+            if differ and b not in have:
+                have.append(b)
+            if have:
+                patch["supersedes"] = have
             if patch:
                 _set_front(path, patch)
             rec = _record(target)
-            if rec is not None and update:  # merged: an edited copy now, settled for this version of the source
-                rec["upstream"] = upstream
+            if rec is not None:
+                if "supersedes" in patch:  # Fridae wrote it: an imported copy honours only those (_entry)
+                    rec["patch"] = dict(rec.get("patch") or {}, supersedes=patch["supersedes"])
+                if update:  # merged: an edited copy now, settled for this version of the source
+                    rec["upstream"] = upstream
                 _write_json(os.path.join(target, SOURCE_FILE), rec)
             _aside(b_dir, b)
         else:  # keep_both
@@ -1350,7 +1477,7 @@ def decide(id, choice, merged_text=None):
             os.rename(b_dir, target)
             if n != b:
                 _mark(target, {"name": n})
-            if update and os.path.isfile(os.path.join(a_dir, SOURCE_FILE)):
+            if update and a_mine and os.path.isfile(os.path.join(a_dir, SOURCE_FILE)):
                 os.remove(os.path.join(a_dir, SOURCE_FILE))  # the user's edited copy is theirs now; the new one follows the source
         dec.update(state="done", choice=choice, decided=_now())
         _save_decisions(decs)
@@ -1358,6 +1485,8 @@ def decide(id, choice, merged_text=None):
 
 
 ADVICE = ("keep", "replace", "merge")
+KEEP_APP_WHY = ("Fridae's own skill is kept, as it always is; the other copy is set aside in skills/.replaced, "
+                "where it can be found again.")
 
 
 def advise(id, rec):
@@ -1377,10 +1506,12 @@ def advise(id, rec):
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
+        why = text("why").strip()
         if (choice in ("replace", "merge") and dec.get("kind", "skill") == "skill"
                 and _kit_owner(dec.get("a_dir") or "")[0] == "app"):
             choice, merged = "keep", ""
-        dec["recommendation"] = {"choice": choice, "why": text("why").strip(), "merged": merged,
+            why = KEEP_APP_WHY  # the recommender's why argued for the choice it cannot have
+        dec["recommendation"] = {"choice": choice, "why": why, "merged": merged,
                                  "by": text("by").strip(), "made": _now(),
                                  "a_hash": text("a_hash") or side_hash(dec.get("a_dir")),
                                  "b_hash": text("b_hash") or side_hash(dec.get("b_dir"))}

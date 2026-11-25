@@ -1108,7 +1108,141 @@ class ImportTests(unittest.TestCase):
             rbxskills.advise(d["id"], {"choice": choice, "why": "Mine is better.", "merged": "---\nname: critic\n---\nX"})
             rec = rbxskills.pending()[0]["recommendation"]
             self.assertEqual((rec["choice"], rec["merged"]), ("keep", ""), "dropped to keep")
+            self.assertNotIn("Mine is better.", rec["why"], "the why argued for the other choice")
+            self.assertIn("Fridae's own skill is kept", rec["why"])
         self.assertIn("The app's critic.", read(os.path.join(app, "SKILL.md")))
+
+    def store(self, edit):
+        """Change the stored decisions as another copy of the app might have written them."""
+        path = os.path.join(self.user, rbxskills.DECISIONS)
+        decs = json.loads(read(path))
+        edit(decs)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(decs, f)
+
+    def test_a_decision_on_a_folder_outside_the_library_moves_and_writes_nothing(self):
+        """A decision written by another copy of the app (its own kit) shares the store: a side that is neither this
+        app's skill nor in the user's library is never moved or written."""
+        d = self.overlap()
+        other = os.path.join(self.home, "Downloads", "Old Fridae.app", "kit", "Guides", "Core", "brainstorm-ideas")
+        skill(other, "brainstorm-ideas", "Turn rough ideas into designs before building anything.", "Another app's.")
+        before = read(os.path.join(other, "SKILL.md"))
+        merged = "---\nname: brainstorm-ideas\ndescription: Both, merged.\n---\n\nMerged body.\n"
+        self.store(lambda decs: decs[0].update(a_dir=other))
+        for choice in ("replace", "merge"):
+            with self.assertRaises(ValueError) as e:
+                rbxskills.decide(d["id"], choice, merged)
+            self.assertIn("check them again", str(e.exception))
+        self.assertEqual(read(os.path.join(other, "SKILL.md")), before, "never written")
+        self.assertEqual(sorted(os.listdir(other)), ["SKILL.md"])
+        self.assertTrue(os.path.isdir(d["b_dir"]), "the newcomer stays waiting")
+        self.assertFalse(os.path.isdir(os.path.join(self.user, ".replaced")))
+        self.assertEqual(len(rbxskills.pending()), 1, "still open")
+        # the newcomer's side outside the library: nothing that would move it
+        self.store(lambda decs: decs[0].update(a_dir=os.path.join(self.user, "brainstorm-ideas"), b_dir=other))
+        for choice in ("replace", "merge", "keep_both"):
+            with self.assertRaises(ValueError) as e:
+                rbxskills.decide(d["id"], choice, merged)
+            self.assertIn("check them again", str(e.exception))
+        self.assertEqual(read(os.path.join(other, "SKILL.md")), before)
+        self.assertIn("Mine.", read(os.path.join(self.user, "brainstorm-ideas", "SKILL.md")))
+        # keep closes it, still touching neither foreign folder
+        self.store(lambda decs: decs[0].update(a_dir=other, b_dir=d["b_dir"]))
+        self.assertEqual(rbxskills.decide(d["id"], "keep")["state"], "done")
+        self.assertEqual(read(os.path.join(other, "SKILL.md")), before, "no supersedes written into it")
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_a_decision_whose_waiting_folder_is_gone_closes(self):
+        two = os.path.join(self.agents, "two")
+        skill(two, "two", "Tune guitar strings.", "Old two.")
+        rbxskills.import_external()
+        with open(os.path.join(self.user, "two", "SKILL.md"), "a", encoding="utf-8") as f:
+            f.write("My own tip.\n")
+        skill(two, "two", "Tune guitar strings.", "New two.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        shutil.rmtree(d["b_dir"])
+        for choice in ("replace", "merge"):
+            with self.assertRaises(LookupError):
+                rbxskills.decide(d["id"], choice, "---\nname: two\n---\nMerged.")
+        self.assertEqual(rbxskills.decide(d["id"], "keep")["state"], "done", "keep closes it anyway")
+        self.assertIn("My own tip.", read(os.path.join(self.user, "two", "SKILL.md")))
+        # another update, its folder gone before anyone decides: pending closes it
+        skill(two, "two", "Tune guitar strings.", "Newer two.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        shutil.rmtree(d["b_dir"])
+        self.assertEqual(rbxskills.pending(), [], "left out, and the count drops")
+        stored = {x["id"]: x for x in json.loads(read(os.path.join(self.user, rbxskills.DECISIONS)))}
+        self.assertEqual(stored[d["id"]]["state"], "gone", "closed in the store")
+        skill(two, "two", "Tune guitar strings.", "Newest two.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        shutil.rmtree(d["b_dir"])
+        self.assertEqual(rbxskills.decide(d["id"], "keep_both")["state"], "done", "keep both closes it too")
+        self.assertEqual(self.ids(), ["two"])
+
+    def test_a_merge_keeps_the_fridae_fields_of_the_skill_in_use(self):
+        mine = os.path.join(self.user, "brainstorm-ideas")
+        os.makedirs(mine)
+        with open(os.path.join(mine, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: brainstorm-ideas\ndescription: Turn rough ideas into designs before building anything.\n"
+                    "examples:\n  - plan a feature, then build it\n  - shape a rough idea\napplies: plain\ncore: true\n"
+                    "owner: community\nsource: github.com/me/skills\nlicence: MIT\nsupersedes: [old-ideas]\n---\n\nMine.\n")
+        skill(os.path.join(self.agents, "brainstorming"), "brainstorming",
+              "Turn rough ideas into designs before building anything.", "Theirs.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        rbxskills.decide(d["id"], "merge", "---\nname: brainstorm-ideas\ndescription: Both, merged.\napplies: both\n---\n\nMerged.\n")
+        [s] = rbxskills.library()
+        self.assertEqual((s["description"], s["applies"]), ("Both, merged.", "both"), "the merged text's own keys win")
+        self.assertEqual(s["examples"], ["plan a feature, then build it", "shape a rough idea"])
+        self.assertEqual((s["core"], s["owner"], s["source"], s["licence"]),
+                         (True, "community", "github.com/me/skills", "MIT"))
+        self.assertEqual(s["supersedes"], ["old-ideas", "brainstorming"])
+
+    def test_an_imported_skill_cannot_pin_itself_claim_fridae_or_hide_a_guide(self):
+        self.kit_skill("ui-design", "Design game menus and HUD screens.")
+        src = os.path.join(self.agents, "tidy-desk")
+        os.makedirs(src)
+        with open(os.path.join(src, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: tidy-desk\ndescription: Sort the papers on a desk into piles.\ncore: true\n"
+                    "owner: shipped\nsupersedes: [ui-design]\n---\n\nSort.\n")
+        rbxskills.import_external()
+        lib = {s["id"]: s for s in rbxskills.library()}
+        self.assertIn("ui-design", lib, "a guide stays visible")
+        self.assertEqual((lib["tidy-desk"]["core"], lib["tidy-desk"]["owner"], lib["tidy-desk"]["supersedes"]),
+                         (False, "user", []))
+        self.assertFalse(rbxskills.pinned(lib["tidy-desk"]))
+        self.assertNotIn("- tidy-desk:", rbxskills.catalog("gemini"))
+        # the user's own skill (no import link) says what it likes
+        skill(os.path.join(self.user, "mine"), "mine", "My own.")
+        with open(os.path.join(self.user, "mine", "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: mine\ndescription: My own.\ncore: true\nsupersedes: [ui-design]\n---\n\nMine.\n")
+        lib = {s["id"]: s for s in rbxskills.library()}
+        self.assertTrue(lib["mine"]["core"])
+        self.assertNotIn("ui-design", lib)
+
+    def test_refreshing_an_unedited_copy_keeps_the_files_the_user_added(self):
+        src = os.path.join(self.agents, "env-skill")
+        skill(src, "env-skill", "Talk to a web service.", "Old.")
+        rbxskills.import_external()
+        copy = os.path.join(self.user, "env-skill")
+        extra = {".env": "TOKEN=mine\n", ".venv/bin/python": "#!", "node_modules/x/index.js": "1",
+                 "scripts/__pycache__/a.pyc": "c"}
+        for rel, text in extra.items():
+            path = os.path.join(copy, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+        skill(src, "env-skill", "Talk to a web service.", "New.")
+        self.assertEqual(rbxskills.import_external()["refreshed"], ["env-skill"], "still an unedited copy")
+        self.assertIn("New.", read(os.path.join(copy, "SKILL.md")))
+        for rel, text in extra.items():
+            self.assertEqual(read(os.path.join(copy, *rel.split("/"))), text, rel)
+        link = json.loads(read(os.path.join(copy, rbxskills.SOURCE_FILE)))
+        self.assertEqual(link["hash"], rbxskills.folder_hash(copy), "still unedited after the refresh")
+        self.assertFalse([n for n in os.listdir(self.user) if n.startswith(".tmp-")], "no temporary folder left")
 
 
 if __name__ == "__main__":
