@@ -131,7 +131,7 @@ def shareable():
         else:
             todo.append((e, files, h, bool(marks)))
     if todo:
-        corpus = _corpus([e["dir"] for e in mine])
+        corpus = _corpus([t[0]["dir"] for t in todo])
         idf = rbxskills._idf([_body(t[0]["dir"]) for t in todo] + [c[2] for c in corpus])
         for e, files, h, changed in todo:
             score, sid, label = best_copy(e["dir"], corpus, idf)

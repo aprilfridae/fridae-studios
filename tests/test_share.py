@@ -118,6 +118,18 @@ class ShareTests(unittest.TestCase):
         self.assertLess(b[0], rbxshare.COPY_MIN, msg)
         self.assertEqual(self.held()["my-critic"], "Looks like a copy of critic (built into Fridae).")
 
+    def test_edited_copy_of_an_import_is_held_though_its_source_is_gone(self):
+        d = self.mine("borrowed-debug", body=FRESH)
+        rbxskills._write_json(os.path.join(d, rbxskills.SOURCE_FILE), {"source": "/gone/superpowers"})
+        lines = FRESH.strip("\n").split("\n")
+        lines[5:6] = NEW_PARAGRAPH[:1]  # a little of it rewritten
+        self.mine("my-debug", body="\n".join(lines))
+        a = rbxshare.best_copy(os.path.join(self.user, "my-debug"))
+        self.assertGreaterEqual(a[0], rbxshare.COPY_MIN, "scored %.4f" % a[0])
+        self.assertEqual(self.held()["my-debug"], "Looks like a copy of borrowed-debug (your library).")
+        self.assertEqual(self.held()["borrowed-debug"],
+                         "Imported from /gone/superpowers: it is credited there, not shared.")
+
     def test_same_topic_written_fresh_is_ready(self):
         skill(os.path.join(self.claude, "skills", "systematic-debugging"), "systematic-debugging", THEIRS)
         self.mine("fresh-debug", body=FRESH)
