@@ -159,6 +159,35 @@ fn known_secrets() -> Vec<String> {
     out
 }
 
+/// `mask`, and what else would say who a person is when text leaves the Mac for a public place: email addresses
+/// become `[email]`, the home folder (as the start of a path) becomes `~`, and the login name (`$USER`, else the home
+/// folder's last part), where it stands as a word of its own and has 3 or more characters, becomes `[user]`. Text
+/// with none of these is unchanged.
+pub fn mask_for_sharing(text: &str) -> String {
+    let home = paths::home_dir();
+    let home = home.to_string_lossy().to_string();
+    let user = std::env::var("USER").ok().filter(|u| !u.trim().is_empty()).unwrap_or_else(|| Path::new(&home).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+    mask_for_sharing_with(text, &home, &user)
+}
+
+fn mask_for_sharing_with(text: &str, home: &str, user: &str) -> String {
+    static EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+").unwrap());
+    let masked = mask(text);
+    let mut out = EMAIL.replace_all(&masked, "[email]").to_string();
+    // the home folder first, so `/Users/angela/x` is `~/x` and not `/Users/[user]/x`
+    let home = home.trim_end_matches(['/', '\\']);
+    if !home.is_empty() {
+        let re = Regex::new(&format!(r"{}(/|\\|[^A-Za-z0-9_.-]|$)", regex::escape(home))).unwrap();
+        out = re.replace_all(&out, "~$1").to_string();
+    }
+    let user = user.trim();
+    if user.chars().count() >= 3 {
+        let re = Regex::new(&format!(r"\b{}\b", regex::escape(user))).unwrap();
+        out = re.replace_all(&out, "[user]").to_string();
+    }
+    out
+}
+
 const MASK: &str = "[masked]";
 
 fn mask_with(text: &str, secrets: &[String]) -> String {
@@ -828,6 +857,25 @@ fn claude_writes(exe: &Path, account: Option<String>, prompt: String, limit: Dur
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn sharing_masks_email_home_and_user() {
+        let out = mask_for_sharing_with("see /Users/angela/x.txt, mail me at a.b@c.io, angela's build", "/Users/angela", "angela");
+        assert_eq!(out, "see ~/x.txt, mail me at [email], [user]'s build");
+    }
+
+    #[test]
+    fn sharing_keeps_ordinary_text() {
+        assert_eq!(mask_for_sharing_with("run ./scripts/go.sh --fast", "/Users/angela", "angela"), "run ./scripts/go.sh --fast");
+        assert_eq!(mask_for_sharing_with("ui design", "/Users/ui", "ui"), "ui design");
+        assert_eq!(mask_for_sharing_with("/Users/angelax/y and angelas", "/Users/angela", "angela"), "/Users/angelax/y and angelas");
+    }
+
+    #[test]
+    fn sharing_masks_keys_too() {
+        let text = format!("token = ghp_{}", "a".repeat(30));
+        assert!(mask_for_sharing_with(&text, "/Users/angela", "angela").contains(MASK));
+    }
 
     fn usage(output: u64) -> usage::Turn {
         usage::Turn { output, ..Default::default() }
