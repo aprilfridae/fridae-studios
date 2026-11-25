@@ -17,6 +17,8 @@ ALLOWED_TOP = ("Skills/",)
 BESIDE = " (Fridae update)"
 BAD = "This vault update looked wrong, so nothing was changed."
 MERGE_MAX = 1 << 20
+# the longest file name accepted: room for " (Fridae update 99)" in the same folder (temp files have short names)
+NAME_MAX = 255 - len(" (Fridae update 99)")
 MAX_FILES, MAX_FILE, MAX_TOTAL = 5000, 1 << 20, 100 << 20
 
 
@@ -106,7 +108,7 @@ def _target_ok(path, root):
 
 def _write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = "%s.%s.tmp" % (path, uuid.uuid4().hex[:8])
+    tmp = os.path.join(os.path.dirname(path), ".%s.tmp" % uuid.uuid4().hex[:8])
     with open(tmp, "wb") as f:
         f.write(data)
     os.replace(tmp, path)
@@ -162,9 +164,9 @@ def _local_path(path, renamed):
 
 
 def _no_symlinks():
-    """Knowledge, its Skills and its .fridae-vault folders are real folders (when they exist)."""
+    """Knowledge/Skills and Knowledge/.fridae-vault are real folders (when they exist)."""
     import rbxskills
-    for d in (rbxpaths.KNOWLEDGE_DIR, rbxskills.vault_dir(), state_dir()):
+    for d in (rbxskills.vault_dir(), state_dir()):  # Knowledge itself may be a link; what is below it may not
         if os.path.islink(d):
             raise ValueError
 
@@ -190,7 +192,7 @@ def _validate(staged, manifest, renamed):
         if total > MAX_TOTAL:
             raise ValueError
         _no_symlinks()
-        seen = set()
+        seen, ups = set(), set()
         vault = rbxskills.vault_dir()
         root = os.path.realpath(staged)
         for f in files:
@@ -202,6 +204,11 @@ def _validate(staged, manifest, renamed):
             if os.path.splitext(p)[0].endswith(BESIDE):
                 raise ValueError
             lp = _local_path(p, renamed)
+            up = unicodedata.normalize("NFC", p).casefold()
+            if up in ups or len(lp.rsplit("/", 1)[1].encode("utf-8", "surrogatepass")) > NAME_MAX \
+                    or len(p.rsplit("/", 1)[1].encode("utf-8", "surrogatepass")) > NAME_MAX:
+                raise ValueError
+            ups.add(up)
             key = unicodedata.normalize("NFC", lp).casefold()
             if not check_path(lp) or not check_path(_beside(lp)) or key in seen:
                 raise ValueError
@@ -244,6 +251,8 @@ def _put_beside(target, data):
         if _read_existing(path) == data:
             return
         n += 1
+        if n > 99:
+            raise OSError("too many saved copies beside it")
 
 
 def _apply(staged, manifest, base):
@@ -268,8 +277,10 @@ def _apply(staged, manifest, base):
 
     def forget(p):
         base["files"].pop(p, None)
+        copy = os.path.join(bdir, *p.split("/"))
         try:
-            os.remove(os.path.join(bdir, *p.split("/")))
+            if _target_ok(copy, state_dir()):
+                os.remove(copy)
         except OSError:
             pass
 

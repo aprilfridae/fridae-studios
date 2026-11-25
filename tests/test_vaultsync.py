@@ -311,12 +311,57 @@ class VaultSyncTests(unittest.TestCase):
         self.refused({"Skills/x/SKILL (Fridae update).md": "v"})
 
     def test_manifest_limits(self):
-        self.refused(mutate=lambda m: m["files"][0].update(size=(1 << 20) + 1))
-        self.refused(mutate=lambda m: m.update(files=[
-            {"path": "Skills/s/f%d.md" % i, "sha256": sha("z"), "size": 1} for i in range(5001)]))
-        self.refused(mutate=lambda m: m.update(files=[
-            {"path": "Skills/s/f%d.md" % i, "sha256": sha("z"), "size": 1 << 20} for i in range(101)]))
+        """Each case has real, matching staged files, so only the limit can refuse it, and no staged file is read."""
+        def boom(path):
+            raise AssertionError("a staged file was read before the limits were checked")
+        cases = [("MAX_FILES", 2, {"Skills/s/a.md": "a", "Skills/s/b.md": "b", "Skills/s/c.md": "c"}),
+                 ("MAX_FILE", 5, {"Skills/s/a.md": "123456"}),
+                 ("MAX_TOTAL", 10, {"Skills/s/a.md": "1234", "Skills/s/b.md": "1234", "Skills/s/c.md": "1234"})]
+        for name, limit, files in cases:
+            staged, man = self.stage(files)
+            before = self.snapshot()
+            with mock.patch.object(rbxvaultsync, name, limit), mock.patch.object(rbxvaultsync, "_read", boom):
+                with self.assertRaises(ValueError, msg=name):
+                    rbxvaultsync.apply(staged, man)
+            self.assertEqual(self.snapshot(), before)
+            with mock.patch.object(rbxvaultsync, name, limit * 10):  # the same files pass when the limit allows
+                rbxvaultsync.apply(staged, man)
+            shutil.rmtree(self.know)
         self.refused(mutate=lambda m: m.update(files=[]))
+
+    def test_longest_accepted_name_really_writes(self):
+        ok = "Skills/y/%s.md" % ("n" * (rbxvaultsync.NAME_MAX - 3))
+        self.assertEqual(len(ok.rsplit("/", 1)[1].encode()), rbxvaultsync.NAME_MAX)
+        self.seed(ok, "a\nb\nc\n", "a\nmine\nc\n")
+        self.put(ok.replace(".md", " (Fridae update).md"), "hand merge")
+        self.apply({ok: "a\ntheirs\nc\n"})
+        self.assertTrue(os.path.exists(self.local(ok.replace(".md", " (Fridae update 2).md"))))
+        self.refused({"Skills/z/%s.md" % ("n" * (rbxvaultsync.NAME_MAX - 2)): "v"})
+
+    def test_upstream_paths_equal_after_casefold_are_refused(self):
+        self.refused({"Skills/y/A.md": "a", "Skills/y/a.md": "b"})
+
+    def test_removing_through_a_symlinked_base_copy_is_refused(self):
+        outside = tempfile.mkdtemp(prefix="outside ")
+        self.addCleanup(shutil.rmtree, outside, True)
+        with open(os.path.join(outside, "keep.md"), "w") as f:
+            f.write("keep")
+        self.seed(self.P, "v1", "v1")
+        self.seed("Skills/y/SKILL.md", "Y", "Y")
+        copy = os.path.join(rbxvaultsync.state_dir(), "base", "Skills", "x", "SKILL.md")
+        os.remove(copy)
+        os.symlink(os.path.join(outside, "keep.md"), copy)
+        self.apply({"Skills/y/SKILL.md": "Y"})
+        self.assertEqual(open(os.path.join(outside, "keep.md")).read(), "keep")
+
+    def test_knowledge_itself_may_be_a_symlink(self):
+        real = tempfile.mkdtemp(prefix="portable ")
+        self.addCleanup(shutil.rmtree, real, True)
+        os.symlink(real, self.know)
+        r = self.apply({self.P: "v"})
+        self.assertEqual(r["added"], [self.P])
+        self.assertEqual(self.get(self.P), "v")
+        self.assertTrue(os.path.exists(os.path.join(real, "Skills", "x", "SKILL.md")))
 
     def test_loose_file_under_skills_is_refused(self):
         self.assertFalse(rbxvaultsync.check_path("Skills/README.md"))
@@ -329,9 +374,6 @@ class VaultSyncTests(unittest.TestCase):
         rbxskills._write_json(rbxvaultsync.base_path(), b)
         self.refused({self.P: "a", "Skills/x-community/SKILL.md": "b"})
         self.refused({"Skills/y/SKILL.md": "a", "Skills/y/skill.md": "b"})
-
-    def test_too_long_beside_name_is_refused(self):
-        self.refused({"Skills/y/%s.md" % ("n" * 240): "a"})
 
     def test_symlinked_vault_folders_are_refused(self):
         outside = tempfile.mkdtemp(prefix="outside ")
