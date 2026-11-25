@@ -64,6 +64,13 @@ impl Drop for Turn {
     }
 }
 
+/// The branch a batch is sent on: `skills-<login>-<YYYYMMDD-HHMM>-<4 hex>`. The stamp is cut only when it is long enough
+/// (it is plain seconds where the clock cannot be read), and the random end keeps two sends in one minute apart.
+fn branch_name(login: &str, stamp: &str) -> String {
+    let stamp = stamp.replace('_', "-").to_lowercase();
+    format!("skills-{login}-{}-{}", stamp.get(..13).unwrap_or(&stamp), &paths::random_hex(1)[..4])
+}
+
 fn fail(why: impl Into<String>) -> Value {
     json!({"ok": false, "error": why.into()})
 }
@@ -445,7 +452,7 @@ fn send_in(batch: &str, drop: &[String]) -> Result<Value, String> {
     let names: Vec<String> = sent.iter().map(|(n, _)| n.clone()).collect();
     let upstream = vault_git::vault_repo();
     let fork = vault_git::ensure_fork(&upstream)?;
-    let branch = format!("skills-{login}-{}", &paths::stamp().replace('_', "-").to_lowercase()[..13]);
+    let branch = branch_name(&login, &paths::stamp());
     let head = vault_git::head_sha(&fork, "main")?;
     vault_git::new_branch(&fork, &branch, &head)?;
     vault_git::commit_files(&fork, &branch, &files, &[], &format!("Skills from {login}: {}", names.join(", ")))?;
@@ -940,5 +947,14 @@ x [user]");
             }
         }
         assert!(crate::paths::GUARDED.contains(&MODE_KEY), "a file edit cannot turn sharing on");
+    }
+
+    #[test]
+    fn branch_name_never_panics_and_differs_within_a_minute() {
+        let full = branch_name("ada", "20261201-153007");
+        assert!(full.starts_with("skills-ada-20261201-1530-") && full.len() == "skills-ada-20261201-1530-".len() + 4, "{full}");
+        // where the clock cannot be read the stamp is plain seconds (10 characters)
+        assert!(branch_name("ada", "1764600000").starts_with("skills-ada-1764600000-"));
+        assert_ne!(branch_name("ada", "20261201-153007"), branch_name("ada", "20261201-153007"));
     }
 }
