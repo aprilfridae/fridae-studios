@@ -5833,7 +5833,7 @@ function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills();
    or Pull newest: the vault-apply report ({added, updated, merged, clashes, incoming, errors}; vault paths
    "Skills/<skill>/<file>" for skills and "Roblox/..." for guides; clashes the units now waiting for Keep the vault's /
    Keep mine, a skill as "Skills/<skill>"; incoming the new skills waiting for a decision), {release: null, note},
-   {current: true} or {ok: false, error}; merged with Share's {mode: off|review|auto, asked, agreed, connected, login,
+   {current: true} or {ok: false, error}; merged with Share's {mode: off|review|auto, asked, agreed, agreed_knowledge, connected, login,
    shareable, ready [{id, scripts}], held [{id, why}], sent [{id, pr, at}], knowledge {ready [{unit, kind, title, new}],
    held [{unit, title, why}], sent [{unit, title, pr, at}]}, batch?, last_sent, held_masked} and role. It runs the
    skills tool, so it is read when Skills opens and after a click, and every few seconds only while an update runs.
@@ -6077,7 +6077,9 @@ function shPaint(st) {
   $("sh-modes").hidden = !asked;
   $("sh-modes").querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.mode === mode); b.disabled = shBusy; });
   $("sh-ask").querySelectorAll("button").forEach((b) => (b.disabled = shBusy));
-  $("sh-terms").hidden = on;
+  /* the licence line shows while sharing is off, and again while an older agreement does not name guides (their rows
+     are held until the user presses their sharing choice again) */
+  $("sh-terms").hidden = on && st.agreed_knowledge !== false;
   $("sh-gh").hidden = !(shWantGh || (on && !st.connected));
   const list = $("sh-list"), live = on && !!st.connected;
   /* a row: the name, its kind after it (a guide or a vault skill; a skill of the library says none), then where it stands */

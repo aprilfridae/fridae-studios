@@ -19,6 +19,10 @@ use crate::{compact, github, paths, vault_git, vault_sync};
 /// it is a guarded setting (an agent's file edit cannot turn it on); the others are seconds and a note.
 const MODE_KEY: &str = "share_skills";
 const AGREED_KEY: &str = "share_agreed_at";
+/// What the agreement covered: missing (agreed when the wording named only the user's skills) or `SCOPE` (skills,
+/// guides and changes to the vault's skills). Guides and vault skills are packed and sent only under `SCOPE`.
+const SCOPE_KEY: &str = "share_agreed_scope";
+const SCOPE: u64 = 2;
 const LAST_KEY: &str = "share_last_sent";
 const HELD_KEY: &str = "share_held";
 const OFF: &str = "Turn on sharing first.";
@@ -28,6 +32,7 @@ const NO_ROOM: &str = "Fridae could not save what it was about to send in its ow
 const NOT_RUN: &str = "Fridae could not get your skills and guides ready to send.";
 const NO_LOGIN: &str = "GitHub did not say who is signed in. Disconnect GitHub in Setup, Connections, and connect again.";
 const AGREE: &str = "Agree to share your skills and guides under CC BY 4.0 (text) and MIT (scripts) first.";
+const HELD_AGREE: &str = "Waiting for your yes to share guides and changes to the vault's skills: read the line above and press your sharing choice again.";
 const HELD_WHY: &str = "Fridae hid something in a script; check it in Setup › Skills before it is sent.";
 const LICENCE_LINE: &str = "I made these skills and share them under CC BY 4.0 (text) and MIT (scripts).";
 const CHANGES_LINE: &str = "I made these changes and share them under CC BY 4.0 (text) and MIT (scripts).";
@@ -187,6 +192,12 @@ fn knowledge_open() -> bool {
     vault_sync::downloaded()
 }
 
+/// Whether the user's agreement names guides and the vault's skills (made through today's agree flow, `SCOPE`); a
+/// standing choice from before guides could be shared never widens to them on its own.
+fn knowledge_agreed() -> bool {
+    config_num(SCOPE_KEY).is_some_and(|s| s >= SCOPE)
+}
+
 /// `rbx skills shareable`'s ready units: the library's skills by name, then what of Knowledge is ready, in the kit's
 /// order (none while `knowledge_open()` is false). A vault skill whose name a library skill of this list has (any
 /// capitals) waits for a later batch, since both would be sent at `Skills/<name>`.
@@ -202,7 +213,7 @@ fn items(v: &Value) -> Vec<Item> {
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     let taken: Vec<String> = out.iter().map(|i| i.unit.to_lowercase()).collect();
-    let open = knowledge_open();
+    let open = knowledge_open() && knowledge_agreed();
     for e in v["knowledge"]["ready"].as_array().into_iter().flatten().filter(|_| open) {
         let (Some(unit), Some(hash)) = (e["unit"].as_str(), e["hash"].as_str()) else { continue };
         let kind = knowledge_kind(&e["kind"]);
@@ -306,6 +317,7 @@ pub fn set_mode(mode: &str, agree: bool) -> Value {
         c.insert(MODE_KEY.into(), json!(mode));
         if mode != "off" {
             c.insert(AGREED_KEY.into(), json!(vault_sync::now()));
+            c.insert(SCOPE_KEY.into(), json!(SCOPE));
         }
     });
     json!({"ok": true, "mode": mode})
@@ -315,7 +327,8 @@ pub fn set_mode(mode: &str, agree: bool) -> Value {
 /// while sharing is on and GitHub connected, `rbx skills shareable` is run once for `ready: [{id, scripts}]` (a skill
 /// held by the last automatic batch is held, not ready), `held: [{id, why}]` (the kit's, then `held_masked`, each name
 /// once), `sent: [{id, pr, at}]` and `knowledge: {ready: [{unit, kind, title, new}], held: [{unit, title, why}], sent:
-/// [{unit, title, pr, at}]}` (guides and vault skills); otherwise the lists are empty.
+/// [{unit, title, pr, at}]}` (guides and vault skills); otherwise the lists are empty. `agreed_knowledge` is false
+/// under an agreement from before guides could be shared: then what would be ready is held (`HELD_AGREE`).
 pub fn status() -> Value {
     let c = paths::load_config();
     let (mode, connected) = (mode(), github::connected());
@@ -341,15 +354,27 @@ pub fn status() -> Value {
     let none = json!({});
     let k = listed.as_ref().map(|v| &v["knowledge"]).filter(|_| knowledge_open()).unwrap_or(&none);
     let klist = |key: &str| k[key].as_array().cloned().unwrap_or_default();
+    // under an agreement from before guides could be shared, what would be ready waits for a fresh yes
+    let agreed_knowledge = knowledge_agreed();
+    let mut kheld: Vec<Value> = klist("held").iter().map(|e| json!({"unit": e["unit"], "title": e["title"], "why": e["why"]})).collect();
+    let mut kready = Vec::new();
+    for e in klist("ready") {
+        if agreed_knowledge {
+            kready.push(json!({"unit": e["unit"], "kind": knowledge_kind(&e["kind"]), "title": e["title"], "new": e["new"] == true}));
+        } else {
+            kheld.push(json!({"unit": e["unit"], "title": e["title"], "why": HELD_AGREE}));
+        }
+    }
     let knowledge = json!({
-        "ready": klist("ready").iter().map(|e| json!({"unit": e["unit"], "kind": knowledge_kind(&e["kind"]), "title": e["title"], "new": e["new"] == true})).collect::<Vec<_>>(),
-        "held": klist("held").iter().map(|e| json!({"unit": e["unit"], "title": e["title"], "why": e["why"]})).collect::<Vec<_>>(),
+        "ready": kready,
+        "held": kheld,
         "sent": klist("sent").iter().map(|e| json!({"unit": e["unit"], "title": e["title"], "pr": e["pr"], "at": e["at"]})).collect::<Vec<_>>(),
     });
     let mut out = json!({
         "mode": mode,
         "asked": paths::setting(MODE_KEY).is_string(),
         "agreed": c.contains_key(AGREED_KEY),
+        "agreed_knowledge": agreed_knowledge,
         "connected": connected,
         "login": github::user()["login"].clone(),
         "shareable": shareable,
@@ -539,6 +564,10 @@ fn send_in(batch: &str, drop: &[String]) -> Result<Value, String> {
         if name.is_empty() || drop.iter().any(|d| *d == unit || (kind == "skill" && d == name)) {
             continue;
         }
+        // a guide or vault skill goes only under an agreement that names them
+        if kind != "skill" && !(knowledge_agreed() && knowledge_open()) {
+            return Err(AGREE.to_string());
+        }
         if kind == "guide" {
             let path = s["path"].as_str().filter(|p| !p.starts_with("Skills/") && vault_sync::check_path(p)).ok_or_else(|| GONE.to_string())?;
             let file = under(&dir.join(KNOWN), path);
@@ -723,7 +752,7 @@ mod tests {
         fs::create_dir_all(base_record().parent().unwrap()).unwrap();
         fs::write(base_record(), r#"{"format": 1, "release": "vault-2026.11.24", "files": {}}"#).unwrap();
         paths::update_config(|c| {
-            for k in [MODE_KEY, AGREED_KEY, LAST_KEY, HELD_KEY] {
+            for k in [MODE_KEY, AGREED_KEY, SCOPE_KEY, LAST_KEY, HELD_KEY] {
                 c.remove(k);
             }
         });
@@ -734,8 +763,12 @@ mod tests {
         join(&knowledge(), ".fridae-vault/base.json")
     }
 
+    /// The user's choice, made through today's agree flow (so the agreement names guides too).
     fn mode_is(m: &str) {
-        paths::update_config(|c| c.insert(MODE_KEY.into(), json!(m)));
+        paths::update_config(|c| {
+            c.insert(MODE_KEY.into(), json!(m));
+            c.insert(SCOPE_KEY.into(), json!(SCOPE));
+        });
     }
 
     /// A skill of the user's own, with words no other skill has; `extra` are more files.
@@ -1230,6 +1263,49 @@ x [user]");
         skill("alpha", ALPHA, &[]);
         let made = prepare();
         assert_eq!(made["skills"].as_array().unwrap().iter().map(|i| i["unit"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Skills/alpha"], "{made}");
+    }
+
+    #[test]
+    fn an_agreement_from_before_guides_never_widens_to_them() {
+        let (_g, s) = setup();
+        guide("Roblox/Glossary.md", "# Glossary\n\nWords.\n");
+        let dir = join(&knowledge(), "Skills/tidy");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: tidy\ndescription: Put things away.\n---\n\nPut things away.\n").unwrap();
+        // "Send automatically", agreed when the wording named only the user's skills: a time, no scope
+        paths::update_config(|c| {
+            c.insert(MODE_KEY.into(), json!("auto"));
+            c.insert(AGREED_KEY.into(), json!(1_700_000_000u64));
+        });
+        let st = status();
+        assert_eq!(st["agreed_knowledge"], false, "{st}");
+        assert_eq!(st["knowledge"]["ready"], json!([]), "{st}");
+        let why = "Waiting for your yes to share guides and changes to the vault's skills: read the line above and press your sharing choice again.";
+        assert_eq!(st["knowledge"]["held"], json!([{"unit": "Roblox/Glossary.md", "title": "Glossary", "why": why}, {"unit": "Skills/tidy", "title": "tidy", "why": why}]), "{st}");
+        auto_tick();
+        assert!(!calls(&s).iter().any(|c| c.starts_with("POST")), "nothing is sent: {:?}", calls(&s));
+        // nor is it packed for a batch to check, and a batch holding a guide is not sent
+        paths::update_config(|c| c.insert(MODE_KEY.into(), json!("review")));
+        assert_eq!(prepare()["batch"], Value::Null);
+        // the agree flow again (its licence line names guides) covers them
+        assert_eq!(set_mode("auto", true)["ok"], true);
+        assert_eq!(status()["agreed_knowledge"], true);
+        assert_eq!(status()["knowledge"]["ready"].as_array().unwrap().len(), 2);
+        auto_tick();
+        let tree = committed(&s);
+        assert!(tree.contains_key("Roblox/Glossary.md") && tree.contains_key("Skills/tidy/SKILL.md"), "{:?}", tree.keys());
+    }
+
+    #[test]
+    fn a_batch_made_under_the_new_agreement_is_not_sent_under_an_old_one() {
+        let (_g, s) = setup();
+        guide("Roblox/Glossary.md", "# Glossary\n\nWords.\n");
+        mode_is("review");
+        let made = prepare();
+        assert_eq!(made["skills"][0]["kind"], "guide", "{made}");
+        paths::update_config(|c| c.remove(SCOPE_KEY));
+        assert_eq!(send(made["batch"].as_str().unwrap(), &[])["error"], AGREE);
+        assert!(!calls(&s).iter().any(|c| c.starts_with("POST")), "{:?}", calls(&s));
     }
 
     #[test]

@@ -2392,7 +2392,11 @@ when nothing travels it says "The vault has nothing to publish yet.".
 
 **Config keys** (`<home>/config.json`): `vault_release` (the release last downloaded), `vault_checked_at` and
 `vault_last` (the last check and its report), `share_skills` (`off`, `review`, `auto`; guarded), `share_agreed_at`,
-`share_last_sent` (the automatic send's clock) and `share_held`. The vault's record is
+`share_agreed_scope` (2 once the user agreed under wording that names guides and changes to the vault's skills; an
+agreement without it covers only their library skills, so guides and vault skills are held with "Waiting for your yes
+..." and never packed or sent, by hand or automatically, until they press their sharing choice again under the licence
+line), `share_last_sent` (the automatic send's clock) and `share_held`. Nothing of Knowledge is listed, packed or sent
+before the first Download (no base record). The vault's record is
 `<Knowledge>/.fridae-vault/base.json`; the app's own `fridae-vault/` folder holds `staging/`, `outbox/`, `inbox/` and
 `main/` (the mirror).
 
