@@ -106,8 +106,14 @@ def claude_skills(core=CORE_GUIDES):
     return out
 
 
+INSTALLED_MARKER = ".fridae-installed.json"  # {"skill": the guide's id, "hash": rbxskills.folder_hash of the folder}
+
+
 def build_claude_skills(dest, core=CORE_GUIDES):
-    """Write each core guide as a Claude Code skill folder under dest; returns how many."""
+    """Write each core guide as a Claude Code skill folder under dest; returns how many. Each folder gets
+    INSTALLED_MARKER, so Fridae's skill import knows the copy is its own guide and whether it was edited since
+    (folder_hash leaves dot-files out, so the marker is not part of the hash it records)."""
+    from rbxskills import folder_hash
     skills = claude_skills(core)
     for name, files in skills.items():
         for rel, src in files.items():
@@ -120,6 +126,10 @@ def build_claude_skills(dest, core=CORE_GUIDES):
                     f.write(text)
             else:
                 shutil.copyfile(src, out)
+        folder = os.path.join(dest, name)
+        guide = os.path.basename(os.path.dirname(files["SKILL.md"]))
+        with open(os.path.join(folder, INSTALLED_MARKER), "w", encoding="utf-8") as f:
+            json.dump({"skill": guide, "hash": folder_hash(folder)}, f)
     return len(skills)
 
 

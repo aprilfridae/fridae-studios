@@ -740,6 +740,70 @@ def _installed_copies():
     return out
 
 
+INSTALLED_FILE = ".fridae-installed.json"  # install.py's marker in each guide it writes: {"skill", "hash"}
+OLD_COPY_MIN = 0.9   # an unmarked copy under a guide's name at least this like the guide is an older install of it
+
+
+def _unfill(text, kit_text):
+    """text with the kit folder install.py filled in put back as {{RBXKIT}}: the folder is whatever stands before the
+    path that follows a placeholder in the kit's text (e.g. <folder>/rbx.py)."""
+    found = set()
+    for m in re.finditer(r"\{\{RBXKIT(?:_WIN)?\}\}([^\s`'\"()<>\[\]]+)", kit_text):
+        for mm in re.finditer(r"([^\s`'\"()<>\[\]]+?)" + re.escape(m.group(1)), text):
+            found.add(mm.group(1))
+    for path in sorted(found, key=len, reverse=True):
+        text = text.replace(path, "{{RBXKIT}}")
+    return text
+
+
+class _FridaeCopies:
+    """Recognises Fridae's own core guides as install.py put them in Claude Code's skills folder, so the import links
+    them to the kit's guide instead of copying them in (rulings 9 and 11). A copy is one when:
+      (a) it is byte for byte what the current install.py writes;
+      (b) its INSTALLED_FILE marker names a kit guide and its folder_hash still equals the hash recorded there;
+      (c) it has no marker (installed before markers), its folder or front-matter name is a core guide's id or its
+          Claude Code name, and its text (kit folder put back as the placeholder) is OLD_COPY_MIN like the guide's.
+    A marked copy whose hash no longer matches was edited: it is the user's skill."""
+
+    def __init__(self):
+        self.installed = _installed_copies()
+        self.guides = {os.path.basename(d): d for d in _skill_dirs(os.path.join(KIT, "vault", "Fridae", "Guides", "Core"))}
+        try:
+            import install
+            folders, fm_names = install.CLAUDE_SKILL_NAMES, install.CLAUDE_FM_NAMES
+        except Exception:
+            folders, fm_names = {}, {}
+        self.names = {}
+        for g in self.guides:
+            for n in (g, folders.get(g, g), fm_names.get(g, g)):
+                self.names.setdefault(n.casefold(), g)
+
+    def guide(self, d, h):
+        """The kit guide's id when skill folder d (folder_hash h) is Fridae's installed copy of it, else None."""
+        mark = _read_json(os.path.join(d, INSTALLED_FILE), {})
+        if mark.get("skill") in self.guides and mark.get("hash") == h:
+            return mark["skill"]
+        hit = self.installed.get(os.path.basename(d))
+        if hit and h in hit[1]:
+            return hit[0]
+        if mark:
+            return None  # Fridae wrote it, and it was edited since
+        try:
+            fm, body = front(_read(os.path.join(d, "SKILL.md")))
+        except OSError:
+            return None
+        g = self.names.get(os.path.basename(d).casefold()) or self.names.get(_fm_name(fm, d).casefold())
+        if not g:
+            return None
+        try:
+            kfm, kbody = front(_read(os.path.join(self.guides[g], "SKILL.md")))
+        except OSError:
+            return None
+        kit_text = ("%s\n%s" % (kfm.get("description") or "", kbody)).replace("{{RBXKIT_WIN}}", "{{RBXKIT}}")
+        text = _unfill("%s\n%s" % (fm.get("description") or "", body), kit_text)
+        return g if _cosine(text, kit_text) >= OLD_COPY_MIN else None
+
+
 # ---- the overlap check
 _SERVICE = {}   # one import's knowledge index answers: {"down": True} after a failure, {summary text: hits}
 
@@ -855,7 +919,7 @@ class _Importer:
                 old = self.replaced.get(rec["key"])
                 if old is None or str(rec.get("imported", "")) >= str(old.get("imported", "")):
                     self.replaced[rec["key"]] = rec
-        self.installed = _installed_copies()
+        self.fridae = _FridaeCopies()
         self.lib = library()
         self.idf = _idf([summary(e) for e in self.lib])
         self.heads = {}      # library dir -> its SKILL.md's bytes hash (the identical check reads few folders whole)
@@ -931,9 +995,8 @@ class _Importer:
         old = self.replaced.get(key)
         if old and old.get("upstream") == h:
             return  # the user set this one aside
-        hit = self.installed.get(os.path.basename(src))
-        if hit and h in hit[1]:
-            self.out["linked"].append(name)  # Fridae's own core guide, as install.py wrote it
+        if self.fridae.guide(src, h):
+            self.out["linked"].append(name)  # Fridae's own core guide, as install.py put it in Claude Code's folder
             return
         same = self.identical(src, h)
         if same is not None:
@@ -971,7 +1034,8 @@ def import_external():
     library, holding <user_dir>/.lock. For each:
       - linked (its copy's .fridae-source.json): a changed source refreshes an unedited copy; when both changed, the
         new one is saved beside it as "<name> (update)" and a decision added;
-      - identical to a library skill, or Fridae's own core guide as install.py wrote it: linked only;
+      - identical to a library skill, or Fridae's own core guide as install.py put it there (_FridaeCopies):
+        linked only;
       - new and overlapping a library skill (similar() >= OVERLAP): a decision, the newcomer kept in .incoming;
       - otherwise copied in.
     A source that disappeared marks its link gone and leaves the copy. Only ever reads the sources.
@@ -1008,18 +1072,13 @@ def maybe_import():
 
 # ---- deciding
 def _kit_owner(d):
-    """(owner, True) for a skill folder inside the app's kit, else ("user", False)."""
-    real, kit = os.path.realpath(d), os.path.realpath(KIT)
-    try:
-        inside = os.path.commonpath([real, kit]) == kit
-    except ValueError:
-        inside = False
-    if not inside:
-        return "user", False
+    """(owner, True) for one of the app's own or shipped skills (kit_skills), else ("user", False). Matched by the
+    skill's folder, not by being somewhere under KIT: running from source, the user's library is <KIT>/skills."""
+    real = os.path.realpath(d)
     for e in kit_skills():
         if os.path.realpath(e["dir"]) == real:
             return e["owner"], True
-    return "shipped", True
+    return "user", False
 
 
 def _aside(d, name):
@@ -1143,15 +1202,15 @@ def native_ids(project=None, config=None):
     folder; None: the main one): the project's, the unedited imports of a skill it loads (its own folder, its enabled
     plugins, what it synced for that account), and Fridae's core guides as install.py put them in its folder."""
     acct = claude_account(config)
-    keys, installed, guides = set(), None, set()
+    keys, fridae, guides = set(), None, set()
     for c in _copies(project):
         if c["origin"] in CLAUDE_NATIVE or (acct and c["bucket"].endswith("_" + acct)):
             keys.add(_key(c))
             if c["origin"] == "claude":
-                installed = _installed_copies() if installed is None else installed
-                hit = installed.get(os.path.basename(c["dir"]))
-                if hit and folder_hash(c["dir"]) in hit[1]:
-                    guides.add(hit[0].casefold())
+                fridae = _FridaeCopies() if fridae is None else fridae
+                g = fridae.guide(c["dir"], folder_hash(c["dir"]))
+                if g:
+                    guides.add(g.casefold())
     out = set()
     for s in library(project):
         sid = s["id"].casefold()

@@ -768,6 +768,83 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(d["a"], "workflow")
         self.assertNotIn("workflow", rbxskills.native_ids())
 
+    def test_running_from_source_user_skills_are_not_kit(self):
+        """From source the user's library is <KIT>/skills: its skills are the user's, not the kit's."""
+        user = os.path.join(self.home, "skills")
+        with mock.patch.object(rbxskills, "KIT", self.home), mock.patch.object(rbxskills, "user_dir", lambda: user):
+            for name, desc in (("notes", "Take meeting notes."), ("tips", "Share cooking tips."),
+                               ("ideas-list", "Collect ideas for garden planting.")):
+                skill(os.path.join(user, name), name, desc, "Mine.")
+            for name, desc in (("notes", "Take meeting notes."), ("tips", "Share cooking tips."),
+                               ("ideas", "Collect ideas for garden planting.")):
+                skill(os.path.join(self.agents, name), name, desc, "Theirs.")
+            rbxskills.import_external()
+            open_ = {d["b"]: d for d in rbxskills.pending()}
+            self.assertEqual(sorted(open_), ["ideas", "notes", "tips"])
+            self.assertEqual(rbxskills._kit_owner(open_["notes"]["a_dir"]), ("user", False))
+            rbxskills.decide(open_["notes"]["id"], "replace")
+            rbxskills.decide(open_["tips"]["id"], "merge", "---\nname: tips\ndescription: Merged tips.\n---\nMerged.\n")
+            rbxskills.decide(open_["ideas"]["id"], "keep")
+            lib = {s["id"]: s for s in rbxskills.library()}
+            self.assertEqual(sorted(lib), ["ideas-list", "notes", "tips"])
+            self.assertIn("Theirs.", read(os.path.join(user, "notes", "SKILL.md")))
+            self.assertEqual(lib["tips"]["description"], "Merged tips.")
+            self.assertEqual(lib["ideas-list"]["supersedes"], ["ideas"])
+            for name in ("notes", "tips", "ideas"):
+                self.assertTrue(os.path.isdir(os.path.join(user, ".replaced", name)), name)
+
+    def core_guide(self, body):
+        """The kit's workflow guide (Core), whose Claude Code copy install.py names roblox-studio-workflow."""
+        return self.kit_skill("workflow", "Run the Roblox studio workflow for every game task.", owner="app", body=body)
+
+    GUIDE = ("## Setup\n\nOpen the place, start the plugin and run {{RBXKIT}}/rbx.py doctor before anything else.\n\n"
+             "## Building\n\nBuild each system as a module with a server part and a client part, tested alone.\n\n"
+             "## Testing\n\nPlaytest with two clients, watch the output window, and fix every warning you see.\n\n"
+             "## Saving\n\nCommit the place file and the scripts together, with a short note of what changed.\n\n"
+             "## Handover\n\nWrite what is done, what is left and what broke into the handover notes for tomorrow.\n")
+
+    def old_copy(self, body, kit_path="/Applications/Old Fridae/kit"):
+        """A copy an older Fridae installed: the Claude name, the kit path filled in, no marker."""
+        d = os.path.join(self.claude, "roblox-studio-workflow")
+        skill(d, "roblox-studio-workflow", "Run the Roblox studio workflow for every game task.",
+              body.replace("{{RBXKIT}}", kit_path).strip())
+        return d
+
+    def test_installed_copy_with_marker_is_linked(self):
+        import install
+        self.core_guide("Changed since: run {{RBXKIT}}/rbx.py first.")
+        install.build_claude_skills(self.claude, core=os.path.join(self.kit, "vault", "Fridae", "Guides", "Core"))
+        d = os.path.join(self.claude, "roblox-studio-workflow")
+        mark = json.loads(read(os.path.join(d, ".fridae-installed.json")))
+        self.assertEqual((mark["skill"], mark["hash"]), ("workflow", rbxskills.folder_hash(d)))
+        self.core_guide("The guide changed again after this install.")  # no longer the current install output
+        got = rbxskills.import_external()
+        self.assertEqual((got["linked"], got["pending"], got["added"]), (["roblox-studio-workflow"], [], []))
+        self.assertIn("workflow", rbxskills.native_ids())
+
+    def test_installed_copy_with_marker_but_edited_is_the_users(self):
+        import install
+        self.core_guide("Run {{RBXKIT}}/rbx.py first.")
+        install.build_claude_skills(self.claude, core=os.path.join(self.kit, "vault", "Fridae", "Guides", "Core"))
+        with open(os.path.join(self.claude, "roblox-studio-workflow", "SKILL.md"), "a", encoding="utf-8") as f:
+            f.write("\nMy own house rule.\n")
+        got = rbxskills.import_external()
+        self.assertEqual((got["linked"], got["pending"]), ([], ["roblox-studio-workflow"]))
+
+    def test_old_installed_copy_without_marker_is_linked(self):
+        self.core_guide(self.GUIDE)
+        self.old_copy(self.GUIDE.replace("fix every warning you see", "note every error the console prints"))
+        got = rbxskills.import_external()
+        self.assertEqual((got["linked"], got["pending"], got["added"]), (["roblox-studio-workflow"], [], []))
+        self.assertEqual(self.ids(), ["workflow"])
+
+    def test_heavily_edited_old_copy_is_the_users(self):
+        self.core_guide(self.GUIDE)
+        self.old_copy("## My way\n\nI sketch levels on paper, then block them out with parts and invite friends to "
+                      "try the obby before adding any coins, shops or pets.\n")
+        got = rbxskills.import_external()
+        self.assertEqual((got["linked"], got["pending"]), ([], ["roblox-studio-workflow"]))
+
     def test_malformed_name_falls_back_to_folder(self):
         d = os.path.join(self.user, "folder-name")
         os.makedirs(d)
