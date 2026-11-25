@@ -24,6 +24,11 @@ class VaultSyncTests(unittest.TestCase):
         p = mock.patch.object(rbxpaths, "KNOWLEDGE_DIR", self.know)
         p.start()
         self.addCleanup(p.stop)
+        self.home = os.path.join(self.root, "home")
+        self.kit = os.path.join(self.root, "kit")
+        for q in (mock.patch.object(rbxpaths, "HOME_DIR", self.home), mock.patch.object(rbxskills, "KIT", self.kit)):
+            q.start()
+            self.addCleanup(q.stop)
         self.n = 0
 
     def stage(self, files, release="vault-2026.01.01", extra=None):
@@ -402,6 +407,242 @@ class VaultSyncTests(unittest.TestCase):
         with mock.patch.object(rbxvaultsync, "_save_base", wraps=rbxvaultsync._save_base) as sv:
             self.apply({"Skills/a/SKILL.md": "a", "Skills/b/SKILL.md": "b", "Skills/c/SKILL.md": "c"})
         self.assertEqual(sv.call_count, 4)  # a, b (declined), c, then the end
+
+    # ---- a new skill that meets the library
+    DESC = "Find the root cause of a bug before fixing it. Use when a test fails or something breaks."
+
+    def user_skill(self, name, desc=DESC, body="Mine.", extra=None):
+        d = os.path.join(rbxskills.user_dir(), name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\ndescription: %s\n---\n\n%s\n" % (name, desc, body))
+        for rel, text in (extra or {}).items():
+            with open(os.path.join(d, rel), "w", encoding="utf-8") as f:
+                f.write(text)
+        return d
+
+    def kit_skill(self, name, owner, desc="Something else entirely about crochet."):
+        d = os.path.join(self.kit, "vault", "Fridae", "Guides", "Core", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\ndescription: %s\nowner: %s\n---\n\nKit.\n" % (name, desc, owner))
+        return d
+
+    def vfiles(self, name, desc=DESC, body="Theirs."):
+        return {"Skills/%s/SKILL.md" % name: "---\nname: %s\ndescription: %s\n---\n\n%s\n" % (name, desc, body),
+                "Skills/%s/ref.md" % name: "ref of " + name}
+
+    def waiting_one(self, **kw):
+        """A user debugging and a vault debug-helper that overlaps it; returns the one open decision."""
+        self.user_skill("debugging")
+        r = self.apply(self.vfiles("debug-helper", **kw))
+        self.assertEqual(r["incoming"], ["debug-helper"])
+        (dec,) = rbxskills.pending()
+        return dec
+
+    def test_overlapping_newcomer_waits(self):
+        dec = self.waiting_one()
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper")))
+        self.assertEqual(dec["from"], "vault")
+        self.assertEqual((dec["a"], dec["b"], dec["reason"]), ("debugging", "debug-helper", "overlap"))
+        self.assertEqual(dec["source"], "Fridae vault vault-2026.01.01")
+        self.assertEqual(dec["b_dir"], os.path.join(rbxvaultsync.incoming_dir(), "debug-helper"))
+        self.assertTrue(os.path.isfile(os.path.join(dec["b_dir"], "ref.md")))
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debugging"])
+        self.assertEqual(rbxvaultsync.read_base()["waiting"], {"debug-helper": "vault-2026.01.01"})
+        self.assertEqual(rbxvaultsync.read_base()["files"], {})
+
+    def test_replace_moves_it_in_and_sets_mine_aside(self):
+        dec = self.waiting_one()
+        rbxvaultsync.decide_vault(dec, "replace", None)
+        lib = {e["id"]: e for e in rbxskills.library()}
+        self.assertEqual(list(lib), ["debug-helper"])
+        self.assertEqual(lib["debug-helper"]["origin"], "vault")
+        self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), ".replaced", "debugging")))
+        base = rbxvaultsync.read_base()
+        for f in ("SKILL.md", "ref.md"):
+            p = "Skills/debug-helper/" + f
+            self.assertEqual(base["files"][p], sha(self.get(p)))
+            with open(os.path.join(rbxvaultsync.state_dir(), "base", *p.split("/")), encoding="utf-8") as h:
+                self.assertEqual(h.read(), self.get(p))
+        self.assertEqual(base["waiting"], {})
+        self.assertFalse(os.path.exists(dec["b_dir"]))
+        self.assertEqual(rbxskills.pending(), [])
+        self.apply(self.vfiles("debug-helper", body="Theirs v2."), release="vault-2026.02.01")  # follows upstream
+        self.assertIn("Theirs v2.", self.get("Skills/debug-helper/SKILL.md"))
+
+    def test_accept_all_settles_vault_decisions(self):
+        dec = self.waiting_one()
+        done = rbxskills.decide(dec["id"], "replace")
+        self.assertEqual(done["state"], "done")
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debug-helper"])
+
+    def test_keep_declines_future_versions(self):
+        dec = self.waiting_one()
+        rbxskills.decide(dec["id"], "keep")
+        base = rbxvaultsync.read_base()
+        self.assertIn("debug-helper", base["declined"])
+        self.assertEqual(base["waiting"], {})
+        self.assertFalse(os.path.exists(dec["b_dir"]))
+        self.assertTrue(os.path.isdir(os.path.join(rbxvaultsync.state_dir(), "removed")))
+        self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), "debugging")))
+        before = self.snapshot()
+        r = self.apply(self.vfiles("debug-helper", body="v2"), release="vault-2026.02.01")
+        self.assertEqual(r["declined"], ["debug-helper"])
+        after = self.snapshot()
+        after.pop(os.path.join(".fridae-vault", "base.json"))
+        before.pop(os.path.join(".fridae-vault", "base.json"))
+        self.assertEqual(after, before)
+
+    def test_keep_both_renames(self):
+        dec = self.waiting_one()
+        rbxskills.decide(dec["id"], "keep_both")
+        self.assertEqual(rbxvaultsync.read_base()["renamed"], {"debug-helper": "debug-helper-community"})
+        self.assertIn("name: debug-helper-community", self.get("Skills/debug-helper-community/SKILL.md"))
+        self.assertEqual(sorted(e["id"] for e in rbxskills.library()), ["debug-helper-community", "debugging"])
+        self.assertEqual(rbxvaultsync.read_base()["files"]["Skills/debug-helper/ref.md"], sha("ref of debug-helper"))
+        self.apply({"Skills/debug-helper/SKILL.md": self.get("Skills/debug-helper-community/SKILL.md"),
+                    "Skills/debug-helper/ref.md": "ref v2"}, release="vault-2026.02.01")
+        self.assertEqual(self.get("Skills/debug-helper-community/ref.md"), "ref v2")
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper")))
+
+    def test_keep_both_name_taken_goes_to_next_free(self):
+        dec = self.waiting_one()
+        self.put("Skills/debug-helper-community/SKILL.md", "x")
+        rbxskills.decide(dec["id"], "keep_both")
+        self.assertEqual(rbxvaultsync.read_base()["renamed"], {"debug-helper": "debug-helper-community-2"})
+
+    def test_own_share_comes_back_without_a_card(self):
+        d = self.user_skill("tidy", "Tidy up a project folder.", extra={"notes.md": "n"})
+        h = rbxskills.folder_hash(d)
+        rbxskills._write_json(os.path.join(d, rbxskills.SHARED_FILE),
+                              {"sent": [{"name": "Tidy", "hash": h, "pr": "https://x/1", "at": 1}]})
+        r = self.apply(self.vfiles("tidy", "Tidy up a project folder."))
+        self.assertEqual(r["settled"], ["tidy"])
+        self.assertEqual(r["added"].__len__(), 2)
+        self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), ".replaced", "tidy")))
+        self.assertFalse(os.path.exists(d))
+        self.assertEqual(rbxskills.pending(), [])
+        self.assertEqual([e["origin"] for e in rbxskills.library()], ["vault"])
+
+    def test_edited_share_opens_a_decision(self):
+        d = self.user_skill("tidy", "Tidy up a project folder.")
+        h = rbxskills.folder_hash(d)
+        rbxskills._write_json(os.path.join(d, rbxskills.SHARED_FILE), {"sent": [{"name": "tidy", "hash": h}]})
+        with open(os.path.join(d, "extra.md"), "w") as f:
+            f.write("edited after sending")
+        r = self.apply(self.vfiles("tidy", "Tidy up a project folder."))
+        self.assertEqual(r["incoming"], ["tidy"])
+        self.assertEqual(r["settled"], [])
+        self.assertTrue(os.path.isdir(d))
+        self.assertEqual(len(rbxskills.pending()), 1)
+
+    def test_app_name_is_declined(self):
+        self.kit_skill("critic", "app")
+        r = self.apply({"Skills/critic/SKILL.md": "---\nname: critic\n---\nx", "Skills/fine/SKILL.md": "f"})
+        self.assertEqual(r["declined"], ["critic"])
+        self.assertFalse(os.path.exists(self.local("Skills/critic")))
+        self.assertIn("critic", rbxvaultsync.read_base()["declined"])
+        self.assertTrue(os.path.exists(self.local("Skills/fine/SKILL.md")))
+
+    def test_app_only_name_is_declined_and_never_listed(self):
+        r = self.apply({"Skills/docs/SKILL.md": "---\nname: docs\n---\nx"})
+        self.assertEqual(r["declined"], ["docs"])
+        self.assertIn("docs", rbxvaultsync.read_base()["declined"])
+        self.assertFalse(os.path.exists(self.local("Skills/docs")))
+        self.put("Skills/computer-use/SKILL.md", "---\nname: computer-use\ndescription: d\n---\nx")
+        self.assertEqual(rbxskills.library(), [])
+
+    def test_identical_body_is_declined_as_already_had(self):
+        self.user_skill("mine", "Totally different words here.", body="Same body.\nTwo lines.  ")
+        files = {"Skills/theirs/SKILL.md": "---\nname: theirs\ndescription: Other words about crochet.\n---\n"
+                                           "\nSame body.  \nTwo lines.\n\n"}
+        r = self.apply(files)
+        self.assertEqual(r["declined"], ["theirs"])
+        self.assertFalse(os.path.exists(self.local("Skills/theirs")))
+        self.assertNotIn("theirs", rbxvaultsync.read_base()["declined"])
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_unrelated_newcomer_installs(self):
+        self.user_skill("debugging")
+        r = self.apply(self.vfiles("crochet", "Stitch a granny square blanket with wool."))
+        self.assertEqual(len(r["added"]), 2)
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_newer_release_replaces_the_waiting_copy_and_clears_the_recommendation(self):
+        dec = self.waiting_one()
+        decs = rbxskills._decisions()
+        decs[0]["recommendation"] = {"choice": "replace"}
+        rbxskills._save_decisions(decs)
+        r = self.apply(self.vfiles("debug-helper", body="Theirs v2."), release="vault-2026.02.01")
+        self.assertEqual(r["incoming"], ["debug-helper"])
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper")))
+        with open(os.path.join(dec["b_dir"], "SKILL.md"), encoding="utf-8") as f:
+            self.assertIn("Theirs v2.", f.read())
+        (again,) = rbxskills.pending()
+        self.assertEqual(again["id"], dec["id"])
+        self.assertIsNone(again["recommendation"])
+        self.assertEqual(rbxvaultsync.read_base()["waiting"], {"debug-helper": "vault-2026.02.01"})
+        self.assertEqual(len(rbxskills._decisions()), 1)
+
+    def test_replace_a_shipped_skill_supersedes_it(self):
+        self.kit_skill("debugging", "shipped", self.DESC)
+        self.apply(self.vfiles("debug-helper"))
+        (dec,) = rbxskills.pending()
+        rbxskills.decide(dec["id"], "replace")
+        self.assertEqual(rbxvaultsync.read_base()["patch"]["debug-helper"]["supersedes"], ["debugging"])
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debug-helper"])
+
+    def test_replace_an_app_skill_is_refused(self):
+        self.kit_skill("debugging", "app", self.DESC)
+        self.apply(self.vfiles("debug-helper"))
+        (dec,) = rbxskills.pending()
+        with self.assertRaises(ValueError) as cm:
+            rbxskills.decide(dec["id"], "replace")
+        self.assertEqual(str(cm.exception), rbxskills.APP_SKILL)
+        self.assertTrue(os.path.isdir(dec["b_dir"]))
+        self.assertEqual(len(rbxskills.pending()), 1)
+
+    def test_merge_edits_the_one_in_use_and_declines(self):
+        dec = self.waiting_one()
+        rbxskills.decide(dec["id"], "merge", "---\nname: debugging\ndescription: Merged.\n---\n\nBoth.\n")
+        mine = os.path.join(rbxskills.user_dir(), "debugging", "SKILL.md")
+        with open(mine, encoding="utf-8") as f:
+            self.assertIn("Both.", f.read())
+        self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), ".replaced", "debugging")))
+        base = rbxvaultsync.read_base()
+        self.assertIn("debug-helper", base["declined"])
+        self.assertEqual(base["waiting"], {})
+        self.assertFalse(os.path.exists(dec["b_dir"]))
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper")))
+
+    def test_decide_vault_refuses_a_folder_outside_the_known_places(self):
+        dec = self.waiting_one()
+        outside = os.path.join(self.root, "elsewhere")
+        os.makedirs(outside)
+        decs = rbxskills._decisions()
+        decs[0]["b_dir"] = outside
+        rbxskills._save_decisions(decs)
+        for choice in ("replace", "keep", "keep_both"):
+            with self.assertRaises(ValueError):
+                rbxskills.decide(dec["id"], choice)
+        self.assertTrue(os.path.isdir(outside))
+
+    def test_locks_are_taken_vault_first_then_library(self):
+        dec = self.waiting_one()
+        order = []
+        real = rbxskills._locked
+
+        import contextlib
+
+        @contextlib.contextmanager
+        def spy(root):
+            order.append(os.path.basename(root))
+            with real(root):
+                yield
+        with mock.patch.object(rbxskills, "_locked", spy):
+            rbxskills.decide(dec["id"], "keep")
+        self.assertEqual(order, [".fridae-vault", "skills"])
 
     def test_one_state_dir(self):
         self.assertEqual(rbxvaultsync.state_dir(), rbxskills.vault_state_dir())

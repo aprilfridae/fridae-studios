@@ -294,7 +294,7 @@ def library(project=None):
     out = {}
     for e in found:
         key = e["id"].casefold()
-        if e["origin"] in ("user", "project") and key in APP_ONLY:
+        if e["origin"] in ("user", "project", "vault") and key in APP_ONLY:
             continue
         if key not in out or out[key]["owner"] != "app":
             out[key] = e
@@ -590,6 +590,7 @@ IMPORT_EVERY = 60       # seconds: catalog() and index() import at most this oft
 LOCK_WAIT, LOCK_STALE = 5.0, 120.0
 SOURCE_FILE = ".fridae-source.json"   # in an imported copy: its import link
 DECISIONS = ".decisions.json"
+SHARED_FILE = ".fridae-shared.json"   # in a library skill the user sent to the vault: {"sent": [{name, hash, pr, at}]}
 INCOMING, REPLACED = ".incoming", ".replaced"
 STAMP = ".imported"                   # touched after each import
 UPDATE_SUFFIX = " (update)"           # <name> (update): a source's new version beside the user's edited copy
@@ -1393,6 +1394,55 @@ def _stale_merge(dec, merged_text):
         side_hash(dec.get("a_dir")), side_hash(dec.get("b_dir")))
 
 
+def _merge_skill(root, a, a_dir, a_kit, merged_text, b, differ, update=False, upstream=None):
+    """The merge of a decision: merged_text becomes the SKILL.md of the skill in use (a, in a_dir; a copy of one of the
+    app's own skills when a_kit, which is then the user's), its old copy saved in .replaced/. Fridae's own fields the
+    old SKILL.md had are kept, and the loser b is named in supersedes when the names differ. Returns the folder holding
+    the merged skill. Shared by the user library's decide and the vault's decide_vault."""
+    a_text = _read(os.path.join(a_dir, "SKILL.md")) if os.path.isfile(os.path.join(a_dir, "SKILL.md")) else ""
+    if a_kit:
+        target = _free(root, _safe(a), "-")
+        shutil.copytree(a_dir, target, ignore=_ignore)
+    else:
+        target = a_dir
+        shutil.copytree(a_dir, _free(os.path.join(root, REPLACED), _safe(a), " "), ignore=_ignore)
+    path = os.path.join(target, "SKILL.md")
+    _write_text(path, merged_text)
+    fm, _ = front(merged_text)
+    a_fm, _ = front(a_text)
+    # the merged text drops none of the Fridae fields the skill in use had (its own keys win); a copy of one
+    # of the app's skills is the user's now, so it takes no owner from it
+    carry = [k for k in MERGE_KEEPS if k in a_fm and k not in fm and not (a_kit and k == "owner")]
+    if carry:
+        _add_front(path, _front_lines(a_text, carry))
+    patch = {} if _fm_name(fm, target) == os.path.basename(target) else {"name": os.path.basename(target)}
+    have = _list(fm.get("supersedes"))
+    have += [n for n in _list(a_fm.get("supersedes")) if n not in have]
+    if differ and b not in have:
+        have.append(b)
+    if have:
+        patch["supersedes"] = have
+    if patch:
+        _set_front(path, patch)
+    rec = _record(target)
+    if rec is not None:
+        if "supersedes" in patch:  # Fridae wrote it: an imported copy honours only those (_entry)
+            rec["patch"] = dict(rec.get("patch") or {}, supersedes=patch["supersedes"])
+        if update:  # merged: an edited copy now, settled for this version of the source
+            rec["upstream"] = upstream
+        _write_json(os.path.join(target, SOURCE_FILE), rec)
+    return target
+
+
+def _refuse_stale(decs, dec, choice, merged_text):
+    """A merge from a recommendation made before either side changed: the recommendation is cleared and saved (decs is
+    the whole store, dec one of them), and STALE raised."""
+    if choice == "merge" and _stale_merge(dec, merged_text):
+        dec["recommendation"] = None
+        _save_decisions(decs)
+        raise ValueError(STALE)
+
+
 def decide(id, choice, merged_text=None):
     """Settle an open decision (a note decision: _decide_note). A merge from a recommendation made before either side
     changed is refused (STALE): the decision stays open and its recommendation is cleared, to be written again. choice:
@@ -1404,16 +1454,19 @@ def decide(id, choice, merged_text=None):
     Refuses (ValueError) a choice that would change an owner: app skill. Returns the decision, now state "done"."""
     if choice not in CHOICES:
         raise ValueError("Choose keep, replace, merge or keep_both.")
+    # a decision about a skill from the Fridae vault is settled there, which takes the vault's lock first and then the
+    # library's: the one fixed order (this function must not hold the library's lock when it calls it)
+    peek = next((d for d in _decisions() if d.get("id") == id and d.get("state") == "open"), None)
+    if peek is not None and peek.get("from") == "vault" and peek.get("kind", "skill") == "skill":
+        import rbxvaultsync
+        return rbxvaultsync.decide_vault(peek, choice, merged_text)
     root = user_dir()
     with _locked(root):
         decs = _decisions()
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
-        if choice == "merge" and _stale_merge(dec, merged_text):
-            dec["recommendation"] = None
-            _save_decisions(decs)
-            raise ValueError(STALE)
+        _refuse_stale(decs, dec, choice, merged_text)
         if dec.get("kind", "skill") == "note":
             _decide_note(dec, choice, merged_text)
             dec.update(state="done", choice=choice, decided=_now())
@@ -1464,38 +1517,7 @@ def decide(id, choice, merged_text=None):
             if patch:
                 _mark(target, patch)
         elif choice == "merge":
-            a_text = _read(os.path.join(a_dir, "SKILL.md")) if os.path.isfile(os.path.join(a_dir, "SKILL.md")) else ""
-            if a_kit:
-                target = _free(root, _safe(a), "-")
-                shutil.copytree(a_dir, target, ignore=_ignore)
-            else:
-                target = a_dir
-                shutil.copytree(a_dir, _free(os.path.join(root, REPLACED), _safe(a), " "), ignore=_ignore)
-            path = os.path.join(target, "SKILL.md")
-            _write_text(path, merged_text)
-            fm, _ = front(merged_text)
-            a_fm, _ = front(a_text)
-            # the merged text drops none of the Fridae fields the skill in use had (its own keys win); a copy of one
-            # of the app's skills is the user's now, so it takes no owner from it
-            carry = [k for k in MERGE_KEEPS if k in a_fm and k not in fm and not (a_kit and k == "owner")]
-            if carry:
-                _add_front(path, _front_lines(a_text, carry))
-            patch = {} if _fm_name(fm, target) == os.path.basename(target) else {"name": os.path.basename(target)}
-            have = _list(fm.get("supersedes"))
-            have += [n for n in _list(a_fm.get("supersedes")) if n not in have]
-            if differ and b not in have:
-                have.append(b)
-            if have:
-                patch["supersedes"] = have
-            if patch:
-                _set_front(path, patch)
-            rec = _record(target)
-            if rec is not None:
-                if "supersedes" in patch:  # Fridae wrote it: an imported copy honours only those (_entry)
-                    rec["patch"] = dict(rec.get("patch") or {}, supersedes=patch["supersedes"])
-                if update:  # merged: an edited copy now, settled for this version of the source
-                    rec["upstream"] = upstream
-                _write_json(os.path.join(target, SOURCE_FILE), rec)
+            _merge_skill(root, a, a_dir, a_kit, merged_text, b, differ, update, upstream)
             _aside(b_dir, b)
         else:  # keep_both
             taken = {e["id"].casefold() for e in library()}
