@@ -5897,14 +5897,18 @@ $("vt-go").onclick = async () => {
   vtWasRunning = true;
   vtLoad();
 };
-/* a pull request's address as a link (only an https address), named by its number */
+/* a link-styled button that opens a page of the vault's in the browser: the app builds the address from which page
+   (vault, pr or release) and its number or release name; the page never gives an address */
+function vaultLink(text, what, extra) {
+  const b = el("button", "linkish");
+  b.textContent = text; b.title = "Open on GitHub";
+  b.onclick = () => api("/api/github/open", Object.assign({ what }, extra || {}));
+  return b;
+}
+/* a pull request of the vault's, named by its number (read from its address); the words alone without one */
 function shLink(url) {
-  const u = String(url || "");
-  if (!/^https:\/\//.test(u)) return document.createTextNode("pull request");
-  const a = el("a", "linkish"), n = u.match(/\/pull\/(\d+)\/?$/);
-  a.href = u; a.target = "_blank"; a.rel = "noopener"; a.title = u;
-  a.textContent = n ? "pull request #" + n[1] : "pull request";
-  return a;
+  const n = String(url || "").match(/\/pull\/(\d+)\/?$/);
+  return n ? vaultLink("pull request #" + n[1], "pr", { n: Number(n[1]) }) : document.createTextNode("pull request");
 }
 function shPaint(st) {
   const mode = st.mode === "review" || st.mode === "auto" ? st.mode : "off", on = mode !== "off", asked = !!st.asked;
@@ -6006,8 +6010,8 @@ function shSentPaint(r) {
    repo for the login that owns VAULT_REPO while the repo is missing. GET /api/vault/inbox: {prs: [{n, url, author,
    title, error?, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill, same_name, closest
    {id, score}|null, diff, recommendation {choice: keep|replace|merge, why, merged}|null, decided {choice, why}|null}]}]}.
-   Everything in a submission is a stranger's: it reaches the page only as text (textContent / text nodes), and a link
-   only when it is a github.com address. Every POST is the maintainer's click: inbox_decide {pr, skill, choice: add |
+   Everything in a submission is a stranger's: it reaches the page only as text (textContent / text nodes), and its
+   pull request opens through the app by number (vaultLink), never by an address. Every POST is the maintainer's click: inbox_decide {pr, skill, choice: add |
    edit | reject, text?, why?}; publish and create_repo only from their confirm card's button, with confirm: true.
    sbPaint(role), sbInboxPaint(inbox), sbPublishPaint(result) and sbCreatedPaint(result) only paint. */
 const VAULT_REPO = "aprilfridae/fridae-vault";
@@ -6017,14 +6021,6 @@ const SB_PUBLISH_Q = "Publish a new vault release? Everyone's Fridae will get th
 const SB_DONE = { add: "Added", edit: "Edited and added", reject: "Rejected" };
 const sbOwner = (role) => !!(role && role.login) && String(role.login).toLowerCase() === VAULT_REPO.split("/")[0].toLowerCase();
 function sbInboxShown(role) { return !!(role && role.maintainer && role.repo_exists); }
-/* a link to a github.com page, else the words alone */
-function sbGhLink(url, text) {
-  const u = String(url || "");
-  if (!/^https:\/\/github\.com\//.test(u)) return document.createTextNode(text);
-  const a = el("a", "linkish");
-  a.href = u; a.target = "_blank"; a.rel = "noopener"; a.title = u; a.textContent = text;
-  return a;
-}
 function sbPaint(role) {
   sbRole = role = role && typeof role === "object" ? role : {};
   const create = sbOwner(role) && !role.repo_exists, inbox = sbInboxShown(role);
@@ -6094,7 +6090,7 @@ function sbPr(pr) {
   const b = el("div", "sb-pr", '<p class="sb-pr-h"><b></b><span></span></p><p class="sub sk-err sb-pr-err" role="status"></p><p class="sub sb-pr-note" role="status" hidden></p>');
   b.querySelector("b").textContent = pr.title || "Untitled";
   const n = Number(pr.n);
-  b.querySelector(".sb-pr-h span").append("by " + (pr.author || "someone") + " · ", sbGhLink(pr.url, Number.isInteger(n) ? "pull request #" + n : "pull request"));
+  b.querySelector(".sb-pr-h span").append("by " + (pr.author || "someone") + " · ", Number.isInteger(n) && n > 0 ? vaultLink("pull request #" + n, "pr", { n }) : document.createTextNode("pull request"));
   if (pr.error) { b.querySelector(".sb-pr-err").textContent = String(pr.error); return b; }
   const skills = vtList(pr, "skills");
   const gone = [...new Set([...vtList(pr, "not_skill"), ...skills.flatMap((s) => vtList(s, "not_skill"))].map(String))];
@@ -6237,7 +6233,7 @@ $("sb-create").onclick = () => {
 };
 function sbCreatedPaint(r) {
   const p = $("sb-made");
-  if (r && r.ok) { p.replaceChildren("Made ", sbGhLink(r.url, String(r.repo || VAULT_REPO)), "."); p.hidden = false; $("sb-err").textContent = ""; return; }
+  if (r && r.ok) { p.replaceChildren("Made ", vaultLink(String(r.repo || VAULT_REPO), "vault"), "."); p.hidden = false; $("sb-err").textContent = ""; return; }
   p.hidden = true;
   $("sb-err").textContent = (r && r.error) || "The vault repo could not be made.";
 }
@@ -6254,7 +6250,7 @@ $("sb-publish").onclick = () => {
 /* Published <tag>, or what stops it: the preflight's problems, each starting with the skill's name */
 function sbPublishPaint(r) {
   const note = $("sb-pub-note"), err = $("sb-pub-err");
-  if (r && r.ok) { note.replaceChildren("Published ", sbGhLink(r.url, String(r.tag || "the release")), "."); err.textContent = ""; return; }
+  if (r && r.ok) { note.replaceChildren("Published ", typeof r.tag === "string" && r.tag ? vaultLink(r.tag, "release", { tag: r.tag }) : document.createTextNode("the release"), "."); err.textContent = ""; return; }
   note.textContent = "";
   const problems = r && Array.isArray(r.problems) ? r.problems.map(String) : [];
   err.textContent = problems.length ? "Not published. Fix these first:\n" + problems.join("\n") : (r && r.error) || "The vault release could not be published.";

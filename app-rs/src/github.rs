@@ -874,14 +874,28 @@ pub fn push(path: &str) -> Value {
     })
 }
 
-/// Open a GitHub page in the browser: the sign-in page, the app's settings page there, or a project's repository.
-fn open(body: &Value) -> Value {
-    let url = match body["what"].as_str().unwrap_or("") {
+/// The GitHub page `open` would show, built here: the page names only which page (and a number or a release name),
+/// never an address.
+fn page_of(body: &Value) -> Option<String> {
+    let vault = || Some(crate::vault_git::vault_repo()).filter(|r| r.split_once('/').is_some_and(|(o, n)| !o.is_empty() && !n.is_empty()));
+    match body["what"].as_str().unwrap_or("") {
         "device" => with(|s| s.pending.as_ref().map(|p| p.verification_uri.clone())),
         "settings" => Some(format!("{}/settings/connections/applications/{}", web_base(), client_id())),
         "repo" => body["project"].as_str().filter(|p| known_project(p)).and_then(target_of).map(|t| format!("{}/{}", web_base(), t.0)),
+        // the vault's repository (after Create the vault repo)
+        "vault" => vault().map(|r| format!("{}/{r}", web_base())),
+        // a pull request of the vault's (Sent, and the maintainer's inbox), by its number
+        "pr" => body["n"].as_u64().filter(|n| *n > 0).and_then(|n| Some(format!("{}/{}/pull/{n}", web_base(), vault()?))),
+        // a release of the vault's (after Publish), by its name
+        "release" => body["tag"].as_str().filter(|t| crate::vault_sync::release_ok(t)).and_then(|t| Some(format!("{}/{}/releases/tag/{t}", web_base(), vault()?))),
         _ => None,
-    };
+    }
+}
+
+/// Open a GitHub page in the browser: the sign-in page, the app's settings page there, a project's repository, or the
+/// vault's repository, one of its pull requests or one of its releases.
+fn open(body: &Value) -> Value {
+    let url = page_of(body);
     let ok = url.as_deref().is_some_and(|u| u.starts_with(&format!("{}/", web_base())));
     if let Some(u) = url.filter(|_| ok) {
         open_page(&u);
@@ -1444,5 +1458,27 @@ pub(crate) mod tests {
             assert!(!a.to_string().contains(TOKEN), "{a}");
         }
         assert_eq!(answers[3]["ok"], true, "{}", answers[3]);
+    }
+
+    #[test]
+    fn vault_pages_are_built_here_from_a_number_or_a_tag() {
+        let _held = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        *STAND_IN.lock().unwrap() = Some(StandIn { web: "https://gh.test".into(), vault_repo: Some("o/r".into()), ..Default::default() });
+        let url = |b: Value| page_of(&b);
+        assert_eq!(url(json!({"what": "pr", "n": 12})).as_deref(), Some("https://gh.test/o/r/pull/12"));
+        assert_eq!(url(json!({"what": "vault"})).as_deref(), Some("https://gh.test/o/r"));
+        assert_eq!(url(json!({"what": "release", "tag": "vault-2026.12.01"})).as_deref(), Some("https://gh.test/o/r/releases/tag/vault-2026.12.01"));
+        // the page never gives the address, and only a real number or a release name is taken
+        assert_eq!(url(json!({"what": "pr", "n": 12, "url": "https://evil.test/x"})).as_deref(), Some("https://gh.test/o/r/pull/12"));
+        for bad in [json!({"what": "pr"}), json!({"what": "pr", "n": 0}), json!({"what": "pr", "n": -3}), json!({"what": "pr", "n": "12"}), json!({"what": "pr", "n": 1.5})] {
+            assert_eq!(url(bad.clone()), None, "{bad}");
+        }
+        for tag in ["", "v1", "../x", "vault-1/../../x", "vault-1?x=1"] {
+            assert_eq!(url(json!({"what": "release", "tag": tag})), None, "{tag}");
+        }
+        *STAND_IN.lock().unwrap() = Some(StandIn { web: "https://gh.test".into(), ..Default::default() });
+        assert_eq!(url(json!({"what": "pr", "n": 12})), None, "no vault repo, no page");
+        assert_eq!(url(json!({"what": "vault"})), None);
+        assert_eq!(open(&json!({"what": "pr", "n": 12}))["ok"], false);
     }
 }
