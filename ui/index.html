@@ -949,6 +949,26 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .sk-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-row small:empty { display: none; }
 .sk-list > .sub { padding: 8px 0; margin: 0; }
+/* Setup, Skills: the Fridae vault row (its last report, the files kept as the user's) and Share your skills (the
+   question, the Sharing control, the list, a batch to check: each skill with its files, scripts first) */
+.vt-kept:empty { display: none; }
+.vt-kept p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 4px 0 0; }
+.sh-modes > .sub { margin: 0; }
+.sh-list { margin-top: 12px; }
+.sh-list .sk-row small { white-space: normal; }
+.sh-list .sk-row small .linkish { font-size: inherit; }
+#sh-batch:empty { display: none; }
+#sh-batch { margin-top: 12px; border-top: 1px solid var(--line); }
+.sh-skill { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.sh-skill header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.sh-skill header b { font-size: 14px; font-weight: 500; word-break: break-word; }
+.sh-skill header label { margin-left: auto; font-size: 13px; color: var(--dim); }
+.sh-skill.out header b, .sh-skill.out .sh-files { opacity: 0.45; }
+.sh-files { margin-top: 4px; }
+.sh-files summary { font-family: var(--mono); font-size: 12px; }
+.sh-mark { display: inline-block; margin-left: 8px; font: 12px/1 var(--sans); color: var(--faint); }
+.sh-files pre { max-height: 220px; overflow-y: auto; margin: 8px 0 0; }
+#sh-note .linkish { font-size: inherit; }
 .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
 .scale-row output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
 .scale-row input[type=range] { flex: 1; min-width: 120px; max-width: 280px; accent-color: #ececed; }
@@ -1295,6 +1315,12 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="act"><button class="pill" id="sk-import">Import now</button><span class="sub" id="sk-import-note" role="status"></span></div>
       <div class="act"><button class="pill" id="sk-notes">Check notes now</button><span class="sub" id="sk-notes-note" role="status"></span></div>
       <p class="sub sk-err" id="sk-err" role="status"></p>
+      <h3 class="sk-h">Fridae vault</h3>
+      <p class="sub" id="vt-line"></p>
+      <div class="act"><button class="pill" id="vt-go" hidden></button><span class="sub" id="vt-note" role="status"></span></div>
+      <p class="sub" id="vt-report" hidden></p>
+      <div class="vt-kept" id="vt-kept"></div>
+      <p class="sub sk-err" id="vt-err" role="status"></p>
       <div id="sk-dec-wrap" hidden>
         <h3 class="sk-h">Needs your decision <span id="sk-dec-n"></span><button class="pill sm" id="sk-all" hidden>Accept all recommendations</button></h3>
         <p class="sub sk-err" id="sk-all-err" role="status"></p>
@@ -1303,6 +1329,19 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <h3 class="sk-h">Your skills <span id="sk-n"></span></h3>
       <div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, games" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div>
       <div class="sk-list" id="sk-list"><p class="sub">Loading...</p></div>
+      <h3 class="sk-h">Share your skills</h3>
+      <div id="sh-ask" hidden>
+        <p class="sub">Share skills you make with everyone who uses Fridae?</p>
+        <div class="act"><button class="pill" data-mode="off">Off</button><button class="pill" data-mode="review">Let me check each batch</button><button class="pill" data-mode="auto">Send automatically</button></div>
+      </div>
+      <div class="act sh-modes" id="sh-modes" hidden><span class="sub">Sharing:</span><div class="seg" role="group" aria-label="Sharing"><button data-mode="off">Off</button><button data-mode="review">Check each batch</button><button data-mode="auto">Automatic</button></div></div>
+      <p class="sub" id="sh-terms" hidden>Shared skills are under CC BY 4.0 (text) and MIT (scripts), credited to your GitHub name. Fridae hides keys, emails and your computer's username first. Fridae's maintainer reads every skill before anyone gets it.</p>
+      <p class="sub" id="sh-gh" hidden>Connect GitHub first in <button class="linkish" id="sh-gh-go">Setup, Connections</button>.</p>
+      <div class="sk-list sh-list" id="sh-list" hidden></div>
+      <div class="act" id="sh-review" hidden><button class="pill" id="sh-prepare">Get a batch ready</button></div>
+      <div id="sh-batch"></div>
+      <p class="sub" id="sh-note" role="status" hidden></p>
+      <p class="sub sk-err" id="sh-err" role="status"></p>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -5485,7 +5524,8 @@ function setupSection(name) {
    A note decision has the two notes' titles and files (a the older), relation ("duplicate" | "conflict") and lines
    ({a, b}: the sentences that differ, or each note's first). Every change is the user's click: POST {action: decide |
    accept_all | import | check_notes}. Replace and Merge are never offered
-   on one of Fridae's own skills (owner app; the app refuses them too), and Merge only with the merged text. */
+   on one of Fridae's own skills (owner app; the app refuses them too), and Merge only with the merged text.
+   The Fridae vault and Share your skills, below, use /api/vault/*. */
 let skBusy = false;   /* a decide or Accept all is on its way: every other decision control waits for it */
 let skData = null, skLoading = null, skAgain = false, skAt = 0, skPollT = 0, skPollUntil = 0;
 const skCards = new Map();   /* decision id -> {el, sig} */
@@ -5723,7 +5763,7 @@ function skPaint() {
 }
 /* fresh: Skills was just opened, so the lines of what was decided before go, and suggestions are looked for again */
 async function loadSkills(fresh) {
-  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; }
+  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; $("sh-note").hidden = true; vtLoad(); }
   if (skLoading) { skAgain = true; return skLoading; }
   skLoading = (async () => {
     do {
@@ -5738,6 +5778,188 @@ async function loadSkills(fresh) {
 }
 /* the Overview and Setup ask for the count now and then (it runs the skills tool, so not on every repaint) */
 function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills(); }
+/* ---------- Setup, Skills: the Fridae vault and Share your skills ----------
+   GET /api/vault/status: the vault's {downloaded, release, checked_at, running, last}, where last is the newest Download
+   or Check: the vault-apply report ({added, updated, merged, kept, incoming, errors}, vault paths
+   "Skills/<skill>/<file>"; incoming the new skills waiting for a decision), {release: null, note}, {current: true} or
+   {ok: false, error}; merged with Share's {mode: off|review|auto, asked, agreed, connected, login, shareable, ready
+   [{id, scripts}], held [{id, why}], sent [{id, pr, at}], batch?, last_sent, held_masked} and role. It runs the skills
+   tool, so it is read when Skills opens and after a click, and every few seconds only while an update runs. Every
+   POST is the user's click: download, check, share_mode {mode, agree}, prepare, send {batch, drop}, reveal {path}.
+   vtPaint(status) and shBatchPaint(prepared) only paint, so a made-up status shows as it would. */
+let vtSt = null, vtT = 0, vtLoading = false, vtAgain = false, vtWasRunning = false;
+let shBatch = null, shBusy = false, shWantGh = false;
+const vtSkill = (p) => String(p || "").split("/")[1] || "";
+const vtList = (o, k) => (o && Array.isArray(o[k]) ? o[k] : []);
+async function vtLoad() {
+  clearTimeout(vtT);
+  if (vtLoading) { vtAgain = true; return; }
+  vtLoading = true;
+  let r;
+  do {
+    vtAgain = false;
+    try { r = await api("/api/vault/status"); } catch (e) { r = null; }
+  } while (vtAgain);
+  vtLoading = false;
+  if (!r || typeof r !== "object") { $("vt-err").textContent = "Could not reach the app."; return; }
+  vtPaint(r);
+  /* an update that just ended may have added skills or decisions: the library and the cards are read again */
+  if (vtWasRunning && !r.running) loadSkills();
+  vtWasRunning = !!r.running;
+  if (r.running) vtT = setTimeout(() => { if (skillsVisible()) vtLoad(); }, 2500);
+}
+/* the last report in one line: new skills (those waiting for a decision among them), then the skills updated */
+function vtReportLine(last) {
+  if (last.note) return last.note;
+  const fresh = new Set(vtList(last, "added").filter((p) => /^Skills\/[^/]+\/SKILL\.md$/.test(p)).map(vtSkill));
+  const touched = new Set([...vtList(last, "added"), ...vtList(last, "updated"), ...vtList(last, "merged")].map(vtSkill).filter((n) => n && !fresh.has(n)));
+  const waiting = vtList(last, "incoming").length, added = fresh.size + waiting, bits = [];
+  if (added) bits.push(added + (added === 1 ? " new skill" : " new skills") + (waiting ? " (" + waiting + (waiting === 1 ? " waits" : " wait") + " for your decision below)" : ""));
+  if (touched.size) bits.push(touched.size + " updated");
+  return bits.length ? bits.join(", ") + "." : "";
+}
+function vtPaint(st) {
+  vtSt = st = st && typeof st === "object" ? st : {};
+  const last = st.last && typeof st.last === "object" ? st.last : null, running = !!st.running;
+  const when = [st.release ? "Release " + st.release : "", st.checked_at ? "checked " + ago(st.checked_at) : ""].filter(Boolean).join(" · ");
+  $("vt-line").textContent = st.downloaded && when ? when.charAt(0).toUpperCase() + when.slice(1) : "Skills other people made, checked by Fridae's maintainer.";
+  const btn = $("vt-go");
+  btn.hidden = false; btn.disabled = running;
+  btn.textContent = st.downloaded ? "Check for updates" : "Download";
+  $("vt-note").textContent = running ? "Getting skills…" : "";
+  const good = last && last.ok !== false && !last.current && !last.skipped ? last : null;
+  const line = good ? vtReportLine(good) : "", rep = $("vt-report");
+  rep.textContent = line; rep.hidden = !line;
+  const failed = vtList(good, "errors").length;
+  $("vt-err").textContent = last && last.ok === false ? last.error || "The vault could not be updated."
+    : failed ? "Fridae could not put " + failed + (failed === 1 ? " file" : " files") + " in place." : "";
+  $("vt-kept").replaceChildren(...vtList(good, "kept").map((p) => {
+    const row = el("p", "sub", '<span></span><button class="pill sm">Reveal</button>'), parts = String(p).split("/");
+    const what = parts.length === 3 && parts[2] === "SKILL.md" ? parts[1] : parts.slice(1).join("/");
+    row.querySelector("span").textContent = "Kept your version of “" + what + "”; the new one is saved beside it";
+    row.querySelector("button").onclick = async () => {
+      let r; try { r = await api("/api/vault/reveal", { path: p }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+      $("vt-err").textContent = r && r.ok ? "" : (r && r.error) || "That file is not there any more.";
+    };
+    return row;
+  }));
+  shPaint(st);
+}
+$("vt-go").onclick = async () => {
+  const btn = $("vt-go"), first = !(vtSt && vtSt.downloaded);
+  btn.disabled = true; $("vt-err").textContent = ""; $("vt-note").textContent = "Getting skills…";
+  let r; try { r = await api(first ? "/api/vault/download" : "/api/vault/check", {}); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  if (!r || !r.ok) {
+    btn.disabled = false; $("vt-note").textContent = ""; $("vt-err").textContent = (r && r.error) || "The vault could not be updated.";
+    if (!(r && r.busy)) return;
+  }
+  vtWasRunning = true;
+  vtLoad();
+};
+/* a pull request's address as a link (only an https address), named by its number */
+function shLink(url) {
+  const u = String(url || "");
+  if (!/^https:\/\//.test(u)) return document.createTextNode("pull request");
+  const a = el("a", "linkish"), n = u.match(/\/pull\/(\d+)\/?$/);
+  a.href = u; a.target = "_blank"; a.rel = "noopener"; a.title = u;
+  a.textContent = n ? "pull request #" + n[1] : "pull request";
+  return a;
+}
+function shPaint(st) {
+  const mode = st.mode === "review" || st.mode === "auto" ? st.mode : "off", on = mode !== "off", asked = !!st.asked;
+  if (st.connected) shWantGh = false;
+  $("sh-ask").hidden = asked;
+  $("sh-modes").hidden = !asked;
+  $("sh-modes").querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.mode === mode); b.disabled = shBusy; });
+  $("sh-ask").querySelectorAll("button").forEach((b) => (b.disabled = shBusy));
+  $("sh-terms").hidden = on;
+  $("sh-gh").hidden = !(shWantGh || (on && !st.connected));
+  const list = $("sh-list"), live = on && !!st.connected;
+  const row = (name, tag, note) => {
+    const r = el("div", "sk-row", "<b><span></span></b><em></em><small></small>");
+    r.querySelector("b span").textContent = name; r.querySelector("em").textContent = tag;
+    const sm = r.querySelector("small");
+    if (typeof note === "string") sm.textContent = note; else if (note) sm.append(...note);
+    return r;
+  };
+  const rows = live ? [
+    ...vtList(st, "ready").map((s) => row(s.id, "Ready", s.scripts ? "Has scripts" : "")),
+    ...vtList(st, "held").map((s) => row(s.id, "Held", s.why || "")),
+    ...vtList(st, "sent").map((s) => { const at = Date.parse(s.at); return row(s.id, "Sent", [shLink(s.pr), isNaN(at) ? "" : " · " + ago(at / 1000)]); }),
+  ] : [];
+  if (live && !rows.length) { const p = el("p", "sub"); p.textContent = "Nothing to share yet."; rows.push(p); }
+  list.replaceChildren(...rows); list.hidden = !live;
+  $("sh-review").hidden = !(live && mode === "review");
+  $("sh-prepare").disabled = shBusy || !(st.shareable > 0);
+  if (!(live && mode === "review")) { shBatch = null; $("sh-batch").replaceChildren(); }
+}
+async function shSetMode(mode) {
+  if (shBusy) return;
+  $("sh-err").textContent = "";
+  if (mode !== "off" && vtSt && !vtSt.connected) { shWantGh = true; shPaint(vtSt); return; }
+  shWantGh = false; shBusy = true;
+  let r; try { r = await api("/api/vault/share_mode", { mode, agree: mode !== "off" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  shBusy = false;
+  if (!r || !r.ok) $("sh-err").textContent = (r && r.error) || "That did not work.";
+  vtLoad();
+}
+document.querySelectorAll("#sh-ask [data-mode], #sh-modes [data-mode]").forEach((b) => (b.onclick = () => shSetMode(b.dataset.mode)));
+$("sh-gh-go").onclick = () => openSetup("connections");
+$("sh-prepare").onclick = async () => {
+  if (shBusy) return;
+  const btn = $("sh-prepare");
+  shBusy = true; btn.disabled = true; $("sh-err").textContent = ""; $("sh-note").hidden = true;
+  let r; try { r = await api("/api/vault/prepare", {}); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  shBusy = false; btn.disabled = false;
+  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "Your skills could not be got ready."; return; }
+  shBatchPaint(r);
+};
+/* a batch to check: each skill with its files (scripts first, each marked), the text exactly as it would be sent, a
+   mark on each file Fridae hid something in, and a box to leave the skill out; Send finishes */
+function shBatchPaint(made) {
+  const box0 = $("sh-batch"), note = $("sh-note");
+  shBatch = made && made.batch && vtList(made, "skills").length ? made : null;
+  if (!shBatch) { box0.replaceChildren(); note.textContent = "Nothing to share yet."; note.hidden = false; return; }
+  note.hidden = true;
+  const blocks = vtList(shBatch, "skills").map((s) => {
+    const b = el("div", "sh-skill", '<header><b></b><label class="check-row"><input type="checkbox"> Leave this one out</label></header><p class="sub"></p><div class="sh-files"></div>');
+    b.dataset.name = s.name;
+    b.querySelector("b").textContent = s.name;
+    const d = b.querySelector("p"); if (s.description) d.textContent = s.description; else d.remove();
+    const cb = b.querySelector("input"); cb.onchange = () => b.classList.toggle("out", cb.checked);
+    const files = vtList(s, "files").slice().sort((x, y) => (y.script ? 1 : 0) - (x.script ? 1 : 0));
+    b.querySelector(".sh-files").replaceChildren(...files.map((f) => {
+      const x = el("details", "moreinfo", "<summary><span></span></summary><pre></pre>"), sum = x.querySelector("summary");
+      sum.querySelector("span").textContent = f.path;
+      if (f.script) sum.insertAdjacentHTML("beforeend", '<span class="sh-mark">Script</span>');
+      if (f.masked) sum.insertAdjacentHTML("beforeend", '<span class="sh-mark">Fridae hid something here</span>');
+      x.querySelector("pre").textContent = f.text || "";
+      return x;
+    }));
+    return b;
+  });
+  const act = el("div", "act", '<button class="pill main">Send</button>'), send = act.querySelector("button");
+  send.onclick = () => shSend(send);
+  box0.replaceChildren(...blocks, act);
+}
+async function shSend(btn) {
+  if (shBusy || !shBatch) return;
+  const drop = [...document.querySelectorAll("#sh-batch .sh-skill")].filter((b) => b.querySelector("input").checked).map((b) => b.dataset.name);
+  shBusy = true; btn.disabled = true; $("sh-err").textContent = "";
+  let r; try { r = await api("/api/vault/send", { batch: shBatch.batch, drop }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  shBusy = false; btn.disabled = false;
+  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "Your skills could not be sent."; return; }
+  shBatch = null; $("sh-batch").replaceChildren();
+  shSentPaint(r);
+  vtLoad();
+}
+/* after a Send: "Sent: <pull request link>", and a warning when Fridae could not note a skill as sent */
+function shSentPaint(r) {
+  const p = $("sh-note");
+  p.replaceChildren("Sent: ", shLink(r.pr_url));
+  if (r.warning) p.append(" " + r.warning);
+  p.hidden = false;
+}
 /* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
 let xpList = null;
