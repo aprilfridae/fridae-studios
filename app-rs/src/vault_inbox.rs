@@ -150,18 +150,23 @@ impl Drop for Held {
 
 const LICENSE: &str = "# Licence
 
-The text in this vault (the Markdown files and any other writing) is licensed under the Creative Commons
-Attribution 4.0 International licence (SPDX: `CC-BY-4.0`). The licence's full legal code is at
+This vault has two parts, each under its own terms.
+
+## `Roblox/`: the Roblox guides
+
+Everything in `Roblox/` (the notes, renders and scripts) is from LihFolk Vault V2, (c) 2026 LihFolk, licensed under the
+Creative Commons Attribution 4.0 International licence as `Roblox/LICENSE.md`, his own licence, says.
+That licence still applies to everything in `Roblox/`: credit it as \"LihFolk Vault V2\" and link the licence, and
+follow `Roblox/LICENSE.md` for the third-party material it lists. Changes added later through the vault's inbox are shared
+under the same licence and credited to their senders in this repository's history.
+
+## `Skills/`: the skills
+
+The text in the skills is licensed under the Creative Commons Attribution 4.0 International licence (SPDX:
+`CC-BY-4.0`): credit each skill to the people its front matter names. The licence's full legal code is at
 https://creativecommons.org/licenses/by/4.0/legalcode
 
-Who to credit. Notes and files in `Roblox/` that credit LihFolk are from LihFolk Vault V2, (c) 2026 LihFolk, under CC BY
-4.0: credit them as \"LihFolk Vault V2 by LihFolk\" and link the licence. `Roblox/LICENSE.md` is LihFolk's own licence
-for his work and still applies to it. Everything else in this vault is the Fridae Studios vault's, (c) Fridae Studios
-and the people credited in each file or in this repository's history, also under CC BY 4.0: credit it as
-\"Fridae Studios vault\".
-
-The scripts in the skills (`Skills/`) are licensed under the MIT License, whose full text follows. Scripts in `Roblox/`
-that are LihFolk's stay under his licence, above.
+The scripts in the skills are licensed under the MIT License, whose full text follows.
 
 ## MIT License
 
@@ -176,8 +181,8 @@ THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMP
 
 const CONTRIBUTING: &str = "# Contributing
 
-Skills and guides in this vault were made by people who use Fridae Studios, and each one was looked at by the vault's maintainer
-before it was added.
+The skills in this vault were made by people who use Fridae Studios. The guides in `Roblox/` are from LihFolk Vault V2 by LihFolk,
+under his licence (`Roblox/LICENSE.md`). Everything added since was looked at by the vault's maintainer before it was added.
 
 ## How sharing works
 
@@ -190,8 +195,9 @@ you imported from somewhere else, or one that is a copy of a skill Fridae alread
 
 ## The licence
 
-By sharing a skill or a guide you agree that the text in it is licensed under CC BY 4.0 and the scripts in it under the MIT
-License. See LICENSE.md. Your name is kept as the credit CC BY 4.0 asks for.
+By sharing a skill you agree that the text in it is licensed under CC BY 4.0 and the scripts in it under the MIT License.
+By sharing a change to a guide you agree that your change is licensed under CC BY 4.0, like the rest of `Roblox/` (see
+`Roblox/LICENSE.md`). See LICENSE.md. Your name is kept as the credit CC BY 4.0 asks for.
 
 ## What is checked
 
@@ -208,11 +214,13 @@ Fridae Studios downloads this vault for anyone who asks, with no sign-in: Downlo
 Pull newest, which never overwrites what you changed.
 
 - `Skills/` holds the skills. Each one is a folder with a `SKILL.md` and, sometimes, scripts.
-- `Roblox/` holds the Roblox guides: about 1,300 notes on making games in Roblox Studio, with rigs and Blender scripts.
+- `Roblox/` holds the Roblox guides from LihFolk Vault V2 by LihFolk: about 1,300 notes on making games in Roblox
+  Studio, with rigs and Blender scripts.
 
-Who made what: notes that credit LihFolk come from LihFolk Vault V2 and keep his credit; the rest is the Fridae Studios
-vault's own. Both are under CC BY 4.0, and scripts in skills under MIT. LICENSE.md says how to credit each. To share a
-skill or a change to a guide, use Share your knowledge in Fridae; CONTRIBUTING.md says how it works.
+Who made what: everything in `Roblox/` is from LihFolk Vault V2, (c) 2026 LihFolk, under CC BY 4.0 as
+`Roblox/LICENSE.md` says, and that licence still applies to it. The skills are credited to the people who made them,
+their text under CC BY 4.0 and their scripts under MIT. LICENSE.md says how to credit each. To share a skill or a
+change to a guide, use Share your knowledge in Fridae; CONTRIBUTING.md says how it works.
 ";
 
 const SKILLS_README: &str = "# Skills
@@ -1393,17 +1401,35 @@ mod tests {
 
     #[test]
     fn licence_credits_lihfolk_and_fridae() {
-        for want in ["LihFolk Vault V2 by LihFolk", "Fridae Studios vault", "CC-BY-4.0", "`Roblox/LICENSE.md` is LihFolk's own licence", "MIT License"] {
+        // Roblox/ is credited whole, by reference to LihFolk's own licence: no per-note split, no Fridae claim on it
+        for text in [LICENSE, README, CONTRIBUTING] {
+            for gone in ["that credit LihFolk", "(c) Fridae Studios", "Everything else in this vault", "the rest is the Fridae Studios"] {
+                assert!(!text.contains(gone), "{gone}");
+            }
+        }
+        for want in [
+            "Everything in `Roblox/` (the notes, renders and scripts) is from LihFolk Vault V2, (c) 2026 LihFolk",
+            "That licence still applies to everything in `Roblox/`",
+            "`Roblox/LICENSE.md`",
+            "\"LihFolk Vault V2\"",
+            "CC-BY-4.0",
+            "MIT License",
+        ] {
             assert!(LICENSE.contains(want), "{want}");
         }
-        // the credit comes after the first paragraph, before the scripts' terms
-        assert!(LICENSE.find("legalcode").unwrap() < LICENSE.find("Who to credit.").unwrap());
-        assert!(LICENSE.find("Who to credit.").unwrap() < LICENSE.find("The scripts in the skills (`Skills/`)").unwrap());
-        assert!(LICENSE.contains("Scripts in `Roblox/`\nthat are LihFolk's stay under his licence"));
+        // the skills keep their own terms, credited to the people who made them
+        assert!(LICENSE.find("## `Roblox/`").unwrap() < LICENSE.find("## `Skills/`").unwrap());
+        assert!(LICENSE.find("## `Skills/`").unwrap() < LICENSE.find("legalcode").unwrap());
+        assert!(LICENSE.contains("The scripts in the skills are licensed under the MIT License"));
+        assert!(LICENSE.contains("credit each skill to the people its front matter names"));
+        assert!(README.contains("LihFolk Vault V2 by LihFolk") && README.contains("`Roblox/LICENSE.md`"));
         assert!(README.contains("Roblox/") && !README.contains("LihFolk's vault"));
         assert!(README.contains("Pull newest, which never overwrites what you changed"));
-        assert!(CONTRIBUTING.contains("Skills and guides in this vault") && CONTRIBUTING.contains("Share your knowledge"));
-        assert!(CONTRIBUTING.contains("By sharing a skill or a guide"));
+        // the guides were not made by Fridae's users, and the vault is not presented as his
+        assert!(!CONTRIBUTING.contains("Skills and guides in this vault were made by people who use Fridae Studios"));
+        assert!(CONTRIBUTING.contains("The guides in `Roblox/` are from LihFolk Vault V2 by LihFolk"));
+        assert!(CONTRIBUTING.contains("Share your knowledge"));
+        assert!(CONTRIBUTING.contains("By sharing a skill") && CONTRIBUTING.contains("By sharing a change to a guide"));
         // guides and changed vault skills can be shared, not only skills the sender made
         assert!(!CONTRIBUTING.contains("Only skills you made yourself can be shared."));
         assert!(CONTRIBUTING.contains("guides you changed or added") && CONTRIBUTING.contains("changes to the vault's own skills"));
