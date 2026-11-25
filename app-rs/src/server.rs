@@ -628,6 +628,7 @@ pub fn start(token: String) -> String {
     thread::spawn(promo::watch);
     thread::spawn(studio_watch::watch);
     thread::spawn(crate::studio_undo::watch);
+    thread::spawn(crate::skills::upkeep_watch); // the user's notes checked once a week while no agent works
     plugin::start();
     crate::signin::start(); // who is signed in to Claude Code, Cursor and Gemini (Gemini's answer is its model list)
     codex::load_models();

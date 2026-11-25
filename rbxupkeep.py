@@ -8,6 +8,10 @@ the checks compare the notes' words.
 - The sweep (rbx_vault 'upkeep', `rbx upkeep`) writes a Markdown report to <notes home>/upkeep/YYYY-MM-DD.md:
   near-duplicate clusters, possible contradictions, superseded notes still linked from current ones, old notes that
   newer notes on the same topic exist for, and broken [[links]]. It only reports: it never changes a note.
+- `rbx upkeep --decisions` (the app runs it once a week while idle, and on Setup › Skills' Check notes now) also puts
+  each near-duplicate and possible contradiction among the user's own notes in the decision store the skills use
+  (rbxskills, kind "note"): the user settles it with keep, replace, merge or keep both, and the note that loses goes
+  to the notes folder's .trash, as 'forget' moves it. A pair is never asked about twice.
 
 How two notes are compared (thresholds below):
   words      a note's title and body words, lower case and stemmed, without the common words (rbxvault.STOP);
@@ -446,7 +450,8 @@ class _Sets:
 
 
 def analyse(notes, sup, now):
-    """The sweep's findings over a list of Notes: {"duplicates", "conflicts", "linked", "stale", "broken"}."""
+    """The sweep's findings over a list of Notes: {"duplicates", "conflicts", "linked", "stale", "broken"}, plus
+    "alike" (every directly alike pair ((a, b), jaccard), most alike first) and "old" (per note: superseded)."""
     by_title = defaultdict(list)
     for i, n in enumerate(notes):
         by_title[n.title.casefold()].append(i)
@@ -476,6 +481,7 @@ def analyse(notes, sup, now):
         best = max(j for (a, b), j in alike.items() if a in ids)
         duplicates.append((ids, best))
     duplicates.sort(key=lambda g: (-len(g[0]), -g[1], notes[g[0][0]].title.casefold()))
+    alike_pairs = sorted(alike.items(), key=lambda kv: (-kv[1], kv[0]))
 
     # possible contradictions: sentences on the same thing whose facts differ, in current notes
     sents, owner = [], []
@@ -543,7 +549,8 @@ def analyse(notes, sup, now):
     # broken [[links]]
     known = _known_targets(notes)
     broken = [(i, t) for i, n in enumerate(notes) for t in n.links if t not in known]
-    return {"duplicates": duplicates, "conflicts": conflicts, "linked": linked, "stale": stale, "broken": broken}
+    return {"duplicates": duplicates, "conflicts": conflicts, "linked": linked, "stale": stale, "broken": broken,
+            "alike": alike_pairs, "old": old}
 
 
 def _name(n, games):
@@ -607,7 +614,7 @@ def _shown_link(n, target):
 
 def sweep(projects=(), now=None):
     """Scan the user's notes (and the given games' notes) and write the report. Returns {"path", "counts",
-    "notes", "seconds"}."""
+    "notes", "seconds", "pairs"} (pairs: what the user may settle, _pairs; decisions_from reads them)."""
     start = time.time()
     now = time.time() if now is None else now
     roots = [("all", rbxnotes.folder("all", None))]
@@ -630,7 +637,80 @@ def sweep(projects=(), now=None):
     counts = {"near_duplicates": len(found["duplicates"]), "contradictions": len(found["conflicts"]),
               "superseded_linked": len(found["linked"]), "stale": len(found["stale"]),
               "broken_links": len(found["broken"])}
-    return {"path": path, "counts": counts, "notes": len(notes), "seconds": round(time.time() - start, 2)}
+    return {"path": path, "counts": counts, "notes": len(notes), "seconds": round(time.time() - start, 2),
+            "pairs": _pairs(notes, found)}
+
+
+# ------------------------------------------------------------------ findings the user decides (Setup › Skills)
+LINE_MAX = 200  # characters of a sentence shown on a decision
+
+
+def _line(s):
+    return s if len(s) <= LINE_MAX else s[:LINE_MAX - 1].rstrip() + "…"
+
+
+def _pairs(notes, found):
+    """The pairs of the user's own notes (scope "all": not a game's, never a shipped note) the user may settle, as plain
+    data [{"relation": "duplicate" | "conflict", "a", "b" (each {title, path, date}), "reason", "lines": {a, b}}]. a
+    is the older note. A pair where one note supersedes the other, or either is superseded, is settled already. The
+    near-duplicates give one pair per link of a spanning tree of each cluster (n alike notes, n - 1 pairs, the most
+    alike first); the possible contradictions one per pair of notes."""
+    old = found["old"]
+
+    def mine(i, j):
+        a, b = notes[i], notes[j]
+        return a.scope == b.scope == "all" and not old[i] and not old[j] and not _related(a, b)
+
+    def side(n):
+        return {"title": n.title, "path": n.path, "date": n.date or ""}
+
+    def first(n):
+        return _line(n.sents[0][0]) if n.sents else ""
+
+    out = []
+
+    def add(relation, i, j, reason, la, lb):
+        if (notes[i].date or "", notes[i].title.casefold()) > (notes[j].date or "", notes[j].title.casefold()):
+            i, j, la, lb = j, i, lb, la
+        out.append({"relation": relation, "a": side(notes[i]), "b": side(notes[j]), "reason": reason,
+                    "lines": {"a": la, "b": lb}})
+
+    tree = _Sets()
+    for (i, j), alike in found["alike"]:
+        if mine(i, j) and tree.find(i) != tree.find(j):
+            tree.join(i, j)
+            add("duplicate", i, j, "the same title" if alike >= 1.0 else "%d%% the same words" % round(100 * alike),
+                first(notes[i]), first(notes[j]))
+    for (i, j), pairs in found["conflicts"]:
+        if mine(i, j):
+            sa, sb, why = pairs[0]
+            add("conflict", i, j, "%s differ" % why, _line(sa), _line(sb))
+    return out
+
+
+def decisions_from(res):
+    """One note decision per pair the sweep found (res: sweep()'s result), on the user's own notes only: [{kind: "note",
+    relation, a, b (titles), a_dir, b_dir (the files), reason, lines, source_key}]. The decision store
+    (rbxskills.add_note_decisions) gives each its id, and never adds a pair twice (source_key names the pair)."""
+    home = os.path.realpath(rbxnotes.home_notes())
+    out, seen = [], set()
+    for p in res.get("pairs") or ():
+        a, b = p["a"], p["b"]
+        if any(os.path.dirname(os.path.realpath(x["path"])) != home for x in (a, b)):
+            continue
+        key = "note:%s:%s" % (p["relation"], "|".join(sorted(os.path.basename(x["path"]).casefold() for x in (a, b))))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"kind": "note", "relation": p["relation"], "a": a["title"], "b": b["title"], "a_dir": a["path"],
+                    "b_dir": b["path"], "reason": p["reason"], "lines": dict(p["lines"]), "source_key": key})
+    return out
+
+
+def add_decisions(res):
+    """Put the sweep's pairs in the decision store (Setup › Skills shows them). {"added", "open"}."""
+    import rbxskills
+    return rbxskills.add_note_decisions(decisions_from(res))
 
 
 def summary_text(res):
@@ -647,10 +727,16 @@ def cmd_upkeep(a):
     import json
     import sys
     res = sweep(projects=a.project or [])
+    if getattr(a, "decisions", False):
+        res["decisions"] = add_decisions(res)
+    res.pop("pairs", None)
     if a.json:
         sys.stdout.write(json.dumps(res, ensure_ascii=False) + "\n")
     else:
         print(summary_text(res))
+        if "decisions" in res:
+            d = res["decisions"]
+            print("%d new note decision(s) for Setup, Skills; %d open in all." % (d["added"], d["open"]))
 
 
 def register(sub):
@@ -658,4 +744,7 @@ def register(sub):
                                       "and write a report to <notes>/upkeep/YYYY-MM-DD.md")
     p.add_argument("--project", action="append", help="a game folder whose notes are checked too (repeatable)")
     p.add_argument("--json", action="store_true", help="print the result as JSON")
+    p.add_argument("--decisions", action="store_true",
+                   help="also put each near-duplicate and possible contradiction among your own notes in Setup, Skills "
+                        "as a decision (keep, replace, merge or keep both); a pair is never asked about twice")
     p.set_defaults(fn=cmd_upkeep)

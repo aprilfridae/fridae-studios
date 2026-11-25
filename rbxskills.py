@@ -934,15 +934,64 @@ def side_meta(d):
             "scripts": has_scripts(d)}
 
 
+def _note_there(d):
+    """Whether both notes of a note decision are still in place."""
+    return all(isinstance(d.get(k), str) and os.path.isfile(d[k]) for k in ("a_dir", "b_dir"))
+
+
 def pending():
     """The open decisions: [{id, kind, a, b, a_dir, b_dir, made, recommendation, state, reason, source}]. a is the
     skill in use, b the newcomer waiting (in .incoming, or beside a as "<a> (update)"). A skill decision also carries
-    a_meta and b_meta (side_meta, read now, never stored)."""
-    out = [d for d in _decisions() if d.get("state") == "open"]
-    for d in out:
+    a_meta and b_meta (side_meta, read now, never stored). A note decision (kind "note", from the notes upkeep) has
+    the two notes' titles as a and b, their files as a_dir and b_dir (a the older), relation ("duplicate" or
+    "conflict") and lines ({a, b}: the sentences that differ, or each note's first); one whose note is gone (moved or
+    trashed since) is left out, and closed by the next upkeep (add_note_decisions)."""
+    out = []
+    for d in _decisions():
+        if d.get("state") != "open":
+            continue
         if d.get("kind", "skill") == "skill":
             d["a_meta"], d["b_meta"] = side_meta(d.get("a_dir")), side_meta(d.get("b_dir"))
+        elif d.get("kind") == "note" and not _note_there(d):
+            continue
+        out.append(d)
     return out
+
+
+NOTE_OPEN_MAX = 20  # note decisions open at once at most (each costs a recommendation); the rest come on a later run
+
+
+def add_note_decisions(items):
+    """Add the notes upkeep's decisions (rbxupkeep.decisions_from, the likeliest first) to the store, each pair once:
+    one is not added while a decision on the same pair (source_key) is open, or after the user kept both; and no more
+    than NOTE_OPEN_MAX are open at once (the rest are found again by a later run). Open note decisions whose note is
+    gone are closed first (state "gone"). Returns {"added", "open" (note decisions open now)}."""
+    with _locked(user_dir()):
+        decs = _decisions()
+        changed = False
+        for d in decs:
+            if d.get("kind") == "note" and d.get("state") == "open" and not _note_there(d):
+                d.update(state="gone", decided=_now())
+                changed = True
+        settled = {d.get("source_key") for d in decs if d.get("kind") == "note" and (
+            d.get("state") == "open" or (d.get("state") == "done" and d.get("choice") == "keep_both"))}
+        added = 0
+        room = NOTE_OPEN_MAX - sum(1 for d in decs if d.get("kind") == "note" and d.get("state") == "open")
+        for it in items or ():
+            key = it.get("source_key")
+            if not key or key in settled:
+                continue
+            if added >= room:
+                break
+            settled.add(key)
+            decs.append({"id": uuid.uuid4().hex[:12], "kind": "note", "relation": it.get("relation"),
+                         "a": it.get("a"), "b": it.get("b"), "a_dir": it.get("a_dir"), "b_dir": it.get("b_dir"),
+                         "made": _now(), "recommendation": None, "state": "open", "reason": it.get("reason", ""),
+                         "lines": it.get("lines") or {}, "source": "upkeep", "source_key": key})
+            added += 1
+        if changed or added:
+            _save_decisions(decs)
+        return {"added": added, "open": sum(1 for d in decs if d.get("kind") == "note" and d.get("state") == "open")}
 
 
 # ---- import
@@ -1152,8 +1201,62 @@ def _mark(d, updates):
         _write_json(os.path.join(d, SOURCE_FILE), rec)
 
 
+def _note_trash_copy(path):
+    """Copy a note into the notes folder's .trash, named as rbxnotes.forget names what it moves there."""
+    import rbxnotes
+    trash = os.path.join(os.path.dirname(path), rbxnotes.TRASH)
+    os.makedirs(trash, exist_ok=True)
+    base = os.path.basename(path)[:-3]
+    dest, n = os.path.join(trash, base + ".md"), 2
+    while os.path.exists(dest):
+        dest, n = os.path.join(trash, "%s %d.md" % (base, n)), n + 1
+    shutil.copy2(path, dest)
+
+
+def _merged_note(old, title, merged):
+    """The merged note's file: a whole note (front matter first) as given; else the old note's front matter, its
+    title as the heading (unless the text has one) and the text."""
+    text = merged.strip()
+    if text.startswith("---"):
+        return text + "\n"
+    fm = re.match(r"^---\r?\n.*?\r?\n---\r?\n?", old, re.S)
+    if not re.match(r"#[ \t]", text):
+        text = "# %s\n\n%s" % (title, text)
+    return (fm.group(0).rstrip("\r\n") + "\n\n" if fm else "") + text + "\n"
+
+
+def _decide_note(dec, choice, merged_text):
+    """Settle a note decision (both notes in the user's own notes folder; a is the older):
+      keep       a stays; b goes to the notes folder's .trash (rbxnotes.forget: never deleted);
+      replace    b stays; a goes to the .trash;
+      merge      merged_text becomes a's text (a copy of a's old text goes to the .trash first); b goes to the .trash;
+      keep_both  both stay, and the pair is not asked about again."""
+    import rbxnotes
+    home = os.path.realpath(rbxnotes.home_notes())
+    paths = (dec.get("a_dir") or "", dec.get("b_dir") or "")
+    for p in paths:
+        if not p.endswith(".md") or os.path.dirname(os.path.realpath(p)) != home:
+            raise ValueError("That note is not in your notes folder: %s" % p)
+        if not os.path.isfile(p):
+            raise LookupError("The note is no longer there: %s" % p)
+    if choice == "merge" and not (merged_text or "").strip():
+        raise ValueError("A merge needs the merged note.")
+    a_path, b_path = paths
+    title = lambda p: os.path.basename(p)[:-3]  # noqa: E731
+    if choice == "keep":
+        rbxnotes.forget(title(b_path), "all")
+    elif choice == "replace":
+        rbxnotes.forget(title(a_path), "all")
+    elif choice == "merge":
+        with open(a_path, encoding="utf-8") as f:
+            old = f.read()
+        _note_trash_copy(a_path)
+        rbxnotes._atomic_write(a_path, _merged_note(old, title(a_path), merged_text))
+        rbxnotes.forget(title(b_path), "all")
+
+
 def decide(id, choice, merged_text=None):
-    """Settle an open decision. choice:
+    """Settle an open decision (a note decision: _decide_note). choice:
       keep       the skill in use stays; the newcomer goes to .replaced/ and the winner gains supersedes;
       replace    the newcomer takes over; the old one goes to .replaced/ (a shipped one stays in the app, superseded);
       merge      merged_text becomes the winner's SKILL.md (the one in use keeps its name); the old SKILL.md's folder
@@ -1168,8 +1271,13 @@ def decide(id, choice, merged_text=None):
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
+        if dec.get("kind", "skill") == "note":
+            _decide_note(dec, choice, merged_text)
+            dec.update(state="done", choice=choice, decided=_now())
+            _save_decisions(decs)
+            return dec
         if dec.get("kind", "skill") != "skill":
-            raise ValueError("That decision is about notes, not skills.")
+            raise ValueError("That decision is of a kind this Fridae does not know.")
         a, b, a_dir, b_dir = dec["a"], dec["b"], dec["a_dir"], dec["b_dir"]
         owner, a_kit = _kit_owner(a_dir)
         if owner == "app" and choice in ("replace", "merge"):
@@ -1256,7 +1364,8 @@ def advise(id, rec):
         dec = next((d for d in decs if d.get("id") == id and d.get("state") == "open"), None)
         if dec is None:
             raise LookupError("No open decision '%s'." % id)
-        if choice in ("replace", "merge") and _kit_owner(dec.get("a_dir") or "")[0] == "app":
+        if (choice in ("replace", "merge") and dec.get("kind", "skill") == "skill"
+                and _kit_owner(dec.get("a_dir") or "")[0] == "app"):
             choice, merged = "keep", ""
         dec["recommendation"] = {"choice": choice, "why": text("why").strip(), "merged": merged,
                                  "by": text("by").strip(), "made": _now()}

@@ -673,3 +673,114 @@ class SweepTests(UpkeepCase):
         self.assertLess(took, 30.0)
         self.assertGreaterEqual(res["counts"]["near_duplicates"], 20)
         self.assertGreater(res["counts"]["broken_links"], 0)
+
+
+# ------------------------------------------------------------------ the sweep's findings become decisions
+class NoteDecisionTests(UpkeepCase):
+    NOW = time.mktime(time.strptime("2026-11-24 12:00", "%Y-%m-%d %H:%M"))
+
+    def setUp(self):
+        super().setUp()
+        import rbxskills
+        self.skills = rbxskills
+
+    def check(self, projects=()):
+        """What `rbx upkeep --decisions --json` prints, as a dict."""
+        import argparse
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rbxupkeep.cmd_upkeep(argparse.Namespace(project=list(projects), json=True, decisions=True))
+        return json.loads(out.getvalue())
+
+    def notes_pending(self):
+        return [d for d in self.skills.pending() if d.get("kind") == "note"]
+
+    def test_contradicting_notes_become_one_decision(self):
+        a = self.mine("Hit freeze", "hit freeze 80-150 ms", when="2026-01-05 10:00")
+        b = self.mine("Hit freeze timing", "hit freeze 66 ms", when="2026-06-01 10:00")
+        res = rbxupkeep.sweep(now=self.NOW)
+        decs = rbxupkeep.decisions_from(res)
+        self.assertEqual(len(decs), 1, decs)
+        d = decs[0]
+        self.assertEqual((d["kind"], d["relation"]), ("note", "conflict"))
+        self.assertEqual((d["a"], d["b"]), ("Hit freeze", "Hit freeze timing"), "the older note is the one in use")
+        self.assertEqual((d["a_dir"], d["b_dir"]), (a, b))
+        self.assertEqual((d["lines"]["a"], d["lines"]["b"]), ("hit freeze 80-150 ms", "hit freeze 66 ms"))
+        out = self.check()
+        self.assertEqual((out["decisions"]["added"], out["decisions"]["open"]), (1, 1))
+        [p] = self.notes_pending()
+        self.assertEqual((p["relation"], p["a"], p["b"], p["state"], p["recommendation"], p["source"]),
+                         ("conflict", "Hit freeze", "Hit freeze timing", "open", None, "upkeep"))
+        self.assertNotIn("pairs", out, "the report's JSON stays small")
+
+    def test_sweep_decisions_not_repeated(self):
+        self.mine("Hit freeze", "hit freeze 80-150 ms")
+        self.mine("Hit freeze timing", "hit freeze 66 ms")
+        self.mine("Button outlines", "The user wants thin outlines on every button, never thick black strokes.")
+        self.mine("Outline style", "User wants thin outlines on every button and never thick black strokes!")
+        self.assertEqual(self.check()["decisions"]["added"], 2)
+        again = self.check()["decisions"]
+        self.assertEqual((again["added"], again["open"]), (0, 2), "the same pairs are not asked about twice")
+        rels = sorted(d["relation"] for d in self.notes_pending())
+        self.assertEqual(rels, ["conflict", "duplicate"])
+        dup = next(d for d in self.notes_pending() if d["relation"] == "duplicate")
+        self.skills.decide(dup["id"], "keep_both")
+        third = self.check()["decisions"]
+        self.assertEqual((third["added"], third["open"]), (0, 1), "both kept: that pair is settled for good")
+
+    def test_only_the_users_own_notes(self):
+        body = "The user wants thin outlines on every button, never thick black strokes."
+        self.mine("Button outlines", body)
+        with self.in_project():
+            self.mine("Game outlines", body, folder=self.game_notes)
+            self.mine("Game outline copy", body.replace("The user", "User"), folder=self.game_notes)
+            self.mine("Lobby size", "Max 4 players per server in the lobby.", folder=self.game_notes)
+            self.mine("Lobby update", "Max 8 players per server in the lobby.", folder=self.game_notes)
+        res = rbxupkeep.sweep(projects=[self.project], now=self.NOW)
+        self.assertGreaterEqual(res["counts"]["near_duplicates"], 1, "the report still lists them")
+        self.assertEqual(rbxupkeep.decisions_from(res), [], "game notes and pairs with them are not decisions")
+
+    def test_superseded_pairs_are_settled_already(self):
+        self.mine("Old lobby", "Max 4 players per server in the lobby.", superseded_by="New lobby")
+        self.mine("New lobby", "Max 8 players per server in the lobby.", supersedes="Old lobby")
+        self.mine("Old outlines", "The user wants thin outlines on every button, never thick black strokes.",
+                  superseded_by="Outlines")
+        self.mine("Outlines", "User wants thin outlines on every button and never thick black strokes!",
+                  supersedes="Old outlines")
+        self.assertEqual(rbxupkeep.decisions_from(rbxupkeep.sweep(now=self.NOW)), [])
+
+    def test_a_cluster_of_copies_is_one_decision_per_link(self):
+        body = "The user wants thin outlines on every button, never thick black strokes and no glow."
+        for t in ("Outlines one", "Outlines two", "Outlines three"):
+            self.mine(t, body)
+        decs = rbxupkeep.decisions_from(rbxupkeep.sweep(now=self.NOW))
+        self.assertEqual(len(decs), 2, "three alike notes: two decisions settle them")
+        self.assertTrue(all(d["relation"] == "duplicate" for d in decs))
+
+    def test_a_decision_whose_note_is_gone_is_closed(self):
+        self.mine("Hit freeze", "hit freeze 80-150 ms")
+        b = self.mine("Hit freeze timing", "hit freeze 66 ms")
+        self.check()
+        self.assertEqual(len(self.notes_pending()), 1)
+        os.remove(b)
+        self.assertEqual(self.notes_pending(), [], "not shown once a note is gone")
+        self.check()
+        with open(os.path.join(self.skills.user_dir(), ".decisions.json"), encoding="utf-8") as f:
+            decs = json.load(f)
+        self.assertEqual([d["state"] for d in decs], ["gone"])
+
+    def test_only_so_many_open_at_once(self):
+        self.mine("Hit freeze", "hit freeze 80-150 ms")
+        self.mine("Hit freeze timing", "hit freeze 66 ms")
+        self.mine("Button outlines", "The user wants thin outlines on every button, never thick black strokes.")
+        self.mine("Outline style", "User wants thin outlines on every button and never thick black strokes!")
+        with mock.patch.object(self.skills, "NOTE_OPEN_MAX", 1):
+            self.assertEqual(self.check()["decisions"], {"added": 1, "open": 1})
+            self.assertEqual(self.check()["decisions"], {"added": 0, "open": 1}, "the rest wait")
+            [d] = self.notes_pending()
+            self.assertEqual(d["relation"], "duplicate", "the likeliest first: near-copies before possible conflicts")
+            self.skills.decide(d["id"], "keep")
+            self.assertEqual(self.check()["decisions"], {"added": 1, "open": 1}, "and come on a later run")
+            self.assertEqual(self.notes_pending()[0]["relation"], "conflict")

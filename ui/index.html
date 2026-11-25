@@ -1291,8 +1291,9 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     <section data-s="skills">
       <h3>Skills</h3>
       <p class="sub">One library of skills that every AI here uses: Fridae's own, the ones it ships, and the ones found in your other AI tools.</p>
-      <details class="moreinfo"><summary>More</summary><p>Fridae looks in Claude Code, its plugins, and the skill folders of Codex, Cursor, OpenCode and Gemini now and then (Import now does it at once), and brings in what is new. When a newcomer covers much the same as a skill you already have, it waits here for you, and the one in use keeps working meanwhile. A cheap AI reads both and suggests what to do. Nothing is deleted: the one you don't keep is set aside in the library's .replaced folder. Pinned skills are in every AI's instructions; the rest are found by search when a chat needs them.</p></details>
+      <details class="moreinfo"><summary>More</summary><p>Fridae looks in Claude Code, its plugins, and the skill folders of Codex, Cursor, OpenCode and Gemini now and then (Import now does it at once), and brings in what is new. When a newcomer covers much the same as a skill you already have, it waits here for you, and the one in use keeps working meanwhile. A cheap AI reads both and suggests what to do. Nothing is deleted: the one you don't keep is set aside in the library's .replaced folder. Pinned skills are in every AI's instructions; the rest are found by search when a chat needs them.</p><p>Your notes get the same care: once a week, while no chat is working (Check notes now does it at once), Fridae looks for notes that say the same thing twice or disagree, and asks you here which one holds. The note you don't keep goes to your notes folder's .trash.</p></details>
       <div class="act"><button class="pill" id="sk-import">Import now</button><span class="sub" id="sk-import-note" role="status"></span></div>
+      <div class="act"><button class="pill" id="sk-notes">Check notes now</button><span class="sub" id="sk-notes-note" role="status"></span></div>
       <p class="sub sk-err" id="sk-err" role="status"></p>
       <div id="sk-dec-wrap" hidden>
         <h3 class="sk-h">Needs your decision <span id="sk-dec-n"></span><button class="pill sm" id="sk-all" hidden>Accept all recommendations</button></h3>
@@ -5481,7 +5482,9 @@ function setupSection(name) {
    two of the user's notes (kind "note"): a is the one in use, b the newcomer waiting beside it, with their folders,
    why it was asked (reason: "update" when the user's edited copy's source changed, else an overlap), the newcomer's
    source folder, and a cheap AI's recommendation once written ({choice: keep|replace|merge|null, why, merged, by}).
-   Every change is the user's click: POST {action: decide | accept_all | import}. Replace and Merge are never offered
+   A note decision has the two notes' titles and files (a the older), relation ("duplicate" | "conflict") and lines
+   ({a, b}: the sentences that differ, or each note's first). Every change is the user's click: POST {action: decide |
+   accept_all | import | check_notes}. Replace and Merge are never offered
    on one of Fridae's own skills (owner app; the app refuses them too), and Merge only with the merged text. */
 let skBusy = false;   /* a decide or Accept all is on its way: every other decision control waits for it */
 let skData = null, skLoading = null, skAgain = false, skAt = 0, skPollT = 0, skPollUntil = 0;
@@ -5531,7 +5534,7 @@ function skLabels(d, a) {
   return { keep: owner === "app" || owner === "shipped" ? "Keep Fridae's" : owner === "community" ? "Keep the one in use" : "Keep yours", replace: "Use the new one", merge: "Merge them", keep_both: "Keep both" };
 }
 function skHeadline(d) {
-  if (d.kind === "note") return /conflict|contradict/i.test(d.reason || "") ? "Two notes disagree" : "Two notes say much the same";
+  if (d.kind === "note") return d.relation === "conflict" ? "Two notes disagree" : "Two notes say much the same";
   if (d.reason === "update") return "“" + d.b + "” has a new version, and you changed your copy";
   return (d.a || "").toLowerCase() === (d.b || "").toLowerCase() ? "Two skills called “" + d.a + "”" : "“" + d.b + "” covers much the same as “" + d.a + "”";
 }
@@ -5559,7 +5562,8 @@ function skCard(d) {
   card.querySelector("h4").textContent = skHeadline(d);
   const sides = card.querySelector(".sk-sides");
   if (note) {
-    sides.append(skSide("First", d.a, "", "", skHome(d.a_dir), d.a_dir), skSide("Second", d.b, "", "", skHome(d.b_dir), d.b_dir));
+    const lines = d.lines || {};
+    sides.append(skSide("First", d.a, "", lines.a || "", skHome(d.a_dir), d.a_dir), skSide("Second", d.b, "", lines.b || "", skHome(d.b_dir), d.b_dir));
   } else {
     const who = (x, extra) => [SK_OWNER[x.owner] || x.owner, extra, x.licence ? "licence " + x.licence : ""].filter(Boolean).join(" · ");
     sides.append(
@@ -5643,6 +5647,19 @@ $("sk-import").onclick = async () => {
   note.textContent = parts.length ? parts.join(", ") + "." : "Nothing new: your library is up to date.";
   loadSkills();
 };
+$("sk-notes").onclick = async () => {
+  const btn = $("sk-notes"), note = $("sk-notes-note");
+  btn.disabled = true; note.textContent = "Reading your notes..."; $("sk-err").textContent = "";
+  let r; try { r = await api("/api/skills", { action: "check_notes" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  btn.disabled = false;
+  if (!r || !r.ok) { note.textContent = ""; $("sk-err").textContent = (r && r.error) || "Your notes could not be checked."; return; }
+  const added = (r.notes && r.notes.added) || 0, open = (r.notes && r.notes.open) || 0;
+  note.textContent = added ? added + (added === 1 ? " new question about your notes, below." : " new questions about your notes, below.")
+    : open ? "Nothing new. " + open + (open === 1 ? " question about your notes still waits below." : " questions about your notes still wait below.")
+    : "Your notes look fine: nothing says the same twice or disagrees.";
+  skPollUntil = Date.now() + 180000;
+  loadSkills();
+};
 $("sk-filter").oninput = () => skPaintList();
 $("ap-sk-go").onclick = () => openSetup("skills");
 /* the count of open decisions: Setup's Skills button and the Overview's totals line */
@@ -5699,7 +5716,7 @@ function skPaint() {
 }
 /* fresh: Skills was just opened, so the lines of what was decided before go, and suggestions are looked for again */
 async function loadSkills(fresh) {
-  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-all-err").textContent = ""; }
+  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; }
   if (skLoading) { skAgain = true; return skLoading; }
   skLoading = (async () => {
     do {

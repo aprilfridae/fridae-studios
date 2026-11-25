@@ -1045,3 +1045,96 @@ class ImportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoteDecideTests(unittest.TestCase):
+    """Deciding a note decision (kind "note", made by the notes upkeep): the losing note goes to the notes folder's
+    .trash as rbx_vault 'forget' moves it; nothing is deleted."""
+
+    def setUp(self):
+        import rbxnotes
+        import rbxpaths
+        self.notes_mod = rbxnotes
+        self.tmp = tempfile.mkdtemp(prefix="note decide é ")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = os.path.join(self.tmp, "home")
+        for p in (mock.patch.object(rbxpaths, "HOME_DIR", self.home),
+                  mock.patch.object(rbxpaths, "WORK", os.path.join(self.tmp, "work")),
+                  mock.patch.object(rbxskills, "user_dir", lambda: os.path.join(self.home, "skills")),
+                  mock.patch.dict(os.environ, {"RBXKIT_PROJECT": "", "FRIDAE_RAG_FILE": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+        self.notes = os.path.join(self.home, "notes")
+        self.trash = os.path.join(self.notes, ".trash")
+        self.a = self.note("Hit freeze", "hit freeze 80-150 ms")
+        self.b = self.note("Hit freeze timing", "hit freeze 66 ms")
+        out = rbxskills.add_note_decisions([{
+            "kind": "note", "relation": "conflict", "a": "Hit freeze", "b": "Hit freeze timing", "a_dir": self.a,
+            "b_dir": self.b, "reason": "numbers differ", "lines": {"a": "hit freeze 80-150 ms", "b": "hit freeze 66 ms"},
+            "source_key": "note:hit freeze.md|hit freeze timing.md"}])
+        self.assertEqual(out, {"added": 1, "open": 1})
+        self.id = rbxskills.pending()[0]["id"]
+
+    def note(self, title, body):
+        os.makedirs(self.notes, exist_ok=True)
+        path = os.path.join(self.notes, title + ".md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("---\ntitle: %s\nwhen: 2026-01-05 10:00\nscope: all\n---\n\n# %s\n\n%s\n" % (title, title, body))
+        return path
+
+    def read(self, path):
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+
+    def trashed(self):
+        return sorted(os.listdir(self.trash)) if os.path.isdir(self.trash) else []
+
+    def test_keep_moves_the_second_to_the_trash(self):
+        dec = rbxskills.decide(self.id, "keep")
+        self.assertEqual((dec["state"], dec["choice"]), ("done", "keep"))
+        self.assertTrue(os.path.isfile(self.a))
+        self.assertFalse(os.path.exists(self.b))
+        self.assertEqual(self.trashed(), ["Hit freeze timing.md"])
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_replace_moves_the_first_to_the_trash(self):
+        rbxskills.decide(self.id, "replace")
+        self.assertFalse(os.path.exists(self.a))
+        self.assertTrue(os.path.isfile(self.b))
+        self.assertEqual(self.trashed(), ["Hit freeze.md"])
+
+    def test_merge_writes_the_merged_note_and_trashes_the_other(self):
+        with self.assertRaises(ValueError):
+            rbxskills.decide(self.id, "merge", "  ")
+        rbxskills.decide(self.id, "merge", "Hit freeze is 66 ms for light hits and 80-150 ms for heavy ones.")
+        text = self.read(self.a)
+        self.assertIn("title: Hit freeze", text, "the first note keeps its front matter")
+        self.assertIn("# Hit freeze\n\nHit freeze is 66 ms for light hits", text)
+        self.assertNotIn("hit freeze 80-150 ms\n", text)
+        self.assertFalse(os.path.exists(self.b))
+        self.assertEqual(self.trashed(), ["Hit freeze timing.md", "Hit freeze.md"],
+                         "the first note's old text is in the trash too")
+        self.assertIn("hit freeze 80-150 ms", self.read(os.path.join(self.trash, "Hit freeze.md")))
+        self.assertIn("hit freeze 66 ms", self.read(os.path.join(self.trash, "Hit freeze timing.md")))
+
+    def test_keep_both_moves_nothing(self):
+        rbxskills.decide(self.id, "keep_both")
+        self.assertTrue(os.path.isfile(self.a) and os.path.isfile(self.b))
+        self.assertEqual(self.trashed(), [])
+
+    def test_a_note_outside_the_users_notes_is_refused(self):
+        with open(os.path.join(self.home, "skills", ".decisions.json"), encoding="utf-8") as f:
+            decs = json.load(f)
+        elsewhere = os.path.join(self.tmp, "elsewhere.md")
+        with open(elsewhere, "w", encoding="utf-8") as f:
+            f.write("x")
+        decs[0]["b_dir"] = elsewhere
+        rbxskills._write_json(os.path.join(self.home, "skills", ".decisions.json"), decs)
+        with self.assertRaises(ValueError):
+            rbxskills.decide(self.id, "keep")
+        self.assertTrue(os.path.isfile(elsewhere))
+
+    def test_advice_on_a_note_is_stored(self):
+        dec = rbxskills.advise(self.id, {"choice": "merge", "why": "Both hold.", "merged": "Both.", "by": "GLM"})
+        self.assertEqual((dec["recommendation"]["choice"], dec["recommendation"]["merged"]), ("merge", "Both."))
+        self.assertEqual(dec["state"], "open")
