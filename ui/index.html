@@ -969,6 +969,28 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .sh-mark { display: inline-block; margin-left: 8px; font: 12px/1 var(--sans); color: var(--faint); }
 .sh-files pre { max-height: 220px; overflow-y: auto; margin: 8px 0 0; }
 #sh-note .linkish { font-size: inherit; }
+/* Setup, Skills: Submissions (the maintainer's copy): each pull request with its skills, a card per skill in the
+   decision cards' idiom (scripts first in their own boxes, then SKILL.md and its changes, the suggestion, the choices) */
+#sb-inbox:empty, #sb-create-box:empty, #sb-pub-box:empty { display: none; }
+#sb-made .linkish, #sb-pub-note .linkish, .sb-pr-h .linkish { font-size: inherit; }
+.sb-pr { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sb-pr-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; }
+.sb-pr-h b { font-size: 14px; font-weight: 500; word-break: break-word; }
+.sb-pr-h span { font-size: 13px; color: var(--dim); }
+.sb-not { margin: 4px 0 0; font-size: 13px; color: var(--faint); }
+.sb-not code { margin-right: 8px; font: 12px/1.5 var(--mono); word-break: break-all; }
+.sb-pr .sk-dec { margin-top: 12px; }
+.sb-script { margin: 12px 0 0; }
+.ask .sk-side.sb-script code { white-space: normal; word-break: break-all; }
+.ask .sb-script pre, .ask .sb-file pre, .ask .sb-diff pre { max-height: 320px; margin: 8px 0 0; }
+.sb-file summary, .sb-diff summary { font-family: var(--mono); font-size: 12px; }
+.sb-files { margin-top: 8px; }
+.ask p.sb-gone { margin: 4px 0 0; font-size: 13px; color: var(--faint); }
+.sb-gone code { margin-right: 8px; font: 12px/1.5 var(--mono); word-break: break-all; }
+.sb-edit textarea { display: block; width: 100%; min-height: 220px; resize: vertical; margin: 0 0 8px; padding: 8px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); color: var(--text); font: 12px/1.55 var(--mono); -webkit-user-select: text; user-select: text; }
+.sb-edit textarea:focus { outline: none; border-color: var(--focus); }
+.sb-edit, .sb-reject { margin-top: 12px; }
+.sb-reject .keyrow { margin: 0 0 8px; }
 .scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
 .scale-row output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
 .scale-row input[type=range] { flex: 1; min-width: 120px; max-width: 280px; accent-color: #ececed; }
@@ -1342,6 +1364,20 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div id="sh-batch"></div>
       <p class="sub" id="sh-note" role="status" hidden></p>
       <p class="sub sk-err" id="sh-err" role="status"></p>
+      <div id="sb-wrap" hidden>
+        <h3 class="sk-h">Submissions <span id="sb-n"></span><button class="pill sm" id="sb-again" hidden>Look again</button></h3>
+        <div id="sb-create-row" hidden>
+          <p class="sub">The vault's repository is not on GitHub yet.</p>
+          <div class="act"><button class="pill" id="sb-create">Create the vault repo</button></div>
+        </div>
+        <div id="sb-create-box"></div>
+        <p class="sub" id="sb-made" role="status" hidden></p>
+        <div id="sb-inbox"></div>
+        <div class="act" id="sb-pub-row" hidden><button class="pill" id="sb-publish">Publish vault release</button><span class="sub" id="sb-pub-note" role="status"></span></div>
+        <div id="sb-pub-box"></div>
+        <p class="sub sk-err" id="sb-pub-err" role="status"></p>
+        <p class="sub sk-err" id="sb-err" role="status"></p>
+      </div>
     </section>
     <section data-s="permissions">
       <h3>Programs agents may run</h3>
@@ -5525,7 +5561,7 @@ function setupSection(name) {
    ({a, b}: the sentences that differ, or each note's first). Every change is the user's click: POST {action: decide |
    accept_all | import | check_notes}. Replace and Merge are never offered
    on one of Fridae's own skills (owner app; the app refuses them too), and Merge only with the merged text.
-   The Fridae vault and Share your skills, below, use /api/vault/*. */
+   The Fridae vault, Share your skills and Submissions, below, use /api/vault/*. */
 let skBusy = false;   /* a decide or Accept all is on its way: every other decision control waits for it */
 let skData = null, skLoading = null, skAgain = false, skAt = 0, skPollT = 0, skPollUntil = 0;
 const skCards = new Map();   /* decision id -> {el, sig} */
@@ -5763,7 +5799,7 @@ function skPaint() {
 }
 /* fresh: Skills was just opened, so the lines of what was decided before go, and suggestions are looked for again */
 async function loadSkills(fresh) {
-  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; $("sh-note").hidden = true; vtLoad(); }
+  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; $("sh-note").hidden = true; sbFresh = true; vtLoad(); }
   if (skLoading) { skAgain = true; return skLoading; }
   skLoading = (async () => {
     do {
@@ -5789,6 +5825,7 @@ function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills();
    vtPaint(status) and shBatchPaint(prepared) only paint, so a made-up status shows as it would. */
 let vtSt = null, vtT = 0, vtLoading = false, vtAgain = false, vtWasRunning = false;
 let shBatch = null, shBusy = false, shWantGh = false;
+let sbRole = null, sbFresh = false, sbLoading = false, sbBusy = false;
 const vtSkill = (p) => String(p || "").split("/")[1] || "";
 const vtList = (o, k) => (o && Array.isArray(o[k]) ? o[k] : []);
 async function vtLoad() {
@@ -5803,6 +5840,8 @@ async function vtLoad() {
   vtLoading = false;
   if (!r || typeof r !== "object") { $("vt-err").textContent = "Could not reach the app."; return; }
   vtPaint(r);
+  /* Submissions: the inbox asks GitHub, so it is read once each time Skills opens, and only for the maintainer */
+  if (sbFresh && sbInboxShown(r.role) && skillsVisible()) { sbFresh = false; sbLoad(); }
   /* an update that just ended may have added skills or decisions: the library and the cards are read again */
   if (vtWasRunning && !r.running) loadSkills();
   vtWasRunning = !!r.running;
@@ -5844,6 +5883,7 @@ function vtPaint(st) {
     return row;
   }));
   shPaint(st);
+  sbPaint(st.role);
 }
 $("vt-go").onclick = async () => {
   const btn = $("vt-go"), first = !(vtSt && vtSt.downloaded);
@@ -5959,6 +5999,257 @@ function shSentPaint(r) {
   p.replaceChildren("Sent: ", shLink(r.pr_url));
   if (r.warning) p.append(" " + r.warning);
   p.hidden = false;
+}
+/* ---------- Setup, Skills: Submissions (the maintainer's copy) ----------
+   status.role {connected, login, maintainer, repo_exists}: the block shows for the maintainer, and Create the vault
+   repo for the login that owns VAULT_REPO while the repo is missing. GET /api/vault/inbox: {prs: [{n, url, author,
+   title, error?, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill, same_name, closest
+   {id, score}|null, diff, recommendation {choice: keep|replace|merge, why, merged}|null, decided {choice, why}|null}]}]}.
+   Everything in a submission is a stranger's: it reaches the page only as text (textContent / text nodes), and a link
+   only when it is a github.com address. Every POST is the maintainer's click: inbox_decide {pr, skill, choice: add |
+   edit | reject, text?, why?}; publish and create_repo only from their confirm card's button, with confirm: true.
+   sbPaint(role), sbInboxPaint(inbox), sbPublishPaint(result) and sbCreatedPaint(result) only paint. */
+const VAULT_REPO = "aprilfridae/fridae-vault";
+const SB_OVERLAP = 0.6;   /* vault_inbox's OVERLAP: below it, no suggestion is asked for */
+const SB_CREATE_Q = "This creates the public repository aprilfridae/fridae-vault on GitHub. Anyone can see it. Go ahead?";
+const SB_PUBLISH_Q = "Publish a new vault release? Everyone's Fridae will get the skills added since the last one.";
+const SB_DONE = { add: "Added", edit: "Edited and added", reject: "Rejected" };
+const sbOwner = (role) => !!(role && role.login) && String(role.login).toLowerCase() === VAULT_REPO.split("/")[0].toLowerCase();
+function sbInboxShown(role) { return !!(role && role.maintainer && role.repo_exists); }
+/* a link to a github.com page, else the words alone */
+function sbGhLink(url, text) {
+  const u = String(url || "");
+  if (!/^https:\/\/github\.com\//.test(u)) return document.createTextNode(text);
+  const a = el("a", "linkish");
+  a.href = u; a.target = "_blank"; a.rel = "noopener"; a.title = u; a.textContent = text;
+  return a;
+}
+function sbPaint(role) {
+  sbRole = role = role && typeof role === "object" ? role : {};
+  const create = sbOwner(role) && !role.repo_exists, inbox = sbInboxShown(role);
+  $("sb-wrap").hidden = !(role.maintainer || create);
+  $("sb-create-row").hidden = !create;
+  $("sb-create").disabled = sbBusy;
+  if (!create) $("sb-create-box").replaceChildren();
+  $("sb-again").hidden = !inbox;
+  $("sb-inbox").hidden = !inbox;
+  $("sb-pub-row").hidden = !inbox;
+  $("sb-publish").disabled = sbBusy;
+  if (!inbox) { $("sb-inbox").replaceChildren(); $("sb-pub-box").replaceChildren(); $("sb-n").textContent = ""; }
+}
+async function sbLoad() {
+  if (sbLoading) return;
+  sbLoading = true;
+  $("sb-err").textContent = "";
+  if (!$("sb-inbox").children.length) { const p = el("p", "sub"); p.textContent = "Loading..."; $("sb-inbox").replaceChildren(p); }
+  $("sb-again").disabled = true;
+  let r; try { r = await api("/api/vault/inbox"); } catch (e) { r = null; }
+  sbLoading = false; $("sb-again").disabled = false;
+  sbInboxPaint(r || { ok: false, error: "Could not reach the app." });
+}
+$("sb-again").onclick = () => sbLoad();
+function sbSetBusy(on) {
+  sbBusy = on;
+  document.querySelectorAll("#sb-inbox .act .pill").forEach((b) => (b.disabled = on));
+  $("sb-publish").disabled = on; $("sb-create").disabled = on;
+}
+function sbCount() {
+  const n = document.querySelectorAll("#sb-inbox .sk-dec:not(.done)").length;
+  $("sb-n").textContent = n ? String(n) : "";
+}
+/* the vault skill a submission is compared with: the one of its name, else the closest (when close enough) */
+function sbAgainst(s) {
+  if (s.same_name) return String(s.name || "");
+  const c = s.closest && typeof s.closest === "object" ? s.closest : null;
+  return c && c.id && Number(c.score) >= SB_OVERLAP ? String(c.id) : "";
+}
+function sbSaid(s, d) {
+  const why = d.choice === "reject" && d.why ? ": " + d.why : "";
+  return (SB_DONE[d.choice] || "Decided") + " “" + s.name + "”" + why;
+}
+/* "Not a skill: will not be added", one line per file, greyed */
+function sbNotSkill(paths) {
+  return paths.map((p) => {
+    const row = el("p", "sb-not", "<code></code><span>Not a skill: will not be added</span>");
+    row.querySelector("code").textContent = String(p);
+    return row;
+  });
+}
+function sbInboxPaint(r) {
+  const box0 = $("sb-inbox");
+  $("sb-err").textContent = "";
+  if (!r || r.ok === false || !Array.isArray(r.prs)) {
+    box0.replaceChildren(); $("sb-n").textContent = "";
+    $("sb-err").textContent = (r && r.error) || "The submissions could not be read.";
+    return;
+  }
+  if (!r.prs.length) { const p = el("p", "sub"); p.textContent = "No submissions waiting."; box0.replaceChildren(p); $("sb-n").textContent = ""; return; }
+  box0.replaceChildren(...r.prs.map(sbPr));
+  sbCount();
+}
+/* one pull request: its title, who sent it and its link; the reason when it could not be read; the files that are not
+   a skill; then a card per skill */
+function sbPr(pr) {
+  const b = el("div", "sb-pr", '<p class="sb-pr-h"><b></b><span></span></p><p class="sub sk-err sb-pr-err" role="status"></p><p class="sub sb-pr-note" role="status" hidden></p>');
+  b.querySelector("b").textContent = pr.title || "Untitled";
+  const n = Number(pr.n);
+  b.querySelector(".sb-pr-h span").append("by " + (pr.author || "someone") + " · ", sbGhLink(pr.url, Number.isInteger(n) ? "pull request #" + n : "pull request"));
+  if (pr.error) { b.querySelector(".sb-pr-err").textContent = String(pr.error); return b; }
+  const skills = vtList(pr, "skills");
+  const gone = [...new Set([...vtList(pr, "not_skill"), ...skills.flatMap((s) => vtList(s, "not_skill"))].map(String))];
+  b.append(...sbNotSkill(gone));
+  b.append(...skills.map((s) => sbCard(pr, s)));
+  return b;
+}
+/* a file of a submission: a script in its own box, open; any other file folded, SKILL.md open when there is nothing to
+   compare it with */
+function sbFile(f, open) {
+  const path = String(f.path || ""), text = typeof f.text === "string" ? f.text : "";
+  if (f.script) {
+    const x = el("div", "sk-side sb-script", '<p class="sk-scripts">' + SCRIPTS_MARK + "<span>Runs on everyone's computer: read it</span></p><code></code><pre></pre>");
+    x.querySelector("code").textContent = path;
+    if (f.note) { const p = el("p", "sb-gone"); p.textContent = String(f.note); x.querySelector("pre").replaceWith(p); }
+    else x.querySelector("pre").textContent = text;
+    return x;
+  }
+  if (f.note) {
+    const p = el("p", "sb-gone", "<code></code><span></span>");
+    p.querySelector("code").textContent = path; p.querySelector("span").textContent = String(f.note);
+    return p;
+  }
+  const x = el("details", "moreinfo sb-file", "<summary></summary><pre></pre>");
+  x.querySelector("summary").textContent = path;
+  x.querySelector("pre").textContent = text;
+  x.open = !!open;
+  return x;
+}
+function sbCard(pr, s) {
+  const files = vtList(s, "files").slice().sort((x, y) => (y.script ? 1 : 0) - (x.script ? 1 : 0));
+  const scripts = files.filter((f) => f.script), md = files.find((f) => !f.script && f.path === "SKILL.md");
+  const rest = files.filter((f) => !f.script && f !== md);
+  const against = sbAgainst(s), diff = typeof s.diff === "string" && s.diff ? s.diff : "";
+  const rec = s.recommendation && typeof s.recommendation === "object" ? s.recommendation : null;
+  const merged = rec && rec.choice === "merge" && typeof rec.merged === "string" && rec.merged.trim() ? rec.merged : "";
+  const card = el("div", "ask rv-item sk-dec", '<div class="meta"></div><h4></h4><div class="sb-scripts"></div><div class="sb-files"></div><div class="plain-words sk-rec"><b></b><p></p></div><div class="act"></div><div class="sb-edit" hidden><textarea spellcheck="false" aria-label="SKILL.md, as it will be added"></textarea><div class="act"><button class="pill main">Add this version</button><button class="pill">Cancel</button></div></div><div class="sb-reject" hidden><div class="keyrow"><input type="text" maxlength="200" placeholder="Why, in one line (optional)" autocomplete="off" aria-label="Why it is rejected (optional)"></div><div class="act"><button class="pill main">Reject it</button><button class="pill">Cancel</button></div></div><p class="rv-err"></p><div class="rv-said"></div>');
+  card.querySelector(".meta").textContent = s.same_name ? "Skill · the vault has one of this name" : against ? "Skill · close to the vault's “" + against + "”" : "Skill · new to the vault";
+  card.querySelector("h4").textContent = s.name || "Untitled";
+  card.querySelector(".sb-scripts").append(...scripts.map((f) => sbFile(f)));
+  const fbox = card.querySelector(".sb-files");
+  if (md) fbox.append(sbFile(md, !diff));
+  if (diff) {
+    const d = el("details", "moreinfo sb-diff", "<summary></summary><pre></pre>");
+    d.querySelector("summary").textContent = against ? "Changes from the vault's “" + against + "”" : "Changes from the vault's skill";
+    d.querySelector("pre").textContent = diff;
+    d.open = true;
+    fbox.append(d);
+  }
+  fbox.append(...rest.map((f) => sbFile(f)));
+  /* the suggestion, worded as the decision cards word theirs */
+  const rb = card.querySelector(".sk-rec"), rt = rb.querySelector("b"), rp = rb.querySelector("p");
+  const pick = !rec ? "" : rec.choice === "replace" ? "add" : rec.choice === "keep" ? "reject" : merged ? "edit" : "";
+  if (!rec) {
+    if (against) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI compares it with the vault's skill and suggests what to do when one is connected (Setup, Connections). You can decide without it."; }
+    else rb.remove();
+  } else {
+    rt.textContent = pick === "add" ? "Suggested: Add, replacing " + (against || "the vault's") : pick === "reject" ? "Suggested: Reject, the vault's is better" : pick === "edit" ? "Suggested: Edit then add, merged" : "No clear pick";
+    if (!pick) rb.classList.add("none");
+    if (rec.why) rp.textContent = String(rec.why); else rp.remove();
+  }
+  if (merged) {
+    const m = el("details", "moreinfo sk-merged", "<summary>See the merged version</summary><pre></pre>");
+    m.querySelector("pre").textContent = merged;
+    rb.after(m);
+  }
+  const edit = card.querySelector(".sb-edit"), rej = card.querySelector(".sb-reject"), err = card.querySelector(".rv-err");
+  const ta = edit.querySelector("textarea"), reason = rej.querySelector("input");
+  const act = card.querySelector(".act");
+  [["add", "Add"], ["edit", "Edit then add"], ["reject", "Reject"]].forEach(([choice, label]) => {
+    const btn = el("button", "pill" + (choice === pick ? " main" : ""));
+    btn.textContent = label; btn.disabled = sbBusy;
+    if (choice === pick) btn.title = "The suggestion";
+    btn.onclick = () => {
+      err.textContent = "";
+      if (choice === "add") { sbDecide(pr, s, "add", card, {}); return; }
+      const box = choice === "edit" ? edit : rej, other = choice === "edit" ? rej : edit;
+      other.hidden = true; box.hidden = false;
+      if (choice === "edit") { if (!ta.value) ta.value = merged || (md && typeof md.text === "string" ? md.text : ""); ta.focus(); }
+      else reason.focus();
+    };
+    act.appendChild(btn);
+  });
+  const [editGo, editNo] = edit.querySelectorAll(".pill"), [rejGo, rejNo] = rej.querySelectorAll(".pill");
+  editNo.onclick = () => { edit.hidden = true; };
+  rejNo.onclick = () => { rej.hidden = true; };
+  editGo.onclick = () => {
+    if (!ta.value.trim()) { err.textContent = "The text is empty."; return; }
+    sbDecide(pr, s, "edit", card, { text: ta.value });
+  };
+  rejGo.onclick = () => sbDecide(pr, s, "reject", card, { why: reason.value.trim() });
+  reason.onkeydown = (e) => { if (e.key === "Enter") rejGo.click(); };
+  const d = s.decided && typeof s.decided === "object" && s.decided.choice ? s.decided : null;
+  if (d) { card.querySelector(".rv-said").textContent = sbSaid(s, d); card.classList.add("done"); }
+  return card;
+}
+async function sbDecide(pr, s, choice, card, extra) {
+  if (sbBusy) return;
+  const err = card.querySelector(".rv-err"), box = card.closest(".sb-pr");
+  sbSetBusy(true); err.textContent = "";
+  let r; try { r = await api("/api/vault/inbox_decide", Object.assign({ pr: Number(pr.n), skill: s.name, choice }, extra)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  sbSetBusy(false);
+  if (!r || !r.ok) { err.textContent = (r && r.error) || "That did not work."; return; }
+  s.decided = { choice, why: extra.why || "" };
+  card.querySelector(".rv-said").textContent = sbSaid(s, s.decided);
+  card.classList.add("done");
+  if (box) {
+    if (r.closed) { const p = box.querySelector(".sb-pr-note"); p.textContent = "Every skill here is decided, so the pull request was closed with a thank-you."; p.hidden = false; }
+    if (r.warning) box.querySelector(".sb-pr-err").textContent = String(r.warning);
+  }
+  sbCount();
+}
+/* a confirm card in the page's own idiom (End this run): the question, the action's own button and Not now */
+function sbConfirm(box, text, goLabel, run) {
+  const card = el("div", "ask enter", '<p></p><div class="act"><button class="pill main"></button><button class="pill">Not now</button></div>');
+  card.querySelector("p").textContent = text;
+  const [go, no] = card.querySelectorAll(".pill");
+  go.textContent = goLabel;
+  no.onclick = () => card.remove();
+  go.onclick = async () => { go.disabled = no.disabled = true; await run(); card.remove(); };
+  box.replaceChildren(card);
+}
+$("sb-create").onclick = () => {
+  if (sbBusy) return;
+  $("sb-err").textContent = "";
+  sbConfirm($("sb-create-box"), SB_CREATE_Q, "Create the vault repo", async () => {
+    sbSetBusy(true);
+    let r; try { r = await api("/api/vault/create_repo", { confirm: true }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+    sbSetBusy(false);
+    sbCreatedPaint(r);
+    if (r && r.ok) { sbFresh = true; vtLoad(); }
+  });
+};
+function sbCreatedPaint(r) {
+  const p = $("sb-made");
+  if (r && r.ok) { p.replaceChildren("Made ", sbGhLink(r.url, String(r.repo || VAULT_REPO)), "."); p.hidden = false; $("sb-err").textContent = ""; return; }
+  p.hidden = true;
+  $("sb-err").textContent = (r && r.error) || "The vault repo could not be made.";
+}
+$("sb-publish").onclick = () => {
+  if (sbBusy) return;
+  $("sb-pub-err").textContent = ""; $("sb-pub-note").textContent = "";
+  sbConfirm($("sb-pub-box"), SB_PUBLISH_Q, "Publish vault release", async () => {
+    sbSetBusy(true); $("sb-pub-note").textContent = "Publishing…";
+    let r; try { r = await api("/api/vault/publish", { confirm: true }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+    sbSetBusy(false);
+    sbPublishPaint(r);
+  });
+};
+/* Published <tag>, or what stops it: the preflight's problems, each starting with the skill's name */
+function sbPublishPaint(r) {
+  const note = $("sb-pub-note"), err = $("sb-pub-err");
+  if (r && r.ok) { note.replaceChildren("Published ", sbGhLink(r.url, String(r.tag || "the release")), "."); err.textContent = ""; return; }
+  note.textContent = "";
+  const problems = r && Array.isArray(r.problems) ? r.problems.map(String) : [];
+  err.textContent = problems.length ? "Not published. Fix these first:\n" + problems.join("\n") : (r && r.error) || "The vault release could not be published.";
 }
 /* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
