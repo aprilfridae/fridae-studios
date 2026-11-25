@@ -27,6 +27,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import time
 import uuid
 
@@ -1592,7 +1593,7 @@ def index(project=None, config=None):
 def register(sub):
     p = sub.add_parser("skills", help="the user's skills, for every AI: catalog, list, load, read, import, pending, "
                                       "decide, index")
-    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index"])
+    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply"])
     p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id")
     p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
                                                        "(advise: only store an AI's recommendation, from --json-file)")
@@ -1604,6 +1605,8 @@ def register(sub):
                         "are left out")
     p.add_argument("--no-import", action="store_true",
                    help="catalog: do not import other tools' skills first (the app's call on a turn)")
+    p.add_argument("--staged", default="", help="vault-apply: the folder holding the fetched files")
+    p.add_argument("--manifest", default="", help="vault-apply: the release's manifest file")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
     p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
@@ -1645,6 +1648,13 @@ def cmd_skills(a):
             out = json.dumps(items, ensure_ascii=False) if a.json else (
                 "\n".join("%s: %s / %s (%s)" % (d["id"], d["a"], d["b"], d.get("reason", "")) for d in items)
                 or "No skill decisions are waiting.")
+        elif a.action == "vault-apply":
+            import rbxvaultsync
+            try:
+                out = json.dumps(rbxvaultsync.apply(a.staged, _read_json(a.manifest, {})), ensure_ascii=False)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                raise SystemExit(2)
         elif a.action == "index":
             out = json.dumps(index(project, a.claude_config or None), ensure_ascii=False)
         else:
