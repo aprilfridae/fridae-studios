@@ -212,6 +212,9 @@ fn get(path: &str, url: &str) -> Reply {
         send_json(crate::swarm::api_get(&unescape(&query(url, "lead").unwrap_or_default()), since))
     } else if path == "/api/vault/status" {
         send_json(crate::vault_sync::status())
+    } else if path == "/api/vault/share" {
+        // Setup › Skills › Share my skills: the mode, what is ready, the batch waiting
+        send_json(crate::share::status())
     } else if path == "/api/skills" {
         // Setup › Skills: the library's index and the decisions waiting (`skills::api_get`)
         send_json(crate::skills::api_get())
@@ -425,6 +428,13 @@ fn post(path: &str, body: Value) -> Reply {
         // Setup > Skills > the Fridae vault, on the user's click only: Download, Check for updates
         "/api/vault/download" => send_json(crate::vault_sync::start(true)),
         "/api/vault/check" => send_json(crate::vault_sync::start(false)),
+        // Share my skills, on the user's click only (no agent tool reaches these): the mode, a batch to look at, Send
+        "/api/vault/share_mode" => send_json(crate::share::set_mode(&text_of("mode"), body["agree"].as_bool() == Some(true))),
+        "/api/vault/prepare" => send_json(crate::share::prepare()),
+        "/api/vault/send" => {
+            let drop: Vec<String> = body["drop"].as_array().into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
+            send_json(crate::share::send(&text_of("batch"), &drop))
+        }
         "/api/experts" => {
             // Setup > Experts: with an expert, save its row (AI "" or "lead" for Same as the Lead); always the listing
             if body["expert"].is_string() {

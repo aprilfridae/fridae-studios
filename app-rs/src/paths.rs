@@ -729,7 +729,7 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::swarm::STRONG_LEAD_KEY, "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::swarm::STRONG_LEAD_KEY, "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING, "share_skills"];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -748,6 +748,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "rag_mode" => "Knowledge index",
         "swarm_ceiling" => "Most experts working at once",
         "second_accounts" => "Second accounts",
+        "share_skills" => "Share my skills",
         // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
         "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
         _ => "a setting",
@@ -938,6 +939,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
         "rag_mode" => v.as_str().filter(|m| crate::rag::MODES.contains(m)).map(Value::from),
+        "share_skills" => v.as_str().filter(|m| matches!(*m, "off" | "review" | "auto")).map(Value::from),
         "expert_ai" => v.as_object().map(|_| v.clone()),
         "second_accounts" => crate::accounts::checked_setting(v),
         _ => None,

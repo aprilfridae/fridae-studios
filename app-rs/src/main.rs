@@ -38,6 +38,7 @@ mod promo_tab;
 mod rag;
 mod research;
 mod server;
+mod share;
 mod splash;
 mod studio_run;
 mod studio_undo;

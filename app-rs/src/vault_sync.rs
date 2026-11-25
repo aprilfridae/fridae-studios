@@ -111,7 +111,7 @@ fn base_file() -> PathBuf {
 }
 
 /// The app's own folder for the vault (`VAULT_APP`).
-fn vault_app() -> PathBuf {
+pub(crate) fn vault_app() -> PathBuf {
     accounts::base().join("fridae-vault")
 }
 
@@ -177,7 +177,7 @@ fn release_claim() {
     *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -210,6 +210,7 @@ pub fn watch() {
     std::thread::sleep(FIRST_WAIT);
     loop {
         tick();
+        crate::share::auto_tick(); // the user's standing choice to send their skills, at most once a day
         std::thread::sleep(EVERY);
     }
 }
@@ -283,7 +284,7 @@ fn run() -> Value {
 }
 
 /// Remove a file or folder this module made (a link is removed itself, never followed).
-fn remove(p: &Path) {
+pub(crate) fn remove(p: &Path) {
     match fs::symlink_metadata(p) {
         Ok(m) if m.is_dir() => {
             let _ = fs::remove_dir_all(p);
@@ -296,7 +297,7 @@ fn remove(p: &Path) {
 }
 
 /// A folder of ours that is a real folder (made when missing), never a link.
-fn real_dir(p: &Path) -> Result<(), String> {
+pub(crate) fn real_dir(p: &Path) -> Result<(), String> {
     if fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(NO_ROOM.to_string());
     }
@@ -305,7 +306,7 @@ fn real_dir(p: &Path) -> Result<(), String> {
 }
 
 /// A file written through a temporary one and a rename, never through a link.
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     real_dir(path.parent().ok_or_else(|| NO_ROOM.to_string())?)?;
     if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(NO_ROOM.to_string());
