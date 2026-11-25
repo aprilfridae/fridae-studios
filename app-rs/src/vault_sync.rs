@@ -21,12 +21,13 @@ const BUSY: &str = "The vault is already being updated. Wait a moment.";
 const NO_RELEASE: &str = "No vault release yet.";
 const NO_ROOM: &str = "Fridae could not save the download in its own folder.";
 const NOT_RUN: &str = "Fridae could not run the update.";
-/// The folders of the vault a manifest may name (rbxvaultsync.ALLOWED_TOP).
-const ALLOWED_TOP: [&str; 1] = ["Skills/"];
-/// At most 5,000 files, 1 MiB each, 100 MiB in all.
-const MAX_FILES: usize = 5000;
-const MAX_FILE: u64 = 1 << 20;
-const MAX_TOTAL: u64 = 100 << 20;
+/// The code's own data under `Roblox/`, which stays in the app and never travels (rbxvaultsync.CODE_DATA).
+const CODE_DATA: [&str; 2] = ["Roblox/_tools/", "Roblox/_data/"];
+/// At most 20,000 files, 8 MiB each, 256 MiB in all (rbxvaultsync's limits: the guides are 1,352 files and 21 MB,
+/// the largest under 1 MB).
+pub(crate) const MAX_FILES: usize = 20_000;
+pub(crate) const MAX_FILE: u64 = 8 << 20;
+pub(crate) const MAX_TOTAL: u64 = 256 << 20;
 /// The config keys that remember the last download and check.
 const RELEASE_KEY: &str = "vault_release";
 const CHECKED_KEY: &str = "vault_checked_at";
@@ -68,14 +69,23 @@ fn seg_ok(s: &str) -> bool {
         && !s.starts_with(' ')
 }
 
-/// rbxvaultsync.check_path: a safe vault-relative path, under an allowed top folder, inside a skill's folder, with no
-/// leading slash and every segment a safe name (`seg_ok`). The download, Reveal and the maintainer's inbox all use it.
+/// rbxvaultsync.check_path, what travels with the vault: everything in Knowledge but top-level files (`House
+/// rules.md`), dot-folders and the code's data (`CODE_DATA`); under `Skills/`, only inside a skill's folder. No
+/// leading slash, and every segment a safe name (`seg_ok`). The download, Reveal and the maintainer's inbox all use it.
 pub fn check_path(p: &str) -> bool {
-    if !ALLOWED_TOP.iter().any(|t| p.starts_with(t)) || p.starts_with('/') {
+    if p.starts_with('/') || CODE_DATA.iter().any(|t| p.starts_with(t)) {
         return false;
     }
     let parts: Vec<&str> = p.split('/').collect();
-    parts.len() >= 3 && parts.iter().all(|s| seg_ok(s))
+    let least = if parts[0] == "Skills" { 3 } else { 2 };
+    parts.len() >= least && parts.iter().all(|s| seg_ok(s))
+}
+
+/// rbxvaultsync.unit_of: what a clash is decided for. A skill is decided whole (`Skills/<name>`), anything else per
+/// file.
+pub(crate) fn unit_of(p: &str) -> String {
+    let parts: Vec<&str> = p.split('/').collect();
+    if parts.len() >= 3 && parts[0] == "Skills" { format!("Skills/{}", parts[1]) } else { p.to_string() }
 }
 
 /// A release name that is safe as a folder name (the staging folder is named by it): `vault-`, then letters, digits,
@@ -161,9 +171,10 @@ fn downloaded() -> bool {
 }
 
 /// A path as this machine keeps it: a skill the user renamed lives in its new folder (rbxvaultsync._local_path).
+/// Only skills are renamed: any other path is kept as it is.
 fn local_path(path: &str, base: &Value) -> String {
     let mut parts: Vec<&str> = path.split('/').collect();
-    if parts.len() > 2 {
+    if parts.len() > 2 && parts[0] == "Skills" {
         if let Some(to) = base["renamed"][parts[1]].as_str() {
             parts[1] = to;
         }
@@ -363,9 +374,10 @@ fn run() -> Value {
     if base["release"].as_str() == Some(&tag) {
         // the same release: what the user deleted, declined or has waiting is no reason to download it again
         let listed = |key: &str, name: &str| base[key].as_array().is_some_and(|l| l.iter().any(|v| v.as_str() == Some(name)));
+        // (declined and waiting name skills, so they count only for paths under Skills/)
         need.retain(|f| {
-            let skill = f.path.split('/').nth(1).unwrap_or("");
-            !listed("deleted", &f.path) && !listed("declined", skill) && base["waiting"].get(skill).is_none()
+            let skill = f.path.strip_prefix("Skills/").and_then(|r| r.split('/').next());
+            !listed("deleted", &f.path) && !skill.is_some_and(|n| listed("declined", n) || base["waiting"].get(n).is_some())
         });
         if need.is_empty() {
             return json!({"ok": true, "current": true, "release": tag});
@@ -675,20 +687,48 @@ Words: {words}. {body}.
         assert!(parse_manifest(&man(vec![entry(ALPHA), entry(BETA)])).is_ok());
         // the path rule's cases, the same as tests/test_vaultsync.py's
         let long = format!("Skills/a/{}", "x".repeat(256));
-        for bad in ["Skills/../x", "/etc/x", "Skills/a/.git/config", "Skills\\a", "Notes/a.md", "Skills//a", "Skills/README.md", "Skills/a/b\0c", "Skills/a/..", "Skills/a/", long.as_str()] {
+        for bad in [
+            "Skills/../x",
+            "/etc/x",
+            "Skills/a/.git/config",
+            "Skills\\a",
+            "Skills//a",
+            "Skills/README.md",
+            "Skills/a/b\0c",
+            "Skills/a/..",
+            "Skills/a/",
+            long.as_str(),
+            "House rules.md",
+            "Glossary.md",
+            ".fridae-vault/base.json",
+            "Roblox/.obsidian/x.json",
+            "Roblox/_tools/roblox_api.json",
+            "Roblox/_data/roblox_facts_2026.json",
+            "Roblox",
+            "Roblox/",
+        ] {
             assert!(!check_path(bad), "{bad:?}");
             assert!(parse_manifest(&man(vec![entry(ALPHA), entry(bad)])).is_err(), "{bad:?}");
         }
         assert!(check_path(&format!("Skills/a/{}", "x".repeat(255))));
         assert!(check_path("Skills/a/b/c.md"));
+        // guides and other topic folders travel too
+        for good in ["Roblox/Glossary.md", "Roblox/02 Luau Scripting/Buffers and Binary Data.md", "Roblox/18 Rigs and Skeletons/Spider_8Leg/Spider_8Leg.fbx", "Notes/a.md", "Taste/Softer.md", "Inbox/x.md"] {
+            assert!(check_path(good), "{good:?}");
+            assert!(parse_manifest(&man(vec![entry(ALPHA), entry(good)])).is_ok(), "{good:?}");
+        }
+        assert_eq!(unit_of("Skills/a/ref/x.md"), "Skills/a");
+        assert_eq!(unit_of("Roblox/Glossary.md"), "Roblox/Glossary.md");
         // the limits
-        let many: Vec<Value> = (0..5001).map(|i| entry(&format!("Skills/s{i}/SKILL.md"))).collect();
-        assert!(parse_manifest(&man(many.clone())).is_err(), "5,001 files");
-        assert!(parse_manifest(&man(many[..5000].to_vec())).is_ok(), "5,000 files");
-        assert!(parse_manifest(&man(vec![json!({"path": ALPHA, "sha256": sha(b"x"), "size": 2 * 1024 * 1024})])).is_err(), "2 MiB");
-        assert!(parse_manifest(&man(vec![json!({"path": ALPHA, "sha256": sha(b"x"), "size": 1024 * 1024})])).is_ok(), "1 MiB");
-        let big: Vec<Value> = (0..101).map(|i| json!({"path": format!("Skills/s{i}/SKILL.md"), "sha256": sha(b"x"), "size": 1024 * 1024})).collect();
-        assert!(parse_manifest(&man(big)).is_err(), "over 100 MiB in all");
+        assert_eq!((MAX_FILES, MAX_FILE, MAX_TOTAL), (20_000, 8 << 20, 256 << 20));
+        let many: Vec<Value> = (0..20_001).map(|i| entry(&format!("Skills/s{i}/SKILL.md"))).collect();
+        assert!(parse_manifest(&man(many.clone())).is_err(), "20,001 files");
+        assert!(parse_manifest(&man(many[..20_000].to_vec())).is_ok(), "20,000 files");
+        assert!(parse_manifest(&man(vec![json!({"path": ALPHA, "sha256": sha(b"x"), "size": (8 << 20) + 1})])).is_err(), "8 MiB and a byte");
+        assert!(parse_manifest(&man(vec![json!({"path": ALPHA, "sha256": sha(b"x"), "size": 8 << 20})])).is_ok(), "8 MiB");
+        let big = |n: usize| -> Vec<Value> { (0..n).map(|i| json!({"path": format!("Skills/s{i}/SKILL.md"), "sha256": sha(b"x"), "size": 8 << 20})).collect() };
+        assert!(parse_manifest(&man(big(33))).is_err(), "over 256 MiB in all");
+        assert!(parse_manifest(&man(big(32))).is_ok(), "256 MiB in all");
         for hash in [sha(b"x").to_uppercase(), "abc".to_string(), "g".repeat(64)] {
             assert!(parse_manifest(&man(vec![json!({"path": ALPHA, "sha256": hash, "size": 1})])).is_err(), "{hash}");
         }
@@ -709,7 +749,7 @@ Words: {words}. {body}.
 
     /// Names Windows would read as a drive, a stream or a device, or would change: the same table as
     /// tests/test_vaultsync.py's WINDOWS_BAD.
-    const WINDOWS_BAD: [&str; 20] = [
+    const WINDOWS_BAD: [&str; 22] = [
         "Skills/a/C:x.md",
         "Skills/C:/x.md",
         "Skills/a/SKILL.md:s",
@@ -730,8 +770,10 @@ Words: {words}. {body}.
         "Skills/a/x?.md",
         "Skills/a/x|y.md",
         "Skills/a/x\u{1}y.md",
+        "Roblox/CON.md",
+        "Roblox/a:b.md",
     ];
-    const WINDOWS_GOOD: [&str; 6] = ["Skills/a/console.md", "Skills/a/com10", "Skills/con-tips/SKILL.md", "Skills/a/nul-thing.md", "Skills/a/x.y.md", "Skills/a/comb"];
+    const WINDOWS_GOOD: [&str; 7] = ["Skills/a/console.md", "Skills/a/com10", "Skills/con-tips/SKILL.md", "Skills/a/nul-thing.md", "Skills/a/x.y.md", "Skills/a/comb", "Roblox/con-tips.md"];
 
     #[test]
     fn path_rule_refuses_what_windows_would_misread() {
@@ -813,6 +855,22 @@ Words: {words}. {body}.
         assert_eq!((r["ok"].clone(), r["current"].clone()), (json!(true), json!(true)), "{r}");
         assert!(fetched(&s).is_empty());
         assert_eq!(status()["last"]["current"], true);
+    }
+
+    #[test]
+    fn the_same_release_ignores_declined_only_for_skills() {
+        let (_g, s) = setup();
+        let guide = "Roblox/x/y.md";
+        // the guide is the only file, so nothing else could be the reason it is fetched
+        release(&s, T1, &[(guide, "The vault's guide.\n".to_string())]);
+        let k = knowledge();
+        fs::create_dir_all(k.join(".fridae-vault")).unwrap();
+        fs::write(base_file(), json!({"format": 1, "release": T1, "files": {}, "declined": ["x"]}).to_string()).unwrap();
+        fs::create_dir_all(k.join("Roblox").join("x")).unwrap();
+        fs::write(join(&k, guide), "The user's own guide.\n").unwrap();
+        s.log.lock().unwrap().clear();
+        update(false);
+        assert!(fetched(&s).contains(&format!("/o/r/{T1}/{guide}")), "{:?}", fetched(&s));
     }
 
     #[test]

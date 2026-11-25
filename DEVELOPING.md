@@ -2189,13 +2189,15 @@ The manifest is `{format: 1, release, made, files: [{path, sha256, size}]}`. A r
 
 **Getting skills** (Setup › Skills › Fridae vault; `vault_sync.rs`; no sign-in needed). Download and Check for updates
 read the latest release, fetch the manifest and only the files whose hash changed, and check each against the manifest
-(path rules, at most 5,000 files, 1 MiB each, 100 MiB in all, `release` equal to the tag). The files go to a staging
+(path rules, at most 20,000 files, 8 MiB each, 256 MiB in all, `release` equal to the tag). The files go to a staging
 folder in the app's own folder. Only when every one is right is the folder handed to `rbx skills vault-apply`
 (`rbxvaultsync.apply`); anything wrong or cut off removes the staging folder and changes nothing ("This vault update
 looked wrong, so nothing was changed."). Staging is kept complete: a file that did not change is copied in from the
 user's file or the base copy when its bytes match the manifest, and fetched only otherwise. The app checks quietly a
 minute after launch and then once a day while it is open, and it only downloads. The path rule (`check_path`, the same
-cases in Python and Rust, and the inbox's too) is: under `Skills/`, inside a skill's folder, no leading slash, and each
+cases in Python and Rust, and the inbox's too) is: everything in Knowledge but top-level files (`House rules.md`),
+dot-folders and `Roblox/_tools/`, `Roblox/_data/` (the code's data); under `Skills/`, inside a skill's folder; no
+leading slash, and each
 part a name every system can hold: not empty or dot-started, at most 255 bytes, no `:` or `<>"|?*\`, no control
 character, no trailing dot or space or leading space, and none of Windows' device names (`CON`, `PRN`, `AUX`, `NUL`,
 `CONIN$`, `CONOUT$`, `COM0`-`COM9`, `LPT0`-`LPT9`, also with `¹²³`) in any case, with or without an extension. Before

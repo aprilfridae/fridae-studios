@@ -40,9 +40,11 @@ WINDOWS_BAD = (
     "Skills/a/x?.md",
     "Skills/a/x|y.md",
     "Skills/a/x\x01y.md",
+    "Roblox/CON.md",
+    "Roblox/a:b.md",
 )
 WINDOWS_GOOD = ("Skills/a/console.md", "Skills/a/com10", "Skills/con-tips/SKILL.md", "Skills/a/nul-thing.md",
-                "Skills/a/x.y.md", "Skills/a/comb")
+                "Skills/a/x.y.md", "Skills/a/comb", "Roblox/con-tips.md")
 
 
 class VaultSyncTests(unittest.TestCase):
@@ -200,7 +202,9 @@ class VaultSyncTests(unittest.TestCase):
 
     def test_bad_paths_refuse_everything(self):
         self.put("Skills/keep/SKILL.md", "k")
-        for bad in ("Skills/../x", "/etc/x", "Skills/a/.git/config", "Skills\\a", "Notes/a.md", "Skills//a"):
+        for bad in ("Skills/../x", "/etc/x", "Skills/a/.git/config", "Skills\\a", "Skills//a", "House rules.md",
+                    "Glossary.md", ".fridae-vault/base.json", "Roblox/.obsidian/x.json", "Roblox/_tools/roblox_api.json",
+                    "Roblox/_data/roblox_facts_2026.json", "Roblox", "Roblox/"):
             before = self.snapshot()
             staged, man = self.stage({"Skills/ok/SKILL.md": "ok"})
             man["files"].append({"path": bad, "sha256": sha("z"), "size": 1})
@@ -208,6 +212,20 @@ class VaultSyncTests(unittest.TestCase):
                 rbxvaultsync.apply(staged, man)
             self.assertEqual(str(cm.exception), "This vault update looked wrong, so nothing was changed.")
             self.assertEqual(self.snapshot(), before, bad)
+
+    def test_guides_and_topic_folders_travel(self):
+        for good in ("Roblox/Glossary.md", "Roblox/02 Luau Scripting/Buffers and Binary Data.md",
+                     "Roblox/18 Rigs and Skeletons/Spider_8Leg/Spider_8Leg.fbx", "Notes/a.md", "Taste/Softer.md",
+                     "Inbox/x.md"):
+            self.assertTrue(rbxvaultsync.check_path(good), good)
+        self.assertEqual(rbxvaultsync.unit_of("Skills/a/ref/x.md"), "Skills/a")
+        self.assertEqual(rbxvaultsync.unit_of("Roblox/Glossary.md"), "Roblox/Glossary.md")
+
+    def test_renamed_and_declined_touch_only_skills(self):
+        self.assertEqual(rbxvaultsync._local_path("Roblox/x/y.md", {"x": "z"}), "Roblox/x/y.md")
+        self.assertEqual(rbxvaultsync._skill("Roblox/x/y.md"), "")
+        self.assertEqual(rbxvaultsync._local_path("Skills/x/y.md", {"x": "z"}), "Skills/z/y.md")
+        self.assertEqual(rbxvaultsync._skill("Skills/x/y.md"), "x")
 
     def test_windows_names_refuse_everything(self):
         for bad in WINDOWS_BAD:
@@ -304,7 +322,7 @@ class VaultSyncTests(unittest.TestCase):
 
     def test_cli_exit_2_on_bad_manifest(self):
         staged, man = self.stage({self.P: "v"})
-        man["files"][0]["path"] = "Notes/a.md"
+        man["files"][0]["path"] = "House rules.md"
         code, out, err = self.cli(staged, man)
         self.assertEqual(code, 2)
         self.assertIn("This vault update looked wrong, so nothing was changed.", err)
@@ -365,22 +383,38 @@ class VaultSyncTests(unittest.TestCase):
         self.refused({"Skills/x/SKILL (Fridae update).md": "v"})
 
     def test_manifest_limits(self):
-        """Each case has real, matching staged files, so only the limit can refuse it, and no staged file is read."""
+        """The real limits, from the manifest alone: a refused manifest reads no staged file, and one within the
+        limits goes on to read them (and finds none)."""
+        self.assertEqual((rbxvaultsync.MAX_FILES, rbxvaultsync.MAX_FILE, rbxvaultsync.MAX_TOTAL),
+                         (20_000, 8 << 20, 256 << 20))
+
         def boom(path):
-            raise AssertionError("a staged file was read before the limits were checked")
-        cases = [("MAX_FILES", 2, {"Skills/s/a.md": "a", "Skills/s/b.md": "b", "Skills/s/c.md": "c"}),
-                 ("MAX_FILE", 5, {"Skills/s/a.md": "123456"}),
-                 ("MAX_TOTAL", 10, {"Skills/s/a.md": "1234", "Skills/s/b.md": "1234", "Skills/s/c.md": "1234"})]
-        for name, limit, files in cases:
-            staged, man = self.stage(files)
-            before = self.snapshot()
-            with mock.patch.object(rbxvaultsync, name, limit), mock.patch.object(rbxvaultsync, "_read", boom):
-                with self.assertRaises(ValueError, msg=name):
+            raise AssertionError("a staged file was read")
+
+        def passes(entries):
+            staged = os.path.join(self.root, "nothing staged")
+            os.makedirs(staged, exist_ok=True)
+            man = {"format": 1, "release": "vault-2026.01.01", "files": entries}
+            with mock.patch.object(rbxvaultsync, "_read", boom):
+                try:
                     rbxvaultsync.apply(staged, man)
-            self.assertEqual(self.snapshot(), before)
-            with mock.patch.object(rbxvaultsync, name, limit * 10):  # the same files pass when the limit allows
-                rbxvaultsync.apply(staged, man)
-            shutil.rmtree(self.know)
+                except AssertionError:
+                    return True  # past the limits: it went on to read a staged file
+                except ValueError:
+                    return False
+            raise AssertionError("neither refused nor read")
+
+        def files(n, size=1):
+            return [{"path": "Skills/s%d/SKILL.md" % i, "sha256": sha("x"), "size": size} for i in range(n)]
+
+        before = self.snapshot()
+        self.assertFalse(passes(files(20_001)), "20,001 files")
+        self.assertTrue(passes(files(20_000)), "20,000 files")
+        self.assertTrue(passes(files(1, 8 << 20)), "8 MiB")
+        self.assertFalse(passes(files(1, (8 << 20) + 1)), "8 MiB and a byte")
+        self.assertFalse(passes(files(33, 8 << 20)), "over 256 MiB in all")
+        self.assertTrue(passes(files(32, 8 << 20)), "256 MiB in all")
+        self.assertEqual(self.snapshot(), before)
         self.refused(mutate=lambda m: m.update(files=[]))
 
     def test_longest_accepted_name_really_writes(self):

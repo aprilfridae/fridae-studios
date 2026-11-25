@@ -18,8 +18,8 @@ use crate::{
     paths,
 };
 
-/// The most a raw file may be: 1 MiB.
-const RAW_MAX: u64 = 1024 * 1024;
+/// The most a raw file may be: a vault file's limit, 8 MiB.
+const RAW_MAX: u64 = crate::vault_sync::MAX_FILE;
 /// How many pages of a pull request's files are read (100 each: up to 300 files).
 const PR_FILES_PAGES: u32 = 3;
 #[cfg(not(test))]
@@ -104,7 +104,7 @@ pub(crate) fn latest_tag(repo: &str) -> Result<Option<String>, String> {
     }
 }
 
-/// One file of the repository at a tag or branch, no token, at most 1 MiB.
+/// One file of the repository at a tag or branch, no token, at most 8 MiB.
 pub(crate) fn raw(repo: &str, git_ref: &str, path: &str) -> Result<Vec<u8>, String> {
     let url = format!("{}/{repo}/{}/{}", github::raw_base(), enc(git_ref), enc(path));
     let mut resp = github::http().get(&url).header("User-Agent", "fridae-studios").call().map_err(|_| OFFLINE.to_string())?;
@@ -115,7 +115,7 @@ pub(crate) fn raw(repo: &str, git_ref: &str, path: &str) -> Result<Vec<u8>, Stri
     let mut bytes = Vec::new();
     resp.body_mut().as_reader().take(RAW_MAX + 1).read_to_end(&mut bytes).map_err(|_| OFFLINE.to_string())?;
     if bytes.len() as u64 > RAW_MAX {
-        return Err(format!("The file {path} is bigger than 1 MB, so Fridae did not take it."));
+        return Err(format!("The file {path} is bigger than 8 MB, so Fridae did not take it."));
     }
     Ok(bytes)
 }
@@ -236,8 +236,9 @@ pub(crate) fn tree_paths(repo: &str, sha: &str) -> Result<Vec<String>, String> {
     Ok(tree.iter().filter(|e| e["type"] == "blob").filter_map(|e| e["path"].as_str().map(str::to_string)).collect())
 }
 
-/// The most a blob may be: 1 MiB (no file of a release, and none a submission may hold, is bigger).
-pub(crate) const BLOB_MAX: u64 = 1024 * 1024;
+/// The most a blob may be: 8 MiB, a vault file's limit (no file of a release, and none a submission may hold, is
+/// bigger).
+pub(crate) const BLOB_MAX: u64 = crate::vault_sync::MAX_FILE;
 
 /// A blob as read: its bytes, or only its size when that is over the limit it was read with.
 #[derive(Debug)]
@@ -358,9 +359,9 @@ mod tests {
         let (_g, s) = setup(
             Box::new(|_, p, _, _| {
                 if p.ends_with("big.txt") {
-                    (200, "x".repeat(1024 * 1024 + 10))
+                    (200, "x".repeat((8 << 20) + 10))
                 } else if p.ends_with("exact.txt") {
-                    (200, "y".repeat(1024 * 1024))
+                    (200, "y".repeat(8 << 20))
                 } else {
                     (200, "hello".into())
                 }
@@ -369,8 +370,9 @@ mod tests {
         );
         assert_eq!(raw("o/r", "vault-1", "Skills/a b/SKILL.md").unwrap(), b"hello");
         assert_eq!(requests(&s)[0].1, "/o/r/vault-1/Skills/a%20b/SKILL.md");
-        assert!(raw("o/r", "vault-1", "big.txt").is_err());
-        assert_eq!(raw("o/r", "vault-1", "exact.txt").unwrap().len(), 1024 * 1024);
+        assert_eq!(raw("o/r", "vault-1", "big.txt").unwrap_err(), "The file big.txt is bigger than 8 MB, so Fridae did not take it.");
+        assert_eq!(raw("o/r", "vault-1", "exact.txt").unwrap().len(), 8 << 20);
+        assert_eq!((RAW_MAX, BLOB_MAX), (crate::vault_sync::MAX_FILE, crate::vault_sync::MAX_FILE));
     }
 
     #[test]
@@ -565,7 +567,7 @@ mod tests {
         let utf8 = json!({"content": "hello", "encoding": "utf-8", "size": 5}).to_string();
         let no_content = json!({"encoding": "base64", "size": 5}).to_string();
         let no_size = json!({"content": b64(b"hello"), "encoding": "base64"}).to_string();
-        let huge = json!({"content": b64(b"hello"), "encoding": "base64", "size": 2 * 1024 * 1024}).to_string();
+        let huge = json!({"content": b64(b"hello"), "encoding": "base64", "size": 9 << 20}).to_string();
         let (_g, _s) = setup(
             Box::new(move |_, p, _, _| {
                 let text = match p.rsplit('/').next().unwrap() {
@@ -588,7 +590,7 @@ mod tests {
         for bad in ["short", "utf8", "nocontent", "nosize", "huge", "cut"] {
             assert!(blob("o/r", bad).is_err(), "{bad}");
         }
-        assert!(matches!(blob_within("o/r", "huge", BLOB_MAX), Ok(Blob::TooBig(n)) if n == 2 * 1024 * 1024));
+        assert!(matches!(blob_within("o/r", "huge", BLOB_MAX), Ok(Blob::TooBig(n)) if n == 9 << 20));
         assert!(matches!(blob_within("o/r", "good", 4), Ok(Blob::TooBig(5))));
         assert!(matches!(blob_within("o/r", "good", 5), Ok(Blob::Bytes(b)) if b == b"hello"));
     }

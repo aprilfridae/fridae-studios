@@ -13,13 +13,15 @@ import uuid
 import rbxpaths
 
 BASE_NAME = "base.json"
-ALLOWED_TOP = ("Skills/",)
+# the code's own data under Roblox/: it stays in the app and never travels (vault_sync::CODE_DATA)
+CODE_DATA = ("Roblox/_tools/", "Roblox/_data/")
 BESIDE = " (Fridae update)"
 BAD = "This vault update looked wrong, so nothing was changed."
 MERGE_MAX = 1 << 20
 # the longest file name accepted: room for " (Fridae update 99)" in the same folder (temp files have short names)
 NAME_MAX = 255 - len(" (Fridae update 99)")
-MAX_FILES, MAX_FILE, MAX_TOTAL = 5000, 1 << 20, 100 << 20
+# at most 20,000 files, 8 MiB each, 256 MiB in all (vault_sync's limits: the guides are 1,352 files and 21 MB)
+MAX_FILES, MAX_FILE, MAX_TOTAL = 20_000, 8 << 20, 256 << 20
 
 
 def state_dir():
@@ -75,14 +77,21 @@ def _seg_ok(seg):
 
 
 def check_path(p):
-    """True when p is a safe vault-relative path: under an allowed top folder, inside a skill's folder, with no
-    leading slash and every segment a safe name (_seg_ok). The same rule as vault_sync::check_path."""
-    if not isinstance(p, str) or not p.startswith(ALLOWED_TOP) or p.startswith("/"):
+    """True when p travels with the vault: everything in Knowledge but top-level files (House rules.md), dot-folders
+    and the code's data (CODE_DATA); under Skills/, only inside a skill's folder. No leading slash, and every segment
+    a safe name (_seg_ok). The same rule as vault_sync::check_path."""
+    if not isinstance(p, str) or p.startswith("/") or p.startswith(CODE_DATA):
         return False
     parts = p.split("/")
-    if len(parts) < 3:  # skills live in folders: Skills/<skill>/<file>
+    if len(parts) < (3 if parts[0] == "Skills" else 2):  # skills live in folders: Skills/<skill>/<file>
         return False
     return all(_seg_ok(seg) for seg in parts)
+
+
+def unit_of(p):
+    """What a clash is decided for: a skill whole ("Skills/<name>"), anything else per file (vault_sync::unit_of)."""
+    parts = p.split("/")
+    return "Skills/" + parts[1] if len(parts) > 2 and parts[0] == "Skills" else p
 
 
 def _sha(data):
@@ -166,13 +175,14 @@ def _merge(local, base, new):
 
 
 def _skill(path):
+    """The skill a path belongs to, or "" for anything outside Skills/ (declined and renamed name only skills)."""
     parts = path.split("/")
-    return parts[1] if len(parts) > 2 else ""
+    return parts[1] if len(parts) > 2 and parts[0] == "Skills" else ""
 
 
 def _local_path(path, renamed):
     parts = path.split("/")
-    if len(parts) > 2 and parts[1] in renamed:
+    if len(parts) > 2 and parts[0] == "Skills" and parts[1] in renamed:
         parts[1] = renamed[parts[1]]
     return "/".join(parts)
 

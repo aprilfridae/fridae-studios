@@ -263,9 +263,9 @@ fn create_repo_in() -> Result<Value, String> {
 }
 
 // ----------------------------------------------------------------------------------------------- the main mirror
-/// Bring `VAULT_APP/main/` up to the repository's `main`: only the skill files (`check_path`), only the blobs whose sha
-/// changed, and `.index.json` maps each path to its blob sha. A file gone from `main` is removed from the mirror.
-/// Returns the paths inside a skill's folder that were left out (too big, a link, or a name Fridae will not write).
+/// Bring `VAULT_APP/main/` up to the repository's `main`: only the files that travel (`check_path`), only the blobs
+/// whose sha changed, and `.index.json` maps each path to its blob sha. A file gone from `main` is removed from the
+/// mirror. Returns the travelling paths that were left out (a link, too big, or a blob sha Fridae will not use).
 fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
     let (code, v) = vault_git::get(&format!("/repos/{repo}/git/trees/main?recursive=1"), true)?;
     let tree: Vec<Value> = match code {
@@ -283,9 +283,9 @@ fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
     let mut skipped = Vec::new();
     for e in &tree {
         let (Some(path), Some(sha)) = (e["path"].as_str(), e["sha"].as_str()) else { continue };
-        if e["type"] == "blob" && e["mode"] != "120000" && check_path(path) && sha_ok(sha) && e["size"].as_u64().unwrap_or(0) <= 1 << 20 {
+        if e["type"] == "blob" && e["mode"] != "120000" && check_path(path) && sha_ok(sha) && e["size"].as_u64().unwrap_or(0) <= vault_sync::MAX_FILE {
             wanted.insert(path.to_string(), sha.to_string());
-        } else if e["type"] != "tree" && path.starts_with("Skills/") && path.split('/').count() >= 3 {
+        } else if e["type"] != "tree" && check_path(path) {
             skipped.push(shown(path));
         }
     }
@@ -804,22 +804,19 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
 const BUSY_PUBLISH: &str = "A release is already being made. Wait a moment.";
 const CHANGED: &str = "The vault changed while Fridae was getting ready. Try again.";
 const NOTHING: &str = "The vault has no skills to publish yet.";
-const MANIFEST_MAX: usize = 5000;
-const MANIFEST_FILE: usize = 1 << 20;
-const MANIFEST_TOTAL: usize = 100 << 20;
 
 static PUBLISHING: AtomicBool = AtomicBool::new(false);
 
-/// What would make the app refuse the manifest of these files: more than 5,000 files, a file over 1 MiB, or over
-/// 100 MiB in all.
+/// What would make the app refuse the manifest of these files (`vault_sync`'s limits): more than 20,000 files, a file
+/// over 8 MiB, or over 256 MiB in all.
 fn check_limits(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
     let mut problems = Vec::new();
-    if files.len() > MANIFEST_MAX {
-        problems.push("The vault has more than 5,000 files, more than Fridae can carry in one release.".to_string());
+    if files.len() > vault_sync::MAX_FILES {
+        problems.push("The vault has more than 20,000 files, more than Fridae can carry in one release.".to_string());
     }
-    problems.extend(files.iter().filter(|(_, b)| b.len() > MANIFEST_FILE).map(|(p, _)| format!("{}: over 1 MB", shown(p))));
-    if files.values().map(Vec::len).sum::<usize>() > MANIFEST_TOTAL {
-        problems.push("The vault is over 100 MB in all, more than Fridae can carry in one release.".to_string());
+    problems.extend(files.iter().filter(|(_, b)| b.len() as u64 > vault_sync::MAX_FILE).map(|(p, _)| format!("{}: over 8 MB", shown(p))));
+    if files.values().map(|b| b.len() as u64).sum::<u64>() > vault_sync::MAX_TOTAL {
+        problems.push("The vault is over 256 MB in all, more than Fridae can carry in one release.".to_string());
     }
     problems
 }
@@ -1682,7 +1679,7 @@ mod tests {
         let big = Box::new(|m: &str, p: &str, b: &str| -> (u16, String) {
             let inner = maint(vec![], vec![("Skills/a/SKILL.md", GOOD)], vec![], None);
             if p == "/repos/o/r/git/trees/main?recursive=1" {
-                let tree = json!([{"path": "Skills/a/SKILL.md", "type": "blob", "mode": "100644", "sha": "cccc0000", "size": GOOD.len()}, {"path": "Skills/a/big.bin", "type": "blob", "mode": "100644", "sha": "cccc0009", "size": 2 << 20}]);
+                let tree = json!([{"path": "Skills/a/SKILL.md", "type": "blob", "mode": "100644", "sha": "cccc0000", "size": GOOD.len()}, {"path": "Skills/a/big.bin", "type": "blob", "mode": "100644", "sha": "cccc0009", "size": 9 << 20}]);
                 return (200, json!({"tree": tree, "truncated": false}).to_string());
             }
             inner(m, p, b)
@@ -1692,10 +1689,11 @@ mod tests {
         assert_eq!(out["ok"], false, "{out}");
         assert!(out["problems"][0].as_str().unwrap().starts_with("Skills/a/big.bin:"), "{out}");
         assert!(sent(&s, "POST", "/repos/o/r/releases").is_empty() && sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
-        let one: BTreeMap<String, Vec<u8>> = [("Skills/a/x".to_string(), vec![0; 10])].into_iter().collect();
-        assert!(check_limits(&one).is_empty());
-        let many: BTreeMap<String, Vec<u8>> = (0..5001).map(|i| (format!("Skills/a/f{i}"), vec![])).collect();
-        assert_eq!(check_limits(&many).len(), 1);
+        let one = |size: usize| -> BTreeMap<String, Vec<u8>> { [("Skills/a/x".to_string(), vec![0; size])].into_iter().collect() };
+        assert!(check_limits(&one(8 << 20)).is_empty(), "8 MiB");
+        assert_eq!(check_limits(&one(9 << 20)), vec!["Skills/a/x: over 8 MB".to_string()], "9 MiB");
+        let many: BTreeMap<String, Vec<u8>> = (0..20_001).map(|i| (format!("Skills/a/f{i}"), vec![])).collect();
+        assert_eq!(check_limits(&many), vec!["The vault has more than 20,000 files, more than Fridae can carry in one release.".to_string()]);
     }
 
     #[test]
