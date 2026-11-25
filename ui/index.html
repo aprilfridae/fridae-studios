@@ -1337,29 +1337,32 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="act"><button class="pill" id="sk-import">Import now</button><span class="sub" id="sk-import-note" role="status"></span></div>
       <div class="act"><button class="pill" id="sk-notes">Check notes now</button><span class="sub" id="sk-notes-note" role="status"></span></div>
       <p class="sub sk-err" id="sk-err" role="status"></p>
-      <h3 class="sk-h">Fridae vault</h3>
+      <h3 class="sk-h">Knowledge vault</h3>
       <p class="sub" id="vt-line"></p>
       <div class="act"><button class="pill" id="vt-go" hidden></button><span class="sub" id="vt-note" role="status"></span></div>
       <p class="sub" id="vt-report" hidden></p>
-      <div class="vt-kept" id="vt-kept"></div>
+      <details class="moreinfo" id="vt-merged" hidden><summary>Show them</summary><div class="vt-kept" id="vt-kept"></div></details>
       <p class="sub sk-err" id="vt-err" role="status"></p>
       <div id="sk-dec-wrap" hidden>
         <h3 class="sk-h">Needs your decision <span id="sk-dec-n"></span><button class="pill sm" id="sk-all" hidden>Accept all recommendations</button></h3>
         <p class="sub sk-err" id="sk-all-err" role="status"></p>
         <div class="rv-list sk-decs" id="sk-decs"></div>
+        <div class="rv-list sk-decs" id="vt-clashes"></div>
+        <div class="act" id="vt-clash-more" hidden><button class="pill sm" id="vt-clash-all"></button></div>
+        <p class="sub sk-err" id="vt-clash-err" role="status"></p>
       </div>
       <h3 class="sk-h">Your skills <span id="sk-n"></span><button class="pill sm" id="sk-fold" aria-expanded="false" aria-controls="sk-body">Show</button></h3>
       <div id="sk-body" hidden>
       <div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, games" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div>
       <div class="sk-list" id="sk-list"><p class="sub">Loading...</p></div>
       </div>
-      <h3 class="sk-h">Share your skills</h3>
+      <h3 class="sk-h">Share your knowledge</h3>
       <div id="sh-ask" hidden>
-        <p class="sub">Share skills you make with everyone who uses Fridae?</p>
+        <p class="sub">Share skills you make and guides you change with everyone who uses Fridae?</p>
         <div class="act"><button class="pill" data-mode="off">Off</button><button class="pill" data-mode="review">Let me check each batch</button><button class="pill" data-mode="auto">Send automatically</button></div>
       </div>
       <div class="act sh-modes" id="sh-modes" hidden><span class="sub">Sharing:</span><div class="seg" role="group" aria-label="Sharing"><button data-mode="off">Off</button><button data-mode="review">Check each batch</button><button data-mode="auto">Automatic</button></div></div>
-      <p class="sub" id="sh-terms" hidden>Shared skills are under CC BY 4.0 (text) and MIT (scripts), credited to your GitHub name. Fridae hides keys, emails and your computer's username first. Fridae's maintainer reads every skill before anyone gets it.</p>
+      <p class="sub" id="sh-terms" hidden>Shared skills and guides are under CC BY 4.0 (text) and MIT (scripts), credited to your GitHub name. Fridae hides keys, emails and your computer's username first. Fridae's maintainer reads every one before anyone gets it.</p>
       <p class="sub" id="sh-gh" hidden>Connect GitHub first in <button class="linkish" id="sh-gh-go">Setup, Connections</button>.</p>
       <div class="sk-list sh-list" id="sh-list" hidden></div>
       <div class="act" id="sh-review" hidden><button class="pill" id="sh-prepare">Get a batch ready</button></div>
@@ -1516,7 +1519,7 @@ const GUIDE = [
     ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
-    ["Shared skills", "Setup, Skills: download skills other people made, and share yours.", "", "Download gets the skills in Fridae's shared vault, with no sign-in. Check for updates brings in changes without touching what you changed: your edits stay, and the new version is saved beside your file. A skill that overlaps one you have waits for your decision. To share your own, turn on Share your skills, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each skill before anyone else gets it."],
+    ["Knowledge vault", "Setup, Skills: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
   ]],
   ["Safety net", [
     ["Checkpoint", "Saves every script into the project folder and its history.", "Take a checkpoint", "Changes can then be compared and restored."],
@@ -5788,7 +5791,7 @@ function skPaintList() {
    the ones just decided, folded to one line */
 function skPaint() {
   skPaintCount();
-  const open = skOpen(), wrap = $("sk-dec-wrap"), box0 = $("sk-decs");
+  const open = skOpen(), box0 = $("sk-decs");
   const seen = new Set();
   const cards = open.map((d) => {
     const sig = JSON.stringify([d, d.kind === "note" ? null : [skSideInfo(d, "a"), skSideInfo(d, "b")]]);
@@ -5800,8 +5803,7 @@ function skPaint() {
   for (const id of skDone.keys()) { const c = skCards.get(id); if (c) { seen.add(id); cards.push(c.el); } }
   for (const id of [...skCards.keys()]) if (!seen.has(id)) skCards.delete(id);
   if (cards.length !== box0.children.length || cards.some((c, i) => c !== box0.children[i])) box0.replaceChildren(...cards);
-  wrap.hidden = !cards.length;
-  $("sk-dec-n").textContent = open.length ? String(open.length) : "";
+  decPaintWrap();
   $("sk-all").hidden = open.length < 2;
   $("sk-all").title = open.some((d) => d.recommendation && d.recommendation.choice) ? "Take every suggestion; those without one stay here" : "No suggestions yet";
   skPaintList();
@@ -5811,7 +5813,7 @@ function skPaint() {
 }
 /* fresh: Skills was just opened, so the lines of what was decided before go, and suggestions are looked for again */
 async function loadSkills(fresh) {
-  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; $("sh-note").hidden = true; sbFresh = true; vtLoad(); }
+  if (fresh) { skDone.clear(); skPollUntil = Date.now() + 180000; $("sk-import-note").textContent = ""; $("sk-notes-note").textContent = ""; $("sk-all-err").textContent = ""; $("sh-note").hidden = true; sbFresh = true; vtClashDone.clear(); vtClashAll = false; vtLoad(); }
   if (skLoading) { skAgain = true; return skLoading; }
   skLoading = (async () => {
     do {
@@ -5826,20 +5828,41 @@ async function loadSkills(fresh) {
 }
 /* the Overview and Setup ask for the count now and then (it runs the skills tool, so not on every repaint) */
 function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills(); }
-/* ---------- Setup, Skills: the Fridae vault and Share your skills ----------
+/* ---------- Setup, Skills: the Knowledge vault and Share your knowledge ----------
    GET /api/vault/status: the vault's {downloaded, release, checked_at, running, last}, where last is the newest Download
-   or Check: the vault-apply report ({added, updated, merged, kept, incoming, errors}, vault paths
-   "Skills/<skill>/<file>"; incoming the new skills waiting for a decision), {release: null, note}, {current: true} or
-   {ok: false, error}; merged with Share's {mode: off|review|auto, asked, agreed, connected, login, shareable, ready
-   [{id, scripts}], held [{id, why}], sent [{id, pr, at}], batch?, last_sent, held_masked} and role. It runs the skills
-   tool, so it is read when Skills opens and after a click, and every few seconds only while an update runs. Every
-   POST is the user's click: download, check, share_mode {mode, agree}, prepare, send {batch, drop}, reveal {path}.
-   vtPaint(status) and shBatchPaint(prepared) only paint, so a made-up status shows as it would. */
+   or Pull newest: the vault-apply report ({added, updated, merged, clashes, incoming, errors}; vault paths
+   "Skills/<skill>/<file>" for skills and "Roblox/..." for guides; clashes the units now waiting for Keep the vault's /
+   Keep mine, a skill as "Skills/<skill>"; incoming the new skills waiting for a decision), {release: null, note},
+   {current: true} or {ok: false, error}; merged with Share's {mode: off|review|auto, asked, agreed, connected, login,
+   shareable, ready [{id, scripts}], held [{id, why}], sent [{id, pr, at}], knowledge {ready [{unit, kind, title, new}],
+   held [{unit, title, why}], sent [{unit, title, pr, at}]}, batch?, last_sent, held_masked} and role. It runs the
+   skills tool, so it is read when Skills opens and after a click, and every few seconds only while an update runs.
+   GET /api/vault/clashes: {ok, clashes: [{unit, kind: file|binary|skill, title, release, made, both_new, files,
+   mine {path, changed, size, modified}, vault {changed, size}, show {mine, vault}}]}. Every POST is the user's click:
+   download, check, clash {unit, choice: vault|mine}, share_mode {mode, agree}, prepare, send {batch, drop: units},
+   reveal {path, which: mine|vault}. vtPaint(status), vtClashPaint(clashes) and shBatchPaint(prepared) only paint, so
+   made-up data shows as it would. */
 let vtSt = null, vtT = 0, vtLoading = false, vtAgain = false, vtWasRunning = false;
+let vtClashes = [], vtClashAll = false, vtClashBusy = false;
+const vtClashCards = new Map(), vtClashDone = new Map();
+const VT_CLASH_FIRST = 20;   /* clash cards shown before "Show all N" */
 let shBatch = null, shBusy = false, shWantGh = false;
 let sbRole = null, sbFresh = false, sbLoading = false, sbBusy = false;
 const vtSkill = (p) => String(p || "").split("/")[1] || "";
 const vtList = (o, k) => (o && Array.isArray(o[k]) ? o[k] : []);
+/* what a vault path is: a guide (Roblox/), a skill (Skills/) or another note */
+const vtKind = (p) => (/^Roblox\//.test(String(p)) ? "guide" : /^Skills\//.test(String(p)) ? "skill" : "note");
+const vtCount = (n, one, many) => n + " " + (n === 1 ? one : many);
+function vtSize(n) {
+  n = Number(n) || 0;
+  if (n < 1000) return n + (n === 1 ? " byte" : " bytes");
+  if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + " KB";
+  return (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + " MB";
+}
+async function vtReveal(path, which, err) {
+  let r; try { r = await api("/api/vault/reveal", { path, which }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  err.textContent = r && r.ok ? "" : (r && r.error) || "That file is not there any more.";
+}
 async function vtLoad() {
   clearTimeout(vtT);
   if (vtLoading) { vtAgain = true; return; }
@@ -5854,52 +5877,75 @@ async function vtLoad() {
   vtPaint(r);
   /* Submissions: the inbox asks GitHub, so it is read once each time Skills opens, and only for the maintainer */
   if (sbFresh && sbInboxShown(r.role) && skillsVisible()) { sbFresh = false; sbLoad(); }
-  /* an update that just ended may have added skills or decisions: the library and the cards are read again */
+  /* an update that just ended may have added skills, decisions or clashes: they are read again */
   if (vtWasRunning && !r.running) loadSkills();
+  if (!r.running) vtLoadClashes();
   vtWasRunning = !!r.running;
   if (r.running) vtT = setTimeout(() => { if (skillsVisible()) vtLoad(); }, 2500);
 }
-/* the last report in one line: new skills (those waiting for a decision among them), then the skills updated */
+/* the last report in one line: new skills (those waiting for a decision among them) and guides, what was updated, then
+   a sentence for each kind combined with the user's edits, and the clashes waiting below */
 function vtReportLine(last) {
   if (last.note) return last.note;
-  const fresh = new Set(vtList(last, "added").filter((p) => /^Skills\/[^/]+\/SKILL\.md$/.test(p)).map(vtSkill));
-  const touched = new Set([...vtList(last, "added"), ...vtList(last, "updated"), ...vtList(last, "merged")].map(vtSkill).filter((n) => n && !fresh.has(n)));
-  const waiting = vtList(last, "incoming").length, added = fresh.size + waiting, bits = [];
-  if (added) bits.push(added + (added === 1 ? " new skill" : " new skills") + (waiting ? " (" + waiting + (waiting === 1 ? " waits" : " wait") + " for your decision below)" : ""));
+  const added = vtList(last, "added"), merged = vtList(last, "merged");
+  const fresh = new Set(added.filter((p) => /^Skills\/[^/]+\/SKILL\.md$/.test(p)).map(vtSkill));
+  const unit = (p) => (vtKind(p) === "skill" ? "Skills/" + vtSkill(p) : String(p));
+  const newGuides = added.filter((p) => vtKind(p) === "guide").length, newNotes = added.filter((p) => vtKind(p) === "note").length;
+  const mergedUnits = new Set(merged.map(unit));
+  const touched = new Set([...added.filter((p) => vtKind(p) === "skill"), ...vtList(last, "updated")].map(unit)
+    .filter((u) => u !== "Skills/" && !(vtKind(u) === "skill" && fresh.has(vtSkill(u))) && !mergedUnits.has(u)));
+  const waiting = vtList(last, "incoming").length, skills = fresh.size + waiting, bits = [];
+  if (skills) bits.push(vtCount(skills, "new skill", "new skills") + (waiting ? " (" + waiting + (waiting === 1 ? " waits" : " wait") + " for your decision below)" : ""));
+  if (newGuides) bits.push(vtCount(newGuides, "new guide", "new guides"));
+  if (newNotes) bits.push(vtCount(newNotes, "new note", "new notes"));
   if (touched.size) bits.push(touched.size + " updated");
-  return bits.length ? bits.join(", ") + "." : "";
+  const out = bits.length ? [bits.join(", ") + "."] : [];
+  const edited = (kind, one, many) => {
+    const n = [...mergedUnits].filter((u) => vtKind(u) === kind).length;
+    if (n) out.push("Updated " + vtCount(n, one, many) + " you had edited.");
+  };
+  edited("guide", "guide", "guides"); edited("skill", "skill", "skills"); edited("note", "note", "notes");
+  const clashes = vtList(last, "clashes").length;
+  if (clashes) out.push(clashes + (clashes === 1 ? " clash waits" : " clashes wait") + " for your choice below.");
+  return out.join(" ");
+}
+/* a merged file in the report, named the way the user knows it: a skill's name (and its file), a guide by its path */
+function vtShortName(p) {
+  const parts = String(p).split("/");
+  if (parts[0] === "Skills" && parts.length >= 3) return parts[2] === "SKILL.md" && parts.length === 3 ? parts[1] : parts.slice(1).join("/");
+  return parts.length > 1 ? parts.slice(1).join("/") : String(p);
 }
 function vtPaint(st) {
   vtSt = st = st && typeof st === "object" ? st : {};
   const last = st.last && typeof st.last === "object" ? st.last : null, running = !!st.running;
   const when = [st.release ? "Release " + st.release : "", st.checked_at ? "checked " + ago(st.checked_at) : ""].filter(Boolean).join(" · ");
-  $("vt-line").textContent = st.downloaded && when ? when.charAt(0).toUpperCase() + when.slice(1) : "Skills other people made, checked by Fridae's maintainer.";
+  $("vt-line").textContent = st.downloaded ? (when ? when.charAt(0).toUpperCase() + when.slice(1) : "")
+    : "Skills and Roblox guides from Fridae's vault, checked by Fridae's maintainer. The Roblox guides are not on this computer yet: press Download to get them. Until then, Fridae's searches have no Roblox guides.";
   const btn = $("vt-go");
   btn.hidden = false; btn.disabled = running;
-  btn.textContent = st.downloaded ? "Check for updates" : "Download";
-  $("vt-note").textContent = running ? "Getting skills…" : "";
+  btn.textContent = st.downloaded ? "Pull newest" : "Download";
+  $("vt-note").textContent = running ? "Getting the vault…" : "";
   const good = last && last.ok !== false && !last.current && !last.skipped ? last : null;
   const line = good ? vtReportLine(good) : "", rep = $("vt-report");
   rep.textContent = line; rep.hidden = !line;
   const failed = vtList(good, "errors").length;
   $("vt-err").textContent = last && last.ok === false ? last.error || "The vault could not be updated."
-    : failed ? "Fridae could not put " + failed + (failed === 1 ? " file" : " files") + " in place." : "";
-  $("vt-kept").replaceChildren(...vtList(good, "kept").map((p) => {
-    const row = el("p", "sub", '<span></span><button class="pill sm">Reveal</button>'), parts = String(p).split("/");
-    const what = parts.length === 3 && parts[2] === "SKILL.md" ? parts[1] : parts.slice(1).join("/");
-    row.querySelector("span").textContent = "Kept your version of “" + what + "”; the new one is saved beside it";
-    row.querySelector("button").onclick = async () => {
-      let r; try { r = await api("/api/vault/reveal", { path: p }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-      $("vt-err").textContent = r && r.ok ? "" : (r && r.error) || "That file is not there any more.";
-    };
+    : failed ? "Fridae could not put " + failed + (failed === 1 ? " file" : " files") + " in place. The next Pull newest tries again." : "";
+  /* each file combined with the user's edits, openable */
+  const merged = vtList(good, "merged");
+  $("vt-kept").replaceChildren(...merged.map((p) => {
+    const row = el("p", "sub", '<span></span><button class="pill sm">Reveal</button>');
+    row.querySelector("span").textContent = vtShortName(p);
+    row.querySelector("button").onclick = () => vtReveal(String(p), "mine", $("vt-err"));
     return row;
   }));
+  $("vt-merged").hidden = !merged.length;
   shPaint(st);
   sbPaint(st.role);
 }
 $("vt-go").onclick = async () => {
   const btn = $("vt-go"), first = !(vtSt && vtSt.downloaded);
-  btn.disabled = true; $("vt-err").textContent = ""; $("vt-note").textContent = "Getting skills…";
+  btn.disabled = true; $("vt-err").textContent = ""; $("vt-note").textContent = "Getting the vault…";
   let r; try { r = await api(first ? "/api/vault/download" : "/api/vault/check", {}); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   if (!r || !r.ok) {
     btn.disabled = false; $("vt-note").textContent = ""; $("vt-err").textContent = (r && r.error) || "The vault could not be updated.";
@@ -5908,6 +5954,109 @@ $("vt-go").onclick = async () => {
   vtWasRunning = true;
   vtLoad();
 };
+/* ---------- the clash cards: Keep the vault's or Keep mine, one per waiting unit (a skill whole, a guide per file) ---------- */
+async function vtLoadClashes() {
+  let r; try { r = await api("/api/vault/clashes"); } catch (e) { r = null; }
+  if (!r || r.ok === false || !Array.isArray(r.clashes)) { $("vt-clash-err").textContent = (r && r.error) || "Fridae could not read the clashes waiting for your choice."; return; }
+  $("vt-clash-err").textContent = "";
+  vtClashPaint(r.clashes);
+}
+/* the words for what each side changed: one of four plain sentences */
+function vtClashWords(c) {
+  const m = c.mine || {}, v = c.vault || {};
+  if (c.both_new) return "The vault has a new file with the same name as yours.";
+  if (m.changed == null || v.changed == null) return "Pictures and models are never combined. Open each to compare them.";
+  const lines = (n) => vtCount(Number(n) || 0, "line", "lines");
+  if (c.kind === "skill") return "The vault changed " + lines(v.changed) + " in " + vtCount(vtList(c, "files").length, "file", "files") + " of this skill; you changed " + (Number(m.changed) || 0) + ".";
+  return "The vault changed " + lines(v.changed) + " since you got it; you changed " + (Number(m.changed) || 0) + ".";
+}
+function vtClashCard(c) {
+  const unit = String(c.unit || ""), title = String(c.title || unit.split("/").pop() || "Untitled"), m = c.mine || {}, v = c.vault || {};
+  const card = el("div", "ask rv-item sk-dec enter", '<div class="meta"></div><h4></h4><div class="sk-sides"></div><div class="plain-words sk-rec"><b>In plain words</b><p></p></div><div class="act"></div><p class="sub sk-own"></p><p class="rv-err"></p><div class="rv-said"></div>');
+  card.dataset.unit = unit;
+  const made = c.made ? Date.parse(c.made) : NaN;
+  card.querySelector(".meta").textContent = [c.kind === "skill" ? "Skill" : vtKind(unit) === "guide" ? "Guide" : "File", isNaN(made) ? "" : ago(made / 1000)].filter(Boolean).join("  ·  ");
+  card.querySelector("h4").textContent = title;
+  const err = card.querySelector(".rv-err");
+  const side = (tag, who, where, which) => {
+    const s = skSide(tag, title, who, "", where, where);
+    const act = el("div", "act", '<button class="pill sm">Reveal</button>');
+    act.querySelector("button").onclick = () => vtReveal(unit, which, err);
+    s.appendChild(act);
+    return s;
+  };
+  const modified = Number(m.modified) > 0 ? "changed " + ago(Number(m.modified)) : "";
+  card.querySelector(".sk-sides").append(
+    side("Yours", [vtSize(m.size), modified].filter(Boolean).join(" · "), String(m.path || unit), "mine"),
+    side("The vault's", [vtSize(v.size), c.release ? "release " + c.release : ""].filter(Boolean).join(" · "), unit, "vault"));
+  card.querySelector(".sk-rec p").textContent = vtClashWords(c);
+  const show = c.show && typeof c.show === "object" ? c.show : {};
+  const mine = typeof show.mine === "string" ? show.mine : "", theirs = typeof show.vault === "string" ? show.vault : "";
+  if (mine || theirs) {
+    const d = el("details", "moreinfo sk-merged", "<summary>Show both</summary>");
+    [["Yours", mine], ["The vault's", theirs]].forEach(([head, text]) => {
+      if (!text) return;
+      const p = el("p"); p.textContent = head;
+      const pre = el("pre"); pre.textContent = text;
+      d.append(p, pre);
+    });
+    card.querySelector(".sk-rec").after(d);
+  }
+  const act = card.querySelector(".act");
+  [["vault", "Keep the vault's"], ["mine", "Keep mine"]].forEach(([choice, label]) => {
+    const b = el("button", "pill");
+    b.textContent = label; b.dataset.choice = choice; b.disabled = vtClashBusy;
+    b.onclick = () => vtClashDecide(c, choice, card, (choice === "vault" ? "Kept the vault's “" : "Kept yours of “") + title + "”");
+    act.appendChild(b);
+  });
+  card.querySelector(".sk-own").textContent = "Keep the vault's sets yours aside in the vault's replaced folder; nothing is deleted.";
+  return card;
+}
+function vtClashSetBusy(on) {
+  vtClashBusy = on;
+  document.querySelectorAll("#vt-clashes .pill[data-choice]").forEach((b) => (b.disabled = on));
+}
+async function vtClashDecide(c, choice, card, said) {
+  if (vtClashBusy) return;
+  const err = card.querySelector(".rv-err");
+  vtClashSetBusy(true); err.textContent = "";
+  let r; try { r = await api("/api/vault/clash", { unit: c.unit, choice }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  vtClashSetBusy(false);
+  if (!r || !r.ok) { err.textContent = (r && r.error) || "That did not work."; return; }
+  vtClashDone.set(String(c.unit), said);
+  card.querySelector(".rv-said").textContent = said; card.classList.add("done");
+  vtClashPaint(vtClashes.filter((x) => x.unit !== c.unit));
+  vtLoadClashes();
+}
+/* the open clash cards (kept while they say the same, so a half-read card does not jump), the first 20 unless Show all
+   was pressed, then the ones just decided, folded to one line */
+function vtClashPaint(list) {
+  vtClashes = (Array.isArray(list) ? list : []).filter((c) => c && typeof c === "object" && c.unit && !vtClashDone.has(String(c.unit)));
+  const seen = new Set();
+  const open = vtClashes.map((c) => {
+    const unit = String(c.unit), sig = JSON.stringify(c);
+    let k = vtClashCards.get(unit);
+    if (!k || k.sig !== sig) { const had = !!k; k = { el: vtClashCard(c), sig }; if (had) k.el.classList.remove("enter"); vtClashCards.set(unit, k); }
+    seen.add(unit);
+    return k.el;
+  });
+  const shown = vtClashAll ? open : open.slice(0, VT_CLASH_FIRST);
+  for (const unit of vtClashDone.keys()) { const k = vtClashCards.get(unit); if (k) { seen.add(unit); shown.push(k.el); } }
+  for (const unit of [...vtClashCards.keys()]) if (!seen.has(unit)) vtClashCards.delete(unit);
+  const box0 = $("vt-clashes");
+  if (shown.length !== box0.children.length || shown.some((c, i) => c !== box0.children[i])) box0.replaceChildren(...shown);
+  const more = !vtClashAll && open.length > VT_CLASH_FIRST;
+  $("vt-clash-more").hidden = !more;
+  $("vt-clash-all").textContent = "Show all " + open.length;
+  decPaintWrap();
+}
+$("vt-clash-all").onclick = () => { vtClashAll = true; vtClashPaint(vtClashes); };
+/* Needs your decision holds the decision cards and the clash cards: shown when either has a card, counting both */
+function decPaintWrap() {
+  const decs = skOpen().length, clashes = vtClashes.length;
+  $("sk-dec-wrap").hidden = !($("sk-decs").children.length || $("vt-clashes").children.length);
+  $("sk-dec-n").textContent = decs + clashes ? String(decs + clashes) : "";
+}
 /* a link-styled button that opens a page of the vault's in the browser: the app builds the address from which page
    (vault, pr or release) and its number or release name; the page never gives an address */
 function vaultLink(text, what, extra) {
@@ -5931,22 +6080,30 @@ function shPaint(st) {
   $("sh-terms").hidden = on;
   $("sh-gh").hidden = !(shWantGh || (on && !st.connected));
   const list = $("sh-list"), live = on && !!st.connected;
-  const row = (name, tag, note) => {
+  /* a row: the name, its kind after it (a guide or a vault skill; a skill of the library says none), then where it stands */
+  const row = (name, tag, note, kind) => {
     const r = el("div", "sk-row", "<b><span></span></b><em></em><small></small>");
-    r.querySelector("b span").textContent = name; r.querySelector("em").textContent = tag;
+    r.querySelector("b span").textContent = name; r.querySelector("em").textContent = kind ? kind + " · " + tag : tag;
     const sm = r.querySelector("small");
     if (typeof note === "string") sm.textContent = note; else if (note) sm.append(...note);
     return r;
   };
+  const k = st.knowledge && typeof st.knowledge === "object" ? st.knowledge : {};
+  const kName = (s) => String(s.title || String(s.unit || "").split("/").pop() || "Untitled");
+  const kKind = (s) => (s.kind === "vault skill" ? "vault skill" : s.kind === "guide" || vtKind(s.unit) === "guide" ? "guide" : vtKind(s.unit) === "skill" ? "vault skill" : "note");
+  const sentNote = (s) => { const at = Date.parse(s.at); return [shLink(s.pr), isNaN(at) ? "" : " · " + ago(at / 1000)]; };
   const rows = live ? [
-    ...vtList(st, "ready").map((s) => row(s.id, "Ready", s.scripts ? "Has scripts" : "")),
-    ...vtList(st, "held").map((s) => row(s.id, "Held", s.why || "")),
-    ...vtList(st, "sent").map((s) => { const at = Date.parse(s.at); return row(s.id, "Sent", [shLink(s.pr), isNaN(at) ? "" : " · " + ago(at / 1000)]); }),
+    ...vtList(st, "ready").map((s) => row(String(s.id), "Ready", s.scripts ? "Has scripts" : "")),
+    ...vtList(k, "ready").map((s) => row(kName(s), "Ready", s.new ? "New" : "Changed", kKind(s))),
+    ...vtList(st, "held").map((s) => row(String(s.id), "Held", s.why ? String(s.why) : "")),
+    ...vtList(k, "held").map((s) => row(kName(s), "Held", s.why ? String(s.why) : "", kKind(s))),
+    ...vtList(st, "sent").map((s) => row(String(s.id), "Sent", sentNote(s))),
+    ...vtList(k, "sent").map((s) => row(kName(s), "Sent", sentNote(s), kKind(s))),
   ] : [];
   if (live && !rows.length) { const p = el("p", "sub"); p.textContent = "Nothing to share yet."; rows.push(p); }
   list.replaceChildren(...rows); list.hidden = !live;
   $("sh-review").hidden = !(live && mode === "review");
-  $("sh-prepare").disabled = shBusy || !(st.shareable > 0);
+  $("sh-prepare").disabled = shBusy || !((Number(st.shareable) || 0) + vtList(k, "ready").length > 0);
   if (!(live && mode === "review")) { shBatch = null; $("sh-batch").replaceChildren(); }
 }
 async function shSetMode(mode) {
@@ -5967,11 +6124,12 @@ $("sh-prepare").onclick = async () => {
   shBusy = true; btn.disabled = true; $("sh-err").textContent = ""; $("sh-note").hidden = true;
   let r; try { r = await api("/api/vault/prepare", {}); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   shBusy = false; btn.disabled = false;
-  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "Your skills could not be got ready."; return; }
+  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "Fridae could not get a batch ready."; return; }
   shBatchPaint(r);
 };
-/* a batch to check: each skill with its files (scripts first, each marked), the text exactly as it would be sent, a
-   mark on each file Fridae hid something in, and a box to leave the skill out; Send finishes */
+/* a batch to check: each skill or guide with its kind and its files (scripts first, each marked; a guide's one file by
+   its full vault path), the text exactly as it would be sent, a mark on each file Fridae hid something in, and a box
+   to leave it out; Send finishes, naming what is left out by unit */
 function shBatchPaint(made) {
   const box0 = $("sh-batch"), note = $("sh-note");
   shBatch = made && made.batch && vtList(made, "skills").length ? made : null;
@@ -5979,8 +6137,9 @@ function shBatchPaint(made) {
   note.hidden = true;
   const blocks = vtList(shBatch, "skills").map((s) => {
     const b = el("div", "sh-skill", '<header><b></b><label class="check-row"><input type="checkbox"> Leave this one out</label></header><p class="sub"></p><div class="sh-files"></div>');
-    b.dataset.name = s.name;
-    b.querySelector("b").textContent = s.name;
+    b.dataset.unit = String(s.unit || "Skills/" + s.name);
+    b.querySelector("b").textContent = String(s.name || "Untitled");
+    if (s.kind === "guide" || s.kind === "vault skill") { const m = el("span", "sh-mark"); m.textContent = s.kind; b.querySelector("b").after(m); }
     const d = b.querySelector("p"); if (s.description) d.textContent = s.description; else d.remove();
     const cb = b.querySelector("input"); cb.onchange = () => b.classList.toggle("out", cb.checked);
     const files = vtList(s, "files").slice().sort((x, y) => (y.script ? 1 : 0) - (x.script ? 1 : 0));
@@ -6000,16 +6159,16 @@ function shBatchPaint(made) {
 }
 async function shSend(btn) {
   if (shBusy || !shBatch) return;
-  const drop = [...document.querySelectorAll("#sh-batch .sh-skill")].filter((b) => b.querySelector("input").checked).map((b) => b.dataset.name);
+  const drop = [...document.querySelectorAll("#sh-batch .sh-skill")].filter((b) => b.querySelector("input").checked).map((b) => b.dataset.unit);
   shBusy = true; btn.disabled = true; $("sh-err").textContent = "";
   let r; try { r = await api("/api/vault/send", { batch: shBatch.batch, drop }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   shBusy = false; btn.disabled = false;
-  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "Your skills could not be sent."; return; }
+  if (!r || !r.ok) { $("sh-err").textContent = (r && r.error) || "The batch could not be sent."; return; }
   shBatch = null; $("sh-batch").replaceChildren();
   shSentPaint(r);
   vtLoad();
 }
-/* after a Send: "Sent: <pull request link>", and a warning when Fridae could not note a skill as sent */
+/* after a Send: "Sent: <pull request link>", and a warning when Fridae could not note something as sent */
 function shSentPaint(r) {
   const p = $("sh-note");
   p.replaceChildren("Sent: ", shLink(r.pr_url));
@@ -6019,16 +6178,17 @@ function shSentPaint(r) {
 /* ---------- Setup, Skills: Submissions (the maintainer's copy) ----------
    status.role {connected, login, maintainer, repo_exists}: the block shows for the maintainer, and Create the vault
    repo for the login that owns VAULT_REPO while the repo is missing. GET /api/vault/inbox: {prs: [{n, url, author,
-   title, error?, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill, same_name, closest
-   {id, score}|null, diff, recommendation {choice: keep|replace|merge, why, merged}|null, decided {choice, why}|null}]}]}.
+   title, error?, not_skill, skills: [{unit, name, files: [{path, text, script, note?}], not_skill, same_name, closest
+   {id, score}|null, diff, recommendation {choice: keep|replace|merge, why, merged}|null, decided {choice, why}|null}],
+   notes: [{unit, path, title, text, note?, binary, in_vault, diff|null, decided|null}]}]}.
    Everything in a submission is a stranger's: it reaches the page only as text (textContent / text nodes), and its
-   pull request opens through the app by number (vaultLink), never by an address. Every POST is the maintainer's click: inbox_decide {pr, skill, choice: add |
-   edit | reject, text?, why?}; publish and create_repo only from their confirm card's button, with confirm: true.
+   pull request opens through the app by number (vaultLink), never by an address. Every POST is the maintainer's click: inbox_decide {pr, unit, choice: add |
+   edit | reject, text?, why?} (a skill's unit is "Skills/<name>", a guide's its path); publish and create_repo only from their confirm card's button, with confirm: true.
    sbPaint(role), sbInboxPaint(inbox), sbPublishPaint(result) and sbCreatedPaint(result) only paint. */
 const VAULT_REPO = "aprilfridae/fridae-vault";
 const SB_OVERLAP = 0.6;   /* vault_inbox's OVERLAP: below it, no suggestion is asked for */
-const SB_CREATE_Q = "This creates the public repository aprilfridae/fridae-vault on GitHub. Anyone can see it. Go ahead?";
-const SB_PUBLISH_Q = "Publish a new vault release? Everyone's Fridae will get the skills added since the last one.";
+const SB_CREATE_Q = "Make aprilfridae/fridae-vault on GitHub, public, with the licence, the readmes and the Roblox guides from this copy of Fridae. It takes a few minutes. Nothing is published until you press Publish vault release.";
+const SB_PUBLISH_Q = "Publish a new vault release? Everyone's Fridae will get the skills and guides added since the last one.";
 const SB_DONE = { add: "Added", edit: "Edited and added", reject: "Rejected" };
 const sbOwner = (role) => !!(role && role.login) && String(role.login).toLowerCase() === VAULT_REPO.split("/")[0].toLowerCase();
 function sbInboxShown(role) { return !!(role && role.maintainer && role.repo_exists); }
@@ -6073,12 +6233,12 @@ function sbAgainst(s) {
 }
 function sbSaid(s, d) {
   const why = d.choice === "reject" && d.why ? ": " + d.why : "";
-  return (SB_DONE[d.choice] || "Decided") + " “" + s.name + "”" + why;
+  return (SB_DONE[d.choice] || "Decided") + " “" + (s.name || s.title || "Untitled") + "”" + why;
 }
-/* "Not a skill: will not be added", one line per file, greyed */
+/* "Not a skill or guide: will not be added", one line per file, greyed */
 function sbNotSkill(paths) {
   return paths.map((p) => {
-    const row = el("p", "sb-not", "<code></code><span>Not a skill: will not be added</span>");
+    const row = el("p", "sb-not", "<code></code><span>Not a skill or guide: will not be added</span>");
     row.querySelector("code").textContent = String(p);
     return row;
   });
@@ -6096,7 +6256,7 @@ function sbInboxPaint(r) {
   sbCount();
 }
 /* one pull request: its title, who sent it and its link; the reason when it could not be read; the files that are not
-   a skill; then a card per skill */
+   a skill or guide; then a card per skill and a card per guide or note */
 function sbPr(pr) {
   const b = el("div", "sb-pr", '<p class="sb-pr-h"><b></b><span></span></p><p class="sub sk-err sb-pr-err" role="status"></p><p class="sub sb-pr-note" role="status" hidden></p>');
   b.querySelector("b").textContent = pr.title || "Untitled";
@@ -6107,7 +6267,14 @@ function sbPr(pr) {
   const gone = [...new Set([...vtList(pr, "not_skill"), ...skills.flatMap((s) => vtList(s, "not_skill"))].map(String))];
   b.append(...sbNotSkill(gone));
   b.append(...skills.map((s) => sbCard(pr, s)));
+  b.append(...vtList(pr, "notes").map((n) => sbNoteCard(pr, n)));
   return b;
+}
+/* on a submission's last undecided skill or guide: that the pull request is closed too */
+function sbLastSay(pr, item) {
+  const all = [...vtList(pr, "skills"), ...vtList(pr, "notes")];
+  return all.every((x) => x === item || (x.decided && x.decided.choice))
+    ? "This is the last one in this submission, so the pull request also gets a thank-you comment and is closed." : "";
 }
 /* a file of a submission: a script in its own box, open; any other file folded, SKILL.md open when there is nothing to
    compare it with */
@@ -6171,9 +6338,8 @@ function sbCard(pr, s) {
   const edit = card.querySelector(".sb-edit"), rej = card.querySelector(".sb-reject"), add = card.querySelector(".sb-add"), err = card.querySelector(".rv-err");
   const ta = edit.querySelector("textarea"), reason = rej.querySelector("input");
   const act = card.querySelector(".act");
-  /* what each step does, said plainly; on the submission's last undecided skill, that the pull request is closed too */
-  const lastSay = () => vtList(pr, "skills").every((x) => x === s || (x.decided && x.decided.choice))
-    ? "This is the last skill in this submission, so the pull request also gets a thank-you comment and is closed." : "";
+  /* what each step does, said plainly; on the submission's last undecided one, that the pull request is closed too */
+  const lastSay = () => sbLastSay(pr, s);
   const addSay = () => "Add “" + (s.name || "Untitled") + "” to the vault?" + (lastSay() ? " " + lastSay() : "") + " Nothing reaches people until you publish a release.";
   const rejectSay = () => "Your reason goes in the comment Fridae leaves on the pull request when it is closed, where anyone can read it." + (lastSay() ? " " + lastSay() : "");
   [["add", "Add"], ["edit", "Edit then add"], ["reject", "Reject"]].forEach(([choice, label]) => {
@@ -6207,18 +6373,76 @@ function sbCard(pr, s) {
   if (d) { card.querySelector(".rv-said").textContent = sbSaid(s, d); card.classList.add("done"); }
   return card;
 }
+/* a guide or note of a submission: new or a change to the vault's, the change (or the whole text of a new one), and
+   Add (asked first), Edit then add, Reject */
+function sbNoteCard(pr, n) {
+  const title = String(n.title || String(n.path || "").split("/").pop() || "Untitled");
+  const text = typeof n.text === "string" ? n.text : "", diff = typeof n.diff === "string" && n.diff ? n.diff : "";
+  const card = el("div", "ask rv-item sk-dec", '<div class="meta"></div><h4></h4><p class="sub"></p><div class="sb-files"></div><div class="act"></div><div class="sb-add" hidden></div><div class="sb-edit" hidden><p hidden></p><textarea spellcheck="false" aria-label="The guide, as it will be added"></textarea><div class="act"><button class="pill main">Add this version</button><button class="pill">Cancel</button></div></div><div class="sb-reject" hidden><p></p><div class="keyrow"><input type="text" maxlength="200" placeholder="Why, in one line (optional; the sender sees it on GitHub)" autocomplete="off" aria-label="Why it is rejected (optional; the sender sees it on GitHub)"></div><div class="act"><button class="pill main">Reject it</button><button class="pill">Cancel</button></div></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const guide = vtKind(n.unit || n.path) === "guide";
+  card.querySelector(".meta").textContent = (guide ? "Guide" : "Note") + " · " + (pr.author || "someone");
+  card.querySelector("h4").textContent = title;
+  card.querySelector("p.sub").textContent = (n.in_vault ? "Changes a " : "New ") + (guide ? "guide" : "note") + (n.in_vault ? " in the vault" : "");
+  const fbox = card.querySelector(".sb-files");
+  const path = el("p", "sb-gone", "<code></code>"); path.querySelector("code").textContent = String(n.path || n.unit || ""); fbox.append(path);
+  if (n.note) { const p = el("p", "sb-gone"); p.textContent = String(n.note); fbox.append(p); }
+  else if (diff || text) {
+    const d = el("details", "moreinfo sb-diff", "<summary>Show the change</summary><pre></pre>");
+    d.querySelector("pre").textContent = n.in_vault && diff ? diff : text;
+    fbox.append(d);
+  }
+  const add = card.querySelector(".sb-add"), edit = card.querySelector(".sb-edit"), rej = card.querySelector(".sb-reject"), err = card.querySelector(".rv-err");
+  const ta = edit.querySelector("textarea"), reason = rej.querySelector("input"), act = card.querySelector(".act");
+  [["add", "Add"], ["edit", "Edit then add"], ["reject", "Reject"]].forEach(([choice, label]) => {
+    const btn = el("button", "pill");
+    btn.textContent = label; btn.disabled = sbBusy;
+    btn.onclick = () => {
+      err.textContent = "";
+      [add, edit, rej].forEach((x) => (x.hidden = true)); add.replaceChildren();
+      if (choice === "add") {
+        const last = sbLastSay(pr, n);
+        add.hidden = false;
+        sbConfirm(add, "Add “" + title + "” to the vault? It goes out in the next release." + (last ? " " + last : ""), "Add it", () => sbDecide(pr, n, "add", card, {}));
+        return;
+      }
+      if (choice === "edit") {
+        if (n.binary) { err.textContent = "Only text can be edited here."; return; }
+        edit.hidden = false;
+        const say = edit.querySelector("p"); say.textContent = sbLastSay(pr, n); say.hidden = !say.textContent;
+        if (!ta.value) ta.value = text; ta.focus();
+        return;
+      }
+      rej.hidden = false;
+      rej.querySelector("p").textContent = "Your reason goes in the comment Fridae leaves on the pull request when it is closed, where anyone can read it." + (sbLastSay(pr, n) ? " " + sbLastSay(pr, n) : "");
+      reason.focus();
+    };
+    act.appendChild(btn);
+  });
+  const [editGo, editNo] = edit.querySelectorAll(".pill"), [rejGo, rejNo] = rej.querySelectorAll(".pill");
+  editNo.onclick = () => { edit.hidden = true; };
+  rejNo.onclick = () => { rej.hidden = true; };
+  editGo.onclick = () => {
+    if (!ta.value.trim()) { err.textContent = "The text is empty."; return; }
+    sbDecide(pr, n, "edit", card, { text: ta.value });
+  };
+  rejGo.onclick = () => sbDecide(pr, n, "reject", card, { why: reason.value.trim() });
+  reason.onkeydown = (e) => { if (e.key === "Enter") rejGo.click(); };
+  const d = n.decided && typeof n.decided === "object" && n.decided.choice ? n.decided : null;
+  if (d) { card.querySelector(".rv-said").textContent = sbSaid(n, d); card.classList.add("done"); }
+  return card;
+}
 async function sbDecide(pr, s, choice, card, extra) {
   if (sbBusy) return;
   const err = card.querySelector(".rv-err"), box = card.closest(".sb-pr");
   sbSetBusy(true); err.textContent = "";
-  let r; try { r = await api("/api/vault/inbox_decide", Object.assign({ pr: Number(pr.n), skill: s.name, choice }, extra)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+  let r; try { r = await api("/api/vault/inbox_decide", Object.assign({ pr: Number(pr.n), unit: String(s.unit || "Skills/" + s.name), choice }, extra)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   sbSetBusy(false);
   if (!r || !r.ok) { err.textContent = (r && r.error) || "That did not work."; return; }
   s.decided = { choice, why: extra.why || "" };
   card.querySelector(".rv-said").textContent = sbSaid(s, s.decided);
   card.classList.add("done");
   if (box) {
-    if (r.closed) { const p = box.querySelector(".sb-pr-note"); p.textContent = "Every skill here is decided, so the pull request was closed with a thank-you."; p.hidden = false; }
+    if (r.closed) { const p = box.querySelector(".sb-pr-note"); p.textContent = "Everything here is decided, so the pull request was closed with a thank-you."; p.hidden = false; }
     if (r.warning) box.querySelector(".sb-pr-err").textContent = String(r.warning);
   }
   sbCount();

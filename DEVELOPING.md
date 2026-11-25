@@ -2198,8 +2198,8 @@ later). `Skills/README.md` is not a skill (a skill's file has three path parts) 
 The manifest is `{format: 1, release, made, files: [{path, sha256, size}]}`. A release is a GitHub release named
 `vault-YYYY.MM.DD` (then `.2`, `.3`) at the commit that holds that manifest, and the manifest's `release` is that tag.
 
-**Getting skills** (Setup › Skills › Fridae vault; `vault_sync.rs`; no sign-in needed). Download and Check for updates
-read the latest release, fetch the manifest and only the files whose hash changed, and check each against the manifest
+**Getting skills and guides** (Setup › Skills › Knowledge vault; `vault_sync.rs`; no sign-in needed). Download (before
+the first one) and Pull newest read the latest release, fetch the manifest and only the files whose hash changed, and check each against the manifest
 (path rules, at most 20,000 files, 8 MiB each, 256 MiB in all, `release` equal to the tag). The files go to a staging
 folder in the app's own folder. Only when every one is right is the folder handed to `rbx skills vault-apply`
 (`rbxvaultsync.apply`); anything wrong or cut off removes the staging folder and changes nothing ("This vault update
@@ -2257,6 +2257,19 @@ user's files and records the vault's version as the base: the same release never
 to that file combine instead of asking each release. Both remove the waiting copy and the entry under the vault's lock;
 a unit that is no longer waiting says "That choice is not waiting any more."
 
+**The page** (`ui/index.html`, Setup › Skills). The Knowledge vault block has one button, Download before the first
+one and Pull newest after, and says until then that the Roblox guides are not on this computer and searches have none.
+The report is one line (new skills and guides, what was updated, "Updated 3 guides you had edited.", "1 clash waits for
+your choice below."), and "Show them" lists each combined file with Reveal. Each waiting clash (`GET
+/api/vault/clashes`) is a card after the decision cards in Needs your decision, counted with them and never touched by
+Accept all recommendations: the kind (guide, skill or file) and its age, Yours and The vault's with size, date and
+Reveal, the lines each side changed in plain words (pictures and models only by name, size and date), Show both, and
+Keep the vault's / Keep mine (`POST /api/vault/clash` by unit). The first 20 cards show, then "Show all N". Share your
+knowledge lists guides and vault skills beside library skills, each with its kind, and a batch is sent with what is
+left out named by unit. Submissions show a card per guide beside the skill cards (New guide or Changes a guide in the
+vault, Show the change, and Add, asked first, Edit then add, Reject, each sent by unit). The painters (`vtPaint`,
+`vtClashPaint`, `shBatchPaint`, `sbInboxPaint`) only paint, so made-up data shows as it would.
+
 **Newcomers and vault decisions** (`rbxvaultnew.py`). A skill that is new to this computer (no base record, no local
 folder) is looked at before it is installed. One named like Fridae's own is declined for good. The user's own earlier
 share coming back from the vault is installed and the user's copy set aside. One whose text says what a library skill's
@@ -2297,7 +2310,7 @@ the login name as a word of its own, three letters or more (`[user]`). The credi
 until the user has read it ("Fridae hid something in a script; check it in Setup › Skills before it is sent."), and
 what is sent is exactly the masked bytes the user was shown.
 
-**Sharing** (`share.rs`; Setup › Skills › Share your skills). The setting `share_skills` is `off`, `review` or `auto`
+**Sharing** (`share.rs`; Setup › Skills › Share your knowledge). The setting `share_skills` is `off`, `review` or `auto`
 (missing counts as off). It is a guarded setting, so an agent's edit cannot turn it on, and no tool of the MCP server
 reaches any route here. Turning it on asks for a yes to CC BY 4.0 (text) and MIT (scripts), and GitHub must be
 connected. Share runs `rbx skills pack` into the app's `outbox` (at most 20 skills; a batch nobody sends is removed
@@ -2396,9 +2409,9 @@ daily check does not fetch again a file whose clash is waiting on the same relea
 is needed, the waiting one is staged from its clash copy.
 
 **Known limits** (the vault).
-- Notes are not in the vault yet; only skills.
-- Edited imports and edited community skills cannot be shared.
-- A three-way conflict is a row line ("kept", the new file saved beside it), not a card.
+- The user's own notes are not in the vault yet (stage B); skills and the Roblox guides are.
+- Edited imports cannot be shared.
+- The count of waiting clashes shows in Needs your decision, not on Setup's Skills button.
 - A declined vault skill cannot be taken back from the page yet (its name stays in `declined` in `base.json`).
 - Contributors' GitHub sign-in asks for `repo`, more than sharing needs (`public_repo`), because Connect GitHub also
   makes private repos.
