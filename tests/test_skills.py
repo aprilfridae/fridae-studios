@@ -409,6 +409,36 @@ class GuideSkillTests(unittest.TestCase):
         self.assertIn("Orange.", self.text(self.load(name="my-style/palette")))
         self.assertTrue(self.load(name="no-such-skill-here")["isError"])
 
+    def test_load_fills_plugin_root_and_frames_only_guides_for_roblox(self):
+        """Through the rbx_skill tool: an imported plugin skill's ${CLAUDE_PLUGIN_ROOT} is filled from its import
+        link, and only the app's own guides carry the Roblox Studio preface; any other skill gets rbxskills.load's
+        neutral framing."""
+        d = os.path.join(self.user, "design-x")
+        skill(d, "design-x", "Design things.",
+              "Run ${CLAUDE_PLUGIN_ROOT}/scripts/x.py then invoke the superpowers:brainstorming skill.\n\n"
+              "## Tokens\n\nSee ${CLAUDE_PLUGIN_ROOT}/tokens.md",
+              {"references/more.md": "# More\n\nAlso ${CLAUDE_PLUGIN_ROOT}/y.py"})
+        with open(os.path.join(d, rbxskills.SOURCE_FILE), "w") as f:
+            json.dump({"source": "/x", "key": "plugin:design-x", "hash": "h", "upstream": "h",
+                       "plugin_root": "/PLUGROOT"}, f)
+        preface = self.mcp.PREFACE.strip().splitlines()[0]
+        for res in (self.load(name="design-x"), self.load(name="design-x", section="Tokens"),
+                    self.load(name="design-x/more"), self.guide(topic="design-x")):
+            text = self.text(res)
+            self.assertFalse(res["isError"], text)
+            self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", text)
+            self.assertIn("/PLUGROOT/", text)
+            self.assertNotIn(preface, text, "no Roblox preface on a skill that is not the app's guide")
+            self.assertNotIn("skills are Claude Code details you can ignore", text)
+        whole = self.text(self.load(name="design-x"))
+        self.assertIn("Run /PLUGROOT/scripts/x.py", whole)
+        self.assertTrue(whole.startswith("# Skill design-x (%s)" % rbxskills.ORIGIN_LABEL["user"]), whole[:200])
+        self.assertIn("Base directory: %s" % d, whole)
+        self.assertTrue(self.text(self.load(name="workflow")).startswith(self.mcp.PREFACE), "a shipped guide keeps it")
+        both = self.text(self.load(names=["workflow", "design-x"]))
+        self.assertEqual(both.count(preface), 1)
+        self.assertIn("Run /PLUGROOT/scripts/x.py", both)
+
     def test_user_skill_with_shipped_name_keeps_roster_valid(self):
         import rbxroster
         import rbxvault
@@ -448,7 +478,7 @@ class GuideSkillTests(unittest.TestCase):
         skill(os.path.join(self.user, "minimalist-ui"), "minimalist-ui", "Mine, literally named so.", "My minimal.")
         text = self.text(self.load(name="minimalist-ui"))
         self.assertIn("My minimal.", text, "a skill with the exact name wins over the alias")
-        self.assertIn("GUIDE: minimalist-ui ", text)
+        self.assertIn("# Skill minimalist-ui (", text, "framed as the user's skill, not the app's guide")
         self.assertNotIn("My minimal.", self.text(self.load(name="minimalist-skill")))
 
     def test_read_accepts_alias_and_id(self):

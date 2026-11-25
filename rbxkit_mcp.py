@@ -171,11 +171,25 @@ def _topic_file(topic):
     exact id (the project's, else the user's, else the app's: rbxskills.library); None when there is none."""
     if topic in GUIDE_FILES:
         return os.path.join(KIT, GUIDE_FILES[topic][0])
+    s = _lib_entry(topic)
+    return os.path.join(s["dir"], "SKILL.md") if s else None
+
+
+def _lib_entry(topic):
+    """The library entry with exactly this id (ignoring case), or None."""
     import rbxskills
     want = topic.casefold()
+    return next((s for s in rbxskills.library(_project()) if s["id"].casefold() == want), None)
+
+
+def _holder(path):
+    """The library skill whose folder holds path (its SKILL.md or a reference file), or None."""
+    import rbxskills
+    real = os.path.normcase(os.path.realpath(path))
     for s in rbxskills.library(_project()):
-        if s["id"].casefold() == want:
-            return os.path.join(s["dir"], "SKILL.md")
+        d = os.path.normcase(os.path.realpath(s["dir"]))
+        if real.startswith(d + os.sep):
+            return s
     return None
 
 
@@ -227,10 +241,15 @@ def _guide_path(topic):
 
 
 def _read_filled(path):
-    """A guide or skill file with its install paths filled in: {{RBXKIT}}, and a skill's ${CLAUDE_SKILL_DIR}."""
+    """A guide or skill file with its install paths filled in: {{RBXKIT}}, a skill's ${CLAUDE_SKILL_DIR} (its
+    folder) and, for an imported plugin skill, ${CLAUDE_PLUGIN_ROOT} (its plugin's folder, as rbxskills.load does)."""
     with open(path, encoding="utf-8") as f:
         text = fill(f.read())
-    return text.replace("${CLAUDE_SKILL_DIR}", os.path.dirname(path).replace("\\", "/"))
+    s = _holder(path)
+    text = text.replace("${CLAUDE_SKILL_DIR}", (s["dir"] if s else os.path.dirname(path)).replace("\\", "/"))
+    if s and s.get("plugin_root"):
+        text = text.replace("${CLAUDE_PLUGIN_ROOT}", s["plugin_root"])
+    return text
 
 
 def _reference(topic):
@@ -245,33 +264,29 @@ def _reference(topic):
 
 def _guide_extras(topic):
     """What follows a guide's own text: where its reference files and other files are, and its credit. A skill that
-    is not one of the app's (the user's, the project's) also names its folder and files, as LihFolk's guides do."""
+    is not one of the app's (the user's, the project's) names its folder and files in its head instead
+    (rbxskills.load_head)."""
     path = _topic_file(topic)
     if not path:
         return ""
     text = ""
+    kit = _is_kit(topic)
     refs = os.path.join(os.path.dirname(path), "references")
     if topic != "vfx" and os.path.isdir(refs):
         files = sorted(f[:-3] for f in os.listdir(refs) if f.endswith(".md"))
         if files:
-            text += "\n\nReference files for this guide (load with rbx_guide topic `%s/<name>`): %s" % (topic, ", ".join(files))
+            what, how = ("guide", "rbx_guide topic") if kit else ("skill", "rbx_skill load, name")
+            text += "\n\nReference files for this %s (load with %s `%s/<name>`): %s" % (what, how, topic, ", ".join(files))
     if topic == "vfx" and os.path.isdir(refs):
         text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
-    kit = _is_kit(topic)
-    lihfolk = kit and KIT_GUIDES[topic][0].startswith(LIHFOLK_GUIDES)
-    if lihfolk or not kit:
+    if kit and KIT_GUIDES[topic][0].startswith(LIHFOLK_GUIDES):
         # its code (Luau modules, examples, Blender scripts, rubrics) is read straight from the folder
         folder = os.path.dirname(path)
-        if lihfolk:
-            files = sorted(os.path.relpath(os.path.join(r, f), folder).replace("\\", "/")
-                           for r, _, fs in os.walk(folder) for f in fs if os.path.join(r, f) != path)
-        else:
-            import rbxskills
-            files = [f for f in rbxskills._files(folder) if f != "SKILL.md"]  # dot-files left out, the list capped
+        files = sorted(os.path.relpath(os.path.join(r, f), folder).replace("\\", "/")
+                       for r, _, fs in os.walk(folder) for f in fs if os.path.join(r, f) != path)
         text += "\n\nThis guide's folder is %s" % folder.replace("\\", "/")
         if files:
             text += "; read its files from there: " + ", ".join(files)
-    if lihfolk:
         text += ("\n\n(From LihFolk Vault V2 by LihFolk, CC BY 4.0. Search the full vault with rbx_vault. Where a step "
                  "names a slash command or agent from the LihFolk plugin, do that step yourself.)")
     return text
@@ -474,33 +489,47 @@ def _load(name, names, a, tool):
         if text is None:
             return result("No such guide: %s%s" % (topic, missing), False)
         note = ("\n\n(`section` reads one guide; not loaded: %s.)" % ", ".join(wanted[1:])) if len(wanted) > 1 else ""
-        return result(PREFACE + "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text + note, True, False)
+        part, kit = _framed(topic, text)
+        return result((PREFACE if kit else "") + part + note, True, False)
     whole = a.get("whole") is True or str(a.get("whole")).lower() == "true"
     outline = a.get("outline") is True or str(a.get("outline")).lower() == "true"
     cap = _guide_cap()
-    out, unknown, left, size = [], [], [], len(PREFACE.encode("utf-8"))
+    out, unknown, left, size, any_kit = [], [], [], len(PREFACE.encode("utf-8")), False
     for topic in wanted:
         # a rules guide bundled with others comes whole; only a call for that one guide alone gets its outline
         text = guide_text(topic, whole, outline and not (topic in ALWAYS_WHOLE and len(wanted) > 1))
         if text is None:
             unknown.append(topic)
             continue
-        part = "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text
+        part, kit = _framed(topic, text)
         n = len(part.encode("utf-8")) + 2
         if out and (left or size + n > cap):
             left.append(topic)  # the first guide always comes whole; the rest only while the answer stays small
             continue
         out.append(part)
         size += n
+        any_kit = any_kit or kit
     if not out:
         return result("No such guide: " + ", ".join(unknown) + missing, False)
-    body = PREFACE + "\n\n".join(out)
+    body = (PREFACE if any_kit else "") + "\n\n".join(out)
     if left:
         body += ("\n\n(Left out to keep this answer under %d KB: %s. Ask for them in another rbx_guide call, two topics "
                  "at a time.)" % (cap // 1000, ", ".join(left)))
     if unknown:
         body += "\n\n(No such guide: " + ", ".join(unknown) + ")"
     return result(body, True, False)
+
+
+def _framed(topic, text):
+    """(one loaded part, whether it is the app's): one of the app's own guides (or its reference file) under its GUIDE
+    banner, which the Roblox PREFACE goes before; any other skill framed as rbxskills.load frames it, neutral."""
+    import rbxskills
+    head, _, sub = topic.partition("/")
+    s = None if _is_kit(head) else _lib_entry(head)
+    if s is None:
+        return "=" * 20 + " GUIDE: " + topic + " " + "=" * 20 + "\n\n" + text, True
+    lead = rbxskills.load_head(s) + ("\nThis part: its reference file `%s`" % sub if sub else "")
+    return lead + "\n\n---\n\n" + text + rbxskills.LOAD_TAIL, False
 
 
 def t_snippet(a):

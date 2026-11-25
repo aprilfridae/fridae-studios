@@ -489,9 +489,13 @@ def _fill(text, s):
     return text
 
 
-def load(name, project=None):
-    s = find(name, project)
-    _, body = front(_read(os.path.join(s["dir"], "SKILL.md")))
+LOAD_TAIL = ("\n\n---\nPaths in this skill are relative to its base directory. Read its files with rbx_skill action "
+             "'read' (name, path) or your own file tools, and run its scripts from a shell by their full path.")
+
+
+def load_head(s):
+    """What a loaded skill opens with (before its text, then LOAD_TAIL): its name and where it comes from, its base
+    directory, when to use it and its files. rbx_skill load frames every skill but the app's own guides so."""
     files = [f for f in _files(s["dir"]) if f != "SKILL.md"]
     more = " (and more)" if len(files) >= FILES_MAX else ""
     head = ["# Skill %s (%s)" % (s["id"], ORIGIN_LABEL.get(s["origin"], s["origin"])),
@@ -500,9 +504,13 @@ def load(name, project=None):
         head.append("When to use: %s" % s["description"])
     if files:
         head.append("Its files%s: %s" % (more, ", ".join(files)))
-    tail = ("\n\n---\nPaths in this skill are relative to its base directory. Read its files with rbx_skill action "
-            "'read' (name, path) or your own file tools, and run its scripts from a shell by their full path.")
-    return "\n".join(head) + "\n\n---\n\n" + _fill(body.strip(), s) + tail
+    return "\n".join(head)
+
+
+def load(name, project=None):
+    s = find(name, project)
+    _, body = front(_read(os.path.join(s["dir"], "SKILL.md")))
+    return load_head(s) + "\n\n---\n\n" + _fill(body.strip(), s) + LOAD_TAIL
 
 
 def read_file(name, path, project=None):

@@ -2052,9 +2052,11 @@ compatibility and denies its own `skill` tool).
 3. the project's `.agents/skills`, then `.claude/skills` (for that project only).
 
 `rbx_skill` (every AI): `search` (the index service's `skills` shelf, one entry per skill: name, description,
-examples; keyword search when the service is off), `list`, `load` (SKILL.md with `${CLAUDE_SKILL_DIR}` and
-`${CLAUDE_PLUGIN_ROOT}` filled in, its folder and files), `read` (one file inside the skill's folder). `rbx_guide` is
-an alias of `load`. `rbx_vault` hits point at skills ("load with rbx_skill").
+examples; keyword search when the service is off), `list`, `load` (SKILL.md with `${CLAUDE_SKILL_DIR}` and, for an
+imported plugin skill, `${CLAUDE_PLUGIN_ROOT}` filled in from its `.fridae-source.json`, its folder and files; only
+the app's own guides open with the Roblox Studio `PREFACE`, every other skill with `rbxskills.load_head`'s neutral
+name, origin, base directory and files), `read` (one file inside the skill's folder). `rbx_guide` is an alias of
+`load`. `rbx_vault` hits point at skills ("load with rbx_skill").
 
 **Import, never a second library** (`import_external`, run by `catalog` and `index` at most once a minute, under
 `<library>/.lock`). The sources are only ever read: Claude Code's `~/.claude/skills` and enabled plugins
