@@ -16,3 +16,6 @@ vault/.trash/
 # the user's notes and skill library when running from source (home is the repo folder then)
 /notes/
 /skills/
+
+# the scale bench's generated corpora, indexes and vector cache
+tests/scale_bench/.cache/
