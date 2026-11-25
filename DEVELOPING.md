@@ -2328,8 +2328,15 @@ last one.
 <skill> --hash <h> --pr <url>`, `compare --new <folder> --against <folder>`, and `decide`, which now settles vault
 decisions too. Routes (the page's own; none is an agent's): `GET /api/vault/status` (download and sharing together,
 with `role`), `GET /api/vault/share`, `GET /api/vault/inbox`; `POST /api/vault/download`, `check`, `share_mode`,
-`prepare`, `send`, `reveal` (shows a file a report names, only under `Knowledge/Skills`), `create_repo` and `publish`
-(both need `confirm: true`), `inbox` and `inbox_decide`.
+`prepare`, `send`, `reveal`, `clash`, `create_repo` and `publish` (both need `confirm: true`), `inbox` and
+`inbox_decide`. `GET /api/vault/clashes` gives `{ok, clashes}`, the cards waiting (`vault-clashes`). `POST
+/api/vault/clash {unit, choice}` is a card's Keep the vault's (`"vault"`) or Keep mine (`"mine"`) for that unit (a
+skill's is `Skills/<name>`); while a download or Pull newest runs it answers `busy`. `POST /api/vault/reveal {path,
+which}` shows anything in Knowledge a report or card names (a file's path or a skill's unit): `which: "mine"` (the
+default) the user's file, or its folder when the file is gone; `which: "vault"` the vault's copy waiting under
+`.fridae-vault/clash/`. Never through a link, never outside Knowledge, never `House rules.md` or a dot-folder. The
+daily check does not fetch again a file whose clash is waiting on the same release; when another file of that release
+is needed, the waiting one is staged from its clash copy.
 
 **Known limits** (the vault).
 - Notes are not in the vault yet; only skills.

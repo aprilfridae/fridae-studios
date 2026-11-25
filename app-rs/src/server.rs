@@ -213,6 +213,9 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/vault/status" {
         // Setup › Skills: the Fridae vault (vault_sync), Share your skills (share) and the maintainer role (Task 10)
         send_json(vault_status())
+    } else if path == "/api/vault/clashes" {
+        // the Knowledge vault's clash cards: each unit waiting for Keep the vault's / Keep mine
+        send_json(crate::vault_sync::clashes())
     } else if path == "/api/vault/inbox" {
         // Setup › Skills › Submissions (the maintainer's copy): each open pull request's skills, scripts first
         send_json(crate::vault_inbox::inbox())
@@ -454,8 +457,14 @@ fn post(path: &str, body: Value) -> Reply {
                 send_json(json!({"ok": false, "error": "Confirm to publish the vault release."}))
             }
         }
-        // Reveal of a file a vault report names: only under Knowledge/Skills, never through a link
-        "/api/vault/reveal" => send_json(crate::vault_sync::reveal(&text_of("path"))),
+        // Reveal of a file a vault report or clash card names: the user's ("mine", the default) or the vault's copy
+        // waiting for the card ("vault"); only inside Knowledge, never through a link
+        "/api/vault/reveal" => {
+            let which = body["which"].as_str().unwrap_or("mine");
+            send_json(crate::vault_sync::reveal(&text_of("path"), which))
+        }
+        // A clash card's Keep the vault's / Keep mine, on the user's click only
+        "/api/vault/clash" => send_json(crate::vault_sync::decide_clash(&text_of("unit"), &text_of("choice"))),
         "/api/vault/send" => {
             let drop: Vec<String> = body["drop"].as_array().into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
             send_json(crate::share::send(&text_of("batch"), &drop))

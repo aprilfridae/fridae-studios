@@ -1,8 +1,9 @@
-//! The shared skill vault's Download and Check for updates: the latest release's manifest is read, only the files
-//! that changed are fetched (each checked against the manifest's hash and size) into a staging folder, and only when
-//! every one is right is the folder handed to `rbx skills vault-apply`, which puts the skills into
-//! `<home>/Knowledge/Skills` without overriding the user. Anything wrong or cut off removes the staging folder and
-//! changes nothing. No sign-in is needed.
+//! The Fridae vault's Download and Pull newest: the latest release's manifest is read, only the files that changed
+//! are fetched (each checked against the manifest's hash and size) into a staging folder, and only when every one is
+//! right is the folder handed to `rbx skills vault-apply`, which puts skills, guides and notes into `<home>/Knowledge`
+//! without overriding the user: what both sides changed and cannot be combined waits for the user's Keep the vault's
+//! or Keep mine (`clashes`, `decide_clash`). Anything wrong or cut off removes the staging folder and changes
+//! nothing. No sign-in is needed.
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -174,7 +175,7 @@ fn downloaded() -> bool {
 /// Only skills are renamed: any other path is kept as it is.
 fn local_path(path: &str, base: &Value) -> String {
     let mut parts: Vec<&str> = path.split('/').collect();
-    if parts.len() > 2 && parts[0] == "Skills" {
+    if parts.len() >= 2 && parts[0] == "Skills" {
         if let Some(to) = base["renamed"][parts[1]].as_str() {
             parts[1] = to;
         }
@@ -182,55 +183,66 @@ fn local_path(path: &str, base: &Value) -> String {
     parts.join("/")
 }
 
-const NOT_SHOWN: &str = "Fridae can only show files in your skills folder.";
+const NOT_SHOWN: &str = "Fridae can only show files in your Knowledge folder.";
 const GONE: &str = "That file is not there any more.";
+const CHOOSE: &str = "Choose Keep the vault's or Keep mine.";
 
-/// What Reveal shows for a vault path from a report: the new copy saved beside the user's file when there is one,
-/// else the file, else its folder. Only under `Knowledge/Skills` (a renamed skill in its new folder), never through
-/// a link.
-pub fn reveal_target(path: &str) -> Result<PathBuf, String> {
-    let local = local_path(path, &read_base());
-    if !check_path(path) || !check_path(&local) {
+/// Whether `p` is a skill's unit (`Skills/<name>`), which clash cards and Reveal name instead of one of its files.
+fn skill_unit(p: &str) -> bool {
+    matches!(p.split('/').collect::<Vec<_>>().as_slice(), ["Skills", name] if seg_ok(name))
+}
+
+/// What Reveal shows for a vault path from a report or a clash card (a `check_path` path, or a skill's unit
+/// `Skills/<name>`). `which` "mine": the user's file (a renamed skill in its new folder), else its folder. `which`
+/// "vault": the vault's copy waiting under `.fridae-vault/clash/`. Never through a link, never outside Knowledge.
+pub fn reveal_target(path: &str, which: &str) -> Result<PathBuf, String> {
+    if !check_path(path) && !skill_unit(path) {
         return Err(NOT_SHOWN.to_string());
     }
     let know = knowledge();
+    let (root, rel) = match which {
+        "mine" => (know.clone(), local_path(path, &read_base())),
+        "vault" => (know.join(".fridae-vault").join("clash"), path.to_string()),
+        _ => return Err(NOT_SHOWN.to_string()),
+    };
+    if !check_path(&rel) && !skill_unit(&rel) {
+        return Err(NOT_SHOWN.to_string());
+    }
+    // every step from Knowledge down is a real folder, never a link (the clash copy's .fridae-vault/clash included)
     let mut at = know.clone();
-    let mut parts = local.split('/').peekable();
-    while let Some(part) = parts.next() {
-        at.push(part);
+    let below = root.strip_prefix(&know).map(Path::to_path_buf).unwrap_or_default();
+    let steps: Vec<String> = below.iter().map(|s| s.to_string_lossy().to_string()).chain(rel.split('/').map(str::to_string)).collect();
+    let mut steps = steps.iter().peekable();
+    while let Some(step) = steps.next() {
+        at.push(step);
         match fs::symlink_metadata(&at) {
             Ok(m) if m.file_type().is_symlink() => return Err(NOT_SHOWN.to_string()),
-            Ok(m) if parts.peek().is_some() && !m.is_dir() => return Err(GONE.to_string()),
+            Ok(m) if steps.peek().is_some() && !m.is_dir() => return Err(GONE.to_string()),
             Ok(_) => {}
             Err(_) => break,
         }
     }
-    let target = join(&know, &local);
-    if !target.starts_with(know.join("Skills")) {
+    let target = join(&root, &rel);
+    if !target.starts_with(&root) || target == root {
         return Err(NOT_SHOWN.to_string());
     }
-    let plain = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
-    let name = target.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i..]),
-        _ => (name.as_str(), ""),
-    };
-    let beside = target.with_file_name(format!("{stem} (Fridae update){ext}"));
-    if plain(&beside) {
-        return Ok(beside);
-    }
-    if plain(&target) {
+    if fs::symlink_metadata(&target).is_ok_and(|m| m.is_file() || m.is_dir()) {
         return Ok(target);
     }
+    // the vault's copy is shown only when it is there; the user's missing file shows its folder (not a skill gone
+    // whole, and never Knowledge or Skills themselves)
     match target.parent() {
-        Some(dir) if dir != know.join("Skills") && fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) => Ok(dir.to_path_buf()),
+        Some(dir) if which == "mine" && dir != know && dir != know.join("Skills") && fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) => {
+            Ok(dir.to_path_buf())
+        }
         _ => Err(GONE.to_string()),
     }
 }
 
-/// POST /api/vault/reveal {path}: show a file of the vault's in Finder or Explorer.
-pub fn reveal(path: &str) -> Value {
-    match reveal_target(path) {
+/// POST /api/vault/reveal {path, which}: show a file of the vault's, the user's or the vault's waiting copy, in
+/// Finder or Explorer.
+pub fn reveal(path: &str, which: &str) -> Value {
+    match reveal_target(path, which) {
         Ok(p) => {
             let (cmd, args) = crate::promo::reveal_cmd(&p.display().to_string());
             let mut c = std::process::Command::new(cmd);
@@ -239,6 +251,32 @@ pub fn reveal(path: &str) -> Value {
             use paths::Start;
             if c.start().is_ok() { json!({"ok": true}) } else { fail("Fridae could not open the folder.") }
         }
+        Err(e) => fail(e),
+    }
+}
+
+/// GET /api/vault/clashes: what each card waiting for Keep the vault's / Keep mine shows (`vault-clashes`).
+pub fn clashes() -> Value {
+    match crate::share::kit_json(&["vault-clashes", "--json"]) {
+        Ok(Value::Array(list)) => json!({"ok": true, "clashes": list}),
+        Ok(_) => fail(NOT_RUN),
+        Err(e) => fail(e),
+    }
+}
+
+/// POST /api/vault/clash {unit, choice}: the user's Keep the vault's ("vault") or Keep mine ("mine") for one waiting
+/// unit, never while an update runs (it would rewrite the same record).
+pub fn decide_clash(unit: &str, choice: &str) -> Value {
+    let Some(_held) = claim() else {
+        return json!({"ok": false, "busy": true, "error": BUSY});
+    };
+    if !matches!(choice, "vault" | "mine") {
+        return fail(CHOOSE);
+    }
+    let (unit, choice) = (format!("--unit={unit}"), format!("--choice={choice}"));
+    match crate::share::kit_json(&["vault-clash", &unit, &choice, "--json"]) {
+        Ok(v) if v.is_object() => v,
+        Ok(_) => fail(NOT_RUN),
         Err(e) => fail(e),
     }
 }
@@ -371,6 +409,8 @@ fn run() -> Value {
     };
     let (base, know) = (read_base(), knowledge());
     let mut need = needed(&m, &base, &know);
+    // a unit waiting for the user's choice on this same release: its vault copy is already kept for the card
+    need.retain(|f| base["clashes"][unit_of(&f.path)]["release"].as_str() != Some(tag.as_str()));
     if base["release"].as_str() == Some(&tag) {
         // the same release: what the user deleted, declined or has waiting is no reason to download it again
         let listed = |key: &str, name: &str| base[key].as_array().is_some_and(|l| l.iter().any(|v| v.as_str() == Some(name)));
@@ -432,8 +472,8 @@ fn right(f: &ManFile, bytes: &[u8]) -> bool {
 }
 
 /// Put every manifest file under `dir` (vault-apply wants the whole release there): the needed ones fetched and
-/// checked, the others copied from where the same bytes already are (the user's file or the base record's copy) and
-/// fetched only when neither has them. Then apply it.
+/// checked, the others copied from where the same bytes already are (the user's file, the base record's copy or the
+/// vault's copy waiting for a clash card) and fetched only when none has them. Then apply it.
 #[allow(clippy::too_many_arguments)]
 fn stage_and_apply(repo: &str, tag: &str, m: &Manifest, man_bytes: &[u8], base: &Value, need: &[ManFile], dir: &Path, manifest: &Path) -> Result<Value, String> {
     real_dir(&vault_app())?;
@@ -442,11 +482,15 @@ fn stage_and_apply(repo: &str, tag: &str, m: &Manifest, man_bytes: &[u8], base: 
     remove(manifest);
     let know = knowledge();
     let record_copies = know.join(".fridae-vault").join("base");
+    let clash_copies = know.join(".fridae-vault").join("clash");
     for f in &m.files {
         let held = if need.contains(f) {
             None
         } else {
-            local_bytes(f, base, &know).filter(|b| right(f, b)).or_else(|| read_plain(&join(&record_copies, &f.path)).filter(|b| right(f, b)))
+            local_bytes(f, base, &know)
+                .filter(|b| right(f, b))
+                .or_else(|| read_plain(&join(&record_copies, &f.path)).filter(|b| right(f, b)))
+                .or_else(|| read_plain(&join(&clash_copies, &f.path)).filter(|b| right(f, b)))
         };
         let bytes = match held {
             Some(b) => b,
@@ -527,6 +571,7 @@ mod tests {
     const ALPHA: &str = "Skills/vault-alpha/SKILL.md";
     const ALPHA_REF: &str = "Skills/vault-alpha/ref.md";
     const BETA: &str = "Skills/vault-beta/SKILL.md";
+    const GLOSSARY: &str = "Roblox/Glossary.md";
 
     #[derive(Default)]
     struct Served {
@@ -1013,35 +1058,156 @@ Words: {words}. {body}.
     }
 
     #[test]
-    fn reveal_stays_in_the_skills_folder() {
+    fn reveal_stays_in_the_knowledge_folder() {
         let (_g, _s) = setup();
-        let skills = knowledge().join("Skills");
+        let k = knowledge();
+        let skills = k.join("Skills");
         fs::create_dir_all(skills.join("vault-alpha")).unwrap();
         fs::write(skills.join("vault-alpha").join("SKILL.md"), "mine").unwrap();
-        assert_eq!(reveal_target(ALPHA), Ok(skills.join("vault-alpha").join("SKILL.md")));
-        // the new copy saved beside the user's is what is shown
-        fs::write(skills.join("vault-alpha").join("SKILL (Fridae update).md"), "new").unwrap();
-        assert_eq!(reveal_target(ALPHA), Ok(skills.join("vault-alpha").join("SKILL (Fridae update).md")));
+        assert_eq!(reveal_target(ALPHA, "mine"), Ok(skills.join("vault-alpha").join("SKILL.md")));
+        // a skill's unit is its folder
+        assert_eq!(reveal_target("Skills/vault-alpha", "mine"), Ok(skills.join("vault-alpha")));
         // a missing file: its folder
-        assert_eq!(reveal_target(ALPHA_REF), Ok(skills.join("vault-alpha")));
+        assert_eq!(reveal_target(ALPHA_REF, "mine"), Ok(skills.join("vault-alpha")));
+        // a guide anywhere in Knowledge
+        fs::create_dir_all(k.join("Roblox")).unwrap();
+        fs::write(k.join("Roblox").join("Glossary.md"), "mine").unwrap();
+        assert_eq!(reveal_target(GLOSSARY, "mine"), Ok(k.join("Roblox").join("Glossary.md")));
         // a skill the user renamed lives in its new folder
         fs::create_dir_all(skills.join("my-beta")).unwrap();
         fs::write(skills.join("my-beta").join("SKILL.md"), "mine").unwrap();
         write_atomic(&base_file(), br#"{"renamed": {"vault-beta": "my-beta"}}"#).unwrap();
-        assert_eq!(reveal_target(BETA), Ok(skills.join("my-beta").join("SKILL.md")));
+        assert_eq!(reveal_target(BETA, "mine"), Ok(skills.join("my-beta").join("SKILL.md")));
+        assert_eq!(reveal_target("Skills/vault-beta", "mine"), Ok(skills.join("my-beta")));
+        fs::write(k.join("House rules.md"), "rules").unwrap();
         for bad in ["Skills/../x/SKILL.md", "Skills/vault-alpha/../../x.md", "/etc/passwd", "C:/Windows/win.ini", "Skills/C:/x/y.md",
-                    "Skills/x:y/SKILL.md", "Skills\\vault-alpha\\SKILL.md", "Notes/x/y.md", "Skills/vault-gone/SKILL.md", ""] {
-            assert!(reveal_target(bad).is_err(), "{bad}");
+                    "Skills/x:y/SKILL.md", "Skills\\vault-alpha\\SKILL.md", "Skills/vault-gone/SKILL.md", "Skills/vault-gone", "",
+                    "House rules.md", "../x", "Roblox/../../x.md", ".fridae-vault/base.json", "Skills", "Roblox"] {
+            assert!(reveal_target(bad, "mine").is_err(), "{bad}");
         }
-        // a link inside the skills folder is never followed
+        assert_eq!(reveal_target("House rules.md", "mine"), Err(NOT_SHOWN.to_string()));
+        assert_eq!(NOT_SHOWN, "Fridae can only show files in your Knowledge folder.");
+        assert!(reveal_target(GLOSSARY, "elsewhere").is_err());
+        // a link inside Knowledge is never followed
         let outside = paths::test_dir("vault-outside");
         fs::create_dir_all(&outside).unwrap();
         fs::write(outside.join("SKILL.md"), "elsewhere").unwrap();
-        if link_dir(&outside, &skills.join("linked")) {
-            assert!(reveal_target("Skills/linked/SKILL.md").is_err());
+        if link_dir(&outside, &skills.join("linked")) && link_dir(&outside, &k.join("Linked")) {
+            assert!(reveal_target("Skills/linked/SKILL.md", "mine").is_err());
+            assert!(reveal_target("Skills/linked", "mine").is_err());
+            assert!(reveal_target("Linked/SKILL.md", "mine").is_err());
         } else {
             eprintln!("no folder links on this machine: the link case was not run");
         }
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn reveal_shows_the_vaults_copy_of_a_clash() {
+        let (_g, _s) = setup();
+        let k = knowledge();
+        let clash = k.join(".fridae-vault").join("clash");
+        fs::create_dir_all(k.join("Roblox")).unwrap();
+        fs::write(k.join("Roblox").join("Glossary.md"), "mine").unwrap();
+        // no copy waiting: nothing to show
+        assert_eq!(reveal_target(GLOSSARY, "vault"), Err(GONE.to_string()));
+        fs::create_dir_all(clash.join("Roblox")).unwrap();
+        fs::write(clash.join("Roblox").join("Glossary.md"), "the vault's").unwrap();
+        assert_eq!(reveal_target(GLOSSARY, "vault"), Ok(clash.join("Roblox").join("Glossary.md")));
+        assert_eq!(reveal_target(GLOSSARY, "mine"), Ok(k.join("Roblox").join("Glossary.md")));
+        // a skill's copy is its folder, by the vault's name even when the user renamed it
+        fs::create_dir_all(clash.join("Skills").join("vault-beta")).unwrap();
+        fs::write(clash.join("Skills").join("vault-beta").join("SKILL.md"), "the vault's").unwrap();
+        write_atomic(&base_file(), br#"{"renamed": {"vault-beta": "my-beta"}}"#).unwrap();
+        assert_eq!(reveal_target("Skills/vault-beta", "vault"), Ok(clash.join("Skills").join("vault-beta")));
+        assert_eq!(reveal_target(BETA, "vault"), Ok(clash.join("Skills").join("vault-beta").join("SKILL.md")));
+        for bad in ["../x", "House rules.md", "Roblox/../../x.md", ""] {
+            assert!(reveal_target(bad, "vault").is_err(), "{bad}");
+        }
+        // a link in place of the clash folder is never followed
+        let outside = paths::test_dir("vault-outside");
+        fs::create_dir_all(outside.join("Roblox")).unwrap();
+        fs::write(outside.join("Roblox").join("Glossary.md"), "elsewhere").unwrap();
+        fs::remove_dir_all(&clash).unwrap();
+        if link_dir(&outside, &clash) {
+            assert!(reveal_target(GLOSSARY, "vault").is_err());
+        } else {
+            eprintln!("no folder links on this machine: the link case was not run");
+        }
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn clash_decisions_wait_for_a_running_update() {
+        let (_g, _s) = setup();
+        let held = claim();
+        let r = decide_clash(GLOSSARY, "vault");
+        assert_eq!((r["ok"].clone(), r["busy"].clone(), r["error"].clone()), (json!(false), json!(true), json!(BUSY)), "{r}");
+        drop(held);
+        for bad in ["", "both", "Vault"] {
+            assert_eq!(decide_clash(GLOSSARY, bad), json!({"ok": false, "error": "Choose Keep the vault's or Keep mine."}), "{bad}");
+        }
+        // nothing waiting: the CLI's own answer, passed on
+        let r = decide_clash(GLOSSARY, "mine");
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().is_some_and(|e| !e.is_empty()), "{r}");
+        assert_eq!(clashes(), json!({"ok": true, "clashes": []}));
+    }
+
+    #[test]
+    fn a_waiting_clash_is_no_reason_to_download_again() {
+        let (_g, s) = setup();
+        let other = "Roblox/Other.md";
+        let one = vec![(GLOSSARY, "one\ntwo\nthree\n".to_string()), (other, "other\n".to_string())];
+        release(&s, T1, &one);
+        assert_eq!(update(true)["ok"], true);
+        let k = knowledge();
+        fs::write(join(&k, GLOSSARY), "one\nTWO (mine)\nthree\n").unwrap();
+        let mut two = one.clone();
+        two[0].1 = "one\nTWO (the vault's)\nthree\n".into();
+        release(&s, T2, &two);
+        let r = update(false);
+        assert_eq!(r["clashes"], json!([GLOSSARY]), "{r}");
+        assert_eq!(fs::read_to_string(join(&k, GLOSSARY)).unwrap(), "one\nTWO (mine)\nthree\n", "the user's stays in use");
+        let waiting = clashes();
+        assert_eq!(waiting["ok"], true, "{waiting}");
+        assert_eq!(waiting["clashes"][0]["unit"], GLOSSARY, "{waiting}");
+        // the daily check on the same release: nothing fetched, nothing asked again
+        s.log.lock().unwrap().clear();
+        let r = update(false);
+        assert_eq!((r["ok"].clone(), r["current"].clone()), (json!(true), json!(true)), "{r}");
+        assert!(fetched(&s).is_empty(), "{:?}", fetched(&s));
+        // another file of the same release is needed again (it could not be put in place): only it is fetched,
+        // the clash's file is staged from the vault's copy kept for the card
+        fs::remove_file(join(&k, other)).unwrap();
+        let mut b = read_base();
+        b["files"].as_object_mut().unwrap().remove(other);
+        write_atomic(&base_file(), b.to_string().as_bytes()).unwrap();
+        s.log.lock().unwrap().clear();
+        let r = update(false);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fetched(&s), vec![format!("/o/r/{T2}/{other}")]);
+        assert_eq!(fs::read_to_string(join(&k, other)).unwrap(), "other\n");
+        assert_eq!(clashes()["clashes"][0]["unit"], GLOSSARY);
+        // Keep the vault's: the vault's version is in use
+        let r = decide_clash(GLOSSARY, "vault");
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(fs::read_to_string(join(&k, GLOSSARY)).unwrap(), two[0].1);
+        assert_eq!(clashes(), json!({"ok": true, "clashes": []}));
+    }
+
+    #[test]
+    fn guides_download_like_skills() {
+        let (_g, s) = setup();
+        let files = vec![(GLOSSARY, "A glossary of Roblox words.\n".to_string()), (ALPHA, skill("vault-alpha", "zebra crossings"))];
+        release(&s, T1, &files);
+        let r = update(true);
+        assert_eq!(r["ok"], true, "{r}");
+        let mut added: Vec<&str> = r["added"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+        added.sort();
+        assert_eq!(added, vec![GLOSSARY, ALPHA]);
+        for (p, text) in &files {
+            assert_eq!(&fs::read_to_string(join(&knowledge(), p)).unwrap(), text);
+        }
     }
 }
