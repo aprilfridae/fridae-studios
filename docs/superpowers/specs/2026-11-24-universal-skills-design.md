@@ -111,13 +111,16 @@ ignore").
     vault update rules apply (keep the user's, save the new one beside it, flag it in Review).
   - A project's own skills stay with the project (like game-only notes) and are not copied out.
   - The seven Claude-desktop-only skills (`APP_ONLY` on the branch) are never imported.
-- **Claude agents see the library, not their own copies** (my call).
-  - Fridae runs Claude in account folders of its own (`accounts.rs`), which today link the user's `~/.claude/skills`.
-    Instead of that link, Fridae builds that folder's `skills` from the library's winners, as links to them. The user's
-    `~/.claude` is never touched.
-  - Claude Code plugins (superpowers and so on) still list their own skills, and Fridae doesn't switch them off.
-  - When a library skill is the same skill as a plugin's (known through the import link or the overlap check): if the
-    library's copy is the plugin's unchanged, Fridae leaves it out of pins and suggestions, so Claude sees it once.
+- **Claude sees each skill once where it can, and is told which copy wins where it can't** (my call; amended while
+  planning).
+  - Fridae runs Claude's main account with the user's own `~/.claude` (only second accounts get folders of their own
+    in `accounts.rs`). So Fridae cannot rebuild the main account's skills folder without touching `~/.claude`, which it
+    never does. The account folders keep linking the user's skills as today.
+  - Claude Code (its own skills folder and plugins such as superpowers) still lists its skills, and Fridae doesn't
+    switch them off.
+  - When a library skill is the same skill as one Claude Code lists (known through the import link or the overlap
+    check): if the library's copy is that one unchanged, Fridae leaves it out of pins and suggestions, so Claude sees it
+    once.
   - If the library's winner differs (merged or replaced), Fridae pins or suggests its own, and Claude's instructions
     say: "When a Fridae skill (rbx_skill) and a Claude Code skill cover the same thing, use the Fridae one."
   - This is the one place two versions can show up, and only for Claude with that plugin enabled.
@@ -215,8 +218,8 @@ ignore").
    - Build on `feature/shared-skills`.
    - The skill format; guides converted to skills; `rbx_skill` with search; `rbx_guide` as an alias.
    - The `skills` search shelf, per-turn suggestions, pinned core.
-   - Import from other folders, the overlap check and its Review card, the bulk first-run review, and Claude's
-     account-folder skills built from the library.
+   - Import from other folders, the overlap check and its decision cards (in Setup › Skills), the bulk first-run
+     review, and Claude's skip-unchanged rule with the precedence line.
    - The notes upkeep pass (near-duplicates and contradictions in the user's vault).
    - This alone delivers "universal, efficient, no duplicates" on the user's Mac.
 2. **The starter library.** Collect, licence-check, convert and de-duplicate open skill collections.
