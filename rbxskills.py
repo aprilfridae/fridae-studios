@@ -18,16 +18,26 @@ import json
 import os
 import re
 
+import rbxpaths
+
+KIT = rbxpaths.KIT
 HOME = os.path.expanduser("~")
 DESC_MAX = 170       # characters of a description in the catalog
 READ_MAX = 100_000   # bytes of a file handed out by `read`
 FILES_MAX = 80       # files listed by `load`
 
+# the skills the app ships: (folder under KIT, owner of a skill that does not say)
+KIT_ROOTS = [("vault/Fridae/Guides/Core", "shipped"), ("vault/Fridae/Guides/Roblox subjects", "shipped"),
+             ("vault/Fridae/Guides/LihFolk", "shipped")]
+OWNERS = ("app", "shipped", "community", "user")
+APPLIES = ("game", "plain", "both")
+
 # Skills the Claude desktop app syncs that only work with the desktop app's own tools (its browser pane, Chrome
 # extension, computer use, docs and Google connectors, artifacts, memory). No agent in Fridae has those tools.
 APP_ONLY = {"built-in-browser", "chrome-browser", "computer-use", "docs", "google-workspace", "morning", "import-memory"}
 
-ORIGIN_LABEL = {"project": "this project", "claude": "Claude Code", "claude-plugin": "a Claude Code plugin",
+ORIGIN_LABEL = {"app": "built into Fridae", "shipped": "shipped with Fridae", "user": "your library",
+                "project": "this project", "claude": "Claude Code", "claude-plugin": "a Claude Code plugin",
                 "synced": "synced from Claude", "synced-plugin": "a plugin synced from Claude", "other": "another AI tool"}
 # the origins Claude Code loads by itself (its Skill tool already lists them), besides its own account's synced ones
 CLAUDE_NATIVE = {"project", "claude", "claude-plugin"}
@@ -44,17 +54,27 @@ def _read(path, limit=None):
 
 
 def front(text):
-    """(front matter as {key: value} for simple and folded keys, the text after it)."""
+    """(front matter as {key: value}: simple and folded keys are text; `key:` followed by `- item` lines, or
+    `[a, b]`, is a list; the text after it)."""
     m = re.match(r"^﻿?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(\r?\n|$)", text, re.S)
     if not m:
         return {}, text
-    fm, key = {}, None
+    fm, key, block = {}, None, False
     for line in m.group(1).splitlines():
         mm = re.match(r"^([A-Za-z_][\w.-]*):[ \t]*(.*)$", line)
+        item = re.match(r"^[ \t]*-[ \t]+(.*)$", line)
         if mm:
             key, val = mm.group(1), mm.group(2).strip()
-            fm[key] = "" if val in (">", "|", ">-", "|-", ">+", "|+") else _unquote(val)
-        elif key and line[:1] in (" ", "\t"):
+            block = val in (">", "|", ">-", "|-", ">+", "|+")
+            if block:
+                fm[key] = ""
+            elif len(val) > 1 and val[0] == "[" and val[-1] == "]":
+                fm[key] = [_unquote(x.strip()) for x in val[1:-1].split(",") if x.strip()]
+            else:
+                fm[key] = _unquote(val)
+        elif key and not block and item and (fm[key] == "" or isinstance(fm[key], list)):
+            fm[key] = (fm[key] or []) + [_unquote(item.group(1).strip())]
+        elif key and line[:1] in (" ", "\t") and isinstance(fm[key], str):
             fm[key] = (fm[key] + " " + line.strip()).strip()
     return fm, text[m.end():]
 
@@ -153,14 +173,69 @@ def _copies(project=None):
                    "plugin": plugin, "plugin_root": plugin_root, "bucket": bucket}
 
 
+def user_dir():
+    """The user's own skill library."""
+    return os.path.join(rbxpaths.HOME_DIR, "skills")
+
+
+def _list(val):
+    if isinstance(val, list):
+        return [str(x).strip() for x in val if str(x).strip()]
+    return [val.strip()] if isinstance(val, str) and val.strip() else []
+
+
+def meta(fm, folder, default_owner):
+    """Every skill field, filled: what the front matter says, else the default. Never raises on odd values."""
+    name = fm.get("name")
+    name = name.strip() if isinstance(name, str) and name.strip() else os.path.basename(folder.rstrip("/\\"))
+    desc = fm.get("description")
+    owner, applies = fm.get("owner"), fm.get("applies")
+    text = lambda k: fm[k].strip() if isinstance(fm.get(k), str) else ""
+    return {"name": name, "description": " ".join(desc.split()) if isinstance(desc, str) else "",
+            "examples": _list(fm.get("examples")), "applies": applies if applies in APPLIES else "both",
+            "core": str(fm.get("core")).strip().lower() in ("true", "yes", "1"),
+            "owner": owner if owner in OWNERS else default_owner, "source": text("source"), "licence": text("licence"),
+            "supersedes": _list(fm.get("supersedes")), "updated": text("updated")}
+
+
+def _entry(d, origin, default_owner, kit=False):
+    try:
+        fm, _ = front(_read(os.path.join(d, "SKILL.md"), 8000))
+    except (OSError, ValueError):
+        fm = {}
+    m = meta(fm, d, default_owner)
+    if m["owner"] == "app" and not kit:
+        m["owner"] = default_owner  # only the app's own skills are app-owned
+    m.update(id=m["name"], dir=d, origin=origin, plugin="", plugin_root="", bucket="")
+    return m
+
+
+def library(project=None):
+    """[{id, name, description, examples, applies, core, owner, source, licence, supersedes, updated, dir, origin}]:
+    the app's skills, those it ships, the user's, then the project's. One per name; a later one takes an earlier
+    name, except an app skill's, which nothing can take."""
+    kit = []
+    for rel, owner in KIT_ROOTS:
+        for d in _skill_dirs(os.path.join(KIT, *rel.split("/"))):
+            e = _entry(d, "shipped", owner, kit=True)
+            if e["owner"] == "app":
+                e["origin"] = "app"
+            kit.append(e)
+    roots = [(os.path.join(project, sub, "skills"), "project") for sub in (".claude", ".agents")] if project else []
+    found = sorted(kit, key=lambda e: e["origin"] != "app") + \
+        [_entry(d, "user", "user") for d in _skill_dirs(user_dir())] + \
+        [_entry(d, o, "user") for r, o in roots[::-1] for d in _skill_dirs(r)]  # .agents, then .claude: .claude wins
+    out = {}
+    for e in found:
+        key = e["id"].casefold()
+        if key not in out or out[key]["owner"] != "app":
+            out[key] = e
+    return list(out.values())
+
+
 def skills(project=None):
-    """[{id, name, description, dir, origin, plugin, plugin_root, bucket}] for every skill, first found wins."""
-    seen, out = set(), []
-    for s in _copies(project):
-        if s["id"].casefold() not in seen:
-            seen.add(s["id"].casefold())
-            out.append(s)
-    return out
+    """Every skill in the library, for the project."""
+    return library(project)
 
 
 def claude_account(config=None):
@@ -250,7 +325,7 @@ def _files(d):
 
 def _fill(text, s):
     text = text.replace("${CLAUDE_SKILL_DIR}", s["dir"])
-    if s["plugin_root"]:
+    if s.get("plugin_root"):
         text = text.replace("${CLAUDE_PLUGIN_ROOT}", s["plugin_root"])
     return text
 
