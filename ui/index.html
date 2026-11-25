@@ -45,7 +45,7 @@ input, select, textarea { font: inherit; color: inherit; }
 ::selection { background: rgba(255, 255, 255, 0.22); }
 [hidden] { display: none !important; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-track { background: transparent; margin-block: var(--r-l); } /* stops short of rounded corners */
 ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); background-clip: content-box; }
 ::-webkit-scrollbar-button { display: none; }
@@ -1348,9 +1348,11 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
         <p class="sub sk-err" id="sk-all-err" role="status"></p>
         <div class="rv-list sk-decs" id="sk-decs"></div>
       </div>
-      <h3 class="sk-h">Your skills <span id="sk-n"></span></h3>
+      <h3 class="sk-h">Your skills <span id="sk-n"></span><button class="pill sm" id="sk-fold" aria-expanded="false" aria-controls="sk-body">Show</button></h3>
+      <div id="sk-body" hidden>
       <div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, games" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div>
       <div class="sk-list" id="sk-list"><p class="sub">Loading...</p></div>
+      </div>
       <h3 class="sk-h">Share your skills</h3>
       <div id="sh-ask" hidden>
         <p class="sub">Share skills you make with everyone who uses Fridae?</p>
@@ -5745,6 +5747,15 @@ $("sk-notes").onclick = async () => {
   loadSkills();
 };
 $("sk-filter").oninput = () => skPaintList();
+/* Your skills folds away (it is long); the choice is remembered */
+function skFold(open) {
+  $("sk-body").hidden = !open;
+  $("sk-fold").textContent = open ? "Hide" : "Show";
+  $("sk-fold").setAttribute("aria-expanded", String(open));
+  try { localStorage.setItem("skills-shown", open ? "1" : "0"); } catch (e) {}
+}
+$("sk-fold").onclick = () => skFold($("sk-body").hidden);
+try { skFold(localStorage.getItem("skills-shown") === "1"); } catch (e) { skFold(false); }
 $("ap-sk-go").onclick = () => openSetup("skills");
 /* the count of open decisions: Setup's Skills button and the Overview's totals line */
 function skPaintCount() {
