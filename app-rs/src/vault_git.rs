@@ -53,7 +53,7 @@ fn enc(path: &str) -> String {
     out
 }
 
-fn sentence(what: &str, code: u16, v: &Value) -> String {
+pub(crate) fn sentence(what: &str, code: u16, v: &Value) -> String {
     let said = github::said(v);
     let said = said.trim_end_matches('.');
     match code {
@@ -76,12 +76,12 @@ pub(crate) fn get(path: &str, auth: bool) -> Result<(u16, Value), String> {
 }
 
 /// An authenticated call that must succeed; its JSON answer.
-fn call(method: &str, path: &str, body: Option<Value>, what: &str) -> Result<Value, String> {
+pub(crate) fn call(method: &str, path: &str, body: Option<Value>, what: &str) -> Result<Value, String> {
     call_as(method, path, body, what, &[])
 }
 
 /// `call`, where some answers have a sentence of their own (never GitHub's own words): (status, sentence).
-fn call_as(method: &str, path: &str, body: Option<Value>, what: &str, own: &[(u16, &str)]) -> Result<Value, String> {
+pub(crate) fn call_as(method: &str, path: &str, body: Option<Value>, what: &str, own: &[(u16, &str)]) -> Result<Value, String> {
     let token = github::read_token().ok_or_else(|| NOT_CONNECTED.to_string())?;
     let (code, v) = github::api(method, path, &token, body)?;
     if (200..300).contains(&code) {
@@ -90,7 +90,7 @@ fn call_as(method: &str, path: &str, body: Option<Value>, what: &str, own: &[(u1
     Err(own.iter().find(|(c, _)| *c == code).map(|(_, s)| s.to_string()).unwrap_or_else(|| sentence(what, code, &v)))
 }
 
-fn unreadable(what: &str) -> String {
+pub(crate) fn unreadable(what: &str) -> String {
     format!("GitHub gave an answer about {what} that Fridae could not read.")
 }
 
@@ -203,14 +203,22 @@ pub(crate) fn open_pr(upstream: &str, head: &str, title: &str, body: &str) -> Re
     }
 }
 
-/// The files of a pull request, up to 300.
+/// The files of a pull request, up to 300. More than that is an error, never a list cut short: a submission whose
+/// files cannot all be seen cannot be reviewed.
 pub(crate) fn pr_files(repo: &str, n: u64) -> Result<Vec<Value>, String> {
     let mut all = Vec::new();
-    for page in 1..=PR_FILES_PAGES {
+    // one page past the last one read, to see whether there is more
+    for page in 1..=PR_FILES_PAGES + 1 {
         let v = call("GET", &format!("/repos/{repo}/pulls/{n}/files?per_page=100&page={page}"), None, "list the files of the pull request")?;
-        let items = v.as_array().cloned().unwrap_or_default();
+        let items = v.as_array().ok_or_else(|| unreadable("the files of the pull request"))?;
+        if page > PR_FILES_PAGES {
+            if items.is_empty() {
+                break;
+            }
+            return Err("This submission has too many files to review in Fridae.".to_string());
+        }
         let full = items.len() >= 100;
-        all.extend(items);
+        all.extend(items.iter().cloned());
         if !full {
             break;
         }
@@ -481,6 +489,34 @@ mod tests {
         }
         assert_eq!(errs[0], "GitHub would not say where the branch is (error 500).");
         assert_eq!(errs[1], "GitHub would not take a file (error 422).");
+    }
+
+    #[test]
+    fn pr_files_never_returns_a_cut_list() {
+        let page = |n: usize, from: usize| -> String { serde_json::to_string(&(0..n).map(|i| json!({"filename": format!("Skills/a/f{}.md", from + i)})).collect::<Vec<_>>()).unwrap() };
+        // exactly 300 files: all of them
+        let (_g, s) = setup(
+            Box::new(move |_, p, _, _| {
+                let pg: usize = p.rsplit("page=").next().unwrap().parse().unwrap();
+                (200, if pg <= 3 { page(100, (pg - 1) * 100) } else { "[]".into() })
+            }),
+            true,
+        );
+        assert_eq!(pr_files("o/r", 4).unwrap().len(), 300);
+        assert_eq!(requests(&s).len(), 4, "the page after the last full one is looked at too");
+        // more than 300: an error, never the first 300
+        let (_g2, _s2) = {
+            drop(_g);
+            setup(Box::new(move |_, _, _, _| (200, page(100, 0))), true)
+        };
+        assert_eq!(pr_files("o/r", 4), Err("This submission has too many files to review in Fridae.".to_string()));
+    }
+
+    #[test]
+    fn pr_files_answer_that_is_not_a_list_is_an_error() {
+        let (_g, _s) = setup(Box::new(|_, _, _, _| (200, r#"{"message":"surprise"}"#.into())), true);
+        let e = pr_files("o/r", 4).unwrap_err();
+        assert_eq!(e, "GitHub gave an answer about the files of the pull request that Fridae could not read.");
     }
 
     #[test]
