@@ -338,21 +338,27 @@ class VaultSyncTests(unittest.TestCase):
         self.assertTrue(os.path.exists(self.local(ok.replace(".md", " (Fridae update 2).md"))))
         self.refused({"Skills/z/%s.md" % ("n" * (rbxvaultsync.NAME_MAX - 2)): "v"})
 
-    def test_upstream_paths_equal_after_casefold_are_refused(self):
-        self.refused({"Skills/y/A.md": "a", "Skills/y/a.md": "b"})
-
     def test_removing_through_a_symlinked_base_copy_is_refused(self):
         outside = tempfile.mkdtemp(prefix="outside ")
         self.addCleanup(shutil.rmtree, outside, True)
-        with open(os.path.join(outside, "keep.md"), "w") as f:
-            f.write("keep")
         self.seed(self.P, "v1", "v1")
         self.seed("Skills/y/SKILL.md", "Y", "Y")
-        copy = os.path.join(rbxvaultsync.state_dir(), "base", "Skills", "x", "SKILL.md")
-        os.remove(copy)
-        os.symlink(os.path.join(outside, "keep.md"), copy)
+        folder = os.path.join(rbxvaultsync.state_dir(), "base", "Skills", "x")
+        shutil.move(os.path.join(folder, "SKILL.md"), os.path.join(outside, "SKILL.md"))
+        os.rmdir(folder)
+        os.symlink(outside, folder)  # base/Skills/x is now a link to a folder outside the record
         self.apply({"Skills/y/SKILL.md": "Y"})
-        self.assertEqual(open(os.path.join(outside, "keep.md")).read(), "keep")
+        self.assertTrue(os.path.exists(os.path.join(outside, "SKILL.md")))
+        self.assertTrue(os.path.islink(folder))
+
+    def test_upstream_paths_equal_after_casefold_are_refused(self):
+        """The two upstream paths map to different local files, so only the upstream check can refuse them."""
+        b = rbxvaultsync.read_base()
+        b["renamed"] = {"X": "x-big"}
+        os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+        rbxskills._write_json(rbxvaultsync.base_path(), b)
+        # same bytes: they are one staged file on a case-insensitive disk
+        self.refused({"Skills/X/a.md": "same", "Skills/x/a.md": "same"})
 
     def test_knowledge_itself_may_be_a_symlink(self):
         real = tempfile.mkdtemp(prefix="portable ")
