@@ -236,11 +236,38 @@ pub(crate) fn tree_paths(repo: &str, sha: &str) -> Result<Vec<String>, String> {
     Ok(tree.iter().filter(|e| e["type"] == "blob").filter_map(|e| e["path"].as_str().map(str::to_string)).collect())
 }
 
-/// A file's bytes by its blob sha.
-pub(crate) fn blob(repo: &str, sha: &str) -> Result<Vec<u8>, String> {
+/// The most a blob may be: 1 MiB (no file of a release, and none a submission may hold, is bigger).
+pub(crate) const BLOB_MAX: u64 = 1024 * 1024;
+
+/// A blob as read: its bytes, or only its size when that is over the limit it was read with.
+#[derive(Debug)]
+pub(crate) enum Blob {
+    Bytes(Vec<u8>),
+    TooBig(u64),
+}
+
+/// A blob by its sha, decoded only when it is at most `max` bytes. An answer that is not base64 `content` of exactly
+/// the `size` GitHub gives (one cut off, or one with no content) is an error, never empty bytes.
+pub(crate) fn blob_within(repo: &str, sha: &str, max: u64) -> Result<Blob, String> {
     let v = call("GET", &format!("/repos/{repo}/git/blobs/{sha}"), None, "send a file")?;
-    let text: String = v["content"].as_str().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
-    base64::engine::general_purpose::STANDARD.decode(text).map_err(|_| unreadable("a file"))
+    let size = v["size"].as_u64().ok_or_else(|| unreadable("a file"))?;
+    if size > max {
+        return Ok(Blob::TooBig(size));
+    }
+    let (Some("base64"), Some(content)) = (v["encoding"].as_str(), v["content"].as_str()) else {
+        return Err(unreadable("a file"));
+    };
+    let text: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD.decode(text).map_err(|_| unreadable("a file"))?;
+    if bytes.len() as u64 == size { Ok(Blob::Bytes(bytes)) } else { Err(unreadable("a file")) }
+}
+
+/// A file's bytes by its blob sha: at most `BLOB_MAX`, checked as `blob_within` checks it.
+pub(crate) fn blob(repo: &str, sha: &str) -> Result<Vec<u8>, String> {
+    match blob_within(repo, sha, BLOB_MAX)? {
+        Blob::Bytes(b) => Ok(b),
+        Blob::TooBig(_) => Err("A file on GitHub is too big for Fridae to read.".to_string()),
+    }
 }
 
 /// Leave a comment on a pull request and close it.
@@ -527,6 +554,43 @@ mod tests {
         let (_g, _s) = setup(Box::new(|_, _, _, _| (200, r#"{"message":"surprise"}"#.into())), true);
         let e = pr_files("o/r", 4).unwrap_err();
         assert_eq!(e, "GitHub gave an answer about the files of the pull request that Fridae could not read.");
+    }
+
+    #[test]
+    fn blob_is_base64_content_of_its_size_or_an_error() {
+        let b64 = |t: &[u8]| base64::engine::general_purpose::STANDARD.encode(t);
+        let good = json!({"content": b64(b"hello"), "encoding": "base64", "size": 5}).to_string();
+        let empty = json!({"content": "", "encoding": "base64", "size": 0}).to_string();
+        let short = json!({"content": b64(b"hel"), "encoding": "base64", "size": 5}).to_string();
+        let utf8 = json!({"content": "hello", "encoding": "utf-8", "size": 5}).to_string();
+        let no_content = json!({"encoding": "base64", "size": 5}).to_string();
+        let no_size = json!({"content": b64(b"hello"), "encoding": "base64"}).to_string();
+        let huge = json!({"content": b64(b"hello"), "encoding": "base64", "size": 2 * 1024 * 1024}).to_string();
+        let (_g, _s) = setup(
+            Box::new(move |_, p, _, _| {
+                let text = match p.rsplit('/').next().unwrap() {
+                    "good" => good.clone(),
+                    "empty" => empty.clone(),
+                    "short" => short.clone(),
+                    "utf8" => utf8.clone(),
+                    "nocontent" => no_content.clone(),
+                    "nosize" => no_size.clone(),
+                    "huge" => huge.clone(),
+                    // an answer that could not be read whole (ureq stops at 10 MB) is no answer
+                    _ => String::new(),
+                };
+                (200, text)
+            }),
+            true,
+        );
+        assert_eq!(blob("o/r", "good").unwrap(), b"hello");
+        assert_eq!(blob("o/r", "empty").unwrap(), b"");
+        for bad in ["short", "utf8", "nocontent", "nosize", "huge", "cut"] {
+            assert!(blob("o/r", bad).is_err(), "{bad}");
+        }
+        assert!(matches!(blob_within("o/r", "huge", BLOB_MAX), Ok(Blob::TooBig(n)) if n == 2 * 1024 * 1024));
+        assert!(matches!(blob_within("o/r", "good", 4), Ok(Blob::TooBig(5))));
+        assert!(matches!(blob_within("o/r", "good", 5), Ok(Blob::Bytes(b)) if b == b"hello"));
     }
 
     #[test]

@@ -329,7 +329,8 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
     // a half-made folder from a run that was cut off
     remove(&dir);
     real_dir(&dir)?;
-    let (mut files, mut other, mut spent) = (Vec::new(), Vec::new(), 0usize);
+    // what was fetched so far, by the sizes GitHub gives; past PR_MAX nothing more is fetched
+    let (mut files, mut other, mut spent) = (Vec::new(), Vec::new(), 0u64);
     for f in &listed {
         let Some(path) = f["filename"].as_str() else { continue };
         if f["status"] == "removed" {
@@ -340,20 +341,28 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
             other.push(shown(path));
             continue;
         };
-        let bytes = vault_git::blob(repo, blob)?;
-        spent += bytes.len();
-        let note = if bytes.len() > FILE_MAX {
-            "Not shown: the file is over 200 KB."
-        } else if spent > PR_MAX {
-            "Not shown: this submission is too big to read in full."
-        } else if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
-            "Not shown: the file is not text."
+        const TOO_BIG_IN_ALL: &str = "Not shown: this submission is too big to read in full.";
+        let note = if spent > PR_MAX as u64 {
+            TOO_BIG_IN_ALL
         } else {
-            ""
+            match vault_git::blob_within(repo, blob, FILE_MAX as u64)? {
+                vault_git::Blob::TooBig(size) => {
+                    spent += size;
+                    "Not shown: the file is over 200 KB."
+                }
+                vault_git::Blob::Bytes(bytes) => {
+                    spent += bytes.len() as u64;
+                    if spent > PR_MAX as u64 {
+                        TOO_BIG_IN_ALL
+                    } else if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
+                        "Not shown: the file is not text."
+                    } else {
+                        write_atomic(&join(&dir, path), &bytes)?;
+                        ""
+                    }
+                }
+            }
         };
-        if note.is_empty() {
-            write_atomic(&join(&dir, path), &bytes)?;
-        }
         files.push(Fetched { path: path.to_string(), note: note.to_string() });
     }
     let record = json!({"files": files.iter().map(|f| json!({"path": f.path, "note": f.note})).collect::<Vec<_>>(), "other": other});
@@ -1197,7 +1206,7 @@ mod tests {
                     (200, json!({"tree": tree, "truncated": false}).to_string())
                 }
                 _ => match p.strip_prefix("/repos/o/r/git/blobs/").and_then(blob_of) {
-                    Some(text) => (200, json!({"content": b64(&text), "encoding": "base64"}).to_string()),
+                    Some(text) => (200, json!({"content": b64(&text), "encoding": "base64", "size": text.len()}).to_string()),
                     None => (404, "{}".into()),
                 },
             }
@@ -1342,6 +1351,21 @@ mod tests {
     }
 
     #[test]
+    fn a_huge_submission_is_read_only_to_its_budget() {
+        // ten files of 1 MiB: past 8 MiB nothing more is fetched
+        let big: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
+        let files: Vec<(&'static str, &'static str)> = std::iter::once(("Skills/tidy/SKILL.md", TIDY)).chain((0..10).map(|i| (&*Box::leak(format!("Skills/tidy/f{i}.md").into_boxed_str()), big))).collect();
+        let (_g, s) = setup("o", vault(files, vec![]));
+        let out = inbox();
+        assert_eq!(out["ok"], true, "{out}");
+        let fetched = calls(&s).iter().filter(|c| c.contains("/git/blobs/bbbb")).count();
+        assert_eq!(fetched, 1 + 8, "SKILL.md, then 1 MiB files until past 8 MiB: {fetched}");
+        let notes: Vec<String> = out["prs"][0]["skills"][0]["files"].as_array().unwrap().iter().map(|f| f["note"].as_str().unwrap_or("").to_string()).collect();
+        assert_eq!(notes.iter().filter(|n| n.as_str() == "Not shown: this submission is too big to read in full.").count(), 2, "{notes:?}");
+        assert_eq!(notes.iter().filter(|n| n.as_str() == "Not shown: the file is over 200 KB.").count(), 8, "{notes:?}");
+    }
+
+    #[test]
     fn inbox_is_for_the_maintainer_only() {
         let (_g, s) = setup("tester", Box::new(|_, p, _| if p == "/repos/o/r" { (200, r#"{"permissions":{"push":false}}"#.into()) } else { (404, "{}".into()) }));
         assert_eq!(inbox(), json!({"ok": false, "error": "Only the vault's maintainer can see submissions."}));
@@ -1363,7 +1387,7 @@ mod tests {
                     return (200, json!({"tree": tree}).to_string());
                 }
                 match p.strip_prefix("/repos/o/r/git/blobs/") {
-                    Some(sha) => (200, json!({"content": b64(sha.trim_start_matches('0')), "encoding": "base64"}).to_string()),
+                    Some(sha) => (200, json!({"content": b64(sha.trim_start_matches('0')), "encoding": "base64", "size": sha.trim_start_matches('0').len()}).to_string()),
                     None => (404, "{}".into()),
                 }
             }),
