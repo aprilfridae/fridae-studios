@@ -4,7 +4,7 @@
 //! scripts first, and a comparison with the vault's own skills, with an AI's recommendation written in the background.
 //!
 //! Nothing here is reachable by an agent: the routes in `server.rs` are the user's page's. The token stays in `github`
-//! and `vault_git`. Every path a pull request names comes from a stranger: it is checked (`path_ok`) before it becomes
+//! and `vault_git`. Every path a pull request names comes from a stranger: it is checked (`check_path`) before it becomes
 //! a path on disk, and everything is written under `VAULT_APP` only, through a temporary file and a rename.
 use std::{
     collections::{BTreeMap, HashMap},
@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     github::{self, NOT_CONNECTED},
     paths, share, skills, vault_git,
-    vault_sync::{self, real_dir, remove, write_atomic},
+    vault_sync::{self, check_path, real_dir, remove, write_atomic},
 };
 
 const ONLY_OWNER: &str = "Only the vault's owner can create it.";
@@ -85,21 +85,6 @@ fn sha_ok(s: &str) -> bool {
 }
 
 // ------------------------------------------------------------------------------------------------------- paths
-/// Whether one part of a path may be a file's or folder's name on every system: nothing Windows would read as a
-/// stream, a device or a trailing dot, and no control character.
-fn seg_ok(s: &str) -> bool {
-    const RESERVED: [&str; 4] = ["con", "prn", "aux", "nul"];
-    let stem = s.split('.').next().unwrap_or("").to_ascii_lowercase();
-    let device = RESERVED.contains(&stem.as_str()) || ((stem.starts_with("com") || stem.starts_with("lpt")) && stem.len() == 4 && stem.as_bytes()[3].is_ascii_digit());
-    !device && !s.chars().any(|c| c.is_control() || "<>:\"|?*".contains(c)) && !s.ends_with(['.', ' ']) && !s.starts_with(' ')
-}
-
-/// A path from a pull request or from the repository's tree that may be made a path on disk under a folder of ours:
-/// inside a skill's folder under `Skills/` (`vault_sync::check_path`), and with only safe names.
-fn path_ok(p: &str) -> bool {
-    vault_sync::check_path(p) && p.split('/').all(seg_ok)
-}
-
 /// A text for the page from a stranger's path: not too long.
 fn shown(p: &str) -> String {
     p.chars().filter(|c| !c.is_control()).take(300).collect()
@@ -263,7 +248,7 @@ fn create_repo_in() -> Result<Value, String> {
 }
 
 // ----------------------------------------------------------------------------------------------- the main mirror
-/// Bring `VAULT_APP/main/` up to the repository's `main`: only the skill files (`path_ok`), only the blobs whose sha
+/// Bring `VAULT_APP/main/` up to the repository's `main`: only the skill files (`check_path`), only the blobs whose sha
 /// changed, and `.index.json` maps each path to its blob sha. A file gone from `main` is removed from the mirror.
 /// Returns the paths inside a skill's folder that were left out (too big, a link, or a name Fridae will not write).
 fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
@@ -283,7 +268,7 @@ fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
     let mut skipped = Vec::new();
     for e in &tree {
         let (Some(path), Some(sha)) = (e["path"].as_str(), e["sha"].as_str()) else { continue };
-        if e["type"] == "blob" && e["mode"] != "120000" && path_ok(path) && sha_ok(sha) && e["size"].as_u64().unwrap_or(0) <= 1 << 20 {
+        if e["type"] == "blob" && e["mode"] != "120000" && check_path(path) && sha_ok(sha) && e["size"].as_u64().unwrap_or(0) <= 1 << 20 {
             wanted.insert(path.to_string(), sha.to_string());
         } else if e["type"] != "tree" && path.starts_with("Skills/") && path.split('/').count() >= 3 {
             skipped.push(shown(path));
@@ -299,7 +284,7 @@ fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
     }
     let gone: Vec<String> = index.keys().filter(|p| !wanted.contains_key(*p)).cloned().collect();
     for path in gone {
-        if path_ok(&path) {
+        if check_path(&path) {
             remove(&join(&root, &path));
         }
         index.remove(&path);
@@ -321,7 +306,7 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
     let dir = inbox_dir().join(format!("pr-{n}")).join(sha);
     let listing = dir.join(".listing.json");
     if let Some(v) = fs::read(&listing).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
-        let files = v["files"].as_array().into_iter().flatten().filter_map(|f| Some(Fetched { path: f["path"].as_str()?.to_string(), note: f["note"].as_str().unwrap_or("").to_string() })).filter(|f| path_ok(&f.path)).collect();
+        let files = v["files"].as_array().into_iter().flatten().filter_map(|f| Some(Fetched { path: f["path"].as_str()?.to_string(), note: f["note"].as_str().unwrap_or("").to_string() })).filter(|f| check_path(&f.path)).collect();
         let other = v["other"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(shown)).collect();
         return Ok((files, other));
     }
@@ -336,7 +321,7 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
             continue;
         }
         let blob = f["sha"].as_str().filter(|s| sha_ok(s));
-        let (Some(blob), true) = (blob, path_ok(path)) else {
+        let (Some(blob), true) = (blob, check_path(path)) else {
             other.push(shown(path));
             continue;
         };
@@ -667,7 +652,7 @@ fn prune_decided(open: &[u64]) {
 /// Every path in the main mirror (the index), as the repository has it.
 fn mirror_paths() -> Vec<String> {
     let index = fs::read(main_dir().join(".index.json")).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
-    index.keys().filter(|p| path_ok(p)).cloned().collect()
+    index.keys().filter(|p| check_path(p)).cloned().collect()
 }
 
 /// A skill of a pull request: add it, edit its `SKILL.md` and add it, or turn it down. `add` and `edit` commit the
@@ -699,7 +684,7 @@ fn decide_in(pr: u64, skill: &str, choice: &str, text: Option<&str>, why: Option
     }
     let author = open["user"]["login"].as_str().filter(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).ok_or_else(|| vault_git::unreadable("who sent the submission"))?.to_string();
     let (files, _) = fetch_pr(&repo, pr, &head)?;
-    // the skill must be a folder this pull request holds (its files all passed `path_ok`)
+    // the skill must be a folder this pull request holds (its files all passed `check_path`)
     let mut by_skill: BTreeMap<String, Vec<&Fetched>> = BTreeMap::new();
     for f in &files {
         if let Some(name) = f.path.split('/').nth(1) {
@@ -850,7 +835,7 @@ fn preflight(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
 /// Every skill file of the main mirror (the files the app would accept in a manifest), by path.
 fn mirror_files() -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut files = BTreeMap::new();
-    for path in mirror_paths().into_iter().filter(|p| vault_sync::check_path(p)) {
+    for path in mirror_paths().into_iter().filter(|p| check_path(p)) {
         let p = join(&main_dir(), &path);
         if !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
             return Err(format!("Fridae could not read {} from its copy of the vault.", shown(&path)));

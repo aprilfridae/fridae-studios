@@ -17,6 +17,34 @@ def sha(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# Names Windows would read as a drive, a stream or a device, or would change: the same table as vault_sync.rs's
+# WINDOWS_BAD.
+WINDOWS_BAD = (
+    "Skills/a/C:x.md",
+    "Skills/C:/x.md",
+    "Skills/a/SKILL.md:s",
+    "Skills/CON/x.md",
+    "Skills/a/nul.txt",
+    "Skills/a/com1",
+    "Skills/a./x.md",
+    "Skills/a /x.md",
+    "Skills/a/x.md.",
+    "Skills/a/CONIN$",
+    "Skills/a/conout$.md",
+    "Skills/a/COM\u00b9",
+    "Skills/a/lpt\u00b3.md",
+    "Skills/a/LPT0",
+    "Skills/a/aux .md",
+    "Skills/ a/x.md",
+    "Skills/a/x<y.md",
+    "Skills/a/x?.md",
+    "Skills/a/x|y.md",
+    "Skills/a/x\x01y.md",
+)
+WINDOWS_GOOD = ("Skills/a/console.md", "Skills/a/com10", "Skills/con-tips/SKILL.md", "Skills/a/nul-thing.md",
+                "Skills/a/x.y.md", "Skills/a/comb")
+
+
 class VaultSyncTests(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="vaultsync é ")
@@ -179,6 +207,20 @@ class VaultSyncTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad) as cm:
                 rbxvaultsync.apply(staged, man)
             self.assertEqual(str(cm.exception), "This vault update looked wrong, so nothing was changed.")
+            self.assertEqual(self.snapshot(), before, bad)
+
+    def test_windows_names_refuse_everything(self):
+        for bad in WINDOWS_BAD:
+            self.assertFalse(rbxvaultsync.check_path(bad), bad)
+        for good in WINDOWS_GOOD:
+            self.assertTrue(rbxvaultsync.check_path(good), good)
+        self.put("Skills/keep/SKILL.md", "k")
+        for bad in WINDOWS_BAD[:3]:
+            before = self.snapshot()
+            staged, man = self.stage({"Skills/ok/SKILL.md": "ok"})
+            man["files"].append({"path": bad, "sha256": sha("z"), "size": 1})
+            with self.assertRaises(ValueError, msg=bad):
+                rbxvaultsync.apply(staged, man)
             self.assertEqual(self.snapshot(), before, bad)
 
     def test_bad_manifest_and_tampered_staged_file(self):

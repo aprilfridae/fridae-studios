@@ -52,18 +52,37 @@ def read_base():
     return base
 
 
+_DEVICES = ("con", "prn", "aux", "nul", "conin$", "conout$")
+_DEVICE_DIGITS = "0123456789¹²³"
+_NOT_IN_NAMES = '<>:"|?*\\'
+
+
+def _seg_ok(seg):
+    """vault_sync::seg_ok: whether one part of a path may be a file's or folder's name on every system. Not empty, not
+    dot-started, at most 255 bytes, and nothing Windows would read as a drive, a stream or a device, or would change:
+    no ':' or '<>"|?*\\', no control character, no trailing dot or space and no leading space, and none of CON PRN AUX
+    NUL CONIN$ CONOUT$ COM0-9 LPT0-9 (also with the superscript 1, 2, 3), in any case, with or without an extension."""
+    if not seg or seg.startswith(".") or len(seg.encode("utf-8", "surrogatepass")) > 255:
+        return False
+    if any(c in _NOT_IN_NAMES or unicodedata.category(c) == "Cc" for c in seg):
+        return False
+    if seg.endswith((".", " ")) or seg.startswith(" "):
+        return False
+    stem = seg.split(".")[0].rstrip(" ").lower()  # lower(), as Rust's to_lowercase, so both sides agree
+    if stem in _DEVICES:
+        return False
+    return not (len(stem) == 4 and stem[:3] in ("com", "lpt") and stem[3] in _DEVICE_DIGITS)
+
+
 def check_path(p):
-    """True when p is a safe vault-relative path: under an allowed top folder, with no empty, dot or dot-started
-    segment, no backslash, NUL or leading slash, and every segment at most 255 bytes."""
-    if not isinstance(p, str) or not p.startswith(ALLOWED_TOP) or "\\" in p or "\0" in p or p.startswith("/"):
+    """True when p is a safe vault-relative path: under an allowed top folder, inside a skill's folder, with no
+    leading slash and every segment a safe name (_seg_ok). The same rule as vault_sync::check_path."""
+    if not isinstance(p, str) or not p.startswith(ALLOWED_TOP) or p.startswith("/"):
         return False
     parts = p.split("/")
     if len(parts) < 3:  # skills live in folders: Skills/<skill>/<file>
         return False
-    for seg in parts:
-        if not seg or seg.startswith(".") or len(seg.encode("utf-8", "surrogatepass")) > 255:
-            return False
-    return True
+    return all(_seg_ok(seg) for seg in parts)
 
 
 def _sha(data):

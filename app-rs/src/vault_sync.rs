@@ -50,19 +50,38 @@ pub struct Manifest {
     pub files: Vec<ManFile>,
 }
 
+/// rbxvaultsync._seg_ok: whether one part of a path may be a file's or folder's name on every system. Not empty, not
+/// dot-started, at most 255 bytes, and nothing Windows would read as a drive, a stream or a device, or would change:
+/// no `:` or `<>"|?*\`, no control character, no trailing dot or space and no leading space, and none of `CON PRN
+/// AUX NUL CONIN$ CONOUT$ COM0-9 LPT0-9` (also with `¹²³`), in any case, with or without an extension.
+fn seg_ok(s: &str) -> bool {
+    const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
+    let stem = s.split('.').next().unwrap_or("").trim_end_matches(' ').to_lowercase();
+    let numbered = |p: &str| stem.strip_prefix(p).is_some_and(|d| d.chars().count() == 1 && d.chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c)));
+    let device = DEVICES.contains(&stem.as_str()) || numbered("com") || numbered("lpt");
+    !s.is_empty()
+        && !s.starts_with('.')
+        && s.len() <= 255
+        && !device
+        && !s.chars().any(|c| c.is_control() || "<>:\"|?*\\".contains(c))
+        && !s.ends_with(['.', ' '])
+        && !s.starts_with(' ')
+}
+
 /// rbxvaultsync.check_path: a safe vault-relative path, under an allowed top folder, inside a skill's folder, with no
-/// empty or dot-started segment, no backslash or NUL, no leading slash, and every segment at most 255 bytes.
+/// leading slash and every segment a safe name (`seg_ok`). The download, Reveal and the maintainer's inbox all use it.
 pub fn check_path(p: &str) -> bool {
-    if !ALLOWED_TOP.iter().any(|t| p.starts_with(t)) || p.contains('\\') || p.contains('\0') || p.starts_with('/') {
+    if !ALLOWED_TOP.iter().any(|t| p.starts_with(t)) || p.starts_with('/') {
         return false;
     }
     let parts: Vec<&str> = p.split('/').collect();
-    parts.len() >= 3 && parts.iter().all(|s| !s.is_empty() && !s.starts_with('.') && s.len() <= 255)
+    parts.len() >= 3 && parts.iter().all(|s| seg_ok(s))
 }
 
-/// A release name that is safe as a folder name (the staging folder is named by it).
-fn release_ok(r: &str) -> bool {
-    !r.is_empty() && r.len() <= 100 && !r.starts_with('.') && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+/// A release name that is safe as a folder name (the staging folder is named by it): `vault-`, then letters, digits,
+/// dots, dashes or underscores.
+pub(crate) fn release_ok(r: &str) -> bool {
+    r.len() > "vault-".len() && r.len() <= 100 && r.starts_with("vault-") && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 fn hash_ok(h: &str) -> bool {
@@ -124,6 +143,13 @@ fn join(base: &Path, path: &str) -> PathBuf {
     path.split('/').fold(base.to_path_buf(), |p, s| p.join(s))
 }
 
+/// Where a manifest file is staged: under `dir`, or an error (defence in depth: `check_path` already refuses every
+/// name that could lead out of it).
+fn staged_target(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let target = join(dir, path);
+    if check_path(path) && target.starts_with(dir) && target != dir { Ok(target) } else { Err(BAD.to_string()) }
+}
+
 /// The base record, whole; empty when there is none or it cannot be read.
 fn read_base() -> Value {
     fs::read(base_file()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}))
@@ -153,7 +179,7 @@ const GONE: &str = "That file is not there any more.";
 /// a link.
 pub fn reveal_target(path: &str) -> Result<PathBuf, String> {
     let local = local_path(path, &read_base());
-    if !check_path(path) || !check_path(&local) || local.contains(':') {
+    if !check_path(path) || !check_path(&local) {
         return Err(NOT_SHOWN.to_string());
     }
     let know = knowledge();
@@ -412,7 +438,7 @@ fn stage_and_apply(repo: &str, tag: &str, m: &Manifest, man_bytes: &[u8], base: 
                 b
             }
         };
-        write_atomic(&join(dir, &f.path), &bytes)?;
+        write_atomic(&staged_target(dir, &f.path)?, &bytes)?;
     }
     write_atomic(manifest, man_bytes)?;
     apply(dir, manifest)
@@ -671,6 +697,60 @@ Words: {words}. {body}.
         assert!(parse_manifest(&other("release", json!("a/b"))).is_err());
         assert!(parse_manifest(&other("release", json!(""))).is_err());
         assert_eq!(parse_manifest(&other("format", json!(2))).unwrap_err(), BAD);
+    }
+
+    /// Names Windows would read as a drive, a stream or a device, or would change: the same table as
+    /// tests/test_vaultsync.py's WINDOWS_BAD.
+    const WINDOWS_BAD: [&str; 20] = [
+        "Skills/a/C:x.md",
+        "Skills/C:/x.md",
+        "Skills/a/SKILL.md:s",
+        "Skills/CON/x.md",
+        "Skills/a/nul.txt",
+        "Skills/a/com1",
+        "Skills/a./x.md",
+        "Skills/a /x.md",
+        "Skills/a/x.md.",
+        "Skills/a/CONIN$",
+        "Skills/a/conout$.md",
+        "Skills/a/COM\u{b9}",
+        "Skills/a/lpt\u{b3}.md",
+        "Skills/a/LPT0",
+        "Skills/a/aux .md",
+        "Skills/ a/x.md",
+        "Skills/a/x<y.md",
+        "Skills/a/x?.md",
+        "Skills/a/x|y.md",
+        "Skills/a/x\u{1}y.md",
+    ];
+    const WINDOWS_GOOD: [&str; 6] = ["Skills/a/console.md", "Skills/a/com10", "Skills/con-tips/SKILL.md", "Skills/a/nul-thing.md", "Skills/a/x.y.md", "Skills/a/comb"];
+
+    #[test]
+    fn path_rule_refuses_what_windows_would_misread() {
+        for bad in WINDOWS_BAD {
+            assert!(!check_path(bad), "{bad:?}");
+            assert!(parse_manifest(&man(vec![entry(ALPHA), entry(bad)])).is_err(), "{bad:?}");
+        }
+        for good in WINDOWS_GOOD {
+            assert!(check_path(good), "{good:?}");
+        }
+    }
+
+    #[test]
+    fn staging_never_writes_outside_its_folder() {
+        let dir = Path::new("staging-root").join(T1);
+        assert_eq!(staged_target(&dir, ALPHA), Ok(dir.join("Skills").join("vault-alpha").join("SKILL.md")));
+        for bad in ["Skills/C:/x.md", "Skills/a/C:x.md", "Skills/../../x.md"] {
+            assert!(staged_target(&dir, bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn release_names_start_with_vault() {
+        assert!(release_ok(T1));
+        for bad in ["2026.12.01", "v1", "vault", "x-vault-1"] {
+            assert!(!release_ok(bad), "{bad:?}");
+        }
     }
 
     #[test]
