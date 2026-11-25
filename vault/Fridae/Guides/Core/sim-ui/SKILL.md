@@ -1,5 +1,5 @@
 ---
-name: roblox-sim-ui
+name: sim-ui
 description: "The chunky simulator / tycoon UI look. The chunky cartoon simulator look (Shop, Daily Rewards, Rebirth, Codes, Settings, HUD buttons). Use ONLY when the user asks for this cartoon simulator look for the game; the default for every genre is the clean look in roblox-ui-design."
 examples:
   - "Make the shop look like a chunky simulator game"

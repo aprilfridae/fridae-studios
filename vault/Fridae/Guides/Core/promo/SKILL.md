@@ -1,5 +1,5 @@
 ---
-name: roblox-promo
+name: promo
 description: "Promo videos: making a TikTok/Shorts/Reels promo for a game with rbx_promo. Making a vertical promo video (TikTok, YouTube Shorts, Instagram Reels) for a Roblox game from the user's gameplay clips - what makes one work, picking moments with probe, writing the promo.json recipe, rendering with rbx_promo, checking the result, the post caption and hashtags, music and voiceover rules. Use for any promo, trailer, TikTok, Short, Reel or \"make a video of my game\" request."
 examples:
   - "Make a TikTok promo for my game"

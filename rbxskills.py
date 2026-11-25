@@ -210,10 +210,8 @@ def _entry(d, origin, default_owner, kit=False):
     return m
 
 
-def library(project=None):
-    """[{id, name, description, examples, applies, core, owner, source, licence, supersedes, updated, dir, origin}]:
-    the app's skills, those it ships, the user's, then the project's. One per name; a later one takes an earlier
-    name, except an app skill's, which nothing can take."""
+def kit_skills():
+    """The skills the app ships (origin app or shipped), whatever the user's and the project's libraries hold."""
     kit = []
     for rel, owner in KIT_ROOTS:
         for d in _skill_dirs(os.path.join(KIT, *rel.split("/"))):
@@ -221,6 +219,14 @@ def library(project=None):
             if e["owner"] == "app":
                 e["origin"] = "app"
             kit.append(e)
+    return kit
+
+
+def library(project=None):
+    """[{id, name, description, examples, applies, core, owner, source, licence, supersedes, updated, dir, origin}]:
+    the app's skills, those it ships, the user's, then the project's. One per name; a later one takes an earlier
+    name, except an app skill's, which nothing can take."""
+    kit = kit_skills()
     roots = [(os.path.join(project, sub, "skills"), "project") for sub in (".claude", ".agents")] if project else []
     found = sorted(kit, key=lambda e: e["origin"] != "app") + \
         [_entry(d, "user", "user") for d in _skill_dirs(user_dir())] + \

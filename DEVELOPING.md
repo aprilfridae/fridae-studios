@@ -172,7 +172,7 @@ exists, that the user's table wins, and to use it sparingly.
 
 **The Lead's prompt.** `app-rs/src/text/studio.txt` (the mode's rules), then `vault/Fridae/Team/lead.md` (the project's
 `.fridae/team/experts/lead.md` first), and `text/kickoff_studio.txt` on the first message; all `include_str!`'d except the team files, which are read
-from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/Core/studio/SKILL.md` (listed in `rbxkit_mcp.GUIDES`).
+from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/Core/studio/SKILL.md` (listed in `rbxkit_mcp.KIT_GUIDES`).
 
 **The app side** (`app-rs/src`):
 - `agents.rs`: `Ask.studio`; the pure loop functions `loop_mode` / `next_step` / `pause_step` / `ended_step` /
@@ -1948,7 +1948,7 @@ everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start H
 | Shelf | What | Ranked by | Cache |
 |---|---|---|---|
 | `vault` | the LihFolk vault notes (`vault/Roblox`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
-| `guides` | every Markdown guide in `rbxkit_mcp.GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
+| `guides` | every Markdown guide in `rbxkit_mcp.KIT_GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
 | `team` | `vault/Fridae/Team/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
 | `game` | the game's `GAME.md`, an older `.fridae/lessons.md`, and its notes `.fridae/notes/*.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
 | `yours` | the user's notes for everything, `<home>/notes/*.md` (with `House rules.md` and `studio-lessons.md`), with or without a project | section | never cached |
@@ -1992,8 +1992,10 @@ Everything else in the guides is craft knowledge that is fine to find by search.
 always apply, put it in one of those places, never only in a large guide or a vault note.
 
 **Adding a guide so it is found.** Guides are skills: add a folder `<name>/` holding `SKILL.md` to
-`vault/Fridae/Guides/Core/`, `Roblox subjects/` or `LihFolk/`, and it is the guide `<name>` (`rbxkit_mcp.GUIDES` is
-built from the skill library; a file that is not a skill goes in `GUIDE_FILES`). A guide in `vault/Fridae/Guides/Core/`
+`vault/Fridae/Guides/Core/`, `Roblox subjects/` or `LihFolk/`, and it is the guide `<name>` (`rbxkit_mcp.KIT_GUIDES` lists
+the kit's skills and `GUIDE_FILES` the guides that are files; the roster and the guides shelf key on it, while a load
+resolves the name in the library at call time, so a user's or project's skill of the same name is served instead; its
+`name` is its folder's name, and old names are aliases in `GUIDE_ALIASES`). A guide in `vault/Fridae/Guides/Core/`
 is also installed as a Claude Code skill by `install.py`. `rbx_skill load` and `rbx_guide` serve it the same way. Give
 it the skill front matter (`name`, `description`, `examples`, `applies`, and `owner`/`core` where they apply; see
 `rbxskills.meta`) with a `description`

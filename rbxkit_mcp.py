@@ -63,7 +63,8 @@ WEB_NOTE = ("> This guide was written for websites. For Roblox, take its judgeme
             "`web-to-roblox` guide (rbx_guide topic web-to-roblox)." + chr(10) + chr(10))
 
 # Guides are skills: each folder <name>/ holding SKILL.md under the app's skill folders (rbxskills.KIT_ROOTS) is the
-# guide <name>, listed in GUIDES from the skill library below. These are the guides that are files, not skills.
+# guide <name> (KIT_GUIDES below). These guides are files, not skills; like the app's own skills, no user or
+# project skill takes their names.
 GUIDE_FILES = {
     "ui-helpers": ("vault/Fridae/Guides/Core/ui-design/helpers.lua", "Luau UI builder functions to paste into a builder"),
     "ui-audit": ("vault/Fridae/Guides/Core/ui-design/audit.lua", "Luau UI defect check to run in Studio"),
@@ -142,51 +143,67 @@ LIHFOLK_GUIDES = "vault/Fridae/Guides/LihFolk/"
 KIT_ORIGINS = ("app", "shipped")  # library origins of the skills the app ships (its guides)
 
 
-def _register_skills():
-    """GUIDES, {topic: (path under KIT, description)}: the app's skills from the library, each by its folder name
-    (a few skills' front-matter names differ: GUIDE_ALIASES), then GUIDE_FILES."""
+def _kit_guides():
+    """{topic: (path under KIT, description)}: the skills the app ships, each by its name (its folder's name), then
+    GUIDE_FILES. Frozen at start and never shadowed: the roster and the guides shelf key on it."""
     import rbxskills
     out = {}
-    for s in rbxskills.library():
-        if s["origin"] not in KIT_ORIGINS:
-            continue
+    for s in rbxskills.kit_skills():
         rel = os.path.relpath(s["dir"], KIT).replace("\\", "/")
         desc = s["description"]
         desc = (desc[:110] + "...") if len(desc) > 110 else desc
-        out[os.path.basename(s["dir"])] = (rel + "/SKILL.md", GUIDE_GROUPS.get(os.path.dirname(rel), "") + desc)
+        out.setdefault(s["id"], (rel + "/SKILL.md", GUIDE_GROUPS.get(os.path.dirname(rel), "") + desc))
     for name, entry in GUIDE_FILES.items():
         out.setdefault(name, entry)
     return out
 
 
-GUIDES = _register_skills()
+KIT_GUIDES = _kit_guides()
+GUIDES = KIT_GUIDES  # its older name
+
+
+def _project():
+    return os.environ.get("RBXKIT_PROJECT") or None
 
 
 def _topic_file(topic):
-    """The SKILL.md behind a topic: one of the app's guides (GUIDES), else a skill in the user's or the project's
-    library by its exact name; None when there is none."""
-    if topic in GUIDES:
-        return os.path.join(KIT, GUIDES[topic][0])
+    """The file behind a skill or guide name, resolved now: one of GUIDE_FILES, else the library's skill with that
+    exact id (the project's, else the user's, else the app's: rbxskills.library); None when there is none."""
+    if topic in GUIDE_FILES:
+        return os.path.join(KIT, GUIDE_FILES[topic][0])
     import rbxskills
-    for s in rbxskills.library(os.environ.get("RBXKIT_PROJECT") or None):
-        if s["origin"] not in KIT_ORIGINS and s["id"].casefold() == topic.casefold():
+    want = topic.casefold()
+    for s in rbxskills.library(_project()):
+        if s["id"].casefold() == want:
             return os.path.join(s["dir"], "SKILL.md")
     return None
 
 
+def _is_kit(topic):
+    """True when the name resolves to the app's own copy (not a user or project skill of the same name)."""
+    path = _topic_file(topic)
+    return bool(path and topic in KIT_GUIDES and
+                os.path.normcase(os.path.normpath(path)) ==
+                os.path.normcase(os.path.normpath(os.path.join(KIT, KIT_GUIDES[topic][0]))))
+
+
 def _canonical(topic):
-    """A topic as the guide code knows it: a guide's name for one of the app's skills named any way the library
-    knows it (or loosely, as rbxskills.find matches), the library name for any other skill, else as given."""
-    head, sep, rest = topic.partition("/")
-    if _topic_file(head):
-        return topic
+    """One id per skill: the library id (a skill's folder name for the app's), found by its exact id first, then by
+    an old name (GUIDE_ALIASES), then loosely as rbxskills.find matches; as given when nothing matches."""
     import rbxskills
-    try:
-        s = rbxskills.find(head, os.environ.get("RBXKIT_PROJECT") or None)
-    except LookupError:
-        return topic
-    name = os.path.basename(s["dir"]) if s["origin"] in KIT_ORIGINS else s["id"]
-    return name + sep + rest
+    head, sep, rest = topic.partition("/")
+    want = head.casefold()
+    lib = rbxskills.library(_project())
+    hit = head if head in GUIDE_FILES else next((s["id"] for s in lib if s["id"].casefold() == want), None)
+    if hit is None and head in GUIDE_ALIASES:
+        alias = GUIDE_ALIASES[head].casefold()
+        hit = next((s["id"] for s in lib if s["id"].casefold() == alias), None)
+    if hit is None:
+        try:
+            hit = rbxskills.find(head, _project())["id"]
+        except LookupError:
+            return topic
+    return hit + sep + rest
 
 
 def _guide_path(topic):
@@ -240,8 +257,9 @@ def _guide_extras(topic):
             text += "\n\nReference files for this guide (load with rbx_guide topic `%s/<name>`): %s" % (topic, ", ".join(files))
     if topic == "vfx" and os.path.isdir(refs):
         text += "\n\nReference files present: " + ", ".join(sorted(f for f in os.listdir(refs) if f.endswith(".md")))
-    lihfolk = topic in GUIDES and GUIDES[topic][0].startswith(LIHFOLK_GUIDES)
-    if lihfolk or topic not in GUIDES:
+    kit = _is_kit(topic)
+    lihfolk = kit and KIT_GUIDES[topic][0].startswith(LIHFOLK_GUIDES)
+    if lihfolk or not kit:
         # its code (Luau modules, examples, Blender scripts, rubrics) is read straight from the folder
         folder = os.path.dirname(path)
         if lihfolk:
@@ -266,13 +284,13 @@ def _one_guide(topic):
     text = _read_filled(path)
     if text.startswith("---"):
         text = text.split("---", 2)[2].lstrip()  # drop the skill front matter
-    if topic in WEB_GUIDES:
+    if topic in WEB_GUIDES and _is_kit(topic):
         text = WEB_NOTE + text
     return text + _guide_extras(topic)
 
 
-# Claude Code skill names (the workflow guide's table uses them) -> rbx_guide names. install.py builds the skill
-# folders with the first six names; the last four are those skills' front-matter names.
+# Old names -> skill ids: the Claude Code skill names (the workflow guide's table uses them; install.py builds those
+# skills under them). Tried only after a skill with the exact name is not found.
 GUIDE_ALIASES = {"roblox-studio-workflow": "workflow", "roblox-playtest": "playtest", "roblox-ui-design": "ui-design",
                  "roblox-sim-ui": "sim-ui", "roblox-vfx": "vfx", "roblox-promo": "promo",
                  "industrial-brutalist-ui": "brutalist-skill", "minimalist-ui": "minimalist-skill",
@@ -328,7 +346,7 @@ def _guide_outline(topic, raw):
         opening = cut[:cut.rfind("\n")].rstrip() if "\n" in cut else cut
         opening += "\n\n(Opening cut; read it whole with `section` \"opening\".)"
     head = ("> " + p["description"] + "\n\n") if p["description"] else ""
-    if topic in WEB_GUIDES:
+    if topic in WEB_GUIDES and _is_kit(topic):
         head = WEB_NOTE + head
     rules, listed, used = [], [], 0
     for s in _rules_sections(topic, p):
@@ -404,7 +422,8 @@ def t_skill(a):
         if action == "load":
             return _load(a.get("name"), a.get("names"), a, "rbx_skill")
         if action == "read":
-            return result(rbxskills.read_file(str(a.get("name") or ""), str(a.get("path") or ""), project), True, False)
+            name = _canonical(str(a.get("name") or "").strip())
+            return result(rbxskills.read_file(name, str(a.get("path") or ""), project), True, False)
     except (LookupError, OSError) as e:
         return result(str(e), False)
     return result("Unknown action '%s': use list, load or read." % action, False)
@@ -421,13 +440,13 @@ def _load(name, names, a, tool):
     wanted = [str(t).strip().lower() for t in (names if isinstance(names, list) else [])]
     if name:
         wanted.insert(0, str(name).strip().lower())
-    wanted = list(dict.fromkeys(_canonical(resolve_alias(t)) for t in wanted if t))
+    wanted = list(dict.fromkeys(_canonical(t) for t in wanted if t))
     missing = (". Call rbx_guide with no arguments to list the topics." if tool == "rbx_guide" else
                ". Call rbx_skill with action 'list' (or 'search') to find one.")
     if not wanted:
         if tool == "rbx_skill":
             return result("Give 'name' (or several in 'names'): the skill to load" + missing, False)
-        lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in GUIDES.items()]
+        lines = ["Guide topics (call rbx_guide with one, or several in `topics`):"] + ["- %s: %s" % (k, v[1]) for k, v in KIT_GUIDES.items()]
         return result("\n".join(lines), True, False)
     section = str(a.get("section") or "").strip()
     if section:

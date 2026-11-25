@@ -9,7 +9,7 @@ it only adds or refreshes its own entries.
   python install.py --no-pip     skip installing Python libraries
   python install.py --print      only print the connection settings
 """
-import argparse, json, os, shutil, subprocess, sys
+import argparse, json, os, re, shutil, subprocess, sys
 
 KIT = os.path.dirname(os.path.abspath(__file__))
 HOME = os.path.expanduser("~")
@@ -64,10 +64,25 @@ def copy_filled(src, dst):
 
 # Claude Code gets Fridae's core guides as skills. They live in the vault as skill folders
 # (vault/Fridae/Guides/Core/<guide>/SKILL.md); the folders in ~/.claude/skills are built from them at install time,
-# with the skill names they had when they were skills/<skill>/ (CLAUDE_SKILL_NAMES) and their placeholders filled.
+# with the folder and skill names they had when they were skills/<skill>/ (CLAUDE_SKILL_NAMES, CLAUDE_FM_NAMES: in
+# Fridae each skill's name is its folder's) and their placeholders filled.
 CORE_GUIDES = os.path.join(KIT, "vault", "Fridae", "Guides", "Core")
 CLAUDE_SKILL_NAMES = {"workflow": "roblox-studio-workflow", "playtest": "roblox-playtest", "ui-design": "roblox-ui-design",
                       "sim-ui": "roblox-sim-ui", "vfx": "roblox-vfx", "promo": "roblox-promo"}  # else the guide's name
+# the front-matter `name` each built skill keeps for Claude Code (else the guide's name)
+CLAUDE_FM_NAMES = dict(CLAUDE_SKILL_NAMES, **{
+    "brutalist-skill": "industrial-brutalist-ui", "minimalist-skill": "minimalist-ui",
+    "redesign-skill": "redesign-existing-projects", "soft-skill": "high-end-visual-design"})
+
+
+def built_text(src, text):
+    """A core guide's file as Claude Code gets it: placeholders filled, and in its SKILL.md the Claude Code name."""
+    text = fill(text)
+    guide = os.path.basename(os.path.dirname(src))
+    if os.path.basename(src) == "SKILL.md" and guide in CLAUDE_FM_NAMES:
+        text = re.sub(r"\A(---\r?\n(?:.*\r?\n)*?)name:[^\r\n]*", lambda m: m.group(1) + "name: " + CLAUDE_FM_NAMES[guide],
+                      text, count=1)
+    return text
 
 
 def claude_skills(core=CORE_GUIDES):
@@ -100,7 +115,7 @@ def build_claude_skills(dest, core=CORE_GUIDES):
             os.makedirs(os.path.dirname(out), exist_ok=True)
             if src.lower().endswith((".md", ".lua", ".txt")):
                 with open(src, encoding="utf-8") as f:
-                    text = fill(f.read())
+                    text = built_text(src, f.read())
                 with open(out, "w", encoding="utf-8") as f:
                     f.write(text)
             else:

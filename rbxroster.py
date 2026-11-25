@@ -72,7 +72,7 @@ def _check(entry, path):
         v = entry.get(k)
         if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
             bad(k, "must be a list of names")
-    unknown = [g for g in entry["guides"] if g not in rbxkit_mcp.GUIDES]
+    unknown = [g for g in entry["guides"] if g not in rbxkit_mcp.KIT_GUIDES]
     if unknown:
         bad("guides", "names guides that do not exist: %s" % ", ".join(unknown))
     kinds = ("worker", "critic", "lead") if entry["id"] == "lead" else ("worker", "critic")

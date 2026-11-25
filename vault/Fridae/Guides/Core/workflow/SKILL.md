@@ -1,5 +1,5 @@
 ---
-name: roblox-studio-workflow
+name: workflow
 description: "Start here: tools, ground rules, 3D models, animations, icons, uploads. How to work in the user's open Roblox Studio with the Roblox Studio MCP tools and the rbxkit toolkit - inspect the place, edit scripts, change edit-mode state, model in Blender and import it, animations, icons, uploads, video references, data resets. Use at the start of any Roblox Studio task, before the more specific roblox-* skills."
 examples:
   - "Add a coin pickup to my open Studio place"

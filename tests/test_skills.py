@@ -266,7 +266,9 @@ class GuideSkillTests(unittest.TestCase):
                     self.assertFalse(os.path.exists(os.path.join(d, name + ".md")), name)
 
     def test_front_matter(self):
-        kit = {os.path.basename(s["dir"]): s for s in rbxskills.library() if s["origin"] in ("app", "shipped")}
+        kit = {s["id"]: s for s in rbxskills.kit_skills()}
+        for n, s in kit.items():
+            self.assertEqual(n, os.path.basename(s["dir"]), "one id per skill: its folder's name")
         self.assertEqual(sorted(n for n, s in kit.items() if s["owner"] == "app"),
                          ["critic", "producer", "promo", "studio", "workflow"])
         self.assertEqual(sorted(n for n, s in kit.items() if s["core"]),
@@ -284,13 +286,15 @@ class GuideSkillTests(unittest.TestCase):
             self.assertEqual(kit[n]["applies"], "game", n)
 
     def test_guides_table_is_built_from_the_library(self):
-        for s in rbxskills.library():
-            if s["origin"] in ("app", "shipped"):
-                name = os.path.basename(s["dir"])
-                rel = os.path.relpath(os.path.join(s["dir"], "SKILL.md"), self.mcp.KIT).replace(os.sep, "/")
-                self.assertEqual(self.mcp.GUIDES[name][0], rel, name)
+        kit = rbxskills.kit_skills()
+        self.assertGreater(len(kit), 50)
+        for s in kit:
+            rel = os.path.relpath(os.path.join(s["dir"], "SKILL.md"), self.mcp.KIT).replace(os.sep, "/")
+            self.assertEqual(self.mcp.KIT_GUIDES[s["id"]][0], rel, s["id"])
         for name in ("ui-helpers", "ui-audit", "tester"):
             self.assertIn(name, self.mcp.GUIDE_FILES)
+            self.assertIn(name, self.mcp.KIT_GUIDES)
+        self.assertIs(self.mcp.GUIDES, self.mcp.KIT_GUIDES)
 
     def test_every_old_guide_name_still_loads(self):
         for name in OLD_GUIDES:
@@ -333,6 +337,58 @@ class GuideSkillTests(unittest.TestCase):
         self.assertIn("Warm.", self.text(self.load(name="my-style", section="Colours")))
         self.assertIn("Orange.", self.text(self.load(name="my-style/palette")))
         self.assertTrue(self.load(name="no-such-skill-here")["isError"])
+
+    def test_user_skill_with_shipped_name_keeps_roster_valid(self):
+        import rbxroster
+        import rbxvault
+        skill(os.path.join(self.user, "unslop"), "unslop", "My own unslop.", "User unslop.")
+        self.assertIn("unslop", self.mcp._kit_guides(), "a user copy never removes a kit name")
+        self.assertIn("unslop", self.mcp.KIT_GUIDES)
+        self.assertTrue(rbxroster.load())
+        kit_path = os.path.normpath(os.path.join(self.mcp.KIT, self.mcp.KIT_GUIDES["unslop"][0]))
+        self.assertIn(("unslop", kit_path), rbxvault.guide_files(), "the guides shelf keeps the kit's copy")
+        text = self.text(self.load(name="unslop"))
+        self.assertIn("User unslop.", text, "the user's copy is served (precedence)")
+        self.assertNotIn("This guide was written for websites", text)
+
+    def test_project_skill_shadows_shipped_on_load(self):
+        game = tempfile.mkdtemp(prefix="game é ")
+        self.addCleanup(shutil.rmtree, game, True)
+        skill(os.path.join(game, ".claude", "skills", "game-design"), "game-design", "This game's design.", "Project design.")
+        self.assertNotIn("Project design.", self.text(self.load(name="game-design")))
+        with mock.patch.dict(os.environ, {"RBXKIT_PROJECT": game}):
+            self.assertIn("Project design.", self.text(self.load(name="game-design")))
+            self.assertIn("Project design.", self.text(self.guide(topic="game-design")))
+            skill(os.path.join(game, ".claude", "skills", "critic"), "critic", "Not the app's.", "Fake critic.")
+            self.assertNotIn("Fake critic.", self.text(self.load(name="critic")), "an app-owned name is never taken")
+
+    def test_skill_added_after_import_is_loadable(self):
+        self.assertTrue(self.load(name="late-skill")["isError"])
+        skill(os.path.join(self.user, "late-skill"), "late-skill", "Added later.", "Late body.")
+        res = self.load(name="late-skill")
+        self.assertFalse(res["isError"], self.text(res))
+        self.assertIn("Late body.", self.text(res))
+
+    def test_old_name_is_an_alias_after_exact_lookup(self):
+        a, b = self.text(self.load(name="roblox-studio-workflow")), self.text(self.load(name="workflow"))
+        self.assertEqual(a, b)
+        self.assertIn("GUIDE: workflow ", a)
+        self.assertIn("GUIDE: minimalist-skill ", self.text(self.load(name="minimalist-ui")))
+        skill(os.path.join(self.user, "minimalist-ui"), "minimalist-ui", "Mine, literally named so.", "My minimal.")
+        text = self.text(self.load(name="minimalist-ui"))
+        self.assertIn("My minimal.", text, "a skill with the exact name wins over the alias")
+        self.assertIn("GUIDE: minimalist-ui ", text)
+        self.assertNotIn("My minimal.", self.text(self.load(name="minimalist-skill")))
+
+    def test_read_accepts_alias_and_id(self):
+        a = self.mcp.t_skill({"action": "read", "name": "roblox-ui-design", "path": "web-to-roblox.md"})
+        b = self.mcp.t_skill({"action": "read", "name": "ui-design", "path": "web-to-roblox.md"})
+        self.assertFalse(a["isError"], self.text(a))
+        self.assertEqual(self.text(a), self.text(b))
+        self.assertTrue(self.text(a).startswith("ui-design/web-to-roblox.md"), "named by its id")
+        listed = rbxskills.listing()
+        self.assertIn("- ui-design [", listed)
+        self.assertNotIn("roblox-ui-design", listed)
 
 
 if __name__ == "__main__":

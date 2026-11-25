@@ -1,5 +1,5 @@
 ---
-name: roblox-playtest
+name: playtest
 description: "Running a playtest and acting like a player. Test Roblox UI and game behavior in a live Studio playtest using the Roblox Studio MCP tools. Use when verifying UI changes, clicking buttons, typing, triggering prompts, inspecting runtime state, or checking the console after a change."
 examples:
   - "Playtest the new shop and click every button"

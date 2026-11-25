@@ -1,5 +1,5 @@
 ---
-name: roblox-ui-design
+name: ui-design
 description: "Building and checking Roblox UI. Build or restyle Roblox UI (HUDs, menus, shops, popups, buttons), matching references and the game genre across devices. Use before creating, laying out or restyling any GUI."
 examples:
   - "Build a HUD with coins and a settings button"

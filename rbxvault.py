@@ -563,7 +563,7 @@ def _list(folder):
 # Everything below is rbxkit's: one lookup over several "shelves". The vault keeps the note-level engine above; the
 # other shelves are ranked by SECTION (each heading with its own text) so an agent reads one section, not a whole file.
 #   vault   the LihFolk vault notes (vault/Roblox)
-#   guides  every guide rbx_guide serves (rbxkit_mcp.GUIDES) and their references/ files
+#   guides  every guide the app ships (rbxkit_mcp.KIT_GUIDES, whatever user copies exist), references/ too
 #   team    the Studio team's expert files (vault/Fridae/Team/*.md, a game's .fridae/team/experts/ overrides them)
 #   game    this game's GAME.md, lessons and notes (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
 #   yours   the user's notes for everything (<home>/notes, rbxnotes.py); indexed on the fly, works with no project
@@ -1263,15 +1263,16 @@ def _parse_section_docs(shelf, title, path, rel, label_hint="", project=""):
 
 
 def guide_files():
-    """[(title, absolute path)] for every Markdown guide rbx_guide serves, plus each guide folder's references/*.md."""
+    """[(title, absolute path)] for every Markdown guide the app ships (KIT_GUIDES), plus each guide folder's
+    references/*.md."""
     import rbxkit_mcp  # lazy: the guide list lives in the tool server
     out, seen, ref_dirs = [], set(), set()
-    for name, (rel, _) in rbxkit_mcp.GUIDES.items():
+    for name, (rel, _) in rbxkit_mcp.KIT_GUIDES.items():
         path = os.path.normpath(os.path.join(KIT, rel))
         if rel.endswith(".md") and os.path.isfile(path) and path not in seen:
             out.append((name, path))
             seen.add(path)
-    for name, (rel, _) in rbxkit_mcp.GUIDES.items():
+    for name, (rel, _) in rbxkit_mcp.KIT_GUIDES.items():
         refs = os.path.join(os.path.dirname(os.path.normpath(os.path.join(KIT, rel))), "references")
         if refs in ref_dirs or not os.path.isdir(refs):
             continue

@@ -1,5 +1,5 @@
 ---
-name: roblox-vfx
+name: vfx
 description: "Visual effects: modules, capture, textures, meshes. Build, improve or check Roblox visual effects - hits, slashes, explosions, spells, projectiles, beams, auras, pickups, lightning, an ability's look. Covers the Emit and Lightning modules, frame-by-frame capture in Studio, drawing particle textures and flipbooks, and effect meshes. Use before any VFX work."
 examples:
   - "Make a sword slash effect"

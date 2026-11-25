@@ -24,14 +24,15 @@ class ClaudeSkillsTests(unittest.TestCase):
             self.assertEqual(sorted(files), sorted(self.base[name]["files"]), name)
 
     def test_built_output_is_the_vault_source(self):
-        """Each built file is its vault source (text files with placeholders filled), so guide edits flow through."""
+        """Each built file is its vault source (text files with placeholders filled, a SKILL.md's name the one Claude
+        Code knows it by), so guide edits flow through."""
         install.build_claude_skills(self.dest)
         for name, files in install.claude_skills().items():
             for rel, src in files.items():
                 with open(src, "rb") as f:
                     want = f.read()
                 if src.lower().endswith((".md", ".lua", ".txt")):
-                    want = install.fill(want.decode("utf-8")).encode("utf-8")
+                    want = install.built_text(src, want.decode("utf-8")).encode("utf-8")
                 with open(os.path.join(self.dest, name, *rel.split("/")), "rb") as f:
                     self.assertEqual(f.read(), want, name + "/" + rel)
 
