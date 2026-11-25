@@ -67,7 +67,6 @@ class VaultSyncTests(unittest.TestCase):
         return out
 
     def apply(self, files, **kw):
-        extra = {k: kw.pop(k) for k in list(kw) if k == "extra"}
         staged, man = self.stage(files, **kw)
         return rbxvaultsync.apply(staged, man)
 
@@ -222,20 +221,142 @@ class VaultSyncTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.local("Skills/new")))
         self.assertEqual(self.get(self.P), "v2")
 
-    def test_cli_exit_2_on_bad_manifest(self):
-        import subprocess
-        import sys
-        staged, man = self.stage({self.P: "v"})
-        man["files"][0]["path"] = "Notes/a.md"
+    def cli(self, staged, manifest, *more):
+        """Run `skills vault-apply` in-process on the made-up Knowledge folder: (exit code, stdout, stderr)."""
+        import argparse
+        import contextlib
+        import io
         mf = os.path.join(self.root, "m.json")
         with open(mf, "w") as f:
-            json.dump(man, f)
-        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        env = dict(os.environ, FRIDAE_HOME=self.root)
-        r = subprocess.run([sys.executable, "rbxskills.py", "skills", "vault-apply", "--staged", staged,
-                            "--manifest", mf, "--json"], cwd=here, capture_output=True, text=True, env=env)
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("This vault update looked wrong, so nothing was changed.", r.stderr)
+            json.dump(manifest, f)
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+        a = ap.parse_args(["skills", "vault-apply", "--staged", staged, "--manifest", mf, "--json"] + list(more))
+        out, err = io.StringIO(), io.StringIO()
+        code = 0
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                a.fn(a)
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 1
+        return code, out.getvalue(), err.getvalue()
+
+    def test_cli_success_prints_result(self):
+        staged, man = self.stage({self.P: "v"})
+        code, out, err = self.cli(staged, man)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["added"], [self.P])
+        self.assertEqual(self.get(self.P), "v")
+
+    def test_cli_exit_2_on_bad_manifest(self):
+        staged, man = self.stage({self.P: "v"})
+        man["files"][0]["path"] = "Notes/a.md"
+        code, out, err = self.cli(staged, man)
+        self.assertEqual(code, 2)
+        self.assertIn("This vault update looked wrong, so nothing was changed.", err)
+
+    def test_cli_refuses_empty_staged_and_plain_errors(self):
+        staged, man = self.stage({self.P: "v"})
+        self.assertEqual(self.cli("", man)[0], 2)
+        with mock.patch.object(rbxvaultsync, "apply", side_effect=OSError("disk full")):
+            code, out, err = self.cli(staged, man)
+        self.assertNotEqual(code, 0)
+        self.assertIn("disk full", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_unreadable_or_non_file_target_is_never_overwritten(self):
+        self.put(self.P, "MY WORK")
+        os.chmod(self.local(self.P), 0)
+        self.addCleanup(os.chmod, self.local(self.P), 0o644)
+        os.makedirs(self.local("Skills/x/dir.md"))
+        r = self.apply({self.P: "theirs", "Skills/x/dir.md": "d"})
+        os.chmod(self.local(self.P), 0o644)
+        self.assertEqual(self.get(self.P), "MY WORK")
+        self.assertTrue(os.path.isdir(self.local("Skills/x/dir.md")))
+        self.assertEqual(len(r["errors"]), 2)
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["deleted"], [])
+        self.assertEqual(base["files"], {})
+
+    def test_unreadable_target_with_base_entry_is_not_marked_deleted(self):
+        self.seed(self.P, "v1", "v1")
+        os.chmod(self.local(self.P), 0)
+        self.addCleanup(os.chmod, self.local(self.P), 0o644)
+        r = self.apply({self.P: "v2"})
+        os.chmod(self.local(self.P), 0o644)
+        self.assertEqual(len(r["errors"]), 1)
+        self.assertEqual(rbxvaultsync.read_base()["deleted"], [])
+        self.assertEqual(self.get(self.P), "v1")
+
+    def test_existing_beside_file_is_not_replaced(self):
+        self.seed(self.P, "a\nb\nc\n", "a\nmine\nc\n")
+        self.put("Skills/x/SKILL (Fridae update).md", "my hand merge")
+        r = self.apply({self.P: "a\ntheirs\nc\n"})
+        self.assertEqual(self.get("Skills/x/SKILL (Fridae update).md"), "my hand merge")
+        self.assertEqual(self.get("Skills/x/SKILL (Fridae update 2).md"), "a\ntheirs\nc\n")
+        self.assertEqual(r["kept"], [self.P])
+        self.apply({self.P: "a\ntheirs\nc\n"}, release="vault-2026.02.01")  # same bytes: no third copy
+        self.assertFalse(os.path.exists(self.local("Skills/x/SKILL (Fridae update 3).md")))
+
+    def refused(self, files=None, mutate=None):
+        staged, man = self.stage(files or {self.P: "v"})
+        if mutate:
+            mutate(man)
+        before = self.snapshot()
+        with self.assertRaises(ValueError):
+            rbxvaultsync.apply(staged, man)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_beside_named_manifest_path_is_refused(self):
+        self.refused({"Skills/x/SKILL (Fridae update).md": "v"})
+
+    def test_manifest_limits(self):
+        self.refused(mutate=lambda m: m["files"][0].update(size=(1 << 20) + 1))
+        self.refused(mutate=lambda m: m.update(files=[
+            {"path": "Skills/s/f%d.md" % i, "sha256": sha("z"), "size": 1} for i in range(5001)]))
+        self.refused(mutate=lambda m: m.update(files=[
+            {"path": "Skills/s/f%d.md" % i, "sha256": sha("z"), "size": 1 << 20} for i in range(101)]))
+        self.refused(mutate=lambda m: m.update(files=[]))
+
+    def test_loose_file_under_skills_is_refused(self):
+        self.assertFalse(rbxvaultsync.check_path("Skills/README.md"))
+        self.refused({"Skills/README.md": "v"})
+
+    def test_two_paths_for_one_local_file_are_refused(self):
+        b = rbxvaultsync.read_base()
+        b["renamed"] = {"x": "x-community"}
+        os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+        rbxskills._write_json(rbxvaultsync.base_path(), b)
+        self.refused({self.P: "a", "Skills/x-community/SKILL.md": "b"})
+        self.refused({"Skills/y/SKILL.md": "a", "Skills/y/skill.md": "b"})
+
+    def test_too_long_beside_name_is_refused(self):
+        self.refused({"Skills/y/%s.md" % ("n" * 240): "a"})
+
+    def test_symlinked_vault_folders_are_refused(self):
+        outside = tempfile.mkdtemp(prefix="outside ")
+        self.addCleanup(shutil.rmtree, outside, True)
+        os.makedirs(self.know)
+        os.symlink(outside, os.path.join(self.know, "Skills"))
+        with self.assertRaises(ValueError):
+            self.apply({self.P: "v"})
+        os.remove(os.path.join(self.know, "Skills"))
+        os.symlink(outside, os.path.join(self.know, ".fridae-vault"))
+        with self.assertRaises(ValueError):
+            self.apply({self.P: "v"})
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_base_is_saved_after_each_skill_folder(self):
+        b = rbxvaultsync.read_base()
+        b["declined"] = ["b"]
+        os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+        rbxskills._write_json(rbxvaultsync.base_path(), b)
+        with mock.patch.object(rbxvaultsync, "_save_base", wraps=rbxvaultsync._save_base) as sv:
+            self.apply({"Skills/a/SKILL.md": "a", "Skills/b/SKILL.md": "b", "Skills/c/SKILL.md": "c"})
+        self.assertEqual(sv.call_count, 4)  # a, b (declined), c, then the end
+
+    def test_one_state_dir(self):
+        self.assertEqual(rbxvaultsync.state_dir(), rbxskills.vault_state_dir())
 
 
 if __name__ == "__main__":

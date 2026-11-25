@@ -198,7 +198,8 @@ def vault_dir():
 
 def vault_state_dir():
     """The vault's base record and what it moved aside."""
-    return os.path.join(rbxpaths.KNOWLEDGE_DIR, ".fridae-vault")
+    import rbxvaultsync  # here, not at the top: rbxvaultsync imports this module lazily too
+    return rbxvaultsync.state_dir()
 
 
 def _list(val):
@@ -1651,10 +1652,15 @@ def cmd_skills(a):
         elif a.action == "vault-apply":
             import rbxvaultsync
             try:
+                if not a.staged:
+                    raise ValueError(rbxvaultsync.BAD)
                 out = json.dumps(rbxvaultsync.apply(a.staged, _read_json(a.manifest, {})), ensure_ascii=False)
             except ValueError as e:
                 print(str(e), file=sys.stderr)
                 raise SystemExit(2)
+            except (OSError, rbxpaths.KitError) as e:
+                print("The vault update could not be applied: %s" % e, file=sys.stderr)
+                raise SystemExit(1)
         elif a.action == "index":
             out = json.dumps(index(project, a.claude_config or None), ensure_ascii=False)
         else:

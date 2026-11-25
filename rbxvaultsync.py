@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 import uuid
 
 import rbxpaths
@@ -16,9 +17,11 @@ ALLOWED_TOP = ("Skills/",)
 BESIDE = " (Fridae update)"
 BAD = "This vault update looked wrong, so nothing was changed."
 MERGE_MAX = 1 << 20
+MAX_FILES, MAX_FILE, MAX_TOTAL = 5000, 1 << 20, 100 << 20
 
 
 def state_dir():
+    """The one place the vault's base record and moved-aside files live."""
     return os.path.join(rbxpaths.KNOWLEDGE_DIR, ".fridae-vault")
 
 
@@ -52,7 +55,10 @@ def check_path(p):
     segment, no backslash, NUL or leading slash, and every segment at most 255 bytes."""
     if not isinstance(p, str) or not p.startswith(ALLOWED_TOP) or "\\" in p or "\0" in p or p.startswith("/"):
         return False
-    for seg in p.split("/"):
+    parts = p.split("/")
+    if len(parts) < 3:  # skills live in folders: Skills/<skill>/<file>
+        return False
+    for seg in parts:
         if not seg or seg.startswith(".") or len(seg.encode("utf-8", "surrogatepass")) > 255:
             return False
     return True
@@ -74,6 +80,17 @@ def _read(path):
             return f.read()
     except OSError:
         return None
+
+
+def _read_existing(path):
+    """The bytes of a target that may be there: None when nothing is, OSError when something is but is not a
+    readable regular file (never mistaken for missing)."""
+    if not os.path.lexists(path):
+        return None
+    if os.path.islink(path) or not os.path.isfile(path):
+        raise OSError("not an ordinary file")
+    with open(path, "rb") as f:
+        return f.read()
 
 
 def _inside(path, root):
@@ -144,6 +161,14 @@ def _local_path(path, renamed):
     return "/".join(parts)
 
 
+def _no_symlinks():
+    """Knowledge, its Skills and its .fridae-vault folders are real folders (when they exist)."""
+    import rbxskills
+    for d in (rbxpaths.KNOWLEDGE_DIR, rbxskills.vault_dir(), state_dir()):
+        if os.path.islink(d):
+            raise ValueError
+
+
 def _validate(staged, manifest, renamed):
     """Everything that can be checked before the first write; raises ValueError(BAD)."""
     import rbxskills
@@ -154,8 +179,17 @@ def _validate(staged, manifest, renamed):
         if not isinstance(rel, str) or not rel or "/" in rel or "\\" in rel or "\0" in rel or rel.startswith("."):
             raise ValueError
         files = manifest.get("files")
-        if not isinstance(files, list):
+        if not isinstance(files, list) or not files or len(files) > MAX_FILES:
             raise ValueError
+        total = 0
+        for f in files:  # the limits, from the manifest alone, before any staged file is read
+            size = f.get("size") if isinstance(f, dict) else None
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0 or size > MAX_FILE:
+                raise ValueError
+            total += size
+        if total > MAX_TOTAL:
+            raise ValueError
+        _no_symlinks()
         seen = set()
         vault = rbxskills.vault_dir()
         root = os.path.realpath(staged)
@@ -163,13 +197,15 @@ def _validate(staged, manifest, renamed):
             if not isinstance(f, dict):
                 raise ValueError
             p, h, size = f.get("path"), f.get("sha256"), f.get("size")
-            if not check_path(p) or p in seen or not isinstance(h, str) or isinstance(size, bool) \
-                    or not isinstance(size, int):
+            if not check_path(p) or not isinstance(h, str):
                 raise ValueError
-            seen.add(p)
+            if os.path.splitext(p)[0].endswith(BESIDE):
+                raise ValueError
             lp = _local_path(p, renamed)
-            if not check_path(lp):
+            key = unicodedata.normalize("NFC", lp).casefold()
+            if not check_path(lp) or not check_path(_beside(lp)) or key in seen:
                 raise ValueError
+            seen.add(key)
             src = os.path.join(staged, *p.split("/"))
             if os.path.islink(src) or not _inside(os.path.dirname(src), root):
                 raise ValueError
@@ -195,6 +231,21 @@ def apply(staged, manifest):
         return _apply(staged, manifest, base)
 
 
+def _put_beside(target, data):
+    """Save the new text beside the user's file as '<stem> (Fridae update)<ext>', never replacing a file already
+    there: identical bytes are left, different ones get '(Fridae update 2)', '3'..."""
+    stem, ext = os.path.splitext(target)
+    n = 1
+    while True:
+        path = stem + (BESIDE if n == 1 else BESIDE[:-1] + " %d)" % n) + ext
+        if not os.path.lexists(path):
+            _write(path, data)
+            return
+        if _read_existing(path) == data:
+            return
+        n += 1
+
+
 def _apply(staged, manifest, base):
     import rbxskills
     vault = rbxskills.vault_dir()
@@ -209,7 +260,10 @@ def _apply(staged, manifest, base):
         return os.path.join(rbxpaths.KNOWLEDGE_DIR, *_local_path(p, renamed).split("/"))
 
     def record(p, data):
-        _write(os.path.join(bdir, *p.split("/")), data)
+        copy = os.path.join(bdir, *p.split("/"))
+        if not _target_ok(copy, state_dir()):
+            raise OSError("outside the vault record")
+        _write(copy, data)
         base["files"][p] = _sha(data)
 
     def forget(p):
@@ -219,9 +273,53 @@ def _apply(staged, manifest, base):
         except OSError:
             pass
 
+    def one(p, name):
+        data = _read(os.path.join(staged, *p.split("/")))
+        target = lp(p)
+        if not _target_ok(target, vault):
+            raise OSError("outside the vault folder")
+        local = _read_existing(target)
+        old = base["files"].get(p)
+        nh = _sha(data)
+        if old is not None:
+            if local is None:
+                base["deleted"].append(p)
+                forget(p)
+                res["skipped_deleted"].append(p)
+            elif _sha(local) == nh:
+                record(p, data)
+            elif _sha(local) == old:
+                _write(target, data)
+                record(p, data)
+                res["updated"].append(p)
+            elif nh == old:
+                pass  # the user's edit stands, upstream did not change
+            else:
+                merged = _merge(local, _read(os.path.join(bdir, *p.split("/"))), data)
+                if merged is not None:
+                    _write(target, merged)
+                    record(p, data)
+                    res["merged"].append(p)
+                else:
+                    _put_beside(target, data)
+                    res["kept"].append(p)
+        elif local is None:
+            _write(target, data)
+            record(p, data)
+            res["added"].append(p)
+        elif _sha(local) == nh:
+            record(p, data)
+        else:
+            _put_beside(target, data)
+            res["kept"].append(p)
+
     decided = {}  # upstream skill name -> install or not
+    current = None
     for p in sorted(new):
         name = _skill(p)
+        if current is not None and name != current:
+            _save_base(base)  # the skill folder before this one is done
+        current = name
         if name in declined:
             if name not in res["declined"]:
                 res["declined"].append(name)
@@ -229,61 +327,23 @@ def _apply(staged, manifest, base):
         if p in base["deleted"]:
             res["skipped_deleted"].append(p)
             continue
-        if name and name not in decided:
+        if name not in decided:
             known = any(_skill(b) == name for b in base["files"])
-            local_dir = os.path.join(vault, renamed.get(name, name))
-            if known or os.path.lexists(local_dir):
+            if known or os.path.lexists(os.path.join(vault, renamed.get(name, name))):
                 decided[name] = True
             else:
                 answer = newcomer(name, os.path.join(staged, "Skills", name))
                 decided[name] = answer == "install"
                 if answer in ("incoming", "settled"):
                     res[answer].append(name)
-        if name and not decided[name]:
+        if not decided[name]:
             continue
         try:
-            data = _read(os.path.join(staged, *p.split("/")))
-            target = lp(p)
-            if not _target_ok(target, vault):
-                raise OSError("outside the vault folder")
-            local = _read(target) if os.path.lexists(target) else None
-            old = base["files"].get(p)
-            nh = _sha(data)
-            if old is not None:
-                if local is None:
-                    base["deleted"].append(p)
-                    forget(p)
-                    res["skipped_deleted"].append(p)
-                elif _sha(local) == nh:
-                    record(p, data)
-                elif _sha(local) == old:
-                    _write(target, data)
-                    record(p, data)
-                    res["updated"].append(p)
-                elif nh == old:
-                    pass  # the user's edit stands, upstream did not change
-                else:
-                    merged = _merge(local, _read(os.path.join(bdir, *p.split("/"))), data)
-                    if merged is not None:
-                        _write(target, merged)
-                        record(p, data)
-                        res["merged"].append(p)
-                    else:
-                        _write(_beside(target), data)
-                        res["kept"].append(p)
-            elif local is None:
-                _write(target, data)
-                record(p, data)
-                res["added"].append(p)
-            elif _sha(local) == nh:
-                record(p, data)
-            else:
-                _write(_beside(target), data)
-                res["kept"].append(p)
+            one(p, name)
         except OSError as e:
             res["errors"].append("%s: %s" % (p, e))
-        if name and (p == max(q for q in new if _skill(q) == name)):
-            _save_base(base)
+    if current is not None:
+        _save_base(base)
 
     for p in sorted(b for b in base["files"] if b not in new and _skill(b) not in declined):
         try:
@@ -293,9 +353,11 @@ def _apply(staged, manifest, base):
             target = lp(p)
             if not _target_ok(target, vault):
                 raise OSError("outside the vault folder")
-            local = _read(target) if os.path.lexists(target) else None
+            local = _read_existing(target)
             if local is not None and _sha(local) == base["files"][p]:
                 dest = os.path.join(state_dir(), "removed", release, *_local_path(p, renamed).split("/"))
+                if not _target_ok(dest, state_dir()):
+                    raise OSError("outside the vault record")
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 if os.path.lexists(dest):
                     dest += "." + uuid.uuid4().hex[:6]
