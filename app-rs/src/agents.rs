@@ -2749,6 +2749,7 @@ impl Agent {
         }
         projects::touch(path);
         self.put("project", projects::describe(path));
+        crate::skills::warm(Some(path)); // the project's skill index, made behind for the first message
         true
     }
 
@@ -5132,6 +5133,7 @@ pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
     let ai = ai.filter(|a| paths::AIS.contains(a));
     agent.st.lock().unwrap().ai = ai.map(str::to_string);
     agent.put("agent_new", json!({"name": agent.name(), "ai": ai}));
+    crate::skills::warm(None); // its first message finds the skill index made (never waits)
     Some(agent)
 }
 
@@ -5214,6 +5216,9 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
     }
     if let Some(p) = agent.project() {
         agent.put("project", projects::describe(&p));
+    }
+    if role.is_none() {
+        crate::skills::warm(agent.project().as_deref()); // a chat of the user's: its skill index, made behind
     }
     Some(agent)
 }
@@ -5406,6 +5411,9 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
     }
     if !settled {
         BUS.put("done", json!({"agent": agent.id})); // it was closed mid-reply: settle the view
+    }
+    if agent.role().is_none() {
+        crate::skills::warm(agent.project().as_deref()); // a reopened chat's skill index, made behind
     }
     // an idle fresh chat that was only a placeholder makes way for the reopened one: never a chat the app started with
     // a name (a studio run's Lead or a helper that has not said anything yet: removing it here, bypassing

@@ -424,12 +424,14 @@ def pinned(s):
     return bool(s.get("core")) or s["id"].casefold() in CORE
 
 
-def catalog(ai="", project=None, config=None, kind=""):
+def catalog(ai="", project=None, config=None, kind="", do_import=True):
     """The skills part of an agent's standing instructions: how to use rbx_skill, one line per pinned skill (pinned)
     whose applies fits kind ("game", "plain"; anything else: every one), then how to find the others. For Claude it
     leaves out the unchanged imports of skills Claude Code lists itself (native_ids; config: its config folder for a
-    second account). Empty when the library is. Imports other tools' skills first (at most once a minute)."""
-    maybe_import()
+    second account). Empty when the library is. Imports other tools' skills first (at most once a minute) unless
+    do_import is False: the app asks with --no-import on the turn, its background index load doing the import."""
+    if do_import:
+        maybe_import()
     claude = ai == "claude"
     every = skills(project)
     if not every:
@@ -1574,6 +1576,8 @@ def register(sub):
     p.add_argument("--kind", default="", choices=["", "game", "plain"],
                    help="catalog: the project's kind (game or plain); the pinned skills that apply only to the other "
                         "are left out")
+    p.add_argument("--no-import", action="store_true",
+                   help="catalog: do not import other tools' skills first (the app's call on a turn)")
     p.add_argument("--json", action="store_true", help="pending, decide: answer in JSON (import and index always do)")
     p.add_argument("--merged-file", default="", help="decide merge: the merged SKILL.md")
     p.add_argument("--json-file", default="", help="decide advise: the recommendation {choice, why, merged, by}")
@@ -1601,7 +1605,7 @@ def cmd_skills(a):
     project = a.project or None
     try:
         if a.action == "catalog":
-            out = catalog(a.ai, project, a.claude_config or None, a.kind)
+            out = catalog(a.ai, project, a.claude_config or None, a.kind, not a.no_import)
         elif a.action == "list":
             out = listing(project)
         elif a.action == "load":

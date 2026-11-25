@@ -119,15 +119,22 @@ fn command(args: &[&str]) -> std::process::Command {
 }
 
 fn make(ai: &str, kind: &str, project: Option<&str>, claude_config: Option<&Path>) -> Option<String> {
-    let config = claude_config.map(|p| p.display().to_string()).unwrap_or_default();
-    let mut args = vec!["catalog", "--ai", ai, "--project", project.unwrap_or("")];
+    let args = catalog_args(ai, kind, project, claude_config);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    run(command(&refs), LIMIT)
+}
+
+/// `rbx skills catalog`'s arguments. `--no-import`: the catalog is made on a turn, which never waits for an import of
+/// other tools' skills; the index load behind (`index_for`, warmed at launch: `warm`) imports at most once a minute.
+fn catalog_args(ai: &str, kind: &str, project: Option<&str>, claude_config: Option<&Path>) -> Vec<String> {
+    let mut args: Vec<String> = ["catalog", "--ai", ai, "--project", project.unwrap_or(""), "--no-import"].iter().map(|a| a.to_string()).collect();
     if !kind.is_empty() {
-        args.extend_from_slice(&["--kind", kind]);
+        args.extend(["--kind".to_string(), kind.to_string()]);
     }
-    if !config.is_empty() {
-        args.extend_from_slice(&["--claude-config", &config]);
+    if let Some(config) = claude_config.map(|p| p.display().to_string()).filter(|c| !c.is_empty()) {
+        args.extend(["--claude-config".to_string(), config]);
     }
-    run(command(&args), LIMIT)
+    args
 }
 
 /// What `cmd` printed, when it ended well within `limit` (else it is ended and nothing is returned). Its output is
@@ -488,6 +495,15 @@ fn index_for(project: Option<&str>, claude_config: Option<&Path>) -> Option<Arc<
             Some(Index::from_json(&v))
         }),
     )
+}
+
+/// Start making the suggestion index for `project` behind, never waiting (`IndexCache`: one load per key at a time,
+/// nothing when a fresh one is kept), so the first message after launch, or in a new chat or a chat given a project,
+/// finds it ready. The key is the one `suggest_for` reads: a project folder that is not there is no project. Called
+/// when the server starts and when a chat is made, reopened or given a project.
+pub fn warm(project: Option<&str>) {
+    let project = project.filter(|p| Path::new(p).is_dir());
+    let _ = index_for(project, None);
 }
 
 /// The keyword fallback: [(index of the entry, score)] best first, over the skills `keep` lets through.
@@ -1055,6 +1071,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_catalog_on_a_turn_never_imports() {
+        let args = catalog_args("other", "game", Some("/games/a"), Some(Path::new("/c2")));
+        assert!(args.contains(&"--no-import".to_string()), "the import is the background index load's: {args:?}");
+        assert_eq!(&args[..5], &["catalog", "--ai", "other", "--project", "/games/a"]);
+        assert!(args.windows(2).any(|w| w == ["--kind", "game"]) && args.windows(2).any(|w| w == ["--claude-config", "/c2"]));
+    }
+
+    #[test]
     fn a_folder_change_shows_in_the_fingerprint() {
         let dir = std::env::temp_dir().join(format!("fridae-skills-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1551,6 +1575,34 @@ mod tests {
         assert!(suggest(q, "game", "cursor", &[]).expect("the next message has it").contains("menu-polish"));
         assert!(began.elapsed() < Duration::from_millis(50));
         assert_eq!(loads.load(Ordering::SeqCst), 1, "a fresh index is not made again");
+    }
+
+    #[test]
+    fn warming_makes_the_index_behind_so_the_first_message_has_it() {
+        let cache = IndexCache::new();
+        let load = || {
+            std::thread::sleep(Duration::from_millis(300)); // a slow `rbx skills index`
+            Some(Index::from_json(&fixture_index()))
+        };
+        TEST_CACHE.with(|c| *c.borrow_mut() = Some((cache.clone(), Arc::new(load))));
+        service(None);
+        let began = Instant::now();
+        warm(None); // the server starting, or a new chat
+        assert!(began.elapsed() < Duration::from_millis(50), "never waits: {:?}", began.elapsed());
+        assert!(wait_until(|| cache.kept.lock().unwrap().len() == 1), "made behind");
+        let line = suggest("my shop menu looks flat", "game", "cursor", &[]);
+        assert!(line.expect("the first message after launch has suggestions").contains("menu-polish"));
+        // a chat given a project warms that project's index
+        let game = paths::test_dir("skills-warm-game");
+        std::fs::create_dir_all(&game).unwrap();
+        let game = game.display().to_string();
+        crate::agents::Agent::detached_for_test("warm-chat", None).set_project(&game);
+        assert!(wait_until(|| cache.kept.lock().unwrap().contains_key(&(game.clone(), String::new()))));
+        let began = Instant::now();
+        warm(Some("/no/such/folder"));
+        assert!(began.elapsed() < Duration::from_millis(50));
+        assert!(!cache.loading.lock().unwrap().contains(&("/no/such/folder".to_string(), String::new())),
+            "a project folder that is not there is the no-project index a message would read");
     }
 
     #[test]

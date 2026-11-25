@@ -1001,6 +1001,18 @@ class ImportTests(unittest.TestCase):
         os.utime(stamp, (old, old))
         self.assertIn("- second:", rbxskills.catalog("gemini"))
 
+    def test_the_apps_catalog_call_never_imports(self):
+        """The app asks for the catalog on the turn (--no-import): the import is the background index load's."""
+        p = mock.patch.object(rbxskills, "CORE", ("first",))
+        p.start()
+        self.addCleanup(p.stop)
+        skill(os.path.join(self.agents, "first"), "first", "Fold paper cranes.")
+        with mock.patch.object(rbxskills, "import_external", side_effect=AssertionError("imported on the turn")):
+            self.assertNotIn("- first:", rbxskills.catalog("gemini", do_import=False))
+            self.assertNotIn("- first:", self.cli("catalog", "--ai", "gemini", "--no-import"))
+        self.assertFalse(os.path.exists(os.path.join(self.user, ".imported")), "no import ran")
+        self.assertIn("- first:", self.cli("catalog", "--ai", "gemini"), "the CLI's default still imports")
+
     def cli(self, *argv):
         import argparse
         import contextlib
