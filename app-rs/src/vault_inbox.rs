@@ -371,7 +371,11 @@ fn refresh_main(repo: &str) -> Result<Vec<String>, String> {
 struct Fetched {
     path: String,
     note: String,
+    /// The blob's sha as the pull request lists it ("" in a listing kept before it was recorded).
+    sha: String,
 }
+
+const NOT_TEXT: &str = "Not shown: the file is not text.";
 
 /// One pull request's files fetched into `inbox/pr-<n>/<sha>/` (the paths as the repository has them), once per head
 /// sha; what was found is kept in `.listing.json` beside them. Returns (skill files, files outside a skill).
@@ -379,7 +383,7 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
     let dir = inbox_dir().join(format!("pr-{n}")).join(sha);
     let listing = dir.join(".listing.json");
     if let Some(v) = fs::read(&listing).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
-        let files = v["files"].as_array().into_iter().flatten().filter_map(|f| Some(Fetched { path: f["path"].as_str()?.to_string(), note: f["note"].as_str().unwrap_or("").to_string() })).filter(|f| check_path(&f.path)).collect();
+        let files = v["files"].as_array().into_iter().flatten().filter_map(|f| Some(Fetched { path: f["path"].as_str()?.to_string(), note: f["note"].as_str().unwrap_or("").to_string(), sha: f["sha"].as_str().filter(|s| sha_ok(s)).unwrap_or("").to_string() })).filter(|f| check_path(&f.path)).collect();
         let other = v["other"].as_array().into_iter().flatten().filter_map(|p| p.as_str().map(shown)).collect();
         return Ok((files, other));
     }
@@ -413,7 +417,7 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
                     if spent > PR_MAX as u64 {
                         TOO_BIG_IN_ALL
                     } else if bytes.contains(&0) || std::str::from_utf8(&bytes).is_err() {
-                        "Not shown: the file is not text."
+                        NOT_TEXT
                     } else {
                         write_atomic(&join(&dir, path), &bytes)?;
                         ""
@@ -421,9 +425,9 @@ fn fetch_pr(repo: &str, n: u64, sha: &str) -> Result<(Vec<Fetched>, Vec<String>)
                 }
             }
         };
-        files.push(Fetched { path: path.to_string(), note: note.to_string() });
+        files.push(Fetched { path: path.to_string(), note: note.to_string(), sha: blob.to_string() });
     }
-    let record = json!({"files": files.iter().map(|f| json!({"path": f.path, "note": f.note})).collect::<Vec<_>>(), "other": other});
+    let record = json!({"files": files.iter().map(|f| json!({"path": f.path, "note": f.note, "sha": f.sha})).collect::<Vec<_>>(), "other": other});
     write_atomic(&listing, record.to_string().as_bytes())?;
     // the folders of this pull request's older heads
     if let Some(parent) = dir.parent() {
@@ -452,6 +456,39 @@ fn compare(new_dir: &Path) -> Option<Value> {
     share::kit_json(&["compare", "--new", &new, "--against", &against, "--json"]).ok().filter(Value::is_object)
 }
 
+/// The comparison of one submitted note with the vault's file of the same path: `rbx skills compare` on a file.
+fn compare_note(new_file: &Path, path: &str) -> Option<Value> {
+    let (new, against) = (new_file.display().to_string(), join(&main_dir(), path).display().to_string());
+    share::kit_json(&["compare", "--new", &new, "--against", &against, "--json"]).ok().filter(Value::is_object)
+}
+
+/// A submission's units: its skills' files by the skill's folder name (only paths under `Skills/`), and its other
+/// files, each a unit of its own (a guide or note).
+fn units_of(files: &[Fetched]) -> (BTreeMap<String, Vec<&Fetched>>, Vec<&Fetched>) {
+    let (mut skills, mut notes): (BTreeMap<String, Vec<&Fetched>>, Vec<&Fetched>) = (BTreeMap::new(), Vec::new());
+    for f in files {
+        match f.path.split('/').collect::<Vec<_>>().as_slice() {
+            ["Skills", name, _, ..] => skills.entry(name.to_string()).or_default().push(f),
+            _ => notes.push(f),
+        }
+    }
+    (skills, notes)
+}
+
+/// What a note is called: its file name, without `.md`.
+fn note_title(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.strip_suffix(".md").filter(|t| !t.is_empty()).unwrap_or(file).to_string()
+}
+
+/// What a unit is called in the thank-you: a skill's name or a note's title.
+fn unit_name(unit: &str) -> String {
+    match unit.strip_prefix("Skills/") {
+        Some(name) if !name.contains('/') => name.to_string(),
+        _ => note_title(unit),
+    }
+}
+
 /// A recommendation still to be written: its key (both sides' hashes) and the two folders.
 #[derive(Clone)]
 struct Job {
@@ -470,10 +507,11 @@ fn read_advice() -> Map<String, Value> {
     fs::read(advice_file()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
-/// The inbox: every open pull request with its skills.
-/// `{ok, prs: [{n, url, author, title, error?, not_skill, skills: [{name, files: [{path, text, script, note?}], not_skill,
-/// same_name, closest: {id, score}|null, diff, recommendation: {choice, why, merged}|null, decided}]}]}`.
-/// `decided` is `{choice, why, at}` once the maintainer has decided the skill (for the head the page shows), else null.
+/// The inbox: every open pull request with its skills and its guides or notes.
+/// `{ok, prs: [{n, url, author, title, error?, not_skill, skills: [{unit, name, files: [{path, text, script, note?}],
+/// not_skill, same_name, closest: {id, score}|null, diff, recommendation: {choice, why, merged}|null, decided}],
+/// notes: [{unit, path, title, text, note?, binary, in_vault, diff, decided}]}]}`.
+/// `decided` is `{choice, why, at}` once the maintainer has decided the unit (for the head the page shows), else null.
 pub fn inbox() -> Value {
     inbox_in().unwrap_or_else(fail)
 }
@@ -494,8 +532,8 @@ fn inbox_in() -> Result<Value, String> {
     for pr in open.iter().take(PRS_MAX) {
         let (Some(n), Some(head)) = (pr["number"].as_u64(), pr["head"]["sha"].as_str().filter(|s| sha_ok(s))) else { continue };
         live.push(format!("pr-{n}"));
-        let header = |error: Option<&str>, skills: Vec<Value>, other: &[String]| {
-            let mut v = json!({"n": n, "url": pr["html_url"].as_str().unwrap_or(""), "author": pr["user"]["login"].as_str().unwrap_or(""), "title": pr["title"].as_str().unwrap_or(""), "not_skill": other, "skills": skills});
+        let header = |error: Option<&str>, skills: Vec<Value>, notes: Vec<Value>, other: &[String]| {
+            let mut v = json!({"n": n, "url": pr["html_url"].as_str().unwrap_or(""), "author": pr["user"]["login"].as_str().unwrap_or(""), "title": pr["title"].as_str().unwrap_or(""), "not_skill": other, "skills": skills, "notes": notes});
             if let Some(e) = error {
                 v["error"] = json!(e);
             }
@@ -505,18 +543,31 @@ fn inbox_in() -> Result<Value, String> {
         let (files, other) = match fetch_pr(&repo, n, head) {
             Ok(x) => x,
             Err(e) => {
-                prs.push(header(Some(&e), Vec::new(), &[]));
+                prs.push(header(Some(&e), Vec::new(), Vec::new(), &[]));
                 continue;
             }
         };
         let dir = inbox_dir().join(format!("pr-{n}")).join(head);
-        // the skills' files by the skill's folder name
-        let mut by_skill: BTreeMap<String, Vec<&Fetched>> = BTreeMap::new();
-        for f in &files {
-            if let Some(name) = f.path.split('/').nth(1) {
-                by_skill.entry(name.to_string()).or_default().push(f);
-            }
-        }
+        let (by_skill, note_files) = units_of(&files);
+        // each guide or note: its text, and its change against the vault's file of the same path
+        let notes: Vec<Value> = note_files
+            .iter()
+            .map(|f| {
+                let file = join(&dir, &f.path);
+                let text = if f.note.is_empty() { fs::read(&file).unwrap_or_default() } else { Vec::new() };
+                let in_vault = fs::symlink_metadata(join(&main_dir(), &f.path)).is_ok_and(|m| m.is_file());
+                let diff = if in_vault && f.note.is_empty() { compare_note(&file, &f.path).map(|c| c["diff"].clone()).filter(Value::is_string) } else { None };
+                let mut v = json!({
+                    "unit": f.path, "path": f.path, "title": note_title(&f.path), "text": String::from_utf8_lossy(&text),
+                    "binary": f.note == NOT_TEXT, "in_vault": in_vault, "diff": diff.unwrap_or(Value::Null),
+                    "decided": decision(&decided, n, &f.path, head),
+                });
+                if !f.note.is_empty() {
+                    v["note"] = json!(f.note);
+                }
+                v
+            })
+            .collect();
         let mut skills = Vec::new();
         for (name, fs_) in by_skill {
             let prefix = format!("Skills/{name}/");
@@ -551,15 +602,16 @@ fn inbox_in() -> Result<Value, String> {
                     }
                 }
             }
+            let unit = format!("Skills/{name}");
             skills.push(json!({
-                "name": name, "files": shown_files, "not_skill": other,
+                "unit": unit, "name": name, "files": shown_files, "not_skill": other,
                 "same_name": same,
                 "closest": closest.as_ref().map(|c| json!({"id": c["id"], "score": c["score"]})).unwrap_or(Value::Null),
                 "diff": cmp.as_ref().map(|c| c["diff"].clone()).filter(Value::is_string).unwrap_or(Value::Null),
-                "recommendation": recommendation, "decided": decision(&decided, n, &name, head),
+                "recommendation": recommendation, "decided": decision(&decided, n, &unit, head),
             }));
         }
-        prs.push(header(None, skills, &other));
+        prs.push(header(None, skills, notes, &other));
     }
     // the folders of pull requests that are not open any more
     for old in fs::read_dir(inbox_dir()).into_iter().flatten().flatten() {
@@ -688,8 +740,8 @@ fn set_front(text: &str, set: &[(&str, String)], drop: &[&str]) -> String {
 
 // ----------------------------------------------------------------------------------------------------- decisions
 const NOT_OPEN: &str = "This submission is not open any more.";
-const NOT_IN_PR: &str = "That skill is not in this submission.";
-const DECIDED_ALREADY: &str = "You have already decided this skill.";
+const NOT_IN_PR: &str = "That is not in this submission.";
+const DECIDED_ALREADY: &str = "You have already decided this.";
 const CHOICES: &str = "Choose Add, Edit then add or Reject.";
 const NOT_READ: &str = "Some of this skill's files could not be read, so Fridae cannot add it.";
 const NO_SKILL_MD: &str = "This skill has no SKILL.md, so it cannot be added.";
@@ -702,7 +754,7 @@ fn decided_file() -> PathBuf {
     inbox_dir().join("decided.json")
 }
 
-/// `{ "<pr>": { "<skill>": {choice, why, at, sha} } }`: the head each decision was made on is kept, so a decision never
+/// `{ "<pr>": { "<unit>": {choice, why, at, sha} } }`: the head each decision was made on is kept, so a decision never
 /// carries over to a changed submission.
 fn read_decided() -> Map<String, Value> {
     fs::read(decided_file()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
@@ -712,7 +764,7 @@ fn write_decided(all: &Map<String, Value>) -> Result<(), String> {
     write_atomic(&decided_file(), Value::Object(all.clone()).to_string().as_bytes())
 }
 
-/// What the inbox shows of one skill's decision, when it was made on this head.
+/// What the inbox shows of one unit's decision, when it was made on this head.
 fn decision(all: &Map<String, Value>, n: u64, skill: &str, head: &str) -> Value {
     match all.get(&n.to_string()).and_then(|p| p.get(skill)).filter(|d| d["sha"] == head) {
         Some(d) => json!({"choice": d["choice"], "why": d["why"], "at": d["at"]}),
@@ -737,17 +789,18 @@ fn mirror_paths() -> Vec<String> {
     index.keys().filter(|p| check_path(p)).cloned().collect()
 }
 
-/// A skill of a pull request: add it, edit its `SKILL.md` and add it, or turn it down. `add` and `edit` commit the
-/// submission's `Skills/<name>/` files to the vault's `main` with the front matter set (owner, credit, licence, source,
-/// updated; `core` and `supersedes` removed) and delete the files of that folder the submission lacks. `reject` only
-/// records the choice. When every skill of the pull request is decided, a thank-you says what was and was not added and
-/// the pull request is closed. Called only by the maintainer's click on one skill (`POST /api/vault/inbox_decide`);
-/// nothing else calls it, and no agent has a tool for it.
-pub fn decide(pr: u64, skill: &str, choice: &str, text: Option<&str>, why: Option<&str>) -> Value {
-    decide_in(pr, skill, choice, text, why).unwrap_or_else(fail)
+/// A unit of a pull request (a skill, `Skills/<name>`, or one guide or note by its path): add it, edit it and add it,
+/// or turn it down. For a skill, `add` and `edit` commit the submission's `Skills/<name>/` files to the vault's `main`
+/// with the front matter set (`add_skill`) and delete the files of that folder the submission lacks; `edit` replaces
+/// its `SKILL.md`. For a note, they commit only that file (`add_note`); `edit` replaces its text, and only text can be
+/// edited. `reject` only records the choice. When every unit of the pull request is decided, a thank-you says what was
+/// and was not added and the pull request is closed. Called only by the maintainer's click on one unit
+/// (`POST /api/vault/inbox_decide`); nothing else calls it, and no agent has a tool for it.
+pub fn decide(pr: u64, unit: &str, choice: &str, text: Option<&str>, why: Option<&str>) -> Value {
+    decide_in(pr, unit, choice, text, why).unwrap_or_else(fail)
 }
 
-fn decide_in(pr: u64, skill: &str, choice: &str, text: Option<&str>, why: Option<&str>) -> Result<Value, String> {
+fn decide_in(pr: u64, unit: &str, choice: &str, text: Option<&str>, why: Option<&str>) -> Result<Value, String> {
     if !github::connected() {
         return Err(NOT_CONNECTED.to_string());
     }
@@ -766,35 +819,48 @@ fn decide_in(pr: u64, skill: &str, choice: &str, text: Option<&str>, why: Option
     }
     let author = open["user"]["login"].as_str().filter(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')).ok_or_else(|| vault_git::unreadable("who sent the submission"))?.to_string();
     let (files, _) = fetch_pr(&repo, pr, &head)?;
-    // the skill must be a folder this pull request holds (its files all passed `check_path`)
-    let mut by_skill: BTreeMap<String, Vec<&Fetched>> = BTreeMap::new();
-    for f in &files {
-        if let Some(name) = f.path.split('/').nth(1) {
-            by_skill.entry(name.to_string()).or_default().push(f);
-        }
+    // the unit must be one this pull request holds (its files all passed `check_path`): a skill's folder or one note
+    let (by_skill, notes) = units_of(&files);
+    let units: Vec<String> = by_skill.keys().map(|n| format!("Skills/{n}")).chain(notes.iter().map(|f| f.path.clone())).collect();
+    if !units.iter().any(|u| u == unit) {
+        return Err(NOT_IN_PR.to_string());
     }
-    let mine = by_skill.get(skill).ok_or_else(|| NOT_IN_PR.to_string())?;
     let mut all = read_decided();
-    if decision(&all, pr, skill, &head) != Value::Null {
+    if decision(&all, pr, unit, &head) != Value::Null {
         return Err(DECIDED_ALREADY.to_string());
     }
     let why_text = clean(why.unwrap_or(""));
     if choice != "reject" {
-        add_skill(&repo, pr, &head, &author, skill, mine, if choice == "edit" { Some(text.ok_or_else(|| "Edit then add needs the new text.".to_string())?) } else { None })?;
+        let edited = if choice == "edit" { Some(text.ok_or_else(|| "Edit then add needs the new text.".to_string())?) } else { None };
+        if edited.is_some_and(|t| t.len() > FILE_MAX) {
+            return Err("The edited text is over 200 KB.".to_string());
+        }
+        match (unit.strip_prefix("Skills/"), notes.iter().find(|f| f.path == unit)) {
+            (Some(name), _) if by_skill.contains_key(name) => add_skill(&repo, pr, &head, &author, name, &by_skill[name], edited)?,
+            (_, Some(f)) => {
+                let bytes = match edited {
+                    Some(_) if f.note == NOT_TEXT => return Err("Only text can be edited here.".to_string()),
+                    Some(t) => t.as_bytes().to_vec(),
+                    None => note_bytes(&repo, pr, &head, f)?,
+                };
+                add_note(&repo, &author, pr, unit, bytes)?
+            }
+            _ => return Err(NOT_IN_PR.to_string()),
+        }
     }
     let record = json!({"choice": choice, "why": why_text, "at": clock(), "sha": head});
     let entry = all.entry(pr.to_string()).or_insert_with(|| json!({}));
-    entry[skill] = record;
+    entry[unit] = record;
     write_decided(&all)?;
-    // every skill decided: thank the sender and close
+    // every unit decided: thank the sender and close
     let here = &all[&pr.to_string()];
-    let undecided = by_skill.keys().any(|n| here[n]["sha"] != head);
+    let undecided = units.iter().any(|u| here[u]["sha"] != head);
     if undecided {
         return Ok(json!({"ok": true, "closed": false}));
     }
     let (mut added, mut not_added) = (Vec::new(), Vec::new());
-    for name in by_skill.keys() {
-        let (name_c, d) = (clean(name), &here[name]);
+    for u in &units {
+        let (name_c, d) = (clean(&unit_name(u)), &here[u]);
         if d["choice"] == "reject" {
             let w = d["why"].as_str().unwrap_or("");
             not_added.push(if w.is_empty() { name_c } else { format!("{name_c} ({w})") });
@@ -836,13 +902,28 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
         None => String::from_utf8(read(&md_path).map_err(|_| NO_SKILL_MD.to_string())?).map_err(|_| NOT_READ.to_string())?,
     };
     let (day, _) = today();
+    // a skill the vault already has keeps its owner and source, and its credit gains the sender's (once)
+    let (mut owner, mut credit, mut source) = ("community".to_string(), clean(author), format!("community, shared by {} in {}#{pr}", clean(author), clean(repo)));
+    if let Some(theirs) = same_named(name).map(|d| String::from_utf8_lossy(&skill_md(&d)).to_string()) {
+        let value = |key: &str| front_value(&theirs, key).map(|v| clean(&v)).filter(|v| !v.is_empty());
+        if let Some(o) = value("owner") {
+            owner = o;
+        }
+        if let Some(s) = value("source") {
+            source = s;
+        }
+        if let Some(c) = value("credit") {
+            let has = c.split(',').any(|who| who.trim().eq_ignore_ascii_case(author));
+            credit = if has { c } else { format!("{c}, {}", clean(author)) };
+        }
+    }
     // the vault knows a skill by its folder: a front-matter name that differs could take another skill's place
     let set = [
         ("name", name.to_string()),
-        ("owner", "community".to_string()),
-        ("credit", clean(author)),
+        ("owner", owner),
+        ("credit", credit),
         ("licence", LICENCE.to_string()),
-        ("source", format!("community, shared by {} in {}#{pr}", clean(author), clean(repo))),
+        ("source", source),
         ("updated", day),
     ];
     let mut out: Vec<(String, Vec<u8>)> = vec![(md_path.clone(), set_front(&base, &set, &["core", "supersedes"]).into_bytes())];
@@ -858,10 +939,40 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
     vault_git::commit_files(repo, "main", &out, &deletes, &message).map(|_| ())
 }
 
+const NOTE_NOT_READ: &str = "This file could not be read, so Fridae cannot add it.";
+
+/// A submitted note's bytes: the text fetched for the inbox, or (a model, or a file too big to show) its blob read
+/// again from GitHub by the sha the pull request lists, up to a vault file's limit.
+fn note_bytes(repo: &str, pr: u64, head: &str, f: &Fetched) -> Result<Vec<u8>, String> {
+    if f.note.is_empty() {
+        let p = join(&inbox_dir().join(format!("pr-{pr}")).join(head), &f.path);
+        if !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
+            return Err(NOTE_NOT_READ.to_string());
+        }
+        return fs::read(&p).map_err(|_| NOTE_NOT_READ.to_string());
+    }
+    if f.sha.is_empty() {
+        return Err(NOTE_NOT_READ.to_string());
+    }
+    vault_git::blob(repo, &f.sha)
+}
+
+/// Commit one submitted guide or note to the vault's `main`: only that file, with nothing deleted. "Add <title> from
+/// <author> (#<pr>)", or "Change ..." when the vault already has it.
+fn add_note(repo: &str, author: &str, pr: u64, path: &str, bytes: Vec<u8>) -> Result<(), String> {
+    if !check_path(path) || path.starts_with("Skills/") {
+        return Err(NOT_IN_PR.to_string());
+    }
+    refresh_main(repo)?;
+    let verb = if mirror_paths().iter().any(|p| p == path) { "Change" } else { "Add" };
+    let message = format!("{verb} {} from {} (#{pr})", clean(&note_title(path)), clean(author));
+    vault_git::commit_files(repo, "main", &[(path.to_string(), bytes)], &[], &message).map(|_| ())
+}
+
 // ----------------------------------------------------------------------------------------------------- publishing
 const BUSY_PUBLISH: &str = "A release is already being made. Wait a moment.";
 const CHANGED: &str = "The vault changed while Fridae was getting ready. Try again.";
-const NOTHING: &str = "The vault has no skills to publish yet.";
+const NOTHING: &str = "The vault has nothing to publish yet.";
 
 static PUBLISHING: AtomicBool = AtomicBool::new(false);
 
@@ -884,8 +995,9 @@ fn check_limits(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
 /// capitals.
 fn preflight(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
     let mut names: BTreeMap<String, ()> = BTreeMap::new();
+    // only skills: a guide's folder is no skill's name
     for p in files.keys() {
-        if let Some(n) = p.split('/').nth(1) {
+        if let ["Skills", n, _, ..] = p.split('/').collect::<Vec<_>>().as_slice() {
             names.insert(n.to_string(), ());
         }
     }
@@ -917,7 +1029,7 @@ fn preflight(files: &BTreeMap<String, Vec<u8>>) -> Vec<String> {
     problems
 }
 
-/// Every skill file of the main mirror (the files the app would accept in a manifest), by path.
+/// Every file of the main mirror that travels (the files the app would accept in a manifest), by path.
 fn mirror_files() -> Result<BTreeMap<String, Vec<u8>>, String> {
     let mut files = BTreeMap::new();
     for path in mirror_paths().into_iter().filter(|p| check_path(p)) {
@@ -930,30 +1042,41 @@ fn mirror_files() -> Result<BTreeMap<String, Vec<u8>>, String> {
     Ok(files)
 }
 
-/// The skills of a list of (path, sha256) by name, each with its files.
-fn by_name(files: impl Iterator<Item = (String, String)>) -> BTreeMap<String, BTreeMap<String, String>> {
+/// The skills of a map of path -> sha256 by name, each with its files (only paths under `Skills/`).
+fn by_name(files: &BTreeMap<String, String>) -> BTreeMap<String, BTreeMap<String, String>> {
     let mut out: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for (path, sha) in files {
-        if let Some(name) = path.split('/').nth(1) {
-            out.entry(name.to_string()).or_default().insert(path, sha);
+        if let ["Skills", name, _, ..] = path.split('/').collect::<Vec<_>>().as_slice() {
+            out.entry(name.to_string()).or_default().insert(path.clone(), sha.clone());
         }
     }
     out
 }
 
-/// The release notes: the skills new, changed and removed against the previous manifest.
-fn release_notes(now: &BTreeMap<String, BTreeMap<String, String>>, before: Option<&BTreeMap<String, BTreeMap<String, String>>>) -> String {
+/// The release notes from path -> sha256 now and in the previous manifest: the skills new, changed and removed, then
+/// one line counting the guides (every other path, per file) new, changed and removed, when any are.
+fn release_notes(now: &BTreeMap<String, String>, before: Option<&BTreeMap<String, String>>) -> String {
     let none = BTreeMap::new();
-    let before = before.unwrap_or(&none);
+    let before_files = before.unwrap_or(&none);
+    let (now_s, before_s) = (by_name(now), by_name(before_files));
     let list = |label: &str, v: Vec<String>| (!v.is_empty()).then(|| format!("{label}: {}", v.iter().map(|n| clean(n)).collect::<Vec<_>>().join(", ")));
-    let new: Vec<String> = now.keys().filter(|n| !before.contains_key(*n)).cloned().collect();
-    let changed: Vec<String> = now.iter().filter(|(n, f)| before.get(*n).is_some_and(|b| b != *f)).map(|(n, _)| n.clone()).collect();
-    let removed: Vec<String> = before.keys().filter(|n| !now.contains_key(*n)).cloned().collect();
+    let new: Vec<String> = now_s.keys().filter(|n| !before_s.contains_key(*n)).cloned().collect();
+    let changed: Vec<String> = now_s.iter().filter(|(n, f)| before_s.get(*n).is_some_and(|b| b != *f)).map(|(n, _)| n.clone()).collect();
+    let removed: Vec<String> = before_s.keys().filter(|n| !now_s.contains_key(*n)).cloned().collect();
     let lines: Vec<String> = [list("New", new), list("Changed", changed), list("Removed", removed)].into_iter().flatten().collect();
-    if lines.is_empty() { "No skills changed.".to_string() } else { lines.join("\n") }
+    let mut notes = if lines.is_empty() { "No skills changed.".to_string() } else { lines.join("\n") };
+    let guide = |p: &&String| !p.starts_with("Skills/");
+    let g_new = now.keys().filter(guide).filter(|p| !before_files.contains_key(*p)).count();
+    let g_changed = now.iter().filter(|(p, _)| guide(p)).filter(|(p, h)| before_files.get(*p).is_some_and(|b| b != *h)).count();
+    let g_removed = before_files.keys().filter(guide).filter(|p| !now.contains_key(*p)).count();
+    let parts: Vec<String> = [(g_new, "new"), (g_changed, "changed"), (g_removed, "removed")].iter().filter(|(n, _)| *n > 0).map(|(n, w)| format!("{n} {w}")).collect();
+    if !parts.is_empty() {
+        notes.push_str(&format!("\nGuides: {}.", parts.join(", ")));
+    }
+    notes
 }
 
-/// Make a vault release: check every skill's front matter, write `manifest.json` (every file under `Skills/`, with its
+/// Make a vault release: check every skill's front matter, write `manifest.json` (every file that travels, with its
 /// sha256 and size) to `main`, and publish a release named `vault-YYYY.MM.DD` (then `.2`, `.3`) at that commit. Refuses,
 /// with `problems`, what the app would not accept. Called only by the maintainer's click and confirm
 /// (`POST /api/vault/publish`); nothing else calls it, and no agent has a tool for it.
@@ -1002,8 +1125,8 @@ fn publish_in() -> Result<Value, String> {
     // the previous release's manifest: what the notes compare with (none readable: everything is new)
     let previous = vault_git::latest_tag(&repo)?.and_then(|t| vault_git::raw(&repo, &t, "manifest.json").ok()).and_then(|b| vault_sync::parse_manifest(&b).ok());
     let notes = release_notes(
-        &by_name(files.iter().map(|(p, b)| (p.clone(), sha256(b)))),
-        previous.as_ref().map(|m| by_name(m.files.iter().map(|f| (f.path.clone(), f.sha256.clone())))).as_ref(),
+        &files.iter().map(|(p, b)| (p.clone(), sha256(b))).collect(),
+        previous.as_ref().map(|m| m.files.iter().map(|f| (f.path.clone(), f.sha256.clone())).collect::<BTreeMap<_, _>>()).as_ref(),
     );
     let list: Vec<Value> = files.iter().map(|(p, b)| json!({"path": p, "sha256": sha256(b), "size": b.len()})).collect();
     let manifest = format!("{}\n", serde_json::to_string_pretty(&json!({"format": 1, "release": tag, "made": made, "files": list})).map_err(|_| "Fridae could not write the manifest.".to_string())?);
@@ -1381,6 +1504,8 @@ mod tests {
         assert_eq!((pr["n"].as_u64(), pr["author"].as_str(), pr["title"].as_str()), (Some(5), Some("ada"), Some("Share tidy")));
         let skill = &pr["skills"][0];
         assert_eq!(skill["name"], "tidy");
+        assert_eq!(skill["unit"], "Skills/tidy");
+        assert_eq!(pr["notes"], json!([]));
         let order: Vec<&str> = skill["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
         assert_eq!(order, vec!["scripts/go.sh", "SKILL.md"], "scripts first");
         assert_eq!(skill["files"][0]["script"], true);
@@ -1613,7 +1738,7 @@ mod tests {
             "o",
             maint(vec![("Skills/tidy/SKILL.md", DIRTY), ("Skills/tidy/scripts/go.sh", "#!/bin/sh\necho hi\n"), ("README.md", "# hello\n")], vec![("Skills/tidy/old.md", "stale"), ("Skills/other/SKILL.md", "---\nname: other\n---\n")], vec![], None),
         );
-        let out = decide(5, "tidy", "add", None, None);
+        let out = decide(5, "Skills/tidy", "add", None, None);
         assert_eq!(out["ok"], true, "{out}");
         let blobs = blobs_sent(&s);
         assert_eq!(blobs.len(), 2);
@@ -1645,7 +1770,7 @@ mod tests {
         let named = "---\nname: level-design\ndescription: Put things away.\n---\n\nPut things away.\n";
         for (choice, text) in [("add", None), ("edit", Some(named))] {
             let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", named)], vec![], vec![], None));
-            let out = decide(5, "tidy", choice, text, None);
+            let out = decide(5, "Skills/tidy", choice, text, None);
             assert_eq!(out["ok"], true, "{choice}: {out}");
             let md = blobs_sent(&s).into_iter().find(|b| b.contains("owner: community")).unwrap();
             assert!(md.lines().any(|l| l == "name: tidy") && !md.contains("level-design"), "{choice}: {md:?}");
@@ -1665,7 +1790,7 @@ mod tests {
                 inner(m, p, b)
             }),
         );
-        assert_eq!(decide(5, "tidy", "add", None, None)["ok"], true);
+        assert_eq!(decide(5, "Skills/tidy", "add", None, None)["ok"], true);
         let tree = tree_sent(&s);
         let deleted: Vec<&str> = tree.iter().filter(|e| e["sha"].is_null()).map(|e| e["path"].as_str().unwrap()).collect();
         assert_eq!(deleted, vec!["Skills/tidy/old.md"], "only what the head tree lacks");
@@ -1675,7 +1800,7 @@ mod tests {
     fn add_refuses_a_head_tree_it_cannot_see_whole() {
         let inner = maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/old.md", "stale")], vec![], None);
         let (_g, s) = setup("o", Box::new(move |m, p, b| if p == "/repos/o/r/git/trees/abc1234?recursive=1" { (200, r#"{"tree":[],"truncated":true}"#.into()) } else { inner(m, p, b) }));
-        let out = decide(5, "tidy", "add", None, None);
+        let out = decide(5, "Skills/tidy", "add", None, None);
         assert_eq!(out["ok"], false, "{out}");
         assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
     }
@@ -1684,9 +1809,9 @@ mod tests {
     fn edit_uses_the_maintainers_text() {
         let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![], vec![], None));
         let mine = "---\nname: tidy\ndescription: Put things away, my way.\n---\n\nMine.\n";
-        assert_eq!(decide(5, "tidy", "edit", None, None)["ok"], false, "edit needs the text");
+        assert_eq!(decide(5, "Skills/tidy", "edit", None, None)["ok"], false, "edit needs the text");
         assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
-        let out = decide(5, "tidy", "edit", Some(mine), None);
+        let out = decide(5, "Skills/tidy", "edit", Some(mine), None);
         assert_eq!(out["ok"], true, "{out}");
         let md = &blobs_sent(&s)[0];
         assert!(md.contains("my way.") && md.contains("Mine.") && !md.contains("Put things away when you finish with them."), "{md}");
@@ -1700,29 +1825,171 @@ mod tests {
         let a = "---\nname: a\n---\nA.\n";
         let b = "---\nname: b\n---\nB.\n";
         let (_g, s) = setup("o", maint(vec![("Skills/a/SKILL.md", a), ("Skills/b/SKILL.md", b)], vec![], vec![], None));
-        let first = decide(5, "a", "add", None, None);
+        let first = decide(5, "Skills/a", "add", None, None);
         assert_eq!((first["ok"].as_bool(), first["closed"].as_bool()), (Some(true), Some(false)), "{first}");
         assert!(sent(&s, "POST", "/repos/o/r/issues/5/comments").is_empty(), "not closed while b waits");
-        assert_eq!(decide(5, "a", "reject", None, Some("no"))["ok"], false, "a is decided once");
-        let last = decide(5, "b", "reject", None, Some("overlaps tidy"));
+        assert_eq!(decide(5, "Skills/a", "reject", None, Some("no"))["ok"], false, "a is decided once");
+        let last = decide(5, "Skills/b", "reject", None, Some("overlaps tidy"));
         assert_eq!((last["ok"].as_bool(), last["closed"].as_bool()), (Some(true), Some(true)), "{last}");
         let comment: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/issues/5/comments")[0]).unwrap();
         assert_eq!(comment["body"], "Thank you! Added: a. Not added: b (overlaps tidy).");
         assert_eq!(sent(&s, "PATCH", "/repos/o/r/pulls/5").len(), 1);
         assert_eq!(sent(&s, "POST", "/repos/o/r/git/commits").len(), 1, "a reject commits nothing");
         let rec: Value = serde_json::from_slice(&fs::read(inbox_dir().join("decided.json")).unwrap()).unwrap();
-        assert_eq!(rec["5"]["b"]["choice"], "reject");
+        assert_eq!(rec["5"]["Skills/b"]["choice"], "reject", "keyed by unit");
+        drop(_g);
+        // a submission of one skill and one guide: closed only when both are decided, and thanked by their names
+        let (_g, s) = setup("o", maint(vec![("Skills/a/SKILL.md", a), ("Roblox/02 Luau/Guide.md", "# Guide\n")], vec![], vec![], None));
+        let first = decide(5, "Skills/a", "add", None, None);
+        assert_eq!((first["ok"].as_bool(), first["closed"].as_bool()), (Some(true), Some(false)), "{first}");
+        assert!(sent(&s, "POST", "/repos/o/r/issues/5/comments").is_empty(), "not closed while the guide waits");
+        let last = decide(5, "Roblox/02 Luau/Guide.md", "reject", None, Some("not yet"));
+        assert_eq!((last["ok"].as_bool(), last["closed"].as_bool()), (Some(true), Some(true)), "{last}");
+        let comment: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/issues/5/comments")[0]).unwrap();
+        assert_eq!(comment["body"], "Thank you! Added: a. Not added: Guide (not yet).");
+        let rec: Value = serde_json::from_slice(&fs::read(inbox_dir().join("decided.json")).unwrap()).unwrap();
+        assert_eq!(rec["5"]["Roblox/02 Luau/Guide.md"]["choice"], "reject");
+    }
+
+    // --------------------------------------------------------------------------------------------- guides
+    const GLOSSARY: &str = "# Glossary\n\nWords.\n";
+    const GLOSSARY_MORE: &str = "# Glossary\n\nWords.\nMore words.\n";
+
+    #[test]
+    fn inbox_lists_guides_with_their_change_against_the_vault() {
+        let (_g, _s) = setup("o", vault(vec![("Roblox/Glossary.md", GLOSSARY_MORE), ("Roblox/02 Luau/New.md", "# New\n"), ("Roblox/18 Rigs/R.fbx", "Kaydara\0bin")], vec![("Roblox/Glossary.md", GLOSSARY)]));
+        let out = inbox();
+        assert_eq!(out["ok"], true, "{out}");
+        let pr = &out["prs"][0];
+        assert_eq!(pr["skills"], json!([]), "a guide is never read as a skill");
+        let notes = pr["notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 3, "{out}");
+        let by = |path: &str| notes.iter().find(|n| n["path"] == path).unwrap().clone();
+        let changed = by("Roblox/Glossary.md");
+        assert_eq!((changed["unit"].as_str(), changed["title"].as_str(), changed["in_vault"].as_bool(), changed["binary"].as_bool()), (Some("Roblox/Glossary.md"), Some("Glossary"), Some(true), Some(false)));
+        assert_eq!(changed["text"], GLOSSARY_MORE);
+        let diff = changed["diff"].as_str().unwrap();
+        assert!(diff.contains("+More words.") && !diff.contains("-Words."), "{diff}");
+        assert!(changed["decided"].is_null() && changed["note"].is_null());
+        let new = by("Roblox/02 Luau/New.md");
+        assert_eq!((new["in_vault"].as_bool(), new["diff"].is_null(), new["title"].as_str()), (Some(false), true, Some("New")));
+        let rig = by("Roblox/18 Rigs/R.fbx");
+        assert_eq!((rig["binary"].as_bool(), rig["note"].as_str(), rig["text"].as_str()), (Some(true), Some("Not shown: the file is not text."), Some("")));
+        assert!(rig["diff"].is_null());
+    }
+
+    #[test]
+    fn add_note_commits_only_that_file() {
+        let (_g, s) = setup("o", maint(vec![("Roblox/02 Luau/New.md", "# New\n")], vec![("Roblox/Glossary.md", GLOSSARY), ("Roblox/02 Luau/Old.md", "# Old\n")], vec![], None));
+        let out = decide(5, "Roblox/02 Luau/New.md", "add", None, None);
+        assert_eq!(out["ok"], true, "{out}");
+        let tree = tree_sent(&s);
+        assert_eq!(tree.len(), 1, "{tree:?}");
+        assert_eq!(tree[0]["path"], "Roblox/02 Luau/New.md");
+        assert!(!tree[0]["sha"].is_null(), "nothing is deleted");
+        assert_eq!(blobs_sent(&s), vec!["# New\n".to_string()], "the submission's bytes, unchanged");
+        let commit: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/git/commits")[0]).unwrap();
+        assert_eq!(commit["message"], "Add New from ada (#5)");
+        let comment: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/issues/5/comments")[0]).unwrap();
+        assert_eq!(comment["body"], "Thank you! Added: New. Not added: none.");
+        drop(_g);
+        // a guide the vault has: "Change"
+        let (_g, s) = setup("o", maint(vec![("Roblox/Glossary.md", GLOSSARY_MORE)], vec![("Roblox/Glossary.md", GLOSSARY)], vec![], None));
+        assert_eq!(decide(5, "Roblox/Glossary.md", "add", None, None)["ok"], true);
+        let commit: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/git/commits")[0]).unwrap();
+        assert_eq!(commit["message"], "Change Glossary from ada (#5)");
+        drop(_g);
+        // a model is added byte for byte, read again from GitHub
+        let (_g, s) = setup("o", maint(vec![("Roblox/18 Rigs/R.fbx", "Kaydara\0bin")], vec![], vec![], None));
+        assert_eq!(decide(5, "Roblox/18 Rigs/R.fbx", "add", None, None)["ok"], true);
+        assert_eq!(blobs_sent(&s), vec!["Kaydara\0bin".to_string()]);
+        assert_eq!(tree_sent(&s)[0]["path"], "Roblox/18 Rigs/R.fbx");
+    }
+
+    #[test]
+    fn edit_note_uses_the_maintainers_text() {
+        let (_g, s) = setup("o", maint(vec![("Roblox/Glossary.md", GLOSSARY_MORE)], vec![("Roblox/Glossary.md", GLOSSARY)], vec![], None));
+        assert_eq!(decide(5, "Roblox/Glossary.md", "edit", None, None)["ok"], false, "edit needs the text");
+        let big = "x".repeat(FILE_MAX + 1);
+        assert_eq!(decide(5, "Roblox/Glossary.md", "edit", Some(&big), None)["error"], "The edited text is over 200 KB.");
+        assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
+        let out = decide(5, "Roblox/Glossary.md", "edit", Some("# Glossary\n\nMine.\n"), None);
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(blobs_sent(&s), vec!["# Glossary\n\nMine.\n".to_string()], "the text as written, no front matter added");
+        drop(_g);
+        let (_g, s) = setup("o", maint(vec![("Roblox/18 Rigs/R.fbx", "Kaydara\0bin")], vec![], vec![], None));
+        assert_eq!(decide(5, "Roblox/18 Rigs/R.fbx", "edit", Some("text"), None)["error"], "Only text can be edited here.");
+        assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
+    }
+
+    #[test]
+    fn a_change_to_a_vault_skill_keeps_its_credit_and_adds_the_sender() {
+        let theirs = "---\nname: tidy\ndescription: Put things away.\nowner: shipped\ncredit: alice\nlicence: CC-BY-4.0 (text), MIT (scripts)\nsource: Fridae Studios\n---\n\nPut things away.\n";
+        let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/SKILL.md", theirs)], vec![], None));
+        assert_eq!(decide(5, "Skills/tidy", "add", None, None)["ok"], true);
+        let md = blobs_sent(&s).into_iter().find(|b| b.contains("name: tidy")).unwrap();
+        for line in ["owner: shipped", "credit: alice, ada", "source: Fridae Studios"] {
+            assert_eq!(md.lines().filter(|l| *l == line).count(), 1, "{line} in {md:?}");
+        }
+        assert!(md.contains("Put things away when you finish with them."));
+        drop(_g);
+        // the sender already credited: the credit is unchanged
+        let both: &'static str = Box::leak(theirs.replace("credit: alice", "credit: alice, Ada").into_boxed_str());
+        let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/SKILL.md", both)], vec![], None));
+        assert_eq!(decide(5, "Skills/tidy", "add", None, None)["ok"], true);
+        let md = blobs_sent(&s).into_iter().find(|b| b.contains("name: tidy")).unwrap();
+        assert!(md.lines().any(|l| l == "credit: alice, Ada"), "{md:?}");
+    }
+
+    #[test]
+    fn publish_carries_guides_and_counts_them() {
+        let mut main = files_of_main();
+        main.extend([("Roblox/Glossary.md", GLOSSARY), ("Roblox/02 Luau/New.md", "# New\n")]);
+        let (_g, s) = setup("o", maint(vec![], main, vec![], None));
+        let out = publish();
+        assert_eq!(out["ok"], true, "{out}");
+        let man = manifest_sent(&s);
+        let paths: Vec<&str> = man["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        assert!(paths.contains(&"Roblox/Glossary.md") && paths.contains(&"Roblox/02 Luau/New.md"), "{paths:?}");
+        let release: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/releases")[0]).unwrap();
+        let body = release["body"].as_str().unwrap();
+        assert!(body.contains("New: a, b") && body.contains("Guides: 2 new.") && !body.contains("Glossary"), "{body}");
+        // counted against the previous release, per file; only the parts that are not zero
+        let map = |v: &[(&str, &str)]| v.iter().map(|(p, h)| (p.to_string(), h.to_string())).collect::<BTreeMap<String, String>>();
+        let now = map(&[("Roblox/a.md", "1"), ("Roblox/b.md", "9"), ("Roblox/c.md", "3"), ("Skills/s/SKILL.md", "1")]);
+        let before = map(&[("Roblox/a.md", "1"), ("Roblox/b.md", "2"), ("Roblox/d.md", "4"), ("Skills/s/SKILL.md", "1")]);
+        assert_eq!(release_notes(&now, Some(&before)), "No skills changed.\nGuides: 1 new, 1 changed, 1 removed.");
+        let same = map(&[("Roblox/a.md", "1"), ("Roblox/b.md", "2")]);
+        assert_eq!(release_notes(&same, Some(&same)), "No skills changed.");
+        assert_eq!(release_notes(&map(&[("Roblox/a.md", "1")]), Some(&map(&[("Roblox/a.md", "1"), ("Roblox/b.md", "2")]))), "No skills changed.\nGuides: 1 removed.");
+    }
+
+    #[test]
+    fn publish_never_carries_code_data_or_top_files() {
+        let mut main = files_of_main();
+        main.extend([("Roblox/_tools/x.json", "{}"), ("Roblox/_data/f.json", "{}"), ("README.md", "# r\n"), ("Roblox/Glossary.md", GLOSSARY)]);
+        let (_g, s) = setup("o", maint(vec![], main, vec![], None));
+        assert_eq!(publish()["ok"], true);
+        let man = manifest_sent(&s);
+        let paths: Vec<&str> = man["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        assert_eq!(paths, vec!["Roblox/Glossary.md", "Skills/a/SKILL.md", "Skills/a/scripts/go.sh", "Skills/b/SKILL.md"]);
+    }
+
+    #[test]
+    fn nothing_to_publish_says_so() {
+        let (_g, _s) = setup("o", maint(vec![], vec![("README.md", "# r\n")], vec![], None));
+        assert_eq!(publish(), json!({"ok": false, "problems": ["The vault has nothing to publish yet."]}));
     }
 
     #[test]
     fn nothing_with_an_at_sign_reaches_github_and_bad_asks_are_refused() {
         let a = "---\nname: a\n---\nA.\n";
         let (_g, s) = setup("o", maint(vec![("Skills/a/SKILL.md", a)], vec![], vec![], None));
-        for (skill, choice) in [("zzz", "add"), ("../a", "add"), ("a", "merge")] {
+        for (skill, choice) in [("Skills/zzz", "add"), ("Skills/../a", "add"), ("Skills/a", "merge"), ("Roblox/Nope.md", "add"), ("a", "add")] {
             assert_eq!(decide(5, skill, choice, None, None)["ok"], false, "{skill} {choice}");
         }
         assert!(s.log.lock().unwrap().iter().all(|x| x.0 == "GET"), "nothing was written to GitHub");
-        let out = decide(5, "a", "reject", None, Some("ask @bob\nand @carol"));
+        let out = decide(5, "Skills/a", "reject", None, Some("ask @bob\nand @carol"));
         assert_eq!(out["ok"], true, "{out}");
         let body = sent(&s, "POST", "/repos/o/r/issues/5/comments")[0].clone();
         assert!(!body.contains('@'), "{body}");
@@ -1733,7 +2000,7 @@ mod tests {
     #[test]
     fn decide_is_for_the_maintainer_only() {
         let (_g, s) = setup("tester", Box::new(|_, p, _| if p == "/repos/o/r" { (200, r#"{"permissions":{"push":false}}"#.into()) } else { (404, "{}".into()) }));
-        assert_eq!(decide(5, "a", "add", None, None), json!({"ok": false, "error": "Only the vault's maintainer can see submissions."}));
+        assert_eq!(decide(5, "Skills/a", "add", None, None), json!({"ok": false, "error": "Only the vault's maintainer can see submissions."}));
         assert_eq!(publish()["error"], NOT_MAINTAINER);
         assert!(s.log.lock().unwrap().iter().all(|x| x.0 == "GET"));
     }

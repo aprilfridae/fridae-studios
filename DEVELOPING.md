@@ -2316,6 +2316,16 @@ anyone can read, and the card says so. On a request's last undecided skill, Add,
 the pull request will be thanked and closed. Decisions are remembered by request, skill and head commit, so a request
 that changed asks again. When every skill in a request is decided, Fridae thanks the sender in a comment and closes it.
 
+Guides and notes arrive beside skills: every file of a request outside `Skills/` that travels is a unit of its own (by
+its path), listed under `notes` with its text, whether the vault has it, and its change against the vault's file
+(`rbx skills compare --new <file> --against <mirror file>`, line endings aside). A model or picture is listed by name
+("Not shown: the file is not text."). Units are decided one at a time by `unit` (`Skills/<name>` for a skill, the path
+for a note), and `decided.json` is keyed by unit. Add on a note commits only that file, deleting nothing ("Add <title>
+from <author> (#<n>)", or "Change ..." when the vault has it; a model is read again from GitHub by its blob sha). Edit
+then add commits the maintainer's text (at most 200 KB); only text can be edited. A change to a skill the vault already
+has keeps that skill's `owner` and `source`, and its `credit` gains the sender's login unless it is already there; a new
+skill gets the first-time credit above. The thank-you names skills by name and notes by title.
+
 **Create the vault repo** (the maintainer's click and confirm; only for the account that owns `aprilfridae`, and only
 when the repo does not exist). It makes the public repo with the four text files above and the Roblox guides, in one
 commit ("Add the licence, the readmes and the Roblox guides"). The guides come from `vault/Roblox` of the copy it runs
@@ -2332,7 +2342,9 @@ Fridae, after the branch is merged with their word.
 folder's ("<name>: name differs from its folder"), no two names alike in any capitals, and the manifest limits above. If
 something is wrong it lists the problems and publishes nothing. Otherwise it writes `manifest.json` to `main` (and
 refuses if `main` moved meanwhile) and makes the release, with notes of the skills new, changed and removed since the
-last one.
+last one, then one line counting the guides per file ("Guides: 2 new, 1 changed.", only the parts that are not zero).
+The manifest carries every file that travels, guides included; only paths under `Skills/` are checked as skills, and
+when nothing travels it says "The vault has nothing to publish yet.".
 
 **Config keys** (`<home>/config.json`): `vault_release` (the release last downloaded), `vault_checked_at` and
 `vault_last` (the last check and its report), `share_skills` (`off`, `review`, `auto`; guarded), `share_agreed_at`,

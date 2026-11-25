@@ -237,8 +237,21 @@ def compare(new_dir, against):
     "diff"}. `against` is the folder of the vault's skills (<against>/<name>/SKILL.md). same_name: the vault has a skill
     of the same name; diff is then the unified diff of its SKILL.md against the submission's (vault first), else None.
     closest is the skill of `against` (the vault's, never the user's own or Fridae's) the submission's body is most
-    like, by the keyword cosine used for copies; None when there is nothing to compare."""
+    like, by the keyword cosine used for copies; None when there is nothing to compare.
+
+    A note: `new_dir` a file and `against` the vault's file of that path. same_name is whether the vault has it, closest
+    is None, and diff is the unified diff of the vault's file against the submission's (line endings aside), else None."""
     import difflib
+    if os.path.isfile(new_dir):
+        name = os.path.basename(new_dir)
+        same = os.path.isfile(against)
+        diff = None
+        if same:
+            def note_lines(p):
+                return rbxskills._read(p).replace("\r\n", "\n").splitlines(keepends=True)
+            diff = "".join(difflib.unified_diff(note_lines(against), note_lines(new_dir), "vault/%s" % name,
+                                                "submission/%s" % name))
+        return {"same_name": same, "closest": None, "diff": diff}
     name = _folder_name(new_dir)
     key = name.casefold()
     theirs = rbxskills._skill_dirs(against)

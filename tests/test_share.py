@@ -249,6 +249,28 @@ class ShareTests(unittest.TestCase):
             a.fn(a)
         self.assertTrue(json.loads(buf.getvalue())["same_name"])
 
+    def test_compare_a_note_file(self):
+        mirror = os.path.join(self.root, "vault copy", "Roblox")
+        incoming = os.path.join(self.root, "incoming", "Roblox")
+        os.makedirs(mirror)
+        os.makedirs(incoming)
+        with open(os.path.join(mirror, "Glossary.md"), "w", encoding="utf-8", newline="") as f:
+            f.write("# Glossary\r\n\r\nWords.\r\n")
+        with open(os.path.join(incoming, "Glossary.md"), "w", encoding="utf-8", newline="") as f:
+            f.write("# Glossary\n\nWords.\nMore words.\n")
+        out = rbxshare.compare(os.path.join(incoming, "Glossary.md"), os.path.join(mirror, "Glossary.md"))
+        self.assertTrue(out["same_name"])
+        self.assertIsNone(out["closest"])
+        self.assertIn("+More words.", out["diff"])
+        self.assertNotIn("-Words.", out["diff"], "line endings alone are no change")
+        self.assertIn("vault/Glossary.md", out["diff"])
+        self.assertIn("submission/Glossary.md", out["diff"])
+        # a new note: nothing to compare with
+        with open(os.path.join(incoming, "New.md"), "w", encoding="utf-8") as f:
+            f.write("# New\n")
+        out = rbxshare.compare(os.path.join(incoming, "New.md"), os.path.join(mirror, "New.md"))
+        self.assertEqual(out, {"same_name": False, "closest": None, "diff": None})
+
     def test_compare_closest_is_only_ever_the_vaults(self):
         vault = os.path.join(self.root, "vault copy")
         skill(os.path.join(vault, "gardening"), "gardening", "Water the soil early. Prune roses in late winter.")

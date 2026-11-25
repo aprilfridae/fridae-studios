@@ -447,8 +447,15 @@ fn post(path: &str, body: Value) -> Reply {
             }
         }
         "/api/vault/inbox" => send_json(crate::vault_inbox::inbox()),
-        // The maintainer's click on one skill: Add, Edit then add, or Reject. Never reachable by an agent.
-        "/api/vault/inbox_decide" => send_json(crate::vault_inbox::decide(body["pr"].as_u64().unwrap_or(0), &text_of("skill"), &text_of("choice"), body["text"].as_str(), body["why"].as_str())),
+        // The maintainer's click on one unit (a skill, `Skills/<name>`, or a guide by its path): Add, Edit then add, or
+        // Reject. Never reachable by an agent. A page that still sends `skill` means `Skills/<skill>`.
+        "/api/vault/inbox_decide" => {
+            let unit = match (text_of("unit"), text_of("skill")) {
+                (u, s) if u.is_empty() && !s.is_empty() => format!("Skills/{s}"),
+                (u, _) => u,
+            };
+            send_json(crate::vault_inbox::decide(body["pr"].as_u64().unwrap_or(0), &unit, &text_of("choice"), body["text"].as_str(), body["why"].as_str()))
+        }
         // The maintainer's click, after their confirm, each time: Publish vault release
         "/api/vault/publish" => {
             if body["confirm"].as_bool() == Some(true) {
