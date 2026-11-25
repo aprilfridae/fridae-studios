@@ -1624,11 +1624,18 @@ def index(project=None, config=None):
 # ------------------------------------------------------------------ rbx skills (the app asks for the catalog)
 def register(sub):
     p = sub.add_parser("skills", help="the user's skills, for every AI: catalog, list, load, read, import, pending, "
-                                      "decide, index")
-    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply"])
-    p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id")
+                                      "decide, index, vault-apply, shareable, pack, mark-shared")
+    p.add_argument("action", choices=["catalog", "list", "load", "read", "import", "pending", "decide", "index", "vault-apply",
+                                      "shareable", "pack", "mark-shared"])
+    p.add_argument("name", nargs="?", default="", help="load, read: the skill; decide: the decision's id; "
+                                                       "mark-shared: the skill; pack: the skills")
     p.add_argument("path", nargs="?", default="", help="read: the file; decide: keep, replace, merge or keep_both "
                                                        "(advise: only store an AI's recommendation, from --json-file)")
+    p.add_argument("more", nargs="*", help="pack: more skills")
+    p.add_argument("--out", default="", help="pack: the folder to write Skills/<name>/ into")
+    p.add_argument("--login", default="", help="pack: the sender's GitHub login, for the credit")
+    p.add_argument("--hash", default="", help="mark-shared: the skill's folder hash when it was sent")
+    p.add_argument("--pr", default="", help="mark-shared: the pull request's address")
     p.add_argument("--ai", default="", help="catalog: the AI it is for (claude leaves out what Claude Code loads itself)")
     p.add_argument("--project", default="", help="the project folder, for its own skills")
     p.add_argument("--claude-config", default="", help="catalog, index: the Claude config folder of a second account")
@@ -1662,6 +1669,28 @@ def _decide_cli(a):
     return "Decided: %s (%s / %s)." % (dec["choice"], dec["a"], dec["b"])
 
 
+def _share_cli(a):
+    import rbxshare
+    try:
+        if a.action == "shareable":
+            return json.dumps(rbxshare.shareable(), ensure_ascii=False)
+        if a.action == "pack":
+            names = [n for n in [a.name, a.path] + list(a.more) if n]
+            if not names or not a.out or not a.login:
+                raise ValueError("pack needs skill names, --out and --login.")
+            return json.dumps(rbxshare.pack(names, a.out, a.login), ensure_ascii=False)
+        if not a.name or not a.hash or not a.pr:
+            raise ValueError("mark-shared needs a skill name, --hash and --pr.")
+        rbxshare.mark_shared(a.name, a.hash, a.pr)
+        return json.dumps({"ok": True}, ensure_ascii=False)
+    except (ValueError, LookupError) as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(2)
+    except (OSError, rbxpaths.KitError) as e:
+        print("Sharing could not be prepared: %s" % e, file=sys.stderr)
+        raise SystemExit(1)
+
+
 def cmd_skills(a):
     project = a.project or None
     try:
@@ -1692,6 +1721,8 @@ def cmd_skills(a):
             except (OSError, rbxpaths.KitError) as e:
                 print("The vault update could not be applied: %s" % e, file=sys.stderr)
                 raise SystemExit(1)
+        elif a.action in ("shareable", "pack", "mark-shared"):
+            out = _share_cli(a)
         elif a.action == "index":
             out = json.dumps(index(project, a.claude_config or None), ensure_ascii=False)
         else:
