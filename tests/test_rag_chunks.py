@@ -127,6 +127,12 @@ class ChunkTests(unittest.TestCase):
         c = chunks.chunks_for_file("team", tid, mine, self.count, project=proj)
         self.assertEqual({x["project"] for x in c}, {proj})
 
+    def test_vault_notes_come_from_knowledge(self):
+        kb = os.path.join(self.tmp, "Knowledge", "Roblox")
+        path = write(os.path.join(kb, "10 Data", "Saving Data.md"), NOTE)
+        with mock.patch.object(rbxvault, "KB", kb):
+            self.assertIn(("vault", "Saving Data", path), chunks.corpus_files(None))
+
     def test_vault_notes_become_sections(self):
         kb = os.path.join(self.tmp, "Roblox")
         path = write(os.path.join(kb, "10 Data", "Saving Data.md"), NOTE)

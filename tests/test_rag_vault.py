@@ -13,10 +13,12 @@ from unittest import mock
 
 import rbxpaths
 import rbxvault
+from tests import guides
 
 
 def setUpModule():
     global _WORK, _PATCHES
+    guides.use_guides()
     _WORK = tempfile.mkdtemp(prefix="rag vault é ")
     _PATCHES = [mock.patch.object(rbxpaths, "WORK", _WORK),
                 mock.patch.object(rbxpaths, "HOME_DIR", os.path.join(_WORK, "home"))]

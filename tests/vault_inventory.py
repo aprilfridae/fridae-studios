@@ -69,6 +69,10 @@ def main():
     import rbxpaths
     rbxpaths.WORK = tempfile.mkdtemp(prefix="vault-inventory ")
     import rbxvault
+    from tests import guides
+    if guides.GUIDES is None:
+        raise SystemExit(guides.SKIP)
+    guides.use_guides()
     kb = rbxvault.KB
     files = rbxvault.note_files()
     root_extra = [os.path.join(kb, f) for f in sorted(os.listdir(kb)) if f.endswith(".md") and f in rbxvault.SKIP_ROOT]

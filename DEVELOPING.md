@@ -1950,7 +1950,7 @@ everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start H
 
 | Shelf | What | Ranked by | Cache |
 |---|---|---|---|
-| `vault` | the LihFolk vault notes (`vault/Roblox`) | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
+| `vault` | the Roblox guides (LihFolk's notes and Fridae's), `<home>/Knowledge/Roblox`, downloaded from the Fridae vault | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
 | `guides` | every Markdown guide in `rbxkit_mcp.KIT_GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
 | `team` | `vault/Fridae/Team/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
 | `game` | the game's `GAME.md`, an older `.fridae/lessons.md`, and its notes `.fridae/notes/*.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
@@ -1971,6 +1971,15 @@ The tool:
 - `read` (`title`, `heading` words, optional `shelf`) returns one section, at most 12 KB; a larger section returns
   its first part and lists its sub-headings. No heading lists the sections. `sections` (`title`) lists headings
   with sizes. `list` and `api` are unchanged.
+
+The app no longer carries the Roblox guides: `rbxvault.KB` is `<home>/Knowledge/Roblox`, filled by the Knowledge
+vault's Download. Until then a `search` over `all` or `vault` gives the other shelves' results and ends with
+`rbxvault.NOT_DOWNLOADED` ("The Roblox guides are not downloaded yet: ask the user to press Download in Setup, Skills,
+Knowledge vault."), which is how the Lead and every agent learn it; `list` and a `read` on the vault refuse with the
+same sentence. The API snapshot `api` and the keyword search read (`roblox_api.json`, `api_overrides.json`) and
+`roblox_facts_2026.json` are the code's own data and stay in the app, in `vault/Fridae/Data` (`rbxvault.API_DIR`).
+Tests that need real guide notes call `tests.guides.use_guides()`: the checkout's `vault/Roblox` while it is there,
+then the checkout's `Knowledge/Roblox`, then `FRIDAE_TEST_GUIDES`, or they are skipped.
 
 `rbx_guide` stays for what must be read in full. A guide over 12 KB comes as its outline unless it is on
 `ALWAYS_WHOLE` in `rbxkit_mcp.py` or the call passes `whole: true`; `outline: true` asks for the outline of any guide

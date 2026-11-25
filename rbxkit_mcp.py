@@ -1447,7 +1447,7 @@ TOOLS = [
              "outline": {"type": "boolean", "description": "load: true returns each skill's outline whatever its size"},
              "path": {"type": "string", "description": "read: a file inside the skill's folder, as 'load' lists it, such as references/quick-reference.md"}},
             ["action"]), t_skill),
-    ("rbx_vault", "One lookup for Roblox knowledge (LihFolk Vault V2: 1,300+ notes dated October 2026), Fridae's own guides, "
+    ("rbx_vault", "One lookup for Roblox knowledge (the Roblox guides of the Fridae vault, which the user downloads in Setup: 1,300+ notes dated October 2026), Fridae's own guides, "
      "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
      "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "
      "default 5) returns ranked sections labelled by shelf and by kind, source (or 'this game') and month, each with a "

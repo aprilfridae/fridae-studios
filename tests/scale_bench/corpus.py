@@ -1,7 +1,7 @@
 """The bench corpora, made offline and deterministically from the real text in the repo.
 
-1x is what the knowledge index holds today without user notes: the vault notes (vault/Roblox, with SYMPTOMS.md and
-the API snapshot the keyword search reads), every guide rbx_guide serves and the team's expert files. 10x adds
+1x is what the knowledge index holds today without user notes: the vault notes (tests.guides.GUIDES, with SYMPTOMS.md; the
+API snapshot the keyword search reads is the app's own, vault/Fridae/Data), every guide rbx_guide serves and the team's expert files. 10x adds
 rule-made distractor notes to the vault until the estimated chunk count is about ten times 1x. The distractors are
 near-topic: real sections split out, summarised, reworded and recombined, placed in the same topic folders, so many
 notes share the same words. Gold notes (any note a question names as an answer) are never used as body text, so the
@@ -187,7 +187,10 @@ def base_files():
     """(vault notes [(rel path, abs path)], guides [(title, abs path)], team [(name, abs path)]) from the repo."""
     import shim  # noqa: F401  (puts the repo on sys.path)
     import rbxvault
-    kb = os.path.join(REPO, "vault", "Roblox")
+    from tests import guides
+    if guides.GUIDES is None:
+        raise SystemExit(guides.SKIP)
+    kb = guides.GUIDES
     notes = []
     for root, dirs, fs in os.walk(kb):
         dirs[:] = sorted(d for d in dirs if not d.startswith("."))

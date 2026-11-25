@@ -18,6 +18,7 @@ import rbxpaths
 import rbxupkeep
 import rbxvault
 from rbxpaths import KitError
+from tests import guides
 
 
 def write(path, text, days_old=None):
@@ -129,6 +130,11 @@ class FrontMatterTests(unittest.TestCase):
 
 # ------------------------------------------------------------------ filing with supersedes
 class SupersedeFilingTests(UpkeepCase):
+    @classmethod
+    def setUpClass(cls):
+        guides.use_guides()  # some of these read real guide notes
+        super().setUpClass()
+
     def test_marks_the_old_note_and_the_new_one_names_it(self):
         self.vault("note", text="The coin cap per player is 500 coins.", title="Coin cap", scope="all")
         out = self.vault("note", text="The coin cap per player is now 900 coins after the economy pass.",
@@ -241,6 +247,11 @@ class SupersedeFilingTests(UpkeepCase):
 
 # ------------------------------------------------------------------ search: keyword
 class KeywordSearchTests(UpkeepCase):
+    @classmethod
+    def setUpClass(cls):
+        guides.use_guides()  # some of these read real guide notes
+        super().setUpClass()
+
     def test_superseded_ranks_below_its_replacement_and_says_so(self):
         self.mine("Coin cap", "The coin cap per player is 500 coins in the shop economy.")
         self.mine("Coin cap raised", "The coin cap per player is now 900 coins in the economy.",

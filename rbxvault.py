@@ -1,8 +1,10 @@
-"""Search and read Fridae's vault (vault/): the LihFolk notes in vault/Roblox and the other knowledge shelves.
+"""Search and read Fridae's knowledge: the Roblox guides in <home>/Knowledge/Roblox (LihFolk's notes and Fridae's,
+downloaded from the Fridae vault) and the other knowledge shelves.
 
 The search engine below is LihFolk's `_tools/vault.py` from LihFolk Vault V2
 (https://github.com/lihfolk-cy/v2-vault), CC BY 4.0, (c) 2026 LihFolk, used with these changes: it reads the
-notes from vault/Roblox (a trimmed copy), keeps its index cache in the work folder, and a read is capped.
+notes from Knowledge/Roblox (a trimmed copy), its API snapshot from the app's own vault/Fridae/Data, keeps its index
+cache in the work folder, and a read is capped.
 Everything from "shelves (rbxkit)" on is rbxkit's.
 """
 import hashlib
@@ -17,7 +19,9 @@ from collections import Counter, defaultdict
 import rbxpaths
 from rbxpaths import KIT, KitError
 
-KB = os.path.join(KIT, "vault", "Roblox")  # LihFolk Vault V2 notes, inside Fridae's one vault
+KB = os.path.join(rbxpaths.KNOWLEDGE_DIR, "Roblox")  # the Roblox guides, downloaded from the Fridae vault
+API_DIR = os.path.join(KIT, "vault", "Fridae", "Data")  # the code's own data (the API snapshot), kept in the app
+NOT_DOWNLOADED = "The Roblox guides are not downloaded yet: ask the user to press Download in Setup, Skills, Knowledge vault."
 
 
 def cache_path(name="lihfolk-vault-index.json"):
@@ -434,7 +438,7 @@ def api_index():
     if _API is None:
         _API = defaultdict(list)
         try:
-            d = json.load(open(os.path.join(KB, "_tools", "roblox_api.json"), encoding="utf-8"))
+            d = json.load(open(os.path.join(API_DIR, "roblox_api.json"), encoding="utf-8"))
         except OSError:
             return _API
         for cls, info in d.get("classes", {}).items():
@@ -442,7 +446,7 @@ def api_index():
             for m, st in info.get("members", {}).items():
                 _API[m].append((cls, st))
         try:  # newer doc deprecations than the snapshot knows
-            over = json.load(open(os.path.join(KB, "_tools", "api_overrides.json"), encoding="utf-8"))
+            over = json.load(open(os.path.join(API_DIR, "api_overrides.json"), encoding="utf-8"))
         except OSError:
             over = {}
         for key, st in over.items():
@@ -2227,12 +2231,13 @@ def _shelf_arg(a, action_reads=False):
     return shelf
 
 
-def _vault_call(fn):
-    """Run one of the vault's printing functions and return what it printed (library code never prints to stdout)."""
+def _vault_call(fn, needs_guides=True):
+    """Run one of the vault's printing functions and return what it printed (library code never prints to stdout).
+    needs_guides: refuse with NOT_DOWNLOADED while the Roblox guides are not downloaded (the API check needs none)."""
     import contextlib
     import io
-    if not os.path.isdir(KB):
-        raise KitError("The LihFolk vault is not installed with this copy of rbxkit.")
+    if needs_guides and not os.path.isdir(KB):
+        raise KitError(NOT_DOWNLOADED)
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
@@ -2253,21 +2258,28 @@ def run(action, a):
         return rbxnotes.run(action, a)
     if action == "list":
         if not os.path.isdir(KB):
-            raise KitError("The LihFolk vault is not installed with this copy of rbxkit.")
+            raise KitError(NOT_DOWNLOADED)
         return _list((a.get("folder") or "").strip().strip("/"))
     if action == "api":
         def api():
             sys.argv = ["vault", "--api"] + str(a.get("names") or a.get("query") or "").split()
             main()
-        return _vault_call(api) or "No API names given."
+        return _vault_call(api, needs_guides=False) or "No API names given."
     shelf = _shelf_arg(a, action in ("read", "sections"))
     if action in ("read", "sections"):
         title = (a.get("title") or "").strip()
         if not title:
             raise KitError("%s needs a title (from a search)." % action)
         heading = ((a.get("heading") or "").strip() or None) if action == "read" else None
+        if shelf == "vault" and not os.path.isdir(KB):
+            raise KitError(NOT_DOWNLOADED)
         docs = section_corpus() if shelf != "vault" else []
-        where, key = resolve(title, None if shelf == "all" else shelf, docs)
+        try:
+            where, key = resolve(title, None if shelf == "all" else shelf, docs)
+        except KitError as e:  # not found on any shelf: it may be a guide that is not downloaded yet
+            if shelf == "all" and not os.path.isdir(KB):
+                raise KitError("%s\n\n%s" % (e, NOT_DOWNLOADED))
+            raise
         if where == "vault":
             return _vault_call(lambda: print_section(key, heading, load_index()))
         return read_file_section(where, key, heading, docs)
@@ -2292,6 +2304,8 @@ def run(action, a):
     text = _search_answer(q, shelf, shelves, k, filters)
     if shelf in ("all", "guides"):
         text += skill_pointers(q)
+    if "vault" in shelves and not os.path.isdir(KB):  # how the Lead and every agent learn the guides are missing
+        text = text.rstrip() + "\n\n" + NOT_DOWNLOADED
     return text
 
 
@@ -2328,7 +2342,8 @@ def _search_answer(q, shelf, shelves, k, filters):
         return text
     # the vault index is read once for the whole search
     idx = load_index() if "vault" in shelves and os.path.isdir(KB) else None
-    if shelf == "vault" and not filters and not _vault_superseded(idx):  # the vault on its own answers as it always has
+    # the vault on its own answers as it always has (without the guides, the combined search says it found nothing)
+    if shelf == "vault" and not filters and os.path.isdir(KB) and not _vault_superseded(idx):
         def vault_search():
             sys.argv = ["vault", "-k", str(k), q]
             main(idx)

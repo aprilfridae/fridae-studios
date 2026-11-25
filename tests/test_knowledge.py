@@ -12,6 +12,7 @@ import rbxkit_mcp
 import rbxpaths
 import rbxvault
 from rbxpaths import KitError
+from tests import guides
 from tests.knowledge_bench import TASKS
 
 _WORK = None
@@ -21,6 +22,7 @@ def setUpModule():
     """One temporary work folder and home for the whole module: index caches and notes never touch the user's real
     folders."""
     global _WORK, _PATCHES
+    guides.use_guides()
     _WORK = tempfile.mkdtemp(prefix="knowledge work é ")
     _PATCHES = [mock.patch.object(rbxpaths, "WORK", _WORK),
                 mock.patch.object(rbxpaths, "HOME_DIR", os.path.join(_WORK, "home é"))]
@@ -76,6 +78,44 @@ Les menus du café.
 
 - one
 """
+
+
+class GuidesHomeTests(unittest.TestCase):
+    """The vault shelf reads the Roblox guides the user downloaded into Knowledge; the API snapshot is the app's."""
+
+    def test_vault_shelf_is_knowledge_roblox(self):
+        # at import (this module points KB at the real guides for its other tests, so ask a fresh interpreter)
+        import subprocess
+        import sys
+        code = "import os, rbxpaths, rbxvault; print(rbxvault.KB == os.path.join(rbxpaths.KNOWLEDGE_DIR, 'Roblox'))"
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        out = subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True,
+                             env=dict(os.environ, PYTHONPATH=repo))
+        self.assertEqual(out.stdout.strip(), "True", out.stderr)
+
+    def test_search_without_guides_says_how_to_get_them(self):
+        missing = os.path.join(_WORK, "no guides here")
+        with mock.patch.object(rbxvault, "KB", missing), no_project():
+            for shelf in ("vault", "all"):
+                text = rbxvault.run("search", {"query": "datastore", "shelf": shelf})
+                self.assertTrue(text.endswith("\n\n" + rbxvault.NOT_DOWNLOADED), text)
+            with self.assertRaises(KitError) as e:
+                rbxvault.run("list", {})
+            self.assertEqual(str(e.exception), rbxvault.NOT_DOWNLOADED)
+            with self.assertRaises(KitError) as e:
+                rbxvault.run("read", {"title": "Saving Data", "shelf": "vault"})
+            self.assertEqual(str(e.exception), rbxvault.NOT_DOWNLOADED)
+        self.assertEqual(rbxvault.NOT_DOWNLOADED, "The Roblox guides are not downloaded yet: ask the user to press "
+                                                  "Download in Setup, Skills, Knowledge vault.")
+
+    def test_api_reads_the_apps_own_data(self):
+        empty = tempfile.mkdtemp(prefix="empty guides ", dir=_WORK)
+        with mock.patch.object(rbxvault, "KB", empty), mock.patch.object(rbxvault, "_API", None):
+            self.assertTrue(rbxvault.api_status("TeleportService", "ReserveServer"))
+            self.assertIn("ReserveServer", rbxvault.run("api", {"names": "TeleportService.ReserveServer"}))
+        self.assertEqual(rbxvault.API_DIR, os.path.join(rbxpaths.KIT, "vault", "Fridae", "Data"))
+        for name in ("roblox_api.json", "api_overrides.json", "roblox_facts_2026.json"):
+            self.assertTrue(os.path.isfile(os.path.join(rbxvault.API_DIR, name)), name)
 
 
 class SectionParsingTests(unittest.TestCase):
