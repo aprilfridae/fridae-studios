@@ -781,7 +781,10 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
         out.push((f.path.clone(), read(&f.path)?));
     }
     let prefix = format!("Skills/{name}/");
-    let deletes: Vec<String> = mirror_paths().into_iter().filter(|p| p.starts_with(&prefix) && !out.iter().any(|(o, _)| o == p)).collect();
+    // only what the pull request's head no longer has: the head's whole tree, not the changed-files list (a file the
+    // submitter left as the vault has it is in the tree but not in that list)
+    let kept = vault_git::tree_paths(repo, head)?;
+    let deletes: Vec<String> = mirror_paths().into_iter().filter(|p| p.starts_with(&prefix) && !kept.contains(p) && !out.iter().any(|(o, _)| o == p)).collect();
     let message = format!("Add skill {} from {} (#{pr})", clean(name), clean(author));
     vault_git::commit_files(repo, "main", &out, &deletes, &message).map(|_| ())
 }
@@ -1383,8 +1386,10 @@ mod tests {
     /// `vault(..)` plus what the maintainer's clicks ask of GitHub: one open pull request (#5, ada), the branch, the
     /// commit, the comment and close, the tag lookups (`taken` tags exist), the latest release and its manifest.
     fn maint(pr_files: Vec<(&'static str, &'static str)>, main_files: Vec<(&'static str, &'static str)>, taken: Vec<&'static str>, previous: Option<&'static str>) -> Answer {
+        let head_tree: Vec<&'static str> = pr_files.iter().map(|f| f.0).collect();
         let read = vault(pr_files, main_files);
         Box::new(move |m, p, b| match (m, p) {
+            ("GET", "/repos/o/r/git/trees/abc1234?recursive=1") => (200, json!({"tree": head_tree.iter().map(|f| json!({"path": f, "type": "blob", "sha": "bbbb0000"})).collect::<Vec<_>>(), "truncated": false}).to_string()),
             ("GET", "/repos/o/r/pulls/5") => (200, r#"{"number":5,"state":"open","user":{"login":"ada"},"head":{"sha":"abc1234"}}"#.into()),
             ("GET", "/repos/o/r/git/ref/heads/main") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
             ("GET", "/repos/o/r/git/commits/head1") => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
@@ -1456,6 +1461,34 @@ mod tests {
         // the inbox now shows it as decided
         let again = inbox();
         assert_eq!(again["prs"][0]["skills"][0]["decided"]["choice"], "add", "{again}");
+    }
+
+    #[test]
+    fn add_never_deletes_a_file_the_submission_left_unchanged() {
+        // go.sh is identical in the vault and the submitter's copy: not in the PR's changed files, but in its head tree
+        let inner = maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/scripts/go.sh", "echo\n"), ("Skills/tidy/old.md", "stale")], vec![], None);
+        let (_g, s) = setup(
+            "o",
+            Box::new(move |m, p, b| {
+                if p == "/repos/o/r/git/trees/abc1234?recursive=1" {
+                    return (200, json!({"tree": [{"path": "Skills/tidy/SKILL.md", "type": "blob"}, {"path": "Skills/tidy/scripts/go.sh", "type": "blob"}, {"path": "Skills/tidy", "type": "tree"}], "truncated": false}).to_string());
+                }
+                inner(m, p, b)
+            }),
+        );
+        assert_eq!(decide(5, "tidy", "add", None, None)["ok"], true);
+        let tree = tree_sent(&s);
+        let deleted: Vec<&str> = tree.iter().filter(|e| e["sha"].is_null()).map(|e| e["path"].as_str().unwrap()).collect();
+        assert_eq!(deleted, vec!["Skills/tidy/old.md"], "only what the head tree lacks");
+    }
+
+    #[test]
+    fn add_refuses_a_head_tree_it_cannot_see_whole() {
+        let inner = maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/old.md", "stale")], vec![], None);
+        let (_g, s) = setup("o", Box::new(move |m, p, b| if p == "/repos/o/r/git/trees/abc1234?recursive=1" { (200, r#"{"tree":[],"truncated":true}"#.into()) } else { inner(m, p, b) }));
+        let out = decide(5, "tidy", "add", None, None);
+        assert_eq!(out["ok"], false, "{out}");
+        assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty());
     }
 
     #[test]

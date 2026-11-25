@@ -226,6 +226,16 @@ pub(crate) fn pr_files(repo: &str, n: u64) -> Result<Vec<Value>, String> {
     Ok(all)
 }
 
+/// The paths of every file in a commit's tree. A tree GitHub cut short is an error, never a shorter list.
+pub(crate) fn tree_paths(repo: &str, sha: &str) -> Result<Vec<String>, String> {
+    let v = call("GET", &format!("/repos/{repo}/git/trees/{sha}?recursive=1"), None, "list the submission's files")?;
+    if v["truncated"] == true {
+        return Err("This submission has too many files for Fridae to check against the vault.".to_string());
+    }
+    let tree = v["tree"].as_array().ok_or_else(|| unreadable("the submission's files"))?;
+    Ok(tree.iter().filter(|e| e["type"] == "blob").filter_map(|e| e["path"].as_str().map(str::to_string)).collect())
+}
+
 /// A file's bytes by its blob sha.
 pub(crate) fn blob(repo: &str, sha: &str) -> Result<Vec<u8>, String> {
     let v = call("GET", &format!("/repos/{repo}/git/blobs/{sha}"), None, "send a file")?;
