@@ -167,7 +167,7 @@ fn read_base() -> Value {
 }
 
 /// Whether the user has pressed Download (the base record exists).
-fn downloaded() -> bool {
+pub(crate) fn downloaded() -> bool {
     base_file().is_file()
 }
 

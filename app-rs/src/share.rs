@@ -180,9 +180,16 @@ fn knowledge_kind(kind: &Value) -> &'static str {
     if kind == "skill" { "vault skill" } else { "guide" }
 }
 
+/// Whether anything of Knowledge (guides, the vault's skills) may be listed, packed or sent: only once the vault has
+/// been downloaded (before that a guide in Knowledge may be the vault's own, copied in by hand; `knowledge_changes`
+/// says the same).
+fn knowledge_open() -> bool {
+    vault_sync::downloaded()
+}
+
 /// `rbx skills shareable`'s ready units: the library's skills by name, then what of Knowledge is ready, in the kit's
-/// order. A vault skill whose name a library skill of this list has (any capitals) waits for a later batch, since both
-/// would be sent at `Skills/<name>`.
+/// order (none while `knowledge_open()` is false). A vault skill whose name a library skill of this list has (any
+/// capitals) waits for a later batch, since both would be sent at `Skills/<name>`.
 fn items(v: &Value) -> Vec<Item> {
     let mut out: Vec<Item> = v["ready"]
         .as_array()
@@ -195,7 +202,8 @@ fn items(v: &Value) -> Vec<Item> {
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     let taken: Vec<String> = out.iter().map(|i| i.unit.to_lowercase()).collect();
-    for e in v["knowledge"]["ready"].as_array().into_iter().flatten() {
+    let open = knowledge_open();
+    for e in v["knowledge"]["ready"].as_array().into_iter().flatten().filter(|_| open) {
         let (Some(unit), Some(hash)) = (e["unit"].as_str(), e["hash"].as_str()) else { continue };
         let kind = knowledge_kind(&e["kind"]);
         let path_ok = if kind == "guide" { !unit.starts_with("Skills/") && vault_sync::check_path(unit) } else { unit.matches('/').count() == 1 && vault_sync::check_path(&format!("{unit}/SKILL.md")) };
@@ -331,7 +339,7 @@ pub fn status() -> Value {
     }
     // guides and vault skills: what of Knowledge is ready, held and sent
     let none = json!({});
-    let k = listed.as_ref().map(|v| &v["knowledge"]).unwrap_or(&none);
+    let k = listed.as_ref().map(|v| &v["knowledge"]).filter(|_| knowledge_open()).unwrap_or(&none);
     let klist = |key: &str| k[key].as_array().cloned().unwrap_or_default();
     let knowledge = json!({
         "ready": klist("ready").iter().map(|e| json!({"unit": e["unit"], "kind": knowledge_kind(&e["kind"]), "title": e["title"], "new": e["new"] == true})).collect::<Vec<_>>(),
@@ -700,7 +708,8 @@ mod tests {
         paths::test_dir("vault-home").join("skills")
     }
 
-    /// A clean slate: the stub as GitHub, a signed-in user, an empty scratch library, no outbox, no share settings.
+    /// A clean slate: the stub as GitHub, a signed-in user, an empty scratch library, no outbox, no share settings,
+    /// and a vault downloaded once (a base record that knows no files: every guide put in Knowledge is new).
     fn setup() -> (MutexGuard<'static, ()>, Stub) {
         let held = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (url, s) = stub();
@@ -711,12 +720,18 @@ mod tests {
         let _ = fs::remove_dir_all(paths::test_dir("vault-home"));
         let _ = fs::remove_dir_all(vault_sync::vault_app());
         fs::create_dir_all(library()).unwrap();
+        fs::create_dir_all(base_record().parent().unwrap()).unwrap();
+        fs::write(base_record(), r#"{"format": 1, "release": "vault-2026.11.24", "files": {}}"#).unwrap();
         paths::update_config(|c| {
             for k in [MODE_KEY, AGREED_KEY, LAST_KEY, HELD_KEY] {
                 c.remove(k);
             }
         });
         (held, s)
+    }
+
+    fn base_record() -> PathBuf {
+        join(&knowledge(), ".fridae-vault/base.json")
     }
 
     fn mode_is(m: &str) {
@@ -1196,6 +1211,25 @@ x [user]");
         assert_eq!(send(made["batch"].as_str().unwrap(), &[])["ok"], true);
         let sent = String::from_utf8(committed(&s)["Skills/tidy/SKILL.md"].clone()).unwrap();
         assert!(sent.contains("credit: alice") && !sent.contains("licence:"), "the vault keeps its own credit: {sent}");
+    }
+
+    #[test]
+    fn nothing_of_knowledge_is_sent_before_the_first_download() {
+        // guides copied in by hand before Download: not "new", not listed, never packed, and auto mode sends nothing
+        let (_g, s) = setup();
+        fs::remove_file(base_record()).unwrap();
+        guide("Roblox/Glossary.md", "# Glossary\n\nWords.\n");
+        guide("Roblox/02 Luau/Notes.md", "# Notes\n");
+        mode_is("auto");
+        assert_eq!(status()["knowledge"], json!({"ready": [], "held": [], "sent": []}));
+        auto_tick();
+        assert!(!calls(&s).iter().any(|c| c.starts_with("POST")), "{:?}", calls(&s));
+        mode_is("review");
+        assert_eq!(prepare()["batch"], Value::Null);
+        // the user's own library skills still go
+        skill("alpha", ALPHA, &[]);
+        let made = prepare();
+        assert_eq!(made["skills"].as_array().unwrap().iter().map(|i| i["unit"].as_str().unwrap()).collect::<Vec<_>>(), vec!["Skills/alpha"], "{made}");
     }
 
     #[test]

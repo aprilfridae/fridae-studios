@@ -316,7 +316,13 @@ def _sha(data):
 
 class KnowledgeShareTests(unittest.TestCase):
     """What of Knowledge may be shared: guides the user changed or added, and vault skills they edited."""
-    setUp = ShareTests.setUp
+
+    def setUp(self):
+        import rbxvaultsync
+        ShareTests.setUp(self)
+        # the vault was downloaded once: a base record exists (it knows no files yet)
+        os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
+        rbxskills._write_json(rbxvaultsync.base_path(), {"format": 1, "release": "vault-2026.11.24", "files": {}})
 
     def know(self, path):
         return os.path.join(rbxpaths.KNOWLEDGE_DIR, *path.split("/"))
@@ -363,6 +369,22 @@ class KnowledgeShareTests(unittest.TestCase):
         self.assertEqual(g["hash"], _sha(b"# Glossary\n\nMore.\n"))
         self.assertIs(r["Roblox/02 Luau/New.md"]["new"], True)
         self.assertEqual(r["Roblox/02 Luau/New.md"]["title"], "New")
+
+    def test_nothing_in_knowledge_is_offered_before_the_first_download(self):
+        """Final review #4: guides copied in by hand before Download are not "new"; with no base record nothing of
+        Knowledge is ready, held or sent, and pack_knowledge refuses it."""
+        import rbxvaultsync
+        os.remove(rbxvaultsync.base_path())
+        self.put("Roblox/Glossary.md", "# Glossary\n")
+        self.put("Roblox/18 Rigs/R.fbx", b"Kaydara FBX binary")
+        self.put("Skills/tidy/SKILL.md", "---\nname: tidy\ndescription: T.\n---\n\nT.\n")
+        out = self.changes()
+        self.assertEqual((out["ready"], out["held"], out["sent"]), ([], [], []))
+        with self.assertRaises(ValueError):
+            rbxshare.pack_knowledge(["Roblox/Glossary.md"], os.path.join(self.root, "pack out"))
+        # after the first Download (a base record), the same guide unknown to the base is new and ready
+        rbxskills._write_json(rbxvaultsync.base_path(), {"format": 1, "release": "vault-2026.11.24", "files": {}})
+        self.assertIn("Roblox/Glossary.md", self.ready())
 
     def test_unchanged_guide_is_not_listed(self):
         self.seed("Roblox/Glossary.md", "# Glossary\n")

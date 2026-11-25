@@ -256,13 +256,14 @@ def _regular(full):
 def _knowledge_units():
     """[(unit, kind, title, local path or folder, new, [(vault path, full path)])] of what in Knowledge differs from
     what the vault gave (by the base record) or is not from the vault at all: notes per file (outside Skills/), and
-    each folder of Knowledge/Skills as one skill under its vault (upstream) name."""
+    each folder of Knowledge/Skills as one skill under its vault (upstream) name. Nothing before the first Download
+    (no base record, vault_sync::downloaded()): a file there then may be the vault's own, copied in by hand."""
     import rbxpaths
     import rbxvaultsync
     know = rbxpaths.KNOWLEDGE_DIR
     base = rbxvaultsync.read_base()
     out = []
-    if not os.path.isdir(know):
+    if not os.path.isdir(know) or not os.path.isfile(rbxvaultsync.base_path()):
         return out, base
 
     def changed(p, full):
