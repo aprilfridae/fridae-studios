@@ -162,7 +162,7 @@ def _no_symlinks():
     import rbxskills
     for d in (rbxskills.vault_dir(), state_dir()):  # Knowledge itself may be a link; what is below it may not
         if os.path.islink(d):
-            raise ValueError
+            raise ValueError(BAD)
 
 
 def _validate(staged, manifest, renamed):
@@ -368,6 +368,28 @@ def _apply(staged, manifest, base):
             _put_beside(target, data)
             res["kept"].append(p)
 
+    # what upstream dropped goes first, so a skill it renamed is not compared with its old self below
+    for p in sorted(b for b in base["files"] if b not in new and _skill(b) not in declined):
+        try:
+            if not check_path(p):
+                forget(p)
+                continue
+            target = lp(p)
+            if not _target_ok(target, vault):
+                raise OSError("outside the vault folder")
+            local = _read_existing(target)
+            if local is not None and _sha(local) == _cmp_hash(base, p):
+                dest = os.path.join(state_dir(), "removed", release, *_local_path(p, renamed).split("/"))
+                if not _target_ok(dest, state_dir()):
+                    raise OSError("outside the vault record")
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                if os.path.lexists(dest):
+                    dest += "." + uuid.uuid4().hex[:6]
+                shutil.move(target, dest)
+                res["removed"].append(p)
+            forget(p)
+        except OSError as e:
+            res["errors"].append("%s: %s" % (p, e))
     import rbxvaultnew
     ctx = rbxvaultnew.Ctx(release)  # the library is read once, when the first newcomer needs it
     decided = {}  # upstream skill name -> install or not
@@ -390,7 +412,7 @@ def _apply(staged, manifest, base):
             if name in base["waiting"]:  # its decision is still open: the newer copy replaces the waiting one
                 try:
                     kept = rbxvaultnew._renew(name, staged_dir)
-                except OSError as e:
+                except (OSError, rbxpaths.KitError) as e:
                     res["errors"].append("%s: %s" % (p, e))
                     decided[name] = False
                     continue
@@ -445,27 +467,6 @@ def _apply(staged, manifest, base):
     if current is not None:
         _save_base(base)
 
-    for p in sorted(b for b in base["files"] if b not in new and _skill(b) not in declined):
-        try:
-            if not check_path(p):
-                forget(p)
-                continue
-            target = lp(p)
-            if not _target_ok(target, vault):
-                raise OSError("outside the vault folder")
-            local = _read_existing(target)
-            if local is not None and _sha(local) == _cmp_hash(base, p):
-                dest = os.path.join(state_dir(), "removed", release, *_local_path(p, renamed).split("/"))
-                if not _target_ok(dest, state_dir()):
-                    raise OSError("outside the vault record")
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                if os.path.lexists(dest):
-                    dest += "." + uuid.uuid4().hex[:6]
-                shutil.move(target, dest)
-                res["removed"].append(p)
-            forget(p)
-        except OSError as e:
-            res["errors"].append("%s: %s" % (p, e))
     base["release"] = release
     _save_base(base)
     return res

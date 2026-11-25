@@ -22,19 +22,27 @@ def _body(text):
     return "\n".join(line.rstrip() for line in rbxskills.front(text)[1].splitlines()).strip()
 
 
-def _own_copy(name):
-    """The user's library folder of a skill they sent to the vault under this name and have not edited since (its
-    .fridae-shared.json lists the name with the folder's present hash), or None."""
+def _own_index():
+    """{casefolded name: folder} of the user's library skills they sent to the vault and have not edited since (their
+    .fridae-shared.json lists the name with the folder's present hash)."""
     import rbxskills
+    out = {}
     for d in rbxskills._skill_dirs(rbxskills.user_dir()):
         if d.endswith(rbxskills.UPDATE_SUFFIX) or not rbxskills._mine(d):
             continue
         sent = rbxskills._read_json(os.path.join(d, rbxskills.SHARED_FILE), {}).get("sent")
+        h = None
         for e in sent if isinstance(sent, list) else []:
-            if isinstance(e, dict) and str(e.get("name", "")).casefold() == name.casefold() \
-                    and e.get("hash") == rbxskills.folder_hash(d):
-                return d
-    return None
+            if isinstance(e, dict) and isinstance(e.get("name"), str):
+                h = h or rbxskills.folder_hash(d)
+                if e.get("hash") == h:
+                    out.setdefault(e["name"].casefold(), d)
+    return out
+
+
+def _own_copy(name):
+    """The folder of the user's own earlier share of this name, unedited since, or None."""
+    return _own_index().get(name.casefold())
 
 
 def _stage_incoming(staged_dir, name):
@@ -93,8 +101,21 @@ class Ctx:
     def __init__(self, release):
         self.release = release
         self.installed = []  # folders of skills this apply installs: they join the library for the next newcomer
-        self._lib = self._idf = self._apps = None
+        self._lib = self._idf = self._apps = self._own = self._open = self._patch = None
         self._bodies = {}
+
+    def own(self, name):
+        if self._own is None:
+            self._own = _own_index()
+        return self._own.get(name.casefold())
+
+    def has_open(self, name):
+        """Whether a vault decision about this name is open (the decisions are read once)."""
+        import rbxskills
+        if self._open is None:
+            self._open = {d.get("b") for d in rbxskills._decisions() if d.get("from") == "vault"
+                          and d.get("state") == "open" and d.get("kind", "skill") == "skill"}
+        return name in self._open
 
     def apps(self):
         import rbxskills
@@ -109,7 +130,9 @@ class Ctx:
             self._idf = rbxskills._idf([rbxskills.summary(e) for e in self._lib])
         self._lib = [e for e in self._lib if os.path.isfile(os.path.join(e["dir"], "SKILL.md"))]
         have = {os.path.realpath(e["dir"]) for e in self._lib}
-        patch = read_base()["patch"]
+        if self._patch is None:
+            self._patch = read_base()["patch"]
+        patch = self._patch
         for d in self.installed:
             if os.path.realpath(d) not in have and os.path.isfile(os.path.join(d, "SKILL.md")):
                 self._lib.append(rbxskills._entry(d, "vault", "community", patch=patch))
@@ -140,10 +163,10 @@ def newcomer(name, staged_dir, ctx=None):
     key = name.casefold()
     if key in rbxskills.APP_ONLY or key in ctx.apps():
         return "declined:app"
-    waiting = _renew(name, staged_dir)  # an earlier run opened its decision but did not record the wait
+    waiting = _renew(name, staged_dir) if ctx.has_open(name) else None  # a run that opened it did not record the wait
     if waiting:
         return "incoming:" + waiting
-    if _own_copy(name):
+    if ctx.own(name):
         return "settled:own"
     try:
         text = rbxskills._read(os.path.join(staged_dir, "SKILL.md"))
@@ -199,15 +222,21 @@ def _install_folder(src, name, local, base):
         raise ValueError(NOT_THERE)
     os.makedirs(vault, exist_ok=True)
     shutil.move(src, dst)
-    for r, p in paths.items():
-        full = os.path.join(dst, *r.split("/"))
-        data = _read(full)
-        if local != name and r == "SKILL.md":
-            mine = rbxvaultsync.rename_front(data, local)
-            _write(full, mine)
-            _record_base(base, p, mine, data)
-        else:
-            _record_base(base, p, data)
+    try:
+        for r, p in paths.items():
+            full = os.path.join(dst, *r.split("/"))
+            data = _read(full)
+            if local != name and r == "SKILL.md":
+                mine = rbxvaultsync.rename_front(data, local)
+                _write(full, mine)
+                _record_base(base, p, mine, data)
+            else:
+                _record_base(base, p, data)
+    except BaseException:  # all or nothing: the folder goes back where it waited and nothing stays recorded
+        for p in paths.values():
+            _forget_base(base, p)
+        shutil.move(dst, src)
+        raise
 
 
 def _set_aside(src, name, release):
@@ -251,6 +280,20 @@ def decide_vault(dec, choice, merged_text):
             return cur
 
 
+def _forget_vault_skill(base, a_dir):
+    """The vault skill whose folder a_dir was is gone from the vault folder: forget what the base record knew of it. Its
+    upstream name is declined (not offered again) only when upstream had it."""
+    local = os.path.basename(a_dir)
+    up = next((u for u, l in base["renamed"].items() if l == local), local)
+    had = [p for p in base["files"] if _skill(p) == up]
+    for p in had:
+        _forget_base(base, p)
+    base["renamed"].pop(up, None)
+    base["waiting"].pop(up, None)
+    if had and up not in base["declined"]:
+        base["declined"].append(up)
+
+
 def _settle(dec, choice, merged_text, base):
     import rbxskills
     name, a, a_dir, b_dir = dec["b"], dec["a"], dec["a_dir"], dec["b_dir"]
@@ -290,25 +333,32 @@ def _settle(dec, choice, merged_text, base):
                 shutil.move(removed, a_dir)
             raise
         if removed:
-            up = next((u for u, l in base["renamed"].items() if l == os.path.basename(a_dir)), os.path.basename(a_dir))
-            for p in [p for p in base["files"] if _skill(p) == up]:
-                _forget_base(base, p)
-            base["renamed"].pop(up, None)
-            base["waiting"].pop(up, None)
-            if up not in base["declined"]:
-                base["declined"].append(up)
+            _forget_vault_skill(base, a_dir)
         if a_kit and differ:
             sup = base["patch"].setdefault(name, {}).setdefault("supersedes", [])
             if a not in sup:
                 sup.append(a)
     elif choice == "keep_both":
         if there:
-            local = os.path.basename(rbxskills._free(vault, name + "-community", "-"))
+            taken = {e["id"].casefold() for e in rbxskills.library()}
+            local, i = name + "-community", 1
+            while os.path.lexists(os.path.join(vault, local)) or local.casefold() in taken:
+                i += 1
+                local = "%s-community-%d" % (name, i)
             _install_folder(b_dir, name, local, base)
             base["renamed"][name] = local
     else:  # keep, merge: the skill in use stays (merged), the waiting copy is set aside and never offered again
         if choice == "merge":
-            rbxskills._merge_skill(rbxskills.user_dir(), a, a_dir, a_kit, merged_text, name, differ)
+            # a vault skill in use: the merged text is the user's own new skill (a copy of it, as for a shipped one),
+            # which wins over the vault copy and which updates never touch; the vault copy is moved to removed/
+            target = rbxskills._merge_skill(rbxskills.user_dir(), a, a_dir, a_kit or a_vault, merged_text, name, differ)
+            if a_vault:
+                try:
+                    _set_aside(a_dir, os.path.basename(a_dir), base["waiting"].get(name, ""))
+                except BaseException:
+                    shutil.rmtree(target, ignore_errors=True)
+                    raise
+                _forget_vault_skill(base, a_dir)
         if there:
             _set_aside(b_dir, name, base["waiting"].get(name, ""))
         if name not in base["declined"]:

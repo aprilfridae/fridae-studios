@@ -9,6 +9,7 @@ from unittest import mock
 
 import rbxpaths
 import rbxskills
+import rbxvaultnew
 import rbxvaultsync
 
 
@@ -519,7 +520,7 @@ class VaultSyncTests(unittest.TestCase):
                               {"sent": [{"name": "Tidy", "hash": h, "pr": "https://x/1", "at": 1}]})
         r = self.apply(self.vfiles("tidy", "Tidy up a project folder."))
         self.assertEqual(r["settled"], ["tidy"])
-        self.assertEqual(r["added"].__len__(), 2)
+        self.assertEqual(len(r["added"]), 2)
         self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), ".replaced", "tidy")))
         self.assertFalse(os.path.exists(d))
         self.assertEqual(rbxskills.pending(), [])
@@ -660,9 +661,10 @@ class VaultSyncTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.local("Skills/debug-helper-community/SKILL (Fridae update).md")))
 
     def test_replace_a_vault_skill_moves_it_to_removed_and_declines_it(self):
-        self.apply(self.vfiles("old-way", "Stitch a granny square blanket with wool."))
-        self.apply(self.vfiles("debug-helper", "Stitch a granny square blanket with wool. Use it for wool.",
-                               body="Newer."), release="vault-2026.02.01")
+        OLD = self.vfiles("old-way", "Stitch a granny square blanket with wool.")
+        self.apply(OLD)
+        self.apply({**OLD, **self.vfiles("debug-helper", "Stitch a granny square blanket with wool. Use it for wool.",
+                                         body="Newer.")}, release="vault-2026.02.01")
         (dec,) = rbxskills.pending()
         self.assertEqual(dec["a"], "old-way")
         rbxskills.decide(dec["id"], "replace")
@@ -692,6 +694,120 @@ class VaultSyncTests(unittest.TestCase):
         r = self.apply(files)
         self.assertEqual(r["incoming"], ["first-two"])
         self.assertTrue(os.path.exists(self.local("Skills/first-one/SKILL.md")))
+
+    def test_upstream_rename_same_body_installs_the_new_name(self):
+        self.apply(self.vfiles("old-name", "Stitch a granny square blanket with wool."))
+        r = self.apply(self.vfiles("new-name", "Stitch a granny square blanket with wool.", body="Theirs."),
+                       release="vault-2026.02.01")
+        self.assertEqual(r["declined"], [])
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["new-name"])
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_upstream_rename_edited_body_asks_no_card(self):
+        self.apply(self.vfiles("old-name", "Stitch a granny square blanket with wool.", body="Old."))
+        r = self.apply(self.vfiles("new-name", "Stitch a granny square blanket with wool.", body="Edited."),
+                       release="vault-2026.02.01")
+        self.assertEqual(r["incoming"], [])
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["new-name"])
+        self.assertEqual(rbxskills.pending(), [])
+
+    def failing_second_record(self):
+        real, calls = rbxvaultnew._record_base, []
+
+        def fake(*a, **k):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real(*a, **k)
+        return mock.patch.object(rbxvaultnew, "_record_base", fake)
+
+    def test_failed_replace_is_rolled_back_whole(self):
+        dec = self.waiting_one()
+        before = [e["id"] for e in rbxskills.library()]
+        with self.failing_second_record(), self.assertRaises(OSError):
+            rbxskills.decide(dec["id"], "replace")
+        self.assertEqual([e["id"] for e in rbxskills.library()], before)
+        self.assertEqual([d["id"] for d in rbxskills.pending()], [dec["id"]])
+        self.assertTrue(os.path.isfile(os.path.join(dec["b_dir"], "ref.md")))
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper")))
+        self.assertEqual(rbxvaultsync.read_base()["files"], {})
+        self.assertTrue(os.path.isdir(os.path.join(rbxskills.user_dir(), "debugging")))
+        rbxskills.decide(dec["id"], "replace")  # and it can be tried again
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debug-helper"])
+
+    def test_failed_keep_both_is_rolled_back_whole(self):
+        dec = self.waiting_one()
+        with self.failing_second_record(), self.assertRaises(OSError):
+            rbxskills.decide(dec["id"], "keep_both")
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debugging"])
+        self.assertTrue(os.path.isdir(dec["b_dir"]))
+        self.assertEqual(rbxvaultsync.read_base()["renamed"], {})
+
+    def test_library_lock_timeout_on_a_waiting_skill_does_not_abort_the_update(self):
+        self.waiting_one()
+        with mock.patch.object(rbxvaultnew, "_renew", side_effect=rbxpaths.KitError("busy")):
+            r = self.apply({**self.vfiles("debug-helper", body="v2"), **self.vfiles("crochet", "Stitch wool.")},
+                           release="vault-2026.02.01")
+        self.assertEqual(len(r["errors"]), 1)
+        self.assertTrue(os.path.exists(self.local("Skills/crochet/SKILL.md")))
+
+    def test_merge_into_a_vault_skill_makes_a_user_skill_and_removes_the_vault_one(self):
+        OLD = self.vfiles("old-way", "Stitch a granny square blanket with wool.", body="Old.")
+        self.apply(OLD)
+        self.apply({**OLD, **self.vfiles("debug-helper", "Stitch a granny square blanket with wool.", body="Newer.")},
+                   release="vault-2026.02.01")
+        (dec,) = rbxskills.pending()
+        rbxskills.decide(dec["id"], "merge", "---\nname: old-way\ndescription: Merged.\n---\n\nBoth.\n")
+        (e,) = rbxskills.library()
+        self.assertEqual((e["id"], e["origin"]), ("old-way", "user"))
+        self.assertFalse(os.path.exists(self.local("Skills/old-way")))
+        self.assertTrue(os.path.isdir(os.path.join(rbxvaultsync.state_dir(), "removed", "vault-2026.02.01",
+                                                   "Skills", "old-way")))
+        base = rbxvaultsync.read_base()
+        self.assertIn("debug-helper", base["declined"])
+        self.assertIn("old-way", base["declined"])
+        self.assertEqual([p for p in base["files"] if "old-way" in p], [])
+        self.apply(self.vfiles("old-way", "Stitch a granny square blanket with wool.", body="Old v2."),
+                   release="vault-2026.03.01")  # an update never touches the merged user skill
+        self.assertFalse(os.path.exists(self.local("Skills/old-way")))
+        self.assertIn("Both.", self.get_text(e["dir"]))
+
+    def get_text(self, d):
+        with open(os.path.join(d, "SKILL.md"), encoding="utf-8") as f:
+            return f.read()
+
+    def test_replace_a_hand_made_vault_folder_is_not_declined(self):
+        self.put("Skills/mine/SKILL.md", "---\nname: mine\ndescription: Stitch a granny square blanket with wool.\n---\n\nB\n")
+        self.apply(self.vfiles("debug-helper", "Stitch a granny square blanket with wool.", body="Newer."))
+        (dec,) = rbxskills.pending()
+        rbxskills.decide(dec["id"], "replace")
+        self.assertEqual(rbxvaultsync.read_base()["declined"], [])
+        self.assertTrue(os.path.isdir(os.path.join(rbxvaultsync.state_dir(), "removed", "vault-2026.01.01", "Skills", "mine")))
+
+    def test_keep_both_avoids_a_name_a_library_skill_has(self):
+        self.user_skill("debug-helper-community", "Something about crochet wool.")
+        dec = self.waiting_one()
+        rbxskills.decide(dec["id"], "keep_both")
+        self.assertEqual(rbxvaultsync.read_base()["renamed"], {"debug-helper": "debug-helper-community-2"})
+
+    def test_symlinked_vault_folder_on_decide_gives_a_plain_message(self):
+        dec = self.waiting_one()
+        outside = tempfile.mkdtemp(prefix="outside ")
+        self.addCleanup(shutil.rmtree, outside, True)
+        os.symlink(outside, os.path.join(self.know, "Skills"))
+        with self.assertRaises(ValueError) as cm:
+            rbxskills.decide(dec["id"], "replace")
+        self.assertEqual(str(cm.exception), rbxvaultsync.BAD)
+
+    def test_a_vault_decision_waits_only_while_its_folder_is_in_incoming(self):
+        dec = self.waiting_one()
+        outside = os.path.join(self.root, "elsewhere")
+        os.makedirs(outside)
+        decs = rbxskills._decisions()
+        decs[0]["b_dir"] = outside
+        rbxskills._save_decisions(decs)
+        self.assertEqual(rbxskills.pending(), [])
+        self.assertEqual(rbxskills._decisions()[0]["state"], "gone")
 
     def test_one_state_dir(self):
         self.assertEqual(rbxvaultsync.state_dir(), rbxskills.vault_state_dir())

@@ -1026,7 +1026,13 @@ def pending():
 
 def _waiting(d):
     """Whether a skill decision's newcomer is still waiting in its folder."""
-    return isinstance(d.get("b_dir"), str) and bool(d["b_dir"]) and os.path.isdir(d["b_dir"])
+    if not (isinstance(d.get("b_dir"), str) and bool(d["b_dir"]) and os.path.isdir(d["b_dir"])):
+        return False
+    if d.get("from") == "vault":  # a vault newcomer waits only in the vault's incoming folder
+        import rbxvaultsync
+        return rbxvaultsync._inside(d["b_dir"], rbxvaultsync.incoming_dir()) \
+            and os.path.realpath(d["b_dir"]) != os.path.realpath(rbxvaultsync.incoming_dir())
+    return True
 
 
 def _close_gone(ids):
