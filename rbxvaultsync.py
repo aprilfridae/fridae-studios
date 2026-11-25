@@ -1,10 +1,11 @@
 """The shared Fridae vault: what was downloaded from it, as the base record remembers it, and applying an update
-without overriding the user (file by file: replace what is untouched, merge what both changed, otherwise keep the
-user's file and save the new one beside it)."""
+without overriding the user (replace what is untouched, combine what both changed, otherwise keep the user's file and
+open a clash that waits for their choice). A skill is decided as one folder, any other file on its own."""
 import hashlib
 import json
 import os
 import shutil
+import time
 import unicodedata
 import uuid
 
@@ -14,10 +15,8 @@ import rbxpaths
 BASE_NAME = "base.json"
 # the code's own data under Roblox/: it stays in the app and never travels (vault_sync::CODE_DATA)
 CODE_DATA = ("Roblox/_tools/", "Roblox/_data/")
-BESIDE = " (Fridae update)"
 BAD = "This vault update looked wrong, so nothing was changed."
-# the longest file name accepted: room for " (Fridae update 99)" in the same folder (temp files have short names)
-NAME_MAX = 255 - len(" (Fridae update 99)")
+SAVE_EVERY = 50  # the base record is saved after this many files outside Skills/ (and after each skill folder)
 # at most 20,000 files, 8 MiB each, 256 MiB in all (vault_sync's limits: the guides are 1,352 files and 21 MB)
 MAX_FILES, MAX_FILE, MAX_TOTAL = 20_000, 8 << 20, 256 << 20
 
@@ -35,7 +34,7 @@ def read_base():
     """The base record (<Knowledge>/.fridae-vault/base.json), every field filled: a missing or broken file, or a
     field of the wrong type, gives that field's empty value."""
     base = {"format": 1, "release": "", "files": {}, "deleted": [], "declined": [], "renamed": {}, "waiting": {},
-            "patch": {}}
+            "patch": {}, "clashes": {}}
     data = rbxpaths.read_json(base_path())
     if not isinstance(data, dict):
         return base
@@ -127,11 +126,20 @@ def _target_ok(path, root):
 
 
 def _write(path, data):
+    """Write through a temporary file and rename it into place (rbxpaths.replace waits out a short Windows "Access is
+    denied"). When the rename fails, the temporary file is removed and the error raised."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = os.path.join(os.path.dirname(path), ".%s.tmp" % uuid.uuid4().hex[:8])
-    with open(tmp, "wb") as f:
-        f.write(data)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        rbxpaths.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _save_base(base):
@@ -140,11 +148,6 @@ def _save_base(base):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(json.dumps(base, ensure_ascii=False, indent=1) + "\n")
     os.replace(tmp, base_path())
-
-
-def _beside(path):
-    stem, ext = os.path.splitext(path)
-    return stem + BESIDE + ext
 
 
 def _merge(local, base, new):
@@ -168,17 +171,20 @@ def _local_path(path, renamed):
     return "/".join(parts)
 
 
-def _no_symlinks():
-    """Knowledge/Skills and Knowledge/.fridae-vault are real folders (when they exist)."""
-    import rbxskills
-    for d in (rbxskills.vault_dir(), state_dir()):  # Knowledge itself may be a link; what is below it may not
-        if os.path.islink(d):
+def _top(p):
+    """The real folder a vault path lands under: <Knowledge>/<its first part>."""
+    return os.path.join(rbxpaths.KNOWLEDGE_DIR, p.split("/")[0])
+
+
+def _no_symlinks(tops=("Skills",)):
+    """Knowledge/<top> for each top folder and Knowledge/.fridae-vault are real folders (when they exist)."""
+    for d in [os.path.join(rbxpaths.KNOWLEDGE_DIR, t) for t in tops] + [state_dir()]:
+        if os.path.islink(d):  # Knowledge itself may be a link; what is below it may not
             raise ValueError(BAD)
 
 
 def _validate(staged, manifest, renamed):
     """Everything that can be checked before the first write; raises ValueError(BAD)."""
-    import rbxskills
     try:
         if not isinstance(manifest, dict) or manifest.get("format") != 1:
             raise ValueError
@@ -196,26 +202,22 @@ def _validate(staged, manifest, renamed):
             total += size
         if total > MAX_TOTAL:
             raise ValueError
-        _no_symlinks()
+        if not all(isinstance(f, dict) and check_path(f.get("path")) for f in files):
+            raise ValueError
+        _no_symlinks(sorted({f["path"].split("/")[0] for f in files}))
         seen, ups = set(), set()
-        vault = rbxskills.vault_dir()
         root = os.path.realpath(staged)
         for f in files:
-            if not isinstance(f, dict):
-                raise ValueError
             p, h, size = f.get("path"), f.get("sha256"), f.get("size")
-            if not check_path(p) or not isinstance(h, str):
-                raise ValueError
-            if os.path.splitext(p)[0].endswith(BESIDE):
+            if not isinstance(h, str):
                 raise ValueError
             lp = _local_path(p, renamed)
             up = unicodedata.normalize("NFC", p).casefold()
-            if up in ups or len(lp.rsplit("/", 1)[1].encode("utf-8", "surrogatepass")) > NAME_MAX \
-                    or len(p.rsplit("/", 1)[1].encode("utf-8", "surrogatepass")) > NAME_MAX:
+            if up in ups:
                 raise ValueError
             ups.add(up)
             key = unicodedata.normalize("NFC", lp).casefold()
-            if not check_path(lp) or not check_path(_beside(lp)) or key in seen:
+            if not check_path(lp) or key in seen:
                 raise ValueError
             seen.add(key)
             src = os.path.join(staged, *p.split("/"))
@@ -224,16 +226,16 @@ def _validate(staged, manifest, renamed):
             data = _read(src)
             if data is None or _sha(data) != h or len(data) != size:
                 raise ValueError
-            for q in (lp, _beside(lp)):
-                if not _target_ok(os.path.join(rbxpaths.KNOWLEDGE_DIR, *q.split("/")), vault):
-                    raise ValueError
+            if not _target_ok(os.path.join(rbxpaths.KNOWLEDGE_DIR, *lp.split("/")), _top(lp)):
+                raise ValueError
     except (ValueError, TypeError, OSError):
         raise ValueError(BAD)
 
 
 def apply(staged, manifest):
-    """Apply a fetched vault release (files under staged/<path>, verified against the manifest) to
-    <Knowledge>/Skills, file by file, never over what the user changed. Returns the lists in the result."""
+    """Apply a fetched vault release (files under staged/<path>, verified against the manifest) to <Knowledge>, never
+    over what the user changed: a skill folder as one unit, any other file on its own. Returns the lists in the
+    result; `clashes` holds the units waiting for the user's choice after this run."""
     import rbxskills
     base = read_base()
     _validate(staged, manifest, base["renamed"])
@@ -241,6 +243,11 @@ def apply(staged, manifest):
         base = read_base()
         _validate(staged, manifest, base["renamed"])
         return _apply(staged, manifest, base)
+
+
+def clash_dir():
+    """Where the vault's copy of each unit waiting for the user's choice is kept (clash/<upstream path>)."""
+    return os.path.join(state_dir(), "clash")
 
 
 def incoming_dir():
@@ -299,171 +306,276 @@ def decide_vault(dec, choice, merged_text):
     return rbxvaultnew.decide_vault(dec, choice, merged_text)
 
 
-def _put_beside(target, data):
-    """Save the new text beside the user's file as '<stem> (Fridae update)<ext>', never replacing a file already
-    there: identical bytes are left, different ones get '(Fridae update 2)', '3'..."""
-    stem, ext = os.path.splitext(target)
-    n = 1
-    while True:
-        path = stem + (BESIDE if n == 1 else BESIDE[:-1] + " %d)" % n) + ext
-        if not os.path.lexists(path):
-            _write(path, data)
-            return
-        if _read_existing(path) == data:
-            return
-        n += 1
-        if n > 99:
-            raise OSError("too many saved copies beside it")
+def _plan(p, local, old, base_bytes, new):
+    """What to do with one vault file: (action, merged bytes or None). local: the user's bytes (None: no file);
+    old: the hash it is compared with when the base record knows p (else None); base_bytes: the base copy; new: the
+    vault's bytes as they would be written. Actions: add, record, write, keep, deleted, merge (with the merged bytes)
+    and clash. Pictures and models are never combined."""
+    import rbxmerge
+    nh = _sha(new)
+    if old is not None:
+        if local is None:
+            return "deleted", None
+        if _sha(local) == nh:
+            return "record", None
+        if _sha(local) == old:
+            return "write", None
+        if nh == old:
+            return "keep", None  # the user's edit stands, upstream did not change
+        if rbxmerge.is_binary(p, local) or rbxmerge.is_binary(p, new):
+            return "clash", None
+        merged = _merge(local, base_bytes, new)
+        return ("merge", merged) if merged is not None else ("clash", None)
+    if local is None:
+        return "add", None
+    if _sha(local) == nh:
+        return "record", None
+    return "clash", None
+
+
+def _now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _apply(staged, manifest, base):
+    import rbxmerge
     import rbxskills
+    import rbxvaultnew
     vault = rbxskills.vault_dir()
     release = manifest["release"]
-    res = {"release": release, "added": [], "updated": [], "merged": [], "kept": [], "removed": [],
-           "skipped_deleted": [], "declined": [], "incoming": [], "settled": [], "errors": []}
-    renamed, declined = base["renamed"], set(base["declined"])
+    res = {"release": release, "added": [], "updated": [], "merged": [], "removed": [], "skipped_deleted": [],
+           "declined": [], "incoming": [], "settled": [], "clashes": [], "errors": []}
+    renamed, declined, clashes = base["renamed"], set(base["declined"]), base["clashes"]
     new = {f["path"]: f for f in manifest["files"]}
-    bdir = os.path.join(state_dir(), "base")
+    units = {}  # each unit's manifest paths, in order: a skill's folder, or one other file
+    for p in sorted(new):
+        units.setdefault(unit_of(p), []).append(p)
 
-    def lp(p):
-        return os.path.join(rbxpaths.KNOWLEDGE_DIR, *_local_path(p, renamed).split("/"))
+    def failed_on(p, e):
+        res["errors"].append("%s: %s" % (p, e))
 
-    def record(p, data, upstream=None):
-        _record_base(base, p, data, upstream)
+    def target_of(p):
+        local = _local_path(p, renamed)
+        target = os.path.join(rbxpaths.KNOWLEDGE_DIR, *local.split("/"))
+        if not _target_ok(target, _top(local)):
+            raise OSError("outside the Knowledge folder")
+        return target
 
-    def forget(p):
-        _forget_base(base, p)
+    def set_aside(src, rel):
+        """Move src to removed/<release>/<rel> (a name already there gets a suffix)."""
+        dest = os.path.join(state_dir(), "removed", release, *rel.split("/"))
+        if not _target_ok(dest, state_dir()):
+            raise OSError("outside the vault record")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if os.path.lexists(dest):
+            dest += "." + uuid.uuid4().hex[:6]
+        shutil.move(src, dest)
 
-    def one(p, name):
-        data = _read(os.path.join(staged, *p.split("/")))
-        up = data
-        if name in renamed and p == "Skills/%s/SKILL.md" % name:  # compared and merged as written locally
-            data = rename_front(data, renamed[name])
-        record_ = lambda p, d: record(p, d, up if up != d else None)
-        target = lp(p)
-        if not _target_ok(target, vault):
-            raise OSError("outside the vault folder")
-        local = _read_existing(target)
-        old = _cmp_hash(base, p) if p in base["files"] else None
-        nh = _sha(data)
-        if old is not None:
-            if local is None:
-                base["deleted"].append(p)
-                forget(p)
-                res["skipped_deleted"].append(p)
-            elif _sha(local) == nh:
-                record_(p, data)
-            elif _sha(local) == old:
-                _write(target, data)
-                record_(p, data)
-                res["updated"].append(p)
-            elif nh == old:
-                pass  # the user's edit stands, upstream did not change
-            else:
-                merged = _merge(local, _read(os.path.join(bdir, *p.split("/"))), data)
-                if merged is not None:
-                    _write(target, merged)
-                    record_(p, data)
-                    res["merged"].append(p)
-                else:
-                    _put_beside(target, data)
-                    res["kept"].append(p)
-        elif local is None:
-            _write(target, data)
-            record_(p, data)
-            res["added"].append(p)
-        elif _sha(local) == nh:
-            record_(p, data)
-        else:
-            _put_beside(target, data)
-            res["kept"].append(p)
-
-    # what upstream dropped goes first, so a skill it renamed is not compared with its old self below
-    for p in sorted(b for b in base["files"] if b not in new and _skill(b) not in declined):
+    def drop(p):
+        """Upstream no longer has p: the user's file is set aside only if they never changed it."""
         try:
             if not check_path(p):
-                forget(p)
-                continue
-            target = lp(p)
-            if not _target_ok(target, vault):
-                raise OSError("outside the vault folder")
+                _forget_base(base, p)
+                return
+            target = target_of(p)
             local = _read_existing(target)
             if local is not None and _sha(local) == _cmp_hash(base, p):
-                dest = os.path.join(state_dir(), "removed", release, *_local_path(p, renamed).split("/"))
-                if not _target_ok(dest, state_dir()):
-                    raise OSError("outside the vault record")
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                if os.path.lexists(dest):
-                    dest += "." + uuid.uuid4().hex[:6]
-                shutil.move(target, dest)
+                set_aside(target, _local_path(p, renamed))
                 res["removed"].append(p)
-            forget(p)
+            _forget_base(base, p)
         except OSError as e:
-            res["errors"].append("%s: %s" % (p, e))
-    import rbxvaultnew
+            failed_on(p, e)
+
+    def copy_of(p):
+        path = os.path.join(clash_dir(), *p.split("/"))
+        if not _target_ok(path, clash_dir()):
+            raise OSError("outside the vault record")
+        return path
+
+    def remove_copy(unit):
+        """The vault's waiting copy of a unit (a file, or a skill's folder) removed, and folders it leaves empty."""
+        path = copy_of(unit)
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.remove(path)
+        d, top = os.path.dirname(path), os.path.realpath(clash_dir())
+        while os.path.realpath(d).startswith(top + os.sep):
+            try:
+                os.rmdir(d)  # only an empty folder goes
+            except OSError:
+                break
+            d = os.path.dirname(d)
+
+    def open_clash(unit, kind, paths):
+        """The unit waits for the user's choice: the vault's copy of it under clash/, its entry in the record. The
+        user's files and the unit's base record are left as they are."""
+        remove_copy(unit)
+        for q in paths:
+            _write(copy_of(q), _read(os.path.join(staged, *q.split("/"))))
+        made = clashes[unit].get("made") if isinstance(clashes.get(unit), dict) else None
+        clashes[unit] = {"release": release, "kind": kind, "paths": list(paths), "made": made or _now()}
+
+    def close_clash(unit):
+        if unit in clashes:
+            remove_copy(unit)
+            del clashes[unit]
+
+    def staged_bytes(p, name):
+        """(the bytes as written locally, upstream's bytes): a renamed skill's SKILL.md carries its local name."""
+        data = _read(os.path.join(staged, *p.split("/")))
+        if name in renamed and p == "Skills/%s/SKILL.md" % name:  # compared and merged as written locally
+            return rename_front(data, renamed[name]), data
+        return data, data
+
+    def plan(p, name=""):
+        data, up = staged_bytes(p, name)
+        target = target_of(p)
+        local = _read_existing(target)
+        old = _cmp_hash(base, p) if p in base["files"] else None
+        action, merged = _plan(p, local, old, _read(_base_copy(p)) if old is not None else None, data)
+        return {"p": p, "action": action, "merged": merged, "data": data, "up": up, "target": target,
+                "local": local}
+
+    def carry(pl):
+        p, action, data, target = pl["p"], pl["action"], pl["data"], pl["target"]
+        up = pl["up"] if pl["up"] != data else None
+        if action == "deleted":
+            base["deleted"].append(p)
+            _forget_base(base, p)
+            res["skipped_deleted"].append(p)
+        elif action in ("add", "write", "merge"):
+            _write(target, pl["merged"] if action == "merge" else data)
+            _record_base(base, p, data, up)
+            res[{"add": "added", "write": "updated", "merge": "merged"}[action]].append(p)
+        elif action == "record":
+            _record_base(base, p, data, up)
+        # keep: the user's edit stands, upstream did not change
+
+    # what upstream dropped goes first, so a skill it renamed is not compared with its old self below; a dropped file
+    # of a skill the vault still has goes with that skill, so a skill that clashes is left whole
+    for p in sorted(b for b in base["files"] if unit_of(b) not in units and _skill(b) not in declined):
+        drop(p)
+    for unit in sorted(u for u in clashes if u not in units):  # a waiting unit the vault no longer has
+        try:
+            path = copy_of(unit)
+            if os.path.lexists(path):
+                set_aside(path, unit)
+            remove_copy(unit)
+            del clashes[unit]
+        except OSError as e:
+            failed_on(unit, e)
+
     ctx = rbxvaultnew.Ctx(release)  # the library is read once, when the first newcomer needs it
-    decided = {}  # upstream skill name -> install or not
     own, failed = [], set()  # names whose own earlier share comes back (the user's copy is set aside once installed)
-    current = None
-    for p in sorted(new):
-        name = _skill(p)
-        if current is not None and name != current:
-            _save_base(base)  # the skill folder before this one is done
-        current = name
+
+    def install(name, first):
+        """Whether the vault's skill `name` goes into Knowledge/Skills: known or already there, or a newcomer the
+        library agrees to (rbxvaultnew)."""
+        staged_dir = os.path.join(staged, "Skills", name)
+        if name in base["waiting"]:  # its decision is still open: the newer copy replaces the waiting one
+            try:
+                kept = rbxvaultnew._renew(name, staged_dir)
+            except (OSError, rbxpaths.KitError) as e:
+                failed_on(first, e)
+                return False
+            if kept:
+                base["waiting"][name] = release
+                res["incoming"].append(name)
+                return False
+            del base["waiting"][name]  # nobody waits for it any more: it meets the library afresh
+        known = any(_skill(b) == name for b in base["files"])
+        if known or os.path.lexists(os.path.join(vault, renamed.get(name, name))):
+            return True
+        try:
+            answer = newcomer(name, staged_dir, ctx=ctx)
+        except (OSError, rbxpaths.KitError) as e:
+            failed_on(first, e)
+            return False
+        what, _, arg = answer.partition(":")
+        if what in ("install", "settled"):
+            ctx.installed.append(os.path.join(vault, name))
+        if what == "settled":
+            own.append(name)
+        elif what == "declined":
+            res["declined"].append(name)
+            if arg == "app":  # never installed, whatever a later release brings
+                base["declined"].append(name)
+                declined.add(name)
+        elif what == "incoming":
+            base["waiting"][name] = release
+            res["incoming"].append(name)
+        return what in ("install", "settled")
+
+    def skill_unit(name, unit, paths):
+        """A skill folder as one unit: planned whole, and written only when none of its files clashes."""
         if name in declined:
             if name not in res["declined"]:
                 res["declined"].append(name)
-            continue
+            return
+        live = []
+        for p in paths:
+            if p in base["deleted"]:
+                res["skipped_deleted"].append(p)
+            else:
+                live.append(p)
+        if not live or not install(name, live[0]):
+            return
+        plans = []
+        for p in live:
+            try:
+                plans.append(plan(p, name))
+            except OSError as e:
+                failed.add(name)
+                failed_on(p, e)
+        if any(pl["action"] == "clash" for pl in plans):
+            try:
+                open_clash(unit, "skill", paths)
+            except OSError as e:
+                failed.add(name)
+                failed_on(unit, e)
+            return
+        for pl in plans:
+            try:
+                carry(pl)
+            except OSError as e:
+                failed.add(name)
+                failed_on(pl["p"], e)
+        for p in sorted(b for b in base["files"] if _skill(b) == name and b not in new):
+            drop(p)
+        try:
+            close_clash(unit)
+        except OSError as e:
+            failed_on(unit, e)
+
+    def file_unit(p):
+        """Any file outside Skills/ is its own unit."""
         if p in base["deleted"]:
             res["skipped_deleted"].append(p)
-            continue
-        if name not in decided:
-            staged_dir = os.path.join(staged, "Skills", name)
-            if name in base["waiting"]:  # its decision is still open: the newer copy replaces the waiting one
-                try:
-                    kept = rbxvaultnew._renew(name, staged_dir)
-                except (OSError, rbxpaths.KitError) as e:
-                    res["errors"].append("%s: %s" % (p, e))
-                    decided[name] = False
-                    continue
-                if kept:
-                    base["waiting"][name] = release
-                    res["incoming"].append(name)
-                    decided[name] = False
-                    continue
-                del base["waiting"][name]  # nobody waits for it any more: it meets the library afresh
-            known = any(_skill(b) == name for b in base["files"])
-            if known or os.path.lexists(os.path.join(vault, renamed.get(name, name))):
-                decided[name] = True
-            else:
-                try:
-                    answer = newcomer(name, staged_dir, ctx=ctx)
-                except (OSError, rbxpaths.KitError) as e:
-                    res["errors"].append("%s: %s" % (p, e))
-                    decided[name] = False
-                    continue
-                what, _, arg = answer.partition(":")
-                decided[name] = what in ("install", "settled")
-                if decided[name]:
-                    ctx.installed.append(os.path.join(vault, name))
-                if what == "settled":
-                    own.append(name)
-                elif what == "declined":
-                    res["declined"].append(name)
-                    if arg == "app":  # never installed, whatever a later release brings
-                        base["declined"].append(name)
-                        declined.add(name)
-                elif what == "incoming":
-                    base["waiting"][name] = release
-                    res["incoming"].append(name)
-        if not decided[name]:
-            continue
+            return
         try:
-            one(p, name)
+            pl = plan(p)
+            if pl["action"] == "clash":
+                binary = rbxmerge.is_binary(p, pl["data"]) or (pl["local"] is not None and
+                                                               rbxmerge.is_binary(p, pl["local"]))
+                open_clash(p, "binary" if binary else "file", [p])
+            else:
+                carry(pl)
+                close_clash(p)
         except OSError as e:
-            failed.add(name)
-            res["errors"].append("%s: %s" % (p, e))
+            failed_on(p, e)
+
+    others = 0
+    for unit, paths in units.items():
+        name = _skill(paths[0])
+        if name:
+            skill_unit(name, unit, paths)
+            _save_base(base)  # the skill folder is done
+        else:
+            file_unit(unit)
+            others += 1
+            if others % SAVE_EVERY == 0:
+                _save_base(base)
     for name in own:  # installed whole: only now is the user's own earlier share set aside
         if name in failed:
             continue
@@ -475,10 +587,8 @@ def _apply(staged, manifest, base):
             res["settled"].append(name)
         except (OSError, ValueError, rbxpaths.KitError) as e:
             res["errors"].append("%s: %s" % (name, e))
-    if current is not None:
-        _save_base(base)
 
     base["release"] = release
+    res["clashes"] = sorted(clashes)
     _save_base(base)
     return res
-

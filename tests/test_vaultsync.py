@@ -147,7 +147,7 @@ class VaultSyncTests(unittest.TestCase):
         self.seed(self.P, "v1", "mine")
         r = self.apply({self.P: "v1"})
         self.assertEqual(self.get(self.P), "mine")
-        for k in ("added", "updated", "merged", "kept", "removed", "skipped_deleted"):
+        for k in ("added", "updated", "merged", "clashes", "removed", "skipped_deleted"):
             self.assertEqual(r[k], [], k)
 
     def test_both_changed_clean_merge(self):
@@ -157,13 +157,24 @@ class VaultSyncTests(unittest.TestCase):
         self.assertEqual(r["merged"], [self.P])
         self.assertEqual(rbxvaultsync.read_base()["files"][self.P], sha("a\nb\nC\n"))
 
-    def test_both_changed_conflict_keeps_mine_saves_beside(self):
+    def clash_copy(self, path):
+        with open(os.path.join(rbxvaultsync.clash_dir(), *path.split("/")), encoding="utf-8", newline="") as f:
+            return f.read()
+
+    def no_beside_files(self):
+        for r, ds, fs in os.walk(self.know):
+            for f in fs:
+                self.assertNotIn("(Fridae update", f)
+
+    def test_both_changed_conflict_opens_a_clash(self):
         self.seed(self.P, "a\nb\nc\n", "a\nmine\nc\n")
         r = self.apply({self.P: "a\ntheirs\nc\n"})
         self.assertEqual(self.get(self.P), "a\nmine\nc\n")
-        self.assertEqual(self.get("Skills/x/SKILL (Fridae update).md"), "a\ntheirs\nc\n")
-        self.assertEqual(r["kept"], [self.P])
+        self.assertEqual(r["clashes"], ["Skills/x"])  # a skill is one unit
+        self.assertEqual(self.clash_copy(self.P), "a\ntheirs\nc\n")
         self.assertEqual(rbxvaultsync.read_base()["files"][self.P], sha("a\nb\nc\n"))
+        self.no_beside_files()
+        self.assertNotIn("kept", r)
 
     def test_user_deleted_file_never_returns(self):
         self.seed(self.P, "v1", None)
@@ -196,8 +207,178 @@ class VaultSyncTests(unittest.TestCase):
         self.put(self.P, "mine")
         r = self.apply({self.P: "theirs"})
         self.assertEqual(self.get(self.P), "mine")
-        self.assertEqual(self.get("Skills/x/SKILL (Fridae update).md"), "theirs")
-        self.assertEqual(r["kept"], [self.P])
+        self.assertEqual(r["clashes"], ["Skills/x"])
+        self.assertEqual(self.clash_copy(self.P), "theirs")
+        self.assertNotIn(self.P, rbxvaultsync.read_base()["files"])
+        self.no_beside_files()
+
+    # ---- guides and clashes that wait for a choice
+    G = "Roblox/A.md"
+
+    def test_guides_are_added_updated_and_merged_like_skills(self):
+        g1, g2 = "Roblox/Glossary.md", "Roblox/02 Luau Scripting/Buffers.md"
+        r = self.apply({g1: "g1\n", g2: "a\nb\nc\n"})
+        self.assertEqual(sorted(r["added"]), sorted([g1, g2]))
+        self.assertEqual((self.get(g1), self.get(g2)), ("g1\n", "a\nb\nc\n"))
+        self.assertEqual(rbxvaultsync.read_base()["files"], {g1: sha("g1\n"), g2: sha("a\nb\nc\n")})
+        self.put(g2, "A\nb\nc\n")  # the user's edit; the vault changes another line
+        r = self.apply({g1: "g1 v2\n", g2: "a\nb\nC\n"}, release="vault-2026.02.01")
+        self.assertEqual((r["updated"], r["merged"], r["clashes"]), ([g1], [g2], []))
+        self.assertEqual((self.get(g1), self.get(g2)), ("g1 v2\n", "A\nb\nC\n"))
+        self.put(g1, "mine\n")  # the user's edit; the vault does not change it
+        r = self.apply({g1: "g1 v2\n", g2: "a\nb\nC\n"}, release="vault-2026.03.01")
+        self.assertEqual(self.get(g1), "mine\n")
+        for k in ("added", "updated", "merged", "clashes", "removed", "skipped_deleted", "errors"):
+            self.assertEqual(r[k], [], k)
+
+    def test_skill_clash_holds_the_whole_folder(self):
+        ref = "Skills/x/ref.md"
+        self.seed(self.P, "a\nb\nc\n", "a\nmine\nc\n")
+        self.seed(ref, "r1", "r1")
+        r = self.apply({self.P: "a\ntheirs\nc\n", ref: "r2"})
+        self.assertEqual(self.get(ref), "r1")
+        self.assertEqual(self.get(self.P), "a\nmine\nc\n")
+        self.assertEqual(r["clashes"], ["Skills/x"])
+        self.assertEqual((self.clash_copy(self.P), self.clash_copy(ref)), ("a\ntheirs\nc\n", "r2"))
+        base = rbxvaultsync.read_base()
+        self.assertEqual((base["files"][self.P], base["files"][ref]), (sha("a\nb\nc\n"), sha("r1")))
+        self.assertEqual(base["clashes"]["Skills/x"]["kind"], "skill")
+        self.assertEqual(sorted(base["clashes"]["Skills/x"]["paths"]), sorted([self.P, ref]))
+        self.assertEqual(r["updated"], [])
+
+    def test_binary_both_changed_is_a_clash_never_combined(self):
+        rig = "Roblox/18 Rigs/R.fbx"
+        self.seed(rig, "a\nb\nc\n", "A\nb\nc\n")  # text bytes that would combine, were it not a model
+        r = self.apply({rig: "a\nb\nC\n"})
+        self.assertEqual(r["clashes"], [rig])
+        self.assertEqual(r["merged"], [])
+        self.assertEqual(self.get(rig), "A\nb\nc\n")
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["clashes"][rig]["kind"], "binary")
+        self.assertEqual(base["files"][rig], sha("a\nb\nc\n"))
+
+    def open_clash(self):
+        self.seed(self.G, "a\nb\nc\n", "a\nmine\nc\n")
+        r = self.apply({self.G: "a\ntheirs\nc\n"})
+        self.assertEqual(r["clashes"], [self.G])
+        c = rbxvaultsync.read_base()["clashes"][self.G]
+        self.assertEqual((c["release"], c["kind"], c["paths"]), ("vault-2026.01.01", "file", [self.G]))
+        self.assertTrue(c["made"])
+        self.assertEqual(self.clash_copy(self.G), "a\ntheirs\nc\n")
+
+    def test_newer_release_settles_an_open_clash_when_it_combines(self):
+        self.open_clash()
+        r = self.apply({self.G: "a\nmine\nc\n"}, release="vault-2026.02.01")
+        self.assertEqual(r["clashes"], [])
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["clashes"], {})
+        self.assertEqual(base["files"][self.G], sha("a\nmine\nc\n"))
+        self.assertFalse(os.path.exists(os.path.join(rbxvaultsync.clash_dir(), "Roblox", "A.md")))
+        self.assertEqual(self.get(self.G), "a\nmine\nc\n")
+
+    def test_newer_release_refreshes_the_waiting_copy(self):
+        self.open_clash()
+        r = self.apply({self.G: "a\ntheirs again\nc\n"}, release="vault-2026.02.01")
+        self.assertEqual(r["clashes"], [self.G])
+        self.assertEqual(self.clash_copy(self.G), "a\ntheirs again\nc\n")
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["clashes"][self.G]["release"], "vault-2026.02.01")
+        self.assertEqual(base["files"][self.G], sha("a\nb\nc\n"))
+        self.assertEqual(self.get(self.G), "a\nmine\nc\n")
+
+    def test_clash_gone_upstream_is_closed_and_set_aside(self):
+        self.open_clash()
+        r = self.apply({"Roblox/Other.md": "o"}, release="vault-2026.02.01")
+        self.assertEqual(r["clashes"], [])
+        self.assertEqual(rbxvaultsync.read_base()["clashes"], {})
+        self.assertFalse(os.path.exists(os.path.join(rbxvaultsync.clash_dir(), "Roblox", "A.md")))
+        aside = os.path.join(rbxvaultsync.state_dir(), "removed", "vault-2026.02.01", "Roblox", "A.md")
+        with open(aside, encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), "a\ntheirs\nc\n")
+        self.assertEqual(self.get(self.G), "a\nmine\nc\n")
+
+    def test_identical_local_copies_are_only_recorded(self):
+        """Review Focus 4: a first Download onto guides already there (copied by hand, or kept from developer mode)."""
+        files = {"Roblox/a.md": "a", "Roblox/b.md": "b", "Roblox/sub/c.md": "c", "Roblox/d.md": "d"}
+        for path, text in files.items():
+            self.put(path, text if path != "Roblox/d.md" else "my d")
+        r = self.apply(files)
+        self.assertEqual(r["clashes"], ["Roblox/d.md"])
+        self.assertEqual(r["added"], [])
+        base = rbxvaultsync.read_base()
+        self.assertEqual(base["files"], {p: sha(t) for p, t in files.items() if p != "Roblox/d.md"})
+        self.assertEqual(self.get("Roblox/d.md"), "my d")
+
+    def test_one_refused_file_does_not_stop_the_rest(self):
+        """Review Focus 1: Windows will not let Fridae replace one guide (open elsewhere, or a path too long)."""
+        files = {"Roblox/A.md": "a", "Roblox/B.md": "b", "Roblox/C.md": "c"}
+        real = rbxpaths.replace
+
+        def picky(src, dst, *a, **k):
+            if dst.endswith("B.md"):
+                raise PermissionError("Access is denied")
+            return real(src, dst, *a, **k)
+        with mock.patch.object(rbxpaths, "replace", picky):
+            r = self.apply(files)
+        self.assertEqual(len(r["errors"]), 1, r["errors"])
+        self.assertTrue(r["errors"][0].startswith("Roblox/B.md: "), r["errors"])
+        base = rbxvaultsync.read_base()
+        self.assertNotIn("Roblox/B.md", base["files"])
+        self.assertEqual((self.get("Roblox/A.md"), self.get("Roblox/C.md")), ("a", "c"))
+        self.assertEqual(sorted(base["files"]), ["Roblox/A.md", "Roblox/C.md"])
+        self.assertEqual(sorted(os.listdir(self.local("Roblox"))), ["A.md", "C.md"])  # no temp file left behind
+        r = self.apply(files)
+        self.assertEqual(r["added"], ["Roblox/B.md"])
+        self.assertEqual(self.get("Roblox/B.md"), "b")
+
+    def test_cut_off_pull_finishes_without_cards(self):
+        """Review Focus 2: files written, the base record never saved (the app quit, the computer slept)."""
+        files = {"Roblox/a.md": "a", "Roblox/b.md": "b", "Roblox/c.md": "c", "Roblox/d.md": "d"}
+        self.apply(files)
+        b = rbxvaultsync.read_base()
+        for path in ("Roblox/c.md", "Roblox/d.md"):
+            del b["files"][path]
+            os.remove(os.path.join(rbxvaultsync.state_dir(), "base", *path.split("/")))
+        rbxskills._write_json(rbxvaultsync.base_path(), b)
+        r = self.apply(files)
+        self.assertEqual(r["clashes"], [])
+        self.assertEqual(r["errors"], [])
+        self.assertEqual(sorted(rbxvaultsync.read_base()["files"]), sorted(files))
+
+    def test_code_data_and_house_rules_never_travel(self):
+        self.put("House rules.md", "my rules\r\n")
+        for bad in ("Roblox/_tools/x.json", "Roblox/_data/x.json", "House rules.md"):
+            staged, man = self.stage({"Roblox/a.md": "a", bad: "{}"})
+            before = self.snapshot()
+            with self.assertRaises(ValueError) as cm:
+                rbxvaultsync.apply(staged, man)
+            self.assertEqual(str(cm.exception), rbxvaultsync.BAD)
+            self.assertEqual(self.snapshot(), before, bad)
+        self.apply({"Roblox/a.md": "a"})
+        self.apply({"Roblox/a.md": "b"}, release="vault-2026.02.01")
+        with open(self.local("House rules.md"), "rb") as f:
+            self.assertEqual(f.read(), b"my rules\r\n")
+
+    def test_symlinked_roblox_folder_is_refused(self):
+        outside = tempfile.mkdtemp(prefix="outside ")
+        self.addCleanup(shutil.rmtree, outside, True)
+        os.makedirs(self.know)
+        try:
+            os.symlink(outside, os.path.join(self.know, "Roblox"), target_is_directory=True)
+        except OSError:
+            self.skipTest("this computer cannot make symlinks")
+        with self.assertRaises(ValueError):
+            self.apply({"Roblox/a.md": "a", self.P: "v"})
+        self.assertEqual(os.listdir(outside), [])
+        self.assertFalse(os.path.exists(self.local(self.P)))
+
+    def test_base_is_saved_every_50_guides(self):
+        files = {"Roblox/g%03d.md" % i: "g%d" % i for i in range(120)}
+        with mock.patch.object(rbxvaultsync, "_save_base", wraps=rbxvaultsync._save_base) as sv:
+            r = self.apply(files)
+        self.assertEqual(len(r["added"]), 120)
+        self.assertLessEqual(sv.call_count, 4)
+        self.assertGreaterEqual(sv.call_count, 3)  # after 50, after 100, at the end
         self.assertNotIn(self.P, rbxvaultsync.read_base()["files"])
 
     def test_bad_paths_refuse_everything(self):
@@ -354,16 +535,6 @@ class VaultSyncTests(unittest.TestCase):
         self.assertEqual(rbxvaultsync.read_base()["deleted"], [])
         self.assertEqual(self.get(self.P), "v1")
 
-    def test_existing_beside_file_is_not_replaced(self):
-        self.seed(self.P, "a\nb\nc\n", "a\nmine\nc\n")
-        self.put("Skills/x/SKILL (Fridae update).md", "my hand merge")
-        r = self.apply({self.P: "a\ntheirs\nc\n"})
-        self.assertEqual(self.get("Skills/x/SKILL (Fridae update).md"), "my hand merge")
-        self.assertEqual(self.get("Skills/x/SKILL (Fridae update 2).md"), "a\ntheirs\nc\n")
-        self.assertEqual(r["kept"], [self.P])
-        self.apply({self.P: "a\ntheirs\nc\n"}, release="vault-2026.02.01")  # same bytes: no third copy
-        self.assertFalse(os.path.exists(self.local("Skills/x/SKILL (Fridae update 3).md")))
-
     def refused(self, files=None, mutate=None):
         staged, man = self.stage(files or {self.P: "v"})
         if mutate:
@@ -372,9 +543,6 @@ class VaultSyncTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rbxvaultsync.apply(staged, man)
         self.assertEqual(self.snapshot(), before)
-
-    def test_beside_named_manifest_path_is_refused(self):
-        self.refused({"Skills/x/SKILL (Fridae update).md": "v"})
 
     def test_manifest_limits(self):
         """The real limits, from the manifest alone: a refused manifest reads no staged file, and one within the
@@ -412,13 +580,16 @@ class VaultSyncTests(unittest.TestCase):
         self.refused(mutate=lambda m: m.update(files=[]))
 
     def test_longest_accepted_name_really_writes(self):
-        ok = "Skills/y/%s.md" % ("n" * (rbxvaultsync.NAME_MAX - 3))
-        self.assertEqual(len(ok.rsplit("/", 1)[1].encode()), rbxvaultsync.NAME_MAX)
-        self.seed(ok, "a\nb\nc\n", "a\nmine\nc\n")
-        self.put(ok.replace(".md", " (Fridae update).md"), "hand merge")
-        self.apply({ok: "a\ntheirs\nc\n"})
-        self.assertTrue(os.path.exists(self.local(ok.replace(".md", " (Fridae update 2).md"))))
-        self.refused({"Skills/z/%s.md" % ("n" * (rbxvaultsync.NAME_MAX - 2)): "v"})
+        ok = "Roblox/%s.md" % ("n" * 252)
+        self.assertEqual(len(ok.rsplit("/", 1)[1].encode()), 255)
+        self.assertEqual(self.apply({ok: "a\nb\nc\n"})["added"], [ok])
+        self.put(ok, "a\nmine\nc\n")
+        r = self.apply({ok: "a\ntheirs\nc\n"}, release="vault-2026.02.01")
+        self.assertEqual(r["clashes"], [ok])
+        self.assertEqual(self.clash_copy(ok), "a\ntheirs\nc\n")
+        too_long = "Roblox/%s.md" % ("n" * 253)  # no disk holds it, so it is refused from the manifest alone
+        self.assertFalse(rbxvaultsync.check_path(too_long))
+        self.refused(mutate=lambda m: m["files"].append({"path": too_long, "sha256": sha("v"), "size": 1}))
 
     def test_removing_through_a_symlinked_base_copy_is_refused(self):
         outside = tempfile.mkdtemp(prefix="outside ")
@@ -730,7 +901,7 @@ class VaultSyncTests(unittest.TestCase):
         r = self.apply(self.vfiles("debug-helper", desc=self.DESC + " Also for crashes."), release="vault-2026.02.01")
         p = "Skills/debug-helper/SKILL.md"
         self.assertTrue(p in r["updated"] or p in r["merged"], r)
-        self.assertEqual(r["kept"], [])
+        self.assertEqual(r["clashes"], [])
         text = self.get("Skills/debug-helper-community/SKILL.md")
         self.assertIn("name: debug-helper-community", text)
         self.assertIn("Also for crashes.", text)

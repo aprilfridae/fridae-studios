@@ -314,12 +314,12 @@ class SkillsTests(unittest.TestCase):
     def test_read_base_gives_empty_values_for_a_missing_or_broken_file(self):
         import rbxvaultsync
         empty = {"format": 1, "release": "", "files": {}, "deleted": [], "declined": [], "renamed": {}, "waiting": {},
-                 "patch": {}}
+                 "patch": {}, "clashes": {}}
         self.vault("tidy")
         self.assertEqual(rbxvaultsync.read_base(), empty)
-        self.vault_base({"release": "vault-2026.11.24", "files": [1], "patch": {"a": {}}})
+        self.vault_base({"release": "vault-2026.11.24", "files": [1], "patch": {"a": {}}, "clashes": ["x"]})
         got = rbxvaultsync.read_base()
-        self.assertEqual((got["release"], got["files"], got["patch"]), ("vault-2026.11.24", {}, {"a": {}}))
+        self.assertEqual((got["release"], got["files"], got["patch"], got["clashes"]), ("vault-2026.11.24", {}, {"a": {}}, {}))
         with open(os.path.join(self.home, "Knowledge", ".fridae-vault", "base.json"), "w") as f:
             f.write("{broken")
         self.assertEqual(rbxvaultsync.read_base(), empty)

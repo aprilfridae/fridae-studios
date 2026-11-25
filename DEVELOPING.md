@@ -2204,22 +2204,31 @@ character, no trailing dot or space or leading space, and none of Windows' devic
 each staged file is written, its place is checked to be inside the staging folder, and a release's name must start
 with `vault-`. The limits bind Python as well as Rust.
 
-**The update rules.** The vault lands in `<Knowledge>/Skills`. `<Knowledge>/.fridae-vault/` holds the record:
-`base.json` (`release`, `files`: the hash of each file as last installed, `deleted`, `declined`, `renamed`, `waiting`,
-`patch`), `base/<path>` (a copy of each file as installed, for three-way merges), `incoming/<skill>/` (a new skill
-waiting for a decision) and `removed/<release>/` (what an update took out; never deleted). Per file, comparing the base
+**The update rules.** Every travelling file lands in `<Knowledge>` at its path (`Skills/`, `Roblox/`, other topic
+folders). `<Knowledge>/.fridae-vault/` holds the record: `base.json` (`release`, `files`: the hash of each file as last
+installed, `deleted`, `declined`, `renamed`, `waiting`, `patch`, `clashes`), `base/<path>` (a copy of each file as
+installed, for three-way merges), `incoming/<skill>/` (a new skill waiting for a decision), `clash/<path>` (the vault's
+copy of each unit waiting for the user's choice) and `removed/<release>/` (what an update took out; never deleted).
+A skill folder is one unit, decided whole; a guide or any other file is its own unit. Per file, comparing the base
 copy, the user's file and the new file:
-- no base record and no file of the user's: added. A file of the user's already there: the new one is saved beside it
-  as `<name> (Fridae update)` (then `(Fridae update 2)`, and so on).
-- the user's file already equals the new one: only recorded.
+- no base record and no file of the user's: added. A different file of the user's already there: a clash.
+- the user's file already equals the new one: only recorded (so a first Download onto guides already there asks
+  nothing for the identical ones, and a cut-off pull finishes without asking).
 - the user's file is unchanged since the base: replaced. Changed by the user but not upstream: the edit stands.
-- changed on both sides: a three-way text merge when it is clean; otherwise the user's file stays and the new one is
-  saved beside it. These show as "kept" in the report, each with Reveal. The merge is Fridae's own
-  (`rbxmerge.merge3`), so no git is needed; changes that touch the same or neighbouring lines are a clash, never
-  conflict marks.
+- changed on both sides: a three-way text merge when it is clean ("merged" in the report); otherwise a clash. The merge
+  is Fridae's own (`rbxmerge.merge3`), so no git is needed; changes that touch the same or neighbouring lines are a
+  clash, never conflict marks. Pictures and models (`rbxmerge.is_binary`) are never combined.
 - a file the user deleted is remembered and never brought back; a file the vault dropped is moved to
   `removed/<release>/` only if the user never changed it.
-Every file is written to a temporary file and renamed. A symlink below `Knowledge/Skills` or the record is refused (the
+A clash never touches the user's file or that unit's base record, and nothing is saved beside the user's file: the
+vault's copy waits in `clash/` and `base.json`'s `clashes` (`{unit: {release, kind: file | binary | skill, paths,
+made}}`) until the user chooses. If any file of a skill clashes, nothing of that skill is written and its whole folder
+waits. Each later Pull plans a waiting unit again: it is applied and closed when it no longer clashes, its copy is
+refreshed when it still does, and it is set aside in `removed/<release>/` and closed when the vault dropped it. One
+file Fridae cannot write (open elsewhere, a path too long) is listed in `errors`, is not recorded, and is tried again
+next time; the rest go on. The base record is saved after each skill folder, every 50 other files and at the end.
+Every file is written to a temporary file and renamed (retried for 2 s while Windows says "Access is denied"). A
+symlink at `Knowledge/<top folder>`, below `Knowledge/Skills` or in the record is refused (the
 `Knowledge` folder itself may be one). A vault skill is known in the library by its folder's name, whatever its front
 matter's `name` says, so it can never take the place of one of Fridae's skills or of another vault skill. One update
 runs at a time under a lock on the vault's record; the user's library is locked after it, never before. A vault skill
