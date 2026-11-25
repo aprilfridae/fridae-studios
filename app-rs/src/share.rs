@@ -30,6 +30,7 @@ const NO_LOGIN: &str = "GitHub did not say who is signed in. Disconnect GitHub i
 const AGREE: &str = "Agree to share your skills under CC BY 4.0 (text) and MIT (scripts) first.";
 const HELD_WHY: &str = "Fridae hid something in a script; check it in Setup › Skills before it is sent.";
 const LICENCE_LINE: &str = "I made these skills and share them under CC BY 4.0 (text) and MIT (scripts).";
+const CHANGES_LINE: &str = "I made these changes and share them under CC BY 4.0 (text) and MIT (scripts).";
 /// At most this many skills in a batch.
 const BATCH_MAX: usize = 20;
 /// One automatic batch in this long.
@@ -163,19 +164,52 @@ pub(crate) fn kit_json(args: &[&str]) -> Result<Value, String> {
     serde_json::from_str(&kit(args)?).map_err(|_| NOT_RUN.to_string())
 }
 
-/// `rbx skills shareable`'s ready skills: [(name, hash)], by name.
-fn ready() -> Result<Vec<(String, String)>, String> {
-    let v = kit_json(&["shareable"])?;
-    let mut out: Vec<(String, String)> = v["ready"]
+/// One unit a batch may hold: a skill of the user's library (`kind` "skill"), a skill of the vault they edited ("vault
+/// skill", `unit` `Skills/<vault name>`) or a guide they changed or added ("guide", `unit` its path).
+#[derive(Clone)]
+struct Item {
+    kind: &'static str,
+    name: String,
+    unit: String,
+    hash: String,
+    new: bool,
+}
+
+/// What a guide's or vault skill's kind is on the page, from `knowledge_changes`' "note" or "skill".
+fn knowledge_kind(kind: &Value) -> &'static str {
+    if kind == "skill" { "vault skill" } else { "guide" }
+}
+
+/// `rbx skills shareable`'s ready units: the library's skills by name, then what of Knowledge is ready, in the kit's
+/// order. A vault skill whose name a library skill of this list has (any capitals) waits for a later batch, since both
+/// would be sent at `Skills/<name>`.
+fn items(v: &Value) -> Vec<Item> {
+    let mut out: Vec<Item> = v["ready"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|e| Some((e["id"].as_str()?.to_string(), e["hash"].as_str().unwrap_or("").to_string())))
         // a name that begins with "-" would be read as an option by the program
         .filter(|(n, _)| !n.is_empty() && !n.starts_with('-'))
+        .map(|(name, hash)| Item { kind: "skill", unit: format!("Skills/{}", safe(&name)), name, hash, new: false })
         .collect();
-    out.sort();
-    Ok(out)
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    let taken: Vec<String> = out.iter().map(|i| i.unit.to_lowercase()).collect();
+    for e in v["knowledge"]["ready"].as_array().into_iter().flatten() {
+        let (Some(unit), Some(hash)) = (e["unit"].as_str(), e["hash"].as_str()) else { continue };
+        let kind = knowledge_kind(&e["kind"]);
+        let path_ok = if kind == "guide" { !unit.starts_with("Skills/") && vault_sync::check_path(unit) } else { unit.matches('/').count() == 1 && vault_sync::check_path(&format!("{unit}/SKILL.md")) };
+        if !path_ok || unit.starts_with('-') || taken.contains(&unit.to_lowercase()) {
+            continue;
+        }
+        let name = e["title"].as_str().unwrap_or(unit).to_string();
+        out.push(Item { kind, name, unit: unit.to_string(), hash: hash.to_string(), new: e["new"] == true });
+    }
+    out
+}
+
+fn ready() -> Result<Vec<Item>, String> {
+    Ok(items(&kit_json(&["shareable"])?))
 }
 
 // ------------------------------------------------------------------------------------------------- the files
@@ -218,8 +252,15 @@ fn description(text: &str) -> String {
     value.chars().take(200).collect()
 }
 
-/// The batch's own record, kept beside its files: who sent it and each skill's folder and hash.
+/// The batch's own record, kept beside its files: who sent it and each unit's kind, name, folder or path, and hash.
 const META: &str = "batch.json";
+/// The folder of a batch that holds what of Knowledge it sends, at the vault's paths.
+const KNOWN: &str = "knowledge";
+
+/// `base` joined with a '/'-separated path, part by part.
+fn under(base: &Path, rel: &str) -> PathBuf {
+    rel.split('/').fold(base.to_path_buf(), |p, s| p.join(s))
+}
 
 fn batch_dir(batch: &str) -> Option<PathBuf> {
     let ok = !batch.is_empty() && batch.len() <= 40 && batch.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
@@ -262,10 +303,11 @@ pub fn set_mode(mode: &str, agree: bool) -> Value {
     json!({"ok": true, "mode": mode})
 }
 
-/// `{mode, asked, agreed, connected, login, shareable, ready, held, sent, batch?, last_sent, held_masked}`: while
-/// sharing is on and GitHub connected, `rbx skills shareable` is run once for `ready: [{id, scripts}]` (a skill held
-/// by the last automatic batch is held, not ready), `held: [{id, why}]` (the kit's, then `held_masked`, each name
-/// once) and `sent: [{id, pr, at}]`; otherwise the three lists are empty.
+/// `{mode, asked, agreed, connected, login, shareable, ready, held, sent, knowledge, batch?, last_sent, held_masked}`:
+/// while sharing is on and GitHub connected, `rbx skills shareable` is run once for `ready: [{id, scripts}]` (a skill
+/// held by the last automatic batch is held, not ready), `held: [{id, why}]` (the kit's, then `held_masked`, each name
+/// once), `sent: [{id, pr, at}]` and `knowledge: {ready: [{unit, kind, title, new}], held: [{unit, title, why}], sent:
+/// [{unit, title, pr, at}]}` (guides and vault skills); otherwise the lists are empty.
 pub fn status() -> Value {
     let c = paths::load_config();
     let (mode, connected) = (mode(), github::connected());
@@ -287,6 +329,15 @@ pub fn status() -> Value {
         ready.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         sent = list(v, "sent").iter().map(|s| json!({"id": s["id"], "pr": s["pr"], "at": s["at"]})).collect();
     }
+    // guides and vault skills: what of Knowledge is ready, held and sent
+    let none = json!({});
+    let k = listed.as_ref().map(|v| &v["knowledge"]).unwrap_or(&none);
+    let klist = |key: &str| k[key].as_array().cloned().unwrap_or_default();
+    let knowledge = json!({
+        "ready": klist("ready").iter().map(|e| json!({"unit": e["unit"], "kind": knowledge_kind(&e["kind"]), "title": e["title"], "new": e["new"] == true})).collect::<Vec<_>>(),
+        "held": klist("held").iter().map(|e| json!({"unit": e["unit"], "title": e["title"], "why": e["why"]})).collect::<Vec<_>>(),
+        "sent": klist("sent").iter().map(|e| json!({"unit": e["unit"], "title": e["title"], "pr": e["pr"], "at": e["at"]})).collect::<Vec<_>>(),
+    });
     let mut out = json!({
         "mode": mode,
         "asked": paths::setting(MODE_KEY).is_string(),
@@ -297,6 +348,7 @@ pub fn status() -> Value {
         "ready": ready,
         "held": held,
         "sent": sent,
+        "knowledge": knowledge,
         "last_sent": c.get(LAST_KEY).cloned().unwrap_or(Value::Null),
         "held_masked": held_masked,
     });
@@ -323,7 +375,7 @@ fn prepare_in() -> Result<Value, String> {
     }
     let login = login().ok_or_else(|| NO_LOGIN.to_string())?;
     clean_outbox();
-    let mut batch: Vec<(String, String)> = ready()?;
+    let mut batch: Vec<Item> = ready()?;
     batch.truncate(BATCH_MAX);
     if batch.is_empty() {
         return Ok(json!({"ok": true, "batch": Value::Null, "skills": []}));
@@ -333,23 +385,41 @@ fn prepare_in() -> Result<Value, String> {
     let made = (|| {
         vault_sync::real_dir(&outbox()).map_err(|_| NO_ROOM.to_string())?;
         vault_sync::real_dir(&dir).map_err(|_| NO_ROOM.to_string())?;
-        let out = dir.display().to_string();
-        let mut args = vec!["pack", "--out", out.as_str(), "--login", login.as_str()];
-        args.extend(batch.iter().map(|(n, _)| n.as_str()));
-        let hashes = kit_json(&args)?;
+        // the library's skills under Skills/, what of Knowledge goes under knowledge/ at its vault path
+        let (library, known): (Vec<&Item>, Vec<&Item>) = batch.iter().partition(|i| i.kind == "skill");
+        let mut hashes = Map::new();
+        if !library.is_empty() {
+            let out = dir.display().to_string();
+            let mut args = vec!["pack", "--out", out.as_str(), "--login", login.as_str()];
+            args.extend(library.iter().map(|i| i.name.as_str()));
+            hashes.extend(kit_json(&args)?.as_object().cloned().unwrap_or_default());
+        }
+        if !known.is_empty() {
+            let kdir = dir.join(KNOWN);
+            vault_sync::real_dir(&kdir).map_err(|_| NO_ROOM.to_string())?;
+            let out = kdir.display().to_string();
+            let mut args = vec!["pack-knowledge", "--out", out.as_str()];
+            args.extend(known.iter().map(|i| i.unit.as_str()));
+            hashes.extend(kit_json(&args)?.as_object().cloned().unwrap_or_default());
+        }
         let mut skills = Vec::new();
         let mut record = Vec::new();
-        for (name, _) in &batch {
-            let (folder, hash) = (safe(name), hashes[name.as_str()].as_str().unwrap_or("").to_string());
-            let root = dir.join("Skills").join(&folder);
+        for item in &batch {
+            let key = if item.kind == "skill" { &item.name } else { &item.unit };
+            let hash = hashes.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+            let folder = item.unit.strip_prefix("Skills/").unwrap_or("").to_string();
             let mut files = Vec::new();
-            walk(&root, "", &mut files);
+            match item.kind {
+                "skill" => walk(&dir.join("Skills").join(&folder), "", &mut files),
+                "vault skill" => walk(&under(&dir.join(KNOWN), &item.unit), "", &mut files),
+                _ => files.push((item.unit.clone(), under(&dir.join(KNOWN), &item.unit))),
+            }
             let mut shown = Vec::new();
             for (rel, path) in files {
                 let bytes = fs::read(&path).map_err(|_| NO_ROOM.to_string())?;
                 let text = String::from_utf8_lossy(&bytes).to_string();
                 let mut masked_text = compact::mask_for_sharing(&text);
-                if rel == "SKILL.md" {
+                if rel == "SKILL.md" && item.kind == "skill" {
                     masked_text = restore_credit(&text, &masked_text);
                 }
                 let masked = masked_text != text;
@@ -362,10 +432,17 @@ fn prepare_in() -> Result<Value, String> {
             shown.sort_by_key(|f| (f["script"] != true, f["path"].as_str().unwrap_or("").to_string()));
             let desc = shown.iter().find(|f| f["path"] == "SKILL.md").and_then(|f| f["text"].as_str()).map(description).unwrap_or_default();
             let has_script = shown.iter().any(|f| f["script"] == true);
-            skills.push((!has_script, json!({"name": name, "description": desc, "files": shown})));
-            record.push(json!({"name": name, "folder": folder, "hash": hash}));
+            let rank = ["skill", "vault skill", "guide"].iter().position(|k| *k == item.kind).unwrap_or(3);
+            skills.push(((!has_script, rank), json!({"name": item.name, "unit": item.unit, "kind": item.kind, "description": desc, "files": shown})));
+            let mut r = json!({"unit": item.unit, "kind": item.kind, "name": item.name, "hash": hash, "new": item.new});
+            if item.kind == "guide" {
+                r["path"] = json!(item.unit);
+            } else {
+                r["folder"] = json!(folder);
+            }
+            record.push(r);
         }
-        skills.sort_by_key(|(no_script, v)| (*no_script, v["name"].as_str().unwrap_or("").to_string()));
+        skills.sort_by_key(|(order, v)| (*order, v["name"].as_str().unwrap_or("").to_string()));
         put(&dir.join(META), json!({"login": login, "made": vault_sync::now(), "skills": record}).to_string().as_bytes())?;
         Ok::<Value, String>(json!({"ok": true, "batch": id, "skills": skills.into_iter().map(|(_, v)| v).collect::<Vec<_>>()}))
     })();
@@ -388,17 +465,39 @@ fn restore_credit(orig: &str, masked: &str) -> String {
     out
 }
 
-/// The title of the pull request: the first three names, then "+N more".
-fn title(login: &str, names: &[String]) -> String {
+/// The title of the pull request (and its commit's message): "Skills from", "Guides from" or "Skills and guides from"
+/// the login, the first three names, then "+N more".
+fn title(login: &str, names: &[String], skills: bool, guides: bool) -> String {
+    let what = match (skills, guides) {
+        (true, true) => "Skills and guides",
+        (false, true) => "Guides",
+        _ => "Skills",
+    };
     let more = names.len().saturating_sub(3);
-    format!("Skills from {login}: {}{}", names.iter().take(3).cloned().collect::<Vec<_>>().join(", "), if more > 0 { format!(" +{more} more") } else { String::new() })
+    format!("{what} from {login}: {}{}", names.iter().take(3).cloned().collect::<Vec<_>>().join(", "), if more > 0 { format!(" +{more} more") } else { String::new() })
 }
 
-/// The pull request's words: one line per skill, the licence, and where it came from.
-fn body(lines: &[(String, String, bool)]) -> String {
-    let mut out: Vec<String> = lines.iter().map(|(name, desc, scripts)| format!("- **{name}**: {desc} (scripts: {})", if *scripts { "yes" } else { "no" })).collect();
+/// One line of the pull request's words: a skill of the sender's (name, description, has scripts), a change to one of
+/// the vault's skills (the same), or a guide (title, path, new).
+enum Line {
+    Skill(String, String, bool),
+    VaultSkill(String, String, bool),
+    Guide(String, String, bool),
+}
+
+/// The pull request's words: one line per skill or guide, the licence, and where it came from. A batch of only the
+/// sender's own skills says they made them; one that changes the vault's skills or guides says they made the changes.
+fn body(lines: &[Line]) -> String {
+    let mut out: Vec<String> = lines
+        .iter()
+        .map(|l| match l {
+            Line::Skill(name, desc, scripts) => format!("- **{name}**: {desc} (scripts: {})", if *scripts { "yes" } else { "no" }),
+            Line::VaultSkill(name, desc, scripts) => format!("- **{name}**: {desc} (scripts: {}; a change to the vault's skill)", if *scripts { "yes" } else { "no" }),
+            Line::Guide(title, path, new) => format!("- **{title}** (`{path}`): {} guide", if *new { "new" } else { "changed" }),
+        })
+        .collect();
     out.push(String::new());
-    out.push(LICENCE_LINE.to_string());
+    out.push(if lines.iter().all(|l| matches!(l, Line::Skill(..))) { LICENCE_LINE } else { CHANGES_LINE }.to_string());
     out.push(String::new());
     out.push(format!("Sent from Fridae {}.", paths::VERSION));
     // an "@" in a description must not notify anyone
@@ -421,14 +520,32 @@ fn send_in(batch: &str, drop: &[String]) -> Result<Value, String> {
     let dir = batch_dir(batch).filter(|d| d.join(META).is_file()).ok_or_else(|| GONE.to_string())?;
     let meta: Value = fs::read(dir.join(META)).ok().and_then(|b| serde_json::from_slice(&b).ok()).ok_or_else(|| GONE.to_string())?;
     let login = login().ok_or_else(|| NO_LOGIN.to_string())?;
-    // the skills still going, each with its files
+    // the units still going, each with its files: library skills at Skills/<folder>/, the vault's skills at
+    // Skills/<vault name>/, guides at their path (a batch made before guides could be sent holds only library skills)
     let (mut files, mut sent, mut lines) = (Vec::new(), Vec::new(), Vec::new());
     for s in meta["skills"].as_array().into_iter().flatten() {
-        let (name, folder, hash) = (s["name"].as_str().unwrap_or(""), s["folder"].as_str().unwrap_or(""), s["hash"].as_str().unwrap_or(""));
-        if name.is_empty() || folder.is_empty() || drop.iter().any(|d| d == name) {
+        let kind = s["kind"].as_str().unwrap_or("skill");
+        let (name, hash) = (s["name"].as_str().unwrap_or(""), s["hash"].as_str().unwrap_or(""));
+        let folder = s["folder"].as_str().unwrap_or("");
+        let unit = s["unit"].as_str().map(str::to_string).unwrap_or_else(|| format!("Skills/{folder}"));
+        if name.is_empty() || drop.iter().any(|d| *d == unit || (kind == "skill" && d == name)) {
             continue;
         }
-        let root = dir.join("Skills").join(folder);
+        if kind == "guide" {
+            let path = s["path"].as_str().filter(|p| !p.starts_with("Skills/") && vault_sync::check_path(p)).ok_or_else(|| GONE.to_string())?;
+            let file = under(&dir.join(KNOWN), path);
+            if !fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
+                return Err(GONE.to_string());
+            }
+            files.push((path.to_string(), fs::read(&file).map_err(|_| GONE.to_string())?));
+            lines.push(Line::Guide(name.to_string(), path.to_string(), s["new"] == true));
+            sent.push((kind, name.to_string(), unit, hash.to_string()));
+            continue;
+        }
+        if folder.is_empty() || !vault_sync::check_path(&format!("Skills/{folder}/SKILL.md")) {
+            return Err(GONE.to_string());
+        }
+        let root = if kind == "vault skill" { under(&dir.join(KNOWN), &format!("Skills/{folder}")) } else { dir.join("Skills").join(folder) };
         let mut found = Vec::new();
         walk(&root, "", &mut found);
         if !found.iter().any(|(r, _)| r == "SKILL.md") {
@@ -443,25 +560,30 @@ fn send_in(batch: &str, drop: &[String]) -> Result<Value, String> {
             scripts |= is_script(&rel, &bytes);
             files.push((format!("Skills/{folder}/{rel}"), bytes));
         }
-        lines.push((name.to_string(), description(&text), scripts));
-        sent.push((name.to_string(), hash.to_string()));
+        lines.push(if kind == "vault skill" { Line::VaultSkill(name.to_string(), description(&text), scripts) } else { Line::Skill(name.to_string(), description(&text), scripts) });
+        sent.push((if kind == "vault skill" { "vault skill" } else { "skill" }, name.to_string(), unit, hash.to_string()));
     }
     if sent.is_empty() {
         return Err("There is nothing left to send.".to_string());
     }
-    let names: Vec<String> = sent.iter().map(|(n, _)| n.clone()).collect();
+    let names: Vec<String> = sent.iter().map(|s| s.1.clone()).collect();
+    let (has_skills, has_guides) = (sent.iter().any(|s| s.0 != "guide"), sent.iter().any(|s| s.0 == "guide"));
+    let words = title(&login, &names, has_skills, has_guides);
     let upstream = vault_git::vault_repo();
+    // the vault's owner gets the vault repo itself: her branch is made there, and her pull request reaches her inbox
     let fork = vault_git::ensure_fork(&upstream)?;
     let branch = branch_name(&login, &paths::stamp());
     let head = vault_git::head_sha(&fork, "main")?;
     vault_git::new_branch(&fork, &branch, &head)?;
-    vault_git::commit_files(&fork, &branch, &files, &[], &format!("Skills from {login}: {}", names.join(", ")))?;
+    vault_git::commit_files(&fork, &branch, &files, &[], &words)?;
     let owner = fork.split('/').next().unwrap_or(&login);
-    let (_, url) = vault_git::open_pr(&upstream, &format!("{owner}:{branch}"), &title(&login, &names), &body(&lines))?;
-    // the pull request is open: note each skill as sent (a note that fails is told, the pull request stands)
+    let (_, url) = vault_git::open_pr(&upstream, &format!("{owner}:{branch}"), &words, &body(&lines))?;
+    // the pull request is open: note each unit as sent (a note that fails is told, the pull request stands)
     let mut unmarked = Vec::new();
-    for (name, hash) in &sent {
-        if kit(&["mark-shared", name, "--hash", hash, "--pr", &url]).is_err() {
+    for (kind, name, unit, hash) in &sent {
+        let unit_arg = format!("--unit={unit}");
+        let args: Vec<&str> = if *kind == "skill" { vec!["mark-shared", name, "--hash", hash, "--pr", &url] } else { vec!["mark-shared", &unit_arg, "--hash", hash, "--pr", &url] };
+        if kit(&args).is_err() {
             unmarked.push(name.clone());
         }
     }
@@ -486,14 +608,16 @@ pub fn auto_tick() {
     }
     let Ok(made) = prepare_in() else { return };
     let Some(batch) = made["batch"].as_str() else { return };
-    let held: Vec<String> = made["skills"]
+    // (name, unit) of each unit with a script Fridae hid something in
+    let held: Vec<(String, String)> = made["skills"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|s| s["files"].as_array().is_some_and(|f| f.iter().any(|f| f["script"] == true && f["masked"] == true)))
-        .filter_map(|s| s["name"].as_str().map(str::to_string))
+        .filter_map(|s| Some((s["name"].as_str()?.to_string(), s["unit"].as_str()?.to_string())))
         .collect();
-    paths::update_config(|c: &mut Map<String, Value>| c.insert(HELD_KEY.into(), Value::Array(held.iter().map(|n| json!({"id": n, "why": HELD_WHY})).collect())));
+    paths::update_config(|c: &mut Map<String, Value>| c.insert(HELD_KEY.into(), Value::Array(held.iter().map(|(n, _)| json!({"id": n, "why": HELD_WHY})).collect())));
+    let held: Vec<String> = held.into_iter().map(|(_, u)| u).collect();
     if held.len() >= made["skills"].as_array().map_or(0, Vec::len) {
         if let Some(dir) = batch_dir(batch) {
             vault_sync::remove(&dir);
@@ -543,21 +667,27 @@ mod tests {
                 let blobs = {
                     let mut g = l.lock().unwrap();
                     g.push((method.clone(), path.clone(), body.clone()));
-                    g.iter().filter(|(m, p, _)| m == "POST" && p == "/repos/tester/r/git/blobs").count()
+                    g.iter().filter(|(m, p, _)| m == "POST" && p.ends_with("/git/blobs")).count()
                 };
-                let (code, text) = match (method.as_str(), path.as_str()) {
-                    ("GET", "/repos/tester/r") => (200, "{}".to_string()),
-                    ("POST", "/repos/tester/r/merge-upstream") => (200, "{}".into()),
-                    ("GET", "/repos/tester/r/git/ref/heads/main") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
-                    ("POST", "/repos/tester/r/git/refs") => (201, "{}".into()),
-                    ("GET", p) if p.starts_with("/repos/tester/r/git/ref/heads/skills-") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
-                    ("GET", "/repos/tester/r/git/commits/head1") => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
-                    ("POST", "/repos/tester/r/git/blobs") => (201, format!(r#"{{"sha":"blob{blobs}"}}"#)),
-                    ("POST", "/repos/tester/r/git/trees") => (201, r#"{"sha":"tree1"}"#.into()),
-                    ("POST", "/repos/tester/r/git/commits") => (201, r#"{"sha":"commit2"}"#.into()),
-                    ("PATCH", p) if p.starts_with("/repos/tester/r/git/refs/heads/skills-") => (200, "{}".into()),
-                    ("POST", "/repos/o/r/pulls") if *refuse.lock().unwrap() => (422, r#"{"message":"Validation Failed"}"#.into()),
-                    ("POST", "/repos/o/r/pulls") => (201, r#"{"number":7,"html_url":"https://example.test/o/r/pull/7"}"#.into()),
+                // the user's fork (tester/r), or the vault itself when the maintainer (o) sends
+                let (repo, rest) = match path.strip_prefix("/repos/tester/r").map(|r| ("tester", r)).or_else(|| path.strip_prefix("/repos/o/r").map(|r| ("o", r))) {
+                    Some(x) => x,
+                    None => ("", path.as_str()),
+                };
+                let (code, text) = match (method.as_str(), repo, rest) {
+                    ("GET", "", "/user") => (200, r#"{"login":"tester"}"#.into()),
+                    ("GET", "tester", "") => (200, "{}".to_string()),
+                    ("POST", "tester", "/merge-upstream") => (200, "{}".into()),
+                    ("GET", _, "/git/ref/heads/main") if !repo.is_empty() => (200, r#"{"object":{"sha":"head1"}}"#.into()),
+                    ("POST", _, "/git/refs") if !repo.is_empty() => (201, "{}".into()),
+                    ("GET", _, p) if !repo.is_empty() && p.starts_with("/git/ref/heads/skills-") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
+                    ("GET", _, "/git/commits/head1") if !repo.is_empty() => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
+                    ("POST", _, "/git/blobs") if !repo.is_empty() => (201, format!(r#"{{"sha":"blob{blobs}"}}"#)),
+                    ("POST", _, "/git/trees") if !repo.is_empty() => (201, r#"{"sha":"tree1"}"#.into()),
+                    ("POST", _, "/git/commits") if !repo.is_empty() => (201, r#"{"sha":"commit2"}"#.into()),
+                    ("PATCH", _, p) if !repo.is_empty() && p.starts_with("/git/refs/heads/skills-") => (200, "{}".into()),
+                    ("POST", "o", "/pulls") if *refuse.lock().unwrap() => (422, r#"{"message":"Validation Failed"}"#.into()),
+                    ("POST", "o", "/pulls") => (201, r#"{"number":7,"html_url":"https://example.test/o/r/pull/7"}"#.into()),
                     _ => (404, "{}".into()),
                 };
                 let _ = req.respond(tiny_http::Response::from_string(text).with_status_code(code));
@@ -914,13 +1044,158 @@ x [user]");
     #[test]
     fn titles_and_script_rules() {
         let names: Vec<String> = ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(title("me", &names[..3]), "Skills from me: a, b, c");
-        assert_eq!(title("me", &names), "Skills from me: a, b, c +2 more");
-        assert_eq!(body(&[("a".into(), "does @someone a thing".into(), true)]).lines().next().unwrap(), "- **a**: does @\u{200b}someone a thing (scripts: yes)");
+        assert_eq!(title("me", &names[..3], true, false), "Skills from me: a, b, c");
+        assert_eq!(title("me", &names, true, false), "Skills from me: a, b, c +2 more");
+        assert_eq!(title("me", &names[..2], false, true), "Guides from me: a, b");
+        assert_eq!(title("me", &names, true, true), "Skills and guides from me: a, b, c +2 more");
+        assert_eq!(body(&[Line::Skill("a".into(), "does @someone a thing".into(), true)]).lines().next().unwrap(), "- **a**: does @\u{200b}someone a thing (scripts: yes)");
+        let lines = [Line::Guide("Glossary".into(), "Roblox/Glossary.md".into(), false), Line::Guide("New".into(), "Roblox/02 Luau/New.md".into(), true)];
+        let text = body(&lines);
+        assert!(text.starts_with("- **Glossary** (`Roblox/Glossary.md`): changed guide\n- **New** (`Roblox/02 Luau/New.md`): new guide\n"), "{text}");
+        assert!(text.contains("I made these changes and share them under CC BY 4.0 (text) and MIT (scripts)."), "{text}");
         assert!(is_script("scripts/x", b"") && is_script("a/b.PS1", b"") && is_script("x", b"#!/usr/bin/env python") && !is_script("notes.md", b"text") && !is_script("data.json", b"{}"));
         assert_eq!(description("---\nname: a\ndescription: >\n  One\n  two\n---\nbody"), "One two");
         assert_eq!(description("---\ndescription: \"Quoted one\"\n---\n"), "Quoted one");
         assert_eq!(safe("a/b: c"), "a-b- c");
+    }
+
+    fn knowledge() -> PathBuf {
+        paths::test_dir("vault-home").join("Knowledge")
+    }
+
+    /// A guide in the scratch Knowledge folder; the vault never gave it, so it is new and ready.
+    fn guide(rel: &str, text: &str) {
+        let p = join(&knowledge(), rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    }
+
+    /// Run with the computer's user name set to `name` (as `the_credit_is_never_masked` does).
+    fn as_user<T>(name: &str, f: impl FnOnce() -> T) -> T {
+        let (was, was_win) = (std::env::var("USER").ok(), std::env::var("USERNAME").ok());
+        unsafe {
+            std::env::set_var("USER", name);
+            std::env::set_var("USERNAME", name);
+        }
+        let out = f();
+        for (k, v) in [("USER", was), ("USERNAME", was_win)] {
+            match v {
+                Some(v) => unsafe { std::env::set_var(k, v) },
+                None => unsafe { std::env::remove_var(k) },
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn maintainer_send_opens_a_pull_request_in_her_own_repo() {
+        let (_g, s) = setup();
+        fs::write(github::folder().join("user.json"), r#"{"login":"o"}"#).unwrap();
+        guide("Roblox/Glossary.md", "# Glossary\n\nWords.\n");
+        mode_is("review");
+        let made = prepare();
+        assert_eq!(made["ok"], true, "{made}");
+        let out = send(made["batch"].as_str().unwrap(), &[]);
+        assert_eq!(out["ok"], true, "{out}");
+        let c = calls(&s);
+        assert!(c.iter().all(|x| !x.contains("/forks") && !x.contains("merge-upstream") && !x.contains("/repos/tester/")), "{c:?}");
+        assert!(c.iter().any(|x| x == "POST /repos/o/r/git/refs"), "the branch is made in the vault repo: {c:?}");
+        let pr: Value = serde_json::from_str(&requests(&s).iter().find(|x| x.1 == "/repos/o/r/pulls").unwrap().2).unwrap();
+        assert!(pr["head"].as_str().unwrap().starts_with("o:skills-o-"), "{pr}");
+        assert_eq!(pr["title"], "Guides from o: Glossary");
+    }
+
+    #[test]
+    fn guides_are_masked_and_sent_at_their_paths() {
+        let (_g, s) = setup();
+        guide("Roblox/02 Luau/Notes.md", "# Notes\n\nAsk river about it, or mail river.person@example.com.\n");
+        mode_is("review");
+        let (made, out) = as_user("river", || {
+            let made = prepare();
+            let out = send(made["batch"].as_str().unwrap_or(""), &[]);
+            (made, out)
+        });
+        assert_eq!(made["ok"], true, "{made}");
+        let item = &made["skills"][0];
+        assert_eq!((item["unit"].as_str(), item["kind"].as_str(), item["name"].as_str()), (Some("Roblox/02 Luau/Notes.md"), Some("guide"), Some("Notes")), "{made}");
+        assert_eq!(item["files"][0]["path"], "Roblox/02 Luau/Notes.md");
+        assert_eq!(item["files"][0]["masked"], true);
+        assert_eq!(out["ok"], true, "{out}");
+        let tree = committed(&s);
+        assert_eq!(tree.keys().collect::<Vec<_>>(), vec!["Roblox/02 Luau/Notes.md"]);
+        let sent = String::from_utf8(tree["Roblox/02 Luau/Notes.md"].clone()).unwrap();
+        assert_eq!(sent, "# Notes\n\nAsk [user] about it, or mail [email].\n");
+        assert!(!everything(&s).contains("river.person@example.com"));
+        let pr: Value = serde_json::from_str(&requests(&s).iter().find(|x| x.1 == "/repos/o/r/pulls").unwrap().2).unwrap();
+        assert!(pr["body"].as_str().unwrap().starts_with("- **Notes** (`Roblox/02 Luau/Notes.md`): new guide\n"), "{pr}");
+        // noted as sent: no longer ready
+        let st = status();
+        assert_eq!(st["knowledge"]["ready"], json!([]), "{st}");
+        assert_eq!(st["knowledge"]["sent"][0]["unit"], "Roblox/02 Luau/Notes.md");
+        // the user's own guide is as it was
+        assert!(fs::read_to_string(join(&knowledge(), "Roblox/02 Luau/Notes.md")).unwrap().contains("river.person@example.com"));
+    }
+
+    #[test]
+    fn a_batch_holds_skills_and_guides_up_to_20() {
+        let (_g, s) = setup();
+        let words = ["pumpkins", "kettles", "napkins", "lanterns", "bicycles", "teapots", "gardens", "ladders", "ribbons", "candles", "marbles", "pebbles", "feathers", "buttons", "anchors"];
+        for (i, w) in words.iter().enumerate() {
+            skill(&format!("s{i:02}"), &format!("Arrange the {w} by colour on the {w} shelf before the {w} fair opens, then count the {w} twice."), &[]);
+        }
+        for i in 0..10 {
+            guide(&format!("Roblox/G{i:02}.md"), &format!("# Guide {i}\n"));
+        }
+        mode_is("review");
+        let made = prepare();
+        let items = made["skills"].as_array().unwrap();
+        assert_eq!(items.len(), 20, "{made}");
+        assert_eq!(items.iter().filter(|i| i["kind"] == "skill").count(), 15, "every skill first, then guides");
+        assert_eq!(items.iter().filter(|i| i["kind"] == "guide").count(), 5);
+        let out = send(made["batch"].as_str().unwrap(), &[]);
+        assert_eq!(out["ok"], true, "{out}");
+        let tree = committed(&s);
+        assert_eq!(tree.keys().filter(|k| k.starts_with("Skills/")).count(), 15);
+        assert_eq!(tree.keys().filter(|k| k.starts_with("Roblox/")).cloned().collect::<Vec<_>>(), (0..5).map(|i| format!("Roblox/G{i:02}.md")).collect::<Vec<_>>());
+        let pr: Value = serde_json::from_str(&requests(&s).iter().find(|x| x.1 == "/repos/o/r/pulls").unwrap().2).unwrap();
+        assert_eq!(pr["title"], "Skills and guides from tester: s00, s01, s02 +17 more");
+        let commit: Value = serde_json::from_str(&requests(&s).iter().find(|x| x.1.ends_with("/git/commits")).unwrap().2).unwrap();
+        assert_eq!(commit["message"], pr["title"]);
+        // the five left over are ready for the next batch
+        let st = status();
+        assert_eq!(st["knowledge"]["ready"].as_array().unwrap().len(), 5, "{st}");
+    }
+
+    #[test]
+    fn status_lists_guides_ready_held_and_sent() {
+        let (_g, _s) = setup();
+        guide("Roblox/Sent.md", "# Sent\n");
+        mode_is("review");
+        assert_eq!(send(prepare()["batch"].as_str().unwrap(), &[])["ok"], true);
+        guide("Roblox/Ready.md", "# Ready\n");
+        guide("Roblox/18 Rigs/R.fbx", "Kaydara FBX");
+        let st = status();
+        let k = &st["knowledge"];
+        assert_eq!(k["ready"], json!([{"unit": "Roblox/Ready.md", "kind": "guide", "title": "Ready", "new": true}]), "{st}");
+        assert_eq!(k["held"], json!([{"unit": "Roblox/18 Rigs/R.fbx", "title": "R.fbx", "why": "Pictures and models cannot be shared yet."}]), "{st}");
+        assert_eq!((k["sent"][0]["unit"].as_str(), k["sent"][0]["pr"].as_str()), (Some("Roblox/Sent.md"), Some("https://example.test/o/r/pull/7")), "{st}");
+        mode_is("off");
+        assert_eq!(status()["knowledge"], json!({"ready": [], "held": [], "sent": []}));
+    }
+
+    #[test]
+    fn a_vault_skill_is_sent_under_its_vault_name() {
+        let (_g, s) = setup();
+        // a skill the vault never gave (no base record): new, and shared under its folder's name
+        let dir = join(&knowledge(), "Skills/tidy");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: tidy\ndescription: Put things away.\ncredit: alice\n---\n\nPut things away.\n").unwrap();
+        mode_is("review");
+        let made = prepare();
+        assert_eq!((made["skills"][0]["unit"].as_str(), made["skills"][0]["kind"].as_str()), (Some("Skills/tidy"), Some("vault skill")), "{made}");
+        assert_eq!(send(made["batch"].as_str().unwrap(), &[])["ok"], true);
+        let sent = String::from_utf8(committed(&s)["Skills/tidy/SKILL.md"].clone()).unwrap();
+        assert!(sent.contains("credit: alice") && !sent.contains("licence:"), "the vault keeps its own credit: {sent}");
     }
 
     #[test]

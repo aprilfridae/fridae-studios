@@ -185,8 +185,8 @@ You do not need to know anything about GitHub. In Fridae, open Setup, then Skill
 Fridae shows you exactly which of your skills and changed guides are ready, and exactly which files would be sent. You press Send (or choose to
 send automatically), and Fridae opens a pull request for you.
 
-Only skills you made yourself can be shared. A skill you imported from somewhere else, or one that is a copy of a
-skill Fridae already has, is not sent.
+You can share skills you made yourself, guides you changed or added, and changes to the vault's own skills. A skill
+you imported from somewhere else, or one that is a copy of a skill Fridae already has, is not sent.
 
 ## The licence
 
@@ -1404,6 +1404,9 @@ mod tests {
         assert!(README.contains("Pull newest, which never overwrites what you changed"));
         assert!(CONTRIBUTING.contains("Skills and guides in this vault") && CONTRIBUTING.contains("Share your knowledge"));
         assert!(CONTRIBUTING.contains("By sharing a skill or a guide"));
+        // guides and changed vault skills can be shared, not only skills the sender made
+        assert!(!CONTRIBUTING.contains("Only skills you made yourself can be shared."));
+        assert!(CONTRIBUTING.contains("guides you changed or added") && CONTRIBUTING.contains("changes to the vault's own skills"));
         assert_eq!(REPO_DESCRIPTION, "The shared Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.");
     }
 

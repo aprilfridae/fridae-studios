@@ -2309,7 +2309,23 @@ Under Send automatically a batch goes at most once a day. The vault's pull reque
 pages are buttons that open the system browser through `POST /api/github/open` (`what: "pr"` with its number,
 `"release"` with its tag, `"vault"`): the app builds the address from `VAULT_REPO`, and the page never gives one.
 
-**The pull request's shape.** Only `Skills/<skill>/...` files, one folder for each skill. The inbox reads nothing else.
+A batch holds skills and guides: at most 20 units in all, the user's library skills first, then what of Knowledge is
+ready (`knowledge` in `rbx skills shareable`, packed by `rbx skills pack-knowledge` into the batch's `knowledge/`
+folder). Each item on the page has `unit` and `kind` (`skill`, `vault skill`, `guide`), and every file is masked the
+same way, guides included. `batch.json` records `{unit, kind, name, folder | path, hash, new}`. Send commits library
+skills at `Skills/<folder>/`, the vault's skills at `Skills/<vault name>/` and guides at their path; then library skills
+are marked with `mark-shared <name>` and the rest with `mark-shared --unit`. The title and the commit message are
+`Skills from`, `Guides from` or `Skills and guides from <login>: a, b, c +N more`; a guide's body line is
+"- **<title>** (`<path>`): new guide" (or "changed guide"), and a batch that changes the vault's skills or guides says
+"I made these changes" in place of "I made these skills". A vault skill named like a library skill in the same batch
+waits for the next one (both would land at `Skills/<name>`). `status` adds `knowledge: {ready, held, sent}`.
+
+The maintainer shares like anyone, from the same page. When the signed-in login owns the vault repo, `ensure_fork`
+gives the vault repo itself (no fork, no merge-upstream): the branch is made there and her pull request arrives in her
+own inbox, where she adds it like any other. Nothing reaches `main` but through Add.
+
+**The pull request's shape.** `Skills/<skill>/...` files, one folder for each skill, and guides or notes at their own
+paths (each a unit of one file). The inbox lists any other file as not part of a skill and reads nothing of it.
 
 **The maintainer's inbox** (`vault_inbox.rs`; Setup › Skills › Submissions, shown only when the signed-in GitHub name
 has push access to the vault repo; kept for 10 minutes). It lists the open pull requests (at most 50), each skill in

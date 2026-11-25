@@ -186,13 +186,18 @@ pub(crate) fn commit_tree(repo: &str, branch: &str, files: &[(String, Vec<u8>)],
 }
 
 /// The user's fork of `upstream`: made when they have none (waiting up to `FORK_WAIT` in all for GitHub to finish,
-/// asking the name GitHub gave the fork), then brought up to date with the upstream's main. Returns "login/name".
+/// asking the name GitHub gave the fork), then brought up to date with the upstream's main. Returns "login/name". When
+/// the signed-in login owns `upstream` (any capitals) it is `upstream` itself: no fork is made and nothing is merged.
 pub(crate) fn ensure_fork(upstream: &str) -> Result<String, String> {
     let name = upstream.split_once('/').map(|x| x.1).filter(|n| !n.is_empty()).ok_or_else(|| "The vault's address is not valid.".to_string())?;
     let login = match github::user()["login"].as_str() {
         Some(l) => l.to_string(),
         None => call("GET", "/user", None, "say who is signed in")?["login"].as_str().ok_or_else(|| unreadable("who is signed in"))?.to_string(),
     };
+    // the vault's owner shares from a branch of the vault itself: her pull request arrives in her inbox like anyone's
+    if upstream.split('/').next().is_some_and(|owner| owner.eq_ignore_ascii_case(&login)) {
+        return Ok(upstream.to_string());
+    }
     let mut fork = format!("{login}/{name}");
     if get(&format!("/repos/{fork}"), true)?.0 != 200 {
         let made = call("POST", &format!("/repos/{upstream}/forks"), Some(json!({})), "make a copy of the vault for you")?;
@@ -510,6 +515,19 @@ mod tests {
         let patch: Value = serde_json::from_str(&r.iter().find(|x| x.0 == "PATCH").unwrap().2).unwrap();
         assert_eq!((patch["sha"].as_str(), patch["force"].as_bool()), (Some("commit2"), Some(false)));
         assert!(r.iter().all(|x| x.1.starts_with("/repos/o/r/")), "only the stub's vault repo");
+    }
+
+    #[test]
+    fn the_maintainer_shares_from_a_branch_of_the_vault_itself() {
+        for login in ["o", "O"] {
+            let (_g, s) = setup(Box::new(move |m, p, _, _| match (m, p) {
+                ("GET", "/user") => (200, json!({"login": login}).to_string()),
+                _ => (500, "{}".into()),
+            }), true);
+            assert_eq!(ensure_fork("o/r"), Ok("o/r".to_string()), "{login}");
+            let calls: Vec<String> = requests(&s).iter().map(|x| format!("{} {}", x.0, x.1)).collect();
+            assert!(calls.iter().all(|c| !c.contains("/forks") && !c.contains("merge-upstream")), "{calls:?}");
+        }
     }
 
     #[test]
