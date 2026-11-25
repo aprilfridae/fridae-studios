@@ -25,6 +25,16 @@ class Merge3Tests(unittest.TestCase):
         self.assertEqual(rbxmerge.merge3(b"a\r\nb\r\nc\r\nd\r\n", b"a\nb\nc\nd\n", b"a\nb\nc\nD\n"),
                          b"a\r\nb\r\nc\r\nD\n")
 
+    def test_a_last_line_without_an_ending_is_never_glued_to_the_next(self):
+        """Final review #2: the user's last line has no line ending and the vault appends after it."""
+        self.assertEqual(rbxmerge.merge3(b"x\nb", b"a\nb", b"a\nb\nc"), b"x\nb\nc")
+        self.assertEqual(rbxmerge.merge3(b"x\nb", b"a\nb\n", b"a\nb\nc\n"), b"x\nb\nc\n")
+        # the ending added is the user's own (Windows endings here)
+        self.assertEqual(rbxmerge.merge3(b"x\r\ny\r\nb", b"a\ny\nb\n", b"a\ny\nb\nc\n"), b"x\r\ny\r\nb\r\nc\n")
+        # the reverse: the vault's last line has no ending and the user appended after it
+        self.assertEqual(rbxmerge.merge3(b"a\nb\nc", b"a\nb", b"x\nb"), b"x\nb\nc")
+        self.assertEqual(rbxmerge.merge3(b"a\nb\nc\n", b"a\nb\n", b"x\nb"), b"x\nb\nc\n")
+
     def test_no_conflict_marks_ever(self):
         clashing = [(b"a\nmine\nc\n", b"a\nb\nc\n", b"a\ntheirs\nc\n"),
                     (b"A\nb\nc\n", b"a\nb\nc\n", b"a\nB\nc\n"),

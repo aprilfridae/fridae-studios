@@ -80,4 +80,9 @@ def merge3(local, base, new):
         out.extend(lines)
         pos = i2
     out.extend(same[i] for i in range(pos, len(base_lines)))
+    # a side's last line may have no ending; when more follows it, it gets the user's ending (else \n), never glued
+    ending = b"\r\n" if local.count(b"\r\n") * 2 > local.count(b"\n") else b"\n"
+    for i in range(len(out) - 1):
+        if not out[i].endswith((b"\n", b"\r")):
+            out[i] += ending
     return b"".join(out)
