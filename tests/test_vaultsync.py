@@ -211,9 +211,9 @@ class VaultSyncTests(unittest.TestCase):
         b["renamed"] = {"x": "x-community"}
         os.makedirs(rbxvaultsync.state_dir(), exist_ok=True)
         rbxskills._write_json(rbxvaultsync.base_path(), b)
-        r = self.apply({"Skills/no/SKILL.md": "n", self.P: "x"})
+        r = self.apply({"Skills/no/SKILL.md": "n", self.P: "---\nname: x\n---\nx"})
         self.assertFalse(os.path.exists(self.local("Skills/no")))
-        self.assertEqual(self.get("Skills/x-community/SKILL.md"), "x")
+        self.assertEqual(self.get("Skills/x-community/SKILL.md"), "---\nname: x-community\n---\nx")
         self.assertFalse(os.path.exists(self.local("Skills/x")))
         self.assertEqual(r["declined"], ["no"])
 
@@ -643,6 +643,55 @@ class VaultSyncTests(unittest.TestCase):
         with mock.patch.object(rbxskills, "_locked", spy):
             rbxskills.decide(dec["id"], "keep")
         self.assertEqual(order, [".fridae-vault", "skills"])
+
+    def test_upstream_change_reaches_a_keep_both_copy_cleanly(self):
+        dec = self.waiting_one()
+        rbxskills.decide(dec["id"], "keep_both")
+        base = rbxvaultsync.read_base()
+        up = self.vfiles("debug-helper")["Skills/debug-helper/SKILL.md"]
+        self.assertEqual(base["files"]["Skills/debug-helper/SKILL.md"], sha(up))  # upstream's hash, for the fetcher
+        r = self.apply(self.vfiles("debug-helper", desc=self.DESC + " Also for crashes."), release="vault-2026.02.01")
+        p = "Skills/debug-helper/SKILL.md"
+        self.assertTrue(p in r["updated"] or p in r["merged"], r)
+        self.assertEqual(r["kept"], [])
+        text = self.get("Skills/debug-helper-community/SKILL.md")
+        self.assertIn("name: debug-helper-community", text)
+        self.assertIn("Also for crashes.", text)
+        self.assertFalse(os.path.exists(self.local("Skills/debug-helper-community/SKILL (Fridae update).md")))
+
+    def test_replace_a_vault_skill_moves_it_to_removed_and_declines_it(self):
+        self.apply(self.vfiles("old-way", "Stitch a granny square blanket with wool."))
+        self.apply(self.vfiles("debug-helper", "Stitch a granny square blanket with wool. Use it for wool.",
+                               body="Newer."), release="vault-2026.02.01")
+        (dec,) = rbxskills.pending()
+        self.assertEqual(dec["a"], "old-way")
+        rbxskills.decide(dec["id"], "replace")
+        self.assertEqual([e["id"] for e in rbxskills.library()], ["debug-helper"])
+        self.assertTrue(os.path.isdir(os.path.join(rbxvaultsync.state_dir(), "removed", "vault-2026.02.01",
+                                                   "Skills", "old-way")))
+        self.assertFalse(os.path.exists(self.local("Skills/old-way")))
+        base = rbxvaultsync.read_base()
+        self.assertIn("old-way", base["declined"])
+        self.assertEqual([p for p in base["files"] if "old-way" in p], [])
+        self.assertIn("Skills/debug-helper/SKILL.md", base["files"])
+
+    def test_library_is_read_once_for_thirty_newcomers(self):
+        words = ["alpha", "bravo", "cobalt", "delta", "ember", "fjord", "garnet", "harbor", "indigo", "juniper"]
+        files = {}
+        for i in range(30):
+            n = "s%02d%s" % (i, words[i % 10])
+            files.update(self.vfiles(n, "%s %s %s unique%d tale" % (words[i % 10], words[(i * 3 + 1) % 10], n, i * 7919),
+                                     body="Body number %d about %s." % (i, n)))
+        with mock.patch.object(rbxskills, "library", wraps=rbxskills.library) as lib:
+            r = self.apply(files)
+        self.assertEqual(len(r["added"]), 60)
+        self.assertEqual(lib.call_count, 1)
+
+    def test_a_second_newcomer_sees_the_first_one_installed(self):
+        files = {**self.vfiles("first-one", body="One."), **self.vfiles("first-two", body="Two.")}
+        r = self.apply(files)
+        self.assertEqual(r["incoming"], ["first-two"])
+        self.assertTrue(os.path.exists(self.local("Skills/first-one/SKILL.md")))
 
     def test_one_state_dir(self):
         self.assertEqual(rbxvaultsync.state_dir(), rbxskills.vault_state_dir())

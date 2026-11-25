@@ -718,7 +718,11 @@ def _free(parent, name, sep):
 def _set_front(path, updates):
     """Set front matter keys of a SKILL.md (a list as [a, b]), replacing each key's old lines; adds front matter
     when it has none."""
-    text = _read(path)
+    _write_text(path, front_with(_read(path), updates))
+
+
+def front_with(text, updates):
+    """text with these front matter keys set (see _set_front)."""
     lines = []
     for k, v in updates.items():
         if isinstance(v, list):
@@ -728,8 +732,7 @@ def _set_front(path, updates):
             lines.append("%s: %s" % (k, json.dumps(v) if _BAD_NAME.match(v) or ": " in v or v != v.strip() else v))
     m = re.match(r"^(﻿?---[ \t]*\r?\n)(.*?)(\r?\n---[ \t]*(?:\r?\n|$))", text, re.S)
     if not m:
-        _write_text(path, "---\n%s\n---\n\n%s" % ("\n".join(lines), text))
-        return
+        return "---\n%s\n---\n\n%s" % ("\n".join(lines), text)
     keep, skipping = [], False
     for line in m.group(2).splitlines():
         km = re.match(r"^([A-Za-z_][\w.-]*):", line)
@@ -742,7 +745,7 @@ def _set_front(path, updates):
         else:
             skipping = False
         keep.append(line)
-    _write_text(path, m.group(1) + "\n".join(keep + lines) + m.group(3) + text[m.end():])
+    return m.group(1) + "\n".join(keep + lines) + m.group(3) + text[m.end():]
 
 
 def _place(src, dst, rec=None, patch=None):

@@ -229,21 +229,63 @@ def apply(staged, manifest):
     with rbxskills._locked(state_dir()):
         base = read_base()
         _validate(staged, manifest, base["renamed"])
-        global _applying
-        _applying = manifest["release"]
-        try:
-            return _apply(staged, manifest, base)
-        finally:
-            _applying = ""
+        return _apply(staged, manifest, base)
 
 
-def _record_base(base, p, data):
-    """Remember what upstream's file p is: its copy under .fridae-vault/base and its hash in the base record."""
-    copy = os.path.join(state_dir(), "base", *p.split("/"))
+def incoming_dir():
+    """Where a new vault skill waits while the user decides about it."""
+    return os.path.join(state_dir(), "incoming")
+
+
+def _base_copy(p):
+    return os.path.join(state_dir(), "base", *p.split("/"))
+
+
+def _record_base(base, p, data, upstream=None):
+    """Remember what upstream's file p is: its copy under .fridae-vault/base (data: the bytes as written locally, which
+    for a renamed skill's SKILL.md are the upstream bytes with the local name) and upstream's own hash in the base
+    record (upstream: those bytes, when they differ from data)."""
+    copy = _base_copy(p)
     if not _target_ok(copy, state_dir()):
         raise OSError("outside the vault record")
     _write(copy, data)
-    base["files"][p] = _sha(data)
+    base["files"][p] = _sha(data if upstream is None else upstream)
+
+
+def _forget_base(base, p):
+    base["files"].pop(p, None)
+    copy = _base_copy(p)
+    try:
+        if _target_ok(copy, state_dir()):
+            os.remove(copy)
+    except OSError:
+        pass
+
+
+def _cmp_hash(base, p):
+    """The hash local files are compared with: that of the base copy (what was written locally), which is not
+    upstream's hash for a renamed skill's SKILL.md."""
+    data = _read(_base_copy(p))
+    return _sha(data) if data is not None else base["files"].get(p)
+
+
+def rename_front(data, local):
+    """A renamed skill's upstream SKILL.md bytes with the front matter name set to its local name."""
+    import rbxskills
+    text = data.decode("utf-8", "surrogateescape")
+    return rbxskills.front_with(text, {"name": local}).encode("utf-8", "surrogateescape")
+
+
+def newcomer(name, staged_dir, ctx=None):
+    """A skill new to this computer: see rbxvaultnew.newcomer. (Here so apply and its callers have one place.)"""
+    import rbxvaultnew
+    return rbxvaultnew.newcomer(name, staged_dir, ctx)
+
+
+def decide_vault(dec, choice, merged_text):
+    """Settle a decision about a vault skill: see rbxvaultnew.decide_vault."""
+    import rbxvaultnew
+    return rbxvaultnew.decide_vault(dec, choice, merged_text)
 
 
 def _put_beside(target, data):
@@ -276,25 +318,23 @@ def _apply(staged, manifest, base):
     def lp(p):
         return os.path.join(rbxpaths.KNOWLEDGE_DIR, *_local_path(p, renamed).split("/"))
 
-    def record(p, data):
-        _record_base(base, p, data)
+    def record(p, data, upstream=None):
+        _record_base(base, p, data, upstream)
 
     def forget(p):
-        base["files"].pop(p, None)
-        copy = os.path.join(bdir, *p.split("/"))
-        try:
-            if _target_ok(copy, state_dir()):
-                os.remove(copy)
-        except OSError:
-            pass
+        _forget_base(base, p)
 
     def one(p, name):
         data = _read(os.path.join(staged, *p.split("/")))
+        up = data
+        if name in renamed and p == "Skills/%s/SKILL.md" % name:  # compared and merged as written locally
+            data = rename_front(data, renamed[name])
+        record_ = lambda p, d: record(p, d, up if up != d else None)
         target = lp(p)
         if not _target_ok(target, vault):
             raise OSError("outside the vault folder")
         local = _read_existing(target)
-        old = base["files"].get(p)
+        old = _cmp_hash(base, p) if p in base["files"] else None
         nh = _sha(data)
         if old is not None:
             if local is None:
@@ -302,10 +342,10 @@ def _apply(staged, manifest, base):
                 forget(p)
                 res["skipped_deleted"].append(p)
             elif _sha(local) == nh:
-                record(p, data)
+                record_(p, data)
             elif _sha(local) == old:
                 _write(target, data)
-                record(p, data)
+                record_(p, data)
                 res["updated"].append(p)
             elif nh == old:
                 pass  # the user's edit stands, upstream did not change
@@ -313,21 +353,23 @@ def _apply(staged, manifest, base):
                 merged = _merge(local, _read(os.path.join(bdir, *p.split("/"))), data)
                 if merged is not None:
                     _write(target, merged)
-                    record(p, data)
+                    record_(p, data)
                     res["merged"].append(p)
                 else:
                     _put_beside(target, data)
                     res["kept"].append(p)
         elif local is None:
             _write(target, data)
-            record(p, data)
+            record_(p, data)
             res["added"].append(p)
         elif _sha(local) == nh:
-            record(p, data)
+            record_(p, data)
         else:
             _put_beside(target, data)
             res["kept"].append(p)
 
+    import rbxvaultnew
+    ctx = rbxvaultnew.Ctx(release)  # the library is read once, when the first newcomer needs it
     decided = {}  # upstream skill name -> install or not
     own, failed = [], set()  # names whose own earlier share comes back (the user's copy is set aside once installed)
     current = None
@@ -347,7 +389,7 @@ def _apply(staged, manifest, base):
             staged_dir = os.path.join(staged, "Skills", name)
             if name in base["waiting"]:  # its decision is still open: the newer copy replaces the waiting one
                 try:
-                    kept = _renew(name, staged_dir)
+                    kept = rbxvaultnew._renew(name, staged_dir)
                 except OSError as e:
                     res["errors"].append("%s: %s" % (p, e))
                     decided[name] = False
@@ -363,13 +405,15 @@ def _apply(staged, manifest, base):
                 decided[name] = True
             else:
                 try:
-                    answer = newcomer(name, staged_dir)
+                    answer = newcomer(name, staged_dir, ctx=ctx)
                 except (OSError, rbxpaths.KitError) as e:
                     res["errors"].append("%s: %s" % (p, e))
                     decided[name] = False
                     continue
                 what, _, arg = answer.partition(":")
                 decided[name] = what in ("install", "settled")
+                if decided[name]:
+                    ctx.installed.append(os.path.join(vault, name))
                 if what == "settled":
                     own.append(name)
                 elif what == "declined":
@@ -392,7 +436,7 @@ def _apply(staged, manifest, base):
             continue
         try:
             with rbxskills._locked(rbxskills.user_dir()):  # the vault's lock is held: always vault first, then library
-                d = _own_copy(name)
+                d = rbxvaultnew._own_copy(name)
                 if d:
                     rbxskills._aside(d, os.path.basename(d))
             res["settled"].append(name)
@@ -410,7 +454,7 @@ def _apply(staged, manifest, base):
             if not _target_ok(target, vault):
                 raise OSError("outside the vault folder")
             local = _read_existing(target)
-            if local is not None and _sha(local) == base["files"][p]:
+            if local is not None and _sha(local) == _cmp_hash(base, p):
                 dest = os.path.join(state_dir(), "removed", release, *_local_path(p, renamed).split("/"))
                 if not _target_ok(dest, state_dir()):
                     raise OSError("outside the vault record")
@@ -426,253 +470,3 @@ def _apply(staged, manifest, base):
     _save_base(base)
     return res
 
-
-# ---- a new skill meets the library
-# Two locks guard all this, always taken in this order: the vault's (state_dir()) first, then the user's library
-# (rbxskills.user_dir(), where the decisions are kept). apply() holds the first when it calls newcomer(), which takes
-# the second; decide_vault() takes both in the same order, and rbxskills.decide() hands over before taking either.
-_applying = ""  # the release apply() is applying: newcomer() names it as the decision's source
-NOT_THERE = "One of them is not where Fridae keeps it; check them again."
-TAKEN = "That name is already used in the vault folder; check them again."
-
-
-def incoming_dir():
-    """Where a new vault skill waits while the user decides about it."""
-    return os.path.join(state_dir(), "incoming")
-
-
-def _body(text):
-    """A SKILL.md's text after its front matter, trailing spaces off every line and blank ends trimmed."""
-    import rbxskills
-    return "\n".join(line.rstrip() for line in rbxskills.front(text)[1].splitlines()).strip()
-
-
-def _own_copy(name):
-    """The user's library folder of a skill they sent to the vault under this name and have not edited since (its
-    .fridae-shared.json lists the name with the folder's present hash), or None."""
-    import rbxskills
-    for d in rbxskills._skill_dirs(rbxskills.user_dir()):
-        if d.endswith(rbxskills.UPDATE_SUFFIX) or not rbxskills._mine(d):
-            continue
-        sent = rbxskills._read_json(os.path.join(d, rbxskills.SHARED_FILE), {}).get("sent")
-        for e in sent if isinstance(sent, list) else []:
-            if isinstance(e, dict) and str(e.get("name", "")).casefold() == name.casefold() \
-                    and e.get("hash") == rbxskills.folder_hash(d):
-                return d
-    return None
-
-
-def _stage_incoming(staged_dir, name):
-    """Copy the new skill's files (regular files only, no dot-files) to incoming/<name>/ through a temporary folder
-    and a rename, replacing a waiting copy of an older release."""
-    parent, dst = incoming_dir(), os.path.join(incoming_dir(), name)
-    if os.path.islink(state_dir()) or os.path.islink(parent) or not _target_ok(dst, state_dir()):
-        raise OSError("outside the vault record")
-    os.makedirs(parent, exist_ok=True)
-    tmp = os.path.join(parent, ".tmp-" + uuid.uuid4().hex[:10])
-    try:
-        os.makedirs(tmp)
-        for root, dirs, files in os.walk(staged_dir):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and not os.path.islink(os.path.join(root, d))]
-            for f in files:
-                src = os.path.join(root, f)
-                if f.startswith(".") or os.path.islink(src):
-                    continue
-                data = _read(src)
-                if data is None:
-                    raise OSError("unreadable: " + src)
-                _write(os.path.join(tmp, os.path.relpath(src, staged_dir)), data)
-        if os.path.lexists(dst):
-            old = os.path.join(parent, ".tmp-" + uuid.uuid4().hex[:10])
-            os.rename(dst, old)
-            os.rename(tmp, dst)
-            shutil.rmtree(old, ignore_errors=True)
-        else:
-            os.rename(tmp, dst)
-    except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
-        raise
-
-
-def _renew(name, staged_dir):
-    """A newer release of a skill whose decision is open: its incoming copy is replaced and the decision stays, with
-    its recommendation cleared (a side changed). The decision's id, or None when no decision is open for it."""
-    import rbxskills
-    with rbxskills._locked(rbxskills.user_dir()):
-        decs = rbxskills._decisions()
-        dec = next((d for d in decs if d.get("from") == "vault" and d.get("state") == "open"
-                    and d.get("kind", "skill") == "skill" and d.get("b") == name), None)
-        if dec is None:
-            return None
-        _stage_incoming(staged_dir, name)
-        dec["recommendation"] = None
-        rbxskills._save_decisions(decs)
-        return dec["id"]
-
-
-def newcomer(name, staged_dir):
-    """What to do with a skill that is new to this computer (no base record, no local folder):
-      "declined:app"   its name is one of Fridae's own skills'; never installed
-      "settled:own"    the user's own earlier share, unedited since: install it, then set theirs aside
-      "declined:same"  its SKILL.md says what a library skill's does already
-      "incoming:<id>"  it overlaps a library skill: it waits in incoming/<name>/ for the user's decision <id>
-      "install"        otherwise."""
-    import rbxskills
-    key = name.casefold()
-    if key in rbxskills.APP_ONLY or any(e["origin"] == "app" and e["id"].casefold() == key
-                                        for e in rbxskills.kit_skills()):
-        return "declined:app"
-    waiting = _renew(name, staged_dir)  # an earlier run opened its decision but did not record the wait
-    if waiting:
-        return "incoming:" + waiting
-    if _own_copy(name):
-        return "settled:own"
-    try:
-        text = rbxskills._read(os.path.join(staged_dir, "SKILL.md"))
-    except OSError:
-        return "install"  # not a skill the library lists: nothing to compare
-    lib = rbxskills.library()  # no project: a project's skills are not the user's
-    body = _body(text)
-    for e in lib:
-        try:
-            if _body(rbxskills._read(os.path.join(e["dir"], "SKILL.md"))) == body:
-                return "declined:same"
-        except OSError:
-            continue
-    fm, _ = rbxskills.front(text)
-    new = dict(rbxskills.meta(fm, staged_dir, "community"), id=name)
-    idf = rbxskills._idf([rbxskills.summary(e) for e in lib])
-    best, score = None, 0.0
-    for e in lib:
-        sc = rbxskills.similar(e, new, idf)
-        if sc > score:
-            best, score = e, sc
-    if best is None or score < rbxskills.OVERLAP:
-        return "install"
-    _stage_incoming(staged_dir, name)
-    dec = {"id": uuid.uuid4().hex[:12], "kind": "skill", "from": "vault", "a": best["id"], "b": name,
-           "a_dir": best["dir"], "b_dir": os.path.join(incoming_dir(), name), "made": rbxskills._now(),
-           "recommendation": None, "state": "open", "reason": "overlap",
-           "source": "Fridae vault " + (_applying or read_base()["release"])}
-    with rbxskills._locked(rbxskills.user_dir()):
-        decs = rbxskills._decisions()
-        decs.append(dec)
-        rbxskills._save_decisions(decs)
-    return "incoming:" + dec["id"]
-
-
-def _install_folder(src, name, local, base):
-    """Move the folder src (a waiting skill) to Knowledge/Skills/<local> and remember each of its files as upstream's
-    <name> file (_record_base), as apply() does for one it writes."""
-    import rbxskills
-    vault = rbxskills.vault_dir()
-    dst = os.path.join(vault, local)
-    if not _target_ok(dst, vault):
-        raise ValueError(NOT_THERE)
-    if os.path.lexists(dst):
-        raise ValueError(TAKEN)
-    rels = []
-    for root, dirs, files in os.walk(src):
-        for n in dirs + files:
-            if os.path.islink(os.path.join(root, n)):
-                raise ValueError(NOT_THERE)
-        rels += [os.path.relpath(os.path.join(root, f), src).replace(os.sep, "/") for f in files]
-    paths = {r: "Skills/%s/%s" % (name, r) for r in rels}
-    if not all(check_path(p) for p in paths.values()):
-        raise ValueError(NOT_THERE)
-    os.makedirs(vault, exist_ok=True)
-    shutil.move(src, dst)
-    for r, p in paths.items():
-        _record_base(base, p, _read(os.path.join(dst, *r.split("/"))))
-
-
-def _set_aside(src, name, release):
-    """Move a waiting copy to .fridae-vault/removed/<release>/Skills/<name> (never deleted)."""
-    import rbxskills
-    parent = os.path.join(state_dir(), "removed", release or "declined", "Skills")
-    dest = rbxskills._free(parent, name, " ")
-    if not _target_ok(dest, state_dir()):
-        raise OSError("outside the vault record")
-    os.makedirs(parent, exist_ok=True)
-    shutil.move(src, dest)
-
-
-def decide_vault(dec, choice, merged_text):
-    """Settle an open decision about a skill from the vault (the decision dec, found again by its id under the locks).
-      keep       the waiting copy goes to removed/, and the name to declined: later versions are not asked about;
-      replace    the waiting copy moves into Knowledge/Skills and its files enter the base record; a skill of the
-                 user's is set aside in .replaced/, a shipped one is superseded; one of Fridae's own is refused;
-      merge      merged_text becomes the skill in use's SKILL.md (phase 1's merge); the waiting copy goes to removed/
-                 and the name to declined;
-      keep_both  it joins as <name>-community (or the next free name), its front matter name set, renamed recorded.
-    Returns the decision, now state "done"."""
-    import rbxskills
-    if choice not in rbxskills.CHOICES:
-        raise ValueError("Choose keep, replace, merge or keep_both.")
-    with rbxskills._locked(state_dir()):  # the vault first, then the library: see the order above
-        with rbxskills._locked(rbxskills.user_dir()):
-            decs = rbxskills._decisions()
-            cur = next((d for d in decs if d.get("id") == dec.get("id") and d.get("state") == "open"
-                        and d.get("from") == "vault"), None)
-            if cur is None:
-                raise LookupError("No open decision '%s'." % dec.get("id"))
-            rbxskills._refuse_stale(decs, cur, choice, merged_text)
-            _no_symlinks()
-            base = read_base()
-            _settle(cur, choice, merged_text, base)
-            _save_base(base)
-            cur.update(state="done", choice=choice, decided=rbxskills._now())
-            rbxskills._save_decisions(decs)
-            return cur
-
-
-def _settle(dec, choice, merged_text, base):
-    import rbxskills
-    name, a, a_dir, b_dir = dec["b"], dec["a"], dec["a_dir"], dec["b_dir"]
-    if not (isinstance(b_dir, str) and b_dir and check_path("Skills/%s/x" % name) and
-            os.path.realpath(b_dir) == os.path.join(os.path.realpath(incoming_dir()), name)):
-        raise ValueError(NOT_THERE)  # the waiting copy is only ever incoming/<name>
-    owner, a_kit = rbxskills._kit_owner(a_dir)
-    a_mine = not a_kit and rbxskills._mine(a_dir)
-    vault = rbxskills.vault_dir()
-    a_vault = not (a_kit or a_mine) and isinstance(a_dir, str) and os.path.realpath(a_dir) != os.path.realpath(vault) \
-        and _inside(a_dir, vault)
-    if owner == "app" and choice in ("replace", "merge"):
-        raise ValueError(rbxskills.APP_SKILL)
-    if choice == "merge" and not (merged_text or "").strip():
-        raise ValueError("A merge needs the merged SKILL.md.")
-    if not (a_kit or a_mine or (a_vault and choice == "merge")) and choice in ("replace", "merge"):
-        raise ValueError(rbxskills.NOT_MINE)
-    there = os.path.isdir(b_dir) and not os.path.islink(b_dir)
-    if not there and choice in ("replace", "merge"):
-        raise LookupError("The waiting skill's folder is missing: %s" % b_dir)
-    differ = a.casefold() != name.casefold()
-    if choice == "replace":
-        asided = None
-        if a_mine:
-            asided = rbxskills._free(os.path.join(rbxskills.user_dir(), rbxskills.REPLACED), rbxskills._safe(a), " ")
-            rbxskills._aside(a_dir, a)
-        try:
-            _install_folder(b_dir, name, name, base)
-        except BaseException:
-            if asided and os.path.isdir(asided):
-                os.rename(asided, a_dir)  # the user's skill goes back
-            raise
-        if a_kit and differ:
-            sup = base["patch"].setdefault(name, {}).setdefault("supersedes", [])
-            if a not in sup:
-                sup.append(a)
-    elif choice == "keep_both":
-        if there:
-            local = os.path.basename(rbxskills._free(vault, name + "-community", "-"))
-            _install_folder(b_dir, name, local, base)
-            rbxskills._set_front(os.path.join(vault, local, "SKILL.md"), {"name": local})
-            base["renamed"][name] = local
-    else:  # keep, merge: the skill in use stays (merged), the waiting copy is set aside and never offered again
-        if choice == "merge":
-            rbxskills._merge_skill(rbxskills.user_dir(), a, a_dir, a_kit, merged_text, name, differ)
-        if there:
-            _set_aside(b_dir, name, base["waiting"].get(name, ""))
-        if name not in base["declined"]:
-            base["declined"].append(name)
-    base["waiting"].pop(name, None)
