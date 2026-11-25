@@ -6002,7 +6002,7 @@ function vtClashCard(c) {
     });
     card.querySelector(".sk-rec").after(d);
   }
-  const act = card.querySelector(".act");
+  const act = card.querySelector(":scope > .act"); // the card's own row, not a side's Reveal row
   [["vault", "Keep the vault's"], ["mine", "Keep mine"]].forEach(([choice, label]) => {
     const b = el("button", "pill");
     b.textContent = label; b.dataset.choice = choice; b.disabled = vtClashBusy;
