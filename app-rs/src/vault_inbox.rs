@@ -132,6 +132,21 @@ pub fn role() -> Value {
 // ------------------------------------------------------------------------------------------------ create the repo
 static CREATING: AtomicBool = AtomicBool::new(false);
 
+/// One of the one-at-a-time places (`CREATING`, `PUBLISHING`), held until dropped (so a panic cannot leave it held).
+struct Held(&'static AtomicBool);
+
+impl Held {
+    fn take(flag: &'static AtomicBool) -> Option<Held> {
+        if flag.swap(true, Ordering::SeqCst) { None } else { Some(Held(flag)) }
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 const LICENSE: &str = "# Licence
 
 The text in this vault (the Markdown files and any other writing) is licensed under the Creative Commons
@@ -200,11 +215,11 @@ added. Its front matter says who made it and under which licence: CC BY 4.0 for 
 /// is the vault repository's owner, and only when it does not exist. Called only by the maintainer's explicit click
 /// (`POST /api/vault/create_repo`); nothing else calls it.
 pub fn create_repo() -> Value {
-    if CREATING.swap(true, Ordering::SeqCst) {
+    let Some(held) = Held::take(&CREATING) else {
         return fail(BUSY);
-    }
+    };
     let out = create_repo_in();
-    CREATING.store(false, Ordering::SeqCst);
+    drop(held);
     forget_role();
     out.unwrap_or_else(fail)
 }
@@ -874,12 +889,10 @@ fn release_notes(now: &BTreeMap<String, BTreeMap<String, String>>, before: Optio
 /// (`POST /api/vault/publish`); nothing else calls it, and no agent has a tool for it.
 /// `{ok: true, tag, url}` or `{ok: false, problems: [...]}` or `{ok: false, error}`.
 pub fn publish() -> Value {
-    if PUBLISHING.swap(true, Ordering::SeqCst) {
+    let Some(_held) = Held::take(&PUBLISHING) else {
         return fail(BUSY_PUBLISH);
-    }
-    let out = publish_in();
-    PUBLISHING.store(false, Ordering::SeqCst);
-    out.unwrap_or_else(fail)
+    };
+    publish_in().unwrap_or_else(fail)
 }
 
 fn publish_in() -> Result<Value, String> {
@@ -1634,6 +1647,19 @@ mod tests {
         assert!(check_limits(&one).is_empty());
         let many: BTreeMap<String, Vec<u8>> = (0..5001).map(|i| (format!("Skills/a/f{i}"), vec![])).collect();
         assert_eq!(check_limits(&many).len(), 1);
+    }
+
+    #[test]
+    fn a_panic_never_leaves_publish_or_create_held() {
+        for flag in [&PUBLISHING, &CREATING] {
+            let hurt = std::panic::catch_unwind(|| {
+                let _held = Held::take(flag).unwrap();
+                assert!(Held::take(flag).is_none(), "one at a time");
+                panic!("cut short");
+            });
+            assert!(hurt.is_err());
+            assert!(Held::take(flag).is_some());
+        }
     }
 
     #[test]

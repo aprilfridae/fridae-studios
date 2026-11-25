@@ -255,13 +255,19 @@ pub fn needed(m: &Manifest, base: &Value, knowledge: &Path) -> Vec<ManFile> {
 // ------------------------------------------------------------------------------------------------------- the job
 static RUNNING: Mutex<bool> = Mutex::new(false);
 
-/// Take the one running place; false when an update is already under way.
-fn claim() -> bool {
-    !std::mem::replace(&mut *RUNNING.lock().unwrap_or_else(|e| e.into_inner()), true)
+/// The one running place, held until dropped (so a panic cannot leave it held).
+struct Claim;
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = false;
+    }
 }
 
-fn release_claim() {
-    *RUNNING.lock().unwrap_or_else(|e| e.into_inner()) = false;
+/// Take the one running place; None when an update is already under way.
+fn claim() -> Option<Claim> {
+    let taken = std::mem::replace(&mut *RUNNING.lock().unwrap_or_else(|e| e.into_inner()), true);
+    if taken { None } else { Some(Claim) }
 }
 
 pub(crate) fn now() -> u64 {
@@ -270,12 +276,12 @@ pub(crate) fn now() -> u64 {
 
 /// Run `update` in the background (one at a time): Download is `first`, Check for updates is not.
 pub fn start(first: bool) -> Value {
-    if !claim() {
+    let Some(held) = claim() else {
         return json!({"ok": false, "busy": true, "error": BUSY});
-    }
+    };
     std::thread::spawn(move || {
+        let _held = held;
         update(first);
-        release_claim();
     });
     json!({"ok": true, "running": true})
 }
@@ -303,9 +309,11 @@ pub fn watch() {
 }
 
 fn tick() {
-    if downloaded() && claim() {
+    if !downloaded() {
+        return;
+    }
+    if let Some(_held) = claim() {
         update(false);
-        release_claim();
     }
 }
 
@@ -910,11 +918,24 @@ Words: {words}. {body}.
     #[test]
     fn only_one_update_runs_at_a_time() {
         let (_g, _s) = setup();
-        assert!(claim());
+        let held = claim();
+        assert!(held.is_some());
         assert_eq!(start(false)["busy"], true);
         assert_eq!(status()["running"], true);
-        release_claim();
+        drop(held);
         assert_eq!(status()["running"], false);
+    }
+
+    #[test]
+    fn a_panic_never_leaves_the_update_claimed() {
+        let (_g, _s) = setup();
+        let hurt = std::panic::catch_unwind(|| {
+            let _held = claim().unwrap();
+            panic!("cut short");
+        });
+        assert!(hurt.is_err());
+        assert_eq!(status()["running"], false);
+        assert!(claim().is_some());
     }
 
     /// A link to a folder (a junction where Windows refuses a symlink); false when this machine allows neither.
