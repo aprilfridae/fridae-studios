@@ -13,5 +13,6 @@ engine/
 promo/node_modules/
 vault/.obsidian/
 vault/.trash/
-# the user's notes when running from source (home is the repo folder then)
+# the user's notes and skill library when running from source (home is the repo folder then)
 /notes/
+/skills/

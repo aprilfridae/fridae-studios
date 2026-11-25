@@ -31,7 +31,7 @@ class SkillsTests(unittest.TestCase):
         patches = [mock.patch.object(rbxskills, "HOME", self.home),
                    mock.patch.object(rbxskills, "KIT", self.kit),
                    mock.patch.object(rbxskills, "user_dir", lambda: self.user),
-                   mock.patch.dict(os.environ, {"FRIDAE_USER_CLAUDE": "", "CLAUDE_CONFIG_DIR": ""})]
+                   mock.patch.dict(os.environ, {"FRIDAE_USER_CLAUDE": "", "CLAUDE_CONFIG_DIR": "", "FRIDAE_RAG_FILE": ""})]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -68,16 +68,18 @@ class SkillsTests(unittest.TestCase):
     def ids(self, **kw):
         return [s["id"] for s in rbxskills.skills(**kw)]
 
-    @unittest.skip("imported in Task 4")
-    def test_every_source_is_found_with_plugin_names(self):
+    def test_every_source_is_imported_under_its_skill_name(self):
+        rbxskills.import_external()
         ids = self.ids()
-        for want in ("ui-ux-pro-max", "kit:tdd", "superpowers:debugging", "runpod:pods", "pdf", "codex-only"):
+        for want in ("ui-ux-pro-max", "tdd", "debugging", "pods", "pdf", "codex-only"):
             self.assertIn(want, ids)
-        self.assertNotIn("off:hidden", ids, "a disabled plugin's skills are not offered")
+        self.assertNotIn("hidden", ids, "a disabled plugin's skills are not imported")
         self.assertNotIn("computer-use", ids, "a desktop-app-only skill is left out")
+        for s in rbxskills.skills():
+            self.assertEqual((s["origin"], os.path.dirname(s["dir"])), ("user", self.user), s["id"])
 
-    @unittest.skip("imported in Task 4")
     def test_quoted_descriptions_are_unescaped(self):
+        rbxskills.import_external()
         d = {s["id"]: s for s in rbxskills.skills()}["ui-ux-pro-max"]["description"]
         self.assertEqual(d, 'UI/UX for games and apps. Use for "menus".')
 
@@ -87,56 +89,59 @@ class SkillsTests(unittest.TestCase):
         s = {s["id"]: s for s in rbxskills.skills(project=game)}["ui-ux-pro-max"]
         self.assertEqual((s["origin"], s["description"]), ("project", "The game's own."))
 
-    @unittest.skip("imported in Task 4")
     def test_other_ais_get_every_skill_in_the_catalog(self):
-        text = rbxskills.catalog("gemini")
-        for want in ("## Skills", "rbx_skill", "- ui-ux-pro-max:", "- kit:tdd:", "- superpowers:debugging:",
-                     "- runpod:pods:", "- pdf:", "- codex-only:"):
+        text = rbxskills.catalog("gemini")  # the catalog imports first
+        for want in ("## Skills", "rbx_skill", "- ui-ux-pro-max:", "- tdd:", "- debugging:", "- pods:", "- pdf:",
+                     "- codex-only:"):
             self.assertIn(want, text)
 
-    @unittest.skip("imported in Task 4")
     def test_claude_gets_only_what_claude_code_does_not_load(self):
         text = rbxskills.catalog("claude")
-        for native in ("ui-ux-pro-max", "kit:tdd", "superpowers:debugging", "- pdf:"):
+        for native in ("ui-ux-pro-max", "- tdd:", "- debugging:", "- pdf:"):
             self.assertNotIn(native, text, "Claude Code lists its own, and its own account's synced skills")
-        self.assertIn("- runpod:pods:", text, "another account's synced skill")
+        self.assertIn("- pods:", text, "another account's synced skill")
         self.assertIn("- codex-only:", text, "another tool's skill")
 
-    @unittest.skip("imported in Task 4")
+    def test_claude_gets_an_edited_import_of_its_own_skill(self):
+        rbxskills.import_external()
+        with open(os.path.join(self.user, "ui-ux-pro-max", "SKILL.md"), "a", encoding="utf-8") as f:
+            f.write("\nMy own extra rule.\n")
+        self.assertIn("- ui-ux-pro-max:", rbxskills.catalog("claude"), "the library's copy differs: Fridae's is listed")
+
     def test_a_second_claude_account_uses_its_own_synced_skills(self):
         second = os.path.join(self.home, "second")
         os.makedirs(second)
         with open(os.path.join(second, ".claude.json"), "w") as f:
             json.dump({"oauthAccount": {"accountUuid": "acct-b"}}, f)
         text = rbxskills.catalog("claude", config=second)
-        self.assertIn("- superpowers:debugging:", text)
-        self.assertNotIn("runpod:pods", text)
+        self.assertIn("- debugging:", text)
+        self.assertNotIn("- pods:", text)
 
     def test_nothing_to_list_is_empty(self):
         shutil.rmtree(os.path.join(self.home, ".agents"))
         shutil.rmtree(os.path.join(self.claude, "plugins", "synced", "org_acct-b"))
         self.assertEqual(rbxskills.catalog("claude"), "")
 
-    @unittest.skip("imported in Task 4")
     def test_load_fills_paths_and_lists_files(self):
+        rbxskills.import_external()
         out = rbxskills.load("ui-ux-pro-max")
-        base = os.path.join(self.claude, "skills", "ui-ux-pro-max")
+        base = os.path.join(self.user, "ui-ux-pro-max")
         self.assertIn("Base directory: %s" % base, out)
         self.assertIn("Run %s/scripts/search.py" % base, out)
         self.assertIn("references/rules.md", out)
         self.assertIn("scripts/search.py", out)
         self.assertIn("See %s/x" % os.path.join(self.home, "plugins", "kit-on"), rbxskills.load("tdd"))
 
-    @unittest.skip("imported in Task 4")
     def test_names_are_found_loosely_but_not_wrongly(self):
-        self.assertEqual(rbxskills.find("/Superpowers:Debugging")["id"], "superpowers:debugging")
-        self.assertEqual(rbxskills.find("debugging")["id"], "superpowers:debugging", "a bare name that only one has")
+        rbxskills.import_external()
+        self.assertEqual(rbxskills.find("/Superpowers:Debugging")["id"], "debugging", "Claude Code's plugin:skill name")
+        self.assertEqual(rbxskills.find("DEBUGGING")["id"], "debugging")
         with self.assertRaises(LookupError) as e:
             rbxskills.find("debug")
-        self.assertIn("superpowers:debugging", str(e.exception), "a near name is suggested")
+        self.assertIn("debugging", str(e.exception), "a near name is suggested")
 
-    @unittest.skip("imported in Task 4")
     def test_read_stays_inside_the_skill(self):
+        rbxskills.import_external()
         self.assertIn("# Rules", rbxskills.read_file("ui-ux-pro-max", "references/rules.md"))
         for bad in ("../../settings.json", "/etc/passwd", "../tdd/SKILL.md"):
             with self.assertRaises(LookupError):
@@ -506,6 +511,322 @@ class SkillsShelfTests(unittest.TestCase):
         self.assertTrue(self.mcp.t_skill({"action": "search"})["isError"])
         res = self.mcp.t_skill({"action": "search", "query": "file my receipts", "kind": "game"})
         self.assertNotIn("tax-notes", res["content"][0]["text"])
+
+
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+class ImportTests(unittest.TestCase):
+    """Import from other tools' folders into the user's library: copied once, refreshed while unedited, overlaps wait
+    for the user's decision, nothing overwritten. A made-up home, kit and library; the real ~/.claude is never read."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="import home é ")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.kit = os.path.join(self.home, "kit")
+        self.user = os.path.join(self.home, "library")
+        for p in (mock.patch.object(rbxskills, "HOME", self.home),
+                  mock.patch.object(rbxskills, "KIT", self.kit),
+                  mock.patch.object(rbxskills, "user_dir", lambda: self.user),
+                  mock.patch.dict(os.environ, {"FRIDAE_USER_CLAUDE": "", "CLAUDE_CONFIG_DIR": "", "FRIDAE_RAG_FILE": ""})):
+            p.start()
+            self.addCleanup(p.stop)
+        self.claude = os.path.join(self.home, ".claude", "skills")
+        self.agents = os.path.join(self.home, ".agents", "skills")
+        os.makedirs(self.claude)
+        os.makedirs(self.agents)
+
+    def ids(self):
+        return sorted(s["id"] for s in rbxskills.library())
+
+    def kit_skill(self, name, desc, owner="", body="Kit body."):
+        d = os.path.join(self.kit, "vault", "Fridae", "Guides", "Core", name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "SKILL.md"), "w", encoding="utf-8") as f:
+            f.write("---\nname: %s\ndescription: %s\n%s---\n\n%s\n" % (name, desc, "owner: %s\n" % owner if owner else "", body))
+        return d
+
+    def test_folder_hash_ignores_dot_files(self):
+        d = os.path.join(self.home, "h")
+        skill(d, "h", "Hash me.", extra={"scripts/a.py": "print(1)"})
+        h = rbxskills.folder_hash(d)
+        self.assertEqual(len(h), 64)
+        for junk in (".DS_Store", ".fridae-source.json", "scripts/.DS_Store"):
+            with open(os.path.join(d, *junk.split("/")), "w") as f:
+                f.write("junk")
+        self.assertEqual(rbxskills.folder_hash(d), h)
+        with open(os.path.join(d, "scripts", "a.py"), "w") as f:
+            f.write("print(2)")
+        self.assertNotEqual(rbxskills.folder_hash(d), h)
+
+    def test_import_copies_new_and_links_identical(self):
+        src = os.path.join(self.claude, "alpha")
+        skill(src, "alpha", "Draw maps of caves.", extra={"scripts/map.py": "print('map')"})
+        skill(os.path.join(self.user, "beta"), "beta", "Bake bread at home.")
+        skill(os.path.join(self.agents, "beta"), "beta", "Bake bread at home.")
+        got = rbxskills.import_external()
+        self.assertEqual((got["added"], got["linked"], got["refreshed"], got["pending"]), (["alpha"], ["beta"], [], []))
+        copy = os.path.join(self.user, "alpha")
+        self.assertEqual(read(os.path.join(copy, "SKILL.md")), read(os.path.join(src, "SKILL.md")))
+        self.assertEqual(read(os.path.join(copy, "scripts", "map.py")), "print('map')")
+        link = json.loads(read(os.path.join(copy, ".fridae-source.json")))
+        self.assertEqual((link["source"], link["hash"], link["gone"]), (src, rbxskills.folder_hash(src), False))
+        self.assertTrue(link["imported"])
+        beta = json.loads(read(os.path.join(self.user, "beta", ".fridae-source.json")))
+        self.assertEqual(beta["source"], os.path.join(self.agents, "beta"))
+        self.assertEqual(self.ids(), ["alpha", "beta"])
+        self.assertEqual(rbxskills.pending(), [])
+        again = rbxskills.import_external()
+        self.assertEqual(again, {"added": [], "linked": [], "refreshed": [], "pending": []}, "nothing new the second time")
+
+    def test_same_name_different_content_is_one_decision(self):
+        mine, theirs = os.path.join(self.claude, "brainstorming"), os.path.join(self.agents, "brainstorming")
+        skill(mine, "brainstorming", "Explore ideas before building.", "Claude's way.")
+        skill(theirs, "brainstorming", "Explore ideas before building.", "Agents' way.")
+        before = (read(os.path.join(mine, "SKILL.md")), read(os.path.join(theirs, "SKILL.md")))
+        for _ in range(2):
+            rbxskills.import_external()
+            hits = [s for s in rbxskills.library() if s["id"] == "brainstorming"]
+            self.assertEqual(len(hits), 1, "one library entry")
+            self.assertIn("Claude's way.", read(os.path.join(hits[0]["dir"], "SKILL.md")), "the first found is in use")
+            open_ = rbxskills.pending()
+            self.assertEqual(len(open_), 1, "one decision, also after a second import")
+            d = open_[0]
+            self.assertEqual((d["kind"], d["a"], d["b"], d["state"], d["recommendation"]),
+                             ("skill", "brainstorming", "brainstorming", "open", None))
+            self.assertEqual(d["a_dir"], hits[0]["dir"])
+            self.assertTrue(d["b_dir"].startswith(os.path.join(self.user, ".incoming") + os.sep))
+            self.assertIn("Agents' way.", read(os.path.join(d["b_dir"], "SKILL.md")))
+            self.assertTrue(d["id"] and d["made"])
+        self.assertEqual((read(os.path.join(mine, "SKILL.md")), read(os.path.join(theirs, "SKILL.md"))), before,
+                         "neither source is overwritten")
+
+    def test_unedited_copy_refreshes_edited_copy_waits(self):
+        one, two = os.path.join(self.claude, "one"), os.path.join(self.agents, "two")
+        skill(one, "one", "Paint watercolour skies.", "Old one.")
+        skill(two, "two", "Tune guitar strings.", "Old two.")
+        rbxskills.import_external()
+        mine = os.path.join(self.user, "two", "SKILL.md")
+        with open(mine, "a", encoding="utf-8") as f:
+            f.write("My own tip.\n")
+        skill(one, "one", "Paint watercolour skies.", "New one.")
+        skill(two, "two", "Tune guitar strings.", "New two.")
+        got = rbxskills.import_external()
+        self.assertEqual((got["refreshed"], got["pending"], got["added"]), (["one"], ["two"], []))
+        self.assertIn("New one.", read(os.path.join(self.user, "one", "SKILL.md")), "the unedited copy follows its source")
+        self.assertIn("My own tip.", read(mine), "the edited copy is never overwritten")
+        self.assertIn("Old two.", read(mine))
+        update = os.path.join(self.user, "two (update)")
+        self.assertIn("New two.", read(os.path.join(update, "SKILL.md")), "the new one waits beside it")
+        self.assertEqual([s["dir"] for s in rbxskills.library() if s["id"] == "two"], [os.path.join(self.user, "two")])
+        [d] = rbxskills.pending()
+        self.assertEqual((d["a"], d["b"], d["a_dir"], d["b_dir"]), ("two", "two", os.path.join(self.user, "two"), update))
+        self.assertEqual(rbxskills.import_external()["pending"], [], "no second decision for the same update")
+        self.assertEqual(len(rbxskills.pending()), 1)
+        rbxskills.decide(d["id"], "keep")
+        self.assertFalse(os.path.exists(update))
+        self.assertEqual(rbxskills.import_external(), {"added": [], "linked": [], "refreshed": [], "pending": []},
+                         "a kept copy is not asked about again for the same update")
+
+    def test_source_deleted_keeps_copy(self):
+        src = os.path.join(self.agents, "solo")
+        skill(src, "solo", "Sing solo parts.", "Solo body.")
+        rbxskills.import_external()
+        shutil.rmtree(src)
+        got = rbxskills.import_external()
+        self.assertEqual(got, {"added": [], "linked": [], "refreshed": [], "pending": []})
+        link = json.loads(read(os.path.join(self.user, "solo", ".fridae-source.json")))
+        self.assertTrue(link["gone"])
+        self.assertIn("Solo body.", rbxskills.load("solo"), "the library copy is still served")
+        self.assertEqual(rbxskills.pending(), [])
+        self.assertEqual(rbxskills.import_external(), got, "not re-imported or flagged")
+
+    def overlap(self):
+        """The user's own brainstorm-ideas and another tool's brainstorming that does the same: one open decision."""
+        skill(os.path.join(self.user, "brainstorm-ideas"), "brainstorm-ideas",
+              "Turn rough ideas into designs before building anything.", "Mine.")
+        skill(os.path.join(self.agents, "brainstorming"), "brainstorming",
+              "Turn rough ideas into designs before building anything.", "Theirs.")
+        got = rbxskills.import_external()
+        self.assertEqual(got["pending"], ["brainstorming"])
+        self.assertEqual(self.ids(), ["brainstorm-ideas"], "the newcomer waits outside the library")
+        [d] = rbxskills.pending()
+        return d
+
+    def test_decide_replace_moves_loser_and_marks_supersedes(self):
+        d = self.overlap()
+        out = rbxskills.decide(d["id"], "replace")
+        self.assertEqual((out["state"], out["choice"]), ("done", "replace"))
+        self.assertFalse(os.path.exists(os.path.join(self.user, "brainstorm-ideas")))
+        self.assertIn("Mine.", read(os.path.join(self.user, ".replaced", "brainstorm-ideas", "SKILL.md")), "never deleted")
+        lib = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual(sorted(lib), ["brainstorming"])
+        self.assertEqual(lib["brainstorming"]["supersedes"], ["brainstorm-ideas"])
+        self.assertIn("Theirs.", read(os.path.join(self.user, "brainstorming", "SKILL.md")))
+        self.assertEqual(os.listdir(os.path.join(self.user, ".incoming")), [])
+        self.assertEqual(rbxskills.pending(), [])
+        self.assertEqual(rbxskills.import_external(), {"added": [], "linked": [], "refreshed": [], "pending": []})
+        with self.assertRaises(LookupError):
+            rbxskills.decide(d["id"], "keep")
+
+    def test_decide_keep_moves_newcomer_aside_and_is_not_asked_again(self):
+        d = self.overlap()
+        rbxskills.decide(d["id"], "keep")
+        self.assertEqual(self.ids(), ["brainstorm-ideas"])
+        self.assertEqual(rbxskills.library()[0]["supersedes"], ["brainstorming"])
+        self.assertIn("Theirs.", read(os.path.join(self.user, ".replaced", "brainstorming", "SKILL.md")))
+        self.assertEqual(rbxskills.import_external()["pending"], [])
+        self.assertEqual(rbxskills.pending(), [])
+
+    def test_decide_keep_both_renames_a_same_name_newcomer(self):
+        skill(os.path.join(self.claude, "notes"), "notes", "Take meeting notes.", "Claude's.")
+        skill(os.path.join(self.agents, "notes"), "notes", "Take meeting notes.", "Agents'.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        rbxskills.decide(d["id"], "keep_both")
+        lib = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual(sorted(lib), ["notes", "notes-2"])
+        self.assertEqual(lib["notes-2"]["dir"], os.path.join(self.user, "notes-2"))
+        self.assertIn("Agents'.", read(os.path.join(self.user, "notes-2", "SKILL.md")))
+        self.assertEqual(rbxskills.import_external(), {"added": [], "linked": [], "refreshed": [], "pending": []})
+
+    def test_decide_merge_writes_merged_and_keeps_old(self):
+        d = self.overlap()
+        with self.assertRaises(ValueError):
+            rbxskills.decide(d["id"], "merge")
+        merged = "---\nname: brainstorm-ideas\ndescription: Both, merged.\n---\n\nMerged body.\n"
+        rbxskills.decide(d["id"], "merge", merged)
+        lib = {s["id"]: s for s in rbxskills.library()}
+        self.assertEqual(sorted(lib), ["brainstorm-ideas"])
+        self.assertEqual((lib["brainstorm-ideas"]["description"], lib["brainstorm-ideas"]["supersedes"]),
+                         ("Both, merged.", ["brainstorming"]))
+        self.assertIn("Merged body.", read(os.path.join(self.user, "brainstorm-ideas", "SKILL.md")))
+        self.assertIn("Mine.", read(os.path.join(self.user, ".replaced", "brainstorm-ideas", "SKILL.md")))
+        self.assertIn("Theirs.", read(os.path.join(self.user, ".replaced", "brainstorming", "SKILL.md")))
+        self.assertEqual(rbxskills.import_external()["pending"], [])
+
+    def test_decide_refuses_app_skill(self):
+        app = self.kit_skill("critic", "Review the game with a critical eye.", owner="app", body="The app's critic.")
+        skill(os.path.join(self.agents, "critic"), "critic", "Review the game with a critical eye.", "Another critic.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        self.assertEqual((d["a"], d["a_dir"]), ("critic", app))
+        for choice in ("replace", "merge"):
+            with self.assertRaises(ValueError) as e:
+                rbxskills.decide(d["id"], choice, "---\nname: critic\n---\nMerged.")
+            self.assertEqual(str(e.exception), "That is one of Fridae's own skills.")
+        self.assertIn("The app's critic.", read(os.path.join(app, "SKILL.md")))
+        self.assertEqual(len(rbxskills.pending()), 1, "still open")
+        with self.assertRaises(ValueError):
+            rbxskills.decide(d["id"], "delete")
+        rbxskills.decide(d["id"], "keep")
+        self.assertEqual([(s["id"], s["origin"]) for s in rbxskills.library()], [("critic", "app")])
+
+    def test_replacing_a_shipped_skill_hides_it(self):
+        self.kit_skill("ui-design", "Design game menus and HUD screens.")
+        skill(os.path.join(self.agents, "menu-maker"), "menu-maker", "Design game menus and HUD screens.", "Mine.")
+        rbxskills.import_external()
+        [d] = rbxskills.pending()
+        self.assertEqual(d["a"], "ui-design")
+        rbxskills.decide(d["id"], "replace")
+        self.assertEqual(self.ids(), ["menu-maker"], "the shipped one is superseded, its files untouched")
+        self.assertTrue(os.path.isfile(os.path.join(self.kit, "vault", "Fridae", "Guides", "Core", "ui-design", "SKILL.md")))
+
+    def test_app_only_never_imported(self):
+        skill(os.path.join(self.agents, "computer-use"), "computer-use", "Desktop app only.")
+        skill(os.path.join(self.claude, "folder-name"), "morning", "Desktop app only.")
+        skill(os.path.join(self.home, ".claude", "skills", "synced", "org_a", "docs"), "docs", "Desktop app only.")
+        skill(os.path.join(self.user, "chrome-browser"), "chrome-browser", "Copied by hand.")
+        got = rbxskills.import_external()
+        self.assertEqual(got, {"added": [], "linked": [], "refreshed": [], "pending": []})
+        self.assertEqual([n for n in os.listdir(self.user) if not n.startswith(".")], ["chrome-browser"])
+        incoming = os.path.join(self.user, ".incoming")
+        self.assertEqual(os.listdir(incoming) if os.path.isdir(incoming) else [], [])
+        self.assertEqual(rbxskills.pending(), [])
+        self.assertEqual(self.ids(), [], "never listed either")
+
+    def test_installed_core_copies_are_linked_not_imported(self):
+        import install
+        core = os.path.join(self.kit, "vault", "Fridae", "Guides", "Core")
+        self.kit_skill("workflow", "Run the Roblox studio workflow for every game task.", owner="app",
+                       body="Scripts live in {{RBXKIT}}/studio.")
+        self.kit_skill("unslop", "Remove generic AI looks from designs.")
+        install.build_claude_skills(self.claude, core=core)  # as install.py writes ~/.claude/skills
+        self.assertTrue(os.path.isdir(os.path.join(self.claude, "roblox-studio-workflow")))
+        got = rbxskills.import_external()
+        self.assertEqual((got["added"], got["pending"]), ([], []), "Fridae's own installed copies are not imported")
+        self.assertEqual(sorted(got["linked"]), ["roblox-studio-workflow", "unslop"])
+        self.assertEqual(self.ids(), ["unslop", "workflow"])
+        self.assertIn("workflow", rbxskills.native_ids(), "Claude Code lists it itself (under its old name)")
+        with open(os.path.join(self.claude, "roblox-studio-workflow", "SKILL.md"), "a", encoding="utf-8") as f:
+            f.write("\nMy own house rule.\n")
+        got = rbxskills.import_external()
+        self.assertEqual(got["pending"], ["roblox-studio-workflow"], "an edited copy is a real skill of the user's")
+        [d] = rbxskills.pending()
+        self.assertEqual(d["a"], "workflow")
+        self.assertNotIn("workflow", rbxskills.native_ids())
+
+    def test_malformed_name_falls_back_to_folder(self):
+        d = os.path.join(self.user, "folder-name")
+        os.makedirs(d)
+        with open(os.path.join(d, "SKILL.md"), "w") as f:
+            f.write("---\nname: [oops\ndescription: x\n---\nBody.\n")
+        [s] = rbxskills.library()
+        self.assertEqual((s["id"], s["name"], s["description"]), ("folder-name", "folder-name", "x"))
+
+    def test_similar(self):
+        a = {"id": "brainstorming", "name": "brainstorming", "description": "Explore ideas.", "examples": []}
+        self.assertEqual(rbxskills.similar(a, dict(a, description="Something else entirely.")), 1.0, "same name")
+        far = {"id": "tax-notes", "name": "tax-notes", "description": "Keep receipts tidy for tax time.", "examples": []}
+        self.assertLess(rbxskills.similar(a, far), rbxskills.OVERLAP)
+        near = dict(far, id="tax-folder", name="tax-folder")
+        self.assertGreaterEqual(rbxskills.similar(far, near), rbxskills.OVERLAP, "same description")
+        self.assertEqual(rbxskills.OVERLAP, 0.55)
+
+    def test_catalog_imports_at_most_once_a_minute(self):
+        skill(os.path.join(self.agents, "first"), "first", "Fold paper cranes.")
+        self.assertIn("- first:", rbxskills.catalog("gemini"))
+        skill(os.path.join(self.agents, "second"), "second", "Brew green tea.")
+        self.assertNotIn("- second:", rbxskills.catalog("gemini"), "not again within a minute")
+        stamp = os.path.join(self.user, ".imported")
+        old = os.path.getmtime(stamp) - 61
+        os.utime(stamp, (old, old))
+        self.assertIn("- second:", rbxskills.catalog("gemini"))
+
+    def cli(self, *argv):
+        import argparse
+        import contextlib
+        import io
+        ap = argparse.ArgumentParser()
+        rbxskills.register(ap.add_subparsers(dest="cmd", required=True))
+        a = ap.parse_args(["skills"] + list(argv))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            a.fn(a)
+        return buf.getvalue()
+
+    def test_cli_import_pending_decide_index(self):
+        skill(os.path.join(self.claude, "notes"), "notes", "Take meeting notes.", "Claude's.")
+        skill(os.path.join(self.agents, "notes"), "notes", "Take meeting notes.", "Agents'.")
+        self.assertEqual(json.loads(self.cli("import"))["pending"], ["notes"])
+        [d] = json.loads(self.cli("pending", "--json"))
+        index = {s["id"]: s for s in json.loads(self.cli("index", "--json"))}
+        self.assertTrue(index["notes"]["claude_native"], "an unedited import of Claude Code's own skill")
+        for key in ("id", "name", "description", "examples", "applies", "core", "owner", "source", "licence",
+                    "supersedes", "updated", "dir", "origin"):
+            self.assertIn(key, index["notes"])
+        merged = os.path.join(self.home, "merged.md")
+        with open(merged, "w", encoding="utf-8") as f:
+            f.write("---\nname: notes\ndescription: Merged notes.\n---\nMerged.\n")
+        out = json.loads(self.cli("decide", d["id"], "merge", "--merged-file", merged, "--json"))
+        self.assertEqual((out["ok"], out["decision"]["choice"]), (True, "merge"))
+        self.assertEqual(json.loads(self.cli("pending", "--json")), [])
+        index = {s["id"]: s for s in json.loads(self.cli("index", "--json"))}
+        self.assertFalse(index["notes"]["claude_native"], "merged: no longer Claude Code's copy")
+        bad = json.loads(self.cli("decide", "nope", "keep", "--json"))
+        self.assertFalse(bad["ok"])
 
 
 if __name__ == "__main__":
