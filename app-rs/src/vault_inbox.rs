@@ -849,7 +849,7 @@ fn decide_in(pr: u64, unit: &str, choice: &str, text: Option<&str>, why: Option<
                 let bytes = match edited {
                     Some(_) if f.note == NOT_TEXT => return Err("Only text can be edited here.".to_string()),
                     Some(t) => t.as_bytes().to_vec(),
-                    None => note_bytes(&repo, pr, &head, f)?,
+                    None => note_bytes(pr, &head, f)?,
                 };
                 add_note(&repo, &author, pr, unit, bytes)?
             }
@@ -948,21 +948,20 @@ fn add_skill(repo: &str, pr: u64, head: &str, author: &str, name: &str, files: &
 }
 
 const NOTE_NOT_READ: &str = "This file could not be read, so Fridae cannot add it.";
+const NOTE_NOT_SHOWN: &str = "This file was not shown to you, so Fridae cannot add it.";
 
-/// A submitted note's bytes: the text fetched for the inbox, or (a model, or a file too big to show) its blob read
-/// again from GitHub by the sha the pull request lists, up to a vault file's limit.
-fn note_bytes(repo: &str, pr: u64, head: &str, f: &Fetched) -> Result<Vec<u8>, String> {
-    if f.note.is_empty() {
-        let p = join(&inbox_dir().join(format!("pr-{pr}")).join(head), &f.path);
-        if !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
-            return Err(NOTE_NOT_READ.to_string());
-        }
-        return fs::read(&p).map_err(|_| NOTE_NOT_READ.to_string());
+/// A submitted note's bytes: only the text fetched and shown in the inbox. A file the card says was not shown (a
+/// model, bytes that are not text, a file over 200 KB, or past the submission's budget) is refused, as `add_skill`
+/// refuses a skill with an unshown file: nothing reaches the vault that the maintainer did not see.
+fn note_bytes(pr: u64, head: &str, f: &Fetched) -> Result<Vec<u8>, String> {
+    if !f.note.is_empty() {
+        return Err(NOTE_NOT_SHOWN.to_string());
     }
-    if f.sha.is_empty() {
+    let p = join(&inbox_dir().join(format!("pr-{pr}")).join(head), &f.path);
+    if !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
         return Err(NOTE_NOT_READ.to_string());
     }
-    vault_git::blob(repo, &f.sha)
+    fs::read(&p).map_err(|_| NOTE_NOT_READ.to_string())
 }
 
 /// Commit one submitted guide or note to the vault's `main`: only that file, with nothing deleted. "Add <title> from
@@ -1927,12 +1926,21 @@ mod tests {
         assert_eq!(decide(5, "Roblox/Glossary.md", "add", None, None)["ok"], true);
         let commit: Value = serde_json::from_str(&sent(&s, "POST", "/repos/o/r/git/commits")[0]).unwrap();
         assert_eq!(commit["message"], "Change Glossary from ada (#5)");
-        drop(_g);
-        // a model is added byte for byte, read again from GitHub
-        let (_g, s) = setup("o", maint(vec![("Roblox/18 Rigs/R.fbx", "Kaydara\0bin")], vec![], vec![], None));
-        assert_eq!(decide(5, "Roblox/18 Rigs/R.fbx", "add", None, None)["ok"], true);
-        assert_eq!(blobs_sent(&s), vec!["Kaydara\0bin".to_string()]);
-        assert_eq!(tree_sent(&s)[0]["path"], "Roblox/18 Rigs/R.fbx");
+    }
+
+    #[test]
+    fn a_note_the_maintainer_was_never_shown_is_never_added() {
+        // a script padded past 200 KB, a model, and bytes that are not text: each card says "Not shown", and Add refuses
+        let padded: &'static str = Box::leak(format!("import bpy\n{}", "#".repeat(201 * 1024)).into_boxed_str());
+        for (path, bytes) in [("Roblox/45 Procedural Blender Assets/scripts/build_x.py", padded), ("Roblox/18 Rigs/R.fbx", "Kaydara\0bin"), ("Roblox/02 Luau/Odd.md", "a\0b")] {
+            let (_g, s) = setup("o", maint(vec![(path, bytes)], vec![], vec![], None));
+            let out = decide(5, path, "add", None, None);
+            assert_eq!(out, json!({"ok": false, "error": "This file was not shown to you, so Fridae cannot add it."}), "{path}");
+            assert!(sent(&s, "POST", "/repos/o/r/git/commits").is_empty() && blobs_sent(&s).is_empty(), "{path}");
+            assert!(read_decided().get("5").is_none_or(|d| d[path].is_null()), "nothing is recorded: {path}");
+            // Reject still decides it
+            assert_eq!(decide(5, path, "reject", None, None)["ok"], true, "{path}");
+        }
     }
 
     #[test]

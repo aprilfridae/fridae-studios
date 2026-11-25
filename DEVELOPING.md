@@ -2363,7 +2363,9 @@ its path), listed under `notes` with its text, whether the vault has it, and its
 (`rbx skills compare --new <file> --against <mirror file>`, line endings aside). A model or picture is listed by name
 ("Not shown: the file is not text."). Units are decided one at a time by `unit` (`Skills/<name>` for a skill, the path
 for a note), and `decided.json` is keyed by unit. Add on a note commits only that file, deleting nothing ("Add <title>
-from <author> (#<n>)", or "Change ..." when the vault has it; a model is read again from GitHub by its blob sha). Edit
+from <author> (#<n>)", or "Change ..." when the vault has it). A note the card says was not shown (a model, bytes that
+are not text, over 200 KB, or past the submission's budget) is never added: Add says "This file was not shown to you,
+so Fridae cannot add it.", as Add on a skill with an unshown file does; it can still be rejected. Edit
 then add commits the maintainer's text (at most 200 KB); only text can be edited. A change to a skill the vault already
 has keeps that skill's `owner` and `source`, and its `credit` gains the sender's login unless it is already there; a new
 skill gets the first-time credit above. The thank-you names skills by name and notes by title.
