@@ -151,6 +151,40 @@ pub(crate) fn commit_files(repo: &str, branch: &str, files: &[(String, Vec<u8>)]
     Ok(sha)
 }
 
+/// The most entries one tree call carries in `commit_tree`.
+pub(crate) const TREE_BATCH: usize = 200;
+
+/// Commit `files` (added or replaced) onto `branch` as one commit, for uploads too big for `commit_files`' one blob
+/// call per file: the tree is built as a chain of tree calls of at most `TREE_BATCH` entries, each on the last. A text
+/// file (UTF-8 with no NUL) goes inline as `content`; any other file as a blob first. The branch moves only forward
+/// (`force: false`). Returns the new commit's sha.
+pub(crate) fn commit_tree(repo: &str, branch: &str, files: &[(String, Vec<u8>)], message: &str) -> Result<String, String> {
+    let head = head_sha(repo, branch)?;
+    let commit = call("GET", &format!("/repos/{repo}/git/commits/{head}"), None, "read the branch's newest commit")?;
+    let mut base = commit["tree"]["sha"].as_str().ok_or_else(|| unreadable("the commit"))?.to_string();
+    for batch in files.chunks(TREE_BATCH) {
+        let mut tree = Vec::with_capacity(batch.len());
+        for (path, bytes) in batch {
+            match std::str::from_utf8(bytes) {
+                Ok(text) if !text.contains('\0') => tree.push(json!({"path": path, "mode": "100644", "type": "blob", "content": text})),
+                _ => {
+                    let body = json!({"content": base64::engine::general_purpose::STANDARD.encode(bytes), "encoding": "base64"});
+                    let blob = call("POST", &format!("/repos/{repo}/git/blobs"), Some(body), "take a file")?;
+                    let sha = blob["sha"].as_str().ok_or_else(|| unreadable("a file"))?;
+                    tree.push(json!({"path": path, "mode": "100644", "type": "blob", "sha": sha}));
+                }
+            }
+        }
+        let made = call("POST", &format!("/repos/{repo}/git/trees"), Some(json!({"base_tree": base, "tree": tree})), "build the new files")?;
+        base = made["sha"].as_str().ok_or_else(|| unreadable("the new files"))?.to_string();
+    }
+    let new = call("POST", &format!("/repos/{repo}/git/commits"), Some(json!({"message": message, "tree": base, "parents": [head]})), "make the commit")?;
+    let sha = new["sha"].as_str().ok_or_else(|| unreadable("the commit"))?.to_string();
+    let changed = "The vault changed while Fridae was saving. Try again.";
+    call_as("PATCH", &format!("/repos/{repo}/git/refs/heads/{}", enc(branch)), Some(json!({"sha": sha, "force": false})), "move the branch to the new commit", &[(409, changed), (422, changed)])?;
+    Ok(sha)
+}
+
 /// The user's fork of `upstream`: made when they have none (waiting up to `FORK_WAIT` in all for GitHub to finish,
 /// asking the name GitHub gave the fork), then brought up to date with the upstream's main. Returns "login/name".
 pub(crate) fn ensure_fork(upstream: &str) -> Result<String, String> {
@@ -416,6 +450,66 @@ mod tests {
         assert_eq!((commit["tree"].as_str(), commit["parents"][0].as_str(), commit["message"].as_str()), (Some("tree1"), Some("head1"), Some("Add a")));
         let patch: Value = serde_json::from_str(&r[5].2).unwrap();
         assert_eq!((patch["sha"].as_str(), patch["force"].as_bool()), (Some("commit2"), Some(false)));
+    }
+
+    #[test]
+    fn commit_tree_sends_text_inline_and_binaries_as_blobs() {
+        let (_g, s) = setup(
+            Box::new(|m, p, _, seen| match (m, p) {
+                ("GET", "/repos/o/r/git/ref/heads/main") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
+                ("GET", "/repos/o/r/git/commits/head1") => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
+                ("POST", "/repos/o/r/git/blobs") => (201, format!(r#"{{"sha":"blob{seen}"}}"#)),
+                ("POST", "/repos/o/r/git/trees") => (201, format!(r#"{{"sha":"tree{seen}"}}"#)),
+                ("POST", "/repos/o/r/git/commits") => (201, r#"{"sha":"commit2"}"#.into()),
+                ("PATCH", "/repos/o/r/git/refs/heads/main") => (200, "{}".into()),
+                _ => (404, "{}".into()),
+            }),
+            true,
+        );
+        let mut files: Vec<(String, Vec<u8>)> = (0..447).map(|i| (format!("Roblox/n{i:03}.md"), format!("Note {i}, é.\n").into_bytes())).collect();
+        files.insert(10, ("Roblox/a.fbx".into(), b"Kaydara\0FBX".to_vec()));
+        files.insert(250, ("Roblox/b.glb".into(), vec![0x67, 0x6c, 0x54, 0x46, 0, 1]));
+        files.insert(420, ("Roblox/c.bin".into(), vec![0xff, 0xfe, 0x41])); // not UTF-8, no NUL
+        assert_eq!(files.len(), 450);
+        let sha = commit_tree("o/r", "main", &files, "Add the guides").unwrap();
+        assert_eq!(sha, "commit2");
+        let r = requests(&s);
+        let count = |m: &str, p: &str| r.iter().filter(|x| x.0 == m && x.1 == p).count();
+        assert_eq!(count("POST", "/repos/o/r/git/trees"), 3);
+        assert_eq!(count("POST", "/repos/o/r/git/blobs"), 3);
+        assert_eq!(count("POST", "/repos/o/r/git/commits"), 1);
+        assert_eq!(count("PATCH", "/repos/o/r/git/refs/heads/main"), 1);
+        assert_eq!(TREE_BATCH, 200);
+        let trees: Vec<Value> = r.iter().filter(|x| x.1 == "/repos/o/r/git/trees").map(|x| serde_json::from_str(&x.2).unwrap()).collect();
+        // each tree is built on the last one
+        let bases: Vec<&str> = trees.iter().map(|t| t["base_tree"].as_str().unwrap()).collect();
+        assert_eq!(bases, vec!["tree0", "tree1", "tree2"]);
+        let mut seen = Vec::new();
+        for t in &trees {
+            let entries = t["tree"].as_array().unwrap();
+            assert!(entries.len() <= TREE_BATCH);
+            for e in entries {
+                let o = e.as_object().unwrap();
+                assert!(o.contains_key("content") != o.contains_key("sha"), "{e}");
+                assert_eq!((e["mode"].as_str(), e["type"].as_str()), (Some("100644"), Some("blob")));
+                seen.push(e["path"].as_str().unwrap().to_string());
+                if e["path"] == "Roblox/n000.md" {
+                    assert_eq!(e["content"], "Note 0, é.\n");
+                }
+                if ["Roblox/a.fbx", "Roblox/b.glb", "Roblox/c.bin"].contains(&e["path"].as_str().unwrap()) {
+                    assert!(e["sha"].as_str().is_some_and(|s| s.starts_with("blob")), "{e}");
+                }
+            }
+        }
+        let want: Vec<String> = files.iter().map(|f| f.0.clone()).collect();
+        assert_eq!(seen, want, "every file once, in order");
+        let blob: Value = serde_json::from_str(&r.iter().find(|x| x.1 == "/repos/o/r/git/blobs").unwrap().2).unwrap();
+        assert_eq!((blob["encoding"].as_str(), blob["content"].as_str()), (Some("base64"), Some(base64::engine::general_purpose::STANDARD.encode(b"Kaydara\0FBX").as_str())));
+        let commit: Value = serde_json::from_str(&r.iter().find(|x| x.1 == "/repos/o/r/git/commits" && x.0 == "POST").unwrap().2).unwrap();
+        assert_eq!((commit["tree"].as_str(), commit["parents"][0].as_str(), commit["message"].as_str()), (Some("tree3"), Some("head1"), Some("Add the guides")));
+        let patch: Value = serde_json::from_str(&r.iter().find(|x| x.0 == "PATCH").unwrap().2).unwrap();
+        assert_eq!((patch["sha"].as_str(), patch["force"].as_bool()), (Some("commit2"), Some(false)));
+        assert!(r.iter().all(|x| x.1.starts_with("/repos/o/r/")), "only the stub's vault repo");
     }
 
     #[test]

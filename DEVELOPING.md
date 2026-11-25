@@ -2188,11 +2188,13 @@ updates, and nothing leaves a computer until its owner turns sharing on. The rep
 makes it from their own Fridae (Create the vault repo, below) after the branch is merged. Until then the vault's
 calls say plainly that there is no release.
 
-**The repository.** `Skills/<skill>/...` (one folder per skill, with a `SKILL.md` and sometimes scripts),
-`manifest.json` (written by each release), `README.md`, `Skills/README.md`, `LICENSE.md` and `CONTRIBUTING.md`.
-`LICENSE.md` names CC BY 4.0 by its address and holds the full MIT text (the long Creative Commons legal code was not
-typed in from memory; the maintainer may paste the official text later). `Skills/README.md` is not a skill (a skill's
-file has three path parts) and is never in a manifest. Notes are not in the vault yet; phase 3 is skills only.
+**The repository.** `Skills/<skill>/...` (one folder per skill, with a `SKILL.md` and sometimes scripts), `Roblox/`
+(the Roblox guides: LihFolk's notes, with `Roblox/LICENSE.md`, and Fridae's), `manifest.json` (written by each
+release), `README.md`, `Skills/README.md`, `LICENSE.md` and `CONTRIBUTING.md`. `LICENSE.md` names CC BY 4.0 by its
+address, says who to credit (notes and files in `Roblox/` that credit LihFolk as "LihFolk Vault V2 by LihFolk", under
+his own `Roblox/LICENSE.md`; everything else as "Fridae Studios vault"), and holds the full MIT text for the skills'
+scripts (the long Creative Commons legal code was not typed in from memory; the maintainer may paste the official text
+later). `Skills/README.md` is not a skill (a skill's file has three path parts) and is never in a manifest.
 The manifest is `{format: 1, release, made, files: [{path, sha256, size}]}`. A release is a GitHub release named
 `vault-YYYY.MM.DD` (then `.2`, `.3`) at the commit that holds that manifest, and the manifest's `release` is that tag.
 
@@ -2315,7 +2317,13 @@ the pull request will be thanked and closed. Decisions are remembered by request
 that changed asks again. When every skill in a request is decided, Fridae thanks the sender in a comment and closes it.
 
 **Create the vault repo** (the maintainer's click and confirm; only for the account that owns `aprilfridae`, and only
-when the repo does not exist). It makes the public repo with the four text files above. Nothing else ever makes it.
+when the repo does not exist). It makes the public repo with the four text files above and the Roblox guides, in one
+commit ("Add the licence, the readmes and the Roblox guides"). The guides come from `vault/Roblox` of the copy it runs
+in, minus `_tools/` and `_data/` (the code's data), dot-entries and links (`vault_inbox::guide_files`); only a copy run
+from source has them, and they are read before anything is asked of GitHub, so an installed app answers "This copy of
+Fridae has no Roblox guides to upload. Run Fridae from its source folder to create the vault." and makes nothing. The
+commit is built by `vault_git::commit_tree`: trees of at most 200 entries chained on one another, text inline and
+only binaries (rigs, models) as blobs, so about 1,350 guides take about 7 tree calls. Nothing else ever makes the repo.
 **The real repo is not made yet and the first release is not published**: both are the user's presses in their own
 Fridae, after the branch is merged with their word.
 

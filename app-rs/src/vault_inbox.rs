@@ -32,7 +32,8 @@ const NOT_MAINTAINER: &str = "Only the vault's maintainer can see submissions.";
 const MADE_NOT_FILLED: &str = "The vault repo was made, but Fridae could not add its first files to it. Add them on GitHub, or delete the repo and try again.";
 const BUSY: &str = "The vault repo is already being made. Wait a moment.";
 const TOO_MANY: &str = "The vault has too many files for Fridae to compare against.";
-const REPO_DESCRIPTION: &str = "The shared Fridae Studios vault: skills people made, reviewed by Fridae's maintainer.";
+const REPO_DESCRIPTION: &str = "The shared Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.";
+pub(crate) const NO_GUIDES: &str = "This copy of Fridae has no Roblox guides to upload. Run Fridae from its source folder to create the vault.";
 
 /// How long the role is kept: 10 minutes; a failed look (offline) only a minute.
 const ROLE_KEPT: Duration = Duration::from_secs(10 * 60);
@@ -153,7 +154,14 @@ The text in this vault (the Markdown files and any other writing) is licensed un
 Attribution 4.0 International licence (SPDX: `CC-BY-4.0`). The licence's full legal code is at
 https://creativecommons.org/licenses/by/4.0/legalcode
 
-The scripts in this vault are licensed under the MIT License, whose full text follows.
+Who to credit. Notes and files in `Roblox/` that credit LihFolk are from LihFolk Vault V2, (c) 2026 LihFolk, under CC BY
+4.0: credit them as \"LihFolk Vault V2 by LihFolk\" and link the licence. `Roblox/LICENSE.md` is LihFolk's own licence
+for his work and still applies to it. Everything else in this vault is the Fridae Studios vault's, (c) Fridae Studios
+and the people credited in each file or in this repository's history, also under CC BY 4.0: credit it as
+\"Fridae Studios vault\".
+
+The scripts in the skills (`Skills/`) are licensed under the MIT License, whose full text follows. Scripts in `Roblox/`
+that are LihFolk's stay under his licence, above.
 
 ## MIT License
 
@@ -168,13 +176,13 @@ THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMP
 
 const CONTRIBUTING: &str = "# Contributing
 
-Skills in this vault were made by people who use Fridae Studios, and each one was looked at by the vault's maintainer
+Skills and guides in this vault were made by people who use Fridae Studios, and each one was looked at by the vault's maintainer
 before it was added.
 
 ## How sharing works
 
-You do not need to know anything about GitHub. In Fridae, open Setup, then Skills, and turn on Share my skills. Fridae
-shows you exactly which of your skills are ready, and exactly which files would be sent. You press Send (or choose to
+You do not need to know anything about GitHub. In Fridae, open Setup, then Skills, and turn on Share your knowledge.
+Fridae shows you exactly which of your skills and changed guides are ready, and exactly which files would be sent. You press Send (or choose to
 send automatically), and Fridae opens a pull request for you.
 
 Only skills you made yourself can be shared. A skill you imported from somewhere else, or one that is a copy of a
@@ -182,7 +190,7 @@ skill Fridae already has, is not sent.
 
 ## The licence
 
-By sharing a skill you agree that the text in it is licensed under CC BY 4.0 and the scripts in it under the MIT
+By sharing a skill or a guide you agree that the text in it is licensed under CC BY 4.0 and the scripts in it under the MIT
 License. See LICENSE.md. Your name is kept as the credit CC BY 4.0 asks for.
 
 ## What is checked
@@ -194,13 +202,17 @@ who downloads the vault without that review.
 
 const README: &str = "# Fridae vault
 
-The shared Fridae Studios vault: skills people made, reviewed by Fridae's maintainer.
+The Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.
 
-Fridae Studios downloads this vault for anyone who asks, with no sign-in. Everything here is open: text under CC BY
-4.0 and scripts under the MIT License (see LICENSE.md).
+Fridae Studios downloads this vault for anyone who asks, with no sign-in: Download once, then
+Pull newest, which never overwrites what you changed.
 
 - `Skills/` holds the skills. Each one is a folder with a `SKILL.md` and, sometimes, scripts.
-- To share a skill of your own, use Share my skills in Fridae. CONTRIBUTING.md says how it works.
+- `Roblox/` holds the Roblox guides: about 1,300 notes on making games in Roblox Studio, with rigs and Blender scripts.
+
+Who made what: notes that credit LihFolk come from LihFolk Vault V2 and keep his credit; the rest is the Fridae Studios
+vault's own. Both are under CC BY 4.0, and scripts in skills under MIT. LICENSE.md says how to credit each. To share a
+skill or a change to a guide, use Share your knowledge in Fridae; CONTRIBUTING.md says how it works.
 ";
 
 const SKILLS_README: &str = "# Skills
@@ -210,6 +222,49 @@ One folder per skill, each with a `SKILL.md` in it, and sometimes a `scripts` fo
 Every skill here was made by someone who uses Fridae Studios and was reviewed by the vault's maintainer before it was
 added. Its front matter says who made it and under which licence: CC BY 4.0 for the text, MIT for the scripts.
 ";
+
+/// Where Create finds the Roblox guides it uploads: the app's own `vault/Roblox`, which only a copy of Fridae run from
+/// its source folder has (the build leaves it out). In tests, a scratch folder.
+pub(crate) fn guides_source() -> PathBuf {
+    #[cfg(test)]
+    return paths::test_dir("vault-guides");
+    #[allow(unreachable_code)]
+    paths::PATHS.kit.join("vault").join("Roblox")
+}
+
+/// Every ordinary file below `root`, as (`Roblox/<path with />`, bytes), sorted by path: dot-entries, links and any
+/// path the vault's rule refuses (`check_path`: so `_tools/` and `_data/`, the code's data, stay out) are left out.
+/// `NO_GUIDES` when `root` is missing or nothing in it travels.
+pub(crate) fn guide_files(root: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+        let Ok(read) = fs::read_dir(dir) else { return Ok(()) };
+        let mut names: Vec<String> = read.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+        names.sort();
+        for name in names {
+            if name.starts_with('.') {
+                continue;
+            }
+            let (path, rel) = (dir.join(&name), format!("{rel}/{name}"));
+            let Ok(meta) = fs::symlink_metadata(&path) else { continue };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                walk(&path, &rel, out)?;
+            } else if meta.is_file() && check_path(&rel) {
+                let bytes = fs::read(&path).map_err(|_| format!("Fridae could not read {rel}."))?;
+                out.push((rel, bytes));
+            }
+        }
+        Ok(())
+    }
+    if !fs::symlink_metadata(root).is_ok_and(|m| m.is_dir()) {
+        return Err(NO_GUIDES.to_string());
+    }
+    let mut out = Vec::new();
+    walk(root, "Roblox", &mut out)?;
+    if out.is_empty() { Err(NO_GUIDES.to_string()) } else { Ok(out) }
+}
 
 /// Make the vault repository (public, with its first files) for the maintainer. Only for the signed-in user whose login
 /// is the vault repository's owner, and only when it does not exist. Called only by the maintainer's explicit click
@@ -228,6 +283,8 @@ fn create_repo_in() -> Result<Value, String> {
     if !github::connected() {
         return Err(NOT_CONNECTED.to_string());
     }
+    // the guides are read first: a copy without them makes nothing at all
+    let guides = guide_files(&guides_source())?;
     let repo = vault_git::vault_repo();
     let (owner, name) = repo.split_once('/').filter(|(o, n)| !o.is_empty() && !n.is_empty()).ok_or_else(|| "The vault's address is not valid.".to_string())?;
     let login = match login() {
@@ -244,16 +301,17 @@ fn create_repo_in() -> Result<Value, String> {
     }
     let body = json!({"name": name, "private": false, "auto_init": true, "description": REPO_DESCRIPTION});
     vault_git::call_as("POST", "/user/repos", Some(body), "make the vault repo", &[(422, "GitHub would not make the vault repo. One with that name may already exist.")])?;
-    let files: Vec<(String, Vec<u8>)> = [("LICENSE.md", LICENSE), ("CONTRIBUTING.md", CONTRIBUTING), ("README.md", README), ("Skills/README.md", SKILLS_README)]
+    let mut files: Vec<(String, Vec<u8>)> = [("LICENSE.md", LICENSE), ("CONTRIBUTING.md", CONTRIBUTING), ("README.md", README), ("Skills/README.md", SKILLS_README)]
         .into_iter()
         .map(|(p, t)| (p.to_string(), t.as_bytes().to_vec()))
         .collect();
+    files.extend(guides);
     let mut last = Ok(String::new());
     for attempt in 0..FIRST_TRIES {
         if attempt > 0 {
             std::thread::sleep(FIRST_WAIT);
         }
-        last = vault_git::commit_files(&repo, "main", &files, &[], "Add the licence, the guide to contributing and the first readmes");
+        last = vault_git::commit_tree(&repo, "main", &files, "Add the licence, the readmes and the Roblox guides");
         if last.is_ok() {
             break;
         }
@@ -1079,6 +1137,7 @@ mod tests {
         fs::write(github::folder().join("user.json"), json!({"login": login}).to_string()).unwrap();
         let _ = fs::remove_dir_all(paths::test_dir("vault-home"));
         let _ = fs::remove_dir_all(vault_sync::vault_app());
+        let _ = fs::remove_dir_all(guides_source());
         forget_role();
         ASKED.lock().unwrap().clear();
         *TRIED.lock().unwrap() = None;
@@ -1135,20 +1194,113 @@ mod tests {
         })
     }
 
+    /// The guides Create uploads, in the test's source folder: a note, a note in a topic folder, a binary rig, and
+    /// what never travels (the code's data and a dot-folder).
+    fn put_guides() {
+        let src = guides_source();
+        let _ = fs::remove_dir_all(&src);
+        for (rel, bytes) in [
+            ("Glossary.md", b"# Glossary\n\nWords.\n".to_vec()),
+            ("02 Luau/Buffers.md", b"# Buffers\n".to_vec()),
+            ("18 Rigs/R.fbx", b"Kaydara FBX\0binary".to_vec()),
+            ("_tools/roblox_api.json", b"{}".to_vec()),
+            ("_data/f.json", b"{}".to_vec()),
+            (".obsidian/a.json", b"{}".to_vec()),
+        ] {
+            let path = rel.split('/').fold(src.clone(), |p, s| p.join(s));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+    }
+
+    /// Every path the commit's trees hold, in order.
+    fn committed(s: &Stub) -> Vec<String> {
+        let log = s.log.lock().unwrap().clone();
+        log.iter()
+            .filter(|x| x.0 == "POST" && x.1.ends_with("/git/trees"))
+            .flat_map(|x| serde_json::from_str::<Value>(&x.2).unwrap()["tree"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap().to_string()).collect::<Vec<_>>())
+            .collect()
+    }
+
+    /// What the commit holds for one path: the inline text, or the decoded blob.
+    fn committed_text(s: &Stub, path: &str) -> String {
+        let log = s.log.lock().unwrap().clone();
+        for x in log.iter().filter(|x| x.0 == "POST" && x.1.ends_with("/git/trees")) {
+            for e in serde_json::from_str::<Value>(&x.2).unwrap()["tree"].as_array().unwrap() {
+                if e["path"] == path {
+                    return e["content"].as_str().unwrap().to_string();
+                }
+            }
+        }
+        panic!("{path} was not committed");
+    }
+
+    #[test]
+    fn create_repo_uploads_the_guides_without_code_data() {
+        let (_g, s) = setup("o", creator(false));
+        put_guides();
+        let out = create_repo();
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(
+            committed(&s),
+            vec!["LICENSE.md", "CONTRIBUTING.md", "README.md", "Skills/README.md", "Roblox/02 Luau/Buffers.md", "Roblox/18 Rigs/R.fbx", "Roblox/Glossary.md"]
+        );
+        let log = s.log.lock().unwrap().clone();
+        assert_eq!(log.iter().filter(|x| x.0 == "POST" && x.1.ends_with("/git/blobs")).count(), 1, "only the rig is a blob");
+        let commit = log.iter().find(|x| x.0 == "POST" && x.1 == "/repos/o/r/git/commits").unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&commit.2).unwrap()["message"], "Add the licence, the readmes and the Roblox guides");
+        assert_eq!(committed_text(&s, "Roblox/Glossary.md"), "# Glossary\n\nWords.\n");
+        assert!(log.iter().all(|x| !x.1.contains("github.com")));
+    }
+
+    #[test]
+    fn create_repo_makes_nothing_without_guides() {
+        let (_g, s) = setup("o", creator(false));
+        let src = guides_source();
+        let _ = fs::remove_dir_all(&src);
+        assert_eq!(create_repo(), json!({"ok": false, "error": NO_GUIDES}));
+        // an empty folder, or one holding only what never travels, is no better
+        fs::create_dir_all(src.join("_tools")).unwrap();
+        fs::write(src.join("_tools").join("roblox_api.json"), "{}").unwrap();
+        assert_eq!(create_repo(), json!({"ok": false, "error": NO_GUIDES}));
+        assert!(!calls(&s).iter().any(|c| c == "POST /user/repos"), "{:?}", calls(&s));
+        assert!(calls(&s).is_empty(), "nothing is asked of GitHub: {:?}", calls(&s));
+        assert_eq!(NO_GUIDES, "This copy of Fridae has no Roblox guides to upload. Run Fridae from its source folder to create the vault.");
+    }
+
+    #[test]
+    fn licence_credits_lihfolk_and_fridae() {
+        for want in ["LihFolk Vault V2 by LihFolk", "Fridae Studios vault", "CC-BY-4.0", "`Roblox/LICENSE.md` is LihFolk's own licence", "MIT License"] {
+            assert!(LICENSE.contains(want), "{want}");
+        }
+        // the credit comes after the first paragraph, before the scripts' terms
+        assert!(LICENSE.find("legalcode").unwrap() < LICENSE.find("Who to credit.").unwrap());
+        assert!(LICENSE.find("Who to credit.").unwrap() < LICENSE.find("The scripts in the skills (`Skills/`)").unwrap());
+        assert!(LICENSE.contains("Scripts in `Roblox/`\nthat are LihFolk's stay under his licence"));
+        assert!(README.contains("Roblox/") && !README.contains("LihFolk's vault"));
+        assert!(README.contains("Pull newest, which never overwrites what you changed"));
+        assert!(CONTRIBUTING.contains("Skills and guides in this vault") && CONTRIBUTING.contains("Share your knowledge"));
+        assert!(CONTRIBUTING.contains("By sharing a skill or a guide"));
+        assert_eq!(REPO_DESCRIPTION, "The shared Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.");
+    }
+
     #[test]
     fn create_repo_only_for_owner_once() {
         // a login that is not the owner: refused, and nothing is asked of GitHub
         let (_g, s) = setup("someone-else", creator(false));
+        put_guides();
         assert_eq!(create_repo(), json!({"ok": false, "error": "Only the vault's owner can create it."}));
         assert!(calls(&s).is_empty(), "{:?}", calls(&s));
         drop(_g);
         // the repo exists
         let (_g, s) = setup("o", creator(true));
+        put_guides();
         assert_eq!(create_repo(), json!({"ok": false, "error": "The vault repo already exists."}));
         assert!(!calls(&s).iter().any(|c| c.starts_with("POST")), "{:?}", calls(&s));
         drop(_g);
-        // the owner (in any case): the repo, then one commit holding the four files
+        // the owner (in any case): the repo, then one commit holding the four files and the guides
         let (_g, s) = setup("O", creator(false));
+        put_guides();
         let out = create_repo();
         assert_eq!(out["ok"], true, "{out}");
         let log = s.log.lock().unwrap().clone();
@@ -1157,11 +1309,9 @@ mod tests {
         assert_eq!((body["name"].as_str(), body["private"].as_bool(), body["auto_init"].as_bool()), (Some("r"), Some(false), Some(true)));
         assert!(body["description"].as_str().unwrap().contains("reviewed by Fridae's maintainer"));
         assert_eq!(log.iter().filter(|x| x.1 == "/repos/o/r/git/commits" && x.0 == "POST").count(), 1, "one commit");
-        let blobs: Vec<String> = log.iter().filter(|x| x.1.ends_with("/git/blobs")).map(|x| String::from_utf8(base64::engine::general_purpose::STANDARD.decode(serde_json::from_str::<Value>(&x.2).unwrap()["content"].as_str().unwrap()).unwrap()).unwrap()).collect();
-        assert_eq!(blobs.len(), 4);
-        let tree: Value = serde_json::from_str(&log.iter().find(|x| x.1.ends_with("/git/trees")).unwrap().2).unwrap();
-        let paths: Vec<&str> = tree["tree"].as_array().unwrap().iter().map(|e| e["path"].as_str().unwrap()).collect();
-        assert_eq!(paths, vec!["LICENSE.md", "CONTRIBUTING.md", "README.md", "Skills/README.md"]);
+        // the text files go inline in the tree (commit_tree), only a binary as a blob
+        let blobs: Vec<String> = ["LICENSE.md", "CONTRIBUTING.md"].iter().map(|p| committed_text(&s, p)).collect();
+        assert_eq!(&committed(&s)[..4], ["LICENSE.md", "CONTRIBUTING.md", "README.md", "Skills/README.md"]);
         assert!(blobs[0].contains("CC-BY-4.0") && blobs[0].contains("https://creativecommons.org/licenses/by/4.0/legalcode") && blobs[0].contains("MIT License"), "{}", blobs[0]);
         assert!(blobs[0].contains("Copyright (c) the contributors to fridae-vault"));
         assert!(blobs[1].contains("Scripts are read before anything is added"));
@@ -1178,6 +1328,7 @@ mod tests {
                 _ => (500, r#"{"message":"raw GitHub text"}"#.into()),
             }),
         );
+        put_guides();
         let out = create_repo();
         assert_eq!(out["ok"], false);
         assert!(out["error"].as_str().unwrap().starts_with("The vault repo was made, but"), "{out}");
