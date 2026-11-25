@@ -61,8 +61,8 @@ const UNIT: Duration = Duration::from_millis(10);
 
 const EXPIRED: &str = "The code ran out of time before it was entered on GitHub. Press Connect to get a new one.";
 const DENIED: &str = "Connecting was cancelled on GitHub's page. Press Connect to try again.";
-const OFFLINE: &str = "Could not reach GitHub. Check the internet connection and try again.";
-const NOT_CONNECTED: &str = "Connect GitHub first: Setup, Connections.";
+pub(crate) const OFFLINE: &str = "Could not reach GitHub. Check the internet connection and try again.";
+pub(crate) const NOT_CONNECTED: &str = "Connect GitHub first: Setup, Connections.";
 const REFUSED: &str = "GitHub no longer accepts Fridae's sign-in. Disconnect GitHub in Setup, Connections, and connect again.";
 const BUSY: &str = "Fridae is already sending this project to GitHub.";
 const NOT_PUT: &str = "This project is not on GitHub from Fridae yet. Press Put on GitHub first.";
@@ -73,6 +73,10 @@ const NOT_PUT: &str = "This project is not on GitHub from Fridae yet. Press Put 
 pub struct StandIn {
     pub web: String,
     pub api: String,
+    /// raw.githubusercontent.com
+    pub raw: String,
+    /// the vault's repository, as "owner/name"
+    pub vault_repo: Option<String>,
     pub client_id: Option<String>,
     pub projects: Vec<String>,
 }
@@ -93,18 +97,26 @@ pub fn configured() -> bool {
 }
 
 /// github.com, where the sign-in pages and the repositories are.
-fn web_base() -> String {
+pub(crate) fn web_base() -> String {
     #[cfg(test)]
     return STAND_IN.lock().unwrap().as_ref().map(|s| s.web.clone()).unwrap_or_default();
     #[allow(unreachable_code)]
     "https://github.com".to_string()
 }
 
-fn api_base() -> String {
+pub(crate) fn api_base() -> String {
     #[cfg(test)]
     return STAND_IN.lock().unwrap().as_ref().map(|s| s.api.clone()).unwrap_or_default();
     #[allow(unreachable_code)]
     "https://api.github.com".to_string()
+}
+
+/// raw.githubusercontent.com, where a repository's files are read without a token.
+pub(crate) fn raw_base() -> String {
+    #[cfg(test)]
+    return STAND_IN.lock().unwrap().as_ref().map(|s| s.raw.clone()).unwrap_or_default();
+    #[allow(unreachable_code)]
+    "https://raw.githubusercontent.com".to_string()
 }
 
 /// Whether a folder is one of the user's projects (the only folders `put` and `push` touch).
@@ -162,11 +174,11 @@ fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
     fs::rename(&tmp, path)
 }
 
-fn save_token(token: &str) -> std::io::Result<()> {
+pub(crate) fn save_token(token: &str) -> std::io::Result<()> {
     write_private(&token_file(), token)
 }
 
-fn read_token() -> Option<String> {
+pub(crate) fn read_token() -> Option<String> {
     fs::read_to_string(token_file()).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
 }
 
@@ -316,7 +328,7 @@ fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-fn http() -> ureq::Agent {
+pub(crate) fn http() -> ureq::Agent {
     use ureq::tls::{TlsConfig, TlsProvider};
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
@@ -327,7 +339,7 @@ fn http() -> ureq::Agent {
         .into()
 }
 
-fn answer(resp: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<(u16, Value), String> {
+pub(crate) fn answer(resp: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<(u16, Value), String> {
     let mut resp = resp.map_err(|_| OFFLINE.to_string())?;
     let code = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
@@ -339,13 +351,13 @@ fn post_form(url: &str, form: &[(&str, &str)]) -> Result<(u16, Value), String> {
 }
 
 /// A call to GitHub's API with the token.
-fn api(method: &str, path: &str, token: &str, body: Option<Value>) -> Result<(u16, Value), String> {
+pub(crate) fn api(method: &str, path: &str, token: &str, body: Option<Value>) -> Result<(u16, Value), String> {
     let url = format!("{}{path}", api_base());
     let auth = format!("Bearer {token}");
     let agent = http();
-    let resp = if method == "POST" {
-        agent
-            .post(&url)
+    let resp = if method == "POST" || method == "PATCH" {
+        let req = if method == "POST" { agent.post(&url) } else { agent.patch(&url) };
+        req
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "fridae-studios")
             .header("X-GitHub-Api-Version", "2022-11-28")
@@ -358,7 +370,7 @@ fn api(method: &str, path: &str, token: &str, body: Option<Value>) -> Result<(u1
 }
 
 /// GitHub's own words, plain and short, when it gives some.
-fn said(v: &Value) -> String {
+pub(crate) fn said(v: &Value) -> String {
     let text = v["error_description"].as_str().or(v["message"].as_str()).or(v["error"].as_str()).unwrap_or("");
     text.chars().filter(|c| !c.is_control()).take(200).collect::<String>().trim().to_string()
 }
@@ -401,7 +413,7 @@ fn fetch_user(token: &str, flow: u64) -> bool {
     with(|s| s.flow == flow && read_token().as_deref() == Some(token) && write_private(&user_file(), &text).is_ok())
 }
 
-fn user() -> Value {
+pub(crate) fn user() -> Value {
     fs::read_to_string(user_file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
 }
 
@@ -1041,7 +1053,7 @@ pub(crate) mod tests {
     fn setup(existing: &[&str], projects: Vec<String>) -> (MutexGuard<'static, ()>, Stub) {
         let held = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let s = stub(existing);
-        *STAND_IN.lock().unwrap() = Some(StandIn { web: s.url.clone(), api: s.url.clone(), client_id: None, projects });
+        *STAND_IN.lock().unwrap() = Some(StandIn { web: s.url.clone(), api: s.url.clone(), raw: String::new(), vault_repo: None, client_id: None, projects });
         disconnect();
         let _ = fs::remove_file(targets_file());
         // (the count carries on: a waiting thread left by an earlier test must never find its number current again)

@@ -16,6 +16,8 @@ use serde_json::{Map, Value};
 pub const APP: &str = "Fridae Studios";
 pub const VERSION: &str = env!("FRIDAE_VERSION");
 pub const UPDATE_REPO: &str = env!("FRIDAE_REPO");
+/// The shared skill vault on GitHub.
+pub const VAULT_REPO: &str = "aprilfridae/fridae-vault";
 pub const EXE_NAME: &str = "Fridae Studios.exe";
 #[cfg(windows)]
 const NO_WINDOW: u32 = 0x0800_0000;

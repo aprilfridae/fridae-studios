@@ -46,6 +46,7 @@ mod swarm;
 mod team;
 mod textures;
 mod update;
+mod vault_git;
 mod usage;
 
 use crate::paths::Start;
