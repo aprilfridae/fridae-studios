@@ -318,7 +318,10 @@ fn prepare_in() -> Result<Value, String> {
             for (rel, path) in files {
                 let bytes = fs::read(&path).map_err(|_| NO_ROOM.to_string())?;
                 let text = String::from_utf8_lossy(&bytes).to_string();
-                let masked_text = compact::mask_for_sharing(&text);
+                let mut masked_text = compact::mask_for_sharing(&text);
+                if rel == "SKILL.md" {
+                    masked_text = restore_credit(&text, &masked_text);
+                }
                 let masked = masked_text != text;
                 if masked {
                     put(&path, masked_text.as_bytes())?;
@@ -340,6 +343,19 @@ fn prepare_in() -> Result<Value, String> {
         vault_sync::remove(&dir);
     }
     made
+}
+
+/// The `credit:` and `source:` lines of a SKILL.md as they were before masking: the sender's GitHub login is the
+/// credit the licence asks for, and it is already in the title, the commit and the branch, so hiding it buys nothing.
+fn restore_credit(orig: &str, masked: &str) -> String {
+    let line_of = |text: &'_ str, key: &str| text.lines().find(|l| l.starts_with(key)).map(str::to_string);
+    let mut out = masked.to_string();
+    for key in ["credit:", "source:"] {
+        if let (Some(was), Some(now)) = (line_of(orig, key), line_of(masked, key)) {
+            out = out.replacen(&now, &was, 1);
+        }
+    }
+    out
 }
 
 /// The title of the pull request: the first three names, then "+N more".
@@ -660,6 +676,37 @@ mod tests {
         assert!(!everything.contains("me.person@example.com") && !everything.contains(&home), "the raw text never reached GitHub");
         // the user's own skill is as it was
         assert!(fs::read_to_string(library().join("alpha").join("SKILL.md")).unwrap().contains("me.person@example.com"));
+    }
+
+    #[test]
+    fn the_credit_is_never_masked() {
+        let (_g, s) = setup();
+        // the local user name is the GitHub login, and another login holds it as a word
+        let was = std::env::var("USER").ok();
+        unsafe { std::env::set_var("USER", "tester") };
+        skill("alpha", &format!("{ALPHA}
+
+Made by tester."), &[]);
+        mode_is("review");
+        let made = prepare();
+        let out = send(made["batch"].as_str().unwrap(), &[]);
+        match was {
+            Some(v) => unsafe { std::env::set_var("USER", v) },
+            None => unsafe { std::env::remove_var("USER") },
+        }
+        assert_eq!(out["ok"], true, "{out}");
+        let sent = String::from_utf8(committed(&s)["Skills/alpha/SKILL.md"].clone()).unwrap();
+        assert!(sent.contains("credit: tester") && sent.contains("source: shared from Fridae by tester"), "{sent}");
+        assert!(sent.contains("Made by [user]."), "the name elsewhere is still hidden: {sent}");
+        let keep = |orig: &str, masked: &str| restore_credit(orig, masked);
+        assert_eq!(keep("credit: river-dev
+x river", "credit: [user]-dev
+x [user]"), "credit: river-dev
+x [user]");
+        assert_eq!(keep("source: shared from Fridae by River
+", "source: shared from Fridae by [user]
+"), "source: shared from Fridae by River
+");
     }
 
     #[test]

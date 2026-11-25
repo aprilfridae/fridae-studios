@@ -202,7 +202,7 @@ fn mask_for_sharing_with(text: &str, home: &str, user: &str) -> String {
     }
     let user = user.trim();
     if user.chars().count() >= 3 {
-        let re = Regex::new(&format!(r"{}\b{}\b", if windows { "(?i)" } else { "" }, regex::escape(user))).unwrap();
+        let re = Regex::new(&format!(r"\b{}\b", regex::escape(user))).unwrap();
         out = re.replace_all(&out, "[user]").to_string();
     }
     out
@@ -905,8 +905,8 @@ mod tests {
         ] {
             assert_eq!(mask_for_sharing_with(text, home, "Angela"), want, "{text}");
         }
-        // the name on its own, whatever its case, and a home written with the other slash
-        assert_eq!(mask_for_sharing_with("made by angela", home, "Angela"), "made by [user]");
+        // the name on its own as it is written (the name mask keeps its case), and a home written with the other slash
+        assert_eq!(mask_for_sharing_with("made by Angela, not angela", home, "Angela"), "made by [user], not angela");
         assert_eq!(mask_for_sharing_with(r"C:\Users\Angela\a", "C:/Users/Angela/", "Angela"), r"~\a");
     }
 
@@ -924,6 +924,13 @@ mod tests {
         assert_eq!(name(Some(" "), Some("b"), "/h/c"), "b");
         assert_eq!(name(None, None, "/h/c"), "c");
         assert_eq!(name(None, None, r"C:\Users\d\"), "d");
+    }
+
+    #[test]
+    fn the_name_mask_keeps_its_case_on_every_platform() {
+        let home = r"C:\Users\User";
+        assert_eq!(mask_for_sharing_with(r"the user at C:\Users\User\x, an Admin and a User", home, "User"), r"the user at ~\x, an Admin and a [user]");
+        assert_eq!(mask_for_sharing_with("the user and the owner", r"C:\Users\Owner", "Owner"), "the user and the owner");
     }
 
     #[test]

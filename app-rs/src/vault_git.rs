@@ -59,8 +59,8 @@ fn sentence(what: &str, code: u16, v: &Value) -> String {
     match code {
         401 => "GitHub no longer accepts Fridae's sign-in. Disconnect GitHub in Setup, Connections, and connect again.".to_string(),
         403 | 429 if said.to_lowercase().contains("rate limit") => "GitHub says there have been too many requests. Try again in a few minutes.".to_string(),
-        _ if said.is_empty() => format!("GitHub would not {what} (error {code})."),
-        _ => format!("GitHub would not {what}: {said}."),
+        // never GitHub's own words: they are not written for this person
+        _ => format!("GitHub would not {what} (error {code})."),
     }
 }
 
@@ -459,6 +459,28 @@ mod tests {
         for e in [commit_files("o/r", "main", &files, &[], "m").unwrap_err(), open_pr("o/r", "me:b", "t", "b").unwrap_err()] {
             assert!(!e.contains("raw GitHub text"), "{e}");
         }
+    }
+
+    #[test]
+    fn unmapped_errors_never_quote_github() {
+        let (_g, _s) = setup(
+            Box::new(|m, p, _, _| match (m, p) {
+                ("GET", "/repos/o/r/git/ref/heads/main") => (500, r#"{"message":"Server blew up: raw GitHub text"}"#.into()),
+                ("GET", "/repos/o/r/git/ref/heads/ok") => (200, r#"{"object":{"sha":"head1"}}"#.into()),
+                ("GET", "/repos/o/r/git/commits/head1") => (200, r#"{"tree":{"sha":"tree0"}}"#.into()),
+                ("POST", "/repos/o/r/git/blobs") => (422, r#"{"message":"Invalid blob: raw GitHub text"}"#.into()),
+                ("POST", "/repos/o/r/forks") => (403, r#"{"message":"Forbidden: raw GitHub text"}"#.into()),
+                _ => (404, "{}".into()),
+            }),
+            true,
+        );
+        let files = [("Skills/a.md".to_string(), b"hi".to_vec())];
+        let errs = [head_sha("o/r", "main").unwrap_err(), commit_files("o/r", "ok", &files, &[], "m").unwrap_err(), call("POST", "/repos/o/r/forks", None, "make a copy").unwrap_err()];
+        for e in &errs {
+            assert!(!e.contains("raw GitHub text"), "{e}");
+        }
+        assert_eq!(errs[0], "GitHub would not say where the branch is (error 500).");
+        assert_eq!(errs[1], "GitHub would not take a file (error 422).");
     }
 
     #[test]
