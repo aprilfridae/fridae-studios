@@ -539,7 +539,31 @@ pub fn child_env_with(cmd: &mut Command, ai: &str, keys_switch: bool) {
     }
     if ai == "gemini" {
         cmd.env("AGY_CLI_DISABLE_AUTO_UPDATE", "1");
+        if !cfg!(test) {
+            quiet_gemini_updater(&home_dir()); // an added account's home is done in `accounts::home`
+        }
     }
+}
+
+/// Windows: tells Gemini it has just checked for updates, by giving `<home>/.gemini/antigravity-cli/last_check.timestamp`
+/// (an empty file) the time now. Every 15 minutes agy starts a background updater, which ignores
+/// `AGY_CLI_DISABLE_AUTO_UPDATE` and runs `agy --version` in a console window of its own: a terminal flashing on the
+/// screen (measured, agy of 2026-11-25: Windows Terminal for `agy.exe --version` the moment the file was 15 minutes
+/// old). The one write the app makes in the user's `.gemini`, by the user's choice (2026-11-25); only in a home where
+/// Gemini has run (its folder is there). agy then updates itself only when run outside the app.
+pub fn quiet_gemini_updater(home: &Path) {
+    #[cfg(windows)]
+    {
+        let data = home.join(".gemini").join("antigravity-cli");
+        if !data.is_dir() {
+            return;
+        }
+        if let Ok(f) = fs::File::options().create(true).append(true).open(data.join("last_check.timestamp")) {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = home;
 }
 
 /// Ends each process (started with `own_group`) and everything it started, and returns once they are gone.
@@ -2544,6 +2568,33 @@ mod job_tests {
 
 #[cfg(test)]
 mod tests {
+    /// Gemini's updater looks at this file's time; a check it thinks just happened opens no window (Windows).
+    #[cfg(windows)]
+    #[test]
+    fn gemini_is_told_it_just_checked_for_updates() {
+        let t = super::test_dir("quiet-updater");
+        let _ = std::fs::remove_dir_all(&t);
+        let data = t.join("used").join(".gemini").join("antigravity-cli");
+        std::fs::create_dir_all(&data).unwrap();
+        let stamp = data.join("last_check.timestamp");
+        std::fs::write(&stamp, b"").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(old).unwrap();
+        super::quiet_gemini_updater(&t.join("used"));
+        let age = std::fs::metadata(&stamp).unwrap().modified().unwrap().elapsed().unwrap_or_default();
+        assert!(age < std::time::Duration::from_secs(60), "the time is now: {age:?}");
+        assert_eq!(std::fs::read(&stamp).unwrap(), b"", "only its time changes");
+        // a Gemini folder without the file gets it
+        let fresh = t.join("fresh").join(".gemini").join("antigravity-cli");
+        std::fs::create_dir_all(&fresh).unwrap();
+        super::quiet_gemini_updater(&t.join("fresh"));
+        assert!(fresh.join("last_check.timestamp").is_file());
+        // a home where Gemini never ran is left as it is
+        std::fs::create_dir_all(t.join("never")).unwrap();
+        super::quiet_gemini_updater(&t.join("never"));
+        assert!(!t.join("never").join(".gemini").exists());
+    }
+
     #[test]
     fn a_saved_chatgpt_default_reads_as_claude() {
         assert_eq!(super::ai_choice(Some("chatgpt")), "claude");

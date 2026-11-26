@@ -113,7 +113,7 @@ class ToolCase(unittest.TestCase):
         os.chmod(self.agy, os.stat(self.agy).st_mode | stat.S_IEXEC)
         self.log = os.path.join(self.tmp, "agy.log")
         self.config = os.path.join(self.tmp, "config.json")
-        env = {"HOME": self.home, "RBXKIT_PROJECT": self.project, "FRIDAE_AGY": self.agy, "FAKE_AGY_LOG": self.log, "FAKE_AGY_MODE": "ok",
+        env = {"HOME": self.home, "USERPROFILE": self.home, "RBXKIT_PROJECT": self.project, "FRIDAE_AGY": self.agy, "FAKE_AGY_LOG": self.log, "FAKE_AGY_MODE": "ok",
                "RBXKIT_AGENT_ID": "c-test", "FRIDAE_SETTINGS_FROM_APP": "", "FRIDAE_GEMINI_IMAGES": ""}
         patch = mock.patch.dict(os.environ, env)
         patch.start()
@@ -994,6 +994,23 @@ class AgyEnvironment(ToolCase):
             self.assertEqual(env.get("FRIDAE_KEEP_ME"), "kept", what)
             self.assertEqual(env.get("HOME"), self.home, what)
         self.assertEqual(os.environ.get("AGY_CLI_FORCE_FILE_TOKEN_STORAGE"), None, "the tool server's own is left as it was")
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows: agy's updater opens a console window there")
+    def test_agy_is_told_it_just_checked_for_updates(self):
+        data = os.path.join(self.home, ".gemini", "antigravity-cli")
+        os.makedirs(data, exist_ok=True)
+        stamp = os.path.join(data, "last_check.timestamp")
+        open(stamp, "w").close()
+        os.utime(stamp, (time.time() - 3600, time.time() - 3600))
+        with mock.patch.dict(os.environ, {"USERPROFILE": self.home, "HOME": self.home}):
+            self.rbxgen.agy_env()
+        self.assertLess(time.time() - os.path.getmtime(stamp), 60)
+        self.assertEqual(os.path.getsize(stamp), 0, "only its time changes")
+        never = os.path.join(self.home, "never")
+        os.makedirs(never)
+        with mock.patch.dict(os.environ, {"USERPROFILE": never, "HOME": never}):
+            self.rbxgen.agy_env()
+        self.assertFalse(os.path.exists(os.path.join(never, ".gemini")), "a home where Gemini never ran is left alone")
 
 
 if __name__ == "__main__":

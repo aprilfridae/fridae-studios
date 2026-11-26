@@ -103,7 +103,26 @@ def agy_env():
     folder, where there is none ("please sign in")."""
     env = dict(os.environ)
     env.pop("AGY_CLI_FORCE_FILE_TOKEN_STORAGE", None)
+    quiet_agy_updater(env.get("USERPROFILE") or env.get("HOME") or "")
     return env
+
+
+def quiet_agy_updater(home):
+    """Windows: tells agy it has just checked for updates (`<home>/.gemini/antigravity-cli/last_check.timestamp`, an
+    empty file, given the time now). Every 15 minutes agy starts a background updater that ignores
+    AGY_CLI_DISABLE_AUTO_UPDATE and runs `agy --version` in a console window of its own, which flashes on the screen
+    (the app does the same, `paths::quiet_gemini_updater`). Only where Gemini has run (its folder is there)."""
+    if sys.platform != "win32" or not home:
+        return
+    data = os.path.join(home, ".gemini", "antigravity-cli")
+    if not os.path.isdir(data):
+        return
+    try:
+        stamp = os.path.join(data, "last_check.timestamp")
+        open(stamp, "a").close()
+        os.utime(stamp, None)
+    except OSError:
+        pass
 
 
 def brain_dir():

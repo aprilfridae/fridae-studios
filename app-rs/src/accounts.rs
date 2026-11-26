@@ -1328,6 +1328,7 @@ pub fn home(cmd: &mut std::process::Command, dir: &Path) {
     {
         cmd.env("USERPROFILE", dir);
         cmd.env("AGY_CLI_FORCE_FILE_TOKEN_STORAGE", "1");
+        crate::paths::quiet_gemini_updater(dir);
     }
     for k in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"].into_iter().chain(KEPT_FROM_SECOND) {
         cmd.env_remove(k);
