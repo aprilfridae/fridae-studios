@@ -1,0 +1,7 @@
+/* The few marks more than one screen draws. */
+export const X = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>;
+export const Lens = <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2l3.3 3.3" /></svg>;
+export const Chevron = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 2.5L8 6l-3.5 3.5" /></svg>;
+export const Arrow = <span class="go"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l6-6M4.5 3H9v4.5" /></svg></span>;
+export const ScriptsMark = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5L1.5 6 4 8.5M8 3.5L10.5 6 8 8.5M7 2L5 10" /></svg>;
+export const Pin = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Pinned"><title>Pinned: in every AI's instructions</title><path d="M4.5 1.5h3M5 1.5v3L3 7h6L7 4.5v-3M6 7v3.5" /></svg>;
