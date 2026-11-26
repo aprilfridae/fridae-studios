@@ -3,6 +3,7 @@
 import { useState } from "preact/hooks";
 import { useStore, type Sum } from "../store";
 import { host } from "../host";
+import { closeUsage } from "../windows";
 import { aiName } from "../ai";
 import { More } from "../ui/More";
 import { X } from "../ui/icons";
@@ -29,7 +30,7 @@ export function UsageWindow() {
         <span class="st-head-note" id="us-checked">{newest ? "Limits checked " + ago(newest) : ""}</span>
         <span class="grow"></span>
         <button class={"icon" + (busy ? " busy" : "")} id="us-refresh" aria-label="Check again" title="Check again" onClick={again}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" /><path d="M13.5 2.5v3h-3" /></svg></button>
-        <button class="icon su-close" id="us-close" aria-label="Close" onClick={() => host.closeUsage()}>{X}</button>
+        <button class="icon su-close" id="us-close" aria-label="Close" onClick={() => closeUsage()}>{X}</button>
       </header>
       <div class="su-body" id="us-body"><div class="st-page wide us-page">
         <section class="us-sec" aria-labelledby="us-h-limits">

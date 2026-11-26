@@ -23,6 +23,15 @@ export function needsCount(r: ReviewReply | undefined, done: Done) {
   return waiting.length + needCards(r).filter((c) => !done[c.id]).length;
 }
 
+/* a run is stopped until the user answers, or a to-do waits: the sidebar says so on the count */
+export function needsStrong(r: ReviewReply | undefined, done: Done) {
+  return needCards(r).some((c) => !done[c.id]) || ((r && r.items) || []).some((i) => i.status === "waiting" && !done[i.id] && !!i.blocking);
+}
+/* a run that is going: started and not through its last stage */
+export function runActive(run: any) {
+  const done = !!(run && run.stages && run.stages.length && run.stages.every((s: any) => s.status === "done"));
+  return !!(run && run.on && !done);
+}
 /* what a project has on the page: what its run waits for, the to-dos only the user can do, then finished work to
    look at. Something just answered stays as one line until the next refresh after it. */
 export function things(path: string, r: ReviewReply | undefined, done: Done): Thing[] {

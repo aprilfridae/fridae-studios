@@ -179,140 +179,11 @@ div.g-row { cursor: default; }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: min(var(--side-w, 232px), 50vw) minmax(0, 1fr); }
-/* the sidebar's right edge is a handle: drag it, or the arrow keys, to set the width; a double press puts it back */
-.side-grip { position: absolute; z-index: 6; top: 0; bottom: 0; right: -6px; width: 12px; cursor: col-resize; touch-action: none; outline: 0; }
-.side-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; background: var(--text); opacity: 0; transition: opacity var(--t-mid) ease 80ms; }
-.side-grip:hover::after { opacity: 0.28; }
-.side-grip.drag::after { opacity: 0.6; transition-delay: 0s; }
-.side-grip:focus-visible::after { background: var(--focus); opacity: 1; transition-delay: 0s; }
-body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
-.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
-.mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
-.mark img { width: 20px; height: 20px; display: block; }
+/* the logo turns while anything works (the sidebar's mark, a new chat's sigil) */
 @keyframes logo-turn { to { transform: rotate(360deg); } }
 body.working .mark img, body.working .sigil { animation: logo-turn 10s linear infinite; }
 @media (prefers-reduced-motion: reduce) { body.working .mark img, body.working .sigil { animation: none; } }
-.side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
-/* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
-.side-list::-webkit-scrollbar { display: none; }
-.proj { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
-.proj:hover { background: var(--hover); }
-.proj.on { background: var(--press); }
-.proj b { font-weight: 500; font-size: 14px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.proj.on b, .proj:hover b { color: var(--text); }
-.proj.none b, .proj.add b { font-weight: 400; }
-.proj .state { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 16px; }
-.proj .count { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; display: grid; place-items: center; font: 600 12px/1 var(--mono); background: var(--text); color: var(--ink); }
-.proj .count:hover { background: var(--main-hover); }
-/* a project's own menu: a button that shows with the pointer or the keyboard on its row (a right-click opens it too) */
-.proj .state { gap: 4px; }
-.proj .p-more { display: none; width: 20px; height: 20px; border-radius: 4px; place-items: center; color: var(--dim); }
-.proj:hover .p-more, .proj:focus-visible .p-more, .proj .p-more[aria-expanded="true"] { display: grid; }
-.proj .p-more:hover, .proj .p-more[aria-expanded="true"] { background: var(--press); color: var(--text); }
-.menu.ctx { position: fixed; left: 0; top: 0; bottom: auto; z-index: 45; width: 208px; padding: 4px; border-radius: var(--r-m); transform: none; }
-.menu.ctx button { display: flex; align-items: center; width: 100%; height: var(--h-m); padding: 0 8px; border-radius: var(--r-s); font-size: 13px; text-align: left; color: var(--text); }
-.menu.ctx button:hover, .menu.ctx button:focus-visible { background: var(--hover); outline: 0; }
-.menu.ctx button:active { background: var(--press); }
-.menu.ctx hr { margin: 4px; border: 0; border-top: 1px solid var(--line); }
-/* a project's name, being changed where it stands */
-.p-rename { position: absolute; z-index: 7; flex: none; padding: 0 7px; font-size: 14px; font-weight: 500; background: var(--raised); border-color: var(--focus); }
-.p-rename[hidden] { display: none; }
-/* a small dialog that asks before something goes away */
-.dlg-wrap { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 64%, transparent); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
-.dlg-wrap[hidden] { display: none; }
-.dlg { width: min(440px, 100%); padding: 20px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-dialog); animation: arrive var(--t-slow) var(--ease) backwards; }
-.dlg h2 { margin: 0 0 4px; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.dlg .sub { margin: 0; font-size: 13px; line-height: 1.45; color: var(--dim); overflow-wrap: anywhere; }
-.dlg-opts { display: grid; gap: 8px; margin: 16px 0 12px; }
-.dlg-opt { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-s); cursor: pointer; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease; }
-.dlg-opt:hover { background: var(--hover); }
-.dlg-opt:has(input:checked) { border-color: var(--line-strong); background: var(--hover); }
-.dlg-opt input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--main); }
-.dlg-opt b { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
-.dlg-opt small { display: block; font-size: 13px; line-height: 1.45; color: var(--dim); }
-.dlg .act { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0 0; }
-.proj.add { grid-template-columns: 12px minmax(0, 1fr); color: var(--dim); }
-.proj.all { grid-template-columns: 12px minmax(0, 1fr) auto; color: var(--dim); }
-.proj.rev .count:hover { background: var(--text); }
-.proj.add:hover { color: var(--text); }
-/* New project stays in reach under a long list of chats */
-.proj.add { position: sticky; bottom: 0; background: var(--panel); box-shadow: 0 12px 0 var(--panel); }
-.proj.add:hover { background: linear-gradient(var(--hover), var(--hover)) var(--panel); }
-.proj.add.on { background: linear-gradient(var(--press), var(--press)) var(--panel); }
-/* The game in front shows its chats under it, and under a chat the experts it started, each a chat of its own (an
-   arrow beside the chat shows or hides them). With a chat in front, its row carries the mark and the game's only
-   brightens. */
-.proj.in { background: transparent; }
-.proj.in:hover { background: var(--hover); }
-.s-chat { display: grid; grid-template-columns: 21px minmax(0, 1fr); align-items: center; padding-left: 4px; }
-/* the arrow is 21px wide, so its point is on the half px that the 1px guide line under it is centred on */
-.s-tw { width: 21px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
-.s-tw:hover { background: var(--hover); color: var(--text); }
-.s-tw svg { transition: transform 160ms var(--ease); }
-.s-tw[aria-expanded="true"] svg { transform: rotate(90deg); }
-.s-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: var(--h-m); padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
-.s-chat .s-row { grid-column: 2; }
-.s-row:hover { background: var(--hover); }
-.s-row.on { background: var(--press); }
-.s-row:focus-visible, .s-tw:focus-visible, .side-list .proj:focus-visible { outline-offset: -2px; }
-.s-row b { font-weight: 400; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.s-row.on b, .s-row:hover b { color: var(--text); }
-.s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
-.s-row.on .s-n { color: var(--dim); }
-/* an expert's row (.sx) */
-.s-row.sx { grid-template-columns: 8px minmax(0, 1fr); min-height: var(--h-l); }
-/* A chat's experts are one list: a window (.s-kids) over its rows (.s-in), which eases open and shut as a whole
-   (easeList). Its earlier experts are a list inside it, behind one line. Each row is a button in a plain block
-   (.s-x) that draws its piece of the guide line as its own background, 1px wide at the same place under the arrow's
-   point, the 2px between rows included: the pieces are one straight line, and each moves with its row. */
-.s-x { padding: 0 0 2px 32px; background: linear-gradient(var(--line-strong), var(--line-strong)) 14px 0 / 1px 100% no-repeat; }
-.s-x.lone { padding: 0 0 0 24px; background: none; }
-.s-kids.tree { margin-bottom: -2px; }   /* the 2px under its last row are the list's own gap to what follows */
-.s-kids.easing { overflow: hidden; will-change: transform; }
-.s-kids.easing > .s-in { will-change: transform, opacity; }
-.s-more { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 4px 8px; border-radius: var(--r-s); text-align: left; font-size: 12px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
-.s-more:hover { background: var(--hover); color: var(--text); }
-.s-more:focus-visible { outline-offset: -2px; }
-.s-more svg { flex: none; transition: transform 160ms var(--ease); }
-.s-more[aria-expanded="true"] svg { transform: rotate(90deg); }
-.s-row.sx .s-t { display: block; min-width: 0; }
-.s-row.sx b, .s-row.sx small { display: block; line-height: 1.4; }
-.s-row.sx b em { font-style: normal; font-weight: 500; color: var(--text); }
-.s-row.sx b span { color: inherit; }
-.s-row.sx small { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.s-row.sx.on small { color: var(--dim); }
-.s-row.sx.busy small { color: var(--text); }
-.side-foot { border-top: 1px solid var(--line); padding: 8px; display: grid; gap: 8px; }
-.foot-row { display: flex; align-items: center; gap: 4px; }
-.upd { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--text); color: var(--ink); font-weight: 500; }
-.upd.busy { background: var(--press); color: var(--dim); }
-.conn { width: var(--h-m); height: var(--h-m); display: grid; place-items: center; border-radius: var(--r-s); transition: background-color 140ms ease; }
-.conn:hover { background: var(--hover); }
-/* the usage panel opens upwards from the sidebar's foot */
-.pop { position: fixed; z-index: 40; left: 8px; bottom: 56px; width: 320px; max-height: calc(100vh - 72px); overflow-y: auto; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
-  opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
-.pop.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 140ms ease, transform 160ms var(--ease); }
-.pop h5 { margin: 8px 8px 4px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
-.u-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px; border-radius: var(--r-s); font-size: 14px; }
-.u-row b { font-weight: 500; }
-.u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
-.u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
-/* today's total is the pop-up's one figure; the rows under it say where it went */
-.u-total { margin: 0; padding: 0 8px 8px; font-size: 13px; line-height: 28px; color: var(--dim); }
-.u-total b { margin-right: 4px; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
-.pop h5 + #use-rows, #use-rows { border-top: 1px solid var(--line); padding-top: 4px; }
-#use-rows:empty { display: none; }
-.u-note { margin: 4px 8px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
-.pop .moreinfo { margin: 0 8px 8px; }
-.pop .moreinfo summary, .pop .moreinfo p { font-size: 12px; }
 
-.stage { position: relative; display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; }
-.top { display: flex; align-items: center; gap: 12px; padding: 0 16px 0 24px; border-bottom: 1px solid var(--line); min-width: 0; }
-.pname { min-width: 0; max-width: 50%; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); text-align: left; }
-button.pname:hover { background: var(--hover); }
-.nav { display: flex; gap: 2px; }
-.nav .tab { height: var(--h-m); padding: 0 12px; font-size: 14px; }
-.nav .tab .n { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--dim); font-weight: 400; }
 .nav .tab .n.strong { font-weight: 700; color: var(--text); }
 
 /* ---------- the Chat tab ---------- */
@@ -641,10 +512,6 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 /* a member's state, as a dot: being checked is a ring, parked is quieter still */
 .dot.verify { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text), 0 0 0 2.5px color-mix(in srgb, var(--text) 12%, transparent); }
 .dot.park { opacity: 0.6; }
-/* the member that holds the Studio turn: the only one changing the live place right now */
-.s-turn { display: none; }
-.s-row.sx.st-turn { grid-template-columns: 8px minmax(0, 1fr) auto; }
-.s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
 
 /* ---------- the other pages take the whole space under the project's bar ---------- */
 #review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
@@ -666,23 +533,6 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-note { font-size: 13px; color: var(--dim); margin: 8px 0 0; min-height: 1.4em; }
 .r-note:empty { min-height: 0; margin: 0; }
 .r-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-
-/* overview: the live graph of every game, its chats and its experts, over the whole page. One quiet line over its
-   top edge says how much is going, with the way to stop it all. */
-#allproj { padding: 0; overflow: hidden; container: overview / size; }
-.ov { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
-.o-graph { position: relative; min-width: 0; min-height: 0; }
-.o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
-.o-graph canvas.over { cursor: pointer; }
-/* what the graph shows, behind one small "?" in its corner */
-.o-key { position: absolute; left: 16px; bottom: 16px; z-index: 1; }
-.o-key summary { width: var(--h-s); height: var(--h-s); display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--dim); font-size: 13px; cursor: pointer; list-style: none; transition: background-color 140ms ease, color 140ms ease; }
-.o-key summary::-webkit-details-marker { display: none; }
-.o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
-.o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); max-width: min(460px, calc(100cqw - 32px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
-.ap-head { position: absolute; z-index: 1; left: 24px; right: 24px; top: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-s); pointer-events: none; }
-.ap-head .sub { margin: 0; font-size: 13px; }
-.ap-head button { pointer-events: auto; }
 
 /* new project: Game or Project, a name and Create */
 .np-make { display: grid; gap: 4px; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 640px; }
@@ -818,114 +668,7 @@ body.setup .veil, body.usage .veil, body.pd-open .veil { opacity: 1; pointer-eve
   opacity: 0; transform: scale(0.985); pointer-events: none; visibility: hidden; transition: opacity 150ms ease-out, transform 150ms ease-out, visibility 0s 150ms; }
 body.setup #sd, body.usage #ud { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 150ms ease-out, transform 150ms ease-out; }
 @media (min-width: 1024px) { .modal { width: min(1280px, calc(100% - 80px)); height: min(960px, calc(100% - 80px)); } }
-/* the list of pages, with a search that jumps to a setting */
-.st-nav { position: relative; display: flex; flex: none; flex-direction: column; width: 240px; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); color: var(--text); }
-.st-nav-in { flex: 1; min-height: 0; overflow: hidden auto; display: flex; flex-direction: column; gap: 8px; padding: 8px; }
-.st-search { display: flex; flex: none; align-items: center; gap: 8px; height: 32px; padding: 6px 8px; border-radius: 6px; font-size: 14px; font-weight: 500; color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
-.st-search:hover, .st-search:focus-within { background: var(--hover); color: var(--text); }
-.st-search > svg { flex: none; opacity: 0.8; }
-.st-search input { flex: 1; min-width: 0; height: auto; padding: 0; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; line-height: 1.5; color: var(--text); }
-.st-search input::placeholder { color: var(--dim); }
-.st-search kbd { display: inline-flex; flex: none; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, var(--text) 7%, transparent); font: 500 12px/1 var(--sans); color: var(--dim); pointer-events: none; -webkit-user-select: none; user-select: none; }
-.st-clear { display: grid; flex: none; place-items: center; width: 20px; height: 20px; border-radius: 6px; color: var(--dim); }
-.st-clear:hover { background: var(--hover); color: var(--text); }
-.st-none { margin: 0; padding: 24px 8px; text-align: center; font-size: 12px; color: var(--dim); }
-.st-menu { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0; margin: 0; padding: 0; list-style: none; }
-.st-menu li { position: relative; }
-.st-menu button { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 6px 10px; overflow: hidden; border-radius: 8px; text-align: left; font-size: 14px; line-height: 20px; font-weight: 500; color: color-mix(in srgb, var(--dim) 80%, transparent); outline: none; }
-.st-menu button:hover { background: var(--hover); color: var(--text); }
-.st-menu button:active { background: var(--press); color: var(--text); }
-.st-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
-.st-menu button.on, .st-menu button[aria-selected="true"] { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
-.st-menu button > svg { flex: none; color: color-mix(in srgb, var(--dim) 85%, transparent); }
-.st-menu button:hover > svg, .st-menu button.on > svg, .st-menu button[aria-selected="true"] > svg { color: var(--text); }
-.st-menu button > span:not(.su-n) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.st-menu .su-n { margin-left: auto; }
-.st-groups { display: flex; flex-direction: column; gap: 16px; }
-.st-group { display: flex; flex-direction: column; gap: 4px; }
-.st-group h3 { margin: 0; padding: 0 8px; font-size: 12px; line-height: 16px; font-weight: 500; color: color-mix(in srgb, var(--dim) 80%, transparent); }
-#st-results button { align-items: flex-start; height: auto; min-height: 40px; padding: 8px 10px; }
-#st-results button > svg { height: 20px; }
-#st-results button > span { flex: 1; }
-#st-results b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
-#st-results small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 16px; font-weight: 400; color: color-mix(in srgb, var(--dim) 75%, transparent); }
-.st-nav-foot { flex: none; padding: 8px 18px 12px; }
-.st-nav-foot .ver { font-size: 12px; color: var(--faint); }
-.st-rail-search { display: none; }
-/* the header (where you are, Close) and the page under it */
-.st-main { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
-.st-head { position: relative; z-index: 1; display: flex; flex: none; align-items: center; gap: 12px; height: 48px; padding: 0 8px 0 20px; border-bottom: 1px solid var(--line); }
-.st-head > nav { min-width: 0; }
-.st-crumb { display: flex; align-items: center; gap: 12px; min-width: 0; margin: 0; padding: 0; list-style: none; font-size: 14px; line-height: 20px; font-weight: 500; }
-.st-crumb li { display: flex; flex: none; align-items: center; color: var(--dim); }
-.st-crumb li[aria-current] { flex: 0 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
-.st-crumb .st-sep { color: var(--faint); }
-.st-head-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--dim); }
-.su-body { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; }
-.su-body > section { display: none; }
-.su-body > section.on { display: block; }
-.st-page { display: flex; flex-direction: column; gap: 32px; width: 100%; max-width: 896px; margin: 0 auto; padding: 24px 24px 48px; }
-.st-page.wide { max-width: 1024px; }
-.st-lede { margin: 0; padding: 0 16px; max-width: 704px; font-size: 14px; line-height: 1.5; color: var(--dim); }
-.st-lede p { margin: 0; }
-.st-lede .moreinfo summary, .st-lede .moreinfo p { font-size: 12px; }
-.st-note { margin: 0; padding: 0 16px; font-size: 12px; line-height: 1.5; color: var(--dim); }
-.st-sec { display: flex; flex-direction: column; gap: 10px; min-width: 0; outline: none; }
-.st-sec-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 4px 16px; min-height: 28px; padding: 0 16px; }
-.st-sec-head h2 { display: flex; align-items: center; gap: 8px; min-height: 28px; margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: 0; color: var(--text); }
-.st-sec-act { display: flex; align-items: center; justify-content: flex-end; min-width: 28px; min-height: 28px; }
-.st-sec > .sub, .st-sec > .act { margin: 0; padding: 0 16px; }
-.sg { position: relative; min-width: 0; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); background: color-mix(in srgb, var(--card) 40%, transparent); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); color: var(--text); }
-.sg > * + * { border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
-.sg > [hidden]:first-child + *, .sg > .sg-list:empty:first-child + * { border-top: 0; }
-.sr { container: settings-row / inline-size; padding: 12px 16px; border-radius: 12px; outline: none; }
-.sg > .sr { border-radius: 0; }
-.sr-in { display: flex; flex-direction: column; gap: 12px; }
-.sr-text { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
-.sr-text h3 { display: flex; align-items: center; gap: 6px; min-height: 20px; margin: 0; padding: 0; border: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
-.sr-text h3 label { cursor: pointer; }
-.sr-text > p { margin: 0; max-width: 672px; font-size: 12px; line-height: 1.5; color: var(--dim); text-wrap: pretty; }
-.sr-text > p:empty, .sr-status:empty { display: none; }
-.sr-text .moreinfo { margin: 0; }
-.sr-text .moreinfo summary, .sr-text .moreinfo p { font-size: 12px; }
-.sr-ctl { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; min-width: 0; margin: 0; }
-.sr-ctl:empty { display: none; }
-@container settings-row (min-width: 512px) {
-  .sr-in { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 32px; }
-  .sr-ctl { width: auto; max-width: 420px; justify-content: flex-end; }
-  .sr-ctl .keyrow { width: 320px; }
-}
-.sr > * + * { margin-top: 12px; }
-.sr > pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin-bottom: 0; }
-.sr > pre:empty { display: none; }
-.sr .sub { margin: 0; max-width: 672px; font-size: 12px; }
-.sr > .sub + .sub, .sr-notes > * + * { margin-top: 8px; }
-.sr-notes:not(:has(> :not([hidden]):not(:empty))) { display: none; }
-/* a list the app fills in (the AIs, the programs agents may run, the skills): each line a row of the group */
-.sg-list:empty { display: none; }
-.sg:has(> .sg-list:only-child:empty) { display: none; }
-/* a row whose one control is not offered now (no key saved yet) is not shown */
-.sr:has(> .sr-in > .sr-ctl > [style*="display: none"]:only-child) { display: none; }
-.sg .sg-list > * { margin: 0; padding: 12px 16px; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); border-bottom: 0; }
-.sg .sg-list > :first-child { border-top: 0; }
-.sg-list .c-row b, .sg-list .g-row b, .sg-list .xp-tr b, .sg-list .sk-row b { font-size: 14px; line-height: 20px; font-weight: 500; }
-.sg-list .c-row small, .sg-list .g-row small, .sg-list .xp-tr small, .sg-list .sk-row small { font-size: 12px; line-height: 1.5; }
-.sg-list .c-row .dot { margin-top: 6px; }
-.sg .sg-list > .oc-row { padding-left: 40px; border-top: 0; padding-top: 0; }
-.sg .sg-list > .g-item { padding: 0; }
-.sg-list .g-item .g-row { padding: 12px 16px; }
-.sg-list .g-item .moreinfo { margin: -8px 16px 12px; }
-.sg-list.sk-list { margin: 0; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
-.sg-list.su-block { margin: 0; }
-#saved-panel .g-row:first-child { border-top: 0; }
-#saved-panel > * + * { margin-top: 8px; }
-.sg #gd-list > div { padding: 0; }
-#gd-list > div > * { border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
-#gd-list > div > :first-child, #gd-list .g-group + .g-item { border-top: 0; }
-#gd-list .g-group { margin: 0; padding: 14px 16px 2px; font: 500 12px/16px var(--sans); letter-spacing: 0; color: color-mix(in srgb, var(--dim) 80%, transparent); }
-.sg-list button.g-row { transition: background-color var(--t-fast) ease; }
-.sg-list button.g-row:hover { background: var(--hover); }
-.sg-list > .g-item:first-child button.g-row, #gd-list > div > .g-item:nth-child(2) button.g-row { border-radius: 0; }
+
 /* the window's own controls: 8px corners, 32px tall, a hairline and a faint fill */
 .modal .pill { height: 32px; padding: 0 11px; border-radius: 8px; font-size: 14px; font-weight: 500; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--line-strong) 32%, transparent); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
 .modal .pill:hover { background: color-mix(in srgb, var(--line-strong) 64%, transparent); border-color: var(--line-strong); }
@@ -939,12 +682,12 @@ body.setup #sd, body.usage #ud { opacity: 1; transform: none; pointer-events: au
 .modal .keyrow input, .modal .field { height: 32px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--line-strong) 32%, transparent); font-size: 14px; box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
 .modal .keyrow input:focus, .modal .field:focus { border-color: var(--focus); }
 .modal .r-sel { border-radius: 8px; background: color-mix(in srgb, var(--line-strong) 32%, transparent); }
-.modal .r-pills { margin: 0; }
+
 .modal .seg { padding: 2px; border-radius: 8px; border-color: var(--line-strong); background: color-mix(in srgb, var(--line-strong) 32%, transparent); }
 .modal .seg button { height: 26px; padding: 0 10px; border-radius: 6px; font-weight: 500; }
 .modal .seg button.on, .modal .seg button[aria-checked="true"] { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
 .modal .act { margin: 0; }
-.modal .sr > .act, .modal .sr > div > .act { margin-top: 12px; }
+
 /* a switch: 30 by 18, the thumb slides 12px; a checkbox with .sw draws as one */
 .modal .switch { gap: 0; padding: 0; border-radius: 999px; }
 .modal .switch .track { width: 30px; height: 18px; border: 0; background: var(--line-strong); transition: background-color 200ms ease; }
@@ -959,136 +702,10 @@ input[type=checkbox].sw:checked { background: var(--accent); border: 0; }
 input[type=checkbox].sw:checked::after { translate: 12px 0; background: var(--bg); transform: none; }
 input[type=checkbox].sw:focus-visible { border-radius: 999px; }
 :root[data-appearance="light"] .modal .switch .knob, :root[data-appearance="light"] input[type=checkbox].sw::after { background: var(--bg); }
-/* a search result lands on its row: the row comes to the middle and its edge pulses twice */
-@keyframes settings-search-target-pulse { 0%, 100% { box-shadow: inset 0 0 0 0 transparent; } 50% { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 70%, transparent); } }
-[data-settings-page-scroll] div.settings-search-target-pulse, [data-settings-page-scroll] section.settings-search-target-pulse > div:first-child { animation: settings-search-target-pulse 650ms ease-in-out 2; border-radius: 12px; }
-[data-settings-page-scroll] .settings-search-target-pulse:focus { outline: none; }
-/* Appearance: light, dark or the system's; then the palette, each drawn as a small picture of the window */
-.th-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: 100%; }
-.th-tile { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); background: color-mix(in srgb, var(--card) 60%, transparent); outline: none; transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease; }
-.th-tile:hover { background: color-mix(in srgb, var(--text) 3%, var(--card)); }
-.th-tile:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 60%, transparent); outline-offset: -7px; }
-.th-tile[aria-pressed="true"] { border-color: transparent; background: color-mix(in srgb, var(--text) 4%, var(--card)); box-shadow: inset 0 0 0 2px var(--accent); }
-.th-tile > span:last-child { display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--dim); }
-.th-tile[aria-pressed="true"] > span:last-child { color: var(--text); }
-.th-wire { position: relative; display: block; width: 100%; height: 140px; overflow: hidden; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
-.th-wire i { position: absolute; display: block; }
-.th-wire > i { inset: 0; }
-.th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 256px), 1fr)); gap: 8px; width: 100%; }
-.th-card { display: block; overflow: hidden; padding: 0; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); background: color-mix(in srgb, var(--card) 60%, transparent); text-align: left; outline: none; transition: background-color 150ms ease, box-shadow 150ms ease; }
-.th-card:hover { background: color-mix(in srgb, var(--text) 3%, var(--card)); }
-.th-card:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
-.th-card[aria-pressed="true"] { background: color-mix(in srgb, var(--text) 5%, var(--card)); box-shadow: inset 0 0 0 1px var(--accent); }
-.th-card .th-wire { height: 112px; border: 0; border-radius: 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
-.th-name { display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
-.th-name small { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--dim); }
-.modal .scale-row { margin: 0; flex-wrap: nowrap; }
-.ab-ver { font-weight: 400; color: var(--dim); }
+
 .eng-bar { height: 4px; max-width: 360px; margin-top: 12px; border-radius: 999px; background: var(--hover); overflow: hidden; }
 .eng-bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width 300ms ease; }
-/* Settings, Connections, Knowledge index: Off / Light / Heavy, Light's one row, Heavy's numbered steps, a test box */
-.rag-seg { margin-top: 12px; max-width: 100%; }
-.rag-seg[aria-busy="true"] { opacity: 0.7; }
-.rag-seg button:disabled { opacity: 0.45; }
-.rag-seg button:disabled:hover { color: var(--dim); }
-.rag-modes { margin: 8px 0 0; padding: 0; list-style: none; }
-.rag-modes li { font-size: 13px; line-height: 1.5; color: var(--faint); margin: 2px 0 0; }
-.rag-modes li b { font-weight: 500; color: var(--dim); }
-.rag-modes li.on { color: var(--dim); }
-.rag-modes li.on b { color: var(--text); }
-.rag-light { margin-top: 12px; }
-.rag-light .sub { margin: 0; }
-.rag-steps { margin: 12px 0 0; padding: 0; list-style: none; }
-.rag-steps .c-row .eng-bar { margin-top: 8px; }
-.rag-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; }
-.rag-err:empty { display: none; }
-.rag-test h4 { margin: 16px 0 0; }
-.rag-hits { margin: 8px 0 0; padding: 0 0 0 20px; font-size: 13px; line-height: 1.6; }
-.rag-hits span { color: var(--dim); }
-.rag-hits:empty, #rag-q-note:empty { display: none; }
-@media (max-width: 520px) { .rag-seg .rag-x { display: none; } }
-/* Settings, Skills: the decisions waiting (Review-style cards, the two skills side by side, the suggestion in its plain
-   words box) and the library, one line per skill */
-.su-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; margin-left: 8px; border-radius: 999px; background: var(--text); color: var(--ink); font: 600 12px/1 var(--mono); vertical-align: 1px; }
-#ap-sk-go { font-size: inherit; }
-/* a failure in Settings: in the text colour, marked by a thin red rule (Knowledge index, Skills, Share) */
-.sk-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; white-space: pre-line; }
-.sk-err:empty { display: none; }
-.sk-h > span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
-.sk-decs { margin-top: 12px; }
-.sk-dec h4 { font-size: 15px; }
-.sk-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 12px 0 0; }
-.sk-side { min-width: 0; padding: 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line); }
-.ask .sk-side p.sk-scripts { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; font-weight: 500; color: var(--warn); }
-.sk-scripts svg { flex: none; }
-.sk-side em { display: inline-block; font: 400 12px/1 var(--mono); letter-spacing: 0.01em; font-style: normal; color: var(--faint); margin-bottom: 8px; }
-.sk-side b { display: block; font-size: 14px; font-weight: 600; word-break: break-word; }
-.sk-side .sk-who { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
-.ask .sk-side p.sk-desc { margin: 8px 0 0; font-size: 13px; color: var(--text); line-height: 1.5; }
-.sk-side code { display: block; margin: 8px 0 0; font: 12px/1.5 var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sk-rec { margin: 12px 0 0; max-width: none; }
-.sk-rec.none { border-left-color: var(--quiet); }
-.sk-by { display: block; margin-top: 4px; font-size: 12px; color: var(--faint); }
-.sk-by:empty { display: none; }
-.sk-rec.none p { color: var(--dim); }
-.sk-dec .act { margin-top: 12px; }
-.sk-dec .sk-own { margin: 8px 0 0; font-size: 13px; }
-.sk-merged { margin: 8px 0 0; }
-.sk-merged pre { margin: 8px 0 0; max-height: 220px; }
-.sk-list { margin-top: 4px; border-top: 1px solid var(--line); }
-.sk-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.sk-row b { font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.sk-row b span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sk-row b svg { flex: none; color: var(--text); }
-.sk-row em { font-style: normal; font-size: 12px; color: var(--faint); white-space: nowrap; }
-.sk-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sk-row small:empty { display: none; }
-.sk-list > .sub { padding: 8px 0; margin: 0; }
-/* Settings, Skills: the Fridae vault row (its last report, the files kept as the user's) and Share your skills (the
-   question, the Sharing control, the list, a batch to check: each skill with its files, scripts first) */
-.vt-kept:empty { display: none; }
-.vt-kept p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 4px 0 0; }
-.sh-modes > .sub { margin: 0; }
-.sh-list { margin-top: 12px; }
-.sh-list .sk-row small { white-space: normal; }
-.sh-list .sk-row small .linkish { font-size: inherit; }
-#sh-batch:empty { display: none; }
-#sh-batch { margin-top: 12px; border-top: 1px solid var(--line); }
-.sh-skill { padding: 12px 0; border-bottom: 1px solid var(--line); }
-.sh-skill header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.sh-skill header b { font-size: 14px; font-weight: 500; word-break: break-word; }
-.sh-skill header label { margin-left: auto; font-size: 13px; color: var(--dim); }
-.sh-skill.out header b, .sh-skill.out .sh-files { opacity: 0.45; }
-.sh-files { margin-top: 4px; }
-.sh-files summary { font-family: var(--mono); font-size: 12px; }
-.sh-mark { display: inline-block; margin-left: 8px; font: 12px/1 var(--sans); color: var(--faint); }
-.sh-files pre { max-height: 220px; overflow-y: auto; margin: 8px 0 0; }
-#sh-note .linkish { font-size: inherit; }
-/* Settings, Skills: Submissions (the maintainer's copy): each pull request with its skills, a card per skill in the
-   decision cards' idiom (scripts first in their own boxes, then SKILL.md and its changes, the suggestion, the choices) */
-#sb-inbox:empty, #sb-create-box:empty, #sb-pub-box:empty { display: none; }
-#sb-made .linkish, #sb-pub-note .linkish, .sb-pr-h .linkish { font-size: inherit; }
-.sb-pr { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-.sb-pr-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; }
-.sb-pr-h b { font-size: 14px; font-weight: 500; word-break: break-word; }
-.sb-pr-h span { font-size: 13px; color: var(--dim); }
-.sb-not { margin: 4px 0 0; font-size: 13px; color: var(--faint); }
-.sb-not code { margin-right: 8px; font: 12px/1.5 var(--mono); word-break: break-all; }
-.sb-pr .sk-dec { margin-top: 12px; }
-.sb-script { margin: 12px 0 0; }
-.ask .sk-side.sb-script code { white-space: normal; word-break: break-all; }
-.ask .sb-script pre, .ask .sb-file pre, .ask .sb-diff pre { max-height: 320px; margin: 8px 0 0; }
-.sb-file summary, .sb-diff summary { font-family: var(--mono); font-size: 12px; }
-.sb-files { margin-top: 8px; }
-.ask p.sb-gone { margin: 4px 0 0; font-size: 13px; color: var(--faint); }
-.sb-gone code { margin-right: 8px; font: 12px/1.5 var(--mono); word-break: break-all; }
-.sb-edit textarea { display: block; width: 100%; min-height: 220px; resize: vertical; margin: 0 0 8px; padding: 8px 12px; border-radius: var(--r-s); background: var(--hover); border: 1px solid var(--line); color: var(--text); font: 12px/1.55 var(--mono); -webkit-user-select: text; user-select: text; }
-.sb-edit textarea:focus { outline: none; border-color: var(--focus); }
-.sb-add, .sb-edit, .sb-reject { margin-top: 12px; }
-.sb-reject .keyrow { margin: 0 0 8px; }
-.scale-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
-.scale-row output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; font-size: 14px; }
-.scale-row input[type=range] { flex: 1; min-width: 120px; max-width: 280px; accent-color: var(--main); }
+
 .drawer { position: fixed; z-index: 31; top: 8px; right: 8px; bottom: 8px; width: min(440px, calc(100vw - 16px)); border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong);
   transform: translateX(calc(100% + 16px)); visibility: hidden; transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1), visibility 0s 300ms; display: flex; }
 body.pd-open #pd { transform: none; visibility: visible; transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1); }
@@ -1103,68 +720,13 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .pill.danger { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 #pd-out.warn { color: var(--text); }
 
-/* ---------- Usage: each account's plan limits, and what was used today ----------
-   A limit is one line: its name and how much is left, a bar filled to what is left, and when it starts again. A thin
-   line cut into the bar marks where even spending would be by now; the mark after the bar says whether you are
-   spending faster than that, about on it, or slower. Adapted from T3 Code's usage page (MIT; see THIRD_PARTY.md). */
-.us-page { gap: 24px; }
-.us-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.us-sec > h2, .us-total > h2 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
-.us-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
-.us-note:empty { display: none; }
-.us-accounts { display: flex; flex-direction: column; gap: 12px; }
-.us-acct { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; border: 1px solid var(--line); }
-.us-acct > header { display: flex; align-items: baseline; gap: 12px; }
-.us-acct h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
-.us-acct header span { margin-left: auto; font-size: 12px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.us-acct .us-err { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
-.us-acct .us-err svg { flex: none; margin-top: 2px; color: var(--warn); }
-.lw { display: grid; grid-template-columns: 176px minmax(0, 1fr) 112px; gap: 4px 16px; align-items: center; }
-.lw.compact { grid-template-columns: minmax(0, 132px) minmax(48px, 1fr) auto; gap: 2px 12px; }
-.lw-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; }
-.lw-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
-.lw-name > b { flex: none; margin-left: auto; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
-.lw-bar { position: relative; height: 24px; border-radius: 999px; cursor: default; outline: none; }
-.lw-bar:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
-.lw-clip { position: absolute; inset: 0; }
-.lw-track { position: absolute; inset: 6px 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); }
-.lw-fill { position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 999px; background: var(--text); }
-.lw-bar.low .lw-fill { background: var(--warn); }
-.lw-tick { position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 999px; background: var(--text); transform: translateX(-50%); }
-.lw-when { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: var(--dim); font-variant-numeric: tabular-nums; }
-.lw-when > span:last-child { flex: none; margin-left: auto; }
-.lw-pace { display: inline-flex; color: var(--dim); }
-.us-today { display: grid; gap: 24px; }
-@media (min-width: 1024px) { .us-today { grid-template-columns: minmax(0, 288px) minmax(0, 1fr); } }
-.us-total { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.us-big { margin: 0; font-size: 36px; line-height: 40px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
-.us-ais { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.us-ai { display: flex; flex-direction: column; gap: 4px; }
-.us-ai > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.us-ai b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 400; color: var(--text); }
-.us-ai .n { flex: none; font-size: 14px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
-.us-ai small { font-size: 12px; line-height: 1.5; color: var(--dim); }
-.us-ai > .us-share { display: block; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
-.us-share i { display: block; height: 100%; border-radius: 999px; background: var(--text); }
-.us-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; padding: 4px 0; }
-@media (min-width: 768px) { .us-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
-.us-metrics > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.us-metrics dt { font-size: 12px; line-height: 16px; color: var(--dim); }
-.us-metrics dd { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
-#us-refresh.busy svg { animation: logo-turn 800ms linear infinite; }
-/* the same limits, smaller, in the pop-up at the bottom left */
-.pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-right: 8px; }
-#use-pop { width: 376px; }
-.pop-acct { padding: 4px 8px 8px; }
-.pop-acct > b { display: block; margin-bottom: 2px; font-size: 13px; line-height: 20px; font-weight: 500; }
-.pop-acct > small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--dim); }
 /* ---------- glass ----------
    A surface that floats over something that scrolls or sits behind it lets it show through, blurred: 16px of blur, a
    touch more colour (saturate 1.08) and the surface's own colour at 80%. Menus and pop-ups, the message box (the chat
    scrolls behind it), the project panel, and a note in the corner. Only what is on screen pays for it: a closed menu
    is hidden, not just see-through. The message box wears its glass on a layer of its own, so the menus that open out
    of it still blur the page behind them. Adapted from T3 Code's glass surfaces (MIT; see THIRD_PARTY.md). */
-.menu, .pop, .slash, .saytip, .bd-ac, .settings-note {
+.menu, .slash, .saytip, .bd-ac, .settings-note {
   background: color-mix(in srgb, var(--raised) 18%, color-mix(in srgb, var(--raised) var(--glass-opacity), transparent));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); }
@@ -1176,7 +738,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
   border-color: color-mix(in srgb, var(--text) 10%, transparent); box-shadow: var(--shadow-dialog); }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .menu, .pop, .slash, .saytip, .bd-ac, .settings-note { background: var(--raised); }
+  .menu, .slash, .saytip, .bd-ac, .settings-note { background: var(--raised); }
   .composer::before, .xp-bar::before, .drawer { background: var(--panel); }
 }
 /* the chat runs under the message box: the list of messages fills the space down to the window's edge and leaves
@@ -1187,27 +749,12 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .main > .dock > * { pointer-events: auto; }
 @media (max-width: 980px) {
   .app { grid-template-columns: 200px minmax(0, 1fr); }
-  .side-grip { display: none; }
   .nav .tab { padding: 0 8px; }
 }
 @media (max-width: 760px) {
   .app { grid-template-columns: 168px minmax(0, 1fr); }
-  .mark span { display: none; }
-  /* Settings: the list of pages becomes a rail of icons; searching opens it over the page */
+  /* Settings and Usage fill the window */
   .modal { width: 100%; height: 100%; border-radius: 0; border: 0; }
-  .st-nav { width: 56px; }
-  .st-nav .st-search, .st-nav .st-group h3, .st-nav-foot, .st-nav .st-menu button > span:not(.su-n) { display: none; }
-  .st-nav .st-menu button { justify-content: center; padding: 0; }
-  .st-nav .st-menu .su-n { position: absolute; top: -2px; right: -2px; margin: 0; }
-  .st-group + .st-group { padding-top: 16px; border-top: 1px solid var(--line); }
-  .st-rail-search { display: block; }
-  .st-nav.searching { position: absolute; inset: 0 auto 0 0; z-index: 10; width: 100%; }
-  .st-nav.searching .st-search { display: flex; }
-  .st-nav.searching .st-group h3 { display: block; }
-  .st-nav.searching .st-menu button { justify-content: flex-start; padding: 6px 10px; }
-  .st-nav.searching .st-menu button > span:not(.su-n) { display: block; }
-  .st-nav.searching .st-rail-search { display: none; }
-  .st-page { padding: 24px 20px 48px; }
   .picker { grid-template-columns: 112px minmax(0, 1fr); }
 }
 /* less motion: nothing slides, fades or pulses; things are simply there */
@@ -1290,22 +837,7 @@ applyTheme();
 </head>
 <body>
 <div class="app">
-  <aside class="side" aria-label="Projects">
-    <span class="mark"><img src="/logo.png" alt=""><span>Fridae</span></span>
-    <nav class="side-list" id="proj-list"></nav>
-    <div class="side-foot">
-      <button class="upd" id="b-update" hidden></button>
-      <div class="foot-row">
-        <button class="icon" id="b-use" aria-expanded="false" aria-controls="use-pop" aria-label="Usage" title="Usage"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V3.5M11.5 11V6"/></svg></button>
-        <span class="grow"></span>
-        <button class="conn" id="b-conn" hidden><span class="dot miss"></span></button>
-        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      </div>
-    </div>
-    <input class="field p-rename" id="proj-rename" type="text" maxlength="80" aria-label="The project's name" hidden>
-    <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="480" aria-valuenow="232" tabindex="0" title="Drag to resize. Double-click to reset."></div>
-    <div class="pop" id="use-pop"><!-- ui/src/usage/UsagePop.tsx, put here by fridae.mount("usage-pop") --></div>
-  </aside>
+  <aside class="side" id="side" aria-label="Projects"><!-- ui/src/sidebar, put here by fridae.mount("sidebar") --></aside>
 
   <main class="stage">
     <header class="top">
@@ -1402,13 +934,8 @@ applyTheme();
     </aside>
     </div>
 
-    <div id="allproj"><div class="ov">
-      <div class="o-graph">
-        <canvas id="o-canvas" role="img" aria-label="Graph of every project, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
-        <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
-        <div class="ap-head"><p class="sub grow"><span id="ap-totals"></span><span id="ap-sk" hidden> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills"></button></span></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
-      </div>
-    </div></div>
+    <!-- Overview is ui/src/overview, put here by fridae.mount("overview") -->
+    <div id="allproj"></div>
 
     <!-- Review is ui/src/review, put here by fridae.mount("review") -->
     <div id="review"></div>
@@ -1456,18 +983,8 @@ applyTheme();
 </div>
 
 <div class="veil" id="veil"></div>
-<div class="menu ctx" id="proj-menu" role="menu" aria-label="Project"></div>
-<div class="dlg-wrap" id="pj-del" hidden><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="pj-del-h" aria-describedby="pj-del-path">
-  <h2 id="pj-del-h"></h2>
-  <p class="sub" id="pj-del-path"></p>
-  <div class="dlg-opts" role="radiogroup" aria-label="What happens to it">
-    <label class="dlg-opt"><input type="radio" name="pj-del-how" value="list" checked><span><b>Remove from Fridae</b><small>It leaves Fridae's list. The folder and every file in it stay where they are.</small></span></label>
-    <label class="dlg-opt"><input type="radio" name="pj-del-how" value="trash"><span><b id="pj-del-bin"></b><small id="pj-del-bin-note"></small></span></label>
-  </div>
-  <p class="sub">Its chats stay in your history. Nothing is deleted for good.</p>
-  <p class="rv-err" id="pj-del-err"></p>
-  <div class="act"><button class="pill" id="pj-del-no">Cancel</button><button class="pill main" id="pj-del-go"></button></div>
-</div></div>
+<!-- a project's menu and the dialog that asks before a project goes: ui/src/sidebar, put here by fridae.mount("side-over") -->
+<div id="side-over"></div>
 <div class="modal" id="sd" role="dialog" aria-label="Settings"><!-- ui/src/settings, put here by fridae.mount("settings") --></div>
 <div class="modal" id="ud" role="dialog" aria-label="Usage"><!-- ui/src/usage, put here by fridae.mount("usage") --></div>
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
@@ -1637,13 +1154,13 @@ function select(id) {
   current = id; calm(p.col); p.col.hidden = false; draftCol.hidden = true;
   const key = p.project || isHelper(p) ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
   if (curProj !== key) curProj = key;
-  /* an expert in front is shown in the sidebar, under its chat; coming back to the game opens the chat, not it */
-  if (isHelper(p)) { if (p.parent) setXpOpen(p.parent, true); } else lastChat[key] = id;
+  /* coming back to the project opens the chat that was in front, not an expert of it */
+  if (!isHelper(p)) lastChat[key] = id;
   if (isPage(view)) view = "chat";
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
   following = atBottom();
-  paintSide(); paintComposer(); paintProject(); swarmFocus(p); if (view === "chat") box.focus();
+  sideToStore(); paintComposer(); paintProject(); swarmFocus(p); if (view === "chat") box.focus();
 }
 /* a project chosen in the sidebar: its last tab, and in Chat its last conversation (or a new one) */
 function showProject(key, tab) {
@@ -1720,7 +1237,7 @@ function showDraft(key) {
   const wrap = helloEl(proxy);
   if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = startStep(pr); proxy.start.paint(); }
   draftCol.replaceChildren(wrap); draftCol.hidden = false;
-  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide(); paintBoard();
+  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); sideToStore(); paintBoard();
 }
 /* the first message of a game's chat: a new game is talked through first, an existing one is read */
 function kickoffChat(p, kind) {
@@ -1731,318 +1248,47 @@ function kickoffChat(p, kind) {
   api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
   p.seed = null;
 }
-/* The sidebar: each game with one state mark, No project when such chats exist, and New project. The game in front
-   shows its chats under it, and under a chat the experts it started, each a chat of its own. */
+/* one mark per project: how much waits for the user, and whether anything works on it (the sidebar draws it:
+   ui/src/sidebar/model.ts) */
 function projState(path) {
   const r = rvAll[path], n = needsOf(r).length;
   const working = [...agents.values()].some((p) => p.busy && projKey(p) === path);
   return { n, working, strong: rvNeeds(r).some((c) => !rvDone.has(c.id)) || rvWaiting(r).some((i) => i.blocking) };
 }
-const CHEVRON = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>';
-/* Lists in the sidebar that were just shown (they open with a short ease once they are in the page) and lists on
-   their way out (kept in the page until their ease ends). Both by the list's row key. */
-const sideGrow = new Set(), sideShrink = new Map();
-/* whether a chat's experts are shown under it: shown until the arrow hides them, and the choice is kept per chat */
-let xpFold = {};
-try { const f = JSON.parse(localStorage.getItem("experts-shown") || "{}"); if (f && typeof f === "object") xpFold = f; } catch (e) {}
-const xpOpen = (id) => xpFold[id] !== false;
-function setXpOpen(id, on) {
-  if (xpOpen(id) === !!on) return;
-  if (on) { delete xpFold[id]; sideGrow.add("k:" + id); } else xpFold[id] = false;
-  try { localStorage.setItem("experts-shown", JSON.stringify(xpFold)); } catch (e) {}
-}
-/* when a chat was made, from its id ("c<milliseconds>-<n>"): the order experts are listed in */
-const bornAt = (id) => { const m = /^c(\d+)-(\d+)/.exec(id || ""); return m ? +m[1] + +m[2] / 1e6 : 0; };
-/* When each expert was last at work (ms). A saved one: when its chat was last saved, as first heard (opening an old
-   expert to read it, and closing it again, saves it anew, and that is not work). An open one: its last start or end
-   of a turn seen here (onEvent). An expert idle for longer than XP_IDLE is listed under "earlier", out of the way. */
-const xpWhen = new Map(), XP_IDLE = 30 * 60 * 1000, pageStart = Date.now();
-const xpOld = new Set();   /* the chats whose earlier experts are shown */
-/* The experts a chat started, newest first: those its conversation names, those saved and those open now. */
-function expertsOf(p) {
-  const all = new Map();
-  const put = (id, more) => { const x = all.get(id) || { id }; for (const k in more) if (more[k] !== undefined && more[k] !== null && more[k] !== "") x[k] = more[k]; all.set(id, x); };
-  /* the members of its team's run, if it leads one: first, so what the chat itself knows of each wins */
-  const team = swarmOf(p.id);
-  if (team && team.run) for (const m of team.members || []) if (m && m.id) put(m.id, { name: m.name, expert: m.role, member: m });
-  for (const x of Object.values(p.xps)) put(x.id, { name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at });
-  for (const c of (saved && saved.chats) || []) if (c.parent === p.id) { if (!xpWhen.has(c.id) && c.updated) xpWhen.set(c.id, c.updated * 1000); put(c.id, { name: c.name, expert: c.expert, ai: c.ai, plain: c.plain }); }
-  for (const h of agents.values()) if (h.parent === p.id) put(h.id, { name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h });
-  /* an open expert nothing is known of was open when the page loaded: it counts from then; one put back from a
-     saved chat that the list of saved chats never named counts as old */
-  for (const x of all.values()) x.when = xpWhen.get(x.id) || (x.pane && !x.pane.replay ? pageStart : 0);
-  return [...all.values()].sort((a, b) => (bornAt(b.id) - bornAt(a.id)) || ((b.at || 0) - (a.at || 0)));
-}
-/* at work now, at work within the last half hour, the chat in front, or a member of a team's run that is going */
-const xpRecent = (x, now) => !!(x.pane && x.pane.busy) || !!x.member || x.id === current || now - x.when < XP_IDLE;
+/* When each open expert was last at work (ms): its last start or end of a turn seen here (onEvent). The sidebar lists
+   an expert idle for half an hour under "earlier" (ui/src/sidebar/fold.ts). */
+const xpWhen = new Map();
 /* an expert's state in a few words, and the class of its dot */
 function xpState(h) {
   const words = h.busy ? "working · " + (h.now || "starting") : h.last === "Stopped" ? "stopped" : h.last === "Needs attention" ? "stopped with an error" : h.last === "Needs you" ? "waiting for an answer" : h.started ? "finished" : "starting";
   return [words, h.busy ? " live" : h.started && h.last !== "Stopped" && h.last !== "Needs attention" ? " ok" : ""];
 }
-/* A row stays the same element from one repaint to the next, and what changes on it (its dot, its words, its mark)
-   is changed in place: a press that is down while a step arrives still lands, and the keyboard stays where it was.
-   A row is made again only when `sig` (what it is built of) changes. key -> { sig, node } */
-const sideRows = new Map();
-function sideRow(used, key, sig, make, paint) {
-  let c = sideRows.get(key);
-  if (!c || c.sig !== sig) { c = { sig, node: make() }; sideRows.set(key, c); }
-  used.add(key);
-  if (paint) paint(c.node);
-  return c.node;
-}
 /* write only what differs, so an unchanged row is not touched at all */
 const putText = (n, t) => { if (n.textContent !== t) n.textContent = t; };
-const putClass = (n, c) => { if (n.className !== c) n.className = c; };
 const putAttr = (n, k, v) => { if (v === null) { if (n.hasAttribute(k)) n.removeAttribute(k); } else if (n.getAttribute(k) !== v) n.setAttribute(k, v); };
 const putTitle = (n, t) => { if (n.title !== t) n.title = t; };
-/* the children of `host` become `rows`, touching only what changed: a row that stays is never taken out */
-function setRows(host, rows) {
-  const keep = new Set(rows);
-  let at = host.firstChild;
-  for (const r of rows) {
-    while (at && !keep.has(at)) { const next = at.nextSibling; at.remove(); at = next; }   /* a row that is gone, or was made again */
-    if (r === at) at = at.nextSibling; else host.insertBefore(r, at);
-  }
-  while (at) { const next = at.nextSibling; at.remove(); at = next; }
-}
-/* A list opens and shuts with a short ease, and nothing is laid out again while it runs: the page takes its final
-   shape at once, and the ease is only moves and a fade, which the browser does without the page's help. The list is
-   a window (`.s-kids`) over its rows (`.s-in`): the window slides one way and the rows the other, so the rows stay
-   where they are and the window's lower edge uncovers them; what follows the list rides on that edge. A list longer
-   than what can be seen is held to that length for the ease (the rest is under the sidebar's foot already), and New
-   project, which is pinned, goes from where it was to where it is. With less motion the list is simply there, or
-   gone. */
-const sideCalm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-let sideEase = null;   /* the ease going on: { anims, tidy } */
-function endEase() {
-  const e = sideEase; if (!e) return;
-  sideEase = null; e.anims.forEach((a) => { a.onfinish = null; a.cancel(); }); e.tidy();
-}
-function easeList(box, open, addWas) {
-  endEase();
-  const list = $("proj-list"), inner = box.firstElementChild;
-  const drop = () => { for (const [k, n] of sideShrink) if (n === box) sideShrink.delete(k); };
-  if (sideCalm() || !box.animate || !inner) { if (!open) { drop(); paintSide(); } return; }
-  /* px of the page per px of the window (the text-size setting scales the page; engines differ on what a
-     rectangle is measured in) */
-  const lr = list.getBoundingClientRect(), s = (typeof scale === "number" && scale > 0 ? scale : 100) / 100, ratio = list.offsetWidth ? lr.width / list.offsetWidth : 1, z = Math.abs(ratio - s) <= Math.abs(ratio - 1) ? s : 1;
-  const top = (n) => n.getBoundingClientRect().top / z, br = box.getBoundingClientRect(), seen = (lr.bottom - br.top) / z;
-  if (seen <= 0) { if (!open) { drop(); paintSide(); } return; }   /* all of it is under the foot: nothing to see */
-  /* what follows the list, down to the end of the sidebar: it rides on the list's lower edge; New project is pinned */
-  const after = []; for (let n = box; n && n !== list; n = n.parentNode) for (let f = n.nextElementSibling; f; f = f.nextElementSibling) after.push(f);
-  const add = after.find((f) => f.matches(".proj.add")), rest = after.filter((f) => f !== add);
-  let tall = br.height / z, held = false, moved, addMoved = 0;
-  if (tall > seen + 1) { tall = Math.ceil(seen); box.style.height = tall + "px"; held = true; }
-  if (open) {
-    moved = tall + (parseFloat(getComputedStyle(box.parentNode).rowGap) || 0) + (parseFloat(getComputedStyle(box).marginBottom) || 0);
-    if (add && typeof addWas === "number") addMoved = top(add) - addWas / z;
-  } else {
-    /* where things will be once the list is gone: looked at with the list taken out for a moment */
-    const keep = list.scrollTop, now = rest.length ? top(rest[0]) : 0, addNow = add ? top(add) : 0;
-    box.style.display = "none";
-    moved = rest.length ? now - top(rest[0]) : tall; addMoved = add ? addNow - top(add) : 0;
-    box.style.display = ""; list.scrollTop = keep;
-  }
-  const y = (px) => "translateY(" + px.toFixed(2) + "px)", path = (a, b) => open ? [{ transform: y(a) }, { transform: y(b) }] : [{ transform: y(b) }, { transform: y(a) }];
-  const timing = { duration: Math.round(Math.max(200, Math.min(360, 150 + tall * 0.35))), easing: "cubic-bezier(0.33, 1, 0.68, 1)", fill: open ? "none" : "forwards" };
-  const hidden = { transform: y(tall), opacity: 0 }, shown = { transform: y(0), opacity: 1 };
-  box.classList.add("easing");
-  const riders = rest.concat(add ? [add] : []); riders.forEach((f) => { f.style.willChange = "transform"; });
-  const anims = [box.animate(path(-tall, 0), timing), inner.animate(open ? [hidden, { opacity: 1, offset: 0.7 }, shown] : [shown, { opacity: 0, offset: 0.7 }, hidden], timing)]
-    .concat(rest.map((f) => f.animate(path(-moved, 0), timing)), add && addMoved ? [add.animate(path(-addMoved, 0), timing)] : []);
-  const tidy = () => { box.classList.remove("easing"); if (held) box.style.height = ""; riders.forEach((f) => { f.style.willChange = ""; }); if (!open) drop(); };
-  sideEase = { anims, tidy };
-  anims[0].onfinish = () => {
-    if (sideEase && sideEase.anims === anims) sideEase = null;
-    /* shut: the list goes and what rode on it lets go in the same moment, so nothing is seen to jump */
-    if (!open) { drop(); paintSide(); anims.forEach((a) => a.cancel()); }
-    tidy();
-  };
-}
-/* show or hide a list in the sidebar: `flip` changes what is kept, then the list eases in, or eases out and goes */
-function foldSide(key, shown, flip) {
-  endEase();
-  const c = sideRows.get(key), node = c && c.node;
-  flip();
-  if (shown && node && node.isConnected && !sideCalm()) { sideShrink.set(key, node); node.inert = true; paintSide(); easeList(node, false); return; }
-  if (!shown) sideGrow.add(key);
-  paintSide();
-}
-/* Of a chat's experts one row takes the Tab key (the one the keyboard was last on, else the one in front, else the
-   first); the arrow keys go through the rest. chat id -> row key */
-const xpTab = new Map();
-/* One expert's row: who and what for, then its state and its AI. The row is a button in a plain block (.s-x), and
-   the block draws its piece of the guide line: a line drawn from inside a button does not land where it is put. */
-function sideExpert(used, x, lead, tab) {
-  const key = "x:" + x.id;
-  return sideRow(used, key, lead ? lead.id : "", () => {
-    const w = el("div", "s-x" + (lead ? "" : " lone"), '<button class="s-row sx"><span class="dot"></span><span class="s-t"><b><em></em> <span></span></b><small></small></span><span class="s-turn">Studio</span></button>'), b = w.firstChild;
-    b.dataset.k = key; if (lead) b.dataset.of = "c:" + lead.id;
-    b.onclick = () => openChatById(x.id);
-    return w;
-  }, (w) => {
-    const b = w.firstChild, h = x.pane, [who, job] = splitExpert(x.name, x.expert), on = x.id === current && view === "chat";
-    /* a member of a team's run says its state in the run (parked, being checked, merged...); while it works, what it
-       is doing, as any expert does */
-    const m = x.member || memberOf(x.id), sw = m && SW[m.status], doing = !!(h && h.busy && (!m || m.status === "working"));
-    const state = sw && !doing ? [sw.word, sw.dot] : h ? xpState(h) : [x.when ? ago(x.when / 1000) : "closed", ""];
-    const ai = x.runsOn || (m && m.ai ? aiName(m.ai) + (m.model ? " · " + m.model : "") : aiName(h ? chatAi(h) : x.ai || (lead && chatAi(lead))));
-    const plain = (h && h.plain) || x.plain || "", still = !!(m && (m.status === "working" || m.status === "parked" || m.status === "verifying"));
-    const turn = !!(m && m.studio_turn), thing = thingOf(lead ? projKey(lead) : curProj);
-    putClass(b, "s-row sx" + (on ? " on" : "") + (doing ? " busy" : "") + (turn ? " st-turn" : ""));
-    putClass(b.firstChild, "dot" + state[1]);
-    putText(b.querySelector("em"), who); putText(b.querySelector("b span"), job);
-    /* once the expert has finished, its row shows the plain-English line of what it did; while it works, its state */
-    putText(b.querySelector("small"), plain && !(h && h.busy) && !still ? "In plain words: " + plain : state[0] + " · " + ai);
-    putTitle(b.lastChild, turn ? "It has the Studio turn: the only one changing the live place right now. The others carry on with their own copies." : "");
-    putTitle(b, [[who, job, state[0], ai].filter(Boolean).join(" · ") + ".", sw ? swTip(m.status, thing, m.role) : "", turn ? "It has the Studio turn." : "", plain ? "In plain words: " + plain : "", lead ? "" : "The chat that started it is closed."].filter(Boolean).join(" "));
-    putAttr(b, "aria-current", on ? "true" : null);
-    const t = !lead || tab === key ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t;
-  });
-}
-/* the chats of the game in front, each with its experts under it */
-function sideChats(used, key, rows) {
-  const front = view === "chat" ? current : null, now = Date.now();
-  for (const p of projectChats(key)) {
-    const xs = expertsOf(p), open = xs.length > 0 && xpOpen(p.id), at = xs.filter((x) => x.pane && x.pane.busy).length, on = p.id === front;
-    const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id;
-    rows.push(sideRow(used, "c:" + p.id, xs.length ? "arrow" : "", () => {
-      const row = el("div", "s-chat");
-      if (xs.length) {
-        const tw = el("button", "s-tw", CHEVRON);
-        tw.dataset.k = "t:" + p.id; tw.setAttribute("aria-controls", "kids-" + p.id);
-        tw.onclick = () => foldSide(kids, xpOpen(p.id), () => setXpOpen(p.id, !xpOpen(p.id)));
-        row.appendChild(tw);
-      }
-      const b = el("button", "s-row", '<span class="dot"></span><b></b><span class="s-n"></span>');
-      b.dataset.k = "c:" + p.id;
-      b.onclick = () => { select(p.id); setView("chat"); };
-      row.appendChild(b);
-      return row;
-    }, (row) => {
-      const tw = row.querySelector(".s-tw"), b = row.querySelector(".s-row"), many = xs.length === 1 ? "expert" : xs.length + " experts";
-      if (tw) { putAttr(tw, "aria-expanded", open ? "true" : "false"); putAttr(tw, "aria-label", (open ? "Hide the " : "Show the ") + many + " of " + p.name); putTitle(tw, (open ? "Hide" : "Show") + " the experts this chat started"); }
-      putClass(b, "s-row" + (on ? " on" : "")); putClass(b.firstChild, "dot" + (p.busy || at ? " live" : ""));
-      putText(b.querySelector("b"), p.name); putText(b.querySelector(".s-n"), xs.length ? String(xs.length) : "");
-      putTitle(b, [p.name, aiName(chatAi(p)), state, xs.length ? (xs.length === 1 ? "1 expert" : many) + (at ? ", " + at + " working" : "") : ""].filter(Boolean).join(" · "));
-      putAttr(b, "aria-current", on ? "true" : null);
-    }));
-    if (!open) { if (sideShrink.has(kids)) rows.push(sideShrink.get(kids)); continue; }
-    sideShrink.delete(kids);
-    /* those at work or lately at work, then one line for the rest, which opens to them */
-    const recent = xs.filter((x) => xpRecent(x, now)), old = xs.filter((x) => !xpRecent(x, now)), olds = "o:" + p.id, showOld = old.length > 0 && xpOld.has(p.id);
-    const shown = recent.concat(showOld ? old : []).map((x) => "x:" + x.id);
-    const tab = shown.includes(xpTab.get(p.id)) ? xpTab.get(p.id) : shown.includes("x:" + current) ? "x:" + current : shown[0];
-    const inside = recent.map((x) => sideExpert(used, x, p, tab));
-    if (old.length) {
-      inside.push(sideRow(used, "m:" + p.id, "", () => {
-        const w = el("div", "s-x", '<button class="s-more">' + CHEVRON + "<span></span></button>"), m = w.firstChild;
-        m.dataset.k = "m:" + p.id; m.dataset.of = "c:" + p.id; m.setAttribute("aria-controls", "old-" + p.id);
-        m.onclick = () => foldSide(olds, xpOld.has(p.id), () => { if (!xpOld.delete(p.id)) xpOld.add(p.id); });
-        return w;
-      }, (w) => {
-        const m = w.firstChild;
-        putText(m.lastChild, old.length + (recent.length ? " earlier" : old.length === 1 ? " earlier expert" : " earlier experts"));
-        putAttr(m, "aria-expanded", showOld ? "true" : "false");
-        putTitle(m, (old.length === 1 ? "One expert that has" : old.length + " experts that have") + " not worked for half an hour or more. Press to " + (showOld ? "hide" : "show") + (old.length === 1 ? " it." : " them."));
-      }));
-      if (showOld) {
-        sideShrink.delete(olds);
-        const box = sideRow(used, olds, "", () => { const d = el("div", "s-kids", '<div class="s-in"></div>'); d.id = "old-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Earlier experts of " + p.name));
-        setRows(box.firstChild, old.map((x) => sideExpert(used, x, p, tab)));
-        inside.push(box);
-      } else if (sideShrink.has(olds)) inside.push(sideShrink.get(olds));
+/* ---------- The sidebar and Overview are ui/src/sidebar and ui/src/overview. What they show is written to the store
+   here: the page, project and chat in front (`nav`), every open chat as plain values (`chats`: one that did not
+   change is the same object as before, so only the rows that changed are drawn again), and the projects. The chat's
+   own head is painted here still. ---------- */
+const NO_PROJECTS = [];
+const projList = () => projects.projects || NO_PROJECTS;
+let sideKept = new Map();   /* chat id -> [what it was as text, the object in the store] */
+function sideToStore() {
+  fridaeDo((f) => {
+    const was = f.store.get(), chats = [], keep = new Map();
+    for (const p of agents.values()) {
+      const c = { id: p.id, name: p.name || "", project: projKey(p), own: !!p.project, want: !!wantProj[p.id], parent: p.parent || "", helper: isHelper(p), research: p.role === "research",
+        started: !!p.started, busy: !!p.busy, now: p.now || "", last: p.last || "", ai: p.ai || "", runsOn: p.runsOn || "", expert: p.expert || "", plain: p.plain || "", replay: !!p.replay,
+        when: xpWhen.get(p.id) || 0, xps: Object.values(p.xps || {}).map((x) => ({ id: x.id, name: x.name, expert: x.expert, runsOn: x.runsOn, at: x.at })) };
+      const text = JSON.stringify(c), had = sideKept.get(p.id), use = had && had[0] === text ? had[1] : c;
+      keep.set(p.id, [text, use]); chats.push(use);
     }
-    const box = sideRow(used, kids, "", () => { const d = el("div", "s-kids tree", '<div class="s-in"></div>'); d.id = "kids-" + p.id; d.setAttribute("role", "group"); return d; }, (d) => putAttr(d, "aria-label", "Experts of " + p.name));
-    setRows(box.firstChild, inside);
-    rows.push(box);
-  }
-  /* an expert that is open while the chat that started it is closed */
-  for (const h of agents.values()) if (isHelper(h) && !agents.has(h.parent) && projKey(h) === key) rows.push(sideExpert(used, { id: h.id, name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h }, null, ""));
-}
-let sideFront = null;   /* the chat last marked in the sidebar: a newly marked one is brought into sight */
-function paintSide() {
-  const list = $("proj-list"); if (!list) return;
-  const rows = [], used = new Set();
-  /* a list is about to open: an ease still going ends first, and where New project is now is noted (it is pinned,
-     so it goes its own way) */
-  let addWas = null;
-  if (sideGrow.size) { endEase(); const add = !sideCalm() && list.querySelector(".proj.add"); if (add) addWas = add.getBoundingClientRect().top; }
-  /* the row the keyboard is on, noted before anything moves (an expert's row may change lists) */
-  const had = list.contains(document.activeElement) ? document.activeElement.dataset.k : "";
-  const inFront = (key) => curProj === key && !isPage(view);
-  /* with one of its chats in front the game's row only brightens: the chat's row carries the mark */
-  const marked = (key) => inFront(key) ? (view === "chat" && agents.has(current) ? " on in" : " on") : "";
-  const anyBusy = [...agents.values()].some((p) => p.busy);
-  document.body.classList.toggle("working", anyBusy);   /* the logo turns while anything works */
-  rows.push(sideRow(used, "all", [view === "all", anyBusy].join("\n"), () => {
-    const all = el("button", "proj all" + (view === "all" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1" y="1" width="4" height="4" rx="1"/><rect x="7" y="1" width="4" height="4" rx="1"/><rect x="1" y="7" width="4" height="4" rx="1"/><rect x="7" y="7" width="4" height="4" rx="1"/></svg><b>Overview</b><span class="state"></span>');
-    if (anyBusy) { all.querySelector(".state").appendChild(el("span", "dot live")); all.querySelector(".state").title = "Agents are working"; }
-    all.title = "Every project, its chats and its experts, and what needs you";
-    all.dataset.k = "all"; all.onclick = showAll;
-    return all;
-  }));
-  /* Review, for every project: the count is everything that waits for the user */
-  const tot = rvTotals();
-  rows.push(sideRow(used, "review", [view === "review", tot.n, tot.k, tot.strong].join("\n"), () => {
-    const b = el("button", "proj all rev" + (view === "review" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 3l1.2 1.2L4.4 2M1 8.4l1.2 1.2 2.2-2.2M6.6 3.2H11M6.6 8.6H11"/></svg><b>Review</b><span class="state"></span>');
-    if (tot.n) { const c = el("span", "count", String(tot.n)); c.setAttribute("aria-hidden", "true"); b.querySelector(".state").appendChild(c); b.setAttribute("aria-label", "Review, " + tot.n + (tot.n === 1 ? " thing needs you" : " things need you")); }
-    if (view === "review") b.setAttribute("aria-current", "page");
-    b.title = (tot.n ? tot.n + (tot.n === 1 ? " thing waits" : " things wait") + " for you" + (tot.k === 1 ? " in one project" : " across " + tot.k + " projects") + (tot.strong ? ", and a run is stopped until you answer" : "") + ". " : "") + "What is happening on every project, and what needs you";
-    b.dataset.k = "review"; b.onclick = () => setView("review");
-    return b;
-  }));
-  for (const x of projects.projects || []) {
-    const st = projState(x.path), cls = marked(x.path);
-    rows.push(sideRow(used, "p:" + x.path, [x.name, st.n, st.strong, st.working].join("\n"), () => {
-      const b = el("button", "proj", "<b></b><span class=\"state\"></span>");
-      b.querySelector("b").textContent = x.name; b.title = x.path; b.dataset.k = "p:" + x.path;
-      const mark = b.querySelector(".state");
-      /* the project's menu (Rename, Open folder, Delete): this button, a right-click, or Shift+F10 on the row */
-      const more = el("span", "p-more", '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="6" r="1.1"/><circle cx="6" cy="6" r="1.1"/><circle cx="10" cy="6" r="1.1"/></svg>');
-      more.setAttribute("role", "button"); more.setAttribute("aria-label", "Menu for " + x.name); more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.title = "Rename, open folder, delete";
-      more.onclick = (ev) => { ev.stopPropagation(); projMenu(x.path, more); };
-      mark.appendChild(more);
-      if (st.n) {
-        const c = el("span", "count", String(st.n)); c.setAttribute("role", "button"); c.tabIndex = 0;
-        c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to see them in Review.";
-        c.onclick = (ev) => { ev.stopPropagation(); openInReview(x.path); };
-        c.onkeydown = (ev) => { if (ev.key === "Enter") c.onclick(ev); };
-        mark.appendChild(c);
-      } else if (st.working) { mark.appendChild(el("span", "dot live")); mark.title = "Agents are working on it"; }
-      b.onclick = () => showProject(x.path);
-      return b;
-    }, (b) => putClass(b, "proj" + cls)));
-    if (inFront(x.path)) sideChats(used, x.path, rows);
-  }
-  const loose = [...agents.values()].filter((p) => isChat(p) && !p.project && !wantProj[p.id] && (p.started || p.busy));
-  if (loose.length || curProj === "") {
-    const cls = marked(""), busy = loose.some((p) => p.busy);
-    rows.push(sideRow(used, "none", "", () => {
-      const b = el("button", "proj none", "<b>No project</b><span class=\"state\"><span class=\"dot\"></span></span>");
-      b.title = "Chats that belong to no project"; b.dataset.k = "none";
-      b.onclick = () => showProject("");
-      return b;
-    }, (b) => { putClass(b, "proj none" + cls); putClass(b.querySelector(".dot"), "dot" + (busy ? " live" : "")); }));
-    if (inFront("")) sideChats(used, "", rows);
-  }
-  rows.push(sideRow(used, "add", "", () => {
-    const add = el("button", "proj add", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg><b>New project</b>');
-    add.dataset.k = "add"; add.onclick = showNewProject;
-    return add;
-  }, (add) => putClass(add, "proj add" + (view === "newproj" ? " on" : ""))));
-  for (const key of [...sideRows.keys()]) if (!used.has(key)) sideRows.delete(key);
-  /* only what changed is touched; the keyboard stays on the row it was on, also when that row moved or was made again */
-  setRows(list, rows);
-  if (had && (!list.contains(document.activeElement) || document.activeElement.dataset.k !== had)) {
-    const again = [...list.querySelectorAll("[data-k]")].find((n) => n.dataset.k === had);
-    if (again) again.focus({ preventScroll: true });
-  }
-  for (const key of sideGrow) { const c = sideRows.get(key); if (c && c.node.isConnected) easeList(c.node, true, addWas); }
-  sideGrow.clear();
-  const front = view === "chat" && !isPage(view) ? current : null;
-  if (front !== sideFront) { sideFront = front; const n = list.querySelector(".s-row.on"); if (n) n.scrollIntoView({ block: "nearest" }); }
+    sideKept = keep;
+    const same = was.chats.length === chats.length && chats.every((c, i) => c === was.chats[i]);
+    const nav = was.nav.view === view && was.nav.proj === curProj && was.nav.chat === current ? was.nav : { view, proj: curProj, chat: current };
+    f.store.set({ nav, chats: same ? was.chats : chats, projects: projList() });
+  });
   paintHead();
 }
 /* The sidebar after an event: nothing until the first batch of events is in (the page is painted once then), and
@@ -2051,152 +1297,31 @@ let sideSoon = false;
 function paintSideSoon() {
   if ((bootMark === Infinity && !ONCE) || sideSoon) return;
   sideSoon = true;
-  requestAnimationFrame(() => { sideSoon = false; paintSide(); });
+  requestAnimationFrame(() => { sideSoon = false; sideToStore(); });
 }
-/* an expert leaves the list half an hour after its last work, with nothing else happening: looked at twice a minute */
-setInterval(() => { if (!document.hidden) paintSide(); }, 30000);
-/* ---------- a project's menu: Rename, Open folder, Delete. It opens at the pointer on a right-click, under the
-   row's button, or beside the row for Shift+F10 and the Menu key. The arrow keys move in it, Escape closes it, and
-   the keyboard goes back to the row. ---------- */
-const BIN = /Mac/.test(navigator.userAgent) ? "Trash" : "Recycle Bin";
-const projRow = (path) => [...$("proj-list").querySelectorAll(".proj")].find((b) => b.dataset.k === "p:" + path);
-let pmPath = null;
-function closeProjMenu(refocus) {
-  const m = $("proj-menu"); if (!m.classList.contains("on")) return;
-  m.classList.remove("on");
-  const row = projRow(pmPath), more = row && row.querySelector(".p-more");
-  if (more) more.setAttribute("aria-expanded", "false");
-  if (refocus && row) row.focus();
-  pmPath = null;
+/* each Lead's team, for the sidebar's experts and Overview's graph */
+function teamsToStore() {
+  fridaeDo((f) => { const teams = {}; for (const [lead, t] of swarm) teams[lead] = { run: t.run || null, members: t.members || [] }; f.store.set({ teams }); });
 }
-/* `at`: the row's button or the row itself (the menu opens under it), or a pointer's { x, y } */
-function projMenu(path, at) {
-  const pr = (projects.projects || []).find((x) => x.path === path), m = $("proj-menu");
-  if (!pr) return;
-  closeProjMenu(false); closePops();
-  const item = (text, run) => { const b = el("button"); b.setAttribute("role", "menuitem"); b.tabIndex = -1; b.textContent = text; b.onclick = () => { closeProjMenu(false); run(); }; m.appendChild(b); };
-  m.replaceChildren(); m.setAttribute("aria-label", pr.name);
-  item("Rename", () => renameProject(path));
-  item("Open folder", () => { api("/api/project", { action: "open", path, what: "folder" }); const row = projRow(path); if (row) row.focus(); });
-  m.appendChild(el("hr"));
-  item("Delete project\u2026", () => askDeleteProject(path));
-  /* where: the pointer, or under what opened it; kept inside the window */
-  const z = scale / 100, r = at.getBoundingClientRect ? at.getBoundingClientRect() : null;
-  const x = (r ? r.left : at.x) / z, y = (r ? r.bottom + 4 : at.y) / z, w = m.offsetWidth, h = m.offsetHeight;
-  m.style.left = Math.max(8, Math.min(x, innerWidth / z - w - 8)) + "px";
-  m.style.top = Math.max(8, Math.min(y, innerHeight / z - h - 8)) + "px";
-  pmPath = path; m.classList.add("on");
-  const row = projRow(path), more = row && row.querySelector(".p-more"); if (more) more.setAttribute("aria-expanded", "true");
-  m.querySelector("button").focus();
+/* how many steps each chat has taken and its last few (overviewNote): Overview's graph, so only while it is in front */
+let stepsT = 0;
+function stepsToStore() {
+  fridaeDo((f) => { const steps = {}; for (const p of agents.values()) if (p.steps || p.recent) steps[p.id] = { n: p.steps || 0, recent: p.recent || [] }; f.store.set({ steps }); });
 }
-$("proj-menu").addEventListener("keydown", (ev) => {
-  const items = [...$("proj-menu").querySelectorAll("button")], i = items.indexOf(document.activeElement);
-  if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeProjMenu(true); }
-  else if (ev.key === "Tab") { ev.preventDefault(); closeProjMenu(true); }
-  else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); items[(i + (ev.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
-  else if (ev.key === "Home" || ev.key === "End") { ev.preventDefault(); items[ev.key === "Home" ? 0 : items.length - 1].focus(); }
-});
-document.addEventListener("mousedown", (ev) => { if (pmPath !== null && !ev.target.closest("#proj-menu") && !ev.target.closest(".p-more")) closeProjMenu(false); });
-window.addEventListener("blur", () => closeProjMenu(false)); window.addEventListener("resize", () => closeProjMenu(false));
-$("proj-list").addEventListener("scroll", () => closeProjMenu(false), { passive: true });
-$("proj-list").addEventListener("contextmenu", (ev) => {
-  const row = ev.target.closest(".proj"); if (!row || !(row.dataset.k || "").startsWith("p:")) return;
-  ev.preventDefault();
-  /* from the keyboard there is no pointer: the menu opens under the row */
-  projMenu(row.dataset.k.slice(2), ev.button === 2 || ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY } : row);
-});
-$("proj-list").addEventListener("keydown", (ev) => {
-  if (!(ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey))) return;
-  const row = ev.target.closest(".proj"); if (!row || !(row.dataset.k || "").startsWith("p:")) return;
-  ev.preventDefault(); ev.stopPropagation(); projMenu(row.dataset.k.slice(2), row);
-});
-/* Rename: the name is typed where it stands. Enter (or leaving the box) keeps it, Escape leaves it as it was. Only the
-   name Fridae shows changes: the folder on disk keeps its own, so chats and git still find it. */
-function renameProject(path) {
-  const pr = (projects.projects || []).find((x) => x.path === path), row = projRow(path), inp = $("proj-rename");
-  if (!pr || !row) return;
-  const list = $("proj-list");
-  Object.assign(inp.style, { left: row.offsetLeft + "px", top: row.offsetTop - list.scrollTop + "px", width: row.offsetWidth + "px", height: row.offsetHeight + "px" });
-  inp.value = pr.name; inp.title = "Fridae's name for it. The folder keeps its own: " + path;
-  inp.hidden = false; inp.focus(); inp.select();
-  let over = false;
-  const end = async (keep) => {
-    if (over) return; over = true;
-    const name = inp.value.replace(/\s+/g, " ").trim(), back = document.activeElement === inp;
-    inp.onkeydown = inp.onblur = null; inp.hidden = true;
-    if (keep && name && name !== pr.name) {
-      let r; try { r = await api("/api/project", { action: "rename", path, name }); } catch (e) { r = null; }
-      if (!r || !r.ok) say((r && r.error) || "Could not rename the project.");
-      else {
-        for (const p of agents.values()) if (p.project && samePath(p.project.path, path)) p.project.name = name;
-        await loadProjects();
-        reviewToStore(); if (view === "all") paintAll();
-      }
-    }
-    if (back) { const again = projRow(path); if (again) again.focus(); }
-  };
-  inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); end(true); } else if (ev.key === "Escape") { ev.preventDefault(); end(false); } };
-  inp.onblur = () => end(true);
+function stepsSoon() { if (view !== "all" || stepsT) return; stepsT = setTimeout(() => { stepsT = 0; stepsToStore(); }, 250); }
+/* a project was renamed or left the list (the sidebar's menu: ui/src/sidebar): the page follows */
+async function projectRenamed(path, name) {
+  for (const p of agents.values()) if (p.project && samePath(p.project.path, path)) p.project.name = name;
+  await loadProjects();
+  reviewToStore();
 }
-/* Delete: a dialog that names the project and its folder and says what each choice does. The first choice keeps
-   every file; the other moves the folder where it can be put back from. Nothing happens without a press here. */
-let pdPath = null;
-function askDeleteProject(path) {
-  const pr = (projects.projects || []).find((x) => x.path === path); if (!pr) return;
-  pdPath = path;
-  $("pj-del-h").textContent = "Delete " + pr.name + "?"; $("pj-del-path").textContent = path;
-  $("pj-del-bin").textContent = "Move the folder to the " + BIN; $("pj-del-bin-note").textContent = "It leaves Fridae's list, and its folder goes to the " + BIN + ". You can put it back from there.";
-  $("pj-del-err").textContent = "";
-  const first = $("pj-del").querySelector('input[value="list"]'); first.checked = true; paintDeleteGo();
-  $("pj-del-go").disabled = $("pj-del-no").disabled = false;
-  $("pj-del").hidden = false; first.focus();
-}
-const deleteHow = () => ($("pj-del").querySelector("input:checked") || {}).value === "trash";
-function paintDeleteGo() { $("pj-del-go").textContent = deleteHow() ? "Move to " + BIN : "Remove from Fridae"; }
-function closeDeleteProject() { const path = pdPath; pdPath = null; $("pj-del").hidden = true; const row = path && projRow(path); if (row) row.focus(); }
-$("pj-del").addEventListener("change", paintDeleteGo);
-$("pj-del-no").onclick = closeDeleteProject;
-$("pj-del").addEventListener("mousedown", (ev) => { if (ev.target === $("pj-del")) closeDeleteProject(); });
-$("pj-del").addEventListener("keydown", (ev) => {
-  ev.stopPropagation();
-  if (ev.key === "Escape") { ev.preventDefault(); closeDeleteProject(); return; }
-  if (ev.key !== "Tab") return;
-  /* the keyboard stays in the dialog while it is open */
-  const stops = [$("pj-del").querySelector("input:checked"), $("pj-del-no"), $("pj-del-go")], i = stops.indexOf(document.activeElement.matches("input") ? stops[0] : document.activeElement);
-  ev.preventDefault(); stops[(i + (ev.shiftKey ? stops.length - 1 : 1)) % stops.length].focus();
-});
-$("pj-del-go").onclick = async () => {
-  const path = pdPath, trash = deleteHow(), pr = (projects.projects || []).find((x) => x.path === path);
-  if (!path || !pr) { closeDeleteProject(); return; }
-  $("pj-del-go").disabled = $("pj-del-no").disabled = true; $("pj-del-err").textContent = "";
-  let r; try { r = await api("/api/project", { action: "delete", path, trash }); } catch (e) { r = { ok: false, error: "The app did not answer." }; }
-  $("pj-del-go").disabled = $("pj-del-no").disabled = false;
-  if (!r || !r.ok) { $("pj-del-err").textContent = (r && r.error) || "That did not work."; return; }
-  pdPath = null; $("pj-del").hidden = true;
+async function projectDeleted(path) {
   try { projects = await api("/api/projects"); } catch (e) {}
   delete rvAll[path];
   if (curProj === path || homeProj === path) { homeProj = null; showAll(); }
-  else { paintSide(); paintView(); reviewToStore(); if (view === "all") paintAll(); }
-  say(pr.name + (trash ? " is in the " + BIN + "." : " is no longer in Fridae. Its folder is untouched."));
-};
-/* in the sidebar the arrow keys go from row to row; right and left show and hide a chat's experts (and its earlier
-   ones), and left on an expert goes to its chat */
-$("proj-list").addEventListener("keydown", (ev) => {
-  if (!["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(ev.key) || ev.altKey || ev.ctrlKey || ev.metaKey) return;
-  const list = $("proj-list"), rows = [...list.querySelectorAll("button")].filter((b) => !b.closest("[inert]")), me = document.activeElement, i = rows.indexOf(me);
-  if (i < 0) return;
-  if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { const to = rows[i + (ev.key === "ArrowDown" ? 1 : -1)]; if (to) { ev.preventDefault(); to.focus(); } return; }
-  const chat = me.closest(".s-chat"), tw = me.matches(".s-more") ? me : chat && chat.querySelector(".s-tw");
-  if (tw && (tw.getAttribute("aria-expanded") === "true") !== (ev.key === "ArrowRight")) { ev.preventDefault(); tw.click(); }
-  else if (ev.key === "ArrowLeft" && me.dataset.of) { const to = rows.find((n) => n.dataset.k === me.dataset.of); if (to) { ev.preventDefault(); to.focus(); } }
-});
-/* the expert the keyboard is on is the one Tab comes back to */
-$("proj-list").addEventListener("focusin", (ev) => {
-  const b = ev.target; if (!b.matches || !b.matches(".s-row.sx") || !b.dataset.of) return;
-  xpTab.set(b.dataset.of.slice(2), b.dataset.k);
-  const group = b.closest(".s-kids[id^='kids-']");
-  if (group) for (const r of group.querySelectorAll(".s-row.sx")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
-});
+  else { sideToStore(); paintView(); }
+  reviewToStore();
+}
 /* the bar over the tabs: the project's name and its tabs (a game also has Promos) */
 function paintView() {
   if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
@@ -2289,7 +1414,7 @@ let histTimer = null;
 let saved = { chats: [], deleted: [] };
 function loadHistory() { clearTimeout(histTimer); histTimer = setTimeout(async () => {
   try { saved = await api("/api/history"); } catch (e) { return; }
-  paintSide();   /* the experts listed under a chat include the saved ones */
+  sideToStore();   /* the experts listed under a chat include the saved ones */
   if ($("conv-menu").classList.contains("on")) paintConv();
   savedToStore();
 }, 120); }
@@ -2392,7 +1517,7 @@ function splitExpert(name, expert) {
   if (expert) return [expert, i >= 0 && n.slice(0, i).trim() === expert ? n.slice(i + 1).trim() : n === expert ? "" : n];
   return i >= 0 ? [n.slice(0, i).trim(), n.slice(i + 1).trim()] : ["Helper", n];
 }
-/* an expert's state changed: the dot on its line in the chat that started it (its row in the sidebar is paintSide's) */
+/* an expert's state changed: the dot on its line in the chat that started it (its row in the sidebar is ui/src/sidebar's) */
 function paintExpert(h) {
   const of = agents.get(h.parent), x = of && of.xps[h.id];
   if (x) x.link.querySelector(".dot").className = "dot" + (agents.has(h.id) ? xpState(h)[1] : "");
@@ -2446,7 +1571,7 @@ let projects = { projects: [], default_parent: "", git: false };
 async function loadProjects() {
   try { projects = await api("/api/projects"); } catch (e) {}
   for (const p of agents.values()) if (p.start && p.start.step === "folder") p.start.paint();
-  paintSide(); paintView();
+  sideToStore(); paintView();
 }
 function startCard(p) {
   const card = el("div", "ask start");
@@ -2721,6 +1846,7 @@ function needRows() {
   return rows;
 }
 function rowHtml([ok, name, what]) { return '<div class="c-row"><span class="dot' + (ok ? " ok" : "") + '"></span><div><b>' + esc(name) + "</b><small>" + esc(what) + "</small></div></div>"; }
+let offSaid = null;   /* what the dot at the bottom left (ui/src/sidebar/Foot.tsx) last said is not connected */
 function paintNeeds() {
   const have = (status.ai || {}).installed || {};
   if (status.studio === undefined) return;
@@ -2729,29 +1855,18 @@ function paintNeeds() {
   /* Studio and Blender count only while a Roblox project is in front: nothing else uses them */
   const rbx = isGameProj(curProj);
   const off = [have[ai] ? "" : aiName(ai), status.studio || !rbx ? "" : "Roblox Studio", status.blender || !rbx ? "" : "Blender"].filter(Boolean);
-  const dot = $("b-conn"); dot.hidden = !off.length;
-  dot.title = "Not connected: " + off.join(", ") + ". Press to see how to fix it.";
-  dot.setAttribute("aria-label", dot.title);
+  if (off.join("\n") !== offSaid) { offSaid = off.join("\n"); fridaeDo((f) => f.store.set({ notConnected: off })); }
   /* a new chat mentions only what is missing for its work: its AI, and Studio for a Roblox project */
   const missing = rows.filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === ai : rbx && r[1] === "Roblox Studio"));
   document.querySelectorAll(".hello-needs").forEach((h) => (h.innerHTML = missing.map(rowHtml).join("")));
 }
-$("b-conn").onclick = () => openSetup("connections");
-/* ---------- Usage: the window and the pop-up at the bottom left are ui/src/usage (today's tokens, each account's plan
-   limits from status.limits). Here is only how they are opened and closed: the button is the sidebar's. ---------- */
+/* ---------- Usage (ui/src/usage) and Settings (ui/src/settings) are windows over the page, opened and closed by
+   ui/src/windows.ts; their buttons are the sidebar's (ui/src/sidebar/Foot.tsx). What is left here calls them. ---------- */
 function loadUsage() { fridaeDo((f) => f.usage.soon()); }
-function openUsage() {
-  closePops(); closeProject(); closeSetup();
-  $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
-  document.body.classList.add("usage"); panelOpened($("us-close"));
-  fridaeDo((f) => { f.store.set({ usageOpen: true }); f.usage.load(); }); refresh();
-}
-function closeUsage() { if (!document.body.classList.contains("usage")) return; document.body.classList.remove("usage"); fridaeDo((f) => f.store.set({ usageOpen: false })); panelClosed(); }
-$("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) fridaeDo((f) => f.usage.load()); };
-document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
-/* Escape closes the pop-up and gives the keyboard back to its button */
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && $("use-pop").classList.contains("on")) { ev.stopPropagation(); $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); $("b-use").focus(); } }, true);
-fridaeDo((f) => f.usage.load());
+function openUsage() { fridaeDo((f) => f.windows.openUsage()); }
+function closeUsage() { if (window.fridae) fridae.windows.closeUsage(); }
+function openSetup(section) { fridaeDo((f) => f.windows.openSetup(section)); }
+function closeSetup() { if (window.fridae) fridae.windows.closeSetup(); }
 
 /* ---------- undo the night: an overnight run's checkpoint, taken back from the game's section in Review, or from the chat
    itself when the chat belongs to no game (it has no Review) ---------- */
@@ -2865,7 +1980,7 @@ function onEvent(e) {
     if (isHelper(p)) paintExpert(p);
     if (current === e.agent) { current = null; if (bootMark !== Infinity && view === "chat" && curProj !== null) showProject(curProj, "chat"); }
     if (p === researchPane) researchPane = null;
-    paintSide(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
+    sideToStore(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
   }
   const p = pane(e.agent), wasBusy = p.busy;
   if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
@@ -2895,7 +2010,7 @@ function onEvent(e) {
     p.project = e; delete wantProj[p.id];
     if (p.start) { p.start.step = startStep(e) === "ready" ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
     if (p.id === current && bootMark !== Infinity && curProj !== projKey(p)) { curProj = projKey(p); savePlace(); }
-    paintProject(); paintSide();
+    paintProject(); sideToStore();
   } else if (e.kind === "model") {
     p.model = e.name;
     if (p.turn) p.turn.querySelector(".label").textContent = e.name;
@@ -2955,7 +2070,7 @@ function onEvent(e) {
     if (e.auto) {
       const left = p.overnight ? Math.max(0, p.overnight - Date.now() / 1000) : 0;
       p.col.appendChild(el("span", "tag enter", p.overnight ? (p.studio ? "Studio" : "Overnight") + " \u00b7 turn " + p.carried + " \u00b7 " + Math.floor(left / 3600) + "h " + Math.floor((left % 3600) / 60) + "m left" : "Full auto \u00b7 carrying on by itself (" + p.carried + " of 12)"));
-      paintSide(); if (e.agent === current) { paintComposer(); stick(); } return;
+      sideToStore(); if (e.agent === current) { paintComposer(); stick(); } return;
     }
     const u = el("div", "you enter");
     if (e.images && e.images.length) {
@@ -3067,7 +2182,6 @@ function onEvent(e) {
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
-  if (view === "all" && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
@@ -3586,7 +2700,7 @@ function setView(v) {
   if (v === "review" && curProj !== null) { homeProj = curProj; curProj = null; }   /* Review is every project's */
   if (gameTab(v) && !isGameProj(curProj)) v = "chat";
   const was = view;
-  view = v; savePlace(); paintView(); paintSide(); paintBoard();
+  view = v; savePlace(); paintView(); sideToStore(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
   if (v === "review") openReview(was !== "review"); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
@@ -3996,7 +3110,7 @@ const rvWaiting = (r) => ((r && r.items) || []).filter((i) => i.status === "wait
 const stageName = (id) => (STAGE_NAMES.find((s) => s[0] === id) || [id, cap(id || "")])[1];
 /* what Review shows goes to the store: the projects, what each has waiting, what was answered here, the tabs' order */
 function reviewToStore() {
-  const now = { projects: projects.projects || [], review: Object.assign({}, rvAll), reviewDone: Object.fromEntries(rvDone), reviewOrder: rvOrder };
+  const now = { projects: projList(), review: Object.assign({}, rvAll), reviewDone: Object.fromEntries(rvDone), reviewOrder: rvOrder };
   fridaeDo((f) => f.store.set(now));
 }
 async function loadReview(only) {
@@ -4007,20 +3121,11 @@ async function loadReview(only) {
   if (!only) for (const k of Object.keys(rvAll)) if (!(projects.projects || []).some((x) => x.path === k)) delete rvAll[k];
   /* an answer made here stays as one line until a refresh that began well after it */
   for (const d of rvDone.values()) if (d.at < started - 1500) d.gone = true;
-  paintReviewBadge();
   reviewToStore();
   paintRunBar();
-  if (view === "all") paintAll();
   if (view === "chat") { paintSwitch(); paintComposer(); }
 }
 function reloadReview() { clearTimeout(rvLoadT); rvLoadT = setTimeout(() => loadReview(), 300); }
-/* everything that waits for the user, over every project: the sidebar's count */
-function rvTotals() {
-  let n = 0, k = 0, strong = false;
-  for (const x of projects.projects || []) { const st = projState(x.path); if (st.n) { n += st.n; k++; } strong = strong || st.strong; }
-  return { n, k, strong };
-}
-function paintReviewBadge() { paintSide(); }
 /* a run that is stopped until the user answers first, then whatever else waits for the user, then the rest */
 const rvRank = (x) => { const st = projState(x.path), r = rvAll[x.path], going = runActive(r && r.run); return st.n && going ? (st.strong ? 0 : 1) : st.n ? 2 : 3; };
 /* the page is painted by ui/src/review; the tabs' order is set when it opens, so it does not move under the reader */
@@ -4032,7 +3137,7 @@ function openReview(fresh) {
   clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") loadReview(); else clearInterval(rvTimer); }, 5000);
 }
 /* something was answered on the page: it stays there as one line (`said`), and the counts follow */
-function rvAnswered(id, said) { rvDone.set(id, { at: Date.now(), said }); paintReviewBadge(); reviewToStore(); }
+function rvAnswered(id, said) { rvDone.set(id, { at: Date.now(), said }); reviewToStore(); }
 /* to a project's tab, and with `id` to one thing in it, which is marked for a moment */
 function rvJump(path, id) { fridaeDo((f) => f.store.set({ reviewJump: { path, id, n: ++rvJumps } })); }
 /* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
@@ -4166,356 +3271,28 @@ $("rv-toggle").onclick = async () => {
 rvBindRun(RB); rvBindSet(RB);
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
 const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
-/* agents did something: Overview's totals follow */
-let nowT = 0;
-function paintNowSoon() { clearTimeout(nowT); nowT = setTimeout(() => { if (view === "all") paintAll(); }, 250); }
-const elapsed = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
-/* ---------- Overview: the live graph of every game, and over its top edge one line of totals ---------- */
+/* ---------- Overview is ui/src/overview: the live graph and the one line over it. Opening it asks for what it shows,
+   and again every five seconds while it is in front. ---------- */
 let apTimer = 0;
 function openAll() {
-  loadHistory(); paintAll(); overviewOpen(); loadReview(); skCount();
+  loadHistory(); stepsToStore(); swarmPrime(); loadReview(); skCount();
   clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); skCount(); } else clearInterval(apTimer); }, 5000);
 }
-/* what needs the user on a game: items the run waits for, then to-dos only they can do. The one count of it: the
-   sidebar, Review's summary and Needs you, and Overview's totals all use this. */
+/* what needs the user on a project: items the run waits for, then to-dos only they can do (the sidebar and Overview
+   count it the same way: ui/src/review/model.ts) */
 function needsOf(r) {
   return rvWaiting(r).filter((i) => i.blocking).concat(rvNeeds(r).filter((c) => !rvDone.has(c.id)));
 }
-function paintAll() {
-  if (view !== "all") return;
-  const list = projects.projects || [];
-  /* at work: something waits for the user, a chat is working, or a run is going */
-  const rank = (x) => { const st = projState(x.path), r = rvAll[x.path]; return st.n || st.working || runActive(r && r.run) ? 0 : 3; };
-  const going = list.filter((x) => rank(x) < 3).length, working = [...agents.values()].filter((p) => p.busy).length, wait = list.reduce((n, x) => n + projState(x.path).n, 0);
-  $("ap-totals").textContent = [!list.length ? "No projects yet" : going ? going + (going === 1 ? " project at work" : " projects at work") : "Nothing going", working ? working + (working === 1 ? " agent working" : " agents working") : "", wait ? wait + (wait === 1 ? " thing waits for you" : " things wait for you") : ""].filter(Boolean).join(" · ");
-  $("ap-stop-all").hidden = !working;
-}
-$("ap-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) api("/api/stop", { agent: p.id }); };
-
-/* The graph: each game a square, its chats around it, each expert tied to the Lead that started it, saved chats dim,
-   and the last few steps of anything that is working. Drag to arrange, scroll to zoom, double-click to fit.
-   It is drawn only while something changes: nodes still finding their place, a drag, the zoom easing to fit, or a
-   working chat pulsing. Settled and with nothing at work, no frame is asked for at all (`og.raf` is 0); a look at
-   what there is to draw every 900 ms (`overviewTick`) and the pointer wake it again.
-   The layout cools as it goes (`og.heat`): at full strength for two seconds after it starts, then easing off over
-   about five more, so it always comes to rest instead of drifting for ever. */
-const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", shape: "", drawn: 0, last: 0, still: false };
-/* less motion: nothing drifts or pulses. The nodes are put straight where they come to rest, and a working chat is
-   bright with a ring that does not move. */
-{ const m = window.matchMedia("(prefers-reduced-motion: reduce)"); og.still = m.matches; m.addEventListener("change", () => { og.still = m.matches; overviewPoke(); }); }
 /* what the graph needs of each event as it passes: how many steps a chat has taken since its last message, and its
    last few steps while it works (after the first batch only: a chat put back from its log shows none) */
 function overviewNote(e) {
   if (!e.agent || (e.kind !== "tool" && e.kind !== "user")) return;
   const p = agents.get(e.agent); if (!p) return;
-  if (e.kind === "user") { p.steps = 0; return; }
+  if (e.kind === "user") { p.steps = 0; stepsSoon(); return; }
   p.steps = (p.steps || 0) + 1;
   if (e.id > bootMark) p.recent = (p.recent || []).concat([{ label: e.label, t: Date.now() }]).slice(-4);
+  stepsSoon();
 }
-function overviewWanted() {
-  const want = new Map(), links = [];
-  const as = (id) => alias.get(id) || id;
-  const add = (id, kind, label, extra) => { if (alias.has(id)) return; want.set(id, Object.assign({ id, kind, label }, extra || {})); };
-  const link = (a, b) => { a = as(a); b = as(b); if (a !== b && want.has(a) && want.has(b)) links.push([a, b]); };
-  /* an expert idle for longer than XP_IDLE is left out, as in the side list (xpRecent), unless the side list shows its
-     chat's earlier experts */
-  const now = Date.now();
-  const xpShown = (id, parent, busy, when) => !parent || busy || id === current || now - when < XP_IDLE || xpOld.has(parent);
-  const open = [...agents.values()].filter((p) => (p.started || p.busy) && (!isHelper(p) || xpShown(p.id, p.parent || p.id, p.busy, xpWhen.get(p.id) || (p.replay ? 0 : pageStart))));
-  const openIds = new Set(open.map((p) => p.id));
-  const savedChats = (saved.chats || []).filter((c) => !agents.has(c.id) && xpShown(c.id, c.parent, false, xpWhen.get(c.id) || (c.updated || 0) * 1000)).slice(0, 60);
-  /* A game's Lead is the game itself in the graph: one node, drawn as the logo, that opens the Lead's chat. The Lead
-     is the chat leading the game's run, else its newest chat named "Lead: ...". `alias` sends the Lead's own node,
-     and every tie to it, to the game's. */
-  const alias = new Map(), leadOf = new Map();
-  const isLeadName = (name) => /^lead\b/i.test(name || "");
-  for (const x of projects.projects || []) {
-    const r = rvAll[x.path], run = r && r.run && r.run.lead;
-    const cands = open.filter((p) => !isHelper(p) && projKey(p) === x.path).map((p) => ({ id: p.id, name: p.name, at: bornAt(p.id) }))
-      .concat(savedChats.filter((c) => !c.parent && (c.project || "") === x.path).map((c) => ({ id: c.id, name: c.name, at: bornAt(c.id) })));
-    const lead = cands.find((c) => c.id === run) || cands.filter((c) => isLeadName(c.name)).sort((a, b) => b.at - a.at)[0];
-    if (!lead) continue;
-    leadOf.set(x.path, lead.id);
-    alias.set("chat:" + lead.id, "proj:" + x.path); alias.set("saved:" + lead.id, "proj:" + x.path);
-  }
-  for (const x of projects.projects || []) {
-    const lid = leadOf.get(x.path), lp = lid && agents.get(lid);
-    add("proj:" + x.path, "project", x.name, { path: x.path, lead: lid || null, busy: open.some((p) => p.busy && projKey(p) === x.path), weight: lp ? Math.min(6, (lp.steps || 0) / 3) : 0 });
-  }
-  if (open.some((p) => isChat(p) && !p.project)) add("proj:", "project", "No project", { path: "", busy: open.some((p) => p.busy && isChat(p) && !p.project) });
-  for (const p of open) {
-    const helper = isHelper(p), label = helper ? splitExpert(p.name, p.expert)[0] : p.name, m = helper && memberOf(p.id);
-    /* a member of a team's run: `swarm` is its state there (parked is drawn dimmer, being checked with a ring) */
-    add("chat:" + p.id, helper ? "expert" : "chat", label, { pane: p.id, busy: !!p.busy, swarm: (m && m.status) || "", weight: Math.min(helper ? 4 : 8, (p.steps || 0) / 3) });
-  }
-  for (const c of savedChats) add("saved:" + c.id, "saved", c.name, { chat: c.id, weight: Math.min(6, (c.messages || 1) / 2) });
-  for (const p of open) {
-    if (isHelper(p) && want.has(as("chat:" + p.parent))) link("chat:" + p.parent, "chat:" + p.id);
-    else link("proj:" + projKey(p), "chat:" + p.id);
-    if (p.busy) (p.recent || []).filter((r) => Date.now() - r.t < 45000).forEach((r, i, all) => { const id = "step:" + p.id + ":" + r.t; add(id, "step", r.label, { born: r.t, of: as("chat:" + p.id), newest: i === all.length - 1 }); links.push([as("chat:" + p.id), id]); });
-  }
-  for (const c of savedChats) {
-    if (c.parent && (openIds.has(c.parent) || want.has(as("saved:" + c.parent)))) link(openIds.has(c.parent) ? "chat:" + c.parent : "saved:" + c.parent, "saved:" + c.id);
-    else link("proj:" + (c.project || ""), "saved:" + c.id);
-  }
-  /* a saved chat of no game, with no square to hang from, is left out */
-  for (const id of [...want.keys()]) if (id.startsWith("saved:") && !links.some((l) => l[1] === id)) want.delete(id);
-  return { want, links };
-}
-/* Bring the nodes into line with what there is to show. Says what changed: "layout" when a game, a chat or a tie
-   between them came or went (the nodes must find their places again), "look" when only what is drawn did (a step
-   taken, a chat starting or stopping work, a name), false when nothing did. */
-function overviewSync() {
-  const { want, links } = overviewWanted();
-  for (const id of [...og.nodes.keys()]) if (!want.has(id)) og.nodes.delete(id);
-  for (const [id, w] of want) {
-    const have = og.nodes.get(id);
-    if (have) Object.assign(have, w);
-    else {
-      /* a new node appears beside what it is tied to, so the picture grows instead of jumping */
-      const tie = links.find((l) => l[1] === id && og.nodes.has(l[0])) || links.find((l) => l[0] === id && og.nodes.has(l[1]));
-      const near = tie ? og.nodes.get(tie[0] === id ? tie[1] : tie[0]) : null, a = Math.random() * 6.283, d = near ? 40 : 120 + Math.random() * 80;
-      og.nodes.set(id, Object.assign({ x: (near ? near.x : 0) + Math.cos(a) * d, y: (near ? near.y : 0) + Math.sin(a) * d, vx: 0, vy: 0 }, w));
-    }
-  }
-  og.links = links.filter((l) => og.nodes.has(l[0]) && og.nodes.has(l[1]));
-  const sig = [...want.values()].map((n) => n.id + "|" + n.label + "|" + (n.busy ? 1 : 0) + "|" + (n.newest ? 1 : 0) + "|" + (n.weight || 0).toFixed(1) + "|" + (n.swarm || "")).join("\n") + "\n" + og.links.map((l) => l[0] + ">" + l[1]).join("\n");
-  if (sig === og.sig) return false;
-  og.sig = sig;
-  const shape = [...want.values()].filter((n) => n.kind !== "step").map((n) => n.id).join("\n") + "\n" + og.links.filter((l) => !l[1].startsWith("step:")).map((l) => l[0] + ">" + l[1]).join("\n");
-  const kind = shape === og.shape ? "look" : "layout"; og.shape = shape;
-  /* the same picture in words, for a reader who cannot see the canvas */
-  const all = [...og.nodes.values()], count = (k) => all.filter((n) => n.kind === k).length, plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
-  const busy = all.filter((n) => n.busy && n.kind !== "project").map((n) => n.label);
-  $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "project"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
-  return kind;
-}
-const NODE = { project: 10, chat: 6, expert: 4, saved: 3, step: 2.5 };
-/* a game is drawn as the Fridae logo, turning while anything in it works */
-const ogLogo = new Image(); ogLogo.onload = () => { if (typeof overviewPoke === "function") overviewPoke(); }; ogLogo.src = "/logo.png";
-/* the furthest out the graph goes, by the fit or by the wheel: in a small space (large text, a narrow window) the
-   whole of it is still inside */
-const ZOOM_MIN = 0.15;
-const radius = (n) => NODE[n.kind] + (n.weight || 0) * 0.6;
-/* one step of the layout; false once every node has come to rest (and until something wakes it) */
-function overviewStep() {
-  if (og.asleep) return false;
-  const nodes = [...og.nodes.values()], k = og.heat;
-  for (let i = 0; i < nodes.length; i++) {
-    const a = nodes[i];
-    a.vx -= a.x * 0.0009 * k; a.vy -= a.y * 0.0009 * k;               /* a gentle pull to the middle */
-    for (let j = i + 1; j < nodes.length; j++) {
-      const b = nodes[j]; let dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy || 0.01;
-      const f = Math.min(3, 2600 / d2) * k, d = Math.sqrt(d2); dx /= d; dy /= d;   /* everything pushes everything else away */
-      a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
-    }
-  }
-  for (const [ia, ib] of og.links) {
-    const a = og.nodes.get(ia), b = og.nodes.get(ib); const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-    const want = b.kind === "step" ? 46 : b.kind === "saved" ? 84 : b.kind === "expert" ? 70 : 140, f = (d - want) * 0.012 * k;   /* a tie holds two nodes at a set distance */
-    a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
-  }
-  let fastest = 0;
-  for (const n of nodes) { if (og.drag && og.drag.node === n) { n.vx = n.vy = 0; continue; } n.vx *= 0.86; n.vy *= 0.86; n.x += n.vx; n.y += n.vy; fastest = Math.max(fastest, Math.abs(n.vx), Math.abs(n.vy)); }
-  /* cooling: full strength for the first 120 steps after it starts (a drag keeps it warm), then easing off */
-  if (og.drag) og.heat = Math.max(og.heat, 0.5); else if (++og.age > 120) og.heat *= 0.985;
-  /* at rest: it has cooled right down, or nothing has moved a fiftieth of a pixel for half a second of frames */
-  og.calm = fastest < 0.02 ? og.calm + 1 : 0;
-  if ((og.heat < 0.01 || og.calm > 30) && !og.drag) { og.asleep = true; for (const n of nodes) n.vx = n.vy = 0; }
-  return !og.asleep;
-}
-/* The graph's space: its width and height in the page's own px (a px of the stylesheet, which the text-size setting
-   scales), where it starts in the window, and that scale. Engines disagree on whether an element's rectangle is
-   already scaled when the text size is not 100% (its offsetWidth never is), so the rectangle is compared with the
-   offset width and brought to window px either way. Everything the graph draws and every pointer place goes
-   through this, so names grow with the text size and a press lands on the node under it. */
-function overviewBox() {
-  const host = $("o-canvas").parentNode, r = host.getBoundingClientRect(), z = (typeof scale === "number" && scale > 0 ? scale : 100) / 100;
-  const ratio = host.offsetWidth ? r.width / host.offsetWidth : 1, scaled = Math.abs(ratio - z) <= Math.abs(ratio - 1), up = scaled ? 1 : z;
-  return { z, left: r.left * up, top: r.top * up, width: r.width * up / z, height: r.height * up / z };
-}
-/* draw it once; true while the zoom is still easing towards the fit */
-function overviewDraw(now) {
-  const cv = $("o-canvas"), box0 = overviewBox(), dpr = (og.dpr = window.devicePixelRatio || 1) * box0.z;
-  if (!box0.width || !box0.height) return false;
-  if (cv.width !== Math.round(box0.width * dpr) || cv.height !== Math.round(box0.height * dpr)) { cv.width = Math.round(box0.width * dpr); cv.height = Math.round(box0.height * dpr); }
-  const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box0.width, box0.height);
-  /* names are 12px on the screen whatever the zoom (13px for a game), growing only when zoomed well in */
-  const FONT = "px Geist, 'Segoe UI', sans-serif", named = (n) => n.kind !== "saved" && n.kind !== "step";
-  const short = (n) => (n.label.length > 30 ? n.label.slice(0, 29) + "…" : n.label), px = (n) => (n.kind === "project" ? 13 : 12);
-  let easing = false;
-  if (!og.mine && og.nodes.size && !og.drag) {
-    /* fit: the middle of what there is goes to the middle of the space, at the zoom that keeps every node, and
-       every name that always shows, inside it with a margin (held still while a node is dragged, so the picture
-       does not slide under the pointer) */
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const n of og.nodes.values()) { x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y); }
-    const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-    let fit = 1.8;
-    for (const n of og.nodes.values()) {
-      let half = 12;
-      if (named(n)) { c.font = (n.kind === "project" ? "500 " : "") + px(n) + FONT; half = c.measureText(short(n)).width / 2 + 8; }
-      if (Math.abs(n.x - mx) > 1) fit = Math.min(fit, (box0.width / 2 - half) / Math.abs(n.x - mx));
-      if (Math.abs(n.y - my) > 1) fit = Math.min(fit, (box0.height / 2 - 40) / (Math.abs(n.y - my) + radius(n)));
-    }
-    fit = Math.max(ZOOM_MIN, fit);
-    const near = Math.abs(fit - og.zoom) < 0.002 && Math.abs(mx - og.cx) < 0.5 && Math.abs(my - og.cy) < 0.5;
-    if (og.still || near) { og.zoom = fit; og.cx = mx; og.cy = my; }
-    else { og.zoom += (fit - og.zoom) * 0.06; og.cx += (mx - og.cx) * 0.06; og.cy += (my - og.cy) * 0.06; easing = true; }
-  }
-  c.translate(box0.width / 2 + og.panX, box0.height / 2 + og.panY); c.scale(og.zoom, og.zoom); c.translate(-og.cx, -og.cy);
-  const near = new Set(); if (og.hover) { near.add(og.hover.id); og.links.forEach(([a, b]) => { if (a === og.hover.id) near.add(b); if (b === og.hover.id) near.add(a); }); }
-  const lit = (id) => !og.hover || near.has(id);
-  c.lineWidth = 1 / og.zoom;
-  for (const [ia, ib] of og.links) {
-    const a = og.nodes.get(ia), b = og.nodes.get(ib), on = og.hover && near.has(ia) && near.has(ib);
-    c.strokeStyle = "rgba(" + INK_RGB + "," + (on ? 0.5 : og.hover ? 0.04 : a.busy || b.busy ? 0.22 : 0.1) + ")";
-    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
-  }
-  const pulse = og.still ? 0.5 : 0.5 + 0.5 * Math.sin(now / 420), size = (p) => p / Math.min(1.4, og.zoom);
-  const names = [];
-  for (const n of og.nodes.values()) {
-    const r = Math.max(radius(n), 1.5 / og.zoom), dim = lit(n.id) ? 1 : 0.18;   /* never under 1.5px on the screen */
-    const parked = n.swarm === "parked" && !n.busy;   /* a parked member rests: drawn dimmer, its name too */
-    const shade = (n.kind === "saved" ? 0.3 : n.kind === "step" ? 0.55 : n.busy ? 1 : n.kind === "chat" || n.kind === "expert" ? 0.62 : 0.85) * (parked ? 0.5 : 1);
-    if (n.busy) { c.fillStyle = "rgba(" + INK_RGB + "," + (0.05 + 0.07 * pulse) * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 7 + 5 * pulse, 0, 6.283); c.fill(); }
-    c.fillStyle = c.strokeStyle = "rgba(" + INK_RGB + "," + shade * dim + ")";
-    if (n.kind === "project" && ogLogo.complete && ogLogo.naturalWidth) {
-      const s = r * 2.6;
-      c.save(); c.globalAlpha = (n.busy ? 1 : 0.9) * dim; c.translate(n.x, n.y);
-      if (n.busy && !og.still) c.rotate((now / 1600) % 6.2832);   /* one turn every ten seconds */
-      c.drawImage(ogLogo, -s / 2, -s / 2, s, s); c.restore();
-    } else {
-      c.beginPath();
-      if (n.kind === "project") c.rect(n.x - r, n.y - r, r * 2, r * 2); else c.arc(n.x, n.y, r, 0, 6.283);
-      c.fill();
-    }
-    /* a member whose work is being checked: one thin, still ring around it */
-    if (n.swarm === "verifying") { c.strokeStyle = "rgba(" + INK_RGB + "," + 0.5 * dim + ")"; c.beginPath(); c.arc(n.x, n.y, r + 3.5, 0, 6.283); c.stroke(); }
-    /* names: always for a game, a chat and an expert; for a saved chat under the pointer or zoomed well in; for a
-       step, the one its chat is on now (all of its last steps under the pointer or zoomed in). They are drawn after
-       the dots, the more important first. */
-    const wordy = named(n) || n === og.hover || og.zoom > 1.5 || (n.kind === "step" && lit(n.id) && (n.newest || !!og.hover || og.zoom >= 1));
-    if (!wordy) continue;
-    const l = { text: short(n), font: (n.kind === "project" ? "500 " : "") + size(px(n)) + FONT, fill: "rgba(" + INK_RGB + "," + (n === og.hover || n.busy || n.kind === "project" ? 0.95 : n.kind === "step" ? 0.55 : parked ? 0.4 : 0.62) * dim + ")",
-      rank: n === og.hover ? 0 : n.kind === "project" ? 1 : n.kind === "chat" ? (n.busy ? 2 : 3) : n.kind === "expert" ? 4 : n.kind === "step" ? (n.newest ? 5 : 6) : 7 };
-    const chat = n.kind === "step" && og.nodes.get(n.of);
-    if (chat) {
-      /* a step's name sits beside it, on the side away from its chat, so it never lies across the chat's own */
-      const side = n.x < chat.x ? -1 : 1;
-      l.align = side < 0 ? "right" : "left"; l.base = "middle"; l.x = n.x + side * (r + size(6)); l.y = n.y;
-    } else { l.align = "center"; l.base = "alphabetic"; l.x = n.x; l.y = n.y + r + size(14); }
-    names.push(l);
-  }
-  /* a name that would lie across one already drawn is left out; the node under the pointer always shows its own */
-  const taken = [], tall = size(15);
-  names.sort((a, b) => a.rank - b.rank);
-  for (const l of names) {
-    c.font = l.font;
-    const wide = c.measureText(l.text).width, x0 = l.align === "center" ? l.x - wide / 2 : l.align === "right" ? l.x - wide : l.x, y0 = l.base === "middle" ? l.y - tall / 2 : l.y - tall * 0.8;
-    if (l.rank > 0 && taken.some((t) => x0 < t[2] && x0 + wide > t[0] && y0 < t[3] && y0 + tall > t[1])) continue;
-    taken.push([x0, y0, x0 + wide, y0 + tall]);
-    c.fillStyle = l.fill; c.textAlign = l.align; c.textBaseline = l.base; c.fillText(l.text, l.x, l.y);
-  }
-  c.textBaseline = "alphabetic";
-  og.drawn++;
-  return easing;
-}
-/* A frame: move, draw, and ask for the next one only if there is a reason to. */
-function overviewFrame(now) {
-  og.raf = 0;
-  if (view !== "all") return;
-  let moving;
-  if (og.still && !og.drag) { for (let i = 0; i < 400 && overviewStep(); i++); moving = !og.asleep; if (moving) { og.raf = requestAnimationFrame(overviewFrame); return; } }   /* straight to rest, then drawn once */
-  else moving = overviewStep();
-  const pulsing = !og.still && [...og.nodes.values()].some((n) => n.busy);
-  /* a pulse alone needs no more than thirty frames a second */
-  const easing = !moving && pulsing && !og.drag && now - og.last < 30 ? false : (og.last = now, overviewDraw(now));
-  if (moving || easing || pulsing || og.drag) og.raf = requestAnimationFrame(overviewFrame);
-}
-/* draw once more (the pointer moved over it, it was zoomed or panned, its space changed) */
-function overviewPoke() { if (view === "all" && !og.raf) og.raf = requestAnimationFrame(overviewFrame); }
-/* the layout has something to do again (a node came or went, one was dragged) */
-function overviewWake() { og.asleep = false; og.calm = 0; og.heat = Math.max(og.heat, 0.3); overviewPoke(); }
-/* every 900 ms while the page is in front: is there something else to show? */
-function overviewTick() {
-  if (view !== "all") { clearInterval(og.timer); og.timer = 0; return; }
-  if (og.dpr !== (window.devicePixelRatio || 1)) overviewPoke();   /* the display's density changed without a word */
-  const changed = overviewSync();
-  /* with less motion the nodes are put straight to rest, which is only worth doing when the layout itself changed:
-     a step taken by a working chat just appears beside it */
-  if (changed === "layout" || (changed && !og.still)) overviewWake(); else if (changed) overviewPoke();
-}
-function overviewOpen() {
-  /* the first time, the layout starts from scratch at full strength; coming back to it, only what changed stirs it */
-  const first = !og.nodes.size;
-  swarmPrime();   /* parked and checked experts are drawn so: what each Lead's team is doing */
-  if (overviewSync()) { if (first) { og.heat = 1; og.age = 0; og.asleep = false; og.calm = 0; } else overviewWake(); }
-  og.last = 0; overviewPoke();
-  if (!og.timer) og.timer = setInterval(overviewTick, 900);
-}
-/* where the pointer is, in the graph's own coordinates, and which node is under it */
-function overviewAt(ev) {
-  const b = overviewBox(), px = (ev.clientX - b.left) / b.z, py = (ev.clientY - b.top) / b.z;   /* in the page's own px, from the graph's corner */
-  const x = (px - b.width / 2 - og.panX) / og.zoom + og.cx, y = (py - b.height / 2 - og.panY) / og.zoom + og.cy;
-  let hit = null, best = 1e9;
-  for (const n of og.nodes.values()) { const d = Math.hypot(n.x - x, n.y - y); if (d < radius(n) + 7 / og.zoom && d < best) { best = d; hit = n; } }
-  return { x, y, px, py, hit };
-}
-/* a press that never got its release (a menu opened over it, the window lost the keyboard) is over */
-function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = null; if (d.moved && d.node) overviewWake(); else overviewPoke(); }
-{
-  const cv = $("o-canvas");
-  cv.addEventListener("mousemove", (ev) => {
-    const at = overviewAt(ev), d = og.drag;
-    if (d) {
-      /* a press becomes a drag once the pointer has gone three px from where it went down; until then it is still a
-         press, and letting go opens what is under it */
-      if (!d.moved && Math.hypot(at.px - d.px0, at.py - d.py0) <= 3) return;
-      d.moved = true;
-      if (d.node) { d.node.x = at.x; d.node.y = at.y; overviewWake(); } else { og.panX += at.px - d.px; og.panY += at.py - d.py; og.mine = true; overviewPoke(); }
-      d.px = at.px; d.py = at.py; return;
-    }
-    if (og.hover !== at.hit) { og.hover = at.hit; overviewPoke(); }
-    cv.classList.toggle("over", !!at.hit && at.hit.kind !== "step");
-  });
-  /* the left button only: any other leaves the graph alone (and opens nothing) */
-  cv.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; const at = overviewAt(ev); og.drag = { node: at.hit, moved: false, px0: at.px, py0: at.py, px: at.px, py: at.py }; });
-  cv.addEventListener("contextmenu", overviewDrop);
-  window.addEventListener("blur", overviewDrop);
-  window.addEventListener("mouseup", (ev) => {
-    if (ev.button !== 0) return;
-    const d = og.drag; og.drag = null; if (!d) return;
-    if (d.moved) { if (d.node) overviewWake(); return; }   /* a dragged node is let go: the rest settle around it */
-    if (!d.node) return;
-    const n = d.node;
-    /* a game opens its Review; a chat opens in Chat; an expert opens its Lead's chat with its line open */
-    if (n.kind === "project") { if (n.lead) openChatById(n.lead); else if (n.path) openInReview(n.path); else showProject(n.path, "chat"); }
-    else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
-    else if (n.kind === "saved") openChatById(n.chat);
-  });
-  cv.addEventListener("mouseleave", () => { if (og.hover) { og.hover = null; overviewPoke(); } });
-  cv.addEventListener("dblclick", () => { og.mine = false; og.panX = og.panY = 0; overviewPoke(); });   /* double-click: fit it to the space again */
-  /* The wheel zooms the graph, down to the smallest zoom the fit itself may choose (ZOOM_MIN). A pinch (the wheel with Ctrl or
-     Command) always does, and stops here, so it never also changes the page's text size. When the cards are under
-     the graph and the page has to scroll to reach them, the plain wheel belongs to the page: it zooms the graph only
-     after a press on the graph, until the pointer leaves it. */
-  cv.addEventListener("wheel", (ev) => {
-    const pinch = ev.ctrlKey || ev.metaKey;
-    ev.preventDefault(); ev.stopPropagation();
-    const by = pinch ? Math.max(0.8, Math.min(1.25, Math.exp(-ev.deltaY * 0.01))) : ev.deltaY < 0 ? 1.1 : 0.9;
-    og.mine = true; og.zoom = Math.max(ZOOM_MIN, Math.min(3, og.zoom * by)); overviewPoke();
-  }, { passive: false });
-  new ResizeObserver(overviewPoke).observe(cv.parentNode);
-  /* a sharper or coarser display (the window moved to another screen): draw again at its density */
-  const density = () => { const m = window.matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)"); m.addEventListener("change", () => { overviewPoke(); density(); }, { once: true }); };
-  density();
-  /* the key behind "?" closes like a menu: on Escape (the keyboard goes back to the "?") and on a press anywhere else */
-  const key = $("o-key");
-  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && key.open) { const inside = key.contains(document.activeElement); key.open = false; if (inside) key.querySelector("summary").focus(); } });
-  document.addEventListener("mousedown", (ev) => { if (key.open && !key.contains(ev.target)) key.open = false; });
-}
-
 /* a new review item: Review reloads; the chat that filed it gets one line pointing there */
 function onReviewItem(e) {
   reloadReview();
@@ -4588,7 +3365,7 @@ async function loadSwarm(lead) {
     const r = await api("/api/swarm?lead=" + encodeURIComponent(lead) + (last ? "&since=" + last : ""));
     if (!r || typeof r !== "object" || !("run" in r)) return;
     /* a new run under the same Lead: its board is read from the start */
-    if (last && r.run !== had.run) { swarm.delete(lead); again = true; return; }
+    if (last && r.run !== had.run) { swarm.delete(lead); teamsToStore(); again = true; return; }
     const s = had && had.run === r.run ? had : { board: [], seen: 0, gen: 0 };
     s.run = r.run || null; s.ceiling = r.ceiling; s.members = Array.isArray(r.members) ? r.members.filter((m) => m && m.id) : [];
     if (!s.run) { s.board = []; s.seen = 0; }
@@ -4601,8 +3378,7 @@ async function loadSwarm(lead) {
     /* the board keeps its newest 600 lines here */
     if (s.board.length > 600) { const cut = s.board.length - 600; s.board.splice(0, cut); s.seen = Math.max(0, s.seen - cut); s.gen++; }
     swarm.set(lead, s);
-    paintSideSoon(); if (bdLead() === lead) paintBoard();
-    if (view === "all") overviewTick();
+    teamsToStore(); if (bdLead() === lead) paintBoard();
   } catch (e) {
   } finally {
     const more = swBusy.get(lead) === "again"; swBusy.delete(lead);
@@ -4898,29 +3674,12 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-/* ---------- Settings is ui/src/settings: every page, the search, the list of pages. Here is how it is opened and
-   closed (the veil, the other windows and the keyboard's way back are the page's). ---------- */
-function openSetup(section) {
-  closePops(); closeProject(); closeUsage();
-  document.body.classList.add("setup"); panelOpened(null);
-  fridaeDo((f) => { f.store.set({ curProj: curProj || "" }); f.settings.open(typeof section === "string" ? section : undefined); });
-  refresh(); loadEngine(); loadGithub();
-}
-/* the decisions waiting in Settings, Skills (two skills, or two notes, that cover the same thing) */
-const skOpen = () => (window.fridae ? fridae.skills.open() : []);
 /* the Overview asks for the count now and then (it runs the skills tool, so not on every repaint) */
 function skCount() { fridaeDo((f) => f.skills.count()); }
-$("ap-sk-go").onclick = () => openSetup("skills");
-/* the count of open decisions, in the Overview's totals line (Settings' Skills button shows it too) */
-function skPaintCount() {
-  const n = skOpen().length;
-  $("ap-sk").hidden = !n; $("ap-sk-go").textContent = n + (n === 1 ? " decision waits" : " decisions wait"); // skills' and notes
-}
 document.fonts.ready.then(() => { slideMark($("tabs")); });
-function closeSetup() { if (!document.body.classList.contains("setup")) return; document.body.classList.remove("setup"); fridaeDo((f) => f.settings.close()); panelClosed(); }
-$("b-setup").onclick = () => openSetup(); $("veil").onclick = () => { closeSetup(); closeUsage(); closeProject(); };
+$("veil").onclick = () => { closeSetup(); closeUsage(); closeProject(); };
 
-/* ---------- what Settings and Usage (ui/src/settings, ui/src/usage) ask of this page, and where they are put.
+/* ---------- what the screens in ui/src ask of this page, and where they are put.
    This runs before anything else that waits for app.js, so the screens find it there. ---------- */
 let statusJson = "", aisKey = "";
 /* the app's status, for the screens: a new object only when something in it changed, so they are not drawn again
@@ -4935,10 +3694,13 @@ function statusToStore(asked) {
   });
 }
 function savedToStore() { fridaeDo((f) => f.store.set({ saved })); }
-let setSideW = () => {};
 fridaeWait.unshift((f) => {
   f.setHost({
-    refresh, closeSetup, closeUsage, openUsage, openSetup, panelOpened, say, allowCommands, ghAct, engineInstall, reloadSaved, setScale,
+    refresh, panelOpened, panelClosed, closePops, closeProject, loadEngine, loadGithub, say, allowCommands, ghAct, engineInstall, reloadSaved, setScale,
+    /* the sidebar and Overview: where a press goes */
+    showAll, showNewProject, setView, showProject, openChatById, openInReview, projectRenamed, projectDeleted,
+    openChat: (id) => { select(id); setView("chat"); },
+    ink: () => INK_RGB,
     anyBusy: () => [...agents.values()].some((x) => x.busy),
     /* a row of the Guide: its page, or its example in the message box */
     example: (example) => {
@@ -4947,16 +3709,14 @@ fridaeWait.unshift((f) => {
       else if (example === "@promos" || example === "@review") setView(example.slice(1));
       else { setView("chat"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); }
     },
-    setSideW: (w) => setSideW(w),
     setTheme: (next) => { setTheme(next); f.store.set({ theme: Object.assign({}, themeChoice) }); },
     themes: () => ({ THEMES, ORDER: THEME_ORDER, colors: themeColors }),
     swarmCeiling: (n) => { status.swarm_ceiling = n; for (const s of swarm.values()) s.ceiling = n; paintBoard(); statusToStore(); },
-    skillsCount: skPaintCount,
   });
   f.store.set({ theme: Object.assign({}, themeChoice) });
-  f.mount("settings", $("sd")); f.mount("usage", $("ud")); f.mount("usage-pop", $("use-pop"));
+  f.mount("sidebar", $("side")); f.mount("side-over", $("side-over")); f.mount("overview", $("allproj"));
+  f.mount("settings", $("sd")); f.mount("usage", $("ud"));
 });
-window.addEventListener("themechange", () => { if (typeof overviewPoke === "function") overviewPoke(); });
 
 /* a picture, large, over the page: the lightbox is ui/src/review/Lightbox.tsx (its own keys: arrows and Escape) */
 function zoom(src, list, from) { fridaeDo((f) => f.zoom(src, list, from)); }
@@ -4966,23 +3726,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   const pop = POPS.find(([, m]) => $(m).classList.contains("on") && $(m).contains(document.activeElement));
   closeSetup(); closeUsage(); closeProject(); closePops(); closeConv();
-  $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
   if (pop) $(pop[0]).focus();
 });
 
-/* the update button at the bottom left (the rest of it is Settings, About) */
-function paintUpdate() {
-  const u = status.update || {}; const b = $("b-update");
-  if (u.status === "ready") { b.hidden = false; b.classList.remove("busy"); b.textContent = "Restart to update"; b.title = "Version " + u.latest + (u.notes ? "\n\n" + u.notes : ""); }
-  else if (u.status === "downloading") { b.hidden = false; b.classList.add("busy"); b.textContent = "Updating " + Math.round((u.progress || 0) * 100) + "%"; }
-  else b.hidden = true;
-}
-$("b-update").onclick = async () => {
-  if ((status.update || {}).status !== "ready") return;
-  const working = [...agents.values()].some((p) => p.busy);
-  if (working && !$("b-update").dataset.sure) { $("b-update").dataset.sure = "1"; $("b-update").textContent = "Chats are working. Restart anyway?"; setTimeout(() => { delete $("b-update").dataset.sure; paintUpdate(); }, 4000); return; }
-  $("b-update").textContent = "Restarting..."; await api("/api/update", { action: "install" });
-};
 /* functions, not consts: they are needed while the page is still loading */
 function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; }
 /* the AI new chats start on (Settings, General) */
@@ -5112,7 +3858,7 @@ async function refresh() { try { status = await api("/api/status");
   moveOpenCodePick();
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   statusToStore(true);
-  paintSide(); paintSettingsNote(); paintUpdate(); paintNeeds(); paintSwitch(); paintComposer(); } catch (e) {} }
+  sideToStore(); paintSettingsNote(); paintNeeds(); paintSwitch(); paintComposer(); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
@@ -5123,43 +3869,9 @@ function setScale(v) {
   fridaeDo((f) => f.store.set({ scale }));
 }
 setScale(scale);
-/* The sidebar's width: dragged at its right edge (or the arrow keys, 16px a press), between 200px and 480px; a double
-   press puts it back to 232px. Remembered on this computer. Narrow windows set their own width and hide the handle. */
-{
-  const grip = $("side-grip"), MIN = 200, MAX = 480, BASE = 232;
-  let w = BASE;
-  const put = (v, keep) => {
-    w = Math.max(MIN, Math.min(MAX, Math.round(v)));
-    document.documentElement.style.setProperty("--side-w", w + "px");
-    grip.setAttribute("aria-valuenow", String(w));
-    fridaeDo((f) => f.store.set({ sideW: w }));
-    if (keep) { try { if (w === BASE) localStorage.removeItem("side-w"); else localStorage.setItem("side-w", String(w)); } catch (e) {} }
-  };
-  put(BASE);
-  try { const v = parseInt(localStorage.getItem("side-w") || "", 10); if (v) put(v); } catch (e) {}
-  /* the same without dragging: three widths in Settings, Appearance */
-  setSideW = (v) => put(v, true);
-  grip.addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    ev.preventDefault(); grip.focus({ preventScroll: true });
-    const x0 = ev.clientX, w0 = w, z = scale / 100;
-    let moved = false;   /* a press that does not travel is not a drag: nothing moves until it has gone 3px */
-    grip.classList.add("drag"); document.body.classList.add("side-drag");
-    try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
-    const move = (e) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; put(w0 + (e.clientX - x0) / z); };
-    const end = () => {
-      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", end); grip.removeEventListener("pointercancel", end);
-      grip.classList.remove("drag"); document.body.classList.remove("side-drag"); put(w, true);
-    };
-    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
-  });
-  grip.addEventListener("dblclick", () => put(BASE, true));
-  grip.addEventListener("keydown", (ev) => {
-    const to = ev.key === "ArrowLeft" ? w - 16 : ev.key === "ArrowRight" ? w + 16 : ev.key === "Home" ? MIN : ev.key === "End" ? MAX : ev.key === "Enter" ? BASE : null;
-    if (to === null) return;
-    ev.preventDefault(); ev.stopPropagation(); put(to, true);
-  });
-}
+/* The sidebar's width, before anything is drawn: 232px unless another was kept on this computer. The handle on its
+   edge and Settings' three widths are ui/src/sidebar (width.ts, Grip.tsx). */
+try { const w = parseInt(localStorage.getItem("side-w") || "", 10); document.documentElement.style.setProperty("--side-w", (w ? Math.max(200, Math.min(480, w)) : 232) + "px"); } catch (e) {}
 document.addEventListener("keydown", (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;   // Ctrl on Windows and Linux, Command on a Mac
   if (e.key === "=" || e.key === "+") { e.preventDefault(); setScale(scale + 10); }

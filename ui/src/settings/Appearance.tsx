@@ -4,6 +4,7 @@
    old page's (they are applied before anything is drawn); this page asks for them through the host. */
 import { useStore } from "../store";
 import { host } from "../host";
+import { setSideW } from "../sidebar/width";
 import { Group } from "../ui/Group";
 import { SettingsRow } from "../ui/SettingsRow";
 import { Segmented } from "../ui/Segmented";
@@ -65,7 +66,7 @@ export function Appearance() {
       </Group>
       <Group id="set-side" title="Sidebar">
         <SettingsRow id="set-side-width" find="sidebar width resize narrow wide projects list" title="Sidebar width" desc="Or drag the sidebar's right edge. A double-click there puts it back."
-          ctl={<Segmented id="side-w-seg" label="Sidebar width" pressed value={sideW} onPick={(w) => host.setSideW(w)}
+          ctl={<Segmented id="side-w-seg" label="Sidebar width" pressed value={sideW} onPick={(w) => setSideW(w, true)}
             options={[{ value: 200, label: "Narrow", data: { "data-w": "200" } }, { value: 232, label: "Default", data: { "data-w": "232" } }, { value: 320, label: "Wide", data: { "data-w": "320" } }]} />} />
       </Group>
     </>

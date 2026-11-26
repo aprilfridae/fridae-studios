@@ -35,7 +35,33 @@ export type State = {
   setupOut: string;                          /* what Run a full check printed */
   scale: number; sideW: number;              /* text size (%) and the sidebar's width (px) */
   theme: { id: string; mode: string };       /* the colour theme in use */
+  /* what the sidebar and Overview show: written by the old page (its `sideToStore`) until the chat has moved too */
+  nav: Nav;                                  /* the page, the project and the chat in front */
+  chats: Chat[];                             /* every open chat, expert and helper; an unchanged one is the same object */
+  steps: Record<string, Steps>;              /* chat id -> the steps it has taken (Overview's graph) */
+  teams: Record<string, Team>;               /* a Lead's chat id -> its team's run and members (GET /api/swarm) */
+  notConnected: string[] | null;             /* what the chat in front needs that is not connected (the dot at the bottom left); null until known */
 };
+/* `view`: "chat", "promos", or a page of no one project ("all" is Overview, "review", "newproj"). `proj`: the project
+   in front ("" for the chats of no project, null on a page). `chat`: the chat in front. */
+export type Nav = { view: string; proj: string | null; chat: string | null };
+/* an expert a chat's conversation says it started */
+export type XpLink = { id: string; name: string; expert: string; runsOn: string; at: number };
+export type Chat = {
+  id: string; name: string;
+  project: string;                           /* where it belongs: its project's folder ("" for none); an expert belongs where its Lead does */
+  own: boolean; want: boolean;               /* it has a project of its own; it is being tied to one */
+  parent: string; helper: boolean; research: boolean;
+  started: boolean; busy: boolean; now: string; last: string;
+  ai: string;                                /* the AI it was put on ("" for the default) */
+  runsOn: string; expert: string; plain: string;
+  replay: boolean;                           /* put back from a saved chat */
+  when: number;                              /* an expert's last start or end of a turn seen here (ms; 0 for none) */
+  xps: XpLink[];
+};
+export type Steps = { n: number; recent: { label: string; t: number }[] };
+export type Member = { id: string; name?: string; role?: string; status?: string; ai?: string; model?: string; studio_turn?: boolean };
+export type Team = { run: string | null; members: Member[] };
 /* an AI a chat can run on: [id, name, the program behind it, how to get it] */
 export type Ai = [string, string, string, string];
 export type Sum = { total: number; input: number; output: number; cached: number; cost: number; turns: number; quiet: number };
@@ -44,7 +70,8 @@ export type EngineRow = { text: string; button: string; error: string; bar: numb
 
 let state: State = { projects: [], review: {}, reviewDone: {}, reviewOrder: [], reviewTab: "", reviewJump: null, light: null,
   status: {}, polls: 0, ais: [], curProj: "", settings: { open: false, page: "general", n: 0 }, usageOpen: false, usage: null, gh: null, ghNote: "", ghBusy: false,
-  engine: null, saved: { chats: [], deleted: [] }, setupOut: "", scale: 100, sideW: 232, theme: { id: "fridae", mode: "dark" } };
+  engine: null, saved: { chats: [], deleted: [] }, setupOut: "", scale: 100, sideW: 232, theme: { id: "fridae", mode: "dark" },
+  nav: { view: "chat", proj: null, chat: null }, chats: [], steps: {}, teams: {}, notConnected: null };
 const subs = new Set<() => void>();
 
 export const store = {

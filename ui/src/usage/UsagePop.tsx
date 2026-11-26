@@ -1,7 +1,7 @@
-/* The pop-up at the bottom left: each account's limits, small, today's total and what each AI used. The old page
-   opens and closes it (its button is in the sidebar). */
+/* The pop-up at the bottom left: each account's limits, small, today's total and what each AI used. The sidebar
+   opens and closes it (sidebar/Foot.tsx). */
 import { useStore } from "../store";
-import { host } from "../host";
+import { openUsage } from "../windows";
 import { aiName } from "../ai";
 import { More } from "../ui/More";
 import { LimitWindows, useNow } from "./Bars";
@@ -13,7 +13,7 @@ export function UsagePop() {
   const accounts = limitAccounts(status), quiet = quietLimits(accounts, ais);
   return (
     <>
-      <div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open" onClick={() => host.openUsage()}>Open Usage</button></div>
+      <div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open" onClick={() => openUsage()}>Open Usage</button></div>
       <div id="use-limits">
         {accounts.length ? accounts.map((a) => (
           <div class="pop-acct"><b>{a.label}</b>{a.windows.length > 0 && <LimitWindows windows={a.windows} now={now} compact />}

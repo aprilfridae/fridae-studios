@@ -1,5 +1,5 @@
-/* Which page of Settings is shown, and what each page does when it comes into view. The old page opens and closes
-   the window (it owns the veil and the other windows); it tells this module through window.fridae.settings. */
+/* Which page of Settings is shown, and what each page does when it comes into view. The window is opened
+   and closed by ../windows.ts. */
 import { store } from "../store";
 import { PAGES } from "./nav";
 

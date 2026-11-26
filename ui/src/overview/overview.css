@@ -1,0 +1,17 @@
+/* overview: the live graph of every game, its chats and its experts, over the whole page. One quiet line over its
+   top edge says how much is going, with the way to stop it all. */
+#allproj { padding: 0; overflow: hidden; container: overview / size; }
+.ov { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
+.o-graph { position: relative; min-width: 0; min-height: 0; }
+.o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+.o-graph canvas.over { cursor: pointer; }
+/* what the graph shows, behind one small "?" in its corner */
+.o-key { position: absolute; left: 16px; bottom: 16px; z-index: 1; }
+.o-key summary { width: var(--h-s); height: var(--h-s); display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); color: var(--dim); font-size: 13px; cursor: pointer; list-style: none; transition: background-color 140ms ease, color 140ms ease; }
+.o-key summary::-webkit-details-marker { display: none; }
+.o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
+.o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); max-width: min(460px, calc(100cqw - 32px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
+.ap-head { position: absolute; z-index: 1; left: 24px; right: 24px; top: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-s); pointer-events: none; }
+.ap-head .sub { margin: 0; font-size: 13px; }
+.ap-head button { pointer-events: auto; }
+#ap-sk-go { font-size: inherit; }

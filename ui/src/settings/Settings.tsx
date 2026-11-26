@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { useStore } from "../store";
 import { host } from "../host";
+import { closeSetup } from "../windows";
 import { Chevron, Lens, X } from "../ui/icons";
 import { NAV, PAGES } from "./nav";
 import { showPage, whenPageChanges } from "./state";
@@ -162,7 +163,7 @@ export function Settings() {
         <header class="st-head">
           <nav aria-label="Settings breadcrumb"><ol class="st-crumb"><li>Settings</li><li aria-hidden="true" class="st-sep">{Chevron}</li><li id="st-here" aria-current="page">{here.name}</li></ol></nav>
           <span class="grow"></span>
-          <button class="icon su-close" id="b-close" aria-label="Close" onClick={() => host.closeSetup()}>{X}</button>
+          <button class="icon su-close" id="b-close" aria-label="Close" onClick={() => closeSetup()}>{X}</button>
         </header>
         <div class="su-body" data-settings-page-scroll="" ref={body}>
           {sec("general", "General", General)}

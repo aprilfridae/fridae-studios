@@ -31,7 +31,6 @@
    why?}; publish and create_repo only from their confirm card's button, with confirm: true. */
 import { api } from "../api";
 import { cell } from "../store";
-import { host } from "../host";
 import { post } from "../util";
 import { shown, whenOpened, whenShown } from "./state";
 
@@ -101,7 +100,6 @@ function skFold(d: any, said: string) { sk.done.set(d.id, { said, d }); }
 function skPainted() {
   const n = skOpen().length;
   if (skillsWaiting.get() !== n) skillsWaiting.set(n);
-  host.skillsCount();
   clearTimeout(skPollT);
   if (skOpen().some((d) => !d.recommendation) && Date.now() < skPollUntil) skPollT = setTimeout(() => { if (visible()) loadSkills(); }, 15000) as unknown as number;
   paint();

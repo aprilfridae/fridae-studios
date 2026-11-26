@@ -1,7 +1,7 @@
 /* Settings, Knowledge: the knowledge index, Fridae's vault (Download, Pull newest and what the last one brought),
    sharing what you make, and the maintainer's submissions. */
 import { useState } from "preact/hooks";
-import { host } from "../host";
+import { openSetup } from "../windows";
 import { ago } from "../util";
 import { Group } from "../ui/Group";
 import { SettingsRow } from "../ui/SettingsRow";
@@ -81,7 +81,7 @@ function Share() {
         {/* the licence line shows while sharing is off, and again while an older agreement does not name guides (their
             rows are held until the user presses their sharing choice again) */}
         <p class="sub" id="sh-terms" hidden={!st || (on && st.agreed_knowledge !== false)}>Shared skills and guides are under CC BY 4.0 (text) and MIT (scripts), credited to your GitHub name. Fridae hides keys, emails and your computer's username first. Fridae's maintainer reads every one before anyone gets it.</p>
-        <p class="sub" id="sh-gh" hidden={!st || !(sh.wantGh || (on && !st.connected))}>Connect GitHub first in <button class="linkish" id="sh-gh-go" onClick={() => host.openSetup("connections")}>Settings, Connections</button>.</p>
+        <p class="sub" id="sh-gh" hidden={!st || !(sh.wantGh || (on && !st.connected))}>Connect GitHub first in <button class="linkish" id="sh-gh-go" onClick={() => openSetup("connections")}>Settings, Connections</button>.</p>
         <div class="sk-list sh-list" id="sh-list" hidden={!live}>{live && !rows.length ? <p class="sub">Nothing to share yet.</p> : rows}</div>
         <div class="act" id="sh-review" hidden={!(live && mode === "review")}><button class="pill" id="sh-prepare" disabled={sh.busy || (!!st && !((Number(st.shareable) || 0) + vtList(k, "ready").length > 0))} onClick={shPrepare}>Get a batch ready</button></div>
         <div id="sh-batch">{sh.batch && <Batch batch={sh.batch} />}</div>

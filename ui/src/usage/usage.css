@@ -1,0 +1,88 @@
+/* Usage: the pop-up that opens upwards from the sidebar's foot, and the window. */
+/* the usage panel opens upwards from the sidebar's foot */
+.pop { position: fixed; z-index: 40; left: 8px; bottom: 56px; width: 320px; max-height: calc(100vh - 72px); overflow-y: auto; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
+  opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
+.pop.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 140ms ease, transform 160ms var(--ease); }
+.pop h5 { margin: 8px 8px 4px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
+.u-row { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px; border-radius: var(--r-s); font-size: 14px; }
+.u-row b { font-weight: 500; }
+.u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
+.u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
+/* today's total is the pop-up's one figure; the rows under it say where it went */
+.u-total { margin: 0; padding: 0 8px 8px; font-size: 13px; line-height: 28px; color: var(--dim); }
+.u-total b { margin-right: 4px; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.pop h5 + #use-rows, #use-rows { border-top: 1px solid var(--line); padding-top: 4px; }
+#use-rows:empty { display: none; }
+.u-note { margin: 4px 8px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
+.pop .moreinfo { margin: 0 8px 8px; }
+.pop .moreinfo summary, .pop .moreinfo p { font-size: 12px; }
+.stage { position: relative; display: grid; grid-template-rows: 48px minmax(0, 1fr); min-width: 0; min-height: 0; }
+.top { display: flex; align-items: center; gap: 12px; padding: 0 16px 0 24px; border-bottom: 1px solid var(--line); min-width: 0; }
+.pname { min-width: 0; max-width: 50%; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); text-align: left; }
+button.pname:hover { background: var(--hover); }
+.nav { display: flex; gap: 2px; }
+.nav .tab { height: var(--h-m); padding: 0 12px; font-size: 14px; }
+.nav .tab .n { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--dim); font-weight: 400; }
+/* ---------- Usage: each account's plan limits, and what was used today ----------
+   A limit is one line: its name and how much is left, a bar filled to what is left, and when it starts again. A thin
+   line cut into the bar marks where even spending would be by now; the mark after the bar says whether you are
+   spending faster than that, about on it, or slower. Adapted from T3 Code's usage page (MIT; see THIRD_PARTY.md). */
+.us-page { gap: 24px; }
+.us-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.us-sec > h2, .us-total > h2 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
+.us-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-note:empty { display: none; }
+.us-accounts { display: flex; flex-direction: column; gap: 12px; }
+.us-acct { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; border: 1px solid var(--line); }
+.us-acct > header { display: flex; align-items: baseline; gap: 12px; }
+.us-acct h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
+.us-acct header span { margin-left: auto; font-size: 12px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.us-acct .us-err { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-acct .us-err svg { flex: none; margin-top: 2px; color: var(--warn); }
+.lw { display: grid; grid-template-columns: 176px minmax(0, 1fr) 112px; gap: 4px 16px; align-items: center; }
+.lw.compact { grid-template-columns: minmax(0, 132px) minmax(48px, 1fr) auto; gap: 2px 12px; }
+.lw-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; }
+.lw-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.lw-name > b { flex: none; margin-left: auto; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.lw-bar { position: relative; height: 24px; border-radius: 999px; cursor: default; outline: none; }
+.lw-bar:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.lw-clip { position: absolute; inset: 0; }
+.lw-track { position: absolute; inset: 6px 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.lw-fill { position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 999px; background: var(--text); }
+.lw-bar.low .lw-fill { background: var(--warn); }
+.lw-tick { position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 999px; background: var(--text); transform: translateX(-50%); }
+.lw-when { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: var(--dim); font-variant-numeric: tabular-nums; }
+.lw-when > span:last-child { flex: none; margin-left: auto; }
+.lw-pace { display: inline-flex; color: var(--dim); }
+.us-today { display: grid; gap: 24px; }
+
+@media (min-width: 1024px) { .us-today { grid-template-columns: minmax(0, 288px) minmax(0, 1fr); } }
+.us-total { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.us-big { margin: 0; font-size: 36px; line-height: 40px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.us-ais { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.us-ai { display: flex; flex-direction: column; gap: 4px; }
+.us-ai > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.us-ai b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 400; color: var(--text); }
+.us-ai .n { flex: none; font-size: 14px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.us-ai small { font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-ai > .us-share { display: block; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
+.us-share i { display: block; height: 100%; border-radius: 999px; background: var(--text); }
+.us-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; padding: 4px 0; }
+
+@media (min-width: 768px) { .us-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.us-metrics > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.us-metrics dt { font-size: 12px; line-height: 16px; color: var(--dim); }
+.us-metrics dd { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+#us-refresh.busy svg { animation: logo-turn 800ms linear infinite; }
+/* the same limits, smaller, in the pop-up at the bottom left */
+.pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-right: 8px; }
+#use-pop { width: 376px; }
+.pop-acct { padding: 4px 8px 8px; }
+.pop-acct > b { display: block; margin-bottom: 2px; font-size: 13px; line-height: 20px; font-weight: 500; }
+.pop-acct > small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--dim); }
+/* glass, as the page's menus wear it (ui/index.html) */
+.pop {
+  background: color-mix(in srgb, var(--raised) 18%, color-mix(in srgb, var(--raised) var(--glass-opacity), transparent));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); }
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .pop { background: var(--raised); } }
