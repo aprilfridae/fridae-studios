@@ -767,22 +767,27 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
    14px for what is read or pressed, 12px for a tab's count, and no more. */
 .rv-page { max-width: 720px; margin: 0 auto; }
 #review * { font-family: inherit; font-size: 14px; letter-spacing: 0; }
-.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 32px -12px; }
+.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
 .rv-tabs[hidden] { display: none; }
 .rv-tabs button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-m); padding: 0 12px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
 .rv-tabs button:hover { color: var(--text); background: var(--hover); }
 .rv-tabs button[aria-selected="true"] { color: var(--text); background: var(--press); font-weight: 600; }
 #review .rv-tabs button i { font-size: 12px; font-style: normal; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--dim); }
-#rv-items { gap: 0; outline: 0; }
-.rv-card { padding: 0 0 40px; }
-.rv-card + .rv-card { padding-top: 40px; border-top: 1px solid var(--line); }
+/* the chosen project's things sit in one box, a hairline between them */
+#rv-items { gap: 0; outline: 0; padding: 24px; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); }
+#rv-items:empty { display: none; }
+.rv-card { padding: 0 0 24px; }
+.rv-card + .rv-card { padding-top: 24px; border-top: 1px solid var(--line); }
 .rv-card:last-child { padding-bottom: 0; }
 .rv-card h4 { margin: 0 0 12px; line-height: 20px; font-weight: 600; overflow-wrap: anywhere; }
-.rv-card .rv-media { margin: 0 0 16px; }
-.rv-card .rv-media:not(.many) img { max-height: 240px; }
+/* every picture and clip is one size, in rows that wrap; a picture opens large when pressed */
+#rv-items .rv-media { display: grid; grid-template-columns: repeat(auto-fill, 208px); gap: 12px; overflow: visible; margin: 0 0 16px; }
+#rv-items .rv-media > * { width: 208px; height: 130px; max-width: none; border-radius: var(--r-s); }
+#rv-items .rv-media img, #rv-items .rv-media video { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
 .rv-card .act { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
 #review .pill { height: var(--h-m); padding: 0 16px; font-weight: 400; }
 .rv-item.rv-card.done { padding: 0 0 16px; }
+.rv-item.rv-card:last-child { padding-bottom: 0; }
 .rv-item.rv-card.done + .rv-card { padding-top: 16px; }
 .rv-card.flash { outline: 2px solid var(--focus); outline-offset: 12px; border-radius: 2px; }
 .rv-nothing { margin: 96px 0 0; text-align: center; color: var(--dim); }
