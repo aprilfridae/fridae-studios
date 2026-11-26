@@ -59,6 +59,15 @@ https://github.com/heydamir/unslop, licensed CC BY 4.0 (`licenses/unslop-LICENSE
 "In Roblox" section was added near the top; its Node snapshot and story-video scripts and its HTML examples are
 not included.
 
+## rea-games
+
+`vault/Fridae/Guides/Core/rea-games/` (its `SKILL.md` and the command-line tool in `tool/`: `bin/`, `lib/`,
+`package.json`) is from rea-games by Erkam Yaman and contributors, https://github.com/erkamyaman/rea-games
+(version 1.1.0), MIT licensed (`LICENSE` in that folder). Changes: a "Setting up (Fridae)" section (copy the tool
+into the project, run it with Node) and Fridae's front matter fields; its worked example games, their originals,
+docs, tests and plugin files are not included. It needs Node.js 22 or newer, and Playwright with Chromium for
+browser games, which it does not install.
+
 ## Promo renderer (`promo/`)
 
 - **Subtle** by Refs (refs.video), https://github.com/0xpratzyy/subtle, MIT (`licenses/subtle-LICENSE.txt`,

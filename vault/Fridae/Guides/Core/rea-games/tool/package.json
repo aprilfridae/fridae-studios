@@ -1,0 +1,14 @@
+{
+  "name": "rea-games",
+  "version": "1.1.0",
+  "description": "Reverse-engineer any game: record the original's behavior, rebuild it in any engine, and prove the rebuild plays the same, frame by frame.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "rea-games": "bin/rea-games.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "homepage": "https://github.com/erkamyaman/rea-games"
+}
