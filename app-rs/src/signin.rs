@@ -33,8 +33,9 @@
 //! commands for real (signed in) and in a scratch home (signed out); the start of each sign-in in a scratch home, where
 //! it cannot see the user's own sign-in, with a stand-in for the browser, ended before anything was done on the page.
 //! No sign-in was completed, so how each one ends (its exit code, agy's answer) is not measured: whatever the tool
-//! says at its end, the app asks for the status again and goes by that. Not offered on Windows (the lines there say
-//! what they said before: sign in from a terminal).
+//! says at its end, the app asks for the status again and goes by that. The AIs' own sign-ins are not offered on
+//! Windows (the lines there say what they said before: sign in from a terminal); added accounts' are, Claude's and
+//! Gemini's (`offered`).
 
 use std::{
     collections::HashMap,
@@ -163,7 +164,8 @@ fn with<R>(ai: &str, f: impl FnOnce(&mut Entry) -> R) -> Option<R> {
 
 /// Whether the app offers this sign-in: one of the three AIs' own, not on Windows (not measured there: the lines keep
 /// saying what they said before); or an added account that exists, wherever its AI's added accounts are offered
-/// (`accounts::offered`: on Windows Claude's, whose sign-in is a file in the account's own folder, measured).
+/// (`accounts::offered`: on Windows both Claude's, whose sign-in is a file in the account's own folder, measured,
+/// and Gemini's, whose sign-in agy keeps in a token file in the account's own folder, `accounts::home`).
 pub fn offered(id: &str) -> bool {
     if let Some((ai, name)) = extra(id) {
         return crate::accounts::offered(ai) && crate::accounts::folder_of(ai, name).is_some();

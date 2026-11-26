@@ -1151,7 +1151,8 @@ comments and tests only). (OpenCode is different: Fridae's own copy, see the nex
 - **The button starts one kind of sign-in**: the tool's default (a Claude account, a Cursor account, a Google
   account). People on an API key, a company gateway or an Enterprise plan sign in in the tool itself; the Guide says so.
 - **Windows**: not offered for the AIs' own sign-ins (`signin::offered`; nothing was measured there). The lines say
-  what they said before. An added Claude account's sign-in is offered there (see "A second account for Claude").
+  what they said before. Added accounts' sign-ins are offered there, Claude's and Gemini's (see "A second account
+  for Claude" and, for Gemini, "On Windows: a token file").
 - **Measured** (23 November 2026; Claude Code 2.1.319, cursor-agent 2026.11.22, agy 1.5.15): the three status
   commands signed in (for real) and signed out (a scratch home; for Claude Code a scratch `CLAUDE_CONFIG_DIR` alone
   also reads as signed out, so its sign-in is kept per config folder); the start of each sign-in in a scratch home,
@@ -1285,7 +1286,17 @@ Nothing runs a tool's logout.
   symbolic link where that is allowed, else a hard link (same drive only; on another drive the file is not
   linked). Claude Code rewrites `settings.json` by putting a new file in its place, which leaves a hard link behind
   as a file of its own: so before every command a linked file there that no longer reads as the user's is made
-  again from the user's (made beside it, then moved over it; only ever inside the account's folder). Measured on
+  again from the user's (made beside it, then moved over it; only ever inside the account's folder). Only names
+  Fridae made itself are touched that way: each file link it makes (symbolic or hard) is listed in the folder's
+  marker, `.fridae-links.json` (`LINKS_MARKER`, a JSON list of names, written beside and renamed into place).
+  A listed name is made again when it differs from the user's file, and removed when the user's file is gone; a
+  file under a linked name that is not listed (the tool's own `CLAUDE.md`, say) is left alone. A marker that is
+  missing or does not read as a list counts as empty: nothing is then made again or removed. Junctions are made
+  by `%SystemRoot%\System32\cmd.exe /D /V:OFF /C mklink /J` (full path, never one found on PATH), and each is
+  read back (`read_link`, compared without `\\?\` and case) and taken away again if it leads anywhere else. On
+  Remove, the linked names that are files are removed first as names (a hard link's other name, the user's file,
+  is not changed by that), and the read-only fallback never clears the attribute of a file with more than one
+  name (`GetFileInformationByHandle`, `nNumberOfLinks`): such a file stays, and so does the folder. Measured on
   Windows 11 with Rust's standard library: `symlink_metadata` of a junction says `is_symlink()` true, `is_dir()`
   false, with `FILE_ATTRIBUTE_REPARSE_POINT` set; `remove_file` on a junction is refused and `remove_dir` takes the
   junction alone; `remove_dir_all` of a folder holding a junction does not follow it. The app treats every reparse
@@ -1560,7 +1571,12 @@ of the kept process's key. Nothing is set for account 1.
     the updater's look at `%LOCALAPPDATA%\agy\bin`, binary unchanged), so those are not overridden.
   - So every agy command of an added account gets HOME = USERPROFILE = the account's folder and the flag; the
     token file is then `<folder>/.gemini/antigravity-cli/...` (presumably `antigravity-oauth-token`, the name seen
-    on the Mac; added to the sign-in files on Windows; under `.gemini`, which Remove deletes first). The user's own
+    on the Mac; added to the sign-in files on Windows; under `.gemini`, which Remove deletes first). Since that
+    name is not measured on Windows, `sign_in_files` also lists, for every account folder, each entry directly in
+    `.gemini/antigravity-cli` and in `.gemini` whose name, lower-cased, contains `token`, `oauth`, `cred`, `auth`
+    or `keyring` (names read, never contents), so agents' read rules cover it whatever agy calls it. `.gemini` and
+    `.gemini/antigravity-cli` must be folders of the account's own: either one being a link (a junction to the
+    user's `~/.gemini`, say) means `prepare_of` gives nothing and no agy command runs for that account. The user's own
     account gets none of it. No Mac keychain is made on Windows. `.gitconfig` is linked in as on the Mac, by
     `link_into`'s Windows links (a symbolic link where allowed, else a hard link on the same drive, made again from
     the user's file when git replaces it), so git in a turn there has the user's identity.
