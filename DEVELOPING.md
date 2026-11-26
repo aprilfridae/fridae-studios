@@ -2253,7 +2253,10 @@ both started from (none for a same-name newcomer or a picture or model), and a s
 diffs, or both texts when there is no common version; at most 300 lines a side). A skill is decided as a whole folder,
 a guide or other file on its own. **Keep the vault's** moves every file of the user's that is not the vault's (for a
 skill, every file in its folder, extra ones included) to `.fridae-vault/replaced/<YYYYMMDD-HHMMSS>/<path>` (never
-deleted) and writes and records the vault's, so a skill folder ends up exactly the vault's. **Keep mine** leaves the
+deleted) and writes and records the vault's, so a skill folder ends up exactly the vault's. Before anything moves, the
+clash's entry gains `keeping` (that folder's name) and the record is saved, so a Keep the vault's cut off part way is
+finished by the next Pull newest (before anything else, from the waiting copy) or by pressing it again, and never read
+as the user deleting the file; Keep mine on such a unit puts the user's files back from that folder. **Keep mine** leaves the
 user's files and records the vault's version as the base: the same release never asks again, and later vault changes
 to that file combine instead of asking each release. Both remove the waiting copy and the entry under the vault's lock;
 a unit that is no longer waiting says "That choice is not waiting any more."

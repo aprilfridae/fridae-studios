@@ -5,6 +5,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 import unicodedata
@@ -470,6 +471,13 @@ def _apply(staged, manifest, base):
             _record_base(base, p, data, up)
         # keep: the user's edit stands, upstream did not change
 
+    # a Keep the vault's cut off part way is finished first, from its waiting copy (_settle), so its file is never
+    # missing below and read as the user deleting it; one that cannot be finished stays waiting (skipped below)
+    for unit in sorted(u for u, c in clashes.items() if isinstance(c, dict) and "keeping" in c):
+        try:
+            _settle(base, unit, "vault")
+        except (OSError, LookupError, ValueError) as e:
+            failed_on(unit, e)
     # what upstream dropped goes first, so a skill it renamed is not compared with its old self below; a dropped file
     # of a skill the vault still has goes with that skill, so a skill that clashes is left whole
     for p in sorted(b for b in base["files"] if unit_of(b) not in units and _skill(b) not in declined):
@@ -585,6 +593,8 @@ def _apply(staged, manifest, base):
 
     others = 0
     for unit, paths in units.items():
+        if isinstance(clashes.get(unit), dict) and "keeping" in clashes[unit]:
+            continue  # a Keep the vault's that could not be finished: it stays waiting, never read as a deletion
         name = _skill(paths[0])
         if name:
             skill_unit(name, unit, paths)
@@ -708,74 +718,121 @@ def decide_clash(unit, choice):
         raise ValueError("Choose vault or mine.")
     with rbxskills._locked(state_dir()):
         base = read_base()
-        c = base["clashes"].get(unit)
-        paths = c.get("paths") if isinstance(c, dict) else None
-        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and check_path(p) for p in paths) \
-                or any(unit_of(p) != unit for p in paths):
-            raise LookupError(NOT_WAITING)
-        copies = {p: _read(_copy_of(p)) for p in paths}
-        if any(d is None for d in copies.values()):
-            raise LookupError(NOT_WAITING)
-        _no_symlinks(sorted({p.split("/")[0] for p in paths}))
-        renamed = base["renamed"]
-        name = _skill(paths[0])
-
-        def bytes_of(p):
-            """(as written locally, upstream's): a renamed skill's SKILL.md carries its local name."""
-            data = copies[p]
-            if name in renamed and p == "Skills/%s/SKILL.md" % name:
-                return rename_front(data, renamed[name]), data
-            return data, data
-
-        def target(lp):
-            t = os.path.join(rbxpaths.KNOWLEDGE_DIR, *lp.split("/"))
-            if not _target_ok(t, _top(lp)):
-                raise OSError("outside the Knowledge folder")
-            return t
-
-        replaced = None
-        if choice == "vault":
-            wanted = {_local_path(p, renamed): bytes_of(p)[0] for p in paths}
-            mine = []  # (Knowledge-relative path, full path) of the user's files to set aside
-            if name:
-                folder = target(_unit_local(unit, renamed) + "/x")[:-2]
-                for r, ds, fs in os.walk(folder):
-                    for f in fs:
-                        full = os.path.join(r, f)
-                        rel = os.path.relpath(full, rbxpaths.KNOWLEDGE_DIR).replace(os.sep, "/")
-                        mine.append((rel, full))
-            else:
-                lp = _local_path(unit, renamed)
-                if os.path.lexists(target(lp)):
-                    mine.append((lp, target(lp)))
-            aside = [(rel, full) for rel, full in mine if rel not in wanted or _safe_read(full) != wanted[rel]]
-            if aside:
-                root = os.path.join(replaced_dir(), time.strftime("%Y%m%d-%H%M%S"))
-                if os.path.lexists(root):
-                    root += "-" + uuid.uuid4().hex[:6]
-                for rel, full in aside:
-                    dest = os.path.join(root, *rel.split("/"))
-                    if not _target_ok(dest, state_dir()):
-                        raise OSError("outside the vault record")
-                    os.makedirs(os.path.dirname(dest), exist_ok=True)
-                    shutil.move(full, dest)
-                replaced = os.path.relpath(root, rbxpaths.KNOWLEDGE_DIR).replace(os.sep, "/")
-                if name:  # folders left empty inside the skill go too
-                    folder = target(_unit_local(unit, renamed) + "/x")[:-2]
-                    for r, ds, fs in os.walk(folder, topdown=False):
-                        if r != folder and not os.listdir(r):
-                            os.rmdir(r)
-            for p in paths:
-                data, up = bytes_of(p)
-                _write(target(_local_path(p, renamed)), data)
-                _record_base(base, p, data, up if up != data else None)
-                if p in base["deleted"]:
-                    base["deleted"].remove(p)
-        else:
-            for p in paths:
-                data, up = bytes_of(p)
-                _record_base(base, p, data, up if up != data else None)
-        _remove_copy(unit)
-        del base["clashes"][unit]
-        _save_base(base)
+        replaced = _settle(base, unit, choice)
     return {"unit": unit, "choice": choice, "replaced": replaced}
+
+
+_KEEPING_NAME = re.compile(r"^[0-9a-z-]{1,40}$")
+
+
+def _settle(base, unit, choice):
+    """decide_clash's work, with the vault's lock held; returns the replaced/ folder (Knowledge-relative) or None.
+    Keep the vault's is made safe against being cut off part way (the app quits): before any of the user's files
+    moves, the clash's entry gains "keeping" (the name of its replaced/ folder) and the record is saved. A unit left
+    with "keeping" is finished, never read as the user deleting the file: by the next Pull newest (_apply), or by
+    pressing Keep the vault's again (the same folder); Keep mine instead puts the user's files back from it."""
+    c = base["clashes"].get(unit)
+    paths = c.get("paths") if isinstance(c, dict) else None
+    if not isinstance(paths, list) or not paths or not all(isinstance(p, str) and check_path(p) for p in paths) \
+            or any(unit_of(p) != unit for p in paths):
+        raise LookupError(NOT_WAITING)
+    copies = {p: _read(_copy_of(p)) for p in paths}
+    if any(d is None for d in copies.values()):
+        raise LookupError(NOT_WAITING)
+    _no_symlinks(sorted({p.split("/")[0] for p in paths}))
+    renamed = base["renamed"]
+    name = _skill(paths[0])
+
+    def bytes_of(p):
+        """(as written locally, upstream's): a renamed skill's SKILL.md carries its local name."""
+        data = copies[p]
+        if name in renamed and p == "Skills/%s/SKILL.md" % name:
+            return rename_front(data, renamed[name]), data
+        return data, data
+
+    def target(lp):
+        t = os.path.join(rbxpaths.KNOWLEDGE_DIR, *lp.split("/"))
+        if not _target_ok(t, _top(lp)):
+            raise OSError("outside the Knowledge folder")
+        return t
+
+    def rel_of(path):
+        return os.path.relpath(path, rbxpaths.KNOWLEDGE_DIR).replace(os.sep, "/")
+
+    wanted = {_local_path(p, renamed): bytes_of(p)[0] for p in paths}
+    keeping = c.get("keeping")
+    root = None
+    if isinstance(keeping, str) and _KEEPING_NAME.match(keeping):
+        root = os.path.join(replaced_dir(), keeping)
+        if not _target_ok(root, state_dir()):
+            raise OSError("outside the vault record")
+    replaced = None
+    if choice == "vault":
+        if root is None:  # the intent first: a cut from here on is finished on the next run
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            if os.path.lexists(os.path.join(replaced_dir(), stamp)):
+                stamp += "-" + uuid.uuid4().hex[:6]
+            root = os.path.join(replaced_dir(), stamp)
+            c["keeping"] = stamp
+            _save_base(base)
+        mine = []  # (Knowledge-relative path, full path) of the user's files to set aside
+        if name:
+            folder = target(_unit_local(unit, renamed) + "/x")[:-2]
+            for r, ds, fs in os.walk(folder):
+                for f in fs:
+                    full = os.path.join(r, f)
+                    mine.append((rel_of(full), full))
+        else:
+            lp = _local_path(unit, renamed)
+            if os.path.lexists(target(lp)):
+                mine.append((lp, target(lp)))
+        aside = [(rel, full) for rel, full in mine if rel not in wanted or _safe_read(full) != wanted[rel]]
+        for rel, full in aside:
+            dest = os.path.join(root, *rel.split("/"))
+            if not _target_ok(dest, state_dir()):
+                raise OSError("outside the vault record")
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            if os.path.lexists(dest):
+                dest += "." + uuid.uuid4().hex[:6]
+            shutil.move(full, dest)
+        if aside and name:  # folders left empty inside the skill go too
+            folder = target(_unit_local(unit, renamed) + "/x")[:-2]
+            for r, ds, fs in os.walk(folder, topdown=False):
+                if r != folder and not os.listdir(r):
+                    os.rmdir(r)
+        if os.path.isdir(root):
+            replaced = rel_of(root)
+        for p in paths:
+            data, up = bytes_of(p)
+            _write(target(_local_path(p, renamed)), data)
+            _record_base(base, p, data, up if up != data else None)
+            if p in base["deleted"]:
+                base["deleted"].remove(p)
+    else:
+        if root is not None and os.path.isdir(root):  # a cut-off Keep the vault's: the user's files go back
+            for r, ds, fs in os.walk(root):
+                for f in fs:
+                    full = os.path.join(r, f)
+                    lp = os.path.relpath(full, root).replace(os.sep, "/")
+                    if "/" not in lp or lp.startswith("."):
+                        continue
+                    t = target(lp)
+                    if not os.path.lexists(t) or _safe_read(t) == wanted.get(lp):
+                        os.makedirs(os.path.dirname(t), exist_ok=True)
+                        rbxpaths.replace(full, t)
+            _prune_tree(root, replaced_dir())
+        for p in paths:
+            data, up = bytes_of(p)
+            _record_base(base, p, data, up if up != data else None)
+    _remove_copy(unit)
+    del base["clashes"][unit]
+    _save_base(base)
+    return replaced
+
+
+def _prune_tree(root, top):
+    """Remove the empty folders of root, root included when it is left empty (never top)."""
+    for r, ds, fs in os.walk(root, topdown=False):
+        if not os.listdir(r):
+            os.rmdir(r)
+    _prune(os.path.dirname(root), top)

@@ -1107,6 +1107,67 @@ class ClashTests(VaultSyncTests):
         self.assertEqual(r["clashes"], [])
         self.assertEqual(self.get(self.P), "a\nmine\nc\nd\n")
 
+    def cut_keep_the_vaults(self, unit):
+        """Keep the vault's on unit, cut off (the app quits) after the user's files were moved aside, at the first
+        write of the vault's file into Knowledge."""
+        class Cut(BaseException):
+            pass
+        real, state = rbxvaultsync._write, os.path.realpath(rbxvaultsync.state_dir())
+
+        def cut(path, data):
+            if os.path.realpath(path).startswith(state + os.sep):
+                return real(path, data)
+            raise Cut()
+        with mock.patch.object(rbxvaultsync, "_write", cut):
+            with self.assertRaises(Cut):
+                rbxvaultsync.decide_clash(unit, "vault")
+
+    def test_a_cut_off_keep_the_vaults_is_finished_by_the_next_pull_never_read_as_a_deletion(self):
+        """Final review #10: the next Pull newest saw no file and a known base, recorded "you deleted it" and closed
+        the clash without asking. It finishes the Keep the vault's instead."""
+        self.seed(self.G, "a\nb\nc\nd\n", "a\nmine\nc\nd\n")
+        self.assertEqual(self.apply({self.G: self.R1})["clashes"], [self.G])
+        self.cut_keep_the_vaults(self.G)
+        self.assertFalse(os.path.exists(self.local(self.G)), "the cut came after the user's file was moved aside")
+        (aside,) = self.replaced(self.G)
+        r = self.apply({self.G: "a\ntheirs\nc\nD\n"}, release="vault-2026.02.01")
+        base = rbxvaultsync.read_base()
+        self.assertNotIn(self.G, base["deleted"])
+        self.assertNotIn(self.G, r["skipped_deleted"])
+        self.assertEqual(self.get(self.G), "a\ntheirs\nc\nD\n", "the vault's, then the newer release over it")
+        self.assertEqual(r["updated"], [self.G])
+        self.assertEqual((base["clashes"], r["clashes"]), ({}, []))
+        self.assertEqual(self.replaced(self.G), [aside], "the user's copy is kept once, where it went")
+        with open(aside, encoding="utf-8", newline="") as f:
+            self.assertEqual(f.read(), "a\nmine\nc\nd\n")
+
+    def test_keep_mine_after_a_cut_off_keep_the_vaults_puts_the_users_file_back(self):
+        self.seed(self.G, "a\nb\nc\nd\n", "a\nmine\nc\nd\n")
+        self.apply({self.G: self.R1})
+        self.cut_keep_the_vaults(self.G)
+        out = rbxvaultsync.decide_clash(self.G, "mine")
+        self.assertEqual(out["replaced"], None)
+        self.assertEqual(self.get(self.G), "a\nmine\nc\nd\n")
+        self.assertEqual(self.replaced(self.G), [])
+        r = self.apply({self.G: self.R1}, release="vault-2026.02.01")
+        self.assertEqual((r["skipped_deleted"], r["clashes"]), ([], []))
+        self.assertEqual(self.get(self.G), "a\nmine\nc\nd\n")
+
+    def test_a_cut_off_keep_the_vaults_on_a_skill_is_finished_by_pressing_it_again(self):
+        self.put("Skills/x/notes.md", "my notes")
+        self.clash()
+        self.cut_keep_the_vaults(self.X)
+        self.assertEqual([c["unit"] for c in rbxvaultsync.clashes()], [self.X], "still waiting")
+        out = rbxvaultsync.decide_clash(self.X, "vault")
+        self.assertEqual(self.get(self.P), self.R1)
+        self.assertEqual(sorted(os.listdir(self.local("Skills/x"))), ["SKILL.md"])
+        self.assertEqual(len(self.replaced(self.P)), 1)
+        self.assertEqual(len(self.replaced("Skills/x/notes.md")), 1)
+        self.assertEqual(out["replaced"], os.path.relpath(os.path.dirname(os.path.dirname(os.path.dirname(
+            self.replaced(self.P)[0]))), self.know).replace(os.sep, "/"), "the same replaced/ folder as the cut run")
+        base = rbxvaultsync.read_base()
+        self.assertEqual((base["clashes"], base["files"][self.P]), ({}, sha(self.R1)))
+
     def test_skill_decided_as_a_whole_folder(self):
         self.put("Skills/x/notes.md", "my notes")
         self.clash()
