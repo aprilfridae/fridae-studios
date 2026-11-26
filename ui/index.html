@@ -762,43 +762,6 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .promo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; }
 .promo-line span { color: var(--dim); }
 
-/* Review: what waits for the user, and nothing else. A tab per project that has something; in it, each thing is its
-   pictures (press one to see it large), its title, and Approve or Ask for changes. Three sizes of type on the page:
-   14px for what is read or pressed, 12px for a tab's count, and no more. */
-.rv-page { max-width: 960px; margin: 0 auto; container-type: inline-size; }
-#review * { font-family: inherit; font-size: 14px; letter-spacing: 0; }
-.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
-.rv-tabs[hidden] { display: none; }
-.rv-tabs button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-m); padding: 0 12px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
-.rv-tabs button:hover { color: var(--text); background: var(--hover); }
-.rv-tabs button[aria-selected="true"] { color: var(--text); background: var(--press); font-weight: 600; }
-#review .rv-tabs button i { font-size: 12px; font-style: normal; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--dim); }
-/* the chosen project's things sit in one box, a hairline between them */
-#rv-items { display: grid; grid-template-columns: minmax(0, 1fr); outline: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); }
-#rv-items[hidden], .rv-col[hidden] { display: none; }
-/* things with pictures on one side, the rest on the other; with only one kind, that side is the whole box */
-#rv-items.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
-.rv-col { min-width: 0; padding: 24px; }
-#rv-items.two .rv-col + .rv-col { border-left: 1px solid var(--line); }
-@container (max-width: 700px) {
-  #rv-items.two { grid-template-columns: minmax(0, 1fr); }
-  #rv-items.two .rv-col + .rv-col { border-left: 0; border-top: 1px solid var(--line); }
-}
-.rv-card { padding: 0 0 24px; }
-.rv-card + .rv-card { padding-top: 24px; border-top: 1px solid var(--line); }
-.rv-card:last-child { padding-bottom: 0; }
-.rv-card h4 { margin: 0 0 12px; line-height: 20px; font-weight: 600; overflow-wrap: anywhere; }
-/* every picture and clip is one size, in rows that wrap; a picture opens large when pressed */
-#rv-items .rv-media { display: grid; grid-template-columns: repeat(auto-fill, 184px); gap: 12px; overflow: visible; margin: 0 0 16px; }
-#rv-items .rv-media > * { width: 184px; height: 115px; max-width: none; border-radius: var(--r-s); }
-#rv-items .rv-media img, #rv-items .rv-media video { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
-.rv-card .act { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
-#review .pill { height: var(--h-m); padding: 0 16px; font-weight: 400; }
-.rv-item.rv-card.done { padding: 0 0 16px; }
-.rv-item.rv-card:last-child { padding-bottom: 0; }
-.rv-item.rv-card.done + .rv-card { padding-top: 16px; }
-.rv-card.flash { outline: 2px solid var(--focus); outline-offset: 12px; border-radius: 2px; }
-.rv-nothing { margin: 96px 0 0; text-align: center; color: var(--dim); }
 /* the run's own controls, behind one button at the top of a chat of its project */
 .run-ctl { position: relative; display: inline-flex; }
 .run-ctl[hidden] { display: none; }
@@ -1139,11 +1102,6 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 #pd-path { word-break: break-all; }
 .pill.danger { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 #pd-out.warn { color: var(--text); }
-.light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 32px; }
-.light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
-.light span { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; }
-.light span:empty { display: none; }
-.light.on { opacity: 1; pointer-events: auto; }
 
 /* ---------- Usage: each account's plan limits, and what was used today ----------
    A limit is one line: its name and how much is left, a bar filled to what is left, and when it starts again. A thin
@@ -1255,6 +1213,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 /* less motion: nothing slides, fades or pulses; things are simply there */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; transition-delay: 0s !important; } }
 </style>
+<!-- the new screens' styles and script: ui/src, bundled by ui/build.py -->
+<link rel="stylesheet" href="app.css">
 <script>
 /* ---------- Themes: the colour palettes, as the page's CSS variables ----------
    A theme is a palette for light and one for dark; the choice ({id, mode}: mode is "dark", "light" or "system") is
@@ -1450,11 +1410,8 @@ applyTheme();
       </div>
     </div></div>
 
-    <div id="review"><div class="rv-page">
-      <div class="rv-tabs" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden></div>
-      <div id="rv-items" role="tabpanel" tabindex="-1" hidden><div class="rv-col" id="rv-pics"></div><div class="rv-col" id="rv-plain"></div></div>
-      <p class="rv-nothing" id="rv-nothing" hidden>Nothing needs you</p>
-    </div></div>
+    <!-- Review is ui/src/review, put here by fridae.mount("review") -->
+    <div id="review"></div>
 
   <div id="promos"><div class="r-col pr-page">
     <div class="pr-cols"><section class="pr-make" aria-label="New promo">
@@ -1889,7 +1846,8 @@ applyTheme();
   </div>
   <p class="sub" id="pd-del-out" hidden></p>
 </div></aside>
-<div class="light" id="light" role="dialog" aria-label="Picture"><img alt=""><span></span></div>
+<!-- a picture shown large: ui/src/review/Lightbox.tsx -->
+<div id="light-host"></div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
@@ -2008,6 +1966,12 @@ async function api(path, body) {
   const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "X-Token": TOKEN, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return r.json();
 }
+/* The screens that have moved to ui/src (Preact, bundled into app.js) are reached through window.fridae:
+   fridae.mount("<screen>", element, props) paints one, and fridae.store holds what they read. app.js loads just
+   after this script, so until it has, what is meant for it waits here. */
+const fridaeWait = [];
+function fridaeDo(f) { if (window.fridae) f(window.fridae); else fridaeWait.push(f); }
+window.fridaeReady = () => { for (const f of fridaeWait.splice(0)) f(window.fridae); };
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
 /* The chosen tab's background is one mark that slides from the last one to it (the tab bar and Settings' list). The
@@ -2596,7 +2560,7 @@ function renameProject(path) {
       else {
         for (const p of agents.values()) if (p.project && samePath(p.project.path, path)) p.project.name = name;
         await loadProjects();
-        if (view === "review") paintReview(); else if (view === "all") paintAll();
+        reviewToStore(); if (view === "all") paintAll();
       }
     }
     if (back) { const again = projRow(path); if (again) again.focus(); }
@@ -2642,7 +2606,7 @@ $("pj-del-go").onclick = async () => {
   try { projects = await api("/api/projects"); } catch (e) {}
   delete rvAll[path];
   if (curProj === path || homeProj === path) { homeProj = null; showAll(); }
-  else { paintSide(); paintView(); if (view === "review") paintReview(); else if (view === "all") paintAll(); }
+  else { paintSide(); paintView(); reviewToStore(); if (view === "all") paintAll(); }
   say(pr.name + (trash ? " is in the " + BIN + "." : " is no longer in Fridae. Its folder is untouched."));
 };
 /* in the sidebar the arrow keys go from row to row; right and left show and hide a chat's experts (and its earlier
@@ -4910,35 +4874,25 @@ function openInPromos(id) {
   it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
 }
 
-/* ---------- Review: one page for every project. Each project has a section: what is happening on it, and what
-   needs the user. A section is made when it is first opened, and an event repaints only its own. ---------- */
+/* ---------- Review: one page for every project. The page itself is ui/src/review; here is what every project has
+   waiting, fetched for the sidebar's counts as well, and written into the store for that screen to show. ---------- */
 const STAGE_NAMES = [["idea", "Idea"], ["design", "Design"], ["build", "Build"], ["test", "Test"], ["launch", "Launch"], ["promote", "Promote"]];
 const LEAD_CARD = "Waiting for your answer in Review";   /* the Lead's own board card points here, so Review leaves it out */
 const rvAll = {};           /* project path -> its GET /api/review reply */
-const rvDone = new Map();   /* item or card id -> { at, gone }: answered here; one line until the next refresh after it */
-const rvTray = { cards: new Map() };   /* the cards on the page, by project and id */
+const rvDone = new Map();   /* item or card id -> { at, gone, said }: answered here; one line until the next refresh after it */
 let rvOrder = [];           /* the tabs' order, set when the page opens: it does not move under the reader */
-let rvTab = "";             /* the project whose things are shown */
-let rvTimer = 0, rvLoadT = 0, rvDeferred = false;
+let rvTimer = 0, rvLoadT = 0, rvJumps = 0;
 const stagesDone = (run) => !!(run && run.stages && run.stages.length && run.stages.every((s) => s.status === "done"));
 const runActive = (run) => !!(run && run.on && !stagesDone(run));
 const LEAD_PAUSED_CARD = "The studio run is paused. Resume it in Review";
 const rvNeeds = (r) => ((r && r.needs) || []).filter((c) => (c.note || "") !== LEAD_CARD && (c.note || "") !== LEAD_PAUSED_CARD);
 const rvWaiting = (r) => ((r && r.items) || []).filter((i) => i.status === "waiting" && !rvDone.has(i.id));
 const stageName = (id) => (STAGE_NAMES.find((s) => s[0] === id) || [id, cap(id || "")])[1];
-/* who made a review item. Its expert is a roster id ("ui"), but sometimes the request's task id ("w1795331301859ygb3"):
-   then the expert chat started for that request names it, open or saved; else just "Expert". */
-function expertName(r, it) {
-  const id = String((it && it.expert) || ""), roster = (r && r.experts) || {};
-  if (roster[id]) return roster[id];
-  const open = [...agents.values()].find((p) => p.team && p.team === id && p.expert) || (it.by_chat && agents.get(it.by_chat));
-  if (open && open.expert) return open.expert;
-  const old = (saved.chats || []).find((c) => c.team === id && c.expert);
-  if (old) return old.expert;
-  if (/^[a-z][a-z-]{1,30}$/.test(id)) return cap(id.replace(/-/g, " "));
-  return "Expert";
+/* what Review shows goes to the store: the projects, what each has waiting, what was answered here, the tabs' order */
+function reviewToStore() {
+  const now = { projects: projects.projects || [], review: Object.assign({}, rvAll), reviewDone: Object.fromEntries(rvDone), reviewOrder: rvOrder };
+  fridaeDo((f) => f.store.set(now));
 }
-const rvShown = (id) => { const d = rvDone.get(id); return !d || !d.gone; };
 async function loadReview(only) {
   const started = Date.now(), list = (projects.projects || []).filter((x) => !only || x.path === only);
   await Promise.all(list.map(async (x) => {
@@ -4948,7 +4902,7 @@ async function loadReview(only) {
   /* an answer made here stays as one line until a refresh that began well after it */
   for (const d of rvDone.values()) if (d.at < started - 1500) d.gone = true;
   paintReviewBadge();
-  if (view === "review") paintReview();
+  reviewToStore();
   paintRunBar();
   if (view === "all") paintAll();
   if (view === "chat") { paintSwitch(); paintComposer(); }
@@ -4963,74 +4917,18 @@ function rvTotals() {
 function paintReviewBadge() { paintSide(); }
 /* a run that is stopped until the user answers first, then whatever else waits for the user, then the rest */
 const rvRank = (x) => { const st = projState(x.path), r = rvAll[x.path], going = runActive(r && r.run); return st.n && going ? (st.strong ? 0 : 1) : st.n ? 2 : 3; };
-const rvName = (path) => { const pr = (projects.projects || []).find((x) => x.path === path); return pr ? pr.name : prName(path); };
+/* the page is painted by ui/src/review; the tabs' order is set when it opens, so it does not move under the reader */
 function openReview(fresh) {
   if (fresh) { rvOrder = (projects.projects || []).slice().sort((a, b) => rvRank(a) - rvRank(b)).map((x) => x.path); $("review").scrollTop = 0; }
-  paintReview(); loadReview();
+  reviewToStore();
+  fridaeDo((f) => f.mount("review", $("review"), { onAnswered: rvAnswered }));
+  loadReview();
   clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") loadReview(); else clearInterval(rvTimer); }, 5000);
 }
-/* what a project has on the page: what its run waits for, the to-dos only the user can do, then finished work to
-   look at. Something just answered stays as one line until the next refresh after it. */
-function rvThings(path) {
-  const r = rvAll[path]; if (!r) return [];
-  const items = (r.items || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
-  const needs = rvNeeds(r).filter((c) => rvShown(c.id));
-  const card = (key, sig, make) => rvCard(rvTray, path + "\n" + key, sig, make);
-  const item = (i) => card(i.id, [i.id, i.created, (i.media || []).join("/"), i.title].join("|"), () => rvItemCard(i, r));
-  return items.filter((i) => i.blocking).map(item).concat(needs.map((c) => card(c.id, [c.id, c.title, c.note].join("|"), () => rvNeedCard(c, path))), items.filter((i) => !i.blocking).map(item));
-}
-/* The page: a tab per project that has something (in the order set when the page opened), and the things of the
-   one that is chosen. A tab goes when its project has nothing left; with no tabs the page says so in three words. */
-function paintReview() {
-  if (view !== "review") return;
-  rvDeferred = false;
-  const have = (projects.projects || []).map((x) => x.path);
-  rvOrder = rvOrder.filter((p) => have.includes(p)); for (const p of have) if (!rvOrder.includes(p)) rvOrder.push(p);
-  const tabs = rvOrder.map((p) => ({ path: p, els: rvThings(p), n: projState(p).n })).filter((t) => t.els.length);
-  if (!tabs.some((t) => t.path === rvTab)) rvTab = tabs.length ? tabs[0].path : "";
-  const bar = $("rv-tabs"), sig = tabs.map((t) => [t.path, rvName(t.path), t.n, t.path === rvTab].join("\n")).join("\n\n");
-  bar.hidden = !tabs.length; $("rv-nothing").hidden = !!tabs.length;
-  if (bar.dataset.sig !== sig) {
-    bar.dataset.sig = sig;
-    const had = bar.contains(document.activeElement);
-    bar.replaceChildren(...tabs.map((t, i) => {
-      const b = el("button", "", "<span></span>"), on = t.path === rvTab;
-      b.id = "rv-tab-" + i; b.dataset.path = t.path; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", on ? "true" : "false"); b.setAttribute("aria-controls", "rv-items"); b.tabIndex = on ? 0 : -1;
-      b.querySelector("span").textContent = rvName(t.path);
-      if (t.n) { const c = el("i"); c.textContent = t.n; b.appendChild(c); b.setAttribute("aria-label", rvName(t.path) + ", " + t.n + (t.n === 1 ? " thing needs you" : " things need you")); }
-      b.onclick = () => { rvTab = t.path; paintReview(); $("review").scrollTop = 0; };
-      if (on) $("rv-items").setAttribute("aria-labelledby", b.id);
-      return b;
-    }));
-    if (had) { const b = bar.querySelector('[aria-selected="true"]'); if (b) b.focus(); }
-  }
-  const tab = tabs.find((t) => t.path === rvTab);
-  /* with pictures or a clip on one side, without on the other */
-  const els = tab ? tab.els : [], pics = els.filter((e) => e.querySelector(".rv-media")), plain = els.filter((e) => !e.querySelector(".rv-media"));
-  paintRvList($("rv-pics"), pics); paintRvList($("rv-plain"), plain);
-  $("rv-items").hidden = !els.length; $("rv-pics").hidden = !pics.length; $("rv-plain").hidden = !plain.length;
-  $("rv-items").classList.toggle("two", pics.length > 0 && plain.length > 0);
-  const keep = new Set(); for (const t of tabs) for (const e of t.els) keep.add(e);
-  for (const [k, c] of [...rvTray.cards]) if (!keep.has(c.el)) rvTray.cards.delete(k);
-}
-/* in the tabs the arrow keys go from project to project */
-$("rv-tabs").addEventListener("keydown", (ev) => {
-  const tabs = [...$("rv-tabs").querySelectorAll("button")], i = tabs.indexOf(document.activeElement);
-  if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
-  ev.preventDefault();
-  const to = tabs[ev.key === "Home" ? 0 : ev.key === "End" ? tabs.length - 1 : (i + (ev.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
-  rvTab = to.dataset.path; paintReview(); $("review").scrollTop = 0;
-});
-function rvPaint() { paintReview(); }
+/* something was answered on the page: it stays there as one line (`said`), and the counts follow */
+function rvAnswered(id, said) { rvDone.set(id, { at: Date.now(), said }); paintReviewBadge(); reviewToStore(); }
 /* to a project's tab, and with `id` to one thing in it, which is marked for a moment */
-function rvJump(path, id) {
-  if (rvThings(path).length) rvTab = path;
-  paintReview();
-  const c = rvTray.cards.get(path + "\n" + id) || (rvTab === path ? { el: $("rv-items").querySelector(".rv-card") } : null);
-  if (!c || !c.el) return;
-  c.el.scrollIntoView({ block: id ? "center" : "start" });
-  c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1400);
-}
+function rvJump(path, id) { fridaeDo((f) => f.store.set({ reviewJump: { path, id, n: ++rvJumps } })); }
 /* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
    same confirm step as the night's undo */
 const cpName = (c) => (c.stage === "start" ? "Start of the run" : "After " + stageName(c.stage).toLowerCase()) + " · " + ago(c.at || 0);
@@ -5160,75 +5058,6 @@ $("rv-toggle").onclick = async () => {
 };
 }
 rvBindRun(RB); rvBindSet(RB);
-/* A thing to look at or decide: its pictures or clip (a picture opens large), its title, and Approve or Ask for
-   changes; the box to write in comes when that is pressed. Answered, it is one line. */
-function rvItemCard(it, r) {
-  const path = r.project;
-  const card = el("div", "rv-item rv-card enter", '<div class="rv-media"></div><h4></h4><div class="act"><button class="pill main">Approve</button><button class="pill rv-ask" aria-expanded="false">Ask for changes</button></div><div class="rv-change" hidden><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Send</button></div><p class="rv-err"></p><div class="rv-said"></div>');
-  card.dataset.id = it.id;
-  const media = it.media || [], row = card.querySelector(".rv-media");
-  const url = (f) => "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(it.id) + "/" + encodeURIComponent(f) + "?t=" + TOKEN;
-  const pics = media.filter((f) => !/\.(mp4|mov)$/i.test(f)).map(url);
-  if (!media.length) row.remove();
-  row.classList.toggle("many", media.length > 1);
-  media.forEach((f) => {
-    const src = url(f);
-    if (/\.(mp4|mov)$/i.test(f)) { const v = el("video"); v.controls = true; v.playsInline = true; v.preload = "metadata"; v.src = src; row.appendChild(v); return; }
-    const b = el("button"), im = new Image(); im.alt = ""; im.loading = "lazy"; im.src = src;
-    b.setAttribute("aria-label", "See " + f + " large"); b.appendChild(im); b.onclick = () => zoom(src, pics, b); row.appendChild(b);
-  });
-  const h = card.querySelector("h4"); h.textContent = it.title || "Untitled"; h.title = it.plain || it.summary || "";
-  const approve = card.querySelector(".act .pill"), ask = card.querySelector(".rv-ask"), box0 = card.querySelector(".rv-change"), input = box0.querySelector("input"), send0 = box0.querySelector(".pill"), err = card.querySelector(".rv-err");
-  const decide = async (body, said) => {
-    approve.disabled = send0.disabled = true; err.textContent = "";
-    let res; try { res = await api("/api/review", Object.assign({ path, id: it.id }, body)); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
-    if (!res.ok) { approve.disabled = false; send0.disabled = !input.value.trim(); err.textContent = res.error || "That did not work."; return; }
-    rvDone.set(it.id, { at: Date.now() });
-    card.querySelector(".rv-said").textContent = said; card.classList.add("done");
-    paintReviewBadge(); paintReview();
-  };
-  approve.onclick = () => decide({ action: "approve" }, "Approved: " + (it.title || "Untitled"));
-  const sendChange = () => { const note = input.value.trim(); if (!note) { err.textContent = "Say what to change."; input.focus(); return; } decide({ action: "change", note }, "Changes asked for: " + note); };
-  send0.onclick = sendChange;
-  ask.onclick = () => { box0.hidden = !box0.hidden; ask.setAttribute("aria-expanded", box0.hidden ? "false" : "true"); if (!box0.hidden) input.focus(); };
-  input.oninput = () => { send0.disabled = !input.value.trim(); err.textContent = ""; };
-  input.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChange(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); input.value = ""; send0.disabled = true; box0.hidden = true; ask.setAttribute("aria-expanded", "false"); ask.focus(); } };
-  input.onblur = () => { if (rvDeferred) setTimeout(paintReview, 0); };
-  return card;
-}
-/* a needs card was done: the Lead of the game's studio run is told, so a run waiting on it goes on */
-function needsDone(path, c) { if (path && c && c.title) api("/api/review", { path, action: "needs_done", title: c.title }).catch(() => {}); }
-/* a to-do only the user can do (a board card in the needs column): its title, and Done */
-function rvNeedCard(c, path) {
-  const card = el("div", "rv-item rv-card enter", '<h4></h4><div class="act"><button class="pill main">Done</button></div><p class="rv-err"></p><div class="rv-said"></div>');
-  card.dataset.id = c.id;
-  const h = card.querySelector("h4"); h.textContent = c.title || ""; h.title = c.note || "";
-  const done = card.querySelector(".act .pill"), err = card.querySelector(".rv-err");
-  done.onclick = async () => {
-    done.disabled = true; err.textContent = "";
-    let r; try { r = await api("/api/board", { path, action: "move", id: c.id, column: "done" }); } catch (e) { r = { ok: false }; }
-    if (!r || !r.ok) { done.disabled = false; err.textContent = (r && r.error) || "Could not move the card."; return; }
-    rvDone.set(c.id, { at: Date.now() });
-    needsDone(path, c);
-    card.querySelector(".rv-said").textContent = "Done: " + (c.title || ""); card.classList.add("done");
-    paintReviewBadge(); paintReview();
-  };
-  return card;
-}
-function rvCard(S, key, sig, make) {
-  const had = S.cards.get(key);
-  if (had && had.sig === sig) return had.el;
-  /* the entrance plays once: a card moved within a list later does not fade in again */
-  const card = make(); card.addEventListener("animationend", () => card.classList.remove("enter"), { once: true });
-  S.cards.set(key, { sig, el: card }); return card;
-}
-/* a list is only rebuilt when what is in it changed, and never under a change note being typed */
-function paintRvList(box, els) {
-  if (els.length === box.children.length && els.every((e, i) => box.children[i] === e)) return;
-  const typing = document.activeElement && document.activeElement.tagName === "INPUT" && box.contains(document.activeElement);
-  if (typing) { rvDeferred = true; return; }
-  box.replaceChildren(...els);
-}
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
 const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
 /* agents did something: Overview's totals follow */
@@ -5966,7 +5795,7 @@ function paintCap() {
   $("sw-cap").setAttribute("aria-busy", capWant ? "true" : "false");
 }
 function onStudioRun(e) {
-  if (rvAll[e.project]) { rvAll[e.project].run = e.run; paintReview(); paintRunBar(); paintHead(); }
+  if (rvAll[e.project]) { rvAll[e.project].run = e.run; paintRunBar(); paintHead(); }
   reloadReview();
 }
 /* Review, at a project's section (and, with `id`, at one item in it) */
@@ -7151,25 +6980,14 @@ window.addEventListener("themechange", () => { if (typeof overviewPoke === "func
 
 $("b-check").onclick = () => { $("setup-out").textContent = "Checking..."; api("/api/setup", {}); };
 $("b-agents").onclick = async () => { const r = await api("/api/connect", {}); $("setup-out").textContent = r.text; };
-let lightList = [], lightAt = 0, lightFrom = null;
-function zoom(src, list, from) {
-  const l = $("light");
-  lightList = list && list.length ? list : [src]; lightAt = Math.max(0, lightList.indexOf(src)); lightFrom = from || null;
-  l.querySelector("img").src = lightList[lightAt]; l.querySelector("span").textContent = lightList.length > 1 ? (lightAt + 1) + " of " + lightList.length : "";
-  l.classList.add("on");
-}
-function closeLight() { const l = $("light"); if (!l.classList.contains("on")) return; l.classList.remove("on"); if (lightFrom && lightFrom.isConnected) lightFrom.focus(); lightFrom = null; }
-$("light").onclick = closeLight;
-document.addEventListener("keydown", (e) => {
-  if (!$("light").classList.contains("on")) return;
-  if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); if (lightList.length > 1) zoom(lightList[(lightAt + (e.key === "ArrowRight" ? 1 : lightList.length - 1)) % lightList.length], lightList, lightFrom); }
-  else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeLight(); }
-}, true);
+/* a picture, large, over the page: the lightbox is ui/src/review/Lightbox.tsx (its own keys: arrows and Escape) */
+function zoom(src, list, from) { fridaeDo((f) => f.zoom(src, list, from)); }
+fridaeDo((f) => f.mount("lightbox", $("light-host")));
 /* Escape closes whatever is open over the page; a menu of the message box hands the keyboard back to its button */
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   const pop = POPS.find(([, m]) => $(m).classList.contains("on") && $(m).contains(document.activeElement));
-  $("light").classList.remove("on"); closeSetup(); closeUsage(); closeProject(); closePops(); closeConv();
+  closeSetup(); closeUsage(); closeProject(); closePops(); closeConv();
   $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
   if (pop) $(pop[0]).focus();
 });
@@ -7567,5 +7385,6 @@ if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st =
 if (!ONCE) setInterval(() => { if (view !== "review") loadReview(); }, 20000);   /* the Review count: board cards have no event */
 fit();
 </script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

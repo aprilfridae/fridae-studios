@@ -1,0 +1,47 @@
+/* Review's own look (ui/src/review). The page's shell, colours, buttons and fields are ui/index.html's: this is
+   only what belongs to this screen. */
+/* Review: what waits for the user, and nothing else. A tab per project that has something; in it, each thing is its
+   pictures (press one to see it large), its title, and Approve or Ask for changes. Three sizes of type on the page:
+   14px for what is read or pressed, 12px for a tab's count, and no more. */
+.rv-page { max-width: 960px; margin: 0 auto; container-type: inline-size; }
+#review * { font-family: inherit; font-size: 14px; letter-spacing: 0; }
+.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
+.rv-tabs[hidden] { display: none; }
+.rv-tabs button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-m); padding: 0 12px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
+.rv-tabs button:hover { color: var(--text); background: var(--hover); }
+.rv-tabs button[aria-selected="true"] { color: var(--text); background: var(--press); font-weight: 600; }
+#review .rv-tabs button i { font-size: 12px; font-style: normal; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--dim); }
+/* the chosen project's things sit in one box, a hairline between them */
+#rv-items { display: grid; grid-template-columns: minmax(0, 1fr); outline: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); }
+#rv-items[hidden], .rv-col[hidden] { display: none; }
+/* things with pictures on one side, the rest on the other; with only one kind, that side is the whole box */
+#rv-items.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.rv-col { min-width: 0; padding: 24px; }
+#rv-items.two .rv-col + .rv-col { border-left: 1px solid var(--line); }
+@container (max-width: 700px) {
+  #rv-items.two { grid-template-columns: minmax(0, 1fr); }
+  #rv-items.two .rv-col + .rv-col { border-left: 0; border-top: 1px solid var(--line); }
+}
+.rv-card { padding: 0 0 24px; }
+.rv-card + .rv-card { padding-top: 24px; border-top: 1px solid var(--line); }
+.rv-card:last-child { padding-bottom: 0; }
+.rv-card h4 { margin: 0 0 12px; line-height: 20px; font-weight: 600; overflow-wrap: anywhere; }
+/* every picture and clip is one size, in rows that wrap; a picture opens large when pressed */
+#rv-items .rv-media { display: grid; grid-template-columns: repeat(auto-fill, 184px); gap: 12px; overflow: visible; margin: 0 0 16px; }
+#rv-items .rv-media > * { width: 184px; height: 115px; max-width: none; border-radius: var(--r-s); }
+#rv-items .rv-media img, #rv-items .rv-media video { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
+.rv-card .act { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+#review .pill { height: var(--h-m); padding: 0 16px; font-weight: 400; }
+.rv-item.rv-card.done { padding: 0 0 16px; }
+.rv-item.rv-card:last-child { padding-bottom: 0; }
+.rv-item.rv-card.done + .rv-card { padding-top: 16px; }
+/* a thing someone was sent to is marked for a moment (the outline itself is .rv-item.flash, in index.html) */
+.rv-card.flash { border-radius: 2px; }
+.rv-nothing { margin: 96px 0 0; text-align: center; color: var(--dim); }
+
+/* a picture, large, over the page */
+.light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 32px; }
+.light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
+.light span { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; }
+.light span:empty { display: none; }
+.light.on { opacity: 1; pointer-events: auto; }

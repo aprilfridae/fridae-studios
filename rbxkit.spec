@@ -8,7 +8,12 @@ HERE = os.path.abspath(os.getcwd())
 sys.path.insert(0, HERE)
 import build_datas  # noqa: E402
 
-datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "agents", "rigs", "ui", "licenses")]
+datas = [(os.path.join(HERE, d), d) for d in ("blender", "studio", "agents", "rigs", "licenses")]
+# the window's page: index.html, the bundled screens (app.js, app.css), fonts and pictures; not the screens' source
+# (ui/src), the libraries bundled into app.js (ui/vendor) or the bundling script
+for folder, dirs, files in os.walk(os.path.join(HERE, "ui")):
+    dirs[:] = [d for d in dirs if not (folder == os.path.join(HERE, "ui") and d in ("src", "vendor", "__pycache__"))]
+    datas += [(os.path.join(folder, f), os.path.relpath(folder, HERE)) for f in files if f not in ("build.py", ".DS_Store")]
 # the vault file by file, leaving out dot-folders, dot-files and vault/Roblox (the guides come from the Fridae vault)
 datas += build_datas.vault_datas(HERE)
 datas.append((os.path.join(HERE, "README.md"), "."))

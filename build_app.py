@@ -72,9 +72,16 @@ def webview_loader(env):
 def check_page():
     """Refuse to build if the window's page does not start cleanly: one bad line in its script leaves every
     button dead. The real page is loaded in a headless Edge or Chrome with the server calls stubbed out, and
-    any error while it loads (a script that does not parse, or one that fails as it starts) stops the build."""
+    any error while it loads (a script that does not parse, or one that fails as it starts) stops the build.
+    The new screens' bundle (ui/app.js) is loaded with it and must start too."""
     import re, tempfile
     page = open(os.path.join(KIT, "ui", "index.html"), encoding="utf-8").read()
+    # the new screens' script goes into the probe whole: a page opened from a file may not load a module from one
+    module = '<script type="module" src="app.js"></script>'
+    if module not in page:
+        sys.exit("Cannot check the window's page: ui/index.html does not load app.js")
+    app_js = open(os.path.join(KIT, "ui", "app.js"), encoding="utf-8").read().replace("</script", r"<\/script")
+    page = page.replace(module, '<script type="module">' + app_js + "</script>", 1)
     browser = next((p for p in (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
                                 r"C:\Program Files\Google\Chrome\Application\chrome.exe") if os.path.exists(p)), None)
     if "<script>" not in page or not browser:
@@ -82,7 +89,8 @@ def check_page():
     trap = ("<script>window.__errors = []; window.onerror = function (m, s, l) { window.__errors.push(m + ' (line ' + l + ')'); };"
             "window.fetch = function () { return new Promise(function () {}); };</script>")
     verdict = ("<script>setTimeout(function () { document.title = window.__errors.length ? 'PAGE-BROKEN ' + window.__errors.join(' | ') : "
-               "(typeof send === 'function' && document.getElementById('send').onclick ? 'PAGE-OK' : 'PAGE-BROKEN the script did not finish loading'); }, 300);</script>")
+               "(typeof send !== 'function' || !document.getElementById('send').onclick ? 'PAGE-BROKEN the script did not finish loading' : "
+               "!window.fridae || !document.getElementById('light') ? 'PAGE-BROKEN app.js did not start' : 'PAGE-OK'); }, 300);</script>")
     probe_page = page.replace("<script>", trap + "<script>", 1).replace("</body>", verdict + "</body>", 1)
     with tempfile.TemporaryDirectory() as tmp:
         probe = os.path.join(tmp, "probe.html")
@@ -97,7 +105,15 @@ def check_page():
     print("The window's page starts cleanly.")
 
 
+def bundle_ui():
+    """ui/src -> ui/app.js and ui/app.css (ui/build.py). A front end that does not bundle stops the build."""
+    sys.path.insert(0, os.path.join(KIT, "ui"))
+    import build as ui_build
+    ui_build.bundle()
+
+
 def build(quiet=False):
+    bundle_ui()
     check_page()
     dist = os.path.join(BUILD, "dist")
     app = os.path.join(dist, APP_NAME)

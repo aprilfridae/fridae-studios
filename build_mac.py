@@ -41,6 +41,11 @@ def main():
     if sys.platform != "darwin":
         sys.exit("build_mac.py builds on a Mac only")
     os.makedirs(OUT, exist_ok=True)
+    # the new screens (ui/app.js, ui/app.css) ship with the rest of ui/: bundled again when esbuild is on this Mac,
+    # else the committed bundle as it is
+    sys.path.insert(0, os.path.join(KIT, "ui"))
+    import build as ui_build
+    ui_build.bundle()
     print("Building the window (Rust) ...")
     run("cargo", "build", "--release", cwd=os.path.join(KIT, "app-rs"))
     print("Building the tools (Python) ...")

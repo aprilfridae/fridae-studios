@@ -67,6 +67,8 @@ pub fn body_json(req: &mut Request, limit: u64) -> Value {
 fn send_file(path: PathBuf) -> Reply {
     let ctype = match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
         "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
         "woff2" => "font/woff2",
         "png" => "image/png",
         "jpg" => "image/jpeg",
@@ -182,6 +184,9 @@ fn get(path: &str, url: &str) -> Reply {
         send_file(ui.join("fonts").join(name))
     } else if path == "/logo.png" {
         send_file(ui.join("logo.png"))
+    } else if path == "/app.js" || path == "/app.css" {
+        // the screens that have moved to ui/src, bundled by ui/build.py
+        send_file(ui.join(name))
     } else if path.starts_with("/img/") {
         send_file(paths::work("chat-images").join(name))
     } else if path.starts_with("/att/") {
@@ -659,7 +664,8 @@ fn handle(mut req: Request, token: &str) {
     }
     // only this app's own page may talk to the server
     let local = is_local(&req);
-    let open_file = path.starts_with("/fonts/") || path == "/logo.png";
+    // the page's own files hold no secrets, and a <script> or <link> cannot carry the token
+    let open_file = path.starts_with("/fonts/") || path == "/logo.png" || path == "/app.js" || path == "/app.css";
     let given = Some(head(&req, "X-Token")).filter(|t| !t.is_empty()).or_else(|| query(&url, "t")).unwrap_or_default();
     let allowed = local && (open_file || same(&given, token));
     let media_path = ["/media/promo/", "/media/promo-style/", "/media/review/"].iter().any(|p| path.starts_with(p));
