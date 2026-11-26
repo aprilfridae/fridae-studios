@@ -5,6 +5,9 @@ app-rs/target/
 config.json
 build/
 dist/
+# Preact's built modules are vendored: the bundler needs them (the rule above is for build output)
+!ui/vendor/preact/dist/
+!ui/vendor/preact/*/dist/
 *.zip
 build-out/
 .venv/
