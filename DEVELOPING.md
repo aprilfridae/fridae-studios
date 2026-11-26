@@ -141,6 +141,47 @@ CSS variables; no component library, no CSS framework. `app.css` is loaded after
 that moves now wins over a rule of the same weight left in `index.html`: move the rules that go together (a media
 query's part for that screen too), and leave what other screens share where it is.
 
+### The chat (`ui/src/chat/`)
+
+The bar over the tabs, the bar above the conversation, the conversation and the message box. `index.html` keeps two
+empty elements for it (`#top` and `#chat-main`), mounts `chat-top` and `chat` into them, and reaches it through
+`fridae.chat` (`index.tsx`).
+
+- **Who keeps what.** A chat's state (`pane(id)`: its name, AI, project, `busy`, `now`, `last`, the experts it
+  started) is still made and listed by `index.html`, because the sidebar and the Overview read it. Its conversation
+  is `p.tl`, kept by `chatStore.ts`. The chat reads the page's state through `H` (`host.ts`: getters over the page's
+  own `current`, `curProj`, `view`, `status`, `rvAll`, and the functions it already had), handed over once with
+  `fridae.chat.init({...})`. Nothing is kept twice. `store.ts` was not changed for the chat.
+- **Events.** `poll()` and `onEvent` are still in `index.html` (they also feed Review, Promos, the Overview and the
+  sidebar). An agent's event goes to `fridae.chat.event(p, e)` first, which sets the chat's state and adds to its
+  conversation; what the rest of the page does about it follows in `onEvent`. `poll()` starts once `app.js` has
+  loaded. `fridae.chat.line(p, text, button, press)` puts one line into a chat's turn (a promo that is ready, a
+  thing filed for review).
+- **Rows.** A conversation is a list of rows (`chatStore.ts`): `you`, `tag`, `turn` (with its `parts`: `steps`,
+  `prose`, cards, pictures, an expert's line), `hello`, `night`, `nightask`, `card`, `wait`, `queue`, `xp`. Each is
+  drawn by `Rows.tsx` as exactly the markup the old page built, so the chat's CSS (still in `index.html`) applies as
+  it is. A row is drawn again only when `touch(row)` is called, a part only when its `v` changes: an agent at work
+  repaints its own turn and nothing else. The agent's words become markup the first time they come into view.
+- **Only what is in view is in the page** (`Timeline.tsx`). Up to 40 rows are drawn whole. Beyond that the column
+  holds the rows around the view (700px over and under) and two empty blocks as tall as the rest: a row's height is
+  measured when it is drawn (the way from its top to the next row's top, so the margins between rows are counted),
+  guessed until then. At the end of a chat the view follows it as it grows; anywhere else the row at the top of the
+  view is kept where it is, whatever is measured or drawn around it. Each chat remembers where the reader was. The
+  steps of a finished turn are in the page only while they are open. "Jump to latest" (`.to-latest`, in
+  `chat.css`) shows while the reader is away from the end.
+- **Redrawing the bars and the box.** `TopBar`, `ChatHead` (with the chats' menu and the run's menu) and `Dock` (the
+  message box, its three menus, the expert's line) read through `H` and are drawn again on `poke()`. The old page's
+  `paintComposer`, `paintHead`, `paintSwitch`, `paintRunBar` and `paintView` still exist as names and only call
+  `chatPoke()`; `closePops` and `closeConv` pass on to the chat too.
+- **The message box** (`compose.ts`): the model and effort per AI, the mode and its two extras, the files waiting to
+  go, and sending (`send`, `studioSend`), all as before, with the same `localStorage` keys. Paste and drop are
+  still listened for by the page (Promos shares them) and handed to `fridae.chat.addFile`.
+- `StartCard.tsx` is a new chat's setup card; its state is the chat's `p.start`, which `index.html` also sets.
+
+To check the chat: `H:/rust/tmp/rvwork-chat/run.sh old|new` (a stand-in server with a chat of every kind of row and
+one of 5,000 messages; `chat.js` presses through it and `cmp.py` compares the old page with the new, element by
+element and pixel by pixel), and `run.sh new perf.js` for the long chat's numbers.
+
 ## Using it
 
 Just ask your agent for what you want: "model a street lamp and put it by the

@@ -20,8 +20,10 @@ import { loadUsage, loadUsageSoon } from "./usage/usage";
 import "./review/review.css";
 import "./settings/settings.css";
 import "./usage/usage.css";
+import { ChatMain, TopBar, chat } from "./chat/index";
 
-const screens: Record<string, ComponentType<any>> = { review: Review, lightbox: Lightbox, settings: Settings, usage: UsageWindow, sidebar: Sidebar, "side-over": SideOver, overview: Overview };
+const screens: Record<string, ComponentType<any>> = { review: Review, lightbox: Lightbox, settings: Settings, usage: UsageWindow, sidebar: Sidebar, "side-over": SideOver, overview: Overview,
+  chat: ChatMain, "chat-top": TopBar };
 
 function mount(name: string, el: Element, props?: Record<string, unknown>) {
   const Screen = screens[name];
@@ -36,6 +38,7 @@ w.fridae = {
   settings: { open: openSettings, close: closeSettings, show: showPage, rag: loadRag },
   usage: { load: loadUsage, soon: loadUsageSoon },
   skills: { open: skOpen, count: skCount },
+  chat,
 };
 /* the old page ran first: whatever it kept for the new screens is handed over now */
 if (typeof w.fridaeReady === "function") w.fridaeReady();

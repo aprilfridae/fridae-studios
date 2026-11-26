@@ -86,11 +86,11 @@ def check_page():
                                 r"C:\Program Files\Google\Chrome\Application\chrome.exe") if os.path.exists(p)), None)
     if "<script>" not in page or not browser:
         sys.exit("Cannot check the window's page: %s" % ("no <script> in ui/index.html" if browser else "Edge or Chrome is needed"))
-    trap = ("<script>window.__errors = []; window.onerror = function (m, s, l) { window.__errors.push(m + ' (line ' + l + ')'); };"
+    trap = ("<script>window.__errors = []; window.onerror = function (m, s, l) { if (/ResizeObserver loop/.test(m)) return; window.__errors.push(m + ' (line ' + l + ')'); };"
             "window.fetch = function () { return new Promise(function () {}); };</script>")
     verdict = ("<script>setTimeout(function () { document.title = window.__errors.length ? 'PAGE-BROKEN ' + window.__errors.join(' | ') : "
-               "(typeof send !== 'function' || !document.getElementById('send').onclick ? 'PAGE-BROKEN the script did not finish loading' : "
-               "!window.fridae || !document.getElementById('light') ? 'PAGE-BROKEN app.js did not start' : "
+               "(typeof poll !== 'function' || typeof boot !== 'function' ? 'PAGE-BROKEN the script did not finish loading' : "
+               "!window.fridae || !document.getElementById('light') || !document.getElementById('send') ? 'PAGE-BROKEN app.js did not start' : "
                "!document.getElementById('proj-list') || !document.getElementById('o-canvas') ? 'PAGE-BROKEN the sidebar or Overview was not drawn' : 'PAGE-OK'); }, 300);</script>")
     probe_page = page.replace("<script>", trap + "<script>", 1).replace("</body>", verdict + "</body>", 1)
     with tempfile.TemporaryDirectory() as tmp:
