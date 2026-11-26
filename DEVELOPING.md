@@ -1150,7 +1150,8 @@ comments and tests only). (OpenCode is different: Fridae's own copy, see the nex
   Gemini's signed-out lines are the app's own, with the button.
 - **The button starts one kind of sign-in**: the tool's default (a Claude account, a Cursor account, a Google
   account). People on an API key, a company gateway or an Enterprise plan sign in in the tool itself; the Guide says so.
-- **Windows**: not offered (`signin::offered`; nothing was measured there). The lines say what they said before.
+- **Windows**: not offered for the AIs' own sign-ins (`signin::offered`; nothing was measured there). The lines say
+  what they said before. An added Claude account's sign-in is offered there (see "A second account for Claude").
 - **Measured** (23 November 2026; Claude Code 2.1.319, cursor-agent 2026.11.22, agy 1.5.15): the three status
   commands signed in (for real) and signed out (a scratch home; for Claude Code a scratch `CLAUDE_CONFIG_DIR` alone
   also reads as signed out, so its sign-in is kept per config folder); the start of each sign-in in a scratch home,
@@ -1276,6 +1277,25 @@ Nothing runs a tool's logout.
   still hold its sign-in"). Nothing is deleted when the accounts folder itself is a link. The name is never used
   again. The keychain entry of a removed Claude folder stays ("Claude Code-credentials-" and 8 hex of the folder's
   path): the app deletes nothing in the keychain.
+- **Windows** (`accounts::offered`: Claude's added accounts are offered there; Gemini's not yet). Claude Code keeps
+  its sign-in as `.credentials.json` in its config folder (measured), so the folder alone separates the sign-in, as
+  on the Mac. A user without admin rights or Developer Mode cannot make symbolic links (os error 1314, measured), so
+  `link_into` links the user's folders (skills, plugins, agents, commands, rules, output styles) by directory
+  junctions (`mklink /J`, no window) and the user's files (`settings.json`, `CLAUDE.md`, `keybindings.json`) by a
+  symbolic link where that is allowed, else a hard link (same drive only; on another drive the file is not
+  linked). Claude Code rewrites `settings.json` by putting a new file in its place, which leaves a hard link behind
+  as a file of its own: so before every command a linked file there that no longer reads as the user's is made
+  again from the user's (made beside it, then moved over it; only ever inside the account's folder). Measured on
+  Windows 11 with Rust's standard library: `symlink_metadata` of a junction says `is_symlink()` true, `is_dir()`
+  false, with `FILE_ATTRIBUTE_REPARSE_POINT` set; `remove_file` on a junction is refused and `remove_dir` takes the
+  junction alone; `remove_dir_all` of a folder holding a junction does not follow it. The app treats every reparse
+  point as a link (`is_link`) for `real_folder`, `real_file` and removal, and removes one as a link (`remove_link`);
+  what cannot be deleted for its read-only attribute has it taken off (never through a link) and is tried again.
+  Names are made from the standard library's randomly seeded hasher (Windows has no `/dev/urandom`). The added
+  account's sign-in and status are offered (`signin::offered`), and Claude's own status is asked too (not shown), so
+  `same_as_first` can tell an added account signed in to the user's own. Not measured on Windows: a sign-in that
+  completes and a turn that really runs on an added account; a reset given only as a clock time is not read there
+  (`day_secs`), so an account used up that way is tried again after an hour.
 
 **Ready** (`accounts::second_signed_in`, `signin::second_ready`). A second account takes chats only when its tool
 says an account is signed in there, an account of its own: not a key or token from the environment (`by_key`: it
