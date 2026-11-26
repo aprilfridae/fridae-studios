@@ -10,7 +10,7 @@
 
 /* One greyscale palette, one outline per surface, one radius scale.
    Spacing: 4 8 12 16 24 32 48 (2 only inside a control). Controls: 28 small, 32 regular, 40 for a page's main field.
-   Type: 12 13 14 15 16 20; 20/600 is a Setup section's title, 16/600 a page or a card, 14/600 a part of one.
+   Type: 12 13 14 15 16 20; 20/600 is a Settings section's title, 16/600 a page or a card, 14/600 a part of one.
    Buttons: .pill.main is the one main action of a place (white), .pill the rest, .linkish a quiet word in a line;
    .sm (28px) only in a list's row or beside a heading, never for a section's own action.
    Motion: --t-fast for hover and press, --t-mid for a control changing state, --t-slow for a panel or a page
@@ -41,7 +41,7 @@
   /* glass: a surface that lets what scrolls behind it show through, blurred (menus, the message box, panels) */
   --glass-blur: 16px; --glass-opacity: 80%; --glass-saturation: 1.08;
   --warn: #e5a23c;    /* the one colour: something is missing or nearly used up */
-  --bad: #e5484d;     /* only a step that failed (Setup, Knowledge index), beside its plain-words line */
+  --bad: #e5484d;     /* only a step that failed (Settings, Knowledge index), beside its plain-words line */
   --r-s: 8px; --r-m: 12px; --r-l: 16px;
   --h-s: 28px; --h-m: 32px; --h-l: 40px;
   --focus: rgba(255, 255, 255, 0.6);
@@ -68,7 +68,7 @@ input, select, textarea { font: inherit; color: inherit; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-/* a page or a Setup section shown again plays this once (display: none to shown restarts it); only the inside
+/* a page or a Settings section shown again plays this once (display: none to shown restarts it); only the inside
    moves, so nothing fixed inside a scrolling page is caught by a transform */
 #review > .rv-page, #promos > .r-col, #newproj > .r-col, .ap-side, .su-body > section.on > .st-page { animation: arrive var(--t-slow) var(--ease) both; }
 .body > .main, .scroll > .col { animation: fade var(--t-mid) ease both; }
@@ -166,7 +166,7 @@ div.g-row { cursor: default; }
 .c-row .notice { margin: 8px 0 0; }
 .oc-row { padding-left: 24px; border-top: 0; }
 .oc-row .act { grid-column: 1 / -1; margin: 8px 0 0; }
-/* GitHub (Setup, Connections; Project details): the code to enter on GitHub, the account's picture */
+/* GitHub (Settings, Connections; Project details): the code to enter on GitHub, the account's picture */
 .gh-code { margin: 8px 0 0; font-family: var(--mono); font-size: 20px; letter-spacing: 0.12em; color: var(--text); user-select: all; }
 .c-row small.gh-note { margin-top: 4px; }
 .gh-avatar { width: 18px; height: 18px; border-radius: 50%; vertical-align: -4px; margin-right: 6px; }
@@ -817,7 +817,7 @@ button.rv-who:hover { background: var(--hover); }
 .rv-h { display: flex; align-items: baseline; gap: 8px; margin: 32px 0 8px; font-size: 16px; font-weight: 600; }
 .rv-h span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
 .rv-h .pill { margin-left: auto; align-self: center; font-weight: 400; }
-/* nothing to show yet: one quiet line in a soft box, the same in Review, Promos and Setup */
+/* nothing to show yet: one quiet line in a soft box, the same in Review, Promos and Settings */
 .rv-none, .empty, #pr-empty, .sk-list > .sub:only-child { margin: 0; padding: 12px 16px; border-radius: var(--r-m); background: color-mix(in srgb, var(--text) 3%, transparent); font-size: 13px; line-height: 1.5; color: var(--faint); }
 #pr-empty { margin-top: 12px; }
 .rv-list { display: grid; gap: 12px; align-items: start; }
@@ -968,18 +968,28 @@ body.setup #sd, body.usage #ud { opacity: 1; transform: none; pointer-events: au
 .sr-notes:not(:has(> :not([hidden]):not(:empty))) { display: none; }
 /* a list the app fills in (the AIs, the programs agents may run, the skills): each line a row of the group */
 .sg-list:empty { display: none; }
-.sg-list > * { margin: 0; padding: 12px 16px; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); border-bottom: 0; }
-.sg-list > :first-child { border-top: 0; }
+.sg:has(> .sg-list:only-child:empty) { display: none; }
+/* a row whose one control is not offered now (no key saved yet) is not shown */
+.sr:has(> .sr-in > .sr-ctl > [style*="display: none"]:only-child) { display: none; }
+.sg .sg-list > * { margin: 0; padding: 12px 16px; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); border-bottom: 0; }
+.sg .sg-list > :first-child { border-top: 0; }
 .sg-list .c-row b, .sg-list .g-row b, .sg-list .xp-tr b, .sg-list .sk-row b { font-size: 14px; line-height: 20px; font-weight: 500; }
 .sg-list .c-row small, .sg-list .g-row small, .sg-list .xp-tr small, .sg-list .sk-row small { font-size: 12px; line-height: 1.5; }
 .sg-list .c-row .dot { margin-top: 6px; }
-.sg-list > .oc-row { padding-left: 40px; border-top: 0; padding-top: 0; }
-.sg-list .g-item { padding: 0; }
+.sg .sg-list > .oc-row { padding-left: 40px; border-top: 0; padding-top: 0; }
+.sg .sg-list > .g-item { padding: 0; }
 .sg-list .g-item .g-row { padding: 12px 16px; }
 .sg-list .g-item .moreinfo { margin: -8px 16px 12px; }
 .sg-list.sk-list { margin: 0; border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
 .sg-list.su-block { margin: 0; }
 #saved-panel .g-row:first-child { border-top: 0; }
+.sg #gd-list > div { padding: 0; }
+#gd-list > div > * { border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent); }
+#gd-list > div > :first-child, #gd-list .g-group + .g-item { border-top: 0; }
+#gd-list .g-group { margin: 0; padding: 14px 16px 2px; font: 500 12px/16px var(--sans); letter-spacing: 0; color: color-mix(in srgb, var(--dim) 80%, transparent); }
+.sg-list button.g-row { transition: background-color var(--t-fast) ease; }
+.sg-list button.g-row:hover { background: var(--hover); }
+.sg-list > .g-item:first-child button.g-row, #gd-list > div > .g-item:nth-child(2) button.g-row { border-radius: 0; }
 /* the window's own controls: 8px corners, 32px tall, a hairline and a faint fill */
 .modal .pill { height: 32px; padding: 0 11px; border-radius: 8px; font-size: 14px; font-weight: 500; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--line-strong) 32%, transparent); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); }
 .modal .pill:hover { background: color-mix(in srgb, var(--line-strong) 64%, transparent); border-color: var(--line-strong); }
@@ -1040,7 +1050,7 @@ input[type=checkbox].sw:focus-visible { border-radius: 999px; }
 .ab-ver { font-weight: 400; color: var(--dim); }
 .eng-bar { height: 4px; max-width: 360px; margin-top: 12px; border-radius: 999px; background: var(--hover); overflow: hidden; }
 .eng-bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width 300ms ease; }
-/* Setup, Connections, Knowledge index: Off / Light / Heavy, Light's one row, Heavy's numbered steps, a test box */
+/* Settings, Connections, Knowledge index: Off / Light / Heavy, Light's one row, Heavy's numbered steps, a test box */
 .rag-seg { margin-top: 12px; max-width: 100%; }
 .rag-seg[aria-busy="true"] { opacity: 0.7; }
 .rag-seg button:disabled { opacity: 0.45; }
@@ -1061,11 +1071,11 @@ input[type=checkbox].sw:focus-visible { border-radius: 999px; }
 .rag-hits span { color: var(--dim); }
 .rag-hits:empty, #rag-q-note:empty { display: none; }
 @media (max-width: 520px) { .rag-seg .rag-x { display: none; } }
-/* Setup, Skills: the decisions waiting (Review-style cards, the two skills side by side, the suggestion in its plain
+/* Settings, Skills: the decisions waiting (Review-style cards, the two skills side by side, the suggestion in its plain
    words box) and the library, one line per skill */
 .su-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; margin-left: 8px; border-radius: 999px; background: var(--text); color: var(--ink); font: 600 12px/1 var(--mono); vertical-align: 1px; }
 #ap-sk-go { font-size: inherit; }
-/* a failure in Setup: in the text colour, marked by a thin red rule (Knowledge index, Skills, Share) */
+/* a failure in Settings: in the text colour, marked by a thin red rule (Knowledge index, Skills, Share) */
 .sk-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; white-space: pre-line; }
 .sk-err:empty { display: none; }
 .sk-h > span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
@@ -1098,7 +1108,7 @@ input[type=checkbox].sw:focus-visible { border-radius: 999px; }
 .sk-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sk-row small:empty { display: none; }
 .sk-list > .sub { padding: 8px 0; margin: 0; }
-/* Setup, Skills: the Fridae vault row (its last report, the files kept as the user's) and Share your skills (the
+/* Settings, Skills: the Fridae vault row (its last report, the files kept as the user's) and Share your skills (the
    question, the Sharing control, the list, a batch to check: each skill with its files, scripts first) */
 .vt-kept:empty { display: none; }
 .vt-kept p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 4px 0 0; }
@@ -1118,7 +1128,7 @@ input[type=checkbox].sw:focus-visible { border-radius: 999px; }
 .sh-mark { display: inline-block; margin-left: 8px; font: 12px/1 var(--sans); color: var(--faint); }
 .sh-files pre { max-height: 220px; overflow-y: auto; margin: 8px 0 0; }
 #sh-note .linkish { font-size: inherit; }
-/* Setup, Skills: Submissions (the maintainer's copy): each pull request with its skills, a card per skill in the
+/* Settings, Skills: Submissions (the maintainer's copy): each pull request with its skills, a card per skill in the
    decision cards' idiom (scripts first in their own boxes, then SKILL.md and its changes, the suggestion, the choices) */
 #sb-inbox:empty, #sb-create-box:empty, #sb-pub-box:empty { display: none; }
 #sb-made .linkish, #sb-pub-note .linkish, .sb-pr-h .linkish { font-size: inherit; }
@@ -1271,7 +1281,7 @@ applyTheme();
         <button class="meter" id="b-use" aria-expanded="false" title="New tokens used today, across every chat. Press for the details.">0 today</button>
         <span class="grow"></span>
         <button class="conn" id="b-conn" hidden><span class="dot miss"></span></button>
-        <button class="icon" id="b-setup" aria-label="Setup" title="Setup"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
+        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
       </div>
     </div>
     <div class="pop" id="use-pop"><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
@@ -1365,7 +1375,7 @@ applyTheme();
         <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
-        <div class="ap-head"><p class="sub grow"><span id="ap-totals"></span><span id="ap-sk" hidden> · <button class="linkish" id="ap-sk-go" title="Open Setup, Skills"></button></span></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
+        <div class="ap-head"><p class="sub grow"><span id="ap-totals"></span><span id="ap-sk" hidden> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills"></button></span></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
         <div class="ap-cards" id="ap-cards"></div>
       </div>
     </div></div>
@@ -1560,7 +1570,7 @@ applyTheme();
         <div class="st-sec-head"><h2>Roblox Studio</h2></div>
         <div class="sg">
           <div class="sg-list" id="needs"></div>
-          <div class="sr" id="set-plugin"><div class="sr-in"><div class="sr-text"><h3>Studio plugin</h3><p>Tells the agent what you have selected in Studio, shows it new errors, and lets you undo a whole turn.</p></div><div class="sr-ctl"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove plugin</button></div></div></div>
+          <div class="sr" id="set-plugin"><div class="sr-in"><div class="sr-text"><h3>Install or remove the plugin</h3><p>Tells the agent what you have selected in Studio, shows it new errors, and lets you undo a whole turn.</p></div><div class="sr-ctl"><button class="pill" id="plug-install">Install plugin</button><button class="pill" id="plug-remove" hidden>Remove plugin</button></div></div></div>
         </div>
       </section>
       <section class="st-sec" id="set-blender">
@@ -1860,19 +1870,19 @@ const GUIDE = [
   ["Bigger jobs", [
     ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first playable of this game and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
     ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
-    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
+    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
     ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
-    ["Knowledge vault", "Setup, Skills: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
+    ["Knowledge vault", "Settings, Knowledge: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
   ]],
   ["Safety net", [
     ["Checkpoint", "Saves every script into the project folder and its history.", "Take a checkpoint", "Changes can then be compared and restored."],
-    ["Undo a turn", "The link under a finished turn takes back what it changed in Studio.", "", "Scripts included. It needs the Studio plugin (Setup, Connections)."],
+    ["Undo a turn", "The link under a finished turn takes back what it changed in Studio.", "", "Scripts included. It needs the Studio plugin (Settings, Connections)."],
     ["Undo the night", "A game's Review puts Studio and the files back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
     ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. A project's Review shows what that project has cost."],
-    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Setup, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
+    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Settings, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
@@ -1880,26 +1890,26 @@ const CONTROLS = [
   ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: its Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
   ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for a game or a plain project (a regular program, or anything else). Chats that belong to no project sit under No project."],
   ["Chat, Review, Promos", "A project's tabs: talk to its agent and see what needs you. A game also has Promos (promo videos)."],
-  ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
+  ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Settings, Chats, and put back afterwards."],
   ["The project's name", "Press it for the project's folder, its kind (Game or Project), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
   ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (or, for a chat going to Claude, by Claude's smallest model when OpenCode cannot). Common keys and passwords are masked where recognised, and the summary runs on your own plan either way. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
-  ["More accounts", "Setup, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Setup, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there. An added Gemini account keeps its sign-in in a keychain of its own, which Fridae makes in that folder and opens by itself: your Mac's own keychain is not used for it and is never changed."],
+  ["More accounts", "Settings, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Settings, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there. An added Gemini account keeps its sign-in in a keychain of its own, which Fridae makes in that folder and opens by itself: your Mac's own keychain is not used for it and is never changed."],
   ["The mode button", "Ask me, Full auto, Overnight or Studio. Self-test and Gemini textures are under More there."],
   ["Sending while it works", "Your messages wait and go to it together the moment it finishes.", "", "Remove one before then if you change your mind. The square button stops it."],
   ["Experts in a chat", "Each expert is a chat of its own, listed under the chat that started it in the sidebar.", "", "The arrow beside that chat shows or hides its experts; each row says who it is, what for, whether it is working and its AI. Those that have not worked for half an hour are behind one line (\"12 earlier\"); press it to see them. Press an expert to read its chat (read only; Stop is there while it works). In the chat that started it, one line marks where it began and opens it too. You never need to talk to them: the agent you talk to does."],
-  ["Experts on another AI", "Setup, Experts: pick an AI and model for any expert.", "", "Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Setup, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its row says so (\"Cursor · Auto\")."],
-  ["The amber dot (bottom left)", "Something is not connected. Press it to see what, in Setup."],
+  ["Experts on another AI", "Settings, Experts: pick an AI and model for any expert.", "", "Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Settings, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its row says so (\"Cursor · Auto\")."],
+  ["The amber dot (bottom left)", "Something is not connected. Press it to see what, in Settings."],
   ["Selected in Studio", "With the Studio plugin connected, the agent is told what you have selected.", "", "The message box shows it, so \"this\" means that."],
   ["Text size", "Ctrl (Cmd on a Mac) and + or - makes everything bigger or smaller; 0 resets it."],
-  ["API keys on this computer", "Setup, Connections, Use API keys from my environment. Off unless you turn it on.", "", "An AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Setup instead."],
-  ["Settings changed mid-turn", "A change in Setup reaches a working agent from its next turn.", "", "This goes for the paid Gemini textures switch and the Blender path: a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
+  ["API keys on this computer", "Settings, Connections, Use API keys from my environment. Off unless you turn it on.", "", "An AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Settings instead."],
+  ["Settings changed mid-turn", "A change in Settings reaches a working agent from its next turn.", "", "This goes for the paid Gemini textures switch and the Blender path: a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
   ["Settings put back", "If the settings file changes without Fridae, it puts the risky settings back and says which.", "", "Fridae keeps a copy of the settings that let agents do more or cost money (allowed programs, API key switches, the Gemini key, games, the Studio plugin link, the Experts table, the model picked for OpenCode) outside every folder an agent is given. If you changed the file yourself, the notice at start offers to use the file's settings instead."],
 ];
 const ARROW = '<span class="go"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l6-6M4.5 3H9v4.5"/></svg></span>';
 /* a longer explanation, folded behind one word */
 function moreInfo(text) { const d = el("details", "moreinfo", "<summary>More</summary><p></p>"); d.querySelector("p").textContent = text; return d; }
-/* One row of the guide. Rows with an example are buttons that close Setup and put it in the message box. */
+/* One row of the guide. Rows with an example are buttons that close Settings and put it in the message box. */
 function guideRow([name, what, example, more]) {
   const item = el("div", "g-item");
   const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
@@ -1922,7 +1932,7 @@ async function api(path, body) {
 }
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
-/* The chosen tab's background is one mark that slides from the last one to it (the tab bar and Setup's list). The
+/* The chosen tab's background is one mark that slides from the last one to it (the tab bar and Settings' list). The
    first time it is simply there; a host it cannot measure (hidden) hides the mark, and the tab keeps its own look. */
 function slideMark(host) {
   if (!host) return;
@@ -2758,7 +2768,7 @@ function paintProject() {
   if (!curProj) closeProject();
   paintView(); paintSwitch();
 }
-/* While Setup or the project panel is open, the page behind it is inert: Tab stays in the panel, and when the panel
+/* While Settings or the project panel is open, the page behind it is inert: Tab stays in the panel, and when the panel
    closes the keyboard goes back to where it was. */
 let panelFrom = null;
 function panelOpened(first) {
@@ -2843,7 +2853,7 @@ async function delProject(trash) {
 $("pd-del-list").onclick = () => delProject(false);
 $("pd-del-trash").onclick = () => delProject(true);
 
-/* ---------- GitHub: Setup, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
+/* ---------- GitHub: Settings, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
    GitHub, Push now). Fridae keeps the sign-in to itself: agents never get it, and nothing is sent to GitHub unless you
    press one of these buttons. Put on GitHub and Push now run in the background: the page follows the project's
    last_push ("running", "ok", "error") and keeps the buttons greyed while one runs. ---------- */
@@ -2880,7 +2890,7 @@ async function ghAct(action, body) {
   await loadGithub();
   return r;
 }
-/* Setup, Connections: GitHub's row, laid out like the AIs' rows */
+/* Settings, Connections: GitHub's row, laid out like the AIs' rows */
 function paintGithub() {
   const box = $("gh-row"); if (!box) return;
   const p = gh.pending, sig = JSON.stringify([gh.configured, gh.connected, gh.login, gh.avatar_url, p, gh.error, gh.forgot, ghNote]);
@@ -2953,8 +2963,8 @@ function paintGithubProject() {
   if (!show) { box.replaceChildren(); return; }
   const path = pr.path, out = el("p", "sub"), said = ghLine[path], parts = [];
   if (!gh.connected) {
-    const act = el("div", "act"); act.appendChild(ghButton("Open Setup", () => openSetup("connections"), "pill"));
-    parts.push(el("p", "sub", "Connect GitHub in Setup, Connections, and this project can go on GitHub with one press."), act);
+    const act = el("div", "act"); act.appendChild(ghButton("Open Settings", () => openSetup("connections"), "pill"));
+    parts.push(el("p", "sub", "Connect GitHub in Settings, Connections, and this project can go on GitHub with one press."), act);
   } else if (info && info.repo) {
     const p = el("p", "sub");
     p.textContent = "This project is on GitHub at " + info.repo + ". Push now sends your latest commits there.";
@@ -2990,7 +3000,7 @@ function needRows() {
   const rows = AIS.map(([id, name, via, how]) => [!!have[id], name + " · " + via, have[id] ? (status.ai && status.ai.default === id ? "Ready. New chats start on it." : "Ready.") : "Not found. " + how]);
   rows.push([!!status.studio, "Roblox Studio", status.studio ? "Its MCP server is on, so agents can work in your place." : "In Studio, open Assistant settings and turn on the MCP server."]);
   rows.push([!!pl.connected, "Studio plugin", pluginLine()]);
-  rows.push([!!status.blender, "Blender", status.blender ? "Found. Used for 3D models, icons and animations." : "Not found. Install Blender, then open Setup again."]);
+  rows.push([!!status.blender, "Blender", status.blender ? "Found. Used for 3D models, icons and animations." : "Not found. Install Blender, then open Settings again."]);
   return rows;
 }
 function rowHtml([ok, name, what]) { return '<div class="c-row"><span class="dot' + (ok ? " ok" : "") + '"></span><div><b>' + esc(name) + "</b><small>" + esc(what) + "</small></div></div>"; }
@@ -2998,10 +3008,10 @@ function paintNeeds() {
   const have = (status.ai || {}).installed || {};
   if (status.studio === undefined) return;
   const rows = needRows(), ai = chatAi(agents.get(current));
-  /* Setup, Connections: Studio, its plugin and Blender (the AIs have their own list there, see paintAi) */
+  /* Settings, Connections: Studio, its plugin and Blender (the AIs have their own list there, see paintAi) */
   $("needs").innerHTML = rows.slice(AIS.length, AIS.length + 2).map(rowHtml).join("");
   $("needs-blender").innerHTML = rows.slice(AIS.length + 2).map(rowHtml).join("");
-  /* the one dot at the bottom left: there only while something is not connected, and it opens Setup on what */
+  /* the one dot at the bottom left: there only while something is not connected, and it opens Settings on what */
   const off = [have[ai] ? "" : aiName(ai), status.studio ? "" : "Roblox Studio", status.blender ? "" : "Blender"].filter(Boolean);
   const dot = $("b-conn"); dot.hidden = !off.length;
   dot.title = "Not connected: " + off.join(", ") + ". Press to see how to fix it.";
@@ -3797,7 +3807,7 @@ function modelParts(ai, name) {
   return at < 0 ? ["", name] : [name.slice(0, at), name.slice(at + 3)];
 }
 /* One line about an AI, for the two places it is picked or set up: the top of the picker's models (#model-notice) and
-   its row in Setup, Connections (.notice in the row). Return a node (the words, and a button when there is something
+   its row in Settings, Connections (.notice in the row). Return a node (the words, and a button when there is something
    to press) or null for nothing; an empty slot takes no room. A notice is painted again when its markup changes (its
    words, a button's label or whether it is disabled): give the node a data- attribute for a change that does not
    show. An AI that is not signed in says so, with the sign-in one press away: Claude, Cursor and Gemini (your own
@@ -3821,7 +3831,7 @@ let noticePresses = 0;
 function accountOf(ai) { return (((status.ai || {}).accounts || {})[ai]) || {}; }
 function accountsOf(ai) { return accountOf(ai).accounts || []; }
 function accountWords(ai, p) { return accountsOf(ai).length && p ? " · account " + (p.account || 1) : ""; }
-/* Their lines in Setup, under the AI's own (which is account 1): one line per added account with its sign-in (the
+/* Their lines in Settings, under the AI's own (which is account 1): one line per added account with its sign-in (the
    same line and buttons as any sign-in) or who is signed in, and Remove; then one line to add another. Your own
    account is never changed from here. */
 function accountRows(ai) {
@@ -3901,7 +3911,7 @@ function signInLine(ai) {
     : s.state !== "out" ? ""
     : login.state === "failed" ? "The sign-in did not finish" + why + " Try again."
     /* a key on this computer that Fridae keeps from this AI: the switch may be all that is missing */
-    : s.kept_key ? "Not signed in. If you use an API key, turn on \"Use API keys from my environment\" in Setup, Connections."
+    : s.kept_key ? "Not signed in. If you use an API key, turn on \"Use API keys from my environment\" in Settings, Connections."
     : "Not signed in.";
   return { text, buttons: text ? [["Sign in", "login"]] : [] };
 }
@@ -4009,7 +4019,7 @@ box.addEventListener("input", fit);
 box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
 sendBtn.onclick = send;
 $("b-out").onclick = () => api("/api/open", { what: "work" });
-/* the guide lives in Setup */
+/* the guide lives in Settings */
 $("gd-list").appendChild(guideList(GUIDE));
 CONTROLS.forEach((c) => $("gd-controls").appendChild(guideRow(c)));
 
@@ -4144,7 +4154,7 @@ function paintEngine() {
     short = "Promo engine " + (all ? "not installed" : "partly installed") + " (about " + engine.download_mb + " MB" + (all ? "" : " left") + ")";
     button = all ? "Install" : "Continue install";
   }
-  /* the same row in Setup and, shorter, at the top of the Promos tab */
+  /* the same row in Settings and, shorter, at the top of the Promos tab */
   document.querySelectorAll(".eng-row").forEach((row) => {
     const compact = row.classList.contains("compact"), btn = row.querySelector(".eng-install"), b = row.querySelector(".eng-bar");
     row.querySelector(".eng-state").textContent = compact ? short : text;
@@ -4168,7 +4178,7 @@ function onEngine(e) {
   paintEngine();
 }
 document.querySelectorAll(".eng-install").forEach((btn) => (btn.onclick = async () => { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } }));
-/* Setup, Connections, Knowledge index: Off, Light or Heavy. The mode is the app's setting and the control shows only
+/* Settings, Connections, Knowledge index: Off, Light or Heavy. The mode is the app's setting and the control shows only
    what the app says it is (rag.mode), never a guess. Light has one Set up; Heavy five numbered steps, each with its dot
    (white done, amber needs you, red failed, hollow not yet) and a button that can always run it again. The status is
    asked every second while something runs, otherwise every 10 s, and only while the section is in view. */
@@ -5605,7 +5615,7 @@ function paintBoard() {
   if (sum.dataset.sig !== ssig) {
     sum.dataset.sig = ssig;
     sum.textContent = (parts.length ? parts.join(" · ") : "The team is getting ready") + (cap ? " · " : "");
-    if (cap) { const b = el("button", "linkish"); b.textContent = "up to " + cap + " at once"; b.title = "How many experts may work at the same time: Setup, Experts"; b.onclick = () => openSetup("experts"); sum.appendChild(b); }
+    if (cap) { const b = el("button", "linkish"); b.textContent = "up to " + cap + " at once"; b.title = "How many experts may work at the same time: Settings, Experts"; b.onclick = () => openSetup("experts"); sum.appendChild(b); }
     sum.title = sum.textContent;
   }
   /* the roster: one chip per member; pressing one shows only its lines */
@@ -5764,7 +5774,7 @@ function bdPick(i) {
   });
 }
 
-/* Setup, Experts: Most experts working at once, 1 to 8 (4 unless changed). The app's agent limit is 8. */
+/* Settings, Experts: Most experts working at once, 1 to 8 (4 unless changed). The app's agent limit is 8. */
 let capWant = 0;
 {
   const box0 = $("sw-cap");
@@ -5808,7 +5818,7 @@ function studioWaitLine(p, on) {
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
 function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); stClear(); paintThemes(); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); if (!skillsVisible()) skCount(); else if (typeof section !== "string") loadSkills(true); }
-/* Setup, General, Your notes: counts for everything and for the game of the chat in front */
+/* Settings, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
 async function loadNotes() {
@@ -5832,7 +5842,7 @@ function setupSection(name) {
   if (name === "skills" || name === "knowledge") loadSkills(true);
   if (name === "appearance") paintThemes();
 }
-/* ---------- Setup, Skills: the decisions waiting for the user, the library, Import now ----------
+/* ---------- Settings, Skills: the decisions waiting for the user, the library, Import now ----------
    GET /api/skills gives the library's index and the open decisions. A decision is about two skills (kind "skill") or
    two of the user's notes (kind "note"): a is the one in use, b the newcomer waiting beside it, with their folders,
    why it was asked (reason: "update" when the user's edited copy's source changed, else an overlap), the newcomer's
@@ -5930,7 +5940,7 @@ function skCard(d) {
   /* the suggestion, in the plain-words box Review uses */
   const rb = card.querySelector(".sk-rec"), rt = rb.querySelector("b"), rp = rb.querySelector("p");
   const pick = rec && rec.choice && labels[rec.choice] && !(app && rec.choice !== "keep") && (rec.choice !== "merge" || canMerge) ? rec.choice : "";
-  if (!rec) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI reads both and suggests one when one is connected (Setup, Connections). You can decide without it."; }
+  if (!rec) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI reads both and suggests one when one is connected (Settings, Connections). You can decide without it."; }
   else {
     rt.textContent = pick ? "Suggested: " + labels[pick] : "No clear pick";
     if (rec.by) rb.querySelector(".sk-by").textContent = "by " + rec.by;
@@ -6035,7 +6045,7 @@ function skFold(open) {
 $("sk-fold").onclick = () => skFold($("sk-body").hidden);
 try { skFold(localStorage.getItem("skills-shown") === "1"); } catch (e) { skFold(false); }
 $("ap-sk-go").onclick = () => openSetup("skills");
-/* the count of open decisions: Setup's Skills button and the Overview's totals line */
+/* the count of open decisions: Settings' Skills button and the Overview's totals line */
 function skPaintCount() {
   const n = skOpen().length, nav = $("sk-nav-n");
   nav.hidden = !n; nav.textContent = n; nav.title = n + (n === 1 ? " decision waits" : " decisions wait");
@@ -6101,9 +6111,9 @@ async function loadSkills(fresh) {
   })();
   try { await skLoading; } finally { skLoading = null; }
 }
-/* the Overview and Setup ask for the count now and then (it runs the skills tool, so not on every repaint) */
+/* the Overview and Settings ask for the count now and then (it runs the skills tool, so not on every repaint) */
 function skCount() { if (!skLoading && Date.now() - skAt > 300000) loadSkills(); }
-/* ---------- Setup, Skills: the Knowledge vault and Share your knowledge ----------
+/* ---------- Settings, Skills: the Knowledge vault and Share your knowledge ----------
    GET /api/vault/status: the vault's {downloaded, release, checked_at, running, last}, where last is the newest Download
    or Pull newest: the vault-apply report ({added, updated, merged, clashes, incoming, errors}; vault paths
    "Skills/<skill>/<file>" for skills and "Roblox/..." for guides; clashes the units now waiting for Keep the vault's /
@@ -6452,7 +6462,7 @@ function shSentPaint(r) {
   if (r.warning) p.append(" " + r.warning);
   p.hidden = false;
 }
-/* ---------- Setup, Skills: Submissions (the maintainer's copy) ----------
+/* ---------- Settings, Skills: Submissions (the maintainer's copy) ----------
    status.role {connected, login, maintainer, repo_exists}: the block shows for the maintainer, and Create the vault
    repo for the login that owns VAULT_REPO while the repo is missing. GET /api/vault/inbox: {prs: [{n, url, author,
    title, error?, not_skill, skills: [{unit, name, files: [{path, text, script, note?}], not_skill, same_name, closest
@@ -6600,7 +6610,7 @@ function sbCard(pr, s) {
   const rb = card.querySelector(".sk-rec"), rt = rb.querySelector("b"), rp = rb.querySelector("p");
   const pick = !rec ? "" : rec.choice === "replace" ? "add" : rec.choice === "keep" ? "reject" : merged ? "edit" : "";
   if (!rec) {
-    if (against) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI compares it with the vault's skill and suggests what to do when one is connected (Setup, Connections). You can decide without it."; }
+    if (against) { rb.classList.add("none"); rt.textContent = "No suggestion yet"; rp.textContent = "A cheap AI compares it with the vault's skill and suggests what to do when one is connected (Settings, Connections). You can decide without it."; }
     else rb.remove();
   } else {
     rt.textContent = pick === "add" ? "Suggested: Add, replacing " + (against || "the vault's") : pick === "reject" ? "Suggested: Reject, the vault's is better" : pick === "edit" ? "Suggested: Edit then add, merged" : "No clear pick";
@@ -6769,7 +6779,7 @@ function sbPublishPaint(r) {
   const problems = r && Array.isArray(r.problems) ? r.problems.map(String) : [];
   err.textContent = problems.length ? "Not published. Fix these first:\n" + problems.join("\n") : (r && r.error) || "The vault release could not be published.";
 }
-/* Setup, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
+/* Settings, Experts: one row per roster expert, its AI and model (both "Same as the Lead" unless chosen), saved in the
    app's config as expert_ai. Only AIs installed here are offered; a saved choice of one that is gone still shows. */
 let xpList = null;
 async function loadExperts(body) { const r = await api("/api/experts", body || {}); if (r && r.list) xpList = r.list; if (r && r.ok === false) alert(r.error || "Could not save that."); paintExperts(); }
@@ -7020,7 +7030,7 @@ $("gem-api").onclick = async () => { await api("/api/gemini", { use_api: $("gem-
 $("gem-clear").onclick = async () => { await api("/api/gemini", { key: "" }); refresh(); };
 /* functions, not consts: they are needed while the page is still loading */
 function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; }
-/* the AI new chats start on (Setup, General) */
+/* the AI new chats start on (Settings, General) */
 function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) => a[0] === d) ? d : "claude"; }
 function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
 /* what an AI can do, from the app's table (status.ai.caps, caps.rs): the page asks it instead of naming AIs */
@@ -7028,7 +7038,7 @@ function caps(ai) { return (((status || {}).ai || {}).caps || {})[ai] || {}; }
 /* whether this AI keeps to a run mode by its own rules: one it cannot keep to is not offered (Ask me instead) */
 function modeKept(ai, id) { const m = caps(ai).modes; if (!m) return true; return id === "ask" ? m.ask !== false : id === "studio" ? m.studio !== false : m.full !== false; }
 /* The picker's left side: the AIs this computer offers, for the chat in front. One that is not installed says so (and
-   can still be picked: Setup says how to get it). A chat that has started carries on with the other AI, handed the
+   can still be picked: Settings says how to get it). A chat that has started carries on with the other AI, handed the
    chat so far. */
 function paintAiPick() {
   const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);
@@ -7040,7 +7050,7 @@ function paintAiPick() {
     b.querySelector("b").textContent = name;
     b.setAttribute("role", "radio"); b.setAttribute("aria-checked", id === on ? "true" : "false");
     b.title = id === on ? "This chat uses " + name + "." : (p && p.started ? "Carry on this chat with " + name + ". It is handed the chat so far." : "Use " + name + " for this chat.")
-      + (have[id] === false ? " " + name + " is not set up on this computer yet: Setup, Connections says how." : "");
+      + (have[id] === false ? " " + name + " is not set up on this computer yet: Settings, Connections says how." : "");
     b.onclick = () => switchAi(id);
     wrap.appendChild(b);
   });
@@ -7056,7 +7066,7 @@ async function switchAi(id) {
   if (!r.ok) { refuse(r.error || "Could not switch."); return; }
   p.ai = id; paintComposer(); paintSwitch(); paintNeeds(); tellPick(p);
 }
-/* Setup: the AI new chats start on (General), and each AI with whether it is found on this computer (Connections).
+/* Settings: the AI new chats start on (General), and each AI with whether it is found on this computer (Connections).
    Rebuilt only when what it says changed, so the keyboard keeps its place through the app's regular refresh. */
 function paintAi() {
   const ai = status.ai || {}, have = ai.installed || {};
@@ -7085,7 +7095,7 @@ function paintAi() {
 /* Fridae's own OpenCode sign-in: Fridae keeps OpenCode apart from yours (its own chats and settings), so it signs in
    on its own, once, with OpenCode's device sign-in: a code here, approved on opencode.ai. Free models work without.
    What it needs from you now, as one plain line and its buttons, is the notice (aiNotice): in the picker's models and
-   in OpenCode's row in Setup. Nothing to say (signed in, or not known yet): no text. */
+   in OpenCode's row in Settings. Nothing to say (signed in, or not known yet): no text. */
 let ocPoll = 0, ocError = "";
 function openCodeSignIn() {
   const oc = (status.ai || {}).opencode || {}, login = oc.login || {}, signed = oc.signed_in || [], waiting = login.state === "waiting";
@@ -7114,7 +7124,7 @@ function openCodeButton(label, action) {
   };
   return b;
 }
-/* Its row in Setup, under OpenCode's own: where the sign-in stands, in one short line (what to do about it is the
+/* Its row in Settings, under OpenCode's own: where the sign-in stands, in one short line (what to do about it is the
    notice above it), and Sign in again once it is signed in. */
 function openCodeRow() {
   const s = openCodeSignIn();
@@ -7149,7 +7159,7 @@ function blockedCard(p, commands) {
   const names = commands.map((c) => c.name);
   const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
   card.querySelector("h4").textContent = "The agent was not allowed to run " + names.join(", ");
-  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude, Cursor and OpenCode chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Setup). Gemini chats can only use the building tools.";
+  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude, Cursor and OpenCode chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Settings). Gemini chats can only use the building tools.";
   const any = names.filter((n) => RUNS_ANY.includes(n));
   if (any.length) card.querySelector("p").textContent += " Note: " + any.join(", ") + (any.length === 1 ? " can" : " can each") + " run any other program, so allowing " + (any.length === 1 ? "it" : "them") + " is close to allowing everything.";
   card.querySelector("pre").textContent = commands.map((c) => c.command).join("\n");
@@ -7261,7 +7271,7 @@ function paintSaved() {
 async function reloadSaved() { try { saved = await api("/api/history"); } catch (e) {} paintSaved(); loadHistory(); }
 $("saved-manage").onclick = () => { const p = $("saved-panel"); p.hidden = !p.hidden; $("saved-word").value = ""; if (!p.hidden) reloadSaved(); };
 $("saved-word").oninput = paintSaved;
-/* The Studio plugin, as one line of Setup, Connections (see needRows). `plugNote`: what the last press of Install or
+/* The Studio plugin, as one line of Settings, Connections (see needRows). `plugNote`: what the last press of Install or
    Remove said, shown until the next refresh. */
 let plugNote = "";
 function pluginLine() {
