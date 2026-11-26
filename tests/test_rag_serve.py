@@ -381,6 +381,51 @@ class ParentWatchTests(unittest.TestCase):
         self.assertFalse(a.exit_with_stdin, "run by hand from a terminal it keeps going")
 
 
+class ServiceProcessTests(unittest.TestCase):
+    """The real `rag serve --exit-with-stdin`, as the app starts it: a process of its own whose stdin is a pipe the app
+    holds. It keeps serving while the pipe is open, and is gone within seconds of the app's end being closed (as the OS
+    does when the app ends, however it ends). Light mode with an empty folder: it binds before it loads any model."""
+
+    ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def test_it_runs_while_its_stdin_is_open_and_ends_once_it_closes(self):
+        import subprocess
+        tmp = tempfile.mkdtemp(prefix="rag serve process ")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        token_file = os.path.join(tmp, "token")
+        with open(token_file, "w") as f:
+            f.write(TOKEN)
+        env = dict(os.environ, HOME=tmp, USERPROFILE=tmp, PYTHONPATH=self.ROOT, PYTHONIOENCODING="utf-8")
+        args = [sys.executable, os.path.join(self.ROOT, "rbx.py"), "rag", "serve", "--mode", "light",
+                "--data", os.path.join(tmp, "data"), "--port", "0", "--token-file", token_file, "--exit-with-stdin"]
+        p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             cwd=tmp, env=env)
+        try:
+            lines = []
+            reader = threading.Thread(target=lambda: lines.append(p.stdout.readline()), daemon=True)
+            reader.start()
+            reader.join(60)
+            self.assertTrue(lines and lines[0], "it said where it listens")
+            port = json.loads(lines[0].decode("utf-8"))["listening"]
+            base = "http://127.0.0.1:%d" % port
+            # while the app holds the pipe: still there, and answering
+            time.sleep(1.5)
+            self.assertIsNone(p.poll(), "it keeps running while its stdin is open")
+            self.assertEqual(call(base, "/status")[0], 200)
+            p.stdin.close()
+            started = time.monotonic()
+            try:
+                p.wait(10)
+            except subprocess.TimeoutExpired:
+                self.fail("still running 10 seconds after its stdin closed")
+            self.assertLess(time.monotonic() - started, 5, "gone within a few seconds")
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait(10)
+            p.stdout.close()
+
+
 class LightDenseTests(unittest.TestCase):
     def test_dense_sorts_cuts_and_keeps_the_order(self):
         seen = []

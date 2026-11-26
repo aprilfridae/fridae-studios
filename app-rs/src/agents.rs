@@ -1424,13 +1424,15 @@ thread_local! {
     /// list of accounts may change under a turn: the user removes one in Setup).
     static AFTER_ACCOUNT_FOR_TEST: std::cell::RefCell<Option<Box<dyn Fn()>>> = const { std::cell::RefCell::new(None) };
     /// Tests, when Some: `send` goes on as if its AI were installed, and each launch it would start is noted here
-    /// (the kept process's key, and the environment of the process per message) instead of being started.
+    /// (the kept process's key, the environment of the process per message, and that of the kept process when the AI
+    /// tells it, `Kept::kept_command_for_test`) instead of being started.
     static LAUNCHES_FOR_TEST: std::cell::RefCell<Option<Vec<LaunchForTest>>> = const { std::cell::RefCell::new(None) };
 }
 
-/// A launch as a test sees it: the kept process's key, and the environment of the process per message.
+/// A launch as a test sees it: the kept process's key, the environment of the process per message, and that of the
+/// kept process (None: the AI does not tell it).
 #[cfg(test)]
-type LaunchForTest = (String, Vec<(String, Option<String>)>);
+type LaunchForTest = (String, Vec<(String, Option<String>)>, Option<Vec<(String, Option<String>)>>);
 
 /// A Cursor or OpenCode chat whose saved conversation is gone: forget it, and hand over the chat so far (without the
 /// message being sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
@@ -1849,6 +1851,12 @@ trait Kept: Clone + Send + 'static {
     fn fits(&self, _a: &Arc<Agent>) -> bool {
         true
     }
+    /// Tests: the command the kept process would be started with, where the AI's launch has one of its own (None:
+    /// not told).
+    #[cfg(test)]
+    fn kept_command_for_test(&self) -> Option<Command> {
+        None
+    }
     /// The same message for a process of its own, when the kept way is not taken or has failed before anything was
     /// shown: the chat's conversation resumed (`per_turn`). An AI whose kept process keeps conversations a process
     /// per message cannot open (Cursor) hands the chat over as text here instead. None: Stop was pressed while that
@@ -1907,9 +1915,13 @@ struct GeminiLaunch {
     /// agy's data folder when it is not `~/.gemini` (FRIDAE_AGY_DIR, testing only): given as `--gemini-dir`
     data_dir: Option<std::path::PathBuf>,
     /// the HOME agy runs with when it is not the app's: the second account's home (`accounts`), which is where
-    /// that account's sign-in and conversations are; or the testing override. Part of the key: a process started
+    /// that account's sign-in and conversations are (never the testing override: `own_home`). Part of the key: a process started
     /// in one home is never sent a message meant for the other account.
     home: Option<std::path::PathBuf>,
+    /// the HOME agy runs with on the user's own account under the testing override (FRIDAE_AGY_HOME, `agy_home`):
+    /// given as HOME alone, never as a second account's home is (`accounts::home`, which on Windows would also
+    /// move USERPROFILE and put agy's sign-in in a file, away from the user's own). Part of the key as `home` is.
+    own_home: Option<std::path::PathBuf>,
     /// the workspace, the tool servers, the model and effort, and the rules its requests are answered by
     spec: crate::acp::Spec,
     /// whether the provider keys in the app's environment reach the process (`paths::child_env`)
@@ -1949,7 +1961,7 @@ struct GeminiSettings<'a> {
     /// the home folder agy runs with, and its data folder when not `<home>/.gemini`
     home: &'a std::path::Path,
     data_dir: Option<&'a std::path::Path>,
-    /// that home, when agy is to be given it as HOME because it is not the app's own (`GeminiLaunch.home`)
+    /// a second account's home, which agy is given as its home (`GeminiLaunch.home`, `accounts::home`)
     home_env: Option<&'a std::path::Path>,
 }
 
@@ -1981,7 +1993,7 @@ impl GeminiLaunch {
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
         let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
         let guarded = guarded_print(s.guarded);
-        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), home: s.home_env.map(std::path::Path::to_path_buf), spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
+        GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), home: s.home_env.map(std::path::Path::to_path_buf), own_home: None, spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
 
     /// The kept process: `agy acp`, in the chat's workspace.
@@ -2005,16 +2017,24 @@ impl GeminiLaunch {
                 cmd.env_remove(k);
             }
         }
-        if let Some(h) = &self.home {
-            crate::accounts::home(&mut cmd, h);
-        }
+        self.homes(&mut cmd);
         cmd
+    }
+
+    /// agy's home on `cmd`, when it is not the app's: a second account's in full (`accounts::home`), the testing
+    /// override's for the user's own account as HOME alone (as `signin::tool_env` gives it).
+    fn homes(&self, cmd: &mut Command) {
+        if let Some(h) = &self.home {
+            crate::accounts::home(cmd, h);
+        } else if let Some(h) = &self.own_home {
+            cmd.env("HOME", h);
+        }
     }
 
     /// Everything a kept process was started with, or answers requests by, that a later message could need otherwise.
     fn key(&self) -> String {
         let r = &self.spec.rules;
-        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.home, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
+        json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.home, self.own_home, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
                r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, r.images, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
         .to_string()
     }
@@ -2082,6 +2102,11 @@ impl Kept for GeminiLaunch {
         Live::start_as(self.command(), key, "gemini", crate::acp::stray)
     }
 
+    #[cfg(test)]
+    fn kept_command_for_test(&self) -> Option<Command> {
+        Some(self.command())
+    }
+
     fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
         let s = &self.spec;
         // (a process per message hands its tools' results over itself: its tool server notes no pictures; and it
@@ -2094,9 +2119,7 @@ impl Kept for GeminiLaunch {
         let mut cmd = Command::new(&self.exe);
         cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
-        if let Some(h) = &self.home {
-            crate::accounts::home(&mut cmd, h);
-        }
+        self.homes(&mut cmd);
         (cmd, antigravity::message_line(text))
     }
 
@@ -3681,7 +3704,7 @@ impl Agent {
                 }
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
                 let jobs = crate::jobs::file(&self.id);
-                let launch = GeminiLaunch::new(&GeminiSettings {
+                let mut launch = GeminiLaunch::new(&GeminiSettings {
                     exe: &exe,
                     agent_id: &self.id,
                     workspace: &workspace,
@@ -3700,8 +3723,9 @@ impl Agent {
                     keys_on: paths::env_keys_on(),
                     home: &agy_home.clone().unwrap_or_else(paths::home_dir),
                     data_dir: agy_dir().filter(|_| second_dir.is_none()).as_deref(),
-                    home_env: agy_home.as_deref(),
+                    home_env: second_dir.as_deref(),
                 });
+                launch.own_home = agy_home.clone().filter(|_| second_dir.is_none());
                 return self.kept_turn(&launch, &text);
             }
             "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
@@ -3766,9 +3790,10 @@ impl Agent {
     fn kept_turn<L: Kept>(self: &Arc<Self>, launch: &L, text: &str) {
         #[cfg(test)]
         if LAUNCHES_FOR_TEST.with(|l| l.borrow().is_some()) {
+            let envs = |cmd: &Command| -> Vec<(String, Option<String>)> { cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect() };
             let (cmd, _) = launch.per_turn(None, text);
-            let env: Vec<(String, Option<String>)> = cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect();
-            LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().as_mut().unwrap().push((launch.key(), env)));
+            let kept = launch.kept_command_for_test().map(|c| envs(&c));
+            LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().as_mut().unwrap().push((launch.key(), envs(&cmd), kept)));
             self.put("done", json!({}));
             return;
         }
@@ -8343,6 +8368,11 @@ mod tests {
         launch.1.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
     }
 
+    /// The same, of the kept process's command (for an AI that tells it).
+    fn kept_env_of(launch: &LaunchForTest, key: &str) -> Option<Option<String>> {
+        launch.2.as_ref().expect("the kept process's command").iter().find(|(k, _)| k == key).map(|(_, v)| v.clone())
+    }
+
     #[test]
     fn a_chat_on_the_second_account_is_started_in_that_accounts_folder_and_one_on_the_first_is_not() {
         crate::accounts::stand_in(true, true);
@@ -8392,6 +8422,16 @@ mod tests {
             assert_eq!(env_of(&l[0], key), Some(None), "{key}");
         }
         assert!(l[0].0.contains("gemini-2-standin"));
+        // the kept process and a process per message alike; and on Windows the account's home is its USERPROFILE too,
+        // and its sign-in a file in that folder (never the user's own entry in Credential Manager)
+        type Of = fn(&LaunchForTest, &str) -> Option<Option<String>>;
+        for (how, of) in [("per message", env_of as Of), ("kept", kept_env_of as Of)] {
+            assert_eq!(of(&l[0], "HOME"), Some(Some(folder("gemini"))), "{how}");
+            if cfg!(windows) {
+                assert_eq!(of(&l[0], "USERPROFILE"), Some(Some(folder("gemini"))), "{how}");
+                assert_eq!(of(&l[0], "AGY_CLI_FORCE_FILE_TOKEN_STORAGE"), Some(Some("1".into())), "{how}");
+            }
+        }
         // the tool server's own entry (the servers' JSON, one of the launch's strings) has the app's HOME back, and
         // on Windows the app's USERPROFILE too (where Python and the app find the user's home there)
         let launch: Value = serde_json::from_str(&l[0].0).unwrap();
@@ -8406,6 +8446,53 @@ mod tests {
         let l = launches(&d, "Carry on");
         assert_eq!((env_of(&l[0], "HOME"), env_of(&l[0], "GEMINI_API_KEY")), (None, None));
         assert!(!l[0].0.contains("gemini-2-standin"));
+        // in neither way of running, and nothing of a second account's home: its USERPROFILE stays the user's, and
+        // its sign-in in Credential Manager
+        for (how, of) in [("per message", env_of as Of), ("kept", kept_env_of as Of)] {
+            for k in ["HOME", "USERPROFILE", "AGY_CLI_FORCE_FILE_TOKEN_STORAGE", "GEMINI_API_KEY"] {
+                assert_eq!(of(&l[0], k), None, "{how}: {k}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_second_home_for_the_users_own_gemini_account_under_the_testing_override_is_its_home_alone() {
+        // (FRIDAE_AGY_HOME: `send` gives that folder as `own_home` when the turn is on the user's own account)
+        let (servers, guarded) = (json!({"rbxkit": {"command": "python3", "args": [], "env": {}}}), serde_json::Map::new());
+        let dir = paths::test_dir("agy-own-home");
+        let mut l = GeminiLaunch::new(&GeminiSettings {
+            exe: std::path::Path::new("/bin/sh"),
+            agent_id: "c-own-home",
+            workspace: &dir,
+            servers: &servers,
+            model: None,
+            effort: None,
+            full: false,
+            kit: std::path::Path::new("/kit"),
+            work: std::path::Path::new("/work"),
+            protected: &[],
+            hidden_in: &[],
+            pictures: None,
+            jobs: None,
+            allowed: &[],
+            guarded: &guarded,
+            keys_on: false,
+            home: &dir,
+            data_dir: None,
+            home_env: None,
+        });
+        let before = l.key();
+        l.own_home = Some(dir.clone());
+        assert_ne!(l.key(), before, "a process kept in one home is never sent a message meant for another");
+        let env = |cmd: &Command, k: &str| cmd.get_envs().find(|(key, _)| *key == k).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        for (how, cmd) in [("kept", l.command()), ("per message", l.per_turn(None, "hello").0)] {
+            assert_eq!(env(&cmd, "HOME"), Some(Some(dir.to_string_lossy().to_string())), "{how}");
+            // nothing a second account's home has: USERPROFILE stays the user's, agy's sign-in where it always is,
+            // and the keys as the app's environment has them
+            for k in ["USERPROFILE", "AGY_CLI_FORCE_FILE_TOKEN_STORAGE"].into_iter().chain(crate::accounts::KEPT_FROM_SECOND) {
+                assert_eq!(env(&cmd, k), None, "{how}: {k}");
+            }
+        }
     }
 
     #[test]

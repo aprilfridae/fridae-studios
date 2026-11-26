@@ -95,6 +95,17 @@ class SpendLimit(RuntimeError):
     """No more pictures may be started for now: the message says who has started how many, and to ask the user."""
 
 
+def agy_env():
+    """The environment agy is started with: this process's own, without AGY_CLI_FORCE_FILE_TOKEN_STORAGE. Pictures are
+    made on the user's own account, whose sign-in agy keeps in the system's credential store; an added Gemini account's
+    chat on Windows runs agy with that variable set (its token is a file in its own folder, `accounts::home`), and the
+    tool server agy starts inherits it, so passed on it would send this agy looking for a file token in the user's own
+    folder, where there is none ("please sign in")."""
+    env = dict(os.environ)
+    env.pop("AGY_CLI_FORCE_FILE_TOKEN_STORAGE", None)
+    return env
+
+
 def brain_dir():
     """Where Antigravity keeps a folder per conversation; its generate_image tool leaves each picture there
     (measured, agy 1.5.15: <home>/.gemini/antigravity-cli/brain/<conversation>/<name>_<time>.jpg)."""
@@ -280,7 +291,7 @@ def cheapest_model(exe, timeout=30):
     if fresh and flash_model(had.get("model")):
         return had["model"]
     try:
-        p = subprocess.run([exe, "models"], capture_output=True, timeout=max(1, timeout), creationflags=no_window())
+        p = subprocess.run([exe, "models"], capture_output=True, timeout=max(1, timeout), env=agy_env(), creationflags=no_window())
     except (OSError, subprocess.TimeoutExpired):
         return None
     if p.returncode != 0:
@@ -364,7 +375,7 @@ def _one_turn(exe, ask, model, timeout):
     with cleanly():
         try:
             os.makedirs(folder)
-            p = subprocess.run(args, input=line.encode("utf-8"), capture_output=True, timeout=max(1, timeout), cwd=folder, creationflags=no_window())
+            p = subprocess.run(args, input=line.encode("utf-8"), capture_output=True, timeout=max(1, timeout), cwd=folder, env=agy_env(), creationflags=no_window())
         except subprocess.TimeoutExpired:
             raise RuntimeError("Antigravity took too long to make the image, so it was ended. Try once more later.")
         except OSError as e:
