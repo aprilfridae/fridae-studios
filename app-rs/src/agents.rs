@@ -4336,7 +4336,9 @@ impl Agent {
                         }
                     }
                     "rate_limit_event" => {
-                        crate::limits::record(&e);
+                        // on the account this turn ran on (each account has limits of its own)
+                        let on = self.st.lock().unwrap().account_name.clone();
+                        crate::limits::record(&e, on.as_deref());
                         // a limit that is reached: when it resets, for the account's "used up until" (`roll_over`)
                         t.limit_reset = crate::accounts::event_reset(&e).or(t.limit_reset);
                     }

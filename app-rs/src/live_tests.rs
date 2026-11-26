@@ -78,7 +78,9 @@ fn recorded_plain_reply_ends_at_its_result_and_keeps_the_limits() {
     assert_eq!(session(&a).as_deref(), Some(S1));
     assert!(lines.next().is_some(), "what follows the result (the turn's `completed` mark) is left for the next turn");
     let lim = crate::limits::state();
-    assert!(lim.to_string().contains("seven_day"), "the rate_limit_event was recorded: {lim}");
+    // (on the user's own account; the recorded window's reset time has passed since, so the page shows none of it)
+    let own = lim["accounts"].as_array().into_iter().flatten().any(|r| r["ai"] == "claude" && r["account"] == crate::limits::OWN && r["checked"].as_f64().is_some_and(|t| t > 0.0));
+    assert!(own, "the rate_limit_event was recorded: {lim}");
 }
 
 #[test]
