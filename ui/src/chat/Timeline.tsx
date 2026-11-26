@@ -63,6 +63,8 @@ function List({ tl }: { tl: Tl }) {
   };
   const cur = range(); w.current = cur;
   const first = useRef(true), tries = useRef(0);
+  /* where this list last put the scroll itself (its own moves are not the reader's), and where the reader last was */
+  const ours = useRef(-1), last = useRef(0);
   /* the row at the top of what is seen, and how far down it sits: what is kept still while the chat changes around it */
   const grab = (c: HTMLElement, sc: HTMLElement, at: { a: number; b: number }) => {
     const kids = c.children, off = at.a > 0 ? 1 : 0;
@@ -92,10 +94,10 @@ function List({ tl }: { tl: Tl }) {
     const now = range();
     if ((now.a !== cur.a || now.b !== cur.b || Math.abs(now.top - cur.top) > 0.5 || Math.abs(now.bot - cur.bot) > 0.5) && tries.current++ < 8) { again(); return; }
     tries.current = 0;
-    if (tl.follow) { if (sc.scrollHeight - sc.scrollTop - sc.clientHeight > 0.5) sc.scrollTop = sc.scrollHeight; }
+    if (tl.follow) { if (sc.scrollHeight - sc.scrollTop - sc.clientHeight > 0.5) { sc.scrollTop = sc.scrollHeight; ours.current = sc.scrollTop; } }
     else if (tl.anchor) {
       const el = (tl.anchor.row as any).el as HTMLElement | undefined;
-      if (el && el.parentElement === c) { const d = el.offsetTop - sc.scrollTop - tl.anchor.dy; if (Math.abs(d) >= 1) sc.scrollTop += d; }
+      if (el && el.parentElement === c) { const d = el.offsetTop - sc.scrollTop - tl.anchor.dy; if (Math.abs(d) >= 1) { sc.scrollTop += d; ours.current = sc.scrollTop; } }
       else grab(c, sc, cur);   /* the reader jumped far (the scrollbar): the kept row is one of those now drawn */
     } else grab(c, sc, cur);
     setAway(!tl.follow);
@@ -106,22 +108,36 @@ function List({ tl }: { tl: Tl }) {
     const c = col.current!, sc = c.parentElement as HTMLElement;
     const onChange = () => again();
     tl.subs.add(onChange);
-    /* the reader scrolled: at the end the chat is followed; anywhere else the row at the top of the view is kept */
+    /* the reader scrolled: any move up lets go of the end at once (a wheel scrolls smoothly, a little at a time, and
+       the chat must not pull it back while it grows); moving down to near the end follows it again */
+    const leave = () => { if (tl.follow) { tl.follow = false; grab(c, sc, w.current!); setAway(true); } };
     const onScroll = () => {
       if (!sc.clientHeight) return;
-      tl.follow = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 80;
+      const top = sc.scrollTop, mine = Math.abs(top - ours.current) < 1, gap = sc.scrollHeight - top - sc.clientHeight;
+      if (!mine) {
+        if (top < last.current - 0.5) tl.follow = gap < 2;
+        else if (gap < 80) tl.follow = true;
+      }
+      last.current = top;
       if (tl.follow) tl.anchor = null;
       else grab(c, sc, w.current!);
       setAway(!tl.follow);
       const now = range(), was = w.current!;
       if (now.a !== was.a || now.b !== was.b) again();
     };
+    const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) leave(); };
+    const onKey = (e: KeyboardEvent) => { if (["PageUp", "ArrowUp", "Home"].includes(e.key) && !(e.target as HTMLElement).closest("textarea,input")) leave(); };
+    /* a press on the scrollbar (the column's own edge, not a row) */
+    const onDown = (e: PointerEvent) => { if (e.target === sc && e.offsetX > sc.clientWidth) leave(); };
     sc.addEventListener("scroll", onScroll, { passive: true });
+    sc.addEventListener("wheel", onWheel, { passive: true });
+    sc.addEventListener("keydown", onKey);
+    sc.addEventListener("pointerdown", onDown);
     const ro = new ResizeObserver(() => fixRef.current());
     ro.observe(c); ro.observe(sc);
     relayout = () => fixRef.current();
     away.go = () => { tl.follow = true; tl.anchor = null; again(); };
-    return () => { tl.subs.delete(onChange); sc.removeEventListener("scroll", onScroll); ro.disconnect(); for (let i = 0; i < tl.rows.length; i++) (tl.rows[i] as any).el = undefined; relayout = () => {}; setAway(false); };
+    return () => { tl.subs.delete(onChange); sc.removeEventListener("scroll", onScroll); sc.removeEventListener("wheel", onWheel); sc.removeEventListener("keydown", onKey); sc.removeEventListener("pointerdown", onDown); ro.disconnect(); for (let i = 0; i < tl.rows.length; i++) (tl.rows[i] as any).el = undefined; relayout = () => {}; setAway(false); };
   }, [tl]);
   const out = [];
   for (let i = cur.a; i <= cur.b; i++) out.push(<RowView key={rows[i].id} row={rows[i]} />);
