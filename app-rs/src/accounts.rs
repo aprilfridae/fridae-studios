@@ -17,6 +17,16 @@
 //! in the home, made and unlocked by the app with a password of the app's own, the home's default by the home's
 //! own list file. The app's tool server is given the app's own HOME back.
 //!
+//! Gemini on Windows (measured 2026-11-25, agy 1.5.17): agy keeps the user's sign-in in the Windows Credential
+//! Manager (generic credential `gemini:antigravity`), which is per Windows user and found from any HOME, and it
+//! finds its home by USERPROFILE. So every agy command of an added account gets the account's folder as HOME and
+//! USERPROFILE and `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1` (`home`): agy then keeps that account's sign-in in a file in
+//! its data folder, `<folder>/.gemini/antigravity-cli`, and never reads or writes the Credential Manager entry
+//! (with the flag a fresh home reads "Please sign in"; without it the user's own sign-in is found there).
+//! `ANTIGRAVITY_APP_DATA_DIR` does not move that folder (measured) and stays taken out. No Mac keychain is made,
+//! and the user's `.gitconfig` is not linked in (`link_into` makes links on Unix only). The user's own account
+//! gets none of this and keeps the Credential Manager.
+//!
 //! The first account is the user's own sign-in and is never touched. The second is signed in with the tool's own
 //! sign-in (`signin`, under the id "<ai>:<folder name>"), by the user's click, and removed by deleting the app's
 //! folder, never by any command of the tool. The app reads, copies, moves and stores no token.
@@ -390,8 +400,19 @@ pub fn sign_in_files() -> Vec<PathBuf> {
             dirs.push(e.path());
         }
     }
-    dirs.iter().flat_map(|d| SIGN_IN_FILES.iter().map(move |f| d.join(f))).collect()
+    // on Windows an added Gemini account's sign-in is always agy's token file (`home`)
+    #[cfg(windows)]
+    let files: Vec<&str> = SIGN_IN_FILES.iter().copied().chain([GEMINI_TOKEN_FILE]).collect();
+    #[cfg(not(windows))]
+    let files: Vec<&str> = SIGN_IN_FILES.to_vec();
+    dirs.iter().flat_map(|d| files.iter().map(move |f| d.join(f))).collect()
 }
+
+/// Where agy keeps a sign-in it keeps in a file (`fileTokenStorage`), in its home: the name seen in an account's
+/// folder on a Mac after a sign-in made without a keychain (see DEVELOPING.md); where it is on Windows as well, in
+/// agy's data folder under USERPROFILE (measured: that folder; the name itself not seen on Windows yet).
+#[cfg(windows)]
+const GEMINI_TOKEN_FILE: &str = ".gemini/antigravity-cli/antigravity-oauth-token";
 
 /// Delete a second account's folder: the links in it first, each as a link (never what it points to), then the
 /// sign-in's own place, then the rest. A folder that has been swapped for a link: the link is removed and nothing
@@ -571,8 +592,9 @@ const KEYCHAIN_LIST: &str = concat!(
 );
 
 /// Whether an added Gemini account gets a keychain here: on a Mac (and in tests, which never run the real program).
+/// Never on Windows, tests included: there agy keeps an added account's sign-in in a file in its home (`home`).
 fn keychain_used() -> bool {
-    cfg!(target_os = "macos") || cfg!(test)
+    cfg!(target_os = "macos") || (cfg!(test) && !cfg!(windows))
 }
 
 /// Whether a path is a file itself: there, a regular file, and not a link to one.
@@ -962,8 +984,20 @@ pub fn env_of(cmd: &mut std::process::Command, ai: &str, account: Option<&str>) 
 /// Default Credentials" among its ways to sign in, so a second home is only ever signed in by the sign-in the user
 /// made in it, never by a key that happens to be in the app's environment (which would be billed per use). The
 /// app's own tool server gets the Gemini keys back in its own entry (its textures may use them).
+///
+/// On Windows agy keeps the user's sign-in in the Windows Credential Manager (generic credential
+/// `gemini:antigravity`), which is the same for every home, and finds its home by USERPROFILE, not HOME (measured,
+/// agy 1.5.17). So there the home is given as USERPROFILE too, and agy is told to keep the sign-in in a file
+/// (`AGY_CLI_FORCE_FILE_TOKEN_STORAGE`): its data folder `<USERPROFILE>/.gemini/antigravity-cli`, inside the
+/// account's folder (measured: with the flag a fake home reads "Please sign in"; without it the user's own sign-in
+/// is found from any home). Never set for the user's own account, which keeps the Credential Manager.
 pub fn home(cmd: &mut std::process::Command, dir: &Path) {
     cmd.env("HOME", dir);
+    #[cfg(windows)]
+    {
+        cmd.env("USERPROFILE", dir);
+        cmd.env("AGY_CLI_FORCE_FILE_TOKEN_STORAGE", "1");
+    }
     for k in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"].into_iter().chain(KEPT_FROM_SECOND) {
         cmd.env_remove(k);
     }
@@ -1826,6 +1860,69 @@ mod tests {
         // an AI that has none
         stand_in(true, true);
         assert!(!env_of(&mut std::process::Command::new("cursor-agent"), "cursor", Some("cursor-2-standin")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_extra_gemini_account_uses_a_token_file_in_its_own_folder() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_tagged("wintoken");
+        let dir = base().join("gemini-2-wintoken");
+        let _ = fs::remove_dir_all(&dir);
+        let get = |cmd: &std::process::Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
+        // the same path every agy command of an added account takes (sign-in, status, turns: `env_of` / `home`)
+        let mut agy = std::process::Command::new("agy");
+        assert!(env_of(&mut agy, "gemini", Some("gemini-2-wintoken")));
+        let home_dir = dir.to_string_lossy().to_string();
+        // agy on Windows finds its home by USERPROFILE (measured), and keeps its data, the token file with it, in
+        // `<USERPROFILE>/.gemini/antigravity-cli` whatever ANTIGRAVITY_APP_DATA_DIR says (measured)
+        assert_eq!(get(&agy, "HOME"), Some(Some(home_dir.clone())));
+        assert_eq!(get(&agy, "USERPROFILE"), Some(Some(home_dir)));
+        // a token file there, never the user's Credential Manager entry, which is the same for every home
+        assert_eq!(get(&agy, "AGY_CLI_FORCE_FILE_TOKEN_STORAGE"), Some(Some("1".to_string())));
+        for gone in ["ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"].into_iter().chain(KEPT_FROM_SECOND) {
+            assert_eq!(get(&agy, gone), Some(None), "{gone} is taken out");
+        }
+        // and the commands the app keeps running (turns) are pointed the same way
+        let mut turn = std::process::Command::new("agy");
+        home(&mut turn, &dir);
+        assert_eq!(get(&turn, "USERPROFILE"), get(&agy, "USERPROFILE"));
+        assert_eq!(get(&turn, "AGY_CLI_FORCE_FILE_TOKEN_STORAGE"), Some(Some("1".to_string())));
+        // the token file is among the sign-in files no agent may read, and is deleted with the sign-in's place
+        assert!(sign_in_files().contains(&dir.join(GEMINI_TOKEN_FILE)));
+        assert!(SIGN_IN_PLACES.iter().any(|p| GEMINI_TOKEN_FILE.starts_with(p)));
+        let _ = fs::remove_dir_all(&dir);
+        stand_in(false, false);
+    }
+
+    #[test]
+    fn the_users_own_gemini_never_gets_file_token_storage() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_tagged("ownfirst");
+        let mut agy = std::process::Command::new("agy");
+        assert!(env_of(&mut agy, "gemini", None));
+        for key in ["HOME", "USERPROFILE", "AGY_CLI_FORCE_FILE_TOKEN_STORAGE", "ANTIGRAVITY_APP_DATA_DIR"] {
+            assert!(agy.get_envs().all(|(k, _)| k != key), "{key} is not touched for the user's own account");
+        }
+        stand_in(false, false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn prepare_works_for_gemini_on_windows() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_tagged("winprep");
+        let dir = base().join("gemini-2-winprep");
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(prepare_of("gemini", "gemini-2-winprep"), Some(dir.clone()));
+        assert!(real_folder(&dir));
+        // no Mac keychain is made, looked for or run on Windows
+        assert!(!dir.join("Library").exists() && !dir.join(KEYCHAIN_KEY).exists(), "no keychain folders on Windows");
+        assert_eq!(ready_of("gemini", "gemini-2-winprep"), Some(dir.clone()));
+        assert!(!dir.join("Library").exists());
+        assert_eq!(prepare_of("gemini", "gemini-2-nothere"), None, "not an added account");
+        let _ = fs::remove_dir_all(&dir);
+        stand_in(false, false);
     }
 
     #[test]

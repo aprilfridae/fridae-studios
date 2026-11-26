@@ -1522,6 +1522,29 @@ of the kept process's key. Nothing is set for account 1.
   is linked in (`.gitconfig`, `GEMINI_LINKED`), their keys and other tools' logins are not. The Guide says so.
 - agy's status names no account, so the app cannot tell when the second account is the same Google account as the
   first (Claude's can, `same_as_first`). The Guide tells the user to sign in with another one.
+- **On Windows: a token file, not the Credential Manager** (`accounts::home`, `#[cfg(windows)]`). Measured
+  2026-11-25 with agy 1.5.17, `agy models` only, each run in a fresh scratch home, before and after each the user's
+  credential checked (`cmdkey /list`: `gemini:antigravity` still there; its LastWritten unchanged) and the top level
+  of the user's `~/.gemini/antigravity-cli` and `~/.gemini/antigravity` unchanged:
+  - agy keeps the user's sign-in in the Windows Credential Manager, generic credential `gemini:antigravity`, per
+    Windows user. **Without** `AGY_CLI_FORCE_FILE_TOKEN_STORAGE`, with HOME and USERPROFILE both a fresh scratch
+    folder, `agy models` listed the models (its log: "keyringAuth: loaded token"): another home alone does not
+    separate a second account on Windows.
+  - **With** `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1` (and HOME, USERPROFILE scratch, the keys of `KEPT_FROM_SECOND`
+    removed): "Error: Please sign in ...", exit 1; log line "Using file-based token storage because
+    AGY_CLI_FORCE_FILE_TOKEN_STORAGE is set". The same with and without `ANTIGRAVITY_APP_DATA_DIR`: agy ignores it
+    for its data folder ("CLI app data directory: <scratch>\.gemini\antigravity-cli"), and nothing was made where
+    it pointed. agy's strings say credentials are saved in "the app data directory", that folder.
+  - agy goes by **USERPROFILE**, not HOME: with only USERPROFILE set to the scratch folder everything (data folder,
+    `cli.log`, `.gemini/config`) was made there. Nothing was written under `LOCALAPPDATA`/`APPDATA` (apart from
+    the updater's look at `%LOCALAPPDATA%\agy\bin`, binary unchanged), so those are not overridden.
+  - So every agy command of an added account gets HOME = USERPROFILE = the account's folder and the flag; the
+    token file is then `<folder>/.gemini/antigravity-cli/...` (presumably `antigravity-oauth-token`, the name seen
+    on the Mac; added to the sign-in files on Windows; under `.gemini`, which Remove deletes first). The user's own
+    account gets none of it. No Mac keychain is made on Windows, and `.gitconfig` is not linked in (links are made
+    on Unix only), so git in a turn there has no user identity.
+  - Not measured: a real sign-in of a second account on Windows (only the user can do that), the token file's name
+    there, and a turn on it.
 
 **The limit.** For Gemini `account_limit_of` knows agy's own words, "Individual quota reached. Please upgrade your
 subscription to increase your limits. Resets in 2h6m48s." (the user's chats of 22 November have exactly this, as a
