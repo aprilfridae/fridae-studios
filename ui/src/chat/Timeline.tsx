@@ -61,7 +61,23 @@ function List({ tl }: { tl: Tl }) {
     if (b < a) b = a;
     return { a, b, top, bot };
   };
-  const cur = range(); w.current = cur;
+  /* The rows drawn now stay drawn while they still cover what is seen with room to spare: a new set is worked out
+     only once the reader nears an edge of them. Working it out on every move made the guessed heights of rows not yet
+     drawn decide it, and two sets could take turns frame after frame (the view shook between them). */
+  const sum = (i: number, j: number) => { let s = 0; for (let k = i; k < j; k++) s += tall(rows[k]); return s; };
+  const covered = (at: { a: number; b: number }) => {
+    const c = col.current, sc = c && (c.parentElement as HTMLElement);
+    if (!c || !sc || !sc.clientHeight || at.b >= n || (tl.follow && at.b !== n - 1)) return false;
+    const off = at.a > 0 ? 1 : 0, f = c.children[off] as HTMLElement | undefined, l = c.children[off + at.b - at.a] as HTMLElement | undefined;
+    if (!f || !l) return false;
+    return (at.a === 0 || f.offsetTop <= sc.scrollTop - OVER / 3) && (at.b === n - 1 || l.offsetTop + l.offsetHeight >= sc.scrollTop + sc.clientHeight + OVER / 3);
+  };
+  const pick = () => {
+    const was = w.current;
+    if (n > ALL && was && covered(was)) return { a: was.a, b: was.b, top: sum(0, was.a), bot: sum(was.b + 1, n) };
+    return range();
+  };
+  const cur = pick(); w.current = cur;
   const first = useRef(true), tries = useRef(0);
   /* where this list last put the scroll itself (its own moves are not the reader's), and where the reader last was */
   const ours = useRef(-1), last = useRef(0);
@@ -91,7 +107,7 @@ function List({ tl }: { tl: Tl }) {
       if (i < cur.b && next) rows[i].h = next.offsetTop - el.offsetTop;
       else if (i === n - 1) rows[i].h = el.offsetHeight;
     }
-    const now = range();
+    const now = pick();
     if ((now.a !== cur.a || now.b !== cur.b || Math.abs(now.top - cur.top) > 0.5 || Math.abs(now.bot - cur.bot) > 0.5) && tries.current++ < 8) { again(); return; }
     tries.current = 0;
     if (tl.follow) { if (sc.scrollHeight - sc.scrollTop - sc.clientHeight > 0.5) { sc.scrollTop = sc.scrollHeight; ours.current = sc.scrollTop; } }
@@ -122,7 +138,7 @@ function List({ tl }: { tl: Tl }) {
       if (tl.follow) tl.anchor = null;
       else grab(c, sc, w.current!);
       setAway(!tl.follow);
-      const now = range(), was = w.current!;
+      const was = w.current!, now = pick();
       if (now.a !== was.a || now.b !== was.b) again();
     };
     const onWheel = (e: WheelEvent) => { if (e.deltaY < 0) leave(); };
