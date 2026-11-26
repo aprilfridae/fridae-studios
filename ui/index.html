@@ -1308,82 +1308,13 @@ applyTheme();
   </aside>
 
   <main class="stage">
-    <header class="top">
-      <button class="pname" id="b-proj" title="The project's folder, notes and git history"></button>
-      <span class="grow"></span>
-      <nav class="nav" id="tabs">
-        <button class="tab on" id="v-chat">Chat</button>
-        <button class="tab" id="v-promos" title="Promo videos made from your gameplay clips">Promos</button>
-      </nav>
-    </header>
+    <!-- the bar over the tabs (the project's name and its tabs) is ui/src/chat, put here by fridae.mount("chat-top") -->
+    <header class="top" id="top"></header>
 
     <div class="body">
-    <div class="main">
-      <div class="chathead">
-        <span class="conv"><button class="title" id="chat-title" aria-haspopup="menu" aria-expanded="false" title="This project's chats"><span id="chat-name">New chat</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
-          <div class="menu down" id="conv-menu" role="menu"></div></span>
-        <span class="meta" id="chat-meta"></span>
-        <span class="run-ctl" id="runbar" hidden>
-          <button class="icon" id="run-more" aria-label="The run" title="The run: pause, settings, undo, end" aria-haspopup="dialog" aria-expanded="false"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg></button>
-          <div class="menu down run-menu" id="run-menu" role="dialog" aria-label="The run">
-            <button class="pill" data-r="rv-toggle" hidden></button>
-            <span class="pr-label">Wait for my approval after</span>
-            <div class="rv-gates" data-r="rv-gates"></div>
-            <span class="pr-label">Experts at once</span>
-            <div class="seg" data-r="rv-max"></div>
-            <div class="act"><button class="pill sm" data-r="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button><button class="pill sm" data-r="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button></div>
-            <div data-r="rv-undo-box"></div>
-            <div data-r="rv-end-box"></div>
-            <p class="rv-err" data-r="rv-err"></p>
-          </div>
-        </span>
-      </div>
-      <div class="scroll" id="scroll"></div>
-      <div class="dock">
-        <div class="xp-bar" id="xp-bar" hidden><span id="xp-bar-text"></span><button class="pill sm" id="xp-stop" hidden>Stop</button><button class="pill sm" id="xp-lead">Open its Lead's chat</button><button class="linkish" id="xp-close" hidden title="Close this expert. Its chat stays saved, and it stays in the list to open again.">Close</button></div>
-        <div class="composer">
-          <div class="atts" id="atts"></div>
-          <input type="file" id="file" multiple hidden>
-          <textarea id="box" rows="1" placeholder="What should we build or test?" autofocus></textarea>
-          <div class="c-bar">
-            <span class="pick">
-              <button class="c-add" id="add" aria-haspopup="menu" aria-expanded="false" aria-label="Add files" title="Add images, documents or video clips. You can also paste them or drop them on the window."><svg width="12" height="12" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg></button>
-              <div class="menu" id="add-menu" role="menu">
-                <button class="opt" id="attach" role="menuitem"><span class="tick"></span><span><b>Images or documents</b></span></button>
-                <button class="opt" id="add-clips" role="menuitem"><span class="tick"></span><span><b>Video clips</b><small>Used where they are, not copied.</small></span></button>
-              </div>
-            </span>
-            <span class="pick">
-              <button class="chip" id="model" aria-haspopup="dialog" aria-expanded="false"><span id="model-name">Claude · Opus</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
-              <div class="menu picker" id="settings-panel" role="dialog" aria-label="AI and model">
-                <div class="pk-ais" id="ai-pick" role="radiogroup" aria-label="Which AI this chat uses"></div>
-                <div class="pk-models">
-                  <!-- one notice line about the chosen AI (aiNotice): empty, it takes no room -->
-                  <div class="notice" id="model-notice"></div>
-                  <div id="model-menu" role="listbox" aria-label="Model"></div>
-                  <div class="pk-effort" id="effort-wrap"><h5>Effort</h5><div class="seg" id="effort"></div></div>
-                </div>
-              </div>
-            </span>
-            <span class="pick">
-              <button class="chip" id="mode" aria-haspopup="menu" aria-expanded="false"><span id="mode-name">Ask me</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
-              <div class="menu" id="mode-menu" role="menu" aria-label="How it works">
-                <div id="run-mode" role="radiogroup" aria-label="How it works"></div>
-                <h5 class="rule">More</h5>
-                <button class="switch" id="selftest" role="switch" aria-checked="false" title="It checks its work with screenshots and playtests and fixes what it finds, up to five rounds."><span class="track"><span class="knob"></span></span><span><span class="swl">Self-test</span><small>Checks its own work and fixes it.</small></span></button>
-                <button class="switch" id="gemini" role="switch" aria-checked="false" title="For each texture it shows you a prompt to run in Gemini and waits for the image, instead of drawing its own."><span class="track"><span class="knob"></span></span><span><span class="swl">Gemini textures</span><small>Asks you for each texture through Gemini.</small></span></button>
-              </div>
-            </span>
-            <span id="now"></span>
-            <button class="send" id="send" aria-label="Send" disabled>
-              <svg class="i-send" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>
-              <svg class="i-stop" width="12" height="12" viewBox="0 0 12 12"><rect width="12" height="12" rx="2.5" fill="currentColor"/></svg>
-            </button>
-          </div>
-        </div>
-        <p class="aigap" id="ai-gap" hidden></p>
-      </div>
-    </div>
+    <!-- the chat (the bar above the conversation, the conversation and the message box) is ui/src/chat, put here by
+         fridae.mount("chat") -->
+    <div class="main" id="chat-main"></div>
     <aside class="board" id="board" hidden aria-label="Team board">
       <button class="bd-rail" id="bd-rail" aria-expanded="false" aria-controls="bd-panel" title="Show the team board"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/></svg><span class="bd-unread" id="bd-unread" hidden></span><span class="bd-rail-t">Team board</span></button>
       <div class="bd-panel" id="bd-panel">
@@ -1513,7 +1444,6 @@ applyTheme();
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const $ = (id) => document.getElementById(id);
-const scroller = $("scroll"), box = $("box"), sendBtn = $("send");
 let after = 0, status = {};
 
 /* The AIs a chat can run on: [id, name, the program behind it, how to get it]. Any project's chats can use any of them.
@@ -1560,64 +1490,20 @@ function slideMark(host) {
   host.classList.add("marked");
   if (!m.classList.contains("go")) requestAnimationFrame(() => requestAnimationFrame(() => m.classList.add("go")));
 }
-/* Things fade in once, as they arrive. A chat put back from its log, or shown again, is simply there: thousands of
-   lines fading in together make a long chat slow to open. */
-function calm(node) { node.querySelectorAll(".enter").forEach((e) => e.classList.remove("enter")); }
+/* things fade in once, as they arrive */
 document.addEventListener("animationend", (e) => { if (e.animationName === "rise" && e.target.classList) e.target.classList.remove("enter"); });
-/* follow the conversation unless the reader has scrolled up */
-let following = true;
-function atBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80; }
-scroller.addEventListener("scroll", () => { following = atBottom(); });
-function stick(force) { if (force) following = true; if (following) scroller.scrollTop = scroller.scrollHeight; }
-/* the message box floats over the chat: the chat keeps as much room at its end as the box is tall */
-new ResizeObserver(() => { const dock = document.querySelector(".main > .dock"); dock.parentNode.style.setProperty("--dock-h", dock.offsetHeight + "px"); stick(); }).observe(document.querySelector(".main > .dock"));
-const grow = new ResizeObserver(() => stick());
 
-/* a small, safe markdown renderer: everything is escaped first */
-function inline(s) {
-  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-}
-function md(src) {
-  const lines = src.replace(/\r/g, "").split("\n"); let out = "", i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^```/.test(line.trim())) { let code = []; i++; while (i < lines.length && !/^```/.test(lines[i].trim())) code.push(lines[i++]); i++; out += "<pre><code>" + esc(code.join("\n")) + "</code></pre>"; continue; }
-    if (/^#{1,4}\s/.test(line)) { out += "<h3>" + inline(line.replace(/^#{1,4}\s+/, "")) + "</h3>"; i++; continue; }
-    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1])) {
-      const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
-      let t = "<table><tr>" + cells(line).map((c) => "<th>" + inline(c) + "</th>").join("") + "</tr>"; i += 2;
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) t += "<tr>" + cells(lines[i++]).map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>";
-      out += t + "</table>"; continue;
-    }
-    const bullet = /^\s*[-*•]\s+/, num = /^\s*\d+[.)]\s+/;
-    if (bullet.test(line) || num.test(line)) {
-      const ordered = num.test(line), re = ordered ? num : bullet; let items = "";
-      while (i < lines.length && re.test(lines[i])) items += "<li>" + inline(lines[i++].replace(re, "")) + "</li>";
-      out += (ordered ? "<ol>" : "<ul>") + items + (ordered ? "</ol>" : "</ul>"); continue;
-    }
-    if (!line.trim()) { i++; continue; }
-    let para = [line]; i++;
-    while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*[-*•]\s+|\s*\d+[.)]\s+|\s*\|)/.test(lines[i])) para.push(lines[i++]);
-    out += "<p>" + inline(para.join(" ")) + "</p>";
-  }
-  return out;
-}
-
-/* ---------- agents: each has its own conversation column ---------- */
+/* ---------- agents: each is a chat. Its state is kept here (the sidebar and the Overview read it); its conversation
+   (p.tl) and what is drawn of it are ui/src/chat ---------- */
 const agents = new Map();
 let current = null;
-/* experts and helpers waiting for the chat that started them to open: helper id -> pane */
-const parked = el("div"); parked.hidden = true;   /* where a researcher's log waits, out of sight */
 function pane(id) {
   let p = agents.get(id);
   if (p) return p;
-  /* xps: the experts this chat's conversation says it started (see xpLink) */
-  p = { id, name: "New chat", col: el("div", "col"), turn: null, busy: false, now: "", last: "Idle", scroll: 0, xps: {} };
-  p.col.hidden = true;
-  scroller.appendChild(p.col);
-  grow.observe(p.col);
+  /* xps: the experts this chat's conversation says it started (xpLink in ui/src/chat/chatStore.ts) */
+  p = { id, name: "New chat", turn: null, busy: false, now: "", last: "Idle", xps: {} };
   agents.set(id, p);
-  hello(p);
+  fridae.chat.opened(p); paintNeeds();
   return p;
 }
 /* an expert or helper another chat started: a chat of its own, read only, listed under that chat in the sidebar */
@@ -1632,18 +1518,14 @@ function projectChats(key) {
 }
 function select(id) {
   const p = agents.get(id); if (!p) return;
-  const old = agents.get(current);
-  if (old && old !== p) { old.scroll = scroller.scrollTop; old.col.hidden = true; }
-  current = id; calm(p.col); p.col.hidden = false; draftCol.hidden = true;
+  current = id; draftOn = false;
   const key = p.project || isHelper(p) ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
   if (curProj !== key) curProj = key;
   /* an expert in front is shown in the sidebar, under its chat; coming back to the game opens the chat, not it */
   if (isHelper(p)) { if (p.parent) setXpOpen(p.parent, true); } else lastChat[key] = id;
   if (isPage(view)) view = "chat";
   savePlace(); paintView();
-  following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
-  following = atBottom();
-  paintSide(); paintComposer(); paintProject(); swarmFocus(p); if (view === "chat") box.focus();
+  paintSide(); paintProject(); swarmFocus(p); fridaeDo((f) => f.chat.front(view === "chat"));
 }
 /* a project chosen in the sidebar: its last tab, and in Chat its last conversation (or a new one) */
 function showProject(key, tab) {
@@ -1707,29 +1589,12 @@ async function ensureChat(key, fresh) {
 }
 /* A game with no chat yet (or New chat): an empty page and the message box, and no chat is made until the first
    message is sent (or a start button is pressed), so looking around never takes an agent slot. */
-const draftCol = el("div", "col"); draftCol.hidden = true;
+let draftOn = false;   /* the empty page is showing (ui/src/chat draws it: the welcome and the start card) */
 function showDraft(key) {
-  const p = agents.get(current);
-  if (p) { p.scroll = scroller.scrollTop; p.col.hidden = true; }
-  current = null;
-  if (!draftCol.parentNode) scroller.appendChild(draftCol);
+  current = null; draftOn = true;
   const pr = (projects.projects || []).find((x) => x.path === key);
-  /* the same welcome an empty chat shows (what is not set up yet, and the folder or new-or-existing card); its
-     buttons make the chat first (`draft` in startCard) */
-  const proxy = { draft: true, key, id: null, project: pr || null, seed: null };
-  const wrap = helloEl(proxy);
-  if (pr) { wrap.querySelector(".lede").textContent = "A new chat for " + pr.name + "."; proxy.start.step = startStep(pr); proxy.start.paint(); }
-  draftCol.replaceChildren(wrap); draftCol.hidden = false;
-  paintNeeds(); paintHead(); paintComposer(); paintSwitch(); paintSide(); paintBoard();
-}
-/* the first message of a game's chat: a new game is talked through first, an existing one is read */
-function kickoffChat(p, kind) {
-  if (!p) return;
-  const text = kind === "new" && p.seed ? "This is a new game, starting from this idea out of market research:\n\n" + p.seed + "\n\nInterview me to sharpen it before building anything."
-    : kind === "new" ? "This is a new game. Interview me about the idea before building anything."
-    : "This is a game I am already working on. Read through it and get up to speed.";
-  api("/api/send", { agent: p.id, text, kickoff: kind, model: modelOf(p) || null, effort: effortOf(p), selftest: false, gemini: false, attachments: [] });
-  p.seed = null;
+  fridaeDo((f) => f.chat.draft(key, pr));
+  paintNeeds(); paintSide(); paintBoard();
 }
 /* The sidebar: each game with one state mark, No project when such chats exist, and New project. The game in front
    shows its chats under it, and under a chat the experts it started, each a chat of its own. */
@@ -2201,82 +2066,37 @@ $("proj-list").addEventListener("focusin", (ev) => {
 function paintView() {
   if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
   for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
-  ["chat", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
-  requestAnimationFrame(() => slideMark($("tabs")));
-  const pr = (projects.projects || []).find((x) => x.path === curProj);
-  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : view === "review" ? "Review" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
-  $("b-proj").textContent = name; $("b-proj").disabled = !curProj || isPage(view);
-  $("b-proj").title = curProj && !isPage(view) ? "The project's folder, notes and git history" : "";
-  $("tabs").hidden = isPage(view);
-  $("v-promos").hidden = !isGameProj(curProj);
-  paintRunBar();
+  chatPoke();   /* the bar itself, and the run's button under it, are ui/src/chat/Head.tsx */
 }
-function selectionHint() {
-  const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
-  const p = agents.get(current); if (!isGameProj(p ? p.project : curProj)) return "";   /* Studio's selection: Roblox projects only */
-  const it = pl.selection.items || []; const first = it[0] ? it[0].path.split(".").pop() + " (" + it[0].class + ")" : "";
-  return '<span class="sel" title="The agent is told what you have selected in Studio.">Selected in Studio: ' + esc(first) + (pl.selection.count > 1 ? " +" + (pl.selection.count - 1) : "") + "</span>";
+/* The bar above the conversation, the conversation and the message box are ui/src/chat. Whatever here changes
+   something they show says so with chatPoke(); the old names stay for the places that already call them. */
+function chatPoke() { fridaeDo((f) => f.chat.poke()); }
+function paintComposer() { chatPoke(); }
+function paintHead() { chatPoke(); }
+function paintSwitch() { chatPoke(); }
+function paintRunBar() { chatPoke(); }
+function closePops() { fridaeDo((f) => f.chat.closePops()); }
+function closeConv() { fridaeDo((f) => f.chat.closeConv()); }
+/* this chat leads its project's running studio run: whatever is chosen, what it sends goes in Studio mode */
+function leadsRun(p) {
+  const r = p && p.project && rvAll[p.project.path];
+  return !!(r && runActive(r.run) && r.run.lead === p.id);
 }
-let startingRun = "";   /* the chat a studio run is being started from, until its first event or an error */
-function paintComposer() {
-  const p = agents.get(current); const b = !!(p && p.busy);
-  paintExpertBar(p);
-  if (isHelper(p)) return;   /* an expert's chat is read only: there is no message box to paint */
-  paintModel();
-  const something = !!box.value.trim() || (typeof pending !== "undefined" && pending.some((a) => a.name));
-  const stop = b && !something;   /* while it works: with text the button sends (it waits its turn), without it stops */
-  sendBtn.classList.toggle("stop", stop); sendBtn.setAttribute("aria-label", stop ? "Stop" : b ? "Send when it finishes" : "Send");
-  sendBtn.title = stop ? "Stop" : b ? "Send. It waits until the agent finishes, then goes straight to it." : "";
-  sendBtn.disabled = !b && !something;
-  box.placeholder = b ? "Add to it while it works. Sent the moment it finishes." : "What should we build or test?";
-  /* the quiet line inside the box: what it is doing now, else what is selected in Studio */
-  const now = $("now");
-  if (b) now.innerHTML = '<span class="now">' + esc(p.now || "Starting") + "</span>";
-  else if (startingRun && p && startingRun === p.id) now.innerHTML = '<span class="now">Starting the studio run…</span>';
-  else now.innerHTML = selectionHint();
-  now.title = b ? p.now || "" : "";
-}
-/* The bar above the conversation: the chat's name (press it for the project's chats) and its state in a few words,
-   which is the way to Review when that is where to go. */
-function paintHead() {
-  const p = agents.get(current);
-  $("chat-name").textContent = p ? p.name : "New chat";
-  const meta = $("chat-meta"); if (!meta) return;
-  const path = p && p.project && p.project.path, r = path && rvAll[path], run = r && r.run;
-  const live = p && p.overnight && p.overnight > Date.now() / 1000;
-  let text = "", review = false;
-  if (!p) text = "";
-  else if (isHelper(p)) { const m = memberOf(p.id), sw = m && SW[m.status]; text = [p.runsOn || aiName(chatAi(p)), sw && !(p.busy && m.status === "working") ? sw.word : xpState(p)[0]].join(" · "); }
-  else if (leadsRun(p)) { text = runState(r, run)[0]; review = true; }
-  else if (p.studio && p.studioWaiting) { text = "Waiting for you"; review = true; }
-  else if (p.busy) text = "Working";
-  else if (live) text = "Overnight until " + new Date(p.overnight * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  else if (p.last === "Needs you" || p.last === "Stopped") text = p.last;
-  else if (p.last === "Needs attention") text = "Stopped with an error";
-  if (meta.dataset.sig === text + "|" + review + "|" + (path || "")) return;
-  meta.dataset.sig = text + "|" + review + "|" + (path || "");
-  meta.replaceChildren();
-  if (!text) return;
-  if (!review) { meta.textContent = text; return; }
-  const b = el("button", "linkish"); b.textContent = text; b.title = "Open Review"; b.onclick = () => openInReview(path);
-  meta.appendChild(b);
-}
-function renameChat() {
-  const p = agents.get(current), t = $("chat-title"); if (!p || !t) return;
-  closeConv();
-  const input = el("input", "title-edit"); input.value = p.name; input.setAttribute("aria-label", "Chat name");
-  t.hidden = true; t.after(input); input.focus(); input.select();
-  let done = false;
-  const finish = async (save) => {
-    if (done) return; done = true;
-    const name = input.value.trim(); input.remove(); t.hidden = false;
-    if (save && name && name !== p.name) { p.name = name; paintHead(); await api("/api/rename", { agent: p.id, name }); }
-  };
-  input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.stopPropagation(); finish(false); } };
-  input.onblur = () => finish(true);
-}
+/* What the chat (ui/src/chat) asks of this page: its state, read as it is now, and the functions it already had. */
+fridaeWait.unshift((f) => {
+  f.chat.init({
+    agents, rvAll, SW, STAGE_NAMES, KIND_NOTE,
+    get current() { return current; }, get curProj() { return curProj; }, get view() { return view; }, get status() { return status; },
+    get projects() { return projects; }, get saved() { return saved; }, get AIS() { return AIS; }, get bootMark() { return bootMark; }, get draftOn() { return draftOn; },
+    setDraftAi: (id) => { draftAi = id; }, tied: (p) => { delete wantProj[p.id]; },
+    select, showDraft, showProject, ensureChat, setView, openProject, openInReview, openChatById, openSaved, loadHistory, loadReview, loadProjects, refresh,
+    paintProject, paintNeeds, helloNeeds, say, slideMark, isHelper, isPage, isGameProj, projectChats, thingOf, prName, aiName, chatAi, caps, modeKept, leadsRun, runState,
+    runActive, stageName, xpState, splitExpert, memberOf, bdName, chatKnown, frontProj, startStep, plainProj, parentFor, allowed, allowCommands,
+  });
+  f.mount("chat-top", $("top")); f.mount("chat", $("chat-main"));
+});
 
-/* ---------- the project's chats: one small menu over the conversation ---------- */
+/* ---------- the project's saved chats (the menu over the conversation is ui/src/chat/Head.tsx) ---------- */
 function ago(ts) {
   const s = Date.now() / 1000 - ts;
   if (s < 90) return "just now";
@@ -2290,227 +2110,21 @@ let saved = { chats: [], deleted: [] };
 function loadHistory() { clearTimeout(histTimer); histTimer = setTimeout(async () => {
   try { saved = await api("/api/history"); } catch (e) { return; }
   paintSide();   /* the experts listed under a chat include the saved ones */
-  if ($("conv-menu").classList.contains("on")) paintConv();
+  chatPoke();
   savedToStore();
 }, 120); }
-const closeIcon = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg>';
-function paintConv() {
-  const m = $("conv-menu"), key = curProj || "";
-  m.replaceChildren();
-  const add = el("button", "cv-new", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg>New chat');
-  add.title = "Start another chat for " + (key ? "this " + thingOf(key) : "no project") + ". Chats that are working keep going at the same time.";
-  add.disabled = (typeof status.slots_used === "number" ? status.slots_used : agents.size) >= (status.max_agents || 8);
-  add.onclick = () => { closeConv(); showDraft(key); };
-  m.appendChild(add);
-  const open = projectChats(key);
-  if (open.length) m.appendChild(el("h5", "", "Open"));
-  open.forEach((p) => {
-    const row = el("button", "cv-row" + (p.id === current ? " on" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><span><b></b><small></small></span><span class="x" role="button" tabindex="0" aria-label="Close chat" title="Close this chat. It is not deleted: it stays under Earlier.">' + closeIcon + "</span>");
-    row.querySelector("b").textContent = p.name;
-    row.querySelector("small").textContent = [aiName(chatAi(p)), p.busy ? p.now || "Working" : p.last].filter(Boolean).join(" · ");
-    row.onclick = (ev) => {
-      const x = ev.target.closest(".x");
-      if (!x) { closeConv(); select(p.id); return; }
-      ev.stopPropagation();
-      /* closing a chat stops it and closes the experts it started: say so first when any of them is working */
-      const xs = [...agents.values()].filter((h) => h.parent === p.id && h.busy);
-      if ((p.busy || xs.length) && !x.dataset.sure) {
-        x.dataset.sure = "1";
-        x.textContent = p.busy && !xs.length ? "stop it?" : "This also stops " + xs.length + (xs.length === 1 ? " expert" : " experts") + " at work. Close?";
-        x.title = xs.length ? "At work: " + xs.map((h) => splitExpert(h.name, h.expert).join(", ")).join("; ") : "";
-        setTimeout(() => { delete x.dataset.sure; x.innerHTML = closeIcon; x.title = ""; }, 4000); return;
-      }
-      api("/api/remove", { agent: p.id });
-    };
-    m.appendChild(row);
-  });
-  const earlier = (saved.chats || []).filter((c) => !c.parent && c.role !== "research" && (c.project || "") === key && !agents.has(c.id)).slice(0, 30);
-  if (earlier.length) m.appendChild(el("h5", "", "Earlier"));
-  earlier.forEach((c) => {
-    const row = el("button", "cv-row past", "<span><b></b><small></small></span>");
-    row.querySelector("b").textContent = c.name; row.title = c.name;
-    row.querySelector("small").textContent = ago(c.updated) + " · " + c.messages + (c.messages === 1 ? " message" : " messages");
-    const x = el("span", "x", "Delete"); x.setAttribute("role", "button"); x.tabIndex = 0; x.title = "Delete this chat. It can be put back from Deleted, at the bottom of this list.";
-    x.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); x.click(); } };
-    row.appendChild(x);
-    row.onclick = async (ev) => {
-      if (ev.target.closest(".x")) {
-        ev.stopPropagation();
-        /* a second press means it: the chat moves to Deleted (it can be put back) */
-        if (!x.dataset.sure) { x.dataset.sure = "1"; x.textContent = "Delete it?"; setTimeout(() => { delete x.dataset.sure; x.textContent = "Delete"; }, 3000); return; }
-        await api("/api/delete-chat", { id: c.id, confirm: "delete" }); loadHistory(); return;
-      }
-      closeConv(); openSaved(c.id);
-    };
-    m.appendChild(row);
-  });
-  const gone = (saved.deleted || []).filter((c) => !c.parent && c.role !== "research" && (c.project || "") === key).slice(0, 30);
-  if (gone.length) {
-    const d = el("details", "cv-gone", "<summary>Deleted (" + gone.length + ")</summary>");
-    gone.forEach((c) => {
-      const row = el("div", "cv-row past", '<span><b></b><small></small></span><button class="x">Put back</button>');
-      row.querySelector("b").textContent = c.name; row.querySelector("small").textContent = ago(c.updated);
-      row.querySelector(".x").onclick = async (ev) => { ev.stopPropagation(); await api("/api/restore-chat", { id: c.id }); loadHistory(); };
-      d.appendChild(row);
-    });
-    d.addEventListener("click", (ev) => ev.stopPropagation());
-    m.appendChild(d);
-  }
-  const foot = el("div", "cv-foot");
-  if (agents.get(current) && !isHelper(agents.get(current))) { const rn = el("button", "linkish", "Rename this chat"); rn.onclick = renameChat; foot.appendChild(rn); }
-  if (foot.children.length) m.appendChild(foot);
-}
-function closeConv() { $("conv-menu").classList.remove("on"); $("chat-title").setAttribute("aria-expanded", "false"); }
-$("chat-title").onclick = (ev) => {
-  ev.stopPropagation();
-  const on = !$("conv-menu").classList.contains("on");
-  if (on) { paintConv(); loadHistory(); }
-  $("conv-menu").classList.toggle("on", on); $("chat-title").setAttribute("aria-expanded", on ? "true" : "false");
-};
-document.addEventListener("click", (ev) => { if (!ev.target.closest(".conv")) closeConv(); });
-
-/* ---------- experts: each is a chat of its own, listed under the chat that started it in the sidebar ---------- */
-/* The line for expert `hid` in chat `p`'s conversation, put where the chat's log says the expert was started: who it
-   is and what for, and the way to its own chat. The experts a chat started are kept with it (p.xps), in order. */
-function xpLink(p, hid, name, expert, runsOn) {
-  let x = p.xps[hid];
-  if (!x) {
-    x = p.xps[hid] = { id: hid, name: "", expert: "", runsOn: "", at: Object.keys(p.xps).length, link: el("button", "xp-link", '<span class="dot"></span><b></b><span class="xp-job"></span><span class="xp-go">Open its chat</span>') };
-    x.link.onclick = () => openChatById(hid);
-  }
-  if (name) x.name = name;
-  if (expert) x.expert = expert;
-  if (runsOn) x.runsOn = runsOn;   /* "Cursor · Auto": only when it runs on another AI or model than the chat that started it */
-  const [who, job] = splitExpert(x.name, x.expert);
-  x.link.querySelector("b").textContent = who; x.link.querySelector(".xp-job").textContent = job;
-  x.link.title = [who, job, x.runsOn ? "on " + x.runsOn : ""].filter(Boolean).join(" · ") + ". Opens its own chat.";
-  return x;
-}
 /* "UI builder: Shop menu" -> ["UI builder", "Shop menu"]; an expert's name comes first */
 function splitExpert(name, expert) {
   const n = String(name || ""), i = n.indexOf(":");
   if (expert) return [expert, i >= 0 && n.slice(0, i).trim() === expert ? n.slice(i + 1).trim() : n === expert ? "" : n];
   return i >= 0 ? [n.slice(0, i).trim(), n.slice(i + 1).trim()] : ["Helper", n];
 }
-/* an expert's state changed: the dot on its line in the chat that started it (its row in the sidebar is paintSide's) */
-function paintExpert(h) {
-  const of = agents.get(h.parent), x = of && of.xps[h.id];
-  if (x) x.link.querySelector(".dot").className = "dot" + (agents.has(h.id) ? xpState(h)[1] : "");
-}
-/* An expert's chat is its own log, read only: where the message box would be, one line says so, with Stop while it
-   works, the way to the chat that started it, and Close. */
-function paintExpertBar(h) {
-  const bar = $("xp-bar"), on = isHelper(h);
-  bar.hidden = !on; bar.nextElementSibling.hidden = on;
-  if (!on) return;
-  const of = agents.get(h.parent), [who] = splitExpert(h.name, h.expert), m = memberOf(h.id);
-  /* a member of a team's run can be written to on its Lead's team board */
-  $("xp-bar-text").textContent = who + "'s own chat, read only. " + (m && of ? "To tell it something, write @" + bdName(m.name) + " on the team board beside “" + of.name + "”." : of ? "“" + of.name + "” started it and talks to it." : "The chat that started it is closed.");
-  $("xp-stop").hidden = !h.busy; $("xp-stop").onclick = () => api("/api/stop", { agent: h.id });
-  $("xp-lead").hidden = !(of || chatKnown(h.parent)); $("xp-lead").textContent = of && leadsRun(of) ? "Open the Lead's chat" : "Open the chat that started it";
-  $("xp-lead").onclick = () => openChatById(h.parent);
-  $("xp-close").hidden = !!h.busy; $("xp-close").onclick = () => api("/api/remove", { agent: h.id });
-}
-/* A card in an expert's chat that asks to allow a program, or to run a command once, is live only while the expert
-   is stopped on it. In a log put back from a saved chat, or once the expert has gone on, has stopped or has handed
-   its result back, the card stays as what was asked, without its buttons: pressing one would wake an expert behind
-   the back of the chat that started it. */
-function approvalCard(p, card) {
-  if (!isHelper(p)) return card;
-  card.dataset.approval = "1";
-  if (p.replay || p.handedBack) shutApproval(card);
-  return card;
-}
-function shutApproval(card) { const act = card.querySelector(".act"); if (act) { act.remove(); card.classList.add("done"); } }
-function pastApprovals(p) { if (isHelper(p)) p.col.querySelectorAll(".ask[data-approval]").forEach(shutApproval); }
-
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
-  try { return (await api("/api/copy", { text })).ok; } catch (e) { return false; }
-}
-function addCopy(node, text) {
-  const b = el("button", "copy", "copy");
-  b.onclick = async (ev) => { ev.stopPropagation(); b.textContent = (await copyText(text)) ? "copied" : "failed"; setTimeout(() => (b.textContent = "copy"), 1400); };
-  node.appendChild(b);
-}
-
-/* ---------- rendering ---------- */
-function helloEl(p) {
-  const wrap = el("div", "hello enter", '<img class="sigil" src="/logo.png" alt=""><h1>What are we <span>building today?</span></h1><p class="lede">Say it in plain words. I show you what I made before calling it done.</p><div class="hello-needs"></div>');
-  wrap.appendChild(startCard(p));
-  return wrap;
-}
-function hello(p) { p.col.appendChild(helloEl(p)); paintNeeds(); }
-/* ---------- new chat setup: folder and repository, then new game or existing ---------- */
+/* ---------- the projects there are (a new chat's setup card is ui/src/chat/StartCard.tsx) ---------- */
 let projects = { projects: [], default_parent: "", git: false };
 async function loadProjects() {
   try { projects = await api("/api/projects"); } catch (e) {}
   for (const p of agents.values()) if (p.start && p.start.step === "folder") p.start.paint();
   paintSide(); paintView();
-}
-function startCard(p) {
-  const card = el("div", "ask start");
-  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, kind: "plain", msg: "", paint };
-  p.start = st;
-  const go = (step, msg) => { st.step = step; st.msg = msg || ""; paint(); };
-  /* on an empty page (`p.draft`) the chat is made first; its own card then carries on */
-  async function realize() { if (!p.draft) return p; const id = await ensureChat(p.key); return id ? agents.get(id) : null; }
-  async function use(body) {
-    const q = await realize(); if (!q) return;
-    const r = await api("/api/project", Object.assign({ agent: q.id }, body));
-    if (!r.ok) { if (q.start) { q.start.msg = r.error || "That did not work."; q.start.paint(); } return go(st.step, r.error || "That did not work."); }
-    q.project = r.project; paintProject(); loadProjects();
-    if (q !== p) { if (q.start) { q.start.step = startStep(r.project); q.start.msg = r.project.note || ""; q.start.paint(); } return; }
-    go(startStep(r.project), r.project.note || "");
-  }
-  const kickoff = async (kind) => { const q = await realize(); if (q) kickoffChat(q, kind); };
-  function paint() {
-    const pr = p.project; let h = "";
-    if (st.step === "folder") {
-      h = "<h4>Start a folder for this project?</h4><p>A folder keeps the project's notes, files and history in one place.</p>"
-        + '<div class="act"><button class="pill main" data-a="new">New folder</button><button class="pill" data-a="pick">Existing folder</button><button class="pill" data-a="skip">Skip, just chat</button></div>';
-      if (projects.projects.length) h += '<p class="sub">Or carry on with a project:</p><div class="act">' + projects.projects.slice(0, 6).map((x, i) => '<button class="pill" data-p="' + i + '">' + esc(x.name) + "</button>").join("") + "</div>";
-    } else if (st.step === "new") {
-      h = "<h4>New project folder</h4>"
-        + '<div class="seg np-kind" role="radiogroup" aria-label="What kind of project">' + [["plain", "Project"], ["game", "Roblox game"]].map(([k, t]) => '<button role="radio" data-a="k-' + k + '" class="' + (st.kind === k ? "on" : "") + '" aria-checked="' + (st.kind === k) + '">' + t + "</button>").join("") + "</div>"
-        + '<p class="sub">' + esc(KIND_NOTE[st.kind]) + "</p>"
-        + '<div class="keyrow"><input type="text" data-f="name" placeholder="Name of the project" aria-label="Name of the project" autocomplete="off" value="' + esc(st.name) + '"></div>'
-        + '<p class="sub where">It goes in ' + esc(st.parent || parentFor(st.kind)) + ' &nbsp;<button class="linkish" data-a="where">Change</button></p>'
-        + (projects.git
-          ? '<div class="act"><button class="switch" data-a="git" role="switch" aria-checked="' + (st.git ? "true" : "false") + '"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div><p class="sub">Git keeps a history of the project that you can look back through and return to.</p>'
-          : '<p class="sub">Git is not installed, so no history is kept. You can add it later from git-scm.com.</p>')
-        + '<div class="act"><button class="pill main" data-a="create">Create</button><button class="pill" data-a="back">Back</button></div>';
-    } else if (st.step === "kind") {
-      h = "<h4>Is this a new game, or one you are already working on?</h4><p>" + esc(pr ? pr.name : "") + (pr && pr.git ? " \u00b7 git repository" : "") + "</p>"
-        + '<div class="act"><button class="pill main" data-a="kn">New game</button><button class="pill" data-a="ke">Already working on it</button></div>'
-        + '<p class="sub">New game: I ask about the idea before building. Already working on it: I read the place and the folder first.</p>';
-    } else {
-      const game = !plainProj(pr);
-      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (pr && pr.bible ? "PROJECT.md is read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
-        + (game ? '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>' : '<div class="act"><button class="pill" data-a="kp">Read through the project</button></div>');
-    }
-    if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
-    card.innerHTML = h;
-    card.querySelectorAll("[data-f]").forEach((i) => { i.oninput = () => (st[i.dataset.f] = i.value); i.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); card.querySelector('[data-a="create"]').click(); } }; });
-    card.querySelectorAll("[data-p]").forEach((b) => (b.onclick = () => p.draft ? showProject(projects.projects[+b.dataset.p].path, "chat") : use({ action: "use", path: projects.projects[+b.dataset.p].path })));
-    const acts = {
-      new: () => { go("new"); const i = card.querySelector("input"); if (i) i.focus(); },
-      back: () => go("folder"),
-      skip: () => { card.remove(); p.start = null; box.focus(); },
-      git: () => { st.git = !st.git; paint(); },
-      pick: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) use({ action: "add", path: r.path }); },
-      where: async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { st.parent = r.path; paint(); } },
-      create: () => use({ action: "create", name: st.name, parent: st.parent || null, git: st.git && projects.git, kind: st.kind }),
-      "k-game": () => { st.kind = "game"; paint(); },
-      "k-plain": () => { st.kind = "plain"; paint(); },
-      kp: async () => { const q = await realize(); if (q) api("/api/send", { agent: q.id, text: "Read through this project and get up to speed: what it is, how it is built and run, and its tests.", model: modelOf(q) || null, effort: effortOf(q), selftest: false, gemini: false, attachments: [] }); },
-      kn: () => kickoff("new"),
-      ke: () => kickoff("existing"),
-    };
-    card.querySelectorAll("[data-a]").forEach((b) => (b.onclick = acts[b.dataset.a]));
-  }
-  paint();
-  return card;
 }
 
 /* ---------- project panel: folder, notes and git ---------- */
@@ -2581,7 +2195,7 @@ for (const b of $("pd-kind").querySelectorAll("button")) b.onclick = async () =>
   await loadProjects(); paintPdKind(r.project);
 };
 function closeProject() { if (!document.body.classList.contains("pd-open")) return; document.body.classList.remove("pd-open"); panelClosed(); }
-$("b-proj").onclick = openProject; $("pd-close").onclick = closeProject;
+$("pd-close").onclick = closeProject;
 $("pd-folder").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "folder" }); };
 $("pd-bible").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "bible" }); };
 $("pd-init").onclick = () => git("init");
@@ -2720,11 +2334,10 @@ function needRows() {
   rows.push([!!status.studio, "Roblox Studio", status.studio ? "Its MCP server is on, so agents in Roblox projects can work in your place." : "For Roblox projects. In Studio, open Assistant settings and turn on the MCP server."]);
   return rows;
 }
-function rowHtml([ok, name, what]) { return '<div class="c-row"><span class="dot' + (ok ? " ok" : "") + '"></span><div><b>' + esc(name) + "</b><small>" + esc(what) + "</small></div></div>"; }
 function paintNeeds() {
   const have = (status.ai || {}).installed || {};
   if (status.studio === undefined) return;
-  const rows = needRows(), ai = chatAi(agents.get(current));
+  const ai = chatAi(agents.get(current));
   /* the one dot at the bottom left: there only while something is not connected, and it opens Settings on what */
   /* Studio and Blender count only while a Roblox project is in front: nothing else uses them */
   const rbx = isGameProj(curProj);
@@ -2732,9 +2345,13 @@ function paintNeeds() {
   const dot = $("b-conn"); dot.hidden = !off.length;
   dot.title = "Not connected: " + off.join(", ") + ". Press to see how to fix it.";
   dot.setAttribute("aria-label", dot.title);
-  /* a new chat mentions only what is missing for its work: its AI, and Studio for a Roblox project */
-  const missing = rows.filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === ai : rbx && r[1] === "Roblox Studio"));
-  document.querySelectorAll(".hello-needs").forEach((h) => (h.innerHTML = missing.map(rowHtml).join("")));
+  chatPoke();
+}
+/* a new chat mentions only what is missing for its work: its AI, and Studio for a Roblox project (ui/src/chat draws them) */
+function helloNeeds() {
+  if (status.studio === undefined) return [];
+  const ai = chatAi(agents.get(current)), rbx = isGameProj(curProj);
+  return needRows().filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === ai : rbx && r[1] === "Roblox Studio"));
 }
 $("b-conn").onclick = () => openSetup("connections");
 /* ---------- Usage: the window and the pop-up at the bottom left are ui/src/usage (today's tokens, each account's plan
@@ -2753,104 +2370,13 @@ document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") 
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && $("use-pop").classList.contains("on")) { ev.stopPropagation(); $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); $("b-use").focus(); } }, true);
 fridaeDo((f) => f.usage.load());
 
-/* ---------- undo the night: an overnight run's checkpoint, taken back from the game's section in Review, or from the chat
-   itself when the chat belongs to no game (it has no Review) ---------- */
-/* the night began with something saved to go back to: the project's files (a commit), Studio's steps, or both */
-function nightSaved(p) { return !!(p && p.night && (p.night.commit || p.night.studio)); }
-/* This chat's overnight run can be undone now: a checkpoint was saved, it is not undone, the chat is not at work, and
-   no undo of it is on its way (a studio run has its own undo, under Run settings in Review). */
-function nightOpen(p) { return nightSaved(p) && !p.nightUndone && !p.nightUndoing && !p.busy && !p.studio && !p.night.run; }
-/* the chats of this game whose overnight run can be undone: each gets its own line in Review */
-function nightChats(path) { return path ? [...agents.values()].filter((p) => isChat(p) && projKey(p) === path && nightOpen(p)) : []; }
-/* The card that asks before undoing one chat's night. It is that chat's alone (data-chat), wherever it is shown, and it
-   checks once more that the night is still there to undo before it calls the app. While the call is on its way the
-   chat is marked (nightUndoing), so its undo is offered nowhere else until the app has answered. */
-function nightCard(p, onUndone) {
-  const when = new Date((p.night.start || 0) * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  const what = [p.night.studio ? "the agents' changes in Studio since then, step by step, stopping at the first step that is yours; and the text of every script goes back to how it was then, your own and other chats' script edits included (first, the scripts as they are now are saved in the game's folder, in .fridae/before-undo/ under the time of the undo)" : "", p.night.commit ? "the project's files, as they were at the checkpoint (the night's versions stay in git history)" : ""].filter(Boolean);
-  const card = el("div", "ask night-ask enter", "<h4>Undo the night?</h4><p></p><div class=\"act\"><button class=\"pill main\">Undo the night</button><button class=\"pill\">Keep it</button></div>");
-  card.dataset.chat = p.id;
-  card.querySelector("p").textContent = "Goes back to " + when + ", when the overnight run in “" + p.name + "” began. Undone: " + what.join("; and ") + ". The task cards are kept. Studio must still be open on the same place.";
-  const [go, keep] = card.querySelectorAll("button");
-  /* shown only after the app refused Studio's part: the files go back, Studio is left as it is */
-  const files = el("button", "pill", "Undo the files only"); files.hidden = true; card.querySelector(".act").insertBefore(files, keep);
-  keep.onclick = () => card.remove();
-  const undo1 = async (filesOnly) => {
-    if (p.nightUndoing) return;                                              /* already on its way */
-    if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }       /* undone meanwhile, at work again, or closed */
-    go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
-    const repaint = () => paintNightTag(p);
-    p.nightUndoing = true; repaint();
-    let r; try { r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly }); } catch (e) { r = null; }
-    p.nightUndoing = false;
-    if (r && r.ok) { card.remove(); p.nightUndone = true; repaint(); if (onUndone) onUndone(); return; }
-    repaint();
-    go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo the night"; files.textContent = "Undo the files only";
-    /* it stays open and says why; when the app refused only Studio's part, the files alone can still go back */
-    if (r && r.files_only) { card.querySelector("p").textContent = r.text || ""; files.hidden = false; }
-    else card.querySelector("p").textContent = (r && r.text) || "Could not undo the night.";
-  };
-  go.onclick = () => undo1(false);
-  files.onclick = () => undo1(true);
-  return card;
-}
-/* The chat's own line where the night began. With a checkpoint it says where the undo is: Review for a game's chat
-   (Run settings for a studio run); for a chat with no game, which has no Review, the undo is this line's own link.
-   With no checkpoint it says so, and points at no undo. */
-function paintNightTag(p) {
-  const t = p.nightTag; if (!t) return;
-  const run = !!(p.studio || (p.night && p.night.run)), game = !!p.project, rbx = isGameProj(p.project);
-  t.querySelector("span").textContent = !nightSaved(p) ? (game ? (rbx ? "No checkpoint: no git in the project and Studio not connected" : "No checkpoint: the project has no git") : "No checkpoint: Studio not connected")
-    : "Checkpoint saved" + (run ? " · Undo this run is in the run's menu, at the top of this chat" : "");
-  const b = t.querySelector("button"); if (b) b.hidden = run || !nightOpen(p);
-}
-/* a night begins: its line goes into the chat, and anything left open about the night before it goes */
-function nightTag(p) {
-  /* an earlier night's line keeps its words and loses its link, and an open card asking about it is taken away: only
-     the newest night can be undone, and a card left open would undo that one under the older one's words */
-  if (p.nightTag) { const old = p.nightTag.querySelector("button"); if (old) old.remove(); }
-  document.querySelectorAll(".night-ask[data-chat]").forEach((c) => { if (c.dataset.chat === p.id) c.remove(); });
-  const t = el("span", "tag enter", '<span></span><button class="linkish" hidden title="Put Studio back as it was before the overnight run began">Undo the night</button>');
-  t.querySelector("button").onclick = () => {
-    if (!nightOpen(p)) { paintNightTag(p); return; }
-    p.col.querySelectorAll(".night-ask").forEach((x) => x.remove());
-    p.col.appendChild(nightCard(p)); if (p.id === current) stick(true);
-  };
-  p.nightTag = t; p.col.appendChild(t); paintNightTag(p);
-}
-
-function newTurn(p) {
-  p.turn = el("div", "turn enter");
-  p.turn.appendChild(el("div", "label", esc(p.model || aiName(chatAi(p)))));
-  p.col.appendChild(p.turn);
-  p.turn._steps = null;
-}
-function steps(p) {
-  if (!p.turn) newTurn(p);
-  const turn = p.turn;
-  if (!turn._steps || turn.lastElementChild !== turn._steps) {
-    const s = el("div", "steps");
-    const fold = el("button", "fold", '<svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg><span></span>');
-    fold.onclick = () => s.classList.toggle("open");
-    s.appendChild(fold);
-    turn.appendChild(s); turn._steps = s;
-  }
-  return turn._steps;
-}
-function settle(p) {
-  if (!p.turn) return;
-  p.turn.querySelectorAll(".step.live").forEach((s) => s.classList.remove("live"));
-  p.turn.querySelectorAll(".steps").forEach((s) => {
-    const n = s.querySelectorAll(".step").length;
-    s.querySelector(".fold span").textContent = n + (n === 1 ? " step" : " steps");
-    s.classList.add("done");
-  });
-}
+/* ---------- the app's events. An agent's event goes to its chat first (ui/src/chat/chatStore.ts keeps the chat's state
+   and its conversation); what the rest of the page does about it is here. ---------- */
 function onEvent(e) {
   if (e.kind === "setup") { fridaeDo((f) => f.store.set({ setupOut: e.text })); return; }
   if (e.kind === "promo_engine") { onEngine(e); return; }
   if (e.kind === "rag_setup") { fridaeDo((f) => f.settings.rag()); return; }
-  if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) setGeminiMode(e.gemini); return; }
+  if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) fridae.chat.setGemini(e.gemini); return; }
   if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? prAddPaths : addClips)(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
   if (e.kind === "promo") { onPromo(e); return; }
@@ -2860,228 +2386,41 @@ function onEvent(e) {
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;
-    grow.unobserve(p.col); p.col.remove(); agents.delete(e.agent);
+    agents.delete(e.agent);
     /* a closed expert keeps its line in the chat that started it, and its row in the sidebar: either opens it again */
-    if (isHelper(p)) paintExpert(p);
+    fridae.chat.closed(p);
     if (current === e.agent) { current = null; if (bootMark !== Infinity && view === "chat" && curProj !== null) showProject(curProj, "chat"); }
     if (p === researchPane) researchPane = null;
     paintSide(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
   }
   const p = pane(e.agent), wasBusy = p.busy;
-  if (startingRun && e.agent === startingRun && ["user", "busy", "error", "done"].includes(e.kind)) startingRun = "";
+  if (fridae.chat.event(p, e) === "auto") { paintSide(); return; }   /* a message the app sent by itself: one line in the chat */
   if (e.kind === "agent_new") {
-    if (e.restored) p.replay = true;   /* put back from a saved chat: what follows is its log, until it works again */
-    p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert; if (e.team) p.team = e.team; if (e.runs_on) p.runsOn = e.runs_on;
-    if (isHelper(p) || p.role === "research") {
-      const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
-      if (!isHelper(p)) { researchPane = p; parked.appendChild(p.col); }
-    }   /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
+    if (!isHelper(p) && p.role === "research") researchPane = p;
+    /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
     if (pendingSelect && pendingSelect.id === p.id) { const t = pendingSelect.tab; pendingSelect = null; select(p.id); if (t) setView(t); }
     loadHistory();
   } else if (e.kind === "helper_started") {
-    /* this chat started an expert here: one line at this point of the conversation leads to the expert's own chat */
-    const x = xpLink(p, e.helper, e.name, e.expert, e.runs_on);
-    (p.turn || p.col).appendChild(x.link); if (p.turn) p.turn._steps = null;   /* where it was started, also after a restart */
-    const h = agents.get(e.helper); if (h && isHelper(h)) paintExpert(h);
     paintSideSoon();
-  } else if (e.kind === "ai") {
-    p.ai = e.ai;
-    if (e.from) {
-      const t = el("span", "tag ai-tag enter");
-      t.textContent = "Switched from " + aiName(e.from) + " to " + aiName(e.ai) + ". It gets the chat so far with your next message.";
-      p.col.appendChild(t); p.turn = null;
-    }
   } else if (e.kind === "project") {
-    p.project = e; delete wantProj[p.id];
-    if (p.start) { p.start.step = startStep(e) === "ready" ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
     if (p.id === current && bootMark !== Infinity && curProj !== projKey(p)) { curProj = projKey(p); savePlace(); }
     paintProject(); paintSide();
-  } else if (e.kind === "model") {
-    p.model = e.name;
-    if (p.turn) p.turn.querySelector(".label").textContent = e.name;
-  } else if (e.kind === "texrequest") {
-    if (!p.turn) newTurn(p);
-    const card = el("div", "ask enter", "<h4></h4><p>The first button opens Gemini and pastes this prompt into its message box: press Enter there. Then copy the image it makes (right-click, Copy image). It is picked up here automatically. You can also paste or drop the image into this window. If the prompt does not appear in Gemini, press Ctrl+V.</p><pre></pre><div class=\"act\"><button class=\"pill main\">Open Gemini and paste prompt</button><button class=\"pill\">Copy prompt</button><button class=\"pill\">Skip</button></div><div class=\"wait\">Waiting for the image</div>");
-    card.querySelector("h4").textContent = "Make this texture in Gemini: " + (e.name || "texture");
-    card.querySelector("pre").textContent = e.prompt;
-    const [open, copy, skip] = card.querySelectorAll("button");
-    open.onclick = () => api("/api/texture", { id: e.req, action: "open" });
-    copy.onclick = async () => { await api("/api/texture", { id: e.req, action: "copy" }); copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy prompt"), 1500); };
-    skip.onclick = () => api("/api/texture", { id: e.req, action: "skip" });
-    p.turn.appendChild(card); p.turn._steps = null;
-    p.asks = p.asks || {}; p.asks[e.req] = card; p.now = "Waiting for your image";
-  } else if (e.kind === "texdone") {
-    const card = p.asks && p.asks[e.req];
-    if (card) { card.classList.add("done"); card.querySelector("h4").textContent = e.ok ? "Image received" : "Texture skipped"; delete p.asks[e.req]; }
   } else if (e.kind === "usage") {
     if (e.id > bootMark) loadUsage();   /* the count at the bottom left, and its pop-up */
-  } else if (e.kind === "night") {
-    p.night = e; p.nightUndone = false; nightTag(p);
-  } else if (e.kind === "night_undone") {
-    p.nightUndone = true;
-    const card = el("div", "ask enter", "<h4>The night was undone</h4><p></p>");
-    card.querySelector("p").textContent = e.text || "";
-    card.querySelector("p").style.whiteSpace = "pre-line";
-    p.col.appendChild(card);
-  } else if (e.kind === "run_undone") {
-    const card = el("div", "ask enter", "<h4>The run was undone</h4><p></p>");
-    card.querySelector("p").textContent = e.text || "";
-    card.querySelector("p").style.whiteSpace = "pre-line";
-    p.col.appendChild(card);
-  } else if (e.kind === "studio_waiting") {
-    studioWaitLine(p, !!e.value);
-  } else if (e.kind === "renamed") {
-    p.name = e.name;
-  } else if (e.kind === "account") {
-    /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
-    p.account = e.account; if (p.id === current) paintModel();
-  } else if (e.kind === "rollover") {
-    /* one of the AI's two accounts ran out of usage and the chat carries on with the other: the app's one line about
-       it. The same message goes again there, so what follows is a turn of its own */
-    const t = el("span", "tag ai-tag enter"); t.textContent = e.text || "";
-    p.col.appendChild(t); p.turn = null;
-  } else if (e.kind === "queued") {
-    paintQueue(p, e.items || [], !!e.paused, !!e.kept);
-  } else if (e.kind === "user" && e.steered) {
-    /* written to a Lead while it works: given to it at its next step, so the turn it is on carries on */
-    const u = el("div", "you enter"); u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
-    p.col.appendChild(el("span", "tag enter", "Given to it at its next step"));
-    p.turn = null;
-  } else if (e.kind === "user") {
-    const h = p.col.querySelector(".hello"); if (h) h.remove();
-    p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0;
-    p.studio = !!e.studio; studioWaitLine(p, !!e.studio_waiting);
-    p.carried = e.auto ? (p.carried || 0) + 1 : 0;
-    if (e.auto) {
-      const left = p.overnight ? Math.max(0, p.overnight - Date.now() / 1000) : 0;
-      p.col.appendChild(el("span", "tag enter", p.overnight ? (p.studio ? "Studio" : "Overnight") + " \u00b7 turn " + p.carried + " \u00b7 " + Math.floor(left / 3600) + "h " + Math.floor((left % 3600) / 60) + "m left" : "Full auto \u00b7 carrying on by itself (" + p.carried + " of 12)"));
-      paintSide(); if (e.agent === current) { paintComposer(); stick(); } return;
-    }
-    const u = el("div", "you enter");
-    if (e.images && e.images.length) {
-      const pics = el("div", "pics");
-      e.images.forEach((src) => { const im = new Image(); im.src = src + "?t=" + TOKEN; im.alt = "Attached image"; im.onload = () => stick(); im.onclick = () => zoom(im.src); pics.appendChild(im); });
-      u.appendChild(pics);
-    }
-    if (e.files && e.files.length) {
-      const docs = el("div", "docs");
-      e.files.forEach((label) => docs.appendChild(el("span", "d", fileTile(label))));
-      u.appendChild(docs);
-    }
-    u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
-    /* an OpenCode model by its name ("OpenCode Zen · big-pickle"), as the picker and the app's own lines show it */
-    const ran = e.model && chatAi(p) === "opencode" ? ((modelsFor("opencode").find((m) => m[0] === e.model) || [])[1] || e.model) : e.model;
-    const tags = [ran, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  \u00b7  ");
-    if (tags) p.col.appendChild(el("span", "tag enter", esc(cap(tags))));
-    if (e.fallback) { const f = el("span", "tag enter"); f.textContent = e.fallback; p.col.appendChild(f); }
-    /* which model ran and why, when that is not what was set (from the app: one line, two short sentences at most) */
-    if (e.model_note) { const f = el("span", "tag enter"); f.textContent = e.model_note; p.col.appendChild(f); }
-  } else if (e.kind === "tool") {
-    const s = steps(p);
-    s.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
-    s.appendChild(el("div", "step live enter", esc(e.label)));
-    p.now = e.label;
-  } else if (e.kind === "text") {
-    /* The agent's last line "STATUS: <WORD>" is for the app, not the reader: it is never shown as written (the saved
-       chat keeps it). CONTINUE, DONE and NEEDS YOU are said in plain words; WAITING alone shows as the "Waiting for
-       you" line; any other word, or a reason after one, is shown as it is, so nothing the agent said is lost. The
-       line must be a line of its own: a sentence that ends "...the build status: done" is left as it was written. */
-    const said = /(?:^|\n)[ \t]*STATUS:[ \t]*(CONTINUE|DONE|NEEDS YOU[^\n]*)\s*$/i.exec(e.text) || /(?:^|\n)[ \t]*STATUS:[ \t]*([A-Z][A-Z _-]*(?::[^\n]*)?)\.?\s*$/.exec(e.text);
-    const text = said ? e.text.slice(0, said.index).trimEnd() : e.text;
-    let plain = "";
-    if (said) {
-      const st = said[1].trim(), up = st.toUpperCase(), colon = st.indexOf(":");
-      const word = (colon < 0 ? st : st.slice(0, colon)).trim().toUpperCase(), why = colon < 0 ? "" : st.slice(colon + 1).trim();
-      const needs = /^NEEDS YOU/.test(up);
-      plain = needs ? st.replace(/^needs you:?\s*/i, "Needs you: ")
-        : (word === "CONTINUE" ? "Autopilot \u00b7 more to do" : word === "DONE" ? "Finished and checked" : word === "WAITING" ? (why ? "Waiting" : "") : cap(word.toLowerCase())) + (why ? ": " + why : "");
-      p.last = needs ? "Needs you" : word === "DONE" ? "Finished" : word === "CONTINUE" ? "Carrying on" : word === "WAITING" ? "Waiting for you" : p.last;
-    }
-    /* a message that was only the STATUS line, with nothing to say in its place, starts no turn */
-    if (text || plain) {
-      if (!p.turn) newTurn(p);
-      if (text) {
-        const block = el("div", "prose enter", md(text));
-        addCopy(block, text);
-        block.querySelectorAll("pre").forEach((pre) => addCopy(pre, pre.textContent));
-        p.turn.appendChild(block); p.turn._steps = null;
-      }
-      if (plain) p.turn.appendChild(el("span", "tag enter", esc(plain)));
-    }
-    if (p.turn) p.turn.querySelectorAll(".step.live").forEach((x) => x.classList.remove("live"));
-    p.now = "Writing";
-  } else if (e.kind === "plain") {
-    /* the app's plain-English line of what this expert did, for the user: shown in the expert's chat and on its row */
-    p.plain = e.text || "";
-    if (e.text) {
-      if (!p.turn) newTurn(p);
-      const box = el("div", "plain-words enter", "<b>In plain words</b><p></p>");
-      putText(box.querySelector("p"), e.text);
-      p.turn.appendChild(box); p.turn._steps = null;
-    }
-  } else if (e.kind === "images") {
-    if (!p.turn) newTurn(p);
-    const g = el("div", "shots enter");
-    e.urls.forEach((u) => { const b = el("button", "shot"); const im = new Image(); im.src = u + "?t=" + TOKEN; im.alt = "Result image"; im.onload = () => stick(); b.appendChild(im); b.onclick = () => zoom(im.src); g.appendChild(b); });
-    p.turn.appendChild(g); p.turn._steps = null;
-  } else if (e.kind === "blocked") {
-    if (!p.turn) newTurn(p);
-    p.turn.appendChild(approvalCard(p, blockedCard(p, e.commands || []))); p.turn._steps = null;
-    p.last = "Needs you";
-  } else if (e.kind === "refused") {
-    if (!p.turn) newTurn(p);
-    p.turn.appendChild(approvalCard(p, refusedCard(p, e.commands || []))); p.turn._steps = null;
-    p.last = "Needs you";
-  } else if (e.kind === "error") {
-    if (!p.turn) newTurn(p);
-    const line = p.turn.appendChild(el("div", "err enter", esc(e.text)));
-    /* the turn failed because nobody is signed in to this chat's AI: the same Sign in as in the picker, beside the
-       line (not on lines from before the app was opened: they are history) */
-    if (e.sign_in && e.id > bootMark) line.appendChild(signInButton(e.sign_in, "Sign in", "login", true));
-    p.last = e.text === "Stopped." ? "Stopped" : "Needs attention";
-    pastApprovals(p);
-  } else if (e.kind === "handed_back") {
-    /* a helper's result went back to the chat that started it: it is finished, whatever it last asked for */
-    p.last = p.last === "Stopped" ? "Stopped" : "Done";
-    p.handedBack = true; pastApprovals(p);
   } else if (e.kind === "busy") {
-    p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); if (e.id > bootMark) loadUsage(); }
-    if (p.busy) { p.replay = false; p.handedBack = false; pastApprovals(p); }   /* it has gone on: what it asked before is history */
+    if (p.busy && e.id > bootMark) loadUsage();
   } else if (e.kind === "done") {
-    const finished = p.turn;
-    if (finished && !isHelper(p) && e.id > bootMark && status.plugin && status.plugin.connected && isGameProj(p.project) && finished.querySelector(".step")) {
-      p.col.querySelectorAll(".undo-turn:not(.said)").forEach((x) => x.remove());
-      const u = el("button", "undo-turn", "Undo this turn in Studio");
-      u.title = "Undoes the changes agents made in Studio since this turn began, and puts scripts back as they were. It stops if your own edit is the newest step.";
-      u.onclick = async () => { if (u.classList.contains("said")) return; u.textContent = "Undoing..."; const r = await api("/api/plugin", { action: "revert", agent: p.id }); u.textContent = r.text || "Could not undo."; u.classList.add("said"); };
-      finished.appendChild(u);
-    }
-    settle(p); p.busy = false; p.now = ""; p.turn = null; refresh(); loadHistory();
+    refresh(); loadHistory();
     if (p.project && projKey(p) === curProj && document.body.classList.contains("pd-open")) git("status");
   }
-  if (p.qbox && p.qbox.childElementCount && p.col.lastElementChild !== p.qbox) p.col.appendChild(p.qbox);   /* waiting messages stay last */
-  /* an expert: the dot on its line in the chat that started it, and its row in the sidebar when its words change */
+  /* an expert: its row in the sidebar when its words change */
   const xpWords = isHelper(p) ? xpState(p)[0] : "";
-  if (xpWords) paintExpert(p);
   /* when it was last at work: a turn that starts or ends now (not one read back from a log), or its own start */
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
-  if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
   if (view === "all" && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
-  if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
-}
-/* Messages sent while the chat was working: shown under the conversation until they go. */
-function paintQueue(p, items, paused, kept) {
-  if (!p.qbox) p.qbox = el("div", "qbox");
-  p.qbox.innerHTML = "";
-  items.forEach((q) => {
-    const u = el("div", "you queued enter", "<div></div><span class=\"qmeta\">" + (paused ? "Held while the studio run is paused. Sent when you press Resume." : kept ? "Kept. Sent with your next message." : "Waiting. Sent the moment it finishes.") + " <button>Remove</button></span>");
-    u.querySelector("div").textContent = q.text;
-    u.querySelector("button").onclick = () => api("/api/unqueue", { agent: p.id, qid: q.qid });
-    p.qbox.appendChild(u);
-  });
-  p.col.appendChild(p.qbox);
+  if (e.agent === current) chatPoke();
 }
 
 /* ---------- promo card: a finished promo, as the Promos tab's library shows it ---------- */
@@ -3129,242 +2468,22 @@ function promoCard(c) {
   return card;
 }
 
-/* ---------- actions ---------- */
-function fit() { box.style.height = "auto"; box.style.height = Math.min(box.scrollHeight, 168) + "px"; paintComposer(); }
-function send() {
-  const p = agents.get(current);
-  if (!p) { sendFromDraft(); return; }
-  if (isHelper(p)) return;   /* an expert's chat is read only */
-  const text = box.value.trim();
-  if (p.busy && !text && !pending.some((a) => a.name)) { api("/api/stop", { agent: p.id }); return; }
-  const ready = pending.filter((a) => a.name);
-  if (!text && !ready.length) return;
-  if (pending.some((a) => !a.name && !a.failed)) return;  /* an upload is still in flight */
-  const names = ready.map((a) => a.name);
-  if (runMode === "studio" || leadsRun(p)) { studioSend(p, text, ready, runMode === "studio"); return; }
-  box.value = ""; pending = []; paintAtts(); fit();
-  plainSend(p, text, names);
-}
-/* the first message on an empty page makes the chat (tied to the game in front), then goes as usual */
-async function sendFromDraft() {
-  if (curProj === null || draftCol.hidden) return;
-  if (!box.value.trim() && !pending.some((a) => a.name)) return;
-  if (pending.some((a) => !a.name && !a.failed)) return;
-  const id = await ensureChat(curProj);
-  if (!id) return;
-  if (current === id && agents.get(id)) send();
-}
-/* a message in the chosen ordinary mode (Ask me, Full auto, Overnight) */
-function plainSend(p, text, names) {
-  /* a chat started from a researched idea carries the idea's details with its first message */
-  const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
-  api("/api/send", { agent: p.id, text: full, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight, full: fullAuto, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
-}
-/* Studio: in the Lead's own chat a message goes to it in Studio mode; in another chat of a game with no run going, it
-   starts one with this chat as the Lead and the message as the idea; while another chat leads, nothing is sent.
-   `chosen`: Studio is the mode picked under the box. Only then may a message start a run: a chat that only looked like
-   the Lead (a run ended a moment ago) sends in the chosen ordinary mode once the fresh run says it leads nothing. */
-async function studioSend(p, text, ready, chosen) {
-  const names = ready.map((a) => a.name);
-  box.value = ""; pending = []; paintAtts(); fit();
-  const back = (why, link) => {
-    if (!box.value.trim()) box.value = text;
-    if (!pending.length) pending = ready;
-    paintAtts(); fit();
-    if (link) noteReview(why, link); else note(why);
-  };
-  const pr = p.project;
-  /* no game folder: this message goes as Ask me, and the app says so in the chat */
-  if (!pr) {
-    const full = p.seed ? text + "\n\n" + p.seed : text; p.seed = null;
-    api("/api/send", { agent: p.id, text: full, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: false, full: false, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
-    return;
-  }
-  let r; try { r = await api("/api/review?path=" + encodeURIComponent(pr.path)); } catch (e) { r = null; }
-  if (!r || !r.ok) return back((r && r.error) || "Could not reach the app.");
-  rvAll[pr.path] = r;
-  const full = p.seed ? text + "\n\n" + p.seed : text;
-  if (runActive(r.run) && r.run.lead === p.id) {
-    p.seed = null;
-    api("/api/send", { agent: p.id, text: full, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: true, full: true, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
-    return;
-  }
-  if (!chosen) { paintSwitch(); plainSend(p, text, names); return; }
-  if (runActive(r.run)) return back("This project's studio run is led by another chat.", pr.path);
-  if (names.length) return back("Send files once the run has started: the message that starts it is words only.");
-  if (!text) return back("Say what to make, then send.");
-  startingRun = p.id; paintComposer();
-  let res; try { res = await api("/api/studio-run", { action: "start", path: pr.path, idea: full, agent: p.id }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
-  if (!res.ok) { startingRun = ""; return back(res.error || "Could not start the studio run."); }
-  if (res.agent && res.agent !== p.id) startingRun = "";
-  p.seed = null;
-  if (res.warning) note(res.warning);
-  loadReview(pr.path);
-}
-/* a passing word over the message box, with a way to Review */
-function noteReview(text, path) {
-  const b = el("button", "linkish", "Open Review"); b.onclick = () => { sayTip.classList.remove("on"); openInReview(path); };
-  say(text, b);
-}
-/* The three menus in the message box (what to add, which AI and model, how it works): one open at a time; a press
-   anywhere else, or Escape, closes them. */
-const TICK = '<span class="tick"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5l2.5 2.5 4.5-5.5"/></svg></span>';   /* the chosen row of a menu */
-const POPS = [["add", "add-menu"], ["model", "settings-panel"], ["mode", "mode-menu"]];
-function closePops(but) { for (const [b, m] of POPS) if (b !== but) { $(m).classList.remove("on"); $(b).setAttribute("aria-expanded", "false"); } }
-function togglePop(btn) {
-  const m = $(POPS.find((x) => x[0] === btn)[1]), open = !m.classList.contains("on");
-  closePops(btn); m.classList.toggle("on", open); $(btn).setAttribute("aria-expanded", open ? "true" : "false");
-  return open;
-}
-/* (the path of the press, not where its target is now: a press inside a menu may repaint the row it landed on) */
-document.addEventListener("click", (ev) => { if (!ev.composedPath().some((n) => n.classList && n.classList.contains("pick"))) closePops(); });
-$("add").onclick = (ev) => { ev.stopPropagation(); togglePop("add"); };
-$("mode").onclick = (ev) => { ev.stopPropagation(); if (togglePop("mode")) paintSwitch(); };
-// one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
-// keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
-/* [id, name, the one line its row in the menu says, the whole of it (the row's tooltip)] */
-const RUN_MODES = [
-  ["ask", "Ask me", "Does what you ask, then waits for you.", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
-  ["full", "Full auto", "Never asks, and keeps going until done.", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in Review, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
-  ["studio", "Studio", "A Lead and its experts build the project, stage by stage.", "A Lead takes this project through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
-];
-let runMode = "ask";
-try {
-  runMode = localStorage.getItem("runmode") || (localStorage.getItem("overnight") === "1" ? "night" : localStorage.getItem("fullauto") === "1" || localStorage.getItem("autopilot") === "1" ? "full" : "ask");
-} catch (e) {}
-if (!RUN_MODES.some((m) => m[0] === runMode)) runMode = "ask";
-let autoPilot = false, overNight = false, fullAuto = false;
-/* Studio sends its own way (see studioSend); other messages sent while it is chosen go in full auto */
-function applyMode() { fullAuto = runMode !== "ask"; overNight = runMode === "night"; autoPilot = false; }
-applyMode();
-let selfTest = false, geminiMode = false;
-try { selfTest = localStorage.getItem("selftest") === "1"; geminiMode = localStorage.getItem("gemini") === "1"; } catch (e) {}
-/* this chat leads its game's running studio run: whatever is chosen, what it sends goes in Studio mode */
-function leadsRun(p) {
-  const r = p && p.project && rvAll[p.project.path];
-  return !!(r && runActive(r.run) && r.run.lead === p.id);
-}
-/* the game the next message belongs to: the chat's own, or on a game's empty page (a chat not made yet) that game */
-function gameInFront() {
-  const p = agents.get(current);
-  if (p) return p.project || null;
-  return curProj && !draftCol.hidden ? frontProj() : null;
-}
-/* Studio needs a game folder, and helper agents on the chat's AI; "" when it can be used */
-function studioWhy() {
-  const g = gameInFront();
-  if (!g) return "Needs a project folder: start one first.";
-  const r = rvAll[g.path];
-  return r && r.helpers === false ? "Needs helper agents, and they don't work on this chat's AI." : "";
-}
-/* what Studio's row says for the chat in front: what its next message will do */
-function studioLine(p) {
-  const g = gameInFront(); if (!g) return "";
-  const r = rvAll[g.path], run = r && r.run;
-  if (runActive(run)) return p && run.lead === p.id ? "This chat leads " + g.name + "'s run. Answer it in Review." : "Another chat leads " + g.name + "'s run.";
-  return runMode === "studio" ? "Your next message starts a studio run for " + g.name + "." : "";
-}
-/* the mode button and its menu: the four ways it works, one line each, then the two extras */
-function paintSwitch() {
-  const p = agents.get(current), ai = chatAi(p);
-  // a mode this chat's AI cannot keep to is never left selected (a saved choice, or the chat's AI switched): Ask me
-  if (ai && runMode !== "ask" && !modeKept(ai, runMode)) { runMode = "ask"; applyMode(); }
-  const why = studioWhy(), lead = leadsRun(p), noGame = !gameInFront();
-  /* with no game folder a message goes as Ask me whatever is chosen, so that is what the button says */
-  const shown = lead ? "studio" : runMode === "studio" && noGame ? "ask" : runMode;
-  $("selftest").setAttribute("aria-checked", selfTest ? "true" : "false");
-  $("gemini").setAttribute("aria-checked", geminiMode ? "true" : "false");
-  /* the rows are left alone while one of them has the keyboard, unless what they say changed */
-  const rows = RUN_MODES.map(([id, name, line, whole]) => {
-    let title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : whole, off = "";
-    /* a mode that cannot be used says why on its own row */
-    if (id === "studio" && why) { off = why; title = "Studio: " + why; }
-    if (!modeKept(ai, id)) { off = "Not offered: " + aiName(ai) + " cannot keep to it here."; title = aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages go as Ask me."; }
-    return { id, name, line: off || (id === "studio" && studioLine(p)) || line, title, off: !!off, on: id === shown };
-  });
-  const sig = JSON.stringify(rows), list = $("run-mode");
-  if (list.dataset.sig !== sig) {
-    list.dataset.sig = sig; list.innerHTML = "";
-    rows.forEach((r) => {
-      const b = el("button", "opt", TICK + "<span><b></b><small></small></span>");
-      b.setAttribute("role", "radio"); b.setAttribute("aria-checked", r.on ? "true" : "false");
-      b.querySelector("b").textContent = r.name; b.querySelector("small").textContent = r.line;
-      b.title = r.title; b.disabled = r.off;
-      b.onclick = () => { runMode = r.id; applyMode(); try { localStorage.setItem("runmode", r.id); } catch (e) {} closePops(); $("mode").focus(); paintSwitch(); paintComposer(); };
-      list.appendChild(b);
-    });
-  }
-  /* the button names the mode, and counts the extras that are on */
-  const extras = [selfTest ? "Self-test" : "", geminiMode ? "Gemini textures" : ""].filter(Boolean);
-  const cur = rows.find((r) => r.on) || rows[0];
-  $("mode-name").textContent = cur.name;
-  let n = $("mode").querySelector(".extra");
-  if (extras.length && !n) { n = el("span", "extra"); $("mode-name").after(n); }
-  if (n) { n.textContent = extras.length ? "+" + extras.length : ""; n.hidden = !extras.length; }
-  $("mode").title = cur.name + ": " + cur.line + (runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works.";
-}
-$("selftest").onclick = () => { selfTest = !selfTest; try { localStorage.setItem("selftest", selfTest ? "1" : "0"); } catch (e) {} paintSwitch(); };
-function setGeminiMode(v) { geminiMode = !!v; try { localStorage.setItem("gemini", geminiMode ? "1" : "0"); } catch (e) {} paintSwitch(); }
-$("gemini").onclick = () => setGeminiMode(!geminiMode);
-paintSwitch();
-
-/* ---------- attachments: paste, drop or pick any file ---------- */
-let pending = [];
-const MAX_ATTACH = 10, MAX_BYTES = 30 * 1024 * 1024;
-const isImage = (f) => !!f.type && f.type.startsWith("image/");
-const extOf = (name) => { const m = /\.([A-Za-z0-9]{1,5})$/.exec(name || ""); return m ? m[1].toLowerCase() : "file"; };
-function fileTile(label) { return '<span class="ext">' + esc(extOf(label)) + '</span><span class="fname">' + esc(label) + "</span>"; }
-function paintAtts() {
-  const tray = $("atts"); tray.innerHTML = ""; tray.classList.toggle("has", pending.length > 0);
-  pending.forEach((a) => {
-    const t = el("div", "att" + (a.image ? "" : " doc") + (a.name ? "" : " wait"));
-    if (a.image) { const im = new Image(); im.src = a.preview; im.alt = "Attached image"; t.appendChild(im); }
-    else t.innerHTML = fileTile(a.label);
-    t.title = a.label;
-    const x = el("button", "", '<svg width="8" height="8" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg>');
-    x.setAttribute("aria-label", "Remove " + a.label);
-    x.onclick = () => { pending = pending.filter((b) => b !== a); paintAtts(); paintComposer(); };
-    t.appendChild(x); tray.appendChild(t);
-  });
-}
-function waitingAsk() { const p = agents.get(current); const ids = p && p.asks ? Object.keys(p.asks) : []; return ids.length ? ids[0] : null; }
+/* ---------- attachments: a file pasted or dropped anywhere on the window goes to the message box (ui/src/chat keeps
+   the files and sends them); on Promos, a drop is that form's ---------- */
 /* a passing word from the app, over the message box (see say) */
 function note(text) { say(text); }
-function addFile(file) {
-  if (!file) return;
-  if (view === "chat" && isHelper(agents.get(current))) { note("An expert's chat is read only. Open the chat that started it to send it a file."); return; }
-  if (/^(video|audio)\//.test(file.type || "")) { note("For videos and music, press + and pick Video clips: they are used where they are, not copied."); return; }
-  const image = isImage(file);
-  const ask = image ? waitingAsk() : null;
-  if (ask) { const r = new FileReader(); r.onload = () => api("/api/texture", { id: ask, action: "image", data: r.result }); r.readAsDataURL(file); return; }
-  if (pending.length >= MAX_ATTACH) { note("Up to " + MAX_ATTACH + " files per message."); return; }
-  if (file.size > MAX_BYTES) { note((file.name || "That file") + " is over 30 MB."); return; }
-  const a = { image, label: file.name || "pasted image", preview: "", name: null, failed: false };
-  pending.push(a); paintAtts();
-  const reader = new FileReader();
-  reader.onload = async () => {
-    if (image) { a.preview = reader.result; paintAtts(); }
-    try {
-      const r = await api("/api/attach", { data: reader.result, filename: file.name || "" });
-      if (r.ok) { a.name = r.name; a.image = r.kind === "image"; } else a.failed = true;
-    } catch (e) { a.failed = true; }
-    if (a.failed) { pending = pending.filter((b) => b !== a); note("Could not attach " + a.label + "."); }
-    paintAtts(); paintComposer();
-  };
-  reader.onerror = () => { pending = pending.filter((b) => b !== a); paintAtts(); note("Could not read " + a.label + "."); };
-  reader.readAsDataURL(file);
-}
+function addFile(file) { fridaeDo((f) => f.chat.addFile(file)); }
 document.addEventListener("paste", (e) => {
   const items = (e.clipboardData && e.clipboardData.items) || [];
   let took = false;
   for (const it of items) if (it.kind === "file") { const f = it.getAsFile(); if (f) { addFile(f); took = true; } }
   if (took) e.preventDefault();
 });
-const composer = document.querySelector(".composer");
-const dropTarget = () => view === "promos" ? $("pr-form") : composer;
-["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; dropTarget().classList.add("drop"); } }));
-["dragleave", "drop"].forEach((n) => document.addEventListener(n, () => { composer.classList.remove("drop"); $("pr-form").classList.remove("drop"); }));
+const composerEl = () => document.querySelector(".composer");
+const dropTarget = () => view === "promos" ? $("pr-form") : composerEl();
+const dropOff = () => { const c = composerEl(); if (c) c.classList.remove("drop"); $("pr-form").classList.remove("drop"); };
+["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; const t = dropTarget(); if (t) t.classList.add("drop"); } }));
+["dragleave", "drop"].forEach((n) => document.addEventListener(n, dropOff));
 document.addEventListener("drop", (e) => {
   if (!e.dataTransfer || !e.dataTransfer.files.length) return;
   e.preventDefault();
@@ -3372,209 +2491,10 @@ document.addEventListener("drop", (e) => {
   if (view === "promos") { prNote([...e.dataTransfer.files].some((f) => /^(video|audio)\//.test(f.type || "")) ? "Use Add clips to choose videos: a video dropped here can't be used where it is." : "Only video and music files can be used here."); return; }
   [...e.dataTransfer.files].forEach(addFile);
 });
-/* a choice closes the menu and hands the keyboard back to its button */
-$("attach").onclick = () => { closePops(); $("add").focus(); $("file").click(); };
-/* Videos and music go in the message as [clip: <path>] lines: the agent uses them where they are, nothing is copied. */
-function addClips(paths) {
-  composer.classList.remove("drop");
-  if (!paths.length) return;
-  const lines = paths.map((p) => "[clip: " + p + "]").join("\n");
-  box.value = box.value.replace(/\s+$/, "") + (box.value.trim() ? "\n" : "") + lines + "\n";
-  fit(); box.focus();
-}
-$("add-clips").onclick = async () => { closePops(); $("add").focus(); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); };
+/* videos and music the app was handed (dropped on the window): [clip: <path>] lines in the message box */
+function addClips(paths) { dropOff(); fridae.chat.addClips(paths); }
 /* A file the app attached itself: it was dropped together with videos, so the page never saw the drop. */
-async function attachedHere(e) {
-  composer.classList.remove("drop");
-  if (!e.ok) { note(e.error || "Could not attach " + (e.label || "that file") + "."); return; }
-  const url = "/att/" + encodeURIComponent(e.name) + "?t=" + TOKEN, ask = e.kind === "image" ? waitingAsk() : null;
-  if (ask) {
-    const blob = await (await fetch(url)).blob(), r = new FileReader();
-    r.onload = () => api("/api/texture", { id: ask, action: "image", data: r.result }); r.readAsDataURL(blob); return;
-  }
-  if (pending.length >= MAX_ATTACH) { note("Up to " + MAX_ATTACH + " files per message."); return; }
-  pending.push({ image: e.kind === "image", label: e.label, preview: e.kind === "image" ? url : "", name: e.name, failed: false });
-  paintAtts(); paintComposer();
-}
-$("file").onchange = (e) => { [...e.target.files].forEach(addFile); e.target.value = ""; };
-
-/* ---------- the AI and its model: one button in the message box, one picker ---------- */
-const MODELS = [
-  ["fable", "Fable", "Most capable; best for big or tricky builds"],
-  ["opus", "Opus", "Strong all-rounder"],
-  ["sonnet", "Sonnet", "Fast and capable; good everyday choice"],
-  ["haiku", "Haiku", "Fastest and cheapest; small, simple jobs"],
-];
-const EFFORTS = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra"], ["max", "Max"]];
-const EFFORT_NAMES = { low: "low effort", medium: "medium effort", high: "high effort", xhigh: "extra-high effort", max: "max effort" };
-let chosenModel = {}, chosenEffort = {};
-try { chosenModel = JSON.parse(localStorage.getItem("models") || "{}"); chosenEffort = JSON.parse(localStorage.getItem("efforts") || "{}"); } catch (e) {}
-/* Each AI has its own models: Claude's are fixed, Gemini's, ChatGPT's, Cursor's and OpenCode's are whatever their tools list on this computer. */
-function modelsFor(ai) {
-  if (ai === "claude") return MODELS;
-  const listed = (((status.ai || {}).models || {})[ai]) || [];
-  return listed.map(([id, name]) => [id, name.replace(/^Gemini /, ""), id]);
-}
-/* The model the next message asks for: the one picked for this AI, else the AI's set default (Opus, Gemini 4 Carbon,
-   the newest GPT Astra, Cursor's Auto). There is no "whatever the program is set to". */
-function modelOf(p) {
-  /* OpenCode's pick is kept by the app (status.ai.default_models.opencode is that pick, or the app's choice while
-     there is none: a model of your plan, else a free one), so experts follow it too. With no such model the app
-     names none and OpenCode chooses: never the first one listed, which may be billed per use */
-  const ai = chatAi(p), list = modelsFor(ai), pick = ai === "opencode" ? "" : chosenModel[ai];
-  if (list.some((m) => m[0] === pick)) return pick;
-  const dflt = ai === "claude" ? "opus" : (((status.ai || {}).default_models || {})[ai]) || "";
-  if (ai === "opencode") return list.some((m) => m[0] === dflt) ? dflt : "";
-  return list.some((m) => m[0] === dflt) ? dflt : list.length ? list[0][0] : "";
-}
-/* The model picked for OpenCode goes to the app's settings: shown at once, then confirmed by the next status. */
-async function pickOpenCodeModel(id) {
-  if (status.ai && status.ai.default_models) status.ai.default_models.opencode = id;
-  paintModel();
-  let r = null; try { r = await api("/api/opencode", { action: "model", model: id }); } catch (e) {}
-  if (!r || !r.ok) note((r && r.error) || "Could not save that pick. Try again.");
-  refresh();
-}
-/* A pick this window kept for OpenCode before the app did is handed to the app, and dropped here only when the app
-   has taken it, has one already, or no longer lists it. */
-let ocPickMoving = false;
-async function moveOpenCodePick() {
-  const old = chosenModel.opencode, oc = (status.ai || {}).opencode, list = modelsFor("opencode");
-  if (ocPickMoving || !old || !oc || !list.length) return;
-  ocPickMoving = true;
-  let settled = !!oc.pick || !list.some((m) => m[0] === old), sent = false;
-  if (!settled) { try { const r = await api("/api/opencode", { action: "model", model: old }); settled = !!(r && r.ok); sent = settled; } catch (e) {} }
-  if (settled) { delete chosenModel.opencode; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} }
-  ocPickMoving = false;
-  if (sent) refresh();
-}
-function effortOf(p) { return chosenEffort[chatAi(p)] || "high"; }
-/* the app is told the chat in front's model and effort when either is picked or its AI is switched, so the app's own
-   messages to it (a run's wakes, board news) and its waiting messages use them at once (/api/chat-model) */
-function tellPick(p) { p = p || agents.get(current); if (!p || !p.started) return; api("/api/chat-model", { agent: p.id, model: modelOf(p) || null, effort: effortOf(p) }).catch(() => {}); }
-/* no effort to set: the AI's models carry their own, or this model names its level (Gemini's "gemini-4-neon-high") */
-function ownLevel(ai, model) { return caps(ai).effort === false || (ai === "gemini" && /-(low|medium|high|xhigh|max)$/.test(model || "")); }
-/* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
-function modelParts(ai, name) {
-  const at = caps(ai).grouped_models ? name.indexOf(" · ") : -1;
-  return at < 0 ? ["", name] : [name.slice(0, at), name.slice(at + 3)];
-}
-/* One line about an AI, for the two places it is picked or set up: the top of the picker's models (#model-notice) and
-   its row in Settings, Connections (.notice in the row). Return a node (the words, and a button when there is something
-   to press) or null for nothing; an empty slot takes no room. A notice is painted again when its markup changes (its
-   words, a button's label or whether it is disabled): give the node a data- attribute for a change that does not
-   show. An AI that is not signed in says so, with the sign-in one press away: Claude, Cursor and Gemini (your own
-   sign-in to those tools), and OpenCode (Fridae's own copy: free models only until then); the words are ui/src/ai.ts. */
-function aiNotice(ai) {
-  const s = window.fridae ? fridae.ai.noticeOf(ai) : null;
-  if (!s) return null;
-  const n = el("span", "nt");
-  /* a press is a change that does not show: with it the notice is painted again, so a pressed button is never left greyed */
-  n.dataset.n = String(noticePresses);
-  n.appendChild(el("span", "", esc(s.text)));
-  s.buttons.forEach(([label, action]) => n.appendChild(signInButton(ai, label, action)));
-  return n;
-}
-let noticePresses = 0;
-/* More accounts for an AI (status.ai.accounts; Settings, Connections adds and removes them): in a chat, a few words
-   say which account it is on, only while there is more than one. */
-function accountWords(ai, p) { return ((((status.ai || {}).accounts || {})[ai] || {}).accounts || []).length && p ? " · account " + (p.account || 1) : ""; }
-/* A sign-in button (the tool's own sign-in, or Fridae's OpenCode): what a press does and what is said next are
-   ui/src/ai.ts. `fromChat`: pressed beside a failed message, where no notice is in view, so what comes next is said
-   over the message box, and the second press is on the same button. */
-function signInButton(ai, label, action, fromChat) {
-  const b = el("button", "pill sm", esc(label));
-  b.onclick = async () => {
-    b.disabled = true; noticePresses++;
-    if (ai === "opencode") { await fridae.ai.pressOpenCode(action); return; }
-    const said = await fridae.ai.pressSignIn(ai, action, fromChat);
-    if (fromChat) { say(said); b.disabled = false; }
-  };
-  return b;
-}
-function paintNotice(slot, ai) {
-  const note = aiNotice(ai), sig = note ? note.outerHTML : "";
-  if (slot.dataset.sig === sig) return;
-  slot.dataset.sig = sig; slot.replaceChildren(...(note ? [note] : []));
-}
-/* the button: "Claude · Opus". The picker behind it is only painted while it is open. */
-function paintModel() {
-  const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
-  const cur = list.find((m) => m[0] === chosen), ownEffort = ownLevel(ai, chosen);
-  $("model-name").textContent = aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p);
-  $("model").title = [aiName(ai), cur ? cur[1] : "", ownEffort ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message.";
-  paintGap(ai, p);
-  if ($("settings-panel").classList.contains("on")) paintPicker();
-}
-let modelFilter = "", modelFilterAi = "";
-/* The picker: the AIs down the left, the chosen AI's models on the right, effort under them. Each part is rebuilt only
-   when what it shows changed, so the keyboard's place in it survives the app's regular refresh. */
-function paintPicker() {
-  const p = agents.get(current), ai = chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p);
-  paintAiPick();
-  paintNotice($("model-notice"), ai);
-  if (modelFilterAi !== ai) { modelFilter = ""; modelFilterAi = ai; }
-  const box0 = $("model-menu"), sig = JSON.stringify([ai, chosen, modelFilter, list]);
-  if (box0.dataset.sig !== sig) {
-    box0.dataset.sig = sig;
-    /* a long list (Cursor offers hundreds) scrolls in a box of its own, with a filter, so effort stays in view */
-    const keep = box0.querySelector(".mlist"), top = keep ? keep.scrollTop : 0;
-    const hadFocus = document.activeElement && document.activeElement.classList.contains("mfind");
-    box0.innerHTML = "";
-    if (!list.length) box0.appendChild(el("p", "sub", "Its model list has not arrived yet.")).style.margin = "8px";
-    if (list.length > 12) {
-      const f = el("input", "mfind"); f.type = "search"; f.placeholder = "Find a model"; f.value = modelFilter; f.setAttribute("aria-label", "Find a model");
-      f.oninput = () => { modelFilter = f.value; paintPicker(); };
-      box0.appendChild(f);
-      if (hadFocus) setTimeout(() => { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }, 0);
-    }
-    const words = list.length > 12 ? modelFilter.toLowerCase().split(/\s+/).filter(Boolean) : [];
-    const shown = list.filter(([id, name]) => words.every((w) => (id + " " + name).toLowerCase().includes(w)));
-    const lst = box0.appendChild(el("div", "mlist"));
-    if (list.length && !shown.length) lst.appendChild(el("p", "sub", "No model matches.")).style.margin = "8px";
-    /* a heading per provider, the model under it */
-    let group = "";
-    shown.forEach(([id, name, note]) => {
-      const [g, rest] = modelParts(ai, name);
-      if (g && g !== group) { group = g; lst.appendChild(el("p", "mgroup", esc(g))); }
-      const o = el("button", "opt", TICK + "<span><b>" + esc(rest) + "</b>" + (note && note !== id ? "<small>" + esc(note) + "</small>" : "") + "</span>");
-      o.setAttribute("role", "option"); o.setAttribute("aria-selected", id === chosen ? "true" : "false");
-      o.onclick = () => { if (ai === "opencode") { pickOpenCodeModel(id).then(() => tellPick(p)); return; } chosenModel[ai] = id; try { localStorage.setItem("models", JSON.stringify(chosenModel)); } catch (e) {} paintModel(); tellPick(p); };
-      lst.appendChild(o);
-    });
-    lst.scrollTop = top;
-  }
-  /* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */
-  const ownEffort = ownLevel(ai, chosen), seg = $("effort"), esig = ownEffort ? "" : ai + " " + effort;
-  $("effort-wrap").hidden = ownEffort;
-  if (seg.dataset.sig === esig) return;
-  seg.dataset.sig = esig; seg.innerHTML = "";
-  if (ownEffort) return;
-  EFFORTS.forEach(([id, name]) => {
-    const b = el("button", id === effort ? "on" : "", esc(name));
-    b.setAttribute("aria-pressed", id === effort ? "true" : "false");
-    b.title = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" }[id];
-    b.onclick = () => { chosenEffort[ai] = id; try { localStorage.setItem("efforts", JSON.stringify(chosenEffort)); } catch (e) {} paintModel(); tellPick(); };
-    seg.appendChild(b);
-  });
-}
-/* one plain line under the message box when Cursor or OpenCode runs in Full auto or Studio and can do something there
-   that Claude cannot (status.ai.gaps, from the app; none today for either, so this stays hidden) */
-function paintGap(ai, p) {
-  const gaps = (((status.ai || {}).gaps || {})[ai]) || {}, mode = runMode === "studio" || leadsRun(p) ? "studio" : fullAuto ? "full" : "";
-  const text = (mode && gaps[mode]) || "", g = $("ai-gap");
-  g.textContent = text; g.hidden = !text;
-}
-$("model").onclick = (ev) => {
-  ev.stopPropagation();
-  if (!togglePop("model")) return;
-  paintPicker();
-  const on = $("model-menu").querySelector('.mlist [aria-selected="true"]'); if (on) on.scrollIntoView({ block: "nearest" });
-};
-paintModel();
-box.addEventListener("input", fit);
-box.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
-sendBtn.onclick = send;
+function attachedHere(e) { dropOff(); fridae.chat.attached(e); }
 
 /* ---------- tabs: Chat for the project in front (and Promos for a game), or a page of no one project: Overview,
    Review and New project ---------- */
@@ -3588,10 +2508,8 @@ function setView(v) {
   const was = view;
   view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
-  if (v === "review") openReview(was !== "review"); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
+  if (v === "review") openReview(was !== "review"); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else fridaeDo((f) => f.chat.focus());
 }
-$("v-chat").onclick = () => setView("chat"); $("v-promos").onclick = () => setView("promos");
-$("b-proj").onclick = () => openProject();
 
 /* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
 let npParent = "", npGit = true, npKind = "plain";
@@ -3635,49 +2553,13 @@ $("np-add").onclick = async () => {
   openMadeProject(r.project);
 };
 $("np-chat").onclick = () => showProject("", "chat");
-/* typing "/" offers the commands */
-const COMMANDS = [
-  ["/texture", "A surface material that tiles: stone, wood, metal"],
-  ["/particle", "A white shape on clear, for particle effects"],
-  ["/decal", "A coloured picture on clear: a crack, a stain, a sign"],
-];
-const slash = el("div", "slash");
-box.parentNode.style.position = "relative"; box.parentNode.appendChild(slash);
-function paintSlash() {
-  const v = box.value; const typing = /^\/[a-z]*$/i.test(v);
-  const hits = typing ? COMMANDS.filter((c) => c[0].startsWith(v.toLowerCase())) : [];
-  slash.classList.toggle("on", hits.length > 0);
-  slash.innerHTML = "";
-  hits.forEach(([cmd, what], n) => {
-    const b = el("button", n === 0 ? "sel" : "", "<code>" + cmd + "</code><span>" + esc(what) + ". Then say what it shows.</span>");
-    b.onmousedown = (ev) => { ev.preventDefault(); box.value = cmd + " "; fit(); box.focus(); slash.classList.remove("on"); };
-    b.onmousemove = () => markSlash(n);
-    slash.appendChild(b);
-  });
-  if (hits.length) slash.appendChild(el("div", "how", "Up and Down to choose \u00b7 Enter to pick \u00b7 Esc to close"));
-}
-box.addEventListener("input", paintSlash);
-box.addEventListener("blur", () => slash.classList.remove("on"));
-function markSlash(n) {
-  const items = [...slash.querySelectorAll("button")]; if (!items.length) return;
-  const at = (n + items.length) % items.length;
-  items.forEach((b, i) => b.classList.toggle("sel", i === at));
-}
-/* registered in the capture phase, so while the menu is open these keys never reach "Enter sends the message" */
-box.addEventListener("keydown", (e) => {
-  if (!slash.classList.contains("on") || e.isComposing) return;
-  const items = [...slash.querySelectorAll("button")], at = Math.max(0, items.findIndex((b) => b.classList.contains("sel")));
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); markSlash(at + (e.key === "ArrowDown" ? 1 : -1)); }
-  else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); e.stopImmediatePropagation(); items[at].onmousedown(e); }
-  else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); slash.classList.remove("on"); }
-}, true);
 /* a short word from the app, shown for a few seconds: over the message box in Chat, at the foot of any other page.
    `more` is a button to go with it. */
 const sayTip = el("div", "saytip"); sayTip.setAttribute("role", "status");
 function say(text, more) {
-  const host = view === "chat" ? composer : document.querySelector(".stage");
+  const host = (view === "chat" && composerEl()) || document.querySelector(".stage");
   if (sayTip.parentNode !== host) host.appendChild(sayTip);
-  sayTip.classList.toggle("free", host !== composer);
+  sayTip.classList.toggle("free", !host.classList.contains("composer"));
   sayTip.textContent = text; if (more) sayTip.appendChild(more);
   sayTip.classList.add("on"); clearTimeout(say.t); say.t = setTimeout(() => sayTip.classList.remove("on"), more ? 8000 : 6000);
 }
@@ -3965,12 +2847,7 @@ function onPromo(e) {
   const prev = p.promoSeen[c.id];
   if (prev !== undefined && prev >= (c.mtime || 0)) return;
   p.promoSeen[c.id] = c.mtime || 0;
-  if (!p.turn) newTurn(p);
-  const line = el("div", "promo-line enter", '<span></span><button class="linkish">Open in Promos</button>');
-  line.querySelector("span").textContent = (prev === undefined ? "Promo ready: " : "Promo updated: ") + (c.folder ? prName(c.folder) : c.id) + " —";
-  line.querySelector("button").onclick = () => openInPromos(c.id);
-  p.turn.appendChild(line); p.turn._steps = null;
-  if (p.id === current) stick();
+  fridae.chat.line(p, (prev === undefined ? "Promo ready: " : "Promo updated: ") + (c.folder ? prName(c.folder) : c.id) + " —", "Open in Promos", () => openInPromos(c.id));
 }
 function openInPromos(id) {
   const p = [...agents.values()].find((x) => x.promoSeen && x.promoSeen[id]);
@@ -4035,97 +2912,7 @@ function openReview(fresh) {
 function rvAnswered(id, said) { rvDone.set(id, { at: Date.now(), said }); paintReviewBadge(); reviewToStore(); }
 /* to a project's tab, and with `id` to one thing in it, which is marked for a moment */
 function rvJump(path, id) { fridaeDo((f) => f.store.set({ reviewJump: { path, id, n: ++rvJumps } })); }
-/* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
-   same confirm step as the night's undo */
-const cpName = (c) => (c.stage === "start" ? "Start of the run" : "After " + stageName(c.stage).toLowerCase()) + " · " + ago(c.at || 0);
-function undoRunCard(path, onDone) {
-  const run = rvAll[path] && rvAll[path].run, seen = new Set();
-  const list = ((run && run.checkpoints) || []).slice().reverse().filter((c) => c && c.stage && !seen.has(c.stage) && seen.add(c.stage));
-  const card = el("div", "ask night-ask run-undo enter", '<h4>Undo this run?</h4><p></p><div class="cp-list" role="group" aria-label="Checkpoints, newest first"></div><div class="act"><button class="pill">Undo this run</button><button class="pill">Keep it</button></div>');
-  const p = card.querySelector("p"), box = card.querySelector(".cp-list"), act = card.querySelector(".act"), [go, keep] = act.querySelectorAll(".pill");
-  let pick = list.length ? list[0].stage : "";
-  p.textContent = list.length
-    ? "Goes back to the checkpoint you pick. The project's files go back to how they were then (the run's versions stay in git history). In Studio, the agents' changes since then are undone step by step, stopping at the first step that is yours; and the text of every script goes back to how it was at the checkpoint, your own and other chats' script edits included. First, the scripts as they are now are saved in the game's folder, in .fridae/before-undo/ under the time of the undo (the reply names the folder). Studio must still be open on the same place, without a restart since the checkpoint, with the current Fridae plugin. Later stages are to do again, review items filed since then move to the archive, and the run is left paused. The task cards are kept."
-    : "This run has no checkpoints yet. One is taken when the run starts and after each finished stage.";
-  list.forEach((c, i) => {
-    const b = el("button"); b.type = "button"; b.textContent = cpName(c); b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
-    b.title = [c.commit ? "the project's files" : "", c.studio ? "Studio's scripts" : ""].filter(Boolean).join(" and ") || "No files or scripts were saved here: only the run's stages and review go back";
-    b.onclick = () => { pick = c.stage; box.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false")); };
-    box.appendChild(b);
-  });
-  if (!list.length) { box.remove(); go.remove(); keep.textContent = "Close"; }
-  /* shown only after the app refused Studio's part (closed, restarted since, an old plugin, the scripts not saved):
-     the files go back, Studio is left as it is */
-  const files = el("button", "pill", "Undo the files only"); files.hidden = true; act.insertBefore(files, keep);
-  keep.onclick = () => card.remove();
-  const run1 = async (filesOnly) => {
-    go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
-    let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick, files_only: filesOnly }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
-    if (res && res.ok) {
-      card.querySelector("h4").textContent = "The run was undone"; p.textContent = res.text || ""; box.remove();
-      go.remove(); files.remove(); keep.disabled = false; keep.textContent = "Close";
-    } else {
-      go.disabled = keep.disabled = files.disabled = false; go.textContent = "Undo this run"; files.textContent = "Undo the files only";
-      p.textContent = (res && (res.error || res.text)) || "Could not undo the run.";
-      if (res && res.files_only) files.hidden = false;
-    }
-    loadReview(path);
-    if (onDone) onDone(res, card);
-  };
-  go.onclick = () => run1(false);
-  files.onclick = () => run1(true);
-  return card;
-}
-/* ---------- the run's controls: one button at the top of a chat of a project with a run going, and behind it Pause or
-   Resume, where the run waits for approval, experts at once, Undo this run and End this run ---------- */
-const RB = { path: "", setBusy: false, $: (id) => $("run-menu").querySelector('[data-r="' + id + '"]') };
-function closeRunMenu(refocus) {
-  if (!$("run-menu").classList.contains("on")) return;
-  $("run-menu").classList.remove("on"); $("run-more").setAttribute("aria-expanded", "false");
-  if (refocus) $("run-more").focus();
-}
-$("run-more").onclick = (ev) => {
-  ev.stopPropagation();
-  const on = !$("run-menu").classList.contains("on");
-  if (!on) { closeRunMenu(); return; }
-  closePops(); closeConv(); paintRunBar();
-  $("run-menu").classList.add("on"); $("run-more").setAttribute("aria-expanded", "true");
-};
-document.addEventListener("mousedown", (ev) => { if (!ev.target.closest("#runbar")) closeRunMenu(); });
-$("runbar").addEventListener("keydown", (ev) => { if (ev.key === "Escape" && $("run-menu").classList.contains("on")) { ev.preventDefault(); ev.stopPropagation(); closeRunMenu(true); } });
-function paintRunBar() {
-  const path = view === "chat" && curProj ? curProj : "", r = path ? rvAll[path] : null, run = r && r.run && r.run.on ? r.run : null;
-  /* another project in front: what was open for the last one goes (an End or Undo card would act on it) */
-  if (RB.path !== path) { RB.path = path; RB.$("rv-undo-box").replaceChildren(); RB.$("rv-end-box").replaceChildren(); RB.$("rv-err").textContent = ""; closeRunMenu(); }
-  $("runbar").hidden = !run;
-  if (!run) { closeRunMenu(); return; }
-  const [, why, action] = runState(r, run), t = RB.$("rv-toggle");
-  t.hidden = !action; t.dataset.action = action; t.textContent = action === "resume" ? "Resume the run" : "Pause the run"; t.title = why;
-  if (!RB.setBusy) {
-    const gates = run.gates || [];
-    RB.$("rv-gates").querySelectorAll("input").forEach((i) => (i.checked = gates.includes(i.value)));
-    RB.$("rv-max").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.n === (run.max_experts || 2)));
-  }
-}
-function rvBindRun(S) {
-const $ = S.$;
-$("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(S.path)); };
-/* "End this run": a confirm, then the run is switched off. Nothing is deleted, and a new run may start. */
-$("rv-end").onclick = () => {
-  const box = $("rv-end-box"), path = S.path;
-  const card = el("div", "ask night-ask enter", '<h4>End this run?</h4><p></p><div class="act"><button class="pill">End this run</button><button class="pill">Keep it</button></div>');
-  card.querySelector("p").textContent = "The Lead and the experts it started are stopped now, and nothing new starts. The " + thingOf(path) + "'s files, review items, checkpoints and task cards stay as they are. Afterwards you can start a new run for it.";
-  const [go, keep] = card.querySelectorAll(".pill");
-  keep.onclick = () => card.remove();
-  go.onclick = async () => {
-    go.disabled = keep.disabled = true; go.textContent = "Ending...";
-    let r; try { r = await api("/api/studio-run", { path, action: "end" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-    if (r && r.ok) { card.remove(); if (rvAll[path] && rvAll[path].run) rvAll[path].run.on = false; paintSwitch(); paintComposer(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
-    loadReview(path);
-  };
-  box.replaceChildren(card);
-};
-}
+/* ---------- a project's run in a few words (its controls, at the top of a chat, are ui/src/chat/Head.tsx) ---------- */
 /* the run in a few words: [its state, one short line why, the button that changes it, the whole of why (a tooltip)] */
 function runState(r, run) {
   if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
@@ -4140,30 +2927,6 @@ function runState(r, run) {
   if (r.waiting) return ["Waiting for you", "Answer in Review and it goes on.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
 }
-function rvBindSet(S) {
-  const $ = S.$;
-  const gates = $("rv-gates"), max = $("rv-max");
-  STAGE_NAMES.forEach(([id, name]) => { const g = el("label", "check-row", '<input type="checkbox"><span></span>'); g.querySelector("span").textContent = name; g.querySelector("input").value = id; gates.appendChild(g); });
-  [1, 2, 3, 4].forEach((n) => { const b = el("button"); b.textContent = n; b.dataset.n = n; max.appendChild(b); });
-  const settings = async (body) => {
-    S.setBusy = true; $("rv-err").textContent = "";
-    let r; try { r = await api("/api/studio-run", Object.assign({ path: S.path, action: "settings" }, body)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-    S.setBusy = false;
-    if (!r.ok) $("rv-err").textContent = r.error || "Could not change the settings.";
-    loadReview(S.path);
-  };
-  gates.onchange = () => settings({ gates: [...gates.querySelectorAll("input:checked")].map((i) => i.value) });
-  max.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; max.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); settings({ max_experts: +b.dataset.n }); };
-$("rv-toggle").onclick = async () => {
-  const b = $("rv-toggle"), action = b.dataset.action, path = S.path;
-  b.disabled = true; $("rv-err").textContent = "";
-  let r; try { r = await api("/api/studio-run", { path, action }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-  b.disabled = false;
-  if (!r.ok) $("rv-err").textContent = r.error || "That did not work.";
-  loadReview(path);
-};
-}
-rvBindRun(RB); rvBindSet(RB);
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
 const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
 /* agents did something: Overview's totals follow */
@@ -4524,12 +3287,7 @@ function onReviewItem(e) {
   p.reviewSeen = p.reviewSeen || {};
   if (p.reviewSeen[it.id]) return;
   p.reviewSeen[it.id] = true;
-  if (!p.turn) newTurn(p);
-  const line = el("div", "promo-line enter", '<span></span><button class="linkish">Open in Review</button>');
-  line.querySelector("span").textContent = "For review: " + (it.title || "Untitled") + " —";
-  line.querySelector("button").onclick = () => openInReview(e.project, it.id);
-  p.turn.appendChild(line); p.turn._steps = null;
-  if (p.id === current) stick();
+  fridae.chat.line(p, "For review: " + (it.title || "Untitled") + " —", "Open in Review", () => openInReview(e.project, it.id));
 }
 /* ---------- a Lead's team: members working at the same time, and the board they talk on ---------- */
 /* What the app knows of each Lead's team (GET /api/swarm), by the Lead's chat id: its run (null when none is going),
@@ -4888,16 +3646,6 @@ function openInReview(path, id) {
   setView("review");
   if (path) rvJump(path, id);
 }
-/* "Waiting for you in Review": one line at the end of a Lead's chat while its run waits at a gate */
-function studioWaitLine(p, on) {
-  p.studioWaiting = on;
-  if (!on) { if (p.waitLine) p.waitLine.remove(); return; }
-  if (!p.waitLine) {
-    p.waitLine = el("div", "studio-wait enter", '<span>Waiting for you in Review</span><button class="linkish">Open Review</button>');
-    p.waitLine.querySelector("button").onclick = () => openInReview(p.project && p.project.path);
-  }
-  p.col.appendChild(p.waitLine); p.last = "Waiting for you";
-}
 /* ---------- Settings is ui/src/settings: every page, the search, the list of pages. Here is how it is opened and
    closed (the veil, the other windows and the keyboard's way back are the page's). ---------- */
 function openSetup(section) {
@@ -4945,7 +3693,7 @@ fridaeWait.unshift((f) => {
       closeSetup();
       if (example === "@newproj") showNewProject();
       else if (example === "@promos" || example === "@review") setView(example.slice(1));
-      else { setView("chat"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); }
+      else { setView("chat"); f.chat.setBox(example); }
     },
     setSideW: (w) => setSideW(w),
     setTheme: (next) => { setTheme(next); f.store.set({ theme: Object.assign({}, themeChoice) }); },
@@ -4964,10 +3712,8 @@ fridaeDo((f) => f.mount("lightbox", $("light-host")));
 /* Escape closes whatever is open over the page; a menu of the message box hands the keyboard back to its button */
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  const pop = POPS.find(([, m]) => $(m).classList.contains("on") && $(m).contains(document.activeElement));
-  closeSetup(); closeUsage(); closeProject(); closePops(); closeConv();
+  closeSetup(); closeUsage(); closeProject(); fridaeDo((f) => f.chat.escape());
   $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
-  if (pop) $(pop[0]).focus();
 });
 
 /* the update button at the bottom left (the rest of it is Settings, About) */
@@ -4992,35 +3738,6 @@ function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
 function caps(ai) { return (((status || {}).ai || {}).caps || {})[ai] || {}; }
 /* whether this AI keeps to a run mode by its own rules: one it cannot keep to is not offered (Ask me instead) */
 function modeKept(ai, id) { const m = caps(ai).modes; if (!m) return true; return id === "ask" ? m.ask !== false : id === "studio" ? m.studio !== false : m.full !== false; }
-/* The picker's left side: the AIs this computer offers, for the chat in front. One that is not installed says so (and
-   can still be picked: Settings says how to get it). A chat that has started carries on with the other AI, handed the
-   chat so far. */
-function paintAiPick() {
-  const have = (status.ai || {}).installed || {}, p = agents.get(current), on = chatAi(p);
-  const wrap = $("ai-pick"), sig = JSON.stringify([on, AIS.map((a) => [a[0], have[a[0]]]), !!(p && p.started)]);
-  if (wrap.dataset.sig === sig) return;
-  wrap.dataset.sig = sig; wrap.innerHTML = "";
-  AIS.forEach(([id, name]) => {
-    const b = el("button", "pk-ai", "<b></b>" + (have[id] === false ? "<small>Not installed</small>" : ""));
-    b.querySelector("b").textContent = name;
-    b.setAttribute("role", "radio"); b.setAttribute("aria-checked", id === on ? "true" : "false");
-    b.title = id === on ? "This chat uses " + name + "." : (p && p.started ? "Carry on this chat with " + name + ". It is handed the chat so far." : "Use " + name + " for this chat.")
-      + (have[id] === false ? " " + name + " is not set up on this computer yet: Settings, Connections says how." : "");
-    b.onclick = () => switchAi(id);
-    wrap.appendChild(b);
-  });
-}
-async function switchAi(id) {
-  const p = agents.get(current);
-  if (!p) { draftAi = id; paintComposer(); paintSwitch(); paintNeeds(); return; }
-  if (chatAi(p) === id) return;
-  /* a switch that is refused says why where it can be seen: the picker closes and the keyboard is back on its button */
-  const refuse = (why) => { closePops(); $("model").focus(); note(why); };
-  if (p.busy) { refuse("Wait until it finishes, or stop it, then switch."); return; }
-  let r; try { r = await api("/api/ai", { agent: p.id, choice: id }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-  if (!r.ok) { refuse(r.error || "Could not switch."); return; }
-  p.ai = id; paintComposer(); paintSwitch(); paintNeeds(); tellPick(p);
-}
 /* Programs agents may run. Claude chats run without anyone watching, so a command the user has not allowed is
    refused; the chat then shows what was refused and one button to allow that program from now on. */
 function allowed() { return status.commands || []; }
@@ -5028,61 +3745,6 @@ async function allowCommands(names, allow) {
   const r = await api("/api/commands", { names, allow });
   if (r && r.commands) status.commands = r.commands;
   statusToStore(); return r && r.ok;
-}
-/* Programs that can start any other program (git aliases and hooks, env, xargs, find -exec, shells, interpreters...):
-   the blocked card says so before the user allows one. */
-const RUNS_ANY = ["git", "env", "xargs", "find", "sh", "bash", "zsh", "fish", "dash", "python", "python3", "node", "ruby", "perl", "php", "lua", "make", "npm", "npx", "pnpm", "yarn", "bun", "deno", "cargo", "ssh", "sudo", "nice", "time", "nohup", "timeout", "watch", "awk", "osascript", "open", "pwsh", "powershell", "cmd", "command", "exec", "stdbuf", "caffeinate", "doas", "parallel"];
-function blockedCard(p, commands) {
-  const names = commands.map((c) => c.name);
-  const card = el("div", "ask enter", "<h4></h4><p></p><pre></pre><div class=\"act\"><button class=\"pill main\"></button><button class=\"pill\">Not now</button></div>");
-  card.querySelector("h4").textContent = "The agent was not allowed to run " + names.join(", ");
-  card.querySelector("p").textContent = "Agents only run programs you have allowed. Allowing " + (names.length === 1 ? "it" : "them") + " lets every Claude, Cursor and OpenCode chat run " + (names.length === 1 ? "this program" : "these programs") + " from now on without asking (you can take that back in Settings). Gemini chats can only use the building tools.";
-  const any = names.filter((n) => RUNS_ANY.includes(n));
-  if (any.length) card.querySelector("p").textContent += " Note: " + any.join(", ") + (any.length === 1 ? " can" : " can each") + " run any other program, so allowing " + (any.length === 1 ? "it" : "them") + " is close to allowing everything.";
-  card.querySelector("pre").textContent = commands.map((c) => c.command).join("\n");
-  const [yes, no] = card.querySelectorAll("button");
-  yes.textContent = "Allow " + names.join(", ") + " and carry on";
-  const finish = (said) => { card.classList.add("done"); card.querySelector("h4").textContent = said; card.querySelector(".act").remove(); };
-  if (names.every((n) => allowed().includes(n))) finish("Allowed: " + names.join(", "));
-  yes.onclick = async () => {
-    if (p.busy) { say("Wait for the agent to finish, then allow it."); return; }
-    if (!(await allowCommands(names, true))) return;
-    finish("Allowed: " + names.join(", "));
-    api("/api/send", { agent: p.id, text: "You may now run " + names.join(", ") + ". Run what was refused and carry on.", app: true, studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
-  };
-  no.onclick = () => finish("Not allowed: " + names.join(", "));
-  return card;
-}
-/* A command the app did not approve by itself for how it is written (not for its program): the card says why in plain
-   words and, unless it could read other programs' settings, offers to run that exact command once in this chat. */
-function refusedCard(p, commands) {
-  const card = el("div", "ask enter", "<h4></h4><div class=\"why\"></div><div class=\"act\"></div>");
-  card.querySelector("h4").textContent = commands.length === 1 ? "A command was not run" : "Some commands were not run";
-  const why = card.querySelector(".why"), act = card.querySelector(".act");
-  const finish = (said) => { card.classList.add("done"); card.querySelector("h4").textContent = said; act.remove(); };
-  commands.forEach((c) => {
-    /* shown whole, never in a scrolling box; characters that would not show as themselves are written out */
-    const pre = el("pre", "whole"); pre.textContent = c.shown || c.command; why.appendChild(pre);
-    const r = el("p"); r.textContent = "Not run because " + c.reason; why.appendChild(r);
-    if (c.no_once) { const q = el("p"); q.textContent = "There is no button to run it from here, because " + c.no_once + "."; why.appendChild(q); }
-  });
-  const runnable = commands.filter((c) => c.once);
-  if (runnable.length) {
-    const yes = el("button", "pill main", runnable.length === 1 ? "Run it once" : "Run these once");
-    yes.title = "Only this exact command, only in this chat, only one time.";
-    yes.onclick = async () => {
-      if (p.busy) { say("Wait for the agent to finish, then answer."); return; }
-      let ok = true;
-      for (const c of runnable) { const r = await api("/api/run-once", { agent: p.id, command: c.command }); ok = ok && r && r.ok; }
-      if (!ok) { say("That command can no longer be run from here."); return; }
-      finish("Allowed once");
-      api("/api/send", { agent: p.id, text: "You may run this exactly as written, one time: " + runnable.map((c) => c.command).join("\n") + "\nRun it now, then carry on.", app: true, studio: !!p.studio, selftest: selfTest, gemini: geminiMode, autopilot: autoPilot, overnight: overNight || !!p.studio, full: fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
-    };
-    act.appendChild(yes);
-  }
-  const no = el("button", "pill", runnable.length ? "Not now" : "OK"); no.onclick = () => finish(runnable.length ? "Not run" : "Not run: " + commands.map((c) => c.shown || c.command).join(", "));
-  act.appendChild(no);
-  return card;
 }
 /* Settings put back at start (the copy Fridae keeps outside the AIs' folders won over a changed settings file): which
    ones and what changed, in plain words, until the user answers; the file's own settings can be taken instead. */
@@ -5109,10 +3771,9 @@ function paintSettingsNote() {
 /* Saved chats (Settings, Chats deletes one and puts one back: ui/src/settings/Chats.tsx) */
 async function reloadSaved() { try { saved = await api("/api/history"); } catch (e) {} savedToStore(); loadHistory(); }
 async function refresh() { try { status = await api("/api/status");
-  moveOpenCodePick();
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   statusToStore(true);
-  paintSide(); paintSettingsNote(); paintUpdate(); paintNeeds(); paintSwitch(); paintComposer(); } catch (e) {} }
+  paintSide(); paintSettingsNote(); paintUpdate(); paintNeeds(); fridaeDo((f) => f.chat.refreshed()); } catch (e) {} }
 /* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
@@ -5185,21 +3846,21 @@ const ONCE = new URLSearchParams(location.search).has("once");
 const SHOW = new URLSearchParams(location.search).get("show");
 let bootMark = Infinity;  /* agents created after the first batch get selected; replayed ones do not */
 async function poll() {
-  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); stick(true); swarmPrime(); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
+  if (ONCE) { const r = await api("/api/events?after=0&wait=0"); for (const e of r.events) { onEvent(e); overviewNote(e); } if (SHOW) select(SHOW); fridae.chat.toLatest(); swarmPrime(); if (new URLSearchParams(location.search).has("menu")) $("model").click(); return; }
   for (;;) {
     try {
       const r = await api("/api/events?after=" + after);
       const first = after === 0;
       for (const e of r.events) { after = e.id; onEvent(e); overviewNote(e); }
-      if (r.events.length > 40) calm(scroller);   /* a chat put back from its log is simply there: nothing fades in */
-      if (first) { bootMark = after; boot(); stick(true); swarmPrime(); }
+      if (r.events.length > 40) fridae.chat.calm();   /* a chat put back from its log is simply there: nothing fades in */
+      if (first) { bootMark = after; boot(); fridae.chat.toLatest(); swarmPrime(); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
 }
-refresh(); loadProjects().then(async () => { await loadReview(); poll(); }); loadPromos(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
+/* (the events build the chats, which are ui/src/chat: they are read once app.js is here) */
+refresh(); loadProjects().then(async () => { await loadReview(); fridaeDo(() => poll()); }); loadPromos(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
 if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st === "downloading" || st === "checking") refresh(); }, 1500);
 if (!ONCE) setInterval(() => { if (view !== "review") loadReview(); }, 20000);   /* the Review count: board cards have no event */
-fit();
 </script>
 <script type="module" src="app.js"></script>
 </body>

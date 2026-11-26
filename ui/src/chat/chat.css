@@ -1,0 +1,9 @@
+/* The chat's own additions to the page's CSS (the rest of the chat's look is still in ui/index.html). */
+/* the rows in view are placed by the list itself, so the browser's own scroll anchoring stays out of it; rows are
+   measured from the scrolling box */
+.main > .scroll { position: relative; overflow-anchor: none; }
+/* the way back to the end of a chat the reader has scrolled up in: over the message box, in its middle */
+.main > .dock { position: relative; }
+.to-latest { position: absolute; left: 50%; bottom: 100%; display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); padding: 0 12px; border-radius: 999px; font-size: 12px; color: var(--dim); background: var(--raised); border: 1px solid var(--line-strong); white-space: nowrap; opacity: 0; visibility: hidden; transform: translate(-50%, 4px); transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms, color var(--t-fast) ease; }
+.to-latest.on { opacity: 1; visibility: visible; transform: translate(-50%, -4px); transition: opacity 140ms ease, transform 160ms var(--ease), color var(--t-fast) ease; }
+.to-latest:hover { color: var(--text); }
