@@ -1,6 +1,7 @@
 """`rbx rag ...`: the knowledge index's service, setup steps and check. Argument parsing and printing only.
 
   rag serve --mode light|heavy --data DIR --port N --token-file PATH [--qdrant-url URL --qdrant-key-file PATH]
+            [--exit-with-stdin]
   rag setup STEP --mode light|heavy --data DIR [--json-progress]
   rag check --mode light|heavy --data DIR [--json]
 
@@ -16,7 +17,8 @@ def _say(line):
 
 def _serve(a):
     from rbxrag import serve
-    serve.run(a.mode, a.data, a.port, a.token_file, a.qdrant_url, a.qdrant_key_file, a.ollama_url)
+    serve.run(a.mode, a.data, a.port, a.token_file, a.qdrant_url, a.qdrant_key_file, a.ollama_url,
+              exit_with_stdin=a.exit_with_stdin)
 
 
 def _setup(a):
@@ -66,6 +68,8 @@ def register(sub):
     x.add_argument("--token-file", required=True, help="file holding the bearer token")
     x.add_argument("--qdrant-url", help="Heavy: the Qdrant service the app started")
     x.add_argument("--qdrant-key-file", help="Heavy: file holding Qdrant's API key")
+    x.add_argument("--exit-with-stdin", action="store_true",
+                   help="end when stdin closes (the app passes a pipe, so the service never outlives it)")
     x.set_defaults(fn=_serve)
 
     x = s.add_parser("setup", help="run one setup step: models, ollama-install, ollama-pull, qdrant-install")

@@ -345,6 +345,42 @@ class FakeReranker:
             yield np.float32(s)
 
 
+
+
+class ParentWatchTests(unittest.TestCase):
+    """The service ends when the app that started it is gone, however the app ended: the app holds the write end of
+    the service's stdin, and the OS closes it when the app exits, crashes or is ended in Task Manager."""
+
+    def test_gone_is_called_once_stdin_closes(self):
+        r, w = os.pipe()
+        gone = threading.Event()
+        with os.fdopen(r, "rb") as stream:
+            serve.watch_parent(stream, gone.set)
+            self.assertFalse(gone.wait(0.3), "not while the app still holds the pipe")
+            os.close(w)
+            self.assertTrue(gone.wait(5), "the service ends once the app's end of the pipe is closed")
+
+    def test_bytes_on_stdin_are_not_a_goodbye(self):
+        r, w = os.pipe()
+        gone = threading.Event()
+        with os.fdopen(r, "rb") as stream:
+            serve.watch_parent(stream, gone.set)
+            os.write(w, b"hello\n")
+            self.assertFalse(gone.wait(0.3))
+            os.close(w)
+            self.assertTrue(gone.wait(5))
+
+    def test_the_cli_offers_the_flag(self):
+        import argparse
+        from rbxrag import cli
+        p = argparse.ArgumentParser()
+        cli.register(p.add_subparsers())
+        a = p.parse_args(["rag", "serve", "--mode", "light", "--data", "d", "--token-file", "t", "--exit-with-stdin"])
+        self.assertTrue(a.exit_with_stdin)
+        a = p.parse_args(["rag", "serve", "--mode", "light", "--data", "d", "--token-file", "t"])
+        self.assertFalse(a.exit_with_stdin, "run by hand from a terminal it keeps going")
+
+
 class LightDenseTests(unittest.TestCase):
     def test_dense_sorts_cuts_and_keeps_the_order(self):
         seen = []

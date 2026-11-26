@@ -327,8 +327,24 @@ def heavy_factory(data, qdrant_url, qdrant_key, ollama_url=None):
     return make
 
 
-def run(mode, data, port, token_file, qdrant_url=None, qdrant_key_file=None, ollama_url=None, out=None):
-    """`rag serve`: bind, say so, build in the background, then serve until killed."""
+def watch_parent(stream, gone):
+    """Call `gone` once `stream` ends. The app passes the service a pipe as stdin and never writes to it: the OS
+    closes the app's end when the app exits for any reason (closed, crashed, ended in Task Manager), so the service
+    never outlives it."""
+    def wait():
+        try:
+            while stream.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        gone()
+    threading.Thread(target=wait, name="parent-watch", daemon=True).start()
+
+
+def run(mode, data, port, token_file, qdrant_url=None, qdrant_key_file=None, ollama_url=None, out=None,
+        exit_with_stdin=False):
+    """`rag serve`: bind, say so, build in the background, then serve until killed (or, with `exit_with_stdin`,
+    until the app that started it is gone)."""
     # set before fastembed (and huggingface_hub) are imported: a query never reaches the network
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -341,6 +357,8 @@ def run(mode, data, port, token_file, qdrant_url=None, qdrant_key_file=None, oll
     service = Service(mode, factory)
     srv = make_server(service, token, port)
     out(json.dumps({"listening": srv.server_address[1]}))
+    if exit_with_stdin:
+        watch_parent(sys.stdin.buffer, lambda: os._exit(0))  # at once: a build thread must not keep it alive
     service.start()
     try:
         srv.serve_forever()

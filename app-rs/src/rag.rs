@@ -28,7 +28,7 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, LazyLock, Mutex, MutexGuard,
         atomic::{AtomicBool, Ordering},
@@ -165,7 +165,7 @@ fn scrubbed(text: &str, token: &str) -> String {
 /// `rag serve`: the token by its file's path, never itself; Heavy names Qdrant's address and key file.
 fn serve_command(mode: &str, data: &Path, token_file: &Path, qdrant_url: Option<&str>) -> Command {
     let (data, token_file) = (data.display().to_string(), token_file.display().to_string());
-    let mut args = vec!["rag", "serve", "--mode", mode, "--data", data.as_str(), "--port", "0", "--token-file", token_file.as_str()];
+    let mut args = vec!["rag", "serve", "--mode", mode, "--data", data.as_str(), "--port", "0", "--token-file", token_file.as_str(), "--exit-with-stdin"];
     if let Some(url) = qdrant_url {
         args.extend(["--qdrant-url", url, "--qdrant-key-file", token_file.as_str()]);
     }
@@ -341,6 +341,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Proc {
     child: Child,
     tail: Arc<Mutex<String>>,
+    /// the service's stdin, never written: held while it runs, it closes when the app ends however it ends (closed,
+    /// crashed, ended in Task Manager), and `rag serve --exit-with-stdin` then ends too
+    stdin: Option<ChildStdin>,
     /// it has exited and been reaped (`exited`): its group is never signalled again, as its ID may be someone else's
     reaped: bool,
     code: Option<i32>,
@@ -434,9 +437,10 @@ fn keep_tail(r: impl Read + Send + 'static, tail: Arc<Mutex<String>>) {
 
 /// Start a process in a group of its own, noted in the ledger under `owner`; refused once the app is closing (decided
 /// under the same lock `shut_down` takes, so nothing starts after it). With `listen`, its stdout is read for the
-/// listening line (the port comes on the channel); otherwise stdout goes into the tail with stderr.
+/// listening line (the port comes on the channel) and its stdin is a pipe the app holds (`Proc::stdin`: the service);
+/// otherwise stdout goes into the tail with stderr.
 fn spawn(mut cmd: Command, owner: &str, listen: bool) -> Result<(Proc, Option<mpsc::Receiver<u16>>), String> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(if listen { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::own_group(&mut cmd);
     let mut child = {
         let mut s = lock(&STATE);
@@ -470,7 +474,8 @@ fn spawn(mut cmd: Command, owner: &str, listen: bool) -> Result<(Proc, Option<mp
             keep_tail(out, tail.clone());
         }
     }
-    Ok((Proc { child, tail, reaped: false, code: None }, port))
+    let stdin = child.stdin.take();
+    Ok((Proc { child, tail, stdin, reaped: false, code: None }, port))
 }
 
 /// Whether a process has exited, with its exit code. Looked at without reaping it first (Unix: `ps`), so while it is
@@ -1259,7 +1264,7 @@ mod tests {
         let light = serve_command("light", Path::new("/w/rag"), Path::new("/w/rag/token"), None);
         let a = args(&light);
         let tail: Vec<&str> = a.iter().map(String::as_str).skip_while(|x| *x != "rag").collect();
-        assert_eq!(tail, ["rag", "serve", "--mode", "light", "--data", "/w/rag", "--port", "0", "--token-file", "/w/rag/token"]);
+        assert_eq!(tail, ["rag", "serve", "--mode", "light", "--data", "/w/rag", "--port", "0", "--token-file", "/w/rag/token", "--exit-with-stdin"]);
         assert!(light.get_envs().any(|(k, v)| k == "HF_HUB_OFFLINE" && v.is_some_and(|v| v == "1")));
         let heavy = serve_command("heavy", Path::new("/w/rag"), Path::new("/w/rag/token"), Some("http://127.0.0.1:7001"));
         let a = args(&heavy);
@@ -1339,6 +1344,23 @@ mod tests {
         // a service that does not answer is an error, not a hang
         let closed = format!("http://127.0.0.1:{}", two_free_ports().unwrap().0);
         assert!(call(&closed, "t0k", "GET", "/status", None, Duration::from_secs(3)).is_err());
+    }
+
+    #[test]
+    fn the_service_is_given_a_pipe_it_ends_with() {
+        // the service ends when its stdin closes, which the OS does when the app ends however it ends: so the app
+        // keeps the write end for as long as the service runs, and only the service (the listener) gets one
+        let quick = || {
+            let mut c = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+            c.args(if cfg!(windows) { ["/C", "exit"] } else { ["-c", "exit"] });
+            c
+        };
+        let (served, _) = spawn(quick(), "rag-pipe-test", true).unwrap();
+        assert!(served.stdin.is_some(), "the service's stdin is a pipe the app holds");
+        end(served);
+        let (other, _) = spawn(quick(), "rag-pipe-test", false).unwrap();
+        assert!(other.stdin.is_none(), "Qdrant and setup steps get no pipe");
+        end(other);
     }
 
     fn alive(pid: u32) -> bool {
