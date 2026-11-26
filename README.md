@@ -61,8 +61,8 @@ An amber dot at the bottom left of the window shows while one of them is missing
 ## Finding your way
 
 The left side lists your games. **Overview**, at the top, is one page for every game: a live graph of the games,
-their chats and the experts each Lead started (press a game for its Review, a chat to open it; drag to arrange,
-scroll to zoom, double-click to fit). **Review**, under it, is one page for what needs you and each game's run.
+their chats and the experts each Lead started (press a game to see what it needs in Review, a chat to open it; drag to arrange,
+scroll to zoom, double-click to fit). **Review**, under it, is what waits for you, a tab per project.
 Pick a game and it has its tabs:
 
 - **Chat**: the game's conversation. The name at the top lists its other chats and **New chat**. In the message
@@ -137,32 +137,26 @@ and in Right now says what it runs on when that differs from the Lead.
 plan**, and at **ready to publish**, which is a checklist of what you do
 yourself (publish, make it public, set prices live). Fridae never publishes,
 spends money or Robux, or deletes your work. You can change where it stops in
-Review, in the project's Run settings.
+the run's menu: the three dots at the top of a chat of the project.
 
-**Review.** One page for every project, opened from the left under Overview;
-its number is everything that waits for you. Each project has a section, the
-ones that need you first. In a section: at the top, the run's state with Pause or Resume, its
-stages, and Run settings; under it **Right now** (who is working on what, and
-what the game has cost so far). What stops the run is under **Needs you**,
-with the to-dos only you can do (press **Done** on those). Everything else the
-experts finish lands in **To look at**, with its pictures or clips, while the
-run carries on. On each item press **Approve**, or write a short note and
-press **Ask for changes**: a fresh expert of the same kind redoes the work
-with your note, and the new version replaces the old one in Review.
-**Approve all** signs off everything in To look at at once. **Tell the run
-something** sends the Lead a message without leaving the page, and earlier
-decisions are folded away at the bottom.
+**Review.** Opened from the left under Overview; its number is everything that
+needs you. There is a tab for each project with something waiting, and each
+thing is its pictures or clip (press a picture to see it large), its title,
+and two buttons. Press **Approve**, or press **Ask for changes** and write a
+short note: a fresh expert of the same kind redoes the work with your note,
+and the new version replaces the old one. A to-do only you can do has
+**Done**. To tell the run something, write to the Lead in its chat.
 
 **Pause and Resume.** Pause stops the Lead handing out new work; experts
 already working finish. While a run is paused, your messages to the Lead wait
 until you press Resume. If you quit the app, the run comes back as Paused.
 
-**End this run.** In Review's Run settings, End this run stops the run for
+**End this run.** In the run's menu, End this run stops the run for
 good: the Lead starts nothing new, and the game's files, review items and
 checkpoints stay. You can then start a new run for the game.
 
 **Undo this run.** The run takes a checkpoint when it starts and after each
-finished stage. Undo this run (in Review's Run settings, or at the top of the
+finished stage. Undo this run (in the run's menu, at the top of the
 Lead's chat) goes back to the checkpoint you pick and leaves the run paused.
 - Your project's files can always go back, as long as the game's folder is a
   git repository (a new game folder made in the app is one; git must be

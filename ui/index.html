@@ -175,7 +175,7 @@ div.g-row { cursor: default; }
 #pd-gh .check-row { margin: 4px 0 0; }
 
 /* a press: the row's background deepens for as long as it is held */
-.proj:active, .s-row:active, .cv-row:active, .cv-new:active, .opt:active:not(:disabled), .pk-ai:active, .rv-line:active, button.rv-who:active, .xp-link:active, .bd-opt:active { background: var(--press); }
+.proj:active, .s-row:active, .cv-row:active, .cv-new:active, .opt:active:not(:disabled), .pk-ai:active, .xp-link:active, .bd-opt:active { background: var(--press); }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: min(var(--side-w, 232px), 50vw) minmax(0, 1fr); }
@@ -762,217 +762,53 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .promo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; }
 .promo-line span { color: var(--dim); }
 
-/* Review: one page for every project. A line that says how much waits, a way to each project, then a section per
-   project: what is happening on it and what needs the user, top to bottom in one column. */
-.rv-page { max-width: 920px; margin: 0 auto; }
-/* the first lines stay in reach while the sections scroll under them */
-.rv-top { position: sticky; top: -24px; z-index: 3; margin: -24px -24px 16px; padding: 24px 24px 12px; border-bottom: 1px solid transparent; background: color-mix(in srgb, var(--bg) var(--glass-opacity), transparent); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); transition: border-color var(--t-mid) ease; }
-.rv-top.stuck { border-bottom-color: var(--line); }
-.rv-top-sum { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: -0.01em; text-wrap: balance; }
-.rv-jump { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 8px 0 0 -8px; font-size: 13px; }
-.rv-jump[hidden] { display: none; }
-.rv-jump > span { padding: 0 4px 0 8px; color: var(--faint); }
-.rv-jump button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); padding: 0 8px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
-.rv-jump button:hover { background: var(--hover); color: var(--text); }
-.rv-jump button:active { background: var(--press); }
-.rv-jump button[aria-current="true"] { background: var(--press); color: var(--text); }
-.rv-jump button i { font-size: 12px; font-weight: 600; font-style: normal; font-variant-numeric: tabular-nums; color: var(--text); }
-.rv-secs { display: grid; gap: 12px; }
-.rv-sec { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); scroll-margin-top: calc(var(--rv-top-h, 104px) + 8px); }
-.rv-sec.settings-search-target-pulse { animation: settings-search-target-pulse 650ms ease-in-out 2; }
-.rv-sec-h { margin: 0; font: inherit; }
-.rv-sec-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 16px; text-align: left; border-radius: calc(var(--r-m) - 1px); transition: background-color var(--t-fast) ease; }
-.rv-sec-head:hover { background: var(--hover); }
-.rv-sec-head:active { background: var(--press); }
-.rv-sec-head:focus-visible { outline-offset: -2px; }
-.rv-sec-head[aria-expanded="true"] { border-radius: calc(var(--r-m) - 1px) calc(var(--r-m) - 1px) 0 0; }
-.rv-sec-head b { min-width: 0; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-kind { flex: none; font-size: 13px; color: var(--faint); white-space: nowrap; }
-.rv-sec-note { flex: none; margin-left: auto; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.rv-sec-note.strong { color: var(--text); font-weight: 600; }
-/* an open section says what waits in its own lines: the count is only on a folded one */
-.rv-sec-head[aria-expanded="true"] .rv-sec-note { visibility: hidden; }
-.rv-sec-head svg { flex: none; color: var(--faint); transition: transform 180ms var(--ease); }
-.rv-sec-head[aria-expanded="true"] svg { transform: rotate(90deg); }
-/* a project with nothing going is one quiet line: no surface, lighter words */
-.rv-sec.quiet { background: none; }
-.rv-sec.quiet .rv-sec-head { min-height: var(--h-l); padding: 4px 16px; }
-.rv-sec.quiet .rv-sec-head b { font-size: 14px; font-weight: 500; color: var(--dim); }
-.rv-sec.quiet .rv-sec-head:hover b { color: var(--text); }
-.rv-sec.quiet .rv-sec-note { color: var(--faint); }
-.rv-sec-body { padding: 0 16px 16px; }
-/* Inside a section: the run is one line (its state, a short reason, what it cost, Pause, and a button for its
-   settings), the parts are labelled quietly, and lists are rows with one hairline between items. */
-.rv-sec .rv-state { gap: 8px; }
-.rv-sec .rv-state b { font-size: 14px; }
-.rv-sec .rv-state .rv-cost { margin-left: auto; padding-right: 4px; }
-.rv-sec .rv-state .icon[aria-expanded="true"] { background: var(--press); color: var(--text); }
-.rv-sec .rv-set { margin: 8px 0 0; padding: 0 0 4px; border-top: 0; }
-.rv-sec .rv-set > summary { display: none; }
-.rv-sec .rv-set .pr-label:first-of-type { margin-top: 8px; }
-.rv-lead { margin: 8px 0 0; font-size: 13px; }
-.rv-lead:empty { display: none; }
-.rv-sec .rv-empty p { min-width: 0; font-size: 13px; }
-.rv-sec .rv-empty b { font-weight: 400; color: var(--dim); }
-.rv-sec .rv-now { margin-top: 4px; }
-.rv-sec .rv-who { min-height: var(--h-s); font-size: 13px; }
-.rv-sec .rv-h { margin: 16px 0 4px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dim); }
-.rv-sec .rv-h span { font: inherit; font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
-.rv-sec .rv-none { padding: 0; background: none; }
-.rv-sec .rv-list { gap: 0; }
-.rv-sec .rv-list:empty { display: none; }
-.rv-sec .rv-list > .rv-item { padding: 12px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
-.rv-sec .rv-list > .rv-item:first-child { padding-top: 4px; }
-.rv-sec .rv-list > .rv-item:last-child { border-bottom: 0; padding-bottom: 4px; }
-.rv-sec .rv-list > .rv-item.done { padding: 8px 0; }
-.rv-sec .rv-item .meta { margin: 0 0 2px; font: 400 12px/16px inherit; font-family: inherit; letter-spacing: 0; color: var(--faint); }
-.rv-sec .rv-item h4 { margin-bottom: 4px; font-size: 15px; }
-.rv-sec .rv-item .plain-words { max-width: 70ch; margin: 0 0 8px; padding: 0; border: 0; border-radius: 0; background: none; }
-.rv-sec .rv-item .plain-words b { display: none; }
-.rv-sec .rv-item .plain-words p { color: var(--dim); }
-.rv-sec .rv-item .more { margin: -4px 0 8px; }
-.rv-sec .rv-item .act { display: flex; flex-wrap: wrap; gap: 8px; }
-.rv-change[hidden] { display: none; }
-.rv-sec .rv-rows { border-top: 0; }
-.rv-sec .rv-lk:last-child { border-bottom: 0; }
-.rv-sec .rv-full .rv-item { padding: 0 8px 4px 60px; border: 0; border-radius: 0; background: none; }
-.rv-sec .rv-past { margin-top: 12px; padding-top: 0; border-top: 0; }
-/* Review's type, as one system: three sizes and two weights on the whole page, and nothing in mono or capitals.
-   18px is the page's one summary; 14px is everything that is read or pressed; 12px is labels and the muted line of
-   an item. 600 is for the summary, a project's name and an item's title; all else is 400. What ranks things is
-   where they stand, that weight, and plain or muted ink: never one more size. */
-#review * { font-family: inherit; font-size: 14px; font-weight: 400; letter-spacing: 0; text-transform: none; }
-#review .rv-top-sum { font-size: 18px; line-height: 24px; font-weight: 600; }
-#review :is(.rv-sec-head b, .rv-item h4, .rv-line b, .rv-past-row b, .ask h4) { font-weight: 600; }
-#review .rv-sec.quiet .rv-sec-head b { font-weight: 400; }
-#review :is(.rv-jump > span, .rv-jump button, .rv-jump button *, .rv-kind, .rv-sec-note, .rv-cost, .rv-cost *, .rv-h, .rv-h span, .meta, .rv-line .who, .rv-line .when, .rv-who em, .pr-label, .sub, .r-note, .rv-past summary, .rv-past summary span, .rv-past-row em, .rv-past-row small, .rv-night > span, .more) { font-size: 12px; line-height: 16px; color: var(--dim); }
-#review .rv-jump button[aria-current="true"], #review .rv-jump button:hover { color: var(--text); }
-#review .rv-jump button i { color: inherit; }
-#review .rv-jump button { height: 24px; }
-/* one size of button; the filled one is only the answer that is asked for (Approve, Done) */
-#review .pill { height: var(--h-s); min-height: 0; padding: 0 12px; border-radius: 999px; line-height: 1; white-space: nowrap; }
-/* gaps: 24 between projects, 16 between a project's parts, 12 either side of the line between items, 4 in an item */
-#review .rv-top { margin-bottom: 8px; }
-#review .rv-secs { gap: 24px; }
-#review .rv-sec-head { min-height: var(--h-l); padding: 4px 16px; }
-#review .rv-sec-head b { line-height: 20px; }
-#review .rv-sec-body { padding: 4px 16px 16px; }
-#review .rv-state { min-height: var(--h-s); }
-#review .rv-state b { color: var(--text); }
-#review .rv-h { display: flex; align-items: center; gap: 8px; min-height: 16px; margin: 16px 0 8px; }
-#review .rv-h .pill { margin-left: auto; }
-#review .rv-now { margin-top: 8px; }
-#review .rv-who { min-height: var(--h-s); padding: 0; margin: 0; }
-#review .rv-who b, #review .rv-who.busy span { color: var(--text); }
-#review button.rv-who:hover { background: none; }
-#review button.rv-who:hover b { text-decoration: underline; text-underline-offset: 3px; }
-#review .rv-none { line-height: 20px; color: var(--dim); }
-#review .rv-list > .rv-item { padding: 12px 0; }
-#review .rv-list > .rv-item:first-child { padding-top: 0; }
-#review .rv-list > .rv-item:last-child { padding-bottom: 0; }
-#review .rv-item h4 { margin: 0; line-height: 20px; }
-#review .rv-item .meta { margin: 0 0 4px; }
-#review .rv-item .plain-words { margin: 0 0 4px; }
-#review .rv-item .plain-words p, #review .rv-item p { line-height: 20px; }
-#review .rv-item .plain-words p { color: var(--text); }
-#review .rv-item .rv-sum { margin: 0 0 4px; }
-#review .rv-item .more { display: block; margin: 0 0 4px; }
-#review .rv-item .act { margin-top: 4px; }
-#review .rv-change { margin-top: 8px; }
-#review .rv-change .field { height: var(--h-s); }
-#review .rv-item.done .rv-said, #review .rv-lk > .rv-said { padding: 0; color: var(--dim); }
-/* To look at: the same left edge as everything else; a picture only where there is one */
-#review .rv-line { display: flex; gap: 12px; min-height: var(--h-l); padding: 8px 0; border-radius: 0; }
-#review .rv-line:hover { background: none; }
-#review .rv-line:hover b { text-decoration: underline; text-underline-offset: 3px; }
-#review .rv-line span.thumb:empty { display: none; }
-#review .rv-line b { flex: 1; min-width: 0; line-height: 20px; }
-#review .rv-line .when { min-width: 0; }
-#review .rv-full { padding: 0 0 12px; }
-#review .rv-full .rv-item { padding: 0; }
-#review .rv-tell { padding: 4px 4px 4px 12px; border-radius: var(--r-m); background: none; }
-#review .rv-tell textarea { min-height: var(--h-s); padding: 4px 0; line-height: 20px; }
-#review .r-note:empty { display: none; }
-#review .rv-past { margin-top: 16px; }
-#review .rv-past-row { padding: 12px 0; border-bottom: 0; border-top: 1px solid var(--line); gap: 4px 12px; }
-#review .rv-past-row:first-child { border-top: 0; padding-top: 4px; }
-#review .rv-set { margin-top: 16px; }
-#review .rv-set .pr-label { display: block; margin: 16px 0 8px; }
-#review .rv-set .pr-label:first-of-type { margin-top: 0; }
-#review .rv-lead { margin: 0 0 16px; }
-#review .rv-set .sub { margin-top: 8px; }
-#review .ask:not(.rv-item) { margin: 8px 0 0; padding: 12px; border-radius: var(--r-s); background: none; border-color: var(--line); }
-#review .ask:not(.rv-item) h4 { margin: 0 0 4px; }
-#review .ask:not(.rv-item) p { margin: 0 0 8px; line-height: 20px; }
-@media (max-width: 760px) { #review .rv-line .who { display: none; } }
-/* inside a project's section the run is not a card of its own */
-.rv-sec .rv-run { padding: 0; border: 0; border-radius: 0; background: none; }
-@media (max-width: 760px) { .rv-kind { display: none; } }
-/* the run, in one bar: its state and the button that changes it, then the stages once, with what it has cost */
-.rv-run { padding: 12px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); }
-.rv-state { display: flex; align-items: center; gap: 8px 12px; min-height: var(--h-m); }
-.rv-state b { font-size: 16px; font-weight: 600; white-space: nowrap; }
-.rv-why { flex: 1; min-width: 0; font-size: 14px; color: var(--dim); line-height: 1.4; }
-.rv-why .linkish { margin-left: 4px; white-space: nowrap; }
+/* Review: what waits for the user, and nothing else. A tab per project that has something; in it, each thing is its
+   pictures (press one to see it large), its title, and Approve or Ask for changes. Three sizes of type on the page:
+   14px for what is read or pressed, 12px for a tab's count, and no more. */
+.rv-page { max-width: 720px; margin: 0 auto; }
+#review * { font-family: inherit; font-size: 14px; letter-spacing: 0; }
+.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 32px -12px; }
+.rv-tabs[hidden] { display: none; }
+.rv-tabs button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-m); padding: 0 12px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
+.rv-tabs button:hover { color: var(--text); background: var(--hover); }
+.rv-tabs button[aria-selected="true"] { color: var(--text); background: var(--press); font-weight: 600; }
+#review .rv-tabs button i { font-size: 12px; font-style: normal; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--dim); }
+#rv-items { gap: 0; outline: 0; }
+.rv-card { padding: 0 0 40px; }
+.rv-card + .rv-card { padding-top: 40px; border-top: 1px solid var(--line); }
+.rv-card:last-child { padding-bottom: 0; }
+.rv-card h4 { margin: 0 0 12px; line-height: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.rv-card .rv-media { margin: 0 0 16px; }
+.rv-card .rv-media:not(.many) img { max-height: 240px; }
+.rv-card .act { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+#review .pill { height: var(--h-m); padding: 0 16px; font-weight: 400; }
+.rv-item.rv-card.done { padding: 0 0 16px; }
+.rv-item.rv-card.done + .rv-card { padding-top: 16px; }
+.rv-card.flash { outline: 2px solid var(--focus); outline-offset: 12px; border-radius: 2px; }
+.rv-nothing { margin: 96px 0 0; text-align: center; color: var(--dim); }
+/* the run's own controls, behind one button at the top of a chat of its project */
+.run-ctl { position: relative; display: inline-flex; }
+.run-ctl[hidden] { display: none; }
+.menu.run-menu { left: auto; right: 0; width: 344px; padding: 16px; }
+.run-menu .pr-label { display: block; margin: 16px 0 8px; font-size: 12px; font-weight: 400; color: var(--dim); }
+.run-menu .act { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+.run-menu .ask { margin: 12px 0 0; padding: 12px; border-radius: var(--r-s); }
 .rv-err, .rv-item .rv-err { margin: 8px 0 0; font-size: 14px; color: var(--text); }
 .rv-err:empty { display: none; }
-/* the stage strip is not shown (the user, 2026-11-24: it named a stage the game was nowhere near); the cost sits right */
-.rv-prog { display: flex; justify-content: flex-end; margin-top: 12px; }
-.rv-cost { display: inline-flex; align-items: flex-end; gap: 8px; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.rv-cost:empty { display: none; }
-.rv-cost .spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
-.rv-cost .spark i { width: 4px; border-radius: 1px; background: var(--quiet); }
-.rv-cost .spark i:last-child { background: var(--text); }
 .rv-item .meta { font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); margin: 0 0 4px; }
-.rv-stages { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
-.rv-stage { min-width: 0; font-size: 12px; color: var(--faint); }
-.rv-stage i { display: block; height: 4px; border-radius: 999px; background: var(--line-strong); margin-bottom: 8px; transition: background-color 200ms ease; }
-.rv-stage span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-stage small { display: block; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-stage small:empty { display: none; }
-.rv-stage.done { color: var(--dim); }
-.rv-stage.done i { background: var(--dim); }
-.rv-stage.cur { color: var(--text); font-weight: 600; }
-.rv-stage.cur i { background: var(--text); }
-.rv-set { margin: 12px 0 0; border-top: 1px solid var(--line); padding-top: 8px; }
-.rv-set summary, .rv-past summary { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); cursor: pointer; list-style: none; border-radius: 4px; }
-.rv-set summary::-webkit-details-marker, .rv-past summary::-webkit-details-marker { display: none; }
-.rv-set summary:hover, .rv-past summary:hover { color: var(--text); }
-.rv-set summary svg, .rv-past summary svg { transition: transform 180ms var(--ease); }
-.rv-set[open] summary svg, .rv-past[open] summary svg { transform: rotate(90deg); }
-.rv-set .pr-label { margin: 16px 0 8px; }
 .rv-gates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; font-size: 14px; color: var(--dim); }
-.rv-set .sub { font-size: 13px; margin: 8px 0 0; }
 .cp-list { display: grid; gap: 4px; margin: 0 0 12px; }
 .cp-list button { height: var(--h-m); padding: 0 12px; text-align: left; border-radius: var(--r-s); border: 1px solid var(--line); font-size: 13px; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
 .cp-list button:hover { color: var(--text); }
 .cp-list button[aria-pressed="true"] { background: var(--press); border-color: var(--line-strong); color: var(--text); }
 .run-undo p { white-space: pre-line; }
-.rv-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-height: var(--h-m); }
-.rv-empty p { margin: 0; font-size: 14px; color: var(--dim); line-height: 1.5; flex: 1; min-width: 280px; }
-.rv-empty b { color: var(--text); font-weight: 600; }
-.rv-night { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; font-size: 14px; color: var(--dim); }
-.rv-night > span { flex: 1; min-width: 200px; }
-.rv-night-box { flex-basis: 100%; }
-.rv-night-box:empty { display: none; }
-.rv-night-box .ask { margin: 4px 0 0; }
-.rv-now { margin: 0; display: grid; gap: 2px; }
-.rv-who { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: var(--h-m); padding: 4px 8px; margin: 0 -8px; border-radius: var(--r-s); text-align: left; font-size: 14px; transition: background-color var(--t-fast) ease; }
-button.rv-who:hover { background: var(--hover); }
-.rv-who b { font-weight: 500; white-space: nowrap; }
-.rv-who span { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-who.busy span { color: var(--text); }
-.rv-who em { font-style: normal; font-size: 13px; color: var(--faint); white-space: nowrap; }
-.rv-h { display: flex; align-items: baseline; gap: 8px; margin: 32px 0 8px; font-size: 16px; font-weight: 600; }
-.rv-h span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
-.rv-h .pill { margin-left: auto; align-self: center; font-weight: 400; }
 /* nothing to show yet: one quiet line in a soft box, the same in Review, Promos and Settings */
 .rv-none, .empty, #pr-empty, .sk-list > .sub:only-child { margin: 0; padding: 12px 16px; border-radius: var(--r-m); background: color-mix(in srgb, var(--text) 3%, transparent); font-size: 13px; line-height: 1.5; color: var(--faint); }
 #pr-empty { margin-top: 12px; }
 .rv-list { display: grid; gap: 12px; align-items: start; }
 .rv-item { margin: 0; max-width: none; transition: border-color 140ms ease; }
 .rv-item.block { border-color: var(--text); }
-.rv-item.flash, .rv-lk.flash { outline: 2px solid var(--text); outline-offset: 2px; }
+.rv-item.flash { outline: 2px solid var(--text); outline-offset: 2px; }
 .rv-item h4 { word-break: break-word; font-size: 16px; }
 .rv-item p { white-space: pre-line; word-break: break-word; font-size: 14px; color: var(--dim); }
 .rv-item p.clamp { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
@@ -980,43 +816,17 @@ button.rv-who:hover { background: var(--hover); }
 .rv-media { display: flex; gap: 8px; overflow-x: auto; margin: 0 0 12px; }
 .rv-media > * { flex: none; display: block; max-width: 100%; border-radius: var(--r-m); border: 1px solid var(--line); background: #000; }
 .rv-media button { padding: 0; overflow: hidden; cursor: zoom-in; }
-.rv-media img { display: block; max-width: 100%; max-height: 280px; }
+.rv-media img { display: block; max-width: 100%; max-height: 360px; }
 .rv-media video { max-height: 320px; }
 .rv-media.many > * { max-width: 78%; }
 .rv-media.many img, .rv-media.many video { height: 168px; max-height: none; width: auto; max-width: 100%; }
 .rv-change { display: flex; gap: 8px; margin: 8px 0 0; }
+.rv-change[hidden] { display: none; }
 .rv-item.done { padding: 8px 16px; }
 .rv-item.done > :not(.rv-said) { display: none; }
 .rv-said { display: none; font-size: 14px; color: var(--dim); word-break: break-word; }
 .rv-item.done .rv-said { display: block; }
-/* to look at: one line per finished piece of work, opening in place to the whole card */
-.rv-rows { border-top: 1px solid var(--line); }
-.rv-lk { border-bottom: 1px solid var(--line); border-radius: 2px; }
-.rv-line { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto 8px; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px; text-align: left; border-radius: var(--r-s); transition: background-color 140ms ease; }
-.rv-line:hover { background: var(--hover); }
-.rv-line:focus-visible { outline-offset: -2px; }
-.rv-line .thumb { width: 40px; height: 40px; border-radius: var(--r-s); object-fit: cover; background: var(--raised); border: 1px solid var(--line); display: grid; place-items: center; color: var(--quiet); }
-.rv-line b { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-line .who { font-size: 13px; color: var(--dim); white-space: nowrap; }
-.rv-line .when { font-size: 13px; color: var(--faint); white-space: nowrap; min-width: 64px; text-align: right; }
-.rv-line svg { color: var(--faint); transition: transform 180ms var(--ease); }
-.rv-lk.open .rv-line svg { transform: rotate(90deg); }
-.rv-lk.open .rv-line b { white-space: normal; }
-.rv-full { padding: 4px 0 12px; }
-.rv-full .rv-item h4, .rv-full .rv-item .meta { display: none; }
-.rv-lk > .rv-said { padding: 8px; }
-.rv-lk.done > .rv-line, .rv-lk.done > .rv-full { display: none; }
-.rv-lk.done > .rv-said { display: block; }
-@media (max-width: 1040px) { .rv-line { grid-template-columns: 40px minmax(0, 1fr) auto 8px; } .rv-line .who { display: none; } }
-.rv-tell { display: flex; gap: 8px; align-items: flex-end; padding: 4px 4px 4px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 160ms ease; }
-.rv-tell:focus-within { border-color: color-mix(in srgb, var(--text) 40%, transparent); }
-.rv-tell textarea { flex: 1; resize: none; border: 0; outline: 0; background: none; line-height: 1.5; padding: 4px 0; min-height: var(--h-m); max-height: 160px; font-size: 14px; -webkit-user-select: text; user-select: text; }
-.rv-past { margin: 32px 0 0; border-top: 1px solid var(--line); padding-top: 12px; }
-.rv-past-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
-.rv-past-row b { font-weight: 500; word-break: break-word; }
-.rv-past-row em { font-style: normal; font-size: 13px; color: var(--faint); white-space: nowrap; }
-.rv-past-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); word-break: break-word; }
-[data-r="rv-past-list"] { margin-top: 8px; }
+
 .studio-wait { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; font-weight: 500; color: var(--text); }
 
 /* ---------- Settings, Usage and the project: windows over the page ----------
@@ -1318,6 +1128,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 #pd-out.warn { color: var(--text); }
 .light { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.86); opacity: 0; pointer-events: none; transition: opacity 180ms ease; padding: 32px; }
 .light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
+.light span { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; }
+.light span:empty { display: none; }
 .light.on { opacity: 1; pointer-events: auto; }
 
 /* ---------- Usage: each account's plan limits, and what was used today ----------
@@ -1538,6 +1350,20 @@ applyTheme();
         <span class="conv"><button class="title" id="chat-title" aria-haspopup="menu" aria-expanded="false" title="This project's chats"><span id="chat-name">New chat</span><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5"/></svg></button>
           <div class="menu down" id="conv-menu" role="menu"></div></span>
         <span class="meta" id="chat-meta"></span>
+        <span class="run-ctl" id="runbar" hidden>
+          <button class="icon" id="run-more" aria-label="The run" title="The run: pause, settings, undo, end" aria-haspopup="dialog" aria-expanded="false"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg></button>
+          <div class="menu down run-menu" id="run-menu" role="dialog" aria-label="The run">
+            <button class="pill" data-r="rv-toggle" hidden></button>
+            <span class="pr-label">Wait for my approval after</span>
+            <div class="rv-gates" data-r="rv-gates"></div>
+            <span class="pr-label">Experts at once</span>
+            <div class="seg" data-r="rv-max"></div>
+            <div class="act"><button class="pill sm" data-r="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button><button class="pill sm" data-r="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button></div>
+            <div data-r="rv-undo-box"></div>
+            <div data-r="rv-end-box"></div>
+            <p class="rv-err" data-r="rv-err"></p>
+          </div>
+        </span>
       </div>
       <div class="scroll" id="scroll"></div>
       <div class="dock">
@@ -1612,64 +1438,10 @@ applyTheme();
     </div></div>
 
     <div id="review"><div class="rv-page">
-      <header class="rv-top">
-        <p class="rv-top-sum" id="rv-top-sum" role="status" aria-atomic="true"></p>
-        <nav class="rv-jump" id="rv-jump" aria-label="Jump to a project" hidden></nav>
-      </header>
-      <p class="rv-none" id="rv-noproj" hidden>No projects yet. New project, on the left, makes one.</p>
-      <div class="rv-secs" id="rv-secs"></div>
+      <div class="rv-tabs" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden></div>
+      <div class="rv-list" id="rv-items" role="tabpanel" tabindex="-1"></div>
+      <p class="rv-nothing" id="rv-nothing" hidden>Nothing needs you</p>
     </div></div>
-    <!-- one project's part of Review: made once per project, when its section is first opened -->
-    <template id="rv-tpl">
-      <section class="rv-run" aria-label="The run">
-        <div class="rv-empty" data-r="rv-empty" hidden>
-          <p data-r="rv-empty-p"></p>
-          <span class="rv-cost"></span>
-          <button class="pill sm" data-r="rv-to-chat">Open chat</button>
-        </div>
-        <div data-r="rv-live" hidden>
-          <div class="rv-state"><span class="dot" data-r="rv-dot"></span><b data-r="rv-state"></b><span class="rv-why" data-r="rv-why"></span><span class="rv-cost"></span><button class="pill sm" data-r="rv-toggle" hidden></button><button class="icon" data-r="rv-more" aria-label="Run settings" title="Run settings" aria-expanded="false"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg></button></div>
-          <div class="rv-stages" data-r="rv-stages" hidden></div>
-          <details class="rv-set" data-r="rv-set">
-            <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
-            <p class="rv-lead" data-r="rv-lead"></p>
-            <span class="pr-label">Wait for my approval after</span>
-            <div class="rv-gates" data-r="rv-gates"></div>
-            <span class="pr-label">Experts at once</span>
-            <div class="seg" data-r="rv-max"></div>
-            <p class="sub">More experts finish sooner and use more of your AI plan.</p>
-            <span class="pr-label">Go back</span>
-            <button class="pill sm" data-r="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button>
-            <div data-r="rv-undo-box"></div>
-            <span class="pr-label">Stop for good</span>
-            <button class="pill sm" data-r="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button>
-            <div data-r="rv-end-box"></div>
-          </details>
-        </div>
-        <div data-r="rv-nights"></div>
-        <p class="rv-err" data-r="rv-err"></p>
-      </section>
-      <div data-r="rv-now-wrap" hidden>
-        <div class="rv-now" data-r="rv-now" role="group" aria-label="At work right now"></div>
-      </div>
-      <h3 class="rv-h">Needs you <span data-r="rv-needs-n"></span></h3>
-      <p class="rv-none" data-r="rv-needs-none">Nothing needs you right now.</p>
-      <div class="rv-list" data-r="rv-needs"></div>
-      <div data-r="rv-look-wrap">
-        <h3 class="rv-h">To look at <span data-r="rv-look-n"></span><button class="pill sm" data-r="rv-all" hidden>Approve all</button></h3>
-        <p class="rv-none" data-r="rv-look-none">Finished work lands here, newest first.</p>
-        <div class="rv-rows" data-r="rv-look"></div>
-      </div>
-      <div data-r="rv-tell-wrap">
-        <h3 class="rv-h">Tell the run something</h3>
-        <div class="rv-tell"><textarea data-r="rv-say" rows="1" placeholder="A message for the Lead, e.g. make the shop brighter" aria-label="A message for the Lead"></textarea><button class="pill" data-r="rv-send" title="Send to the Lead" disabled>Send</button></div>
-        <p class="r-note" data-r="rv-said"></p>
-      </div>
-      <details class="rv-past" data-r="rv-past" hidden>
-        <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Earlier decisions <span data-r="rv-past-n"></span></summary>
-        <div data-r="rv-past-list"></div>
-      </details>
-    </template>
 
   <div id="promos"><div class="r-col pr-page">
     <div class="pr-cols"><section class="pr-make" aria-label="New promo">
@@ -2104,7 +1876,7 @@ applyTheme();
   </div>
   <p class="sub" id="pd-del-out" hidden></p>
 </div></aside>
-<div class="light" id="light"><img alt=""></div>
+<div class="light" id="light" role="dialog" aria-label="Picture"><img alt=""><span></span></div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
@@ -2125,7 +1897,6 @@ let AIS = ALL_AIS.slice();
 let curProj = null, view = "chat";
 let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
 const lastChat = {}, lastTab = {};
-const rvSecs = new Map();   /* Review: project path -> its section of the page */
 try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (saved0 && typeof saved0.proj === "string") { curProj = saved0.proj; view = saved0.view || "chat"; } } catch (e) {}
 
 /* Everything the program can do: [name, one short line, an example to put in the message box (or a page to open),
@@ -2143,17 +1914,17 @@ const GUIDE = [
   ]],
   ["Bigger jobs", [
     ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first working version of this and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
-    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in Review, in the project's section under Needs you, instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; for a Roblox game, leave Studio open. Pressing stop ends it."],
-    ["Studio", "A Lead takes the project through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a project's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
-    ["Review", "One page for every project: what is happening on each, and what needs you.", "@review", "Open it from the left, under Overview; its number is everything that waits for you. Each project has a section, the ones that need you first; a project with nothing waiting is one line that opens when pressed. In a section: at the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
+    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in Review instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; for a Roblox game, leave Studio open. Pressing stop ends it."],
+    ["Studio", "A Lead takes the project through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a project's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in the run's menu (the three dots at the top of the chat) to use less, or pause it there. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
+    ["Review", "What waits for you: look, then Approve or Ask for changes.", "@review", "Open it from the left, under Overview; its number is everything that needs you. There is a tab for each project with something waiting. Each thing is its pictures or clip (press a picture to see it large; the arrow keys go through them), its title, and two buttons: Approve, or Ask for changes, which opens a box to say what should change, and a fresh expert of the same kind redoes it. A to-do only you can do has Done. Pausing a run and its settings are behind the three dots at the top of a chat of its project."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Knowledge vault", "Settings, Knowledge: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
   ]],
   ["Safety net", [
     ["Checkpoint", "Before an overnight or studio run the project is committed to git, so it can go back.", "", "In a Roblox game, \"Take a checkpoint\" also saves every script of the place into the project folder."],
-    ["Undo the night", "A project's section in Review puts its files (and for a Roblox game, Studio) back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
-    ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The graph button at the bottom left opens today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), today's total, and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. Review shows what each project has cost."],
+    ["Undo the night", "The chat's own Checkpoint saved line puts its files (and for a Roblox game, Studio) back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
+    ["Undo this run", "In the run's menu, at the top of the chat: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
+    ["Usage", "The graph button at the bottom left opens today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), today's total, and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. "],
     ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Settings, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
   ["Roblox games", [
@@ -2182,7 +1953,8 @@ const CONTROLS = [
   ["Overview", "A live graph of every project, its chats and its experts.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project to see it in Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. What needs you is in Review. This page opens first when a project has a run going or something waits for you."],
   ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project in Review. Right-click a project (or press the button that shows on its row, or Shift+F10) to rename it, open its folder or delete it. Renaming changes the name Fridae shows, not the folder. Deleting asks first: remove it from Fridae and keep its files, or move its folder to the Recycle Bin or Trash. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
   ["Chat, Promos", "A project's tabs: talk to its agent. A Roblox game also has Promos (promo videos)."],
-  ["Review, on the left", "One page for every project: what needs you, and each project's run.", "", "Under Overview. Its number is everything that waits for you, across every project."],
+  ["Review, on the left", "What waits for you, a tab per project.", "", "Under Overview. Its number is everything that needs you, across every project."],
+  ["The three dots at the top of a chat", "While the project has a studio run: pause or resume it, where it waits for your approval, experts at once, undo, end."],
   ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Settings, Chats, and put back afterwards."],
   ["The project's name", "Press it for the project's folder, its kind (Project or Roblox game), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
@@ -2882,7 +2654,6 @@ $("proj-list").addEventListener("focusin", (ev) => {
 function paintView() {
   if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
   for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
-  if (view !== "review") for (const S of rvSecs.values()) if (S.built) S.$("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
   ["chat", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
   requestAnimationFrame(() => slideMark($("tabs")));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
@@ -2891,6 +2662,7 @@ function paintView() {
   $("b-proj").title = curProj && !isPage(view) ? "The project's folder, notes and git history" : "";
   $("tabs").hidden = isPage(view);
   $("v-promos").hidden = !isGameProj(curProj);
+  paintRunBar();
 }
 function selectionHint() {
   const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
@@ -3659,7 +3431,7 @@ function nightCard(p, onUndone) {
     if (p.nightUndoing) return;                                              /* already on its way */
     if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }       /* undone meanwhile, at work again, or closed */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
-    const repaint = () => { paintNightTag(p); if (view === "review") paintNight(rvSecs.get(projKey(p))); };
+    const repaint = () => paintNightTag(p);
     p.nightUndoing = true; repaint();
     let r; try { r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly }); } catch (e) { r = null; }
     p.nightUndoing = false;
@@ -3674,34 +3446,6 @@ function nightCard(p, onUndone) {
   files.onclick = () => undo1(true);
   return card;
 }
-/* Review: in a project's section, one line per chat of that project whose night can be undone, each with its own button and its own
-   card under it. A line goes with its chat, so nothing of another game's (or another chat's) is ever left open. A
-   line whose undo is on its way stays where it is, with its card, until the app answers; it is not made anew. */
-function paintNight(S) {
-  if (!S || !S.built) return;
-  const host = S.$("rv-nights"), path = S.path, list = nightChats(path), keep = new Set(list.map((p) => p.id));
-  for (const row of [...host.children]) {
-    const p = agents.get(row.dataset.chat), undoing = !!(p && p.nightUndoing && projKey(p) === path);
-    if (!keep.has(row.dataset.chat) && !undoing) row.remove(); else row.querySelector("button").disabled = undoing;
-  }
-  for (const p of list) {
-    let row = [...host.children].find((r) => r.dataset.chat === p.id);
-    if (!row) {
-      row = el("div", "rv-night", '<span></span><button class="pill sm" title="Put Studio and the project back as they were before the overnight run began">Undo the night</button><div class="rv-night-box"></div>');
-      row.dataset.chat = p.id;
-      row.querySelector("button").onclick = () => {
-        if (!nightOpen(p)) { paintNight(S); return; }
-        row.querySelector(".rv-night-box").replaceChildren(nightCard(p, () => {
-          /* its line is gone; the chat holds what went back */
-          const b = el("button", "linkish", "Open the chat"); b.onclick = () => { sayTip.classList.remove("on"); openChatById(p.id); };
-          say("The night was undone. The chat says what went back.", b);
-        }));
-      };
-      host.appendChild(row);
-    }
-    row.querySelector("span").textContent = "The overnight run in “" + p.name + "” can be undone.";
-  }
-}
 /* The chat's own line where the night began. With a checkpoint it says where the undo is: Review for a game's chat
    (Run settings for a studio run); for a chat with no game, which has no Review, the undo is this line's own link.
    With no checkpoint it says so, and points at no undo. */
@@ -3709,8 +3453,8 @@ function paintNightTag(p) {
   const t = p.nightTag; if (!t) return;
   const run = !!(p.studio || (p.night && p.night.run)), game = !!p.project, rbx = isGameProj(p.project);
   t.querySelector("span").textContent = !nightSaved(p) ? (game ? (rbx ? "No checkpoint: no git in the project and Studio not connected" : "No checkpoint: the project has no git") : "No checkpoint: Studio not connected")
-    : "Checkpoint saved" + (run ? " · Undo this run is in Review, under Run settings" : game ? " · Undo the night is in Review" : "");
-  const b = t.querySelector("button"); if (b) b.hidden = run || game || !nightOpen(p);
+    : "Checkpoint saved" + (run ? " · Undo this run is in the run's menu, at the top of this chat" : "");
+  const b = t.querySelector("button"); if (b) b.hidden = run || !nightOpen(p);
 }
 /* a night begins: its line goes into the chat, and anything left open about the night before it goes */
 function nightTag(p) {
@@ -3975,7 +3719,7 @@ function onEvent(e) {
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
-  if ((view === "review" || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon(projKey(p));
+  if (view === "all" && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
@@ -4134,7 +3878,7 @@ $("mode").onclick = (ev) => { ev.stopPropagation(); if (togglePop("mode")) paint
 const RUN_MODES = [
   ["ask", "Ask me", "Does what you ask, then waits for you.", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks, and keeps going until done.", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in Review, in the project's section under Needs you, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
+  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in Review, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
   ["studio", "Studio", "A Lead and its experts build the project, stage by stage.", "A Lead takes this project through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 let runMode = "ask";
@@ -5159,9 +4903,10 @@ const STAGE_NAMES = [["idea", "Idea"], ["design", "Design"], ["build", "Build"],
 const LEAD_CARD = "Waiting for your answer in Review";   /* the Lead's own board card points here, so Review leaves it out */
 const rvAll = {};           /* project path -> its GET /api/review reply */
 const rvDone = new Map();   /* item or card id -> { at, gone }: answered here; one line until the next refresh after it */
-const rvOpen = {};          /* project path -> a section opened (true) or folded (false) by hand */
-let rvOrder = [];           /* the sections' order, set when the page opens: it does not move under the reader */
-let rvTimer = 0, rvLoadT = 0, rvDeferred = false, rvUsage = [], rvUsageAt = 0;
+const rvTray = { cards: new Map() };   /* the cards on the page, by project and id */
+let rvOrder = [];           /* the tabs' order, set when the page opens: it does not move under the reader */
+let rvTab = "";             /* the project whose things are shown */
+let rvTimer = 0, rvLoadT = 0, rvDeferred = false;
 const stagesDone = (run) => !!(run && run.stages && run.stages.length && run.stages.every((s) => s.status === "done"));
 const runActive = (run) => !!(run && run.on && !stagesDone(run));
 const LEAD_PAUSED_CARD = "The studio run is paused. Resume it in Review";
@@ -5190,142 +4935,84 @@ async function loadReview(only) {
   /* an answer made here stays as one line until a refresh that began well after it */
   for (const d of rvDone.values()) if (d.at < started - 1500) d.gone = true;
   paintReviewBadge();
-  if (view === "review") { if (only) rvPaint(only); else paintReview(); }
+  if (view === "review") paintReview();
+  paintRunBar();
   if (view === "all") paintAll();
   if (view === "chat") { paintSwitch(); paintComposer(); }
 }
 function reloadReview() { clearTimeout(rvLoadT); rvLoadT = setTimeout(() => loadReview(), 300); }
-/* everything that waits for the user, over every project: the sidebar's count and the page's first line */
+/* everything that waits for the user, over every project: the sidebar's count */
 function rvTotals() {
   let n = 0, k = 0, strong = false;
   for (const x of projects.projects || []) { const st = projState(x.path); if (st.n) { n += st.n; k++; } strong = strong || st.strong; }
   return { n, k, strong };
 }
-function paintReviewBadge() { paintSide(); paintRvTop(); }
-/* a run that is stopped until the user answers first, then whatever else waits for the user, then what is at work,
-   then the rest */
-const rvRank = (x) => { const st = projState(x.path), r = rvAll[x.path], going = runActive(r && r.run); return st.n && going ? (st.strong ? 0 : 1) : st.n ? 2 : st.working || going ? 3 : 4; };
+function paintReviewBadge() { paintSide(); }
+/* a run that is stopped until the user answers first, then whatever else waits for the user, then the rest */
+const rvRank = (x) => { const st = projState(x.path), r = rvAll[x.path], going = runActive(r && r.run); return st.n && going ? (st.strong ? 0 : 1) : st.n ? 2 : 3; };
 const rvName = (path) => { const pr = (projects.projects || []).find((x) => x.path === path); return pr ? pr.name : prName(path); };
 function openReview(fresh) {
-  if (fresh) {
-    rvOrder = (projects.projects || []).slice().sort((a, b) => rvRank(a) - rvRank(b)).map((x) => x.path);
-    for (const S of rvSecs.values()) S.stay = false;
-    $("review").scrollTop = 0;
-  }
-  paintReview(); loadReview(); loadRvUsage(true);
-  clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") { loadReview(); loadRvUsage(); } else clearInterval(rvTimer); }, 5000);
+  if (fresh) { rvOrder = (projects.projects || []).slice().sort((a, b) => rvRank(a) - rvRank(b)).map((x) => x.path); $("review").scrollTop = 0; }
+  paintReview(); loadReview();
+  clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") loadReview(); else clearInterval(rvTimer); }, 5000);
 }
-/* a project's section: its name as a line that opens and folds it, and under it (made when first opened) the run,
-   who is at work, what needs the user, what there is to look at, and the box for the Lead */
-function rvSec(path) {
-  let S = rvSecs.get(path); if (S) return S;
-  const root = el("section", "rv-sec", '<h2 class="rv-sec-h"><button class="rv-sec-head" aria-expanded="false"><b></b><span class="rv-kind" hidden>Roblox game</span><span class="rv-sec-note"></span>' + CHEVRON + '</button></h2><div class="rv-sec-body" hidden></div>');
-  root.dataset.path = path;
-  S = { path, root, head: root.querySelector(".rv-sec-head"), body: root.querySelector(".rv-sec-body"), name: root.querySelector(".rv-sec-head b"), kind: root.querySelector(".rv-kind"), note: root.querySelector(".rv-sec-note"),
-    built: false, open: false, stay: false, cards: new Map(), setBusy: false, pastSig: null, $: null };
-  S.head.onclick = () => { rvOpen[path] = !S.open; paintSec(S); };
-  rvSecs.set(path, S); return S;
+/* what a project has on the page: what its run waits for, the to-dos only the user can do, then finished work to
+   look at. Something just answered stays as one line until the next refresh after it. */
+function rvThings(path) {
+  const r = rvAll[path]; if (!r) return [];
+  const items = (r.items || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
+  const needs = rvNeeds(r).filter((c) => rvShown(c.id));
+  const card = (key, sig, make) => rvCard(rvTray, path + "\n" + key, sig, make);
+  const item = (i) => card(i.id, [i.id, i.created, (i.media || []).join("/"), i.title].join("|"), () => rvItemCard(i, r));
+  return items.filter((i) => i.blocking).map(item).concat(needs.map((c) => card(c.id, [c.id, c.title, c.note].join("|"), () => rvNeedCard(c, path))), items.filter((i) => !i.blocking).map(item));
 }
-function rvBuild(S) {
-  S.body.appendChild($("rv-tpl").content.cloneNode(true));
-  const got = new Map();
-  /* the section's own parts, by the names the page's parts had when a project's Review was a tab */
-  S.$ = (id) => { let n = got.get(id); if (!n) { n = S.body.querySelector('[data-r="' + id + '"]') || document.getElementById(id); got.set(id, n); } return n; };
-  S.built = true;
-  rvBindRun(S); rvBindSet(S); rvBindTell(S);
-}
-/* One section. A project with nothing waiting, no run and no one at work is one quiet line until it is pressed; a
-   section that had something stays open while the page is in front, so an answer just given does not fold away.
-   `light`: only who is at work changed. */
-function paintSec(S, light) {
-  const path = S.path, r = rvAll[path], st = projState(path), run = r && r.run && r.run.on ? r.run : null;
-  const look = rvWaiting(r).filter((i) => !i.blocking).length;
-  const quiet = !st.n && !look && !run && !st.working && !nightChats(path).length;
-  if (!quiet) S.stay = true;
-  const open = rvOpen[path] !== undefined ? rvOpen[path] : !quiet || S.stay;
-  S.open = open;
-  putText(S.name, rvName(path)); S.kind.hidden = !isGameProj(path);
-  putText(S.note, st.n ? st.n + (st.n === 1 ? " thing needs you" : " things need you") : run ? runState(r, run)[0] : st.working ? "Chats at work" : look ? look + " to look at" : "Nothing needs you");
-  putClass(S.note, "rv-sec-note" + (st.strong ? " strong" : ""));
-  putAttr(S.head, "aria-expanded", open ? "true" : "false");
-  putTitle(S.head, path);
-  S.body.hidden = !open; S.root.classList.toggle("quiet", !open && quiet);
-  if (!open) return;
-  if (!S.built) { rvBuild(S); light = false; }
-  if (light) paintNow(S); else paintSecBody(S);
-}
-/* the whole page: a section per project, in the order set when the page opened (a new project goes last) */
+/* The page: a tab per project that has something (in the order set when the page opened), and the things of the
+   one that is chosen. A tab goes when its project has nothing left; with no tabs the page says so in three words. */
 function paintReview() {
   if (view !== "review") return;
   rvDeferred = false;
-  const have = new Set((projects.projects || []).map((x) => x.path));
-  rvOrder = rvOrder.filter((p) => have.has(p));
-  for (const p of have) if (!rvOrder.includes(p)) rvOrder.push(p);
-  for (const [p, S] of [...rvSecs]) if (!have.has(p)) { S.root.remove(); rvSecs.delete(p); }
-  const host = $("rv-secs"), els = rvOrder.map((p) => rvSec(p).root);
-  if (els.length !== host.children.length || els.some((e, i) => host.children[i] !== e)) setRows(host, els);
-  for (const p of rvOrder) paintSec(rvSecs.get(p));
-  paintRvTop();
-}
-/* one project's section, after something of that project changed */
-function rvPaint(path, light) {
-  if (view !== "review") return;
-  const S = rvSecs.get(path); if (!S) return;
-  paintSec(S, light); paintRvTop();
-}
-/* the page's first lines: how much waits and in how many projects, and a way to each project's section */
-function paintRvTop() {
-  if (view !== "review") return;
-  const t = rvTotals(), any = (projects.projects || []).length > 0;
-  putText($("rv-top-sum"), !any ? "Review" : t.n ? t.n + (t.n === 1 ? " thing needs you" : " things need you") + (t.k === 1 ? " in one project" : " across " + t.k + " projects") : "Nothing needs you right now");
-  $("rv-noproj").hidden = any;
-  const jump = $("rv-jump"), sig = rvOrder.map((p) => [p, rvName(p), projState(p).n].join("\n")).join("\n\n");
-  jump.hidden = rvOrder.length < 2;
-  if (jump.dataset.sig === sig) return;
-  jump.dataset.sig = sig;
-  const had = jump.contains(document.activeElement) ? document.activeElement.dataset.path : null;
-  jump.replaceChildren(el("span", "", "Jump to"), ...rvOrder.map((p) => {
-    const b = el("button", "", "<span></span>"), n = projState(p).n; b.dataset.path = p;
-    b.querySelector("span").textContent = rvName(p);
-    if (n) { const i = el("i"); i.textContent = n; i.title = n + (n === 1 ? " thing needs you" : " things need you"); b.appendChild(i); }
-    b.onclick = () => rvJump(p);
-    return b;
-  }));
-  if (had !== null) { const b = [...jump.querySelectorAll("button")].find((x) => x.dataset.path === had); if (b) b.focus(); }
-  rvSpy();
-}
-/* The first lines stay at the top of the page: a hairline shows once something has scrolled under them, a jump lands
-   below them (their height is kept in --rv-top-h), and the section in sight is the one marked in Jump to. */
-function rvSpy() {
-  const page = $("review"), top = page.querySelector(".rv-top"), h = top.offsetHeight;
-  if (!h) return;
-  page.style.setProperty("--rv-top-h", h + "px");
-  top.classList.toggle("stuck", page.scrollTop > 0);
-  const line = top.getBoundingClientRect().bottom + 24;
-  let cur = rvOrder[0];
-  for (const p of rvOrder) { const S = rvSecs.get(p); if (S && S.root.getBoundingClientRect().top <= line) cur = p; }
-  if (page.scrollTop + page.clientHeight >= page.scrollHeight - 2 && page.scrollTop > 0) { const vis = rvOrder.filter((p) => { const S = rvSecs.get(p); return S && S.root.getBoundingClientRect().top >= line; }); if (vis.length) cur = vis[0]; }
-  for (const b of $("rv-jump").querySelectorAll("button")) putAttr(b, "aria-current", b.dataset.path === cur ? "true" : null);
-}
-{ let spyT = 0; $("review").addEventListener("scroll", () => { if (!spyT) spyT = requestAnimationFrame(() => { spyT = 0; rvSpy(); }); }, { passive: true }); }
-/* to a project's section (or one item in it): it opens, comes into sight, and its edge pulses twice, as a Settings
-   search result does */
-function rvJump(path, id) {
-  const S = rvSecs.get(path); if (!S) return;
-  if (!S.open) { rvOpen[path] = true; paintSec(S); }
-  const c = id && S.cards.get(id);
-  if (c) {
-    /* a line of To look at opens to its card */
-    if (c.el.classList.contains("rv-lk") && !c.el.classList.contains("open")) c.el.querySelector(".rv-line").click();
-    c.el.scrollIntoView({ block: "center" });
-    c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
-    return;
+  const have = (projects.projects || []).map((x) => x.path);
+  rvOrder = rvOrder.filter((p) => have.includes(p)); for (const p of have) if (!rvOrder.includes(p)) rvOrder.push(p);
+  const tabs = rvOrder.map((p) => ({ path: p, els: rvThings(p), n: projState(p).n })).filter((t) => t.els.length);
+  if (!tabs.some((t) => t.path === rvTab)) rvTab = tabs.length ? tabs[0].path : "";
+  const bar = $("rv-tabs"), sig = tabs.map((t) => [t.path, rvName(t.path), t.n, t.path === rvTab].join("\n")).join("\n\n");
+  bar.hidden = !tabs.length; $("rv-nothing").hidden = !!tabs.length;
+  if (bar.dataset.sig !== sig) {
+    bar.dataset.sig = sig;
+    const had = bar.contains(document.activeElement);
+    bar.replaceChildren(...tabs.map((t, i) => {
+      const b = el("button", "", "<span></span>"), on = t.path === rvTab;
+      b.id = "rv-tab-" + i; b.dataset.path = t.path; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", on ? "true" : "false"); b.setAttribute("aria-controls", "rv-items"); b.tabIndex = on ? 0 : -1;
+      b.querySelector("span").textContent = rvName(t.path);
+      if (t.n) { const c = el("i"); c.textContent = t.n; b.appendChild(c); b.setAttribute("aria-label", rvName(t.path) + ", " + t.n + (t.n === 1 ? " thing needs you" : " things need you")); }
+      b.onclick = () => { rvTab = t.path; paintReview(); $("review").scrollTop = 0; };
+      if (on) $("rv-items").setAttribute("aria-labelledby", b.id);
+      return b;
+    }));
+    if (had) { const b = bar.querySelector('[aria-selected="true"]'); if (b) b.focus(); }
   }
-  S.root.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-  S.head.focus({ preventScroll: true });
-  S.root.classList.remove("settings-search-target-pulse"); void S.root.offsetWidth;
-  S.root.classList.add("settings-search-target-pulse");
-  clearTimeout(S.pulseT); S.pulseT = setTimeout(() => S.root.classList.remove("settings-search-target-pulse"), 1400);
+  const tab = tabs.find((t) => t.path === rvTab);
+  paintRvList($("rv-items"), tab ? tab.els : []);
+  const keep = new Set(); for (const t of tabs) for (const e of t.els) keep.add(e);
+  for (const [k, c] of [...rvTray.cards]) if (!keep.has(c.el)) rvTray.cards.delete(k);
+}
+/* in the tabs the arrow keys go from project to project */
+$("rv-tabs").addEventListener("keydown", (ev) => {
+  const tabs = [...$("rv-tabs").querySelectorAll("button")], i = tabs.indexOf(document.activeElement);
+  if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
+  ev.preventDefault();
+  const to = tabs[ev.key === "Home" ? 0 : ev.key === "End" ? tabs.length - 1 : (i + (ev.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+  rvTab = to.dataset.path; paintReview(); $("review").scrollTop = 0;
+});
+function rvPaint() { paintReview(); }
+/* to a project's tab, and with `id` to one thing in it, which is marked for a moment */
+function rvJump(path, id) {
+  if (rvThings(path).length) rvTab = path;
+  paintReview();
+  const c = rvTray.cards.get(path + "\n" + id) || (rvTab === path ? { el: $("rv-items").firstElementChild } : null);
+  if (!c || !c.el) return;
+  c.el.scrollIntoView({ block: id ? "center" : "start" });
+  c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1400);
 }
 /* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
    same confirm step as the night's undo */
@@ -5368,7 +5055,37 @@ function undoRunCard(path, onDone) {
   files.onclick = () => run1(true);
   return card;
 }
-/* a section's Undo this run and End this run */
+/* ---------- the run's controls: one button at the top of a chat of a project with a run going, and behind it Pause or
+   Resume, where the run waits for approval, experts at once, Undo this run and End this run ---------- */
+const RB = { path: "", setBusy: false, $: (id) => $("run-menu").querySelector('[data-r="' + id + '"]') };
+function closeRunMenu(refocus) {
+  if (!$("run-menu").classList.contains("on")) return;
+  $("run-menu").classList.remove("on"); $("run-more").setAttribute("aria-expanded", "false");
+  if (refocus) $("run-more").focus();
+}
+$("run-more").onclick = (ev) => {
+  ev.stopPropagation();
+  const on = !$("run-menu").classList.contains("on");
+  if (!on) { closeRunMenu(); return; }
+  closePops(); closeConv(); paintRunBar();
+  $("run-menu").classList.add("on"); $("run-more").setAttribute("aria-expanded", "true");
+};
+document.addEventListener("mousedown", (ev) => { if (!ev.target.closest("#runbar")) closeRunMenu(); });
+$("runbar").addEventListener("keydown", (ev) => { if (ev.key === "Escape" && $("run-menu").classList.contains("on")) { ev.preventDefault(); ev.stopPropagation(); closeRunMenu(true); } });
+function paintRunBar() {
+  const path = view === "chat" && curProj ? curProj : "", r = path ? rvAll[path] : null, run = r && r.run && r.run.on ? r.run : null;
+  /* another project in front: what was open for the last one goes (an End or Undo card would act on it) */
+  if (RB.path !== path) { RB.path = path; RB.$("rv-undo-box").replaceChildren(); RB.$("rv-end-box").replaceChildren(); RB.$("rv-err").textContent = ""; closeRunMenu(); }
+  $("runbar").hidden = !run;
+  if (!run) { closeRunMenu(); return; }
+  const [, why, action] = runState(r, run), t = RB.$("rv-toggle");
+  t.hidden = !action; t.dataset.action = action; t.textContent = action === "resume" ? "Resume the run" : "Pause the run"; t.title = why;
+  if (!RB.setBusy) {
+    const gates = run.gates || [];
+    RB.$("rv-gates").querySelectorAll("input").forEach((i) => (i.checked = gates.includes(i.value)));
+    RB.$("rv-max").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.n === (run.max_experts || 2)));
+  }
+}
 function rvBindRun(S) {
 const $ = S.$;
 $("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(S.path)); };
@@ -5399,17 +5116,13 @@ function runState(r, run) {
   if (run.note === "slots") return r.waiting
     ? ["Waiting for a free slot", "Every agent slot is in use. Closing a chat frees one.", "resume", "Every agent slot is in use: the run's own experts count too. The Lead is woken as soon as one is free; closing a chat you are done with frees one. Resume tries again now."]
     : ["Waiting for a free slot", "Every agent slot is in use. The Lead waits for its experts.", "pause", "Every agent slot is in use: the run's own experts count too. The Lead waits for its experts, then tries again."];
-  if (r.waiting) return ["Waiting for you", "Answer under Needs you and it goes on.", "pause"];
+  if (r.waiting) return ["Waiting for you", "Answer in Review and it goes on.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
 }
-/* a section's stages, its Run settings, and Pause or Resume */
 function rvBindSet(S) {
   const $ = S.$;
-  const strip = $("rv-stages"), gates = $("rv-gates"), max = $("rv-max");
-  STAGE_NAMES.forEach(([id, name]) => {
-    const s = el("div", "rv-stage", "<i></i><span></span><small></small>"); s.dataset.id = id; s.querySelector("span").textContent = name; strip.appendChild(s);
-    const g = el("label", "check-row", '<input type="checkbox"><span></span>'); g.querySelector("span").textContent = name; g.querySelector("input").value = id; gates.appendChild(g);
-  });
+  const gates = $("rv-gates"), max = $("rv-max");
+  STAGE_NAMES.forEach(([id, name]) => { const g = el("label", "check-row", '<input type="checkbox"><span></span>'); g.querySelector("span").textContent = name; g.querySelector("input").value = id; gates.appendChild(g); });
   [1, 2, 3, 4].forEach((n) => { const b = el("button"); b.textContent = n; b.dataset.n = n; max.appendChild(b); });
   const settings = async (body) => {
     S.setBusy = true; $("rv-err").textContent = "";
@@ -5420,7 +5133,6 @@ function rvBindSet(S) {
   };
   gates.onchange = () => settings({ gates: [...gates.querySelectorAll("input:checked")].map((i) => i.value) });
   max.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; max.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); settings({ max_experts: +b.dataset.n }); };
-$("rv-more").onclick = () => { const d = $("rv-set"); d.open = !d.open; $("rv-more").setAttribute("aria-expanded", d.open ? "true" : "false"); };
 $("rv-toggle").onclick = async () => {
   const b = $("rv-toggle"), action = b.dataset.action, path = S.path;
   b.disabled = true; $("rv-err").textContent = "";
@@ -5430,121 +5142,51 @@ $("rv-toggle").onclick = async () => {
   loadReview(path);
 };
 }
-/* one stage of the strip: done, now, or to do (and whether it waits for the user's approval) */
-function paintStage(s, run, id) {
-  const st = (run.stages || []).find((x) => x.id === id) || {}, gates = run.gates || [];
-  const now = st.status !== "done" && (st.status === "doing" || run.stage === id), gate = gates.includes(id);
-  s.className = "rv-stage" + (st.status === "done" ? " done" : now ? " cur" : "");
-  /* the bar already says done, now or to do; the one word under a stage is that it stops for the user's approval */
-  s.querySelector("small").textContent = gate && st.status !== "done" ? "asks you" : "";
-  s.title = stageName(id) + ": " + (st.status === "done" ? "done" : now ? "working on it now" : "to do") + (gate ? ". Waits for your approval before it is done." : ".");
-}
-const runDot = (state) => "dot" + (state === "Working" ? " live" : state === "Finished" || state === "Waiting for you" ? " ok" : "");
-function paintRun(S, r) {
-  const $ = S.$;
-  const run = r && r.run && r.run.on ? r.run : null;
-  $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
-  const ended = r && r.run && !r.run.on && r.run.ended;
-  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run.") + "</b> Start one in Chat, with the mode button.";
-  if (!run) return;
-  const [state, why, action, whole] = runState(r, run);
-  $("rv-state").textContent = state;
-  $("rv-dot").className = runDot(state);
-  /* the one-line reason, and the way to the Lead; rebuilt only when it changes, so the link keeps the keyboard */
-  const w = $("rv-why"), wsig = why + "|" + ((r.lead_live && run.lead) || "");
-  if (w.dataset.sig !== wsig) {
-    w.dataset.sig = wsig; w.textContent = why; w.title = whole || "";
-    /* the way to the Lead is with the run's settings, behind the button at the end of the line */
-    if (r.lead_live && run.lead) { const b = el("button", "linkish", "Open the Lead's chat"); b.onclick = () => openChatById(run.lead); $("rv-lead").replaceChildren(b); } else $("rv-lead").replaceChildren();
-  }
-  const t = $("rv-toggle"); t.hidden = !action; t.dataset.action = action; t.textContent = action === "resume" ? "Resume" : "Pause";
-  const gates = run.gates || [];
-  $("rv-stages").querySelectorAll(".rv-stage").forEach((s) => paintStage(s, run, s.dataset.id));
-  if (!S.setBusy) {
-    $("rv-gates").querySelectorAll("input").forEach((i) => (i.checked = gates.includes(i.value)));
-    $("rv-max").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.n === (run.max_experts || 2)));
-  }
-}
-/* a review item: its pictures or clip first, then who made it, what it is, and Approve or Change. `onDone` (the line
-   of To look at that holds this card) is told what was decided instead of the card folding to one line itself. */
-function rvItemCard(it, r, onDone) {
+rvBindRun(RB); rvBindSet(RB);
+/* A thing to look at or decide: its pictures or clip (a picture opens large), its title, and Approve or Ask for
+   changes; the box to write in comes when that is pressed. Answered, it is one line. */
+function rvItemCard(it, r) {
   const path = r.project;
-  const card = el("div", "ask rv-item enter" + (it.blocking ? " block" : ""), '<div class="rv-media"></div><h4></h4><div class="meta"></div><div class="plain-words rv-plain" hidden><b>In plain words</b><p></p></div><p class="rv-sum"></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button><button class="pill rv-ask" aria-expanded="false">Ask for changes</button></div><div class="rv-change" hidden><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Send</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const card = el("div", "rv-item rv-card enter", '<div class="rv-media"></div><h4></h4><div class="act"><button class="pill main">Approve</button><button class="pill rv-ask" aria-expanded="false">Ask for changes</button></div><div class="rv-change" hidden><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Send</button></div><p class="rv-err"></p><div class="rv-said"></div>');
   card.dataset.id = it.id;
   const media = it.media || [], row = card.querySelector(".rv-media");
+  const url = (f) => "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(it.id) + "/" + encodeURIComponent(f) + "?t=" + TOKEN;
+  const pics = media.filter((f) => !/\.(mp4|mov)$/i.test(f)).map(url);
   if (!media.length) row.remove();
   row.classList.toggle("many", media.length > 1);
   media.forEach((f) => {
-    const src = "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(it.id) + "/" + encodeURIComponent(f) + "?t=" + TOKEN;
+    const src = url(f);
     if (/\.(mp4|mov)$/i.test(f)) { const v = el("video"); v.controls = true; v.playsInline = true; v.preload = "metadata"; v.src = src; row.appendChild(v); return; }
-    const b = el("button"), im = new Image(); im.alt = f; im.loading = "lazy"; im.src = src;
-    b.setAttribute("aria-label", "Enlarge " + f); b.appendChild(im); b.onclick = () => zoom(src); row.appendChild(b);
+    const b = el("button"), im = new Image(); im.alt = ""; im.loading = "lazy"; im.src = src;
+    b.setAttribute("aria-label", "See " + f + " large"); b.appendChild(im); b.onclick = () => zoom(src, pics, b); row.appendChild(b);
   });
-  const meta = card.querySelector(".meta");
-  meta.textContent = [it.blocking ? "Blocks the run" : "", expertName(r, it), it.created ? ago(it.created) : ""].filter(Boolean).join(" · ");
-  if (it.blocking) meta.title = "The run waits for your answer to this";
-  card.querySelector("h4").textContent = it.title || "Untitled";
-  const plainBox = card.querySelector(".rv-plain");
-  if (it.plain) { plainBox.querySelector("p").textContent = it.plain; plainBox.hidden = false; } else plainBox.remove();
-  const sum = card.querySelector(".rv-sum"), more = card.querySelector(".more");
-  sum.textContent = it.summary || "";
-  if (!it.summary) sum.remove();
-  /* with plain words, those are what is read first: the expert's own text is behind More */
-  else if (it.plain) { sum.hidden = true; more.hidden = false; more.textContent = "More"; more.onclick = () => { sum.hidden = !sum.hidden; more.textContent = sum.hidden ? "More" : "Less"; }; }
-  else if (it.summary.length > 320 || it.summary.split("\n").length > 6) { sum.classList.add("clamp"); more.hidden = false; more.onclick = () => { const open = sum.classList.toggle("clamp"); more.textContent = open ? "Show all" : "Show less"; }; }
-  const approve = card.querySelector(".act .pill"), box0 = card.querySelector(".rv-change"), input = box0.querySelector("input"), send0 = box0.querySelector(".pill"), err = card.querySelector(".rv-err");
+  const h = card.querySelector("h4"); h.textContent = it.title || "Untitled"; h.title = it.plain || it.summary || "";
+  const approve = card.querySelector(".act .pill"), ask = card.querySelector(".rv-ask"), box0 = card.querySelector(".rv-change"), input = box0.querySelector("input"), send0 = box0.querySelector(".pill"), err = card.querySelector(".rv-err");
   const decide = async (body, said) => {
     approve.disabled = send0.disabled = true; err.textContent = "";
     let res; try { res = await api("/api/review", Object.assign({ path, id: it.id }, body)); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
     if (!res.ok) { approve.disabled = false; send0.disabled = !input.value.trim(); err.textContent = res.error || "That did not work."; return; }
     rvDone.set(it.id, { at: Date.now() });
-    if (onDone) onDone(said); else { card.querySelector(".rv-said").textContent = said; card.classList.add("done"); }
-    paintReviewBadge(); rvPaint(path);
+    card.querySelector(".rv-said").textContent = said; card.classList.add("done");
+    paintReviewBadge(); paintReview();
   };
   approve.onclick = () => decide({ action: "approve" }, "Approved: " + (it.title || "Untitled"));
   const sendChange = () => { const note = input.value.trim(); if (!note) { err.textContent = "Say what to change."; input.focus(); return; } decide({ action: "change", note }, "Changes asked for: " + note); };
   send0.onclick = sendChange;
-  const ask = card.querySelector(".rv-ask");
   ask.onclick = () => { box0.hidden = !box0.hidden; ask.setAttribute("aria-expanded", box0.hidden ? "false" : "true"); if (!box0.hidden) input.focus(); };
   input.oninput = () => { send0.disabled = !input.value.trim(); err.textContent = ""; };
   input.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChange(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); input.value = ""; send0.disabled = true; box0.hidden = true; ask.setAttribute("aria-expanded", "false"); ask.focus(); } };
   input.onblur = () => { if (rvDeferred) setTimeout(paintReview, 0); };
   return card;
 }
-/* A finished piece of work, as one line of To look at: a small picture if it has one, its title, who made it and when.
-   Pressing the line opens the whole card in place, with its pictures or clip and Approve or Ask for changes. The card
-   is made, and its pictures and clips loaded, only when the line is first opened. */
-const CLIP_MARK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M3 1.8v8.4L10 6z"/></svg>';
-function rvLookRow(it, r) {
-  const wrap = el("div", "rv-lk enter", '<button class="rv-line" aria-expanded="false"><span class="thumb"></span><b></b><span class="who"></span><span class="when"></span>' + CHEVRON + '</button><div class="rv-said"></div><div class="rv-full" hidden></div>');
-  wrap.dataset.id = it.id;
-  const line = wrap.querySelector(".rv-line"), full = wrap.querySelector(".rv-full"), media = it.media || [];
-  const pic = media.find((f) => !/\.(mp4|mov)$/i.test(f));
-  if (pic) {
-    const im = new Image(); im.className = "thumb"; im.alt = ""; im.loading = "lazy";
-    im.src = "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(it.id) + "/" + encodeURIComponent(pic) + "?t=" + TOKEN;
-    wrap.querySelector(".thumb").replaceWith(im);
-  } else if (media.length) wrap.querySelector(".thumb").innerHTML = CLIP_MARK;
-  wrap.querySelector("b").textContent = it.title || "Untitled";
-  wrap.querySelector(".who").textContent = [expertName(r, it), it.stage ? stageName(it.stage) : ""].filter(Boolean).join(" · ");
-  wrap.querySelector(".when").textContent = it.created ? ago(it.created) : "";
-  line.title = [it.title || "Untitled", expertName(r, it), media.length ? media.length + (media.length === 1 ? " picture or clip" : " pictures or clips") : ""].filter(Boolean).join(" · ");
-  line.onclick = () => {
-    const open = !wrap.classList.contains("open");
-    if (open && !full.firstChild) { const card = rvItemCard(it, r, (said) => { wrap.querySelector(".rv-said").textContent = said; wrap.classList.add("done"); }); card.classList.remove("enter"); full.appendChild(card); }
-    wrap.classList.toggle("open", open); full.hidden = !open; line.setAttribute("aria-expanded", open ? "true" : "false");
-  };
-  return wrap;
-}
 /* a needs card was done: the Lead of the game's studio run is told, so a run waiting on it goes on */
 function needsDone(path, c) { if (path && c && c.title) api("/api/review", { path, action: "needs_done", title: c.title }).catch(() => {}); }
-/* a board card in the needs column: only the user can do it, so it is answered here too */
+/* a to-do only the user can do (a board card in the needs column): its title, and Done */
 function rvNeedCard(c, path) {
-  const card = el("div", "ask rv-item enter", '<h4></h4><div class="meta">Only you can do this</div><p></p><div class="act"><button class="pill main">Done</button></div><p class="rv-err"></p><div class="rv-said"></div>');
-  card.querySelector("h4").textContent = c.title || "";
-  const p = card.querySelector("p"); if (c.note) p.textContent = c.note; else p.remove();
+  const card = el("div", "rv-item rv-card enter", '<h4></h4><div class="act"><button class="pill main">Done</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  card.dataset.id = c.id;
+  const h = card.querySelector("h4"); h.textContent = c.title || ""; h.title = c.note || "";
   const done = card.querySelector(".act .pill"), err = card.querySelector(".rv-err");
-  if (c.chat && chatKnown(c.chat)) { const o = el("button", "pill", "Open its chat"); o.onclick = () => openChatById(c.chat); card.querySelector(".act").appendChild(o); }
   done.onclick = async () => {
     done.disabled = true; err.textContent = "";
     let r; try { r = await api("/api/board", { path, action: "move", id: c.id, column: "done" }); } catch (e) { r = { ok: false }; }
@@ -5552,7 +5194,7 @@ function rvNeedCard(c, path) {
     rvDone.set(c.id, { at: Date.now() });
     needsDone(path, c);
     card.querySelector(".rv-said").textContent = "Done: " + (c.title || ""); card.classList.add("done");
-    paintReviewBadge(); rvPaint(path);
+    paintReviewBadge(); paintReview();
   };
   return card;
 }
@@ -5570,171 +5212,12 @@ function paintRvList(box, els) {
   if (typing) { rvDeferred = true; return; }
   box.replaceChildren(...els);
 }
-/* what is in an open section */
-function paintSecBody(S) {
-  const $ = S.$;
-  const path = S.path, r = rvAll[path], run = r && r.run && r.run.on ? r.run : null;
-  paintRun(S, r);
-  const items = ((r && r.items) || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
-  const needs = rvNeeds(r).filter((c) => rvShown(c.id));
-  const keep = new Set();
-  const itemEl = (i) => { keep.add(i.id); return rvCard(S, i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvItemCard(i, r)); };
-  const lookEl = (i) => { keep.add(i.id); return rvCard(S, i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvLookRow(i, r)); };
-  const needEl = (c) => { keep.add(c.id); return rvCard(S, c.id, [path, c.id, c.title, c.note, c.chat].join("|"), () => rvNeedCard(c, path)); };
-  const blocking = items.filter((i) => i.blocking), look = items.filter((i) => !i.blocking);
-  paintRvList($("rv-needs"), blocking.map(itemEl).concat(needs.map(needEl)));
-  paintRvList($("rv-look"), look.map(lookEl));
-  for (const k of [...S.cards.keys()]) if (!keep.has(k)) S.cards.delete(k);
-  const nNeeds = needsOf(r).length, open = look.filter((i) => !rvDone.has(i.id));
-  $("rv-needs-n").textContent = nNeeds || ""; $("rv-look-n").textContent = open.length || "";
-  $("rv-needs-none").hidden = blocking.length + needs.length > 0; $("rv-look-none").hidden = look.length > 0;
-  $("rv-look").hidden = !look.length;
-  $("rv-all").hidden = open.length < 2;
-  /* with no run going, only what there is: no empty To look at, no box for a Lead that is not there */
-  $("rv-look-wrap").hidden = !run && !look.length;
-  $("rv-tell-wrap").hidden = !run;
-  paintTell(S, r, run);
-  paintCost(S);
-  paintNow(S);
-  paintPast(S, r);
-}
-/* what the game has cost so far, small, at the right of the run bar: "$85 · 25 turns" and a bar a day for the week */
-function paintCost(S) {
-  const cost = rvCost(S.path);
-  let html = "", title = "";
-  if (cost.turns) {
-    const money = cost.usd >= 0.01;
-    const sum = money ? "$" + (cost.usd >= 10 ? Math.round(cost.usd) : cost.usd.toFixed(2)) : fmtTokens(cost.tokens) + " tokens";
-    html = "<span>" + esc(sum + " · " + cost.turns + (cost.turns === 1 ? " turn" : " turns")) + "</span>";
-    title = (money ? "About $" + cost.usd.toFixed(2) + " so far, at API prices" + (cost.run ? ", $" + cost.run.toFixed(2) + " of it in this run" : "") : fmtTokens(cost.tokens) + " new tokens so far") + ".";
-  }
-  S.root.querySelectorAll(".rv-cost").forEach((c) => { if (c.dataset.sig !== html) { c.dataset.sig = html; c.innerHTML = html; c.title = title; } });
-}
-/* the usage log, for what the game in front has cost: a turn counts when it names the game, or (older lines) its chat does */
-async function loadRvUsage(force) {
-  if (!force && Date.now() - rvUsageAt < 30000) return;
-  rvUsageAt = Date.now();
-  try { const r = await api("/api/usage", { since: 0 }); rvUsage = (r && r.records) || []; } catch (e) { return; }
-  if (view === "review") for (const S of rvSecs.values()) if (S.built && S.open) paintCost(S);
-}
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
 const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
-function rvCost(path) {
-  const chatProj = {};
-  for (const c of saved.chats || []) if (c.project) chatProj[c.id] = c.project;
-  for (const p of agents.values()) if (p.project) chatProj[p.id] = projKey(p);
-  const r = rvAll[path], since = r && r.run && r.run.on ? r.run.started || 0 : 0;
-  const day = new Date(); day.setHours(0, 0, 0, 0); const today = day.getTime() / 1000;
-  const out = { usd: 0, tokens: 0, turns: 0, run: 0, days: [0, 0, 0, 0, 0, 0, 0] }, tok = [0, 0, 0, 0, 0, 0, 0];
-  for (const x of rvUsage) {
-    if (!path || !samePath(x.project || chatProj[x.chat], path)) continue;
-    const usd = x.cost || 0;
-    out.usd += usd; out.tokens += (x.total || 0) - (x.cache_read || 0); out.turns++;
-    if (since && x.t >= since) out.run += usd;
-    const ago0 = Math.floor((today - x.t) / 86400) + 1;
-    const slot = x.t >= today ? 6 : 6 - ago0;
-    if (slot >= 0 && slot <= 6) { out.days[slot] += usd; tok[slot] += (x.total || 0) - (x.cache_read || 0); }
-  }
-  /* the spark is dollars when turns carry a cost, else tokens: never the two added together */
-  if (!out.usd) out.days = tok;
-  return out;
-}
-/* who is working on the game right now: the Lead, each expert at work, and any other chat of the game at work */
+/* agents did something: Overview's totals follow */
 let nowT = 0;
-const nowPaths = new Set();   /* the projects whose agents did something since the last repaint */
-function paintNowSoon(path) {
-  nowPaths.add(path || ""); clearTimeout(nowT);
-  nowT = setTimeout(() => { const ps = [...nowPaths]; nowPaths.clear(); if (view === "review") ps.forEach((p) => rvPaint(p, true)); else if (view === "all") paintAll(); }, 250);
-}
-/* one line per agent at work on the game: the Lead, then each expert or chat */
-function nowRows(path) {
-  const r = rvAll[path], run = r && r.run && r.run.on ? r.run : null, lead = run && agents.get(run.lead);
-  const rows = [];
-  const row = (p, who, what, when) => {
-    const b = el("button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
-    b.querySelector("b").textContent = who; b.querySelector("b + span").textContent = what; b.querySelector("em").textContent = when || "";
-    b.dataset.chat = p.id;
-    b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert's chat" : "Open this chat";
-    return b;
-  };
-  const since = (p) => p.busy && p.since ? elapsed(Date.now() - p.since) : "";
-  if (lead && lead.busy) rows.push(row(lead, "Lead", lead.now || "Working", since(lead)));
-  const shown = new Set(lead ? [lead.id] : []);
-  for (const p of agents.values()) {
-    if (shown.has(p.id) || !p.busy || projKey(p) !== path) continue;
-    const [name, job] = isHelper(p) ? splitExpert(p.name, p.expert) : [p.name, ""];
-    rows.push(row(p, name, (job ? job + " · " : "") + (p.runsOn ? "on " + p.runsOn + " · " : "") + (p.now || "Working"), since(p)));
-    shown.add(p.id);
-  }
-  return rows;
-}
-/* Right now is there only while someone is working on the game */
-function paintNow(S) {
-  const $ = S.$;
-  /* the Lead alone is what the state line already says: the lines are for experts and other chats at work */
-  let rows = nowRows(S.path);
-  const r0 = rvAll[S.path], lead = r0 && r0.run && r0.run.on ? r0.run.lead : "";
-  if (rows.length === 1 && lead && rows[0].dataset.chat === lead) rows = [];
-  $("rv-now-wrap").hidden = !rows.length;
-  $("rv-now").replaceChildren(...rows);
-  paintNight(S);
-}
+function paintNowSoon() { clearTimeout(nowT); nowT = setTimeout(() => { if (view === "all") paintAll(); }, 250); }
 const elapsed = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
-/* earlier decisions: approved, or changes asked for, newest first, folded away */
-function paintPast(S, r) {
-  const $ = S.$;
-  const done = ((r && r.items) || []).filter((i) => (i.status === "approved" || i.status === "changes") && !rvDone.has(i.id) || (rvDone.has(i.id) && rvDone.get(i.id).gone && i.status !== "waiting"));
-  done.sort((a, b) => (b.decided || b.created || 0) - (a.decided || a.created || 0));
-  $("rv-past").hidden = !done.length; $("rv-past-n").textContent = done.length ? "(" + done.length + ")" : "";
-  const sig = done.map((i) => i.id + i.status).join("|"); if (sig === S.pastSig) return; S.pastSig = sig;
-  $("rv-past-list").replaceChildren(...done.slice(0, 60).map((i) => {
-    const row = el("div", "rv-past-row", "<b></b><em></em><small></small>");
-    row.querySelector("b").textContent = i.title || "Untitled";
-    row.querySelector("em").textContent = (i.status === "approved" ? "Approved" : "Changes asked for") + (i.decided ? " · " + ago(i.decided) : "");
-    const sm = row.querySelector("small"); sm.textContent = [expertName(r, i), i.note || ""].filter(Boolean).join(": ");
-    return row;
-  }));
-}
-/* Tell the run something: a message to the Lead, from here */
-function paintTell(S, r, run) {
-  const $ = S.$;
-  const can = !!(run && r.lead_live), txt = $("rv-say").value.trim();
-  $("rv-send").disabled = !can || !txt;
-  $("rv-say").disabled = !can;
-  $("rv-say").placeholder = can ? (run.paused ? "A message for the Lead. It waits until you press Resume." : "A message for the Lead, e.g. make the shop brighter") : "The Lead's chat is closed. Press Resume first.";
-}
-/* a section's message box for the Lead, its way to Chat, and Approve all */
-function rvBindTell(S) {
-const $ = S.$;
-$("rv-say").oninput = () => { const t = $("rv-say"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; const r = rvAll[S.path]; paintTell(S, r, r && r.run && r.run.on ? r.run : null); };
-$("rv-say").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("rv-send").click(); } };
-$("rv-send").onclick = async () => {
-  const r = rvAll[S.path], run = r && r.run, text = $("rv-say").value.trim();
-  if (!run || !run.lead || !text) return;
-  const lead = agents.get(run.lead) || { ai: undefined };
-  $("rv-send").disabled = true;
-  let res; try { res = await api("/api/send", { agent: run.lead, text, studio: true, selftest: selfTest, gemini: geminiMode, autopilot: false, overnight: true, full: true, model: modelOf(lead) || null, effort: effortOf(lead), attachments: [] }); } catch (e) { res = { ok: false }; }
-  if (!res || !res.ok) { $("rv-said").textContent = "Could not reach the Lead. Open its chat and try there."; $("rv-send").disabled = false; return; }
-  $("rv-say").value = ""; $("rv-say").style.height = "";
-  $("rv-said").textContent = run.paused ? "Kept for the Lead. It goes when you press Resume." : lead.busy ? "Sent. The Lead gets it the moment it finishes what it is doing." : "Sent to the Lead.";
-  setTimeout(() => { $("rv-said").textContent = ""; }, 6000);
-  paintTell(S, r, run.on ? run : null);
-};
-$("rv-to-chat").onclick = () => showProject(S.path, "chat");
-$("rv-all").onclick = async () => {
-  const b = $("rv-all"), path = S.path, r = rvAll[path];
-  const open = ((r && r.items) || []).filter((i) => i.status === "waiting" && !i.blocking && !rvDone.has(i.id));
-  b.disabled = true; $("rv-err").textContent = "";
-  let res; try { res = await api("/api/review", { path, action: "approve_all", ids: open.map((i) => i.id) }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
-  b.disabled = false;
-  if (!res.ok) { $("rv-err").textContent = res.error || "Could not approve them."; return; }
-  open.forEach((i) => {
-    rvDone.set(i.id, { at: Date.now() });
-    const c = S.cards.get(i.id); if (c) { c.el.querySelector(".rv-said").textContent = "Approved: " + (i.title || "Untitled"); c.el.classList.add("done"); }
-  });
-  paintReviewBadge(); rvPaint(path);
-};
-}
 /* ---------- Overview: the live graph of every game, and over its top edge one line of totals ---------- */
 let apTimer = 0;
 function openAll() {
@@ -6466,7 +5949,7 @@ function paintCap() {
   $("sw-cap").setAttribute("aria-busy", capWant ? "true" : "false");
 }
 function onStudioRun(e) {
-  if (rvAll[e.project]) { rvAll[e.project].run = e.run; rvPaint(e.project); }
+  if (rvAll[e.project]) { rvAll[e.project].run = e.run; paintReview(); paintRunBar(); paintHead(); }
   reloadReview();
 }
 /* Review, at a project's section (and, with `id`, at one item in it) */
@@ -7651,8 +7134,20 @@ window.addEventListener("themechange", () => { if (typeof overviewPoke === "func
 
 $("b-check").onclick = () => { $("setup-out").textContent = "Checking..."; api("/api/setup", {}); };
 $("b-agents").onclick = async () => { const r = await api("/api/connect", {}); $("setup-out").textContent = r.text; };
-function zoom(src) { const l = $("light"); l.querySelector("img").src = src; l.classList.add("on"); }
-$("light").onclick = () => $("light").classList.remove("on");
+let lightList = [], lightAt = 0, lightFrom = null;
+function zoom(src, list, from) {
+  const l = $("light");
+  lightList = list && list.length ? list : [src]; lightAt = Math.max(0, lightList.indexOf(src)); lightFrom = from || null;
+  l.querySelector("img").src = lightList[lightAt]; l.querySelector("span").textContent = lightList.length > 1 ? (lightAt + 1) + " of " + lightList.length : "";
+  l.classList.add("on");
+}
+function closeLight() { const l = $("light"); if (!l.classList.contains("on")) return; l.classList.remove("on"); if (lightFrom && lightFrom.isConnected) lightFrom.focus(); lightFrom = null; }
+$("light").onclick = closeLight;
+document.addEventListener("keydown", (e) => {
+  if (!$("light").classList.contains("on")) return;
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); e.stopPropagation(); if (lightList.length > 1) zoom(lightList[(lightAt + (e.key === "ArrowRight" ? 1 : lightList.length - 1)) % lightList.length], lightList, lightFrom); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeLight(); }
+}, true);
 /* Escape closes whatever is open over the page; a menu of the message box hands the keyboard back to its button */
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;

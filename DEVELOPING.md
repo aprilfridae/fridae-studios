@@ -183,7 +183,7 @@ collects (`team::with_model_note`). What a chat was told is read back from its s
 agent's file tools may write, `paths::app_protected`). The
 expert's chat keeps its model (`State.model`, saved with the chat) for every later message that names none. Its
 `agent_new` and the Lead's `helper_started` carry `runs_on` ("Cursor · Auto") when it differs from the Lead's, which
-the expert's row in the sidebar and Review's Right now show. Usage is recorded under the expert's own AI, as for any chat.
+the expert's row in the sidebar shows. Usage is recorded under the expert's own AI, as for any chat.
 `/api/experts` lists the kit's roster (not the Lead), the table, and for Claude, Gemini, Cursor and OpenCode whether each is
 installed, its models and its default; with `expert`, `ai`, `model` it saves one row ("" is Same as the Lead). Beside
 Cursor the table shows `cursor::EXPERT_GAP` (experts run with Ask me's rules: Cursor may also write into temp
@@ -232,8 +232,8 @@ from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/C
   The Lead's note says only what really went back. Overnight's Undo the night uses the same `put_back` with `exact:
   false`: the agents' Studio steps since the night began are undone by time, as before, even when Studio was closed
   when it began (the scripts are still saved to disk first, so it too needs the current plugin).
-- `ui/index.html`: Review (one page for every project, a section each: `rvSec`, `paintSec`; a section's parts are
-  `data-r` names looked up with `S.$`), Studio in the run-mode menu, experts by name, the undo picker.
+- `ui/index.html`: Review (what waits for the user, a tab per project: `paintReview`, `rvThings`, `rvItemCard`,
+  `rvNeedCard`), the run's menu at the top of a chat (`paintRunBar`, `RB`), Studio in the run-mode menu, experts by name, the undo picker.
 
 **The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists Overview, the games
 (`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
@@ -285,7 +285,7 @@ spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
   is pressed.
 - The page makes no chat just for looking: a game with no chat shows an empty page (`showDraft`), and the chat is
   made (`/api/new` with the chosen AI, then `/api/project use`) when its first message is sent.
-- Usage lines carry `project` (the chat's game) so Review and Overview can show what a game has cost.
+- Usage lines carry `project` (the chat's game) for the Usage window.
 
 **Testing without an AI.**
 - Python: `python3 -m unittest tests.test_stage tests.test_roster tests.test_team_expert tests.test_project_save
