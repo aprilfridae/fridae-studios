@@ -10,7 +10,12 @@
 
 /* One greyscale palette, one outline per surface, one radius scale.
    Spacing: 4 8 12 16 24 32 48 (2 only inside a control). Controls: 28 small, 32 regular, 40 for a page's main field.
-   Type: 12 13 14 15 16; headings are 16/600 (a page or section) and 14/600 (a part of one).
+   Type: 12 13 14 15 16 20; 20/600 is a Setup section's title, 16/600 a page or a card, 14/600 a part of one.
+   Buttons: .pill.main is the one main action of a place (white), .pill the rest, .linkish a quiet word in a line;
+   .sm (28px) only in a list's row or beside a heading, never for a section's own action.
+   Motion: --t-fast for hover and press, --t-mid for a control changing state, --t-slow for a panel or a page
+   arriving; always --ease (a fast start, a soft landing), only opacity and transform, never a bounce. Less motion
+   (the system setting) turns it all off at the bottom of this sheet.
    Every size is in px and the whole page is scaled with the text-size setting (Ctrl + and Ctrl -), so nothing needs
    its own size rules. */
 :root {
@@ -32,6 +37,7 @@
   --h-s: 28px; --h-m: 32px; --h-l: 40px;
   --focus: rgba(255, 255, 255, 0.6);
   --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --t-fast: 120ms; --t-mid: 160ms; --t-slow: 220ms;
   --sans: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Geist Mono", "Cascadia Mono", Consolas, monospace;
 }
@@ -41,7 +47,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 button:disabled { cursor: default; }
 input, select, textarea { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-s); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 ::selection { background: rgba(255, 255, 255, 0.22); }
 [hidden] { display: none !important; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -51,14 +57,22 @@ input, select, textarea { font: inherit; color: inherit; }
 ::-webkit-scrollbar-button { display: none; }
 .enter { animation: rise 280ms var(--ease) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes arrive { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+/* a page or a Setup section shown again plays this once (display: none to shown restarts it); only the inside
+   moves, so nothing fixed inside a scrolling page is caught by a transform */
+#review > .rv-page, #promos > .r-col, #newproj > .r-col, .ap-side, .su-body section.on { animation: arrive var(--t-slow) var(--ease) both; }
+.body > .main, .scroll > .col { animation: fade var(--t-mid) ease both; }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); } 50% { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); } }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
 
 /* ---------- shared controls ---------- */
-.pill { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--hover); border: 1px solid var(--line); white-space: nowrap; transition: background-color 140ms ease, transform 120ms var(--ease); }
-.pill:hover { background: var(--press); }
+.pill { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--hover); border: 1px solid var(--line); white-space: nowrap; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease, transform var(--t-fast) var(--ease), opacity var(--t-mid) ease; }
+.pill:hover { background: var(--press); border-color: var(--line-strong); }
 .pill:active { transform: scale(0.97); }
 .pill:disabled { opacity: 0.45; transform: none; }
+.pill:disabled:hover { background: var(--hover); border-color: var(--line); }
+.pill.main:disabled:hover { background: var(--text); }
 .pill.sm { height: var(--h-s); padding: 0 12px; font-size: 12px; }
 /* display: the layout rule `.main` (a grid) also matches these buttons and would push the label to the top */
 .pill.main { display: inline-block; background: var(--text); color: var(--ink); border-color: transparent; font-weight: 500; }
@@ -66,7 +80,9 @@ input, select, textarea { font: inherit; color: inherit; }
 .pill.on { background: rgba(255, 255, 255, 0.16); border-color: var(--line-strong); }
 .icon { width: var(--h-m); height: var(--h-m); border-radius: var(--r-s); display: grid; place-items: center; color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
 .icon:hover, .icon[aria-expanded="true"] { background: var(--hover); color: var(--text); }
-.linkish { color: var(--text); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.icon:active { background: var(--press); }
+.linkish { color: var(--text); text-decoration: underline; text-decoration-color: rgba(255, 255, 255, 0.35); text-underline-offset: 3px; font-size: 13px; border-radius: 4px; transition: text-decoration-color var(--t-fast) ease, color var(--t-fast) ease; }
+.linkish:hover { text-decoration-color: currentColor; }
 .act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 4px; }
 .sub { font-size: 13px; color: var(--dim); line-height: 1.5; margin: 4px 0 0; }
 .grow { flex: 1; min-width: 0; }
@@ -89,9 +105,14 @@ input[type=checkbox]:checked::after { transform: rotate(-45deg) scale(1); }
 input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 .check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); }
-.seg button, .tab { height: var(--h-s); padding: 0 12px; border-radius: 999px; font-size: 13px; color: var(--dim); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease; }
+.seg button, .tab { height: var(--h-s); padding: 0 12px; border-radius: 999px; font-size: 13px; color: var(--dim); white-space: nowrap; transition: background-color var(--t-mid) ease, color var(--t-mid) ease; }
+.seg button:active:not(:disabled), .tab:active { background: var(--hover); }
 .seg button:hover, .tab:hover { color: var(--text); }
 .seg button.on, .tab.on { background: var(--press); color: var(--text); }
+.slide-host { position: relative; isolation: isolate; }
+.slide-mark { position: absolute; left: 0; top: 0; z-index: -1; width: 0; height: 0; border-radius: 999px; background: var(--press); pointer-events: none; opacity: 0; }
+.slide-mark.go { transition: transform var(--t-slow) var(--ease), width var(--t-slow) var(--ease), height var(--t-slow) var(--ease), opacity var(--t-fast) ease; }
+.slide-host.marked > .on, .slide-host.marked > .on:hover { background: transparent; }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 1.5px var(--quiet); }
 .dot.ok { background: var(--text); box-shadow: none; }
 .dot.live { background: var(--text); box-shadow: none; animation: pulse 1.1s ease-in-out infinite; }
@@ -101,8 +122,8 @@ input[type=checkbox]:focus-visible { outline: 2px solid var(--focus); outline-of
 .tag .linkish { font: inherit; letter-spacing: inherit; margin-left: 8px; color: var(--dim); border-radius: 4px; }
 .tag .linkish:hover { color: var(--text); }
 /* "In plain words": the app's plain-English line of what an expert did, for a non-technical reader */
-.plain-words { max-width: 70ch; margin: 10px 0 2px; padding: 10px 14px; border-radius: 10px; background: var(--soft, rgba(127, 127, 127, 0.08)); border-left: 3px solid var(--accent, #6b8afd); }
-.plain-words b { display: block; font-size: 12px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--faint); margin-bottom: 3px; }
+.plain-words { max-width: 70ch; margin: 8px 0 4px; padding: 12px 16px; border-radius: 0 var(--r-s) var(--r-s) 0; background: var(--hover); border-left: 2px solid var(--line-strong); }
+.plain-words b { display: block; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); margin-bottom: 4px; }
 .plain-words p { margin: 0; color: var(--text); line-height: 1.5; }
 /* a longer explanation, folded behind one word */
 .moreinfo { margin: 4px 0 0; }
@@ -143,6 +164,9 @@ div.g-row { cursor: default; }
 #pd-gh { margin: 0 0 16px; }
 #pd-gh .act { margin: 8px 0 0; }
 #pd-gh .check-row { margin: 4px 0 0; }
+
+/* a press: the row's background deepens for as long as it is held */
+.proj:active, .s-row:active, .cv-row:active, .cv-new:active, .opt:active:not(:disabled), .pk-ai:active, .rv-line:active, button.rv-who:active, .xp-link:active, .su-nav button:active, .bd-opt:active { background: var(--press); }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
@@ -191,7 +215,7 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .s-row.on b, .s-row:hover b { color: var(--text); }
 .s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
 .s-row.on .s-n { color: var(--dim); }
-/* (an expert's row is .sx: .xp is the researcher's line on the New project page, with a border and margins of its own) */
+/* an expert's row (.sx) */
 .s-row.sx { grid-template-columns: 8px minmax(0, 1fr); min-height: var(--h-l); }
 /* A chat's experts are one list: a window (.s-kids) over its rows (.s-in), which eases open and shut as a whole
    (easeList). Its earlier experts are a list inside it, behind one line. Each row is a button in a plain block
@@ -263,7 +287,7 @@ button.pname:hover { background: var(--hover); }
 .title:hover, .title[aria-expanded="true"] { background: var(--hover); }
 .title[aria-expanded="true"] svg { transform: rotate(180deg); }
 .conv { position: relative; min-width: 0; }
-.cv-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); }
+.cv-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); transition: background-color var(--t-fast) ease; }
 .cv-row:hover { background: var(--hover); }
 .cv-row:focus-visible { outline-offset: -2px; }
 .cv-row.on { background: var(--press); }
@@ -279,7 +303,7 @@ button.pname:hover { background: var(--hover); }
 .cv-gone summary { cursor: pointer; padding: 8px; font-size: 13px; color: var(--faint); list-style: none; border-radius: var(--r-s); }
 .cv-gone summary::-webkit-details-marker { display: none; }
 .cv-gone summary:hover { color: var(--text); }
-.cv-new { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: var(--r-s); font-size: 14px; }
+.cv-new { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border-radius: var(--r-s); font-size: 14px; transition: background-color var(--t-fast) ease; }
 .cv-new:hover { background: var(--hover); }
 .cv-new:focus-visible { outline-offset: -2px; }
 .cv-foot { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 8px 8px 4px; margin-top: 4px; border-top: 1px solid var(--line); }
@@ -374,7 +398,7 @@ button.pname:hover { background: var(--hover); }
 
 /* An expert the chat started: one line where it was started (who, and what for), which opens the expert's own chat.
    The expert itself is listed under this chat in the sidebar. */
-.xp-link { display: grid; grid-template-columns: 8px auto minmax(0, auto) auto; justify-content: start; align-items: center; gap: 8px; width: fit-content; max-width: min(70ch, 100%); min-height: var(--h-s); padding: 2px 8px; margin: 2px 0 2px -8px; text-align: left; border-radius: var(--r-s); font-size: 13px; }
+.xp-link { display: grid; grid-template-columns: 8px auto minmax(0, auto) auto; justify-content: start; align-items: center; gap: 8px; width: fit-content; max-width: min(70ch, 100%); min-height: var(--h-s); padding: 2px 8px; margin: 2px 0 2px -8px; text-align: left; border-radius: var(--r-s); font-size: 13px; transition: background-color var(--t-fast) ease; }
 .xp-link:hover { background: var(--hover); }
 .xp-link b { font-weight: 500; white-space: nowrap; }
 .xp-link .xp-job { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -383,24 +407,6 @@ button.pname:hover { background: var(--hover); }
 /* an expert's chat is its own log, read only: this line takes the message box's place */
 .xp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; max-width: 800px; min-height: var(--h-l); margin: 0 auto; padding: 8px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); font-size: 13px; color: var(--dim); }
 .xp-bar > span { flex: 1; min-width: 16ch; }
-/* the researcher on the New project page: one compact line that opens to its own log, read-only */
-.xp { margin: 2px 0; max-width: 70ch; border-radius: var(--r-s); border: 1px solid transparent; transition: border-color 140ms ease; }
-.xp.open { max-width: none; margin: 8px 0 12px; border-color: var(--line-strong); background: var(--panel); border-radius: var(--r-m); }
-.xp-row { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto auto 8px; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 2px 8px; margin-left: -8px; text-align: left; border-radius: var(--r-s); font-size: 13px; }
-.xp.open .xp-row { margin-left: 0; padding: 4px 12px; }
-.xp-row:hover { background: var(--hover); }
-.xp-row .xp-name { font-weight: 500; white-space: nowrap; }
-.xp-row .xp-job { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.xp-row .xp-on { font-size: 12px; color: var(--faint); white-space: nowrap; }
-.xp-row .xp-state { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
-.xp.busy .xp-state { color: var(--text); }
-.xp-row svg { color: var(--faint); transition: transform 180ms var(--ease); }
-.xp.open .xp-row svg { transform: rotate(90deg); }
-.xp-body { padding: 0 16px 8px; border-top: 1px solid var(--line); }
-.xp-act { display: flex; align-items: center; gap: 12px; padding: 8px 0 0; font-size: 13px; color: var(--faint); }
-.xp-act .xp-remove { margin-left: auto; font-size: 13px; color: var(--dim); }
-.xp-body .col { max-width: none; margin: 0; }
-.xp-body .you { margin-top: 12px; }
 .ai-tag { color: var(--dim); }
 
 /* the first screen of a chat */
@@ -470,7 +476,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .menu .switch:focus-visible, .opt:focus-visible { outline-offset: -2px; }
 .menu .switch small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
 .menu .sub { margin: 4px 8px 8px; }
-.opt { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); }
+.opt { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); transition: background-color var(--t-fast) ease; }
 .opt:hover { background: var(--hover); }
 .opt:disabled b { opacity: 0.5; }
 .opt b { font-weight: 500; font-size: 14px; color: var(--text); }
@@ -492,13 +498,13 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .pk-models .notice { margin: 0 0 8px; }
 #model-menu { display: flex; flex-direction: column; min-height: 0; }
 #model-menu .mlist { max-height: 232px; overflow-y: auto; overscroll-behavior: contain; }
-#model-menu .mgroup { margin: 8px 8px 2px; font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); }
+#model-menu .mgroup { margin: 8px 8px 2px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
 #model-menu .mfind { display: block; width: calc(100% - 8px); height: var(--h-s); margin: 0 4px 8px; padding: 0 8px; font-size: 13px; background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r-s); outline: none; }
 #model-menu .mfind:focus { border-color: var(--focus); }
 .pk-effort { margin-top: 8px; border-top: 1px solid var(--line); }
 .slash { position: absolute; left: 8px; bottom: calc(100% + 8px); z-index: 5; min-width: 320px; padding: 4px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); display: none; }
 .slash.on { display: block; }
-.slash button { display: grid; grid-template-columns: 84px 1fr; gap: 12px; width: 100%; text-align: left; padding: 8px 12px; border-radius: var(--r-s); font-size: 13px; }
+.slash button { display: grid; grid-template-columns: 84px 1fr; gap: 12px; width: 100%; text-align: left; padding: 8px 12px; border-radius: var(--r-s); font-size: 13px; transition: background-color var(--t-fast) ease; }
 .slash button:hover, .slash button.sel { background: var(--hover); }
 .slash code { font-family: var(--mono); font-size: 12px; }
 .slash span { color: var(--dim); }
@@ -602,9 +608,9 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
 
 /* ---------- the other pages take the whole space under the project's bar ---------- */
-#review, #promos, #ideas, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
-body.review #review, body.promos #promos, body.ideas #ideas, body.newproj #newproj, body.all #allproj { display: block; }
-body.review .body, body.promos .body, body.ideas .body, body.newproj .body, body.all .body { display: none; }
+#review, #promos, #newproj, #allproj { display: none; min-height: 0; overflow-y: auto; padding: 24px 24px 48px; }
+body.review #review, body.promos #promos, body.newproj #newproj, body.all #allproj { display: block; }
+body.review .body, body.promos .body, body.newproj .body, body.all .body { display: none; }
 .r-col { max-width: 960px; margin: 0 auto; }
 .r-col h2 { font-size: 16px; font-weight: 600; margin: 32px 0 4px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .r-col h2:first-child { margin-top: 0; }
@@ -645,8 +651,9 @@ body.review .body, body.promos .body, body.ideas .body, body.newproj .body, body
   .ap-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; min-height: auto; padding: 24px 24px 48px; }
   .ap-cards { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
 }
-.ap-card { display: flex; flex-direction: column; width: 100%; min-height: 136px; text-align: left; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 140ms ease, background-color 140ms ease; }
+.ap-card { display: flex; flex-direction: column; width: 100%; min-height: 136px; text-align: left; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease, transform var(--t-fast) var(--ease); }
 .ap-card:hover { border-color: var(--dim); }
+.ap-card:active { transform: scale(0.99); }
 .ap-card.hot { border-color: var(--text); }
 .ap-card h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: baseline; gap: 12px; }
 .ap-card h3 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -662,31 +669,17 @@ body.review .body, body.promos .body, body.ideas .body, body.newproj .body, body
 .ap-card.new { flex-direction: row; align-items: center; justify-content: center; gap: 8px; background: none; border-style: dashed; color: var(--dim); font-size: 14px; }
 .ap-card.new:hover { color: var(--text); background: var(--hover); }
 
-/* new project: a name and Create, then ideas to start from */
+/* new project: Game or Project, a name and Create */
 .np-make { display: grid; gap: 4px; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 640px; }
 .np-make .keyrow { margin: 0; }
 .np-kind { margin: 0 0 8px; align-self: start; justify-self: start; }
 .np-kind button { height: 32px; padding: 0 16px; font-size: 14px; }
 .np-make .kind-note { margin: 0 0 8px; }
-.np-make .keyrow input, .r-find input { height: var(--h-l); font-size: 15px; border-radius: var(--r-m); padding: 0 16px; }
-.np-make .keyrow .pill, .r-find .pill { height: var(--h-l); padding: 0 24px; }
+.np-make .keyrow input { height: var(--h-l); font-size: 15px; border-radius: var(--r-m); padding: 0 16px; }
+.np-make .keyrow .pill { height: var(--h-l); padding: 0 24px; }
 .np-make .act { margin: 8px 0 0; }
 .np-make .where { word-break: break-all; }
 .np-other { font-size: 13px; color: var(--dim); margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
-.r-find { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
-.r-find input { flex: 1; min-width: 240px; border: 1px solid var(--line-strong); background: var(--panel); outline: none; -webkit-user-select: text; user-select: text; }
-.r-find input:focus { border-color: var(--focus); }
-#r-job .xp { max-width: none; margin-top: 12px; }
-.r-ideas { display: grid; gap: 12px; margin-top: 12px; }
-.idea-card { padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); -webkit-user-select: text; user-select: text; }
-.idea-card h3 { margin: 0 0 2px; font-size: 16px; font-weight: 600; }
-.idea-card .kind { font-family: var(--mono); font-size: 12px; letter-spacing: 0.01em; color: var(--faint); }
-.idea-card .pitch { margin: 8px 0 12px; }
-.idea-card dl { margin: 0; display: grid; grid-template-columns: 112px 1fr; gap: 8px 16px; font-size: 14px; line-height: 1.5; }
-.idea-card dt { color: var(--faint); font-size: 13px; padding-top: 2px; }
-.idea-card dd { margin: 0; color: var(--dim); }
-.idea-card dd ul { margin: 0; padding-left: 16px; }
-.idea-card .act { margin: 16px 0 0; }
 
 /* promos: the new-promo form on the left, the library on the right */
 .eng-row .eng-error { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
@@ -805,7 +798,7 @@ body.review .body, body.promos .body, body.ideas .body, body.newproj .body, body
 .rv-night-box:empty { display: none; }
 .rv-night-box .ask { margin: 4px 0 0; }
 .rv-now { margin: 0; display: grid; gap: 2px; }
-.rv-who { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: var(--h-m); padding: 4px 8px; margin: 0 -8px; border-radius: var(--r-s); text-align: left; font-size: 14px; }
+.rv-who { display: grid; grid-template-columns: 8px auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: var(--h-m); padding: 4px 8px; margin: 0 -8px; border-radius: var(--r-s); text-align: left; font-size: 14px; transition: background-color var(--t-fast) ease; }
 button.rv-who:hover { background: var(--hover); }
 .rv-who b { font-weight: 500; white-space: nowrap; }
 .rv-who span { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -814,7 +807,9 @@ button.rv-who:hover { background: var(--hover); }
 .rv-h { display: flex; align-items: baseline; gap: 8px; margin: 32px 0 8px; font-size: 16px; font-weight: 600; }
 .rv-h span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
 .rv-h .pill { margin-left: auto; align-self: center; font-weight: 400; }
-.rv-none { font-size: 14px; color: var(--faint); margin: 0; }
+/* nothing to show yet: one quiet line in a soft box, the same in Review, Promos and Setup */
+.rv-none, .empty, #pr-empty, .sk-list > .sub:only-child { margin: 0; padding: 12px 16px; border-radius: var(--r-m); background: rgba(255, 255, 255, 0.03); font-size: 13px; line-height: 1.5; color: var(--faint); }
+#pr-empty { margin-top: 12px; }
 .rv-list { display: grid; gap: 12px; align-items: start; }
 .rv-item { margin: 0; max-width: none; transition: border-color 140ms ease; }
 .rv-item.block { border-color: var(--text); }
@@ -874,16 +869,31 @@ body.setup .veil, body.pd-open .veil { opacity: 1; pointer-events: auto; }
 body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: auto; visibility: visible; transition: opacity 180ms ease, transform 220ms var(--ease); }
 .su-nav { border-right: 1px solid var(--line); padding: 16px 8px; display: flex; flex-direction: column; gap: 2px; }
 .su-nav h2 { margin: 0 8px 12px; font-size: 16px; font-weight: 600; }
-.su-nav button { text-align: left; height: var(--h-m); padding: 0 8px; border-radius: var(--r-s); font-size: 14px; color: var(--dim); }
+.su-nav button { text-align: left; height: var(--h-m); padding: 0 8px; border-radius: var(--r-s); font-size: 14px; color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-mid) ease; }
+.su-nav .slide-mark { border-radius: var(--r-s); }
 .su-nav button:hover { background: var(--hover); color: var(--text); }
 .su-nav button.on { background: var(--press); color: var(--text); }
 .su-nav .ver { margin-top: auto; padding: 0 8px; font-size: 12px; color: var(--faint); }
-.su-body { overflow-y: auto; padding: 24px 32px 32px; }
+/* A section: its title and one line on what it holds (.su-head), then its parts, each a heading over a hairline,
+   one line or two under it, and then its rows or controls 12px below. Fields stop at 480px; a part's own actions
+   are 32px pills in one row (.act, 8px apart, 8px between two such rows); a row's actions are .sm. */
+.su-body { overflow-y: auto; padding: 24px 32px 40px; scroll-padding-top: 24px; }
 .su-body section { display: none; }
 .su-body section.on { display: block; }
-.su-body h3 { margin: 24px 0 0; font-size: 14px; font-weight: 600; }
-.su-body h3:first-child { margin-top: 0; }
+.su-head { margin: 0 40px 0 0; }
+.su-head h2 { margin: 0; font-size: 20px; line-height: 1.3; font-weight: 600; letter-spacing: -0.015em; }
+.su-head .sub { margin: 4px 0 0; max-width: 64ch; }
+.su-body h3 { margin: 24px 0 0; padding-top: 24px; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.4; font-weight: 600; }
 .su-body h3 + div > .c-row:first-child, .su-body h3 + div > .g-row:first-child { border-top: 0; }
+.su-body h4 { margin: 16px 0 0; font-size: 13px; font-weight: 600; }
+.su-body .sub { max-width: 68ch; }
+.su-body .act, .su-body .keyrow, .su-body .scale-row, .su-body .r-pills, .su-body .su-block { margin: 12px 0 0; }
+.su-body .act + .act { margin-top: 8px; }
+.su-body .act > .sub { margin: 0; }
+.su-body .keyrow { max-width: 480px; }
+.su-body section > .seg { margin-top: 12px; max-width: 100%; }
+.su-body .check-row + .moreinfo, .su-body .check-row + .sub { margin-left: 24px; }
+.su-body .moreinfo + .check-row { margin-top: 8px; }
 .su-body pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
 .su-body pre:empty { display: none; }
 .su-body .check-row { margin-top: 12px; color: var(--text); }
@@ -906,18 +916,19 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .rag-steps .c-row .eng-bar { margin-top: 8px; }
 .rag-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; }
 .rag-err:empty { display: none; }
-.rag-test h4 { margin: 16px 0 0; font-size: 13px; font-weight: 500; }
+.rag-test h4 { margin: 16px 0 0; }
 .rag-hits { margin: 8px 0 0; padding: 0 0 0 20px; font-size: 13px; line-height: 1.6; }
 .rag-hits span { color: var(--dim); }
 .rag-hits:empty, #rag-q-note:empty { display: none; }
 @media (max-width: 520px) { .rag-seg .rag-x { display: none; } }
 /* Setup, Skills: the decisions waiting (Review-style cards, the two skills side by side, the suggestion in its plain
    words box) and the library, one line per skill */
-.su-n { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 8px; border-radius: 999px; background: var(--text); color: var(--ink); font: 600 11px/1 var(--mono); vertical-align: 1px; }
+.su-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; margin-left: 8px; border-radius: 999px; background: var(--text); color: var(--ink); font: 600 12px/1 var(--mono); vertical-align: 1px; }
 #ap-sk-go { font-size: inherit; }
+/* a failure in Setup: in the text colour, marked by a thin red rule (Knowledge index, Skills, Share) */
 .sk-err { color: var(--text); border-left: 2px solid var(--bad); padding-left: 8px; margin-top: 12px; white-space: pre-line; }
 .sk-err:empty { display: none; }
-.su-body h3.sk-h { display: flex; align-items: center; gap: 8px; margin-top: 32px; }
+.su-body h3.sk-h { display: flex; align-items: center; gap: 8px; }
 .sk-h > span { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--faint); }
 .sk-h .pill { margin-left: auto; font-weight: 400; }
 .sk-decs { margin-top: 12px; }
@@ -926,7 +937,7 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 .sk-side { min-width: 0; padding: 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line); }
 .ask .sk-side p.sk-scripts { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 13px; font-weight: 500; color: var(--warn); }
 .sk-scripts svg { flex: none; }
-.sk-side em { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-bottom: 8px; }
+.sk-side em { display: inline-block; font: 400 12px/1 var(--mono); letter-spacing: 0.01em; font-style: normal; color: var(--faint); margin-bottom: 8px; }
 .sk-side b { display: block; font-size: 14px; font-weight: 600; word-break: break-word; }
 .sk-side .sk-who { margin: 2px 0 0; font-size: 13px; color: var(--dim); }
 .ask .sk-side p.sk-desc { margin: 8px 0 0; font-size: 13px; color: var(--text); line-height: 1.5; }
@@ -999,7 +1010,8 @@ body.setup #sd { opacity: 1; transform: translate(-50%, -50%); pointer-events: a
 body.pd-open #pd { transform: none; visibility: visible; transition: transform 300ms cubic-bezier(0.32, 0.72, 0, 1); }
 .drawer .plate { flex: 1; overflow-y: auto; padding: 16px 24px 24px; }
 .drawer header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-.drawer header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.drawer header h2 { margin: 0; font-size: 20px; line-height: 1.3; font-weight: 600; letter-spacing: -0.015em; }
+.drawer #pd-kind { margin: 12px 0 0; }
 .drawer h3 { font-size: 14px; font-weight: 600; margin: 24px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
 .drawer pre { font-family: var(--mono); font-size: 12px; line-height: 1.6; color: var(--dim); white-space: pre-wrap; word-break: break-word; margin: 12px 0 0; }
 #pd-changes:empty, #pd-out:empty, #pd-log:empty { display: none; }
@@ -1051,7 +1063,6 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <nav class="nav" id="tabs">
         <button class="tab on" id="v-chat">Chat</button>
         <button class="tab" id="v-review" title="What is happening on this project, and what needs you">Review<span class="n" id="rv-badge" hidden></span></button>
-        <button class="tab" id="v-ideas" title="Game ideas from Roblox's live charts, for this game">Ideas</button>
         <button class="tab" id="v-promos" title="Promo videos made from your gameplay clips">Promos</button>
       </nav>
     </header>
@@ -1217,15 +1228,6 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
     </section></div>
   </div></div>
 
-    <div id="ideas"><div class="r-col">
-      <h2>Ideas <small>from Roblox's live charts</small></h2>
-      <p class="sub">Reads the charts as they are now and proposes five game ideas, with the numbers behind each. Use one to shape this game.</p>
-      <div class="r-find"><input type="text" id="r-focus" placeholder="Anything to steer it? e.g. horror, for phones, two-week build" autocomplete="off" aria-label="Anything to steer the ideas"><button class="pill main" id="r-find">Find ideas</button></div>
-      <p class="r-note" id="r-note"></p>
-      <div id="r-job"></div>
-      <div id="r-ideas"></div>
-    </div></div>
-
     <div id="newproj"><div class="r-col">
       <div class="np-make">
         <div class="seg np-kind" id="np-kind" role="radiogroup" aria-label="What kind of project"><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
@@ -1257,6 +1259,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
   <div class="su-body">
     <button class="icon su-close" id="b-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
     <section data-s="general" class="on">
+      <header class="su-head"><h2>General</h2><p class="sub">Text size, updates, and where things are kept.</p></header>
       <h3>Text size</h3>
       <p class="sub">Ctrl (Cmd on a Mac) and + or - does the same; 0 resets it.</p>
       <div class="scale-row"><button class="pill" id="sc-down" aria-label="Smaller">A&minus;</button><input type="range" id="sc-range" min="70" max="200" step="5" aria-label="Text size"><button class="pill" id="sc-up" aria-label="Bigger">A+</button><output id="sc-val">100%</output><button class="linkish" id="sc-reset">Reset</button></div>
@@ -1276,6 +1279,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="act"><button class="pill" id="notes-open">Open notes folder</button><button class="pill" id="notes-open-game" hidden>Open this project's notes</button></div>
     </section>
     <section data-s="connections">
+      <header class="su-head"><h2>Connections</h2><p class="sub">The AIs and programs Fridae works with, and whether each is ready.</p></header>
       <h3>AIs</h3>
       <div id="ai-list"></div>
       <label class="sub check-row"><input type="checkbox" id="env-keys"> Use API keys from my environment</label>
@@ -1290,7 +1294,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <h3>Promo engine</h3>
       <div class="eng-row"><p class="sub eng-state">Checking...</p><div class="eng-bar" hidden><i></i></div><pre class="eng-error"></pre><div class="act"><button class="pill eng-install" hidden>Install</button></div></div>
       <h3 id="rag-title">Knowledge index</h3>
-      <p class="sub">Lets the AIs look up just the right bits of your notes, guides and project docs instead of reading whole files. Runs on your Mac; nothing is sent anywhere.</p>
+      <p class="sub">Lets the AIs look up just the right bits of your notes, guides and project docs instead of reading whole files. Runs on this computer; nothing is sent anywhere.</p>
       <div class="seg rag-seg" id="rag-seg" role="radiogroup" aria-labelledby="rag-title">
         <button role="radio" aria-checked="false" tabindex="0" data-m="off" aria-describedby="rag-d-off">Off</button>
         <button role="radio" aria-checked="false" tabindex="-1" data-m="light" aria-describedby="rag-d-light">Light</button>
@@ -1316,24 +1320,26 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <pre id="setup-out"></pre>
     </section>
     <section data-s="experts">
-      <h3>Experts</h3>
-      <p class="sub">In a studio run, the Lead hands each part of the game to an expert.<br>Pick an AI and model for any of them; the rest run on the Lead's.</p>
+      <header class="su-head"><h2>Experts</h2><p class="sub">In a studio run, the Lead hands each part of the game to an expert. Pick an AI and model for any of them; the rest run on the Lead's.</p></header>
+      <h3>The Lead and its experts</h3>
       <label class="sub check-row"><input type="checkbox" id="xp-lead-picks"> The Lead may pick an AI for a job</label>
       <details class="moreinfo"><summary>More</summary><p>Now and then the Lead may start an expert on another AI or model; your rows here always win. An expert on Same as the Lead uses the Lead's model, so a Lead on a big model uses up that plan faster. Once you pick an AI, the expert uses that AI's default model unless you pick one. Only AIs installed on this computer are offered.</p></details>
       <label class="sub check-row"><input type="checkbox" id="xp-summaries"> Plain-English summary of each expert's work</label>
       <details class="moreinfo"><summary>More</summary><p>When an expert finishes, Fridae writes a short, plain-English line of what it changed in your project, so you can follow along without reading reports or code. It is a small job on your OpenCode plan (Setup, Connections). Off: you see the expert's own one-line note instead.</p></details>
       <label class="sub check-row"><input type="checkbox" id="xp-strong-lead"> Keep the Lead on a strong model</label>
       <p class="sub">A run's Lead plans and splits the work, so it never runs on DeepSeek or GLM. Turn off to let it.</p>
-      <div id="xp-table" style="margin-top: 12px"></div>
+      <h3>Each expert's AI</h3>
+      <div id="xp-table" class="su-block"></div>
       <h3 id="sw-cap-title">Most experts working at once</h3>
       <p class="sub">1 means one at a time; more get it done sooner and use up your plan's usage faster.</p>
-      <div class="seg" id="sw-cap" style="margin-top: 12px; max-width: 100%" role="group" aria-labelledby="sw-cap-title"></div>
+      <div class="seg" id="sw-cap" role="group" aria-labelledby="sw-cap-title"></div>
       <p class="sub" id="sw-cap-note" role="status" hidden></p>
     </section>
     <section data-s="skills">
-      <h3>Skills</h3>
-      <p class="sub">One library of skills that every AI here uses: Fridae's own, the ones it ships, and the ones found in your other AI tools.</p>
+      <header class="su-head"><h2>Skills</h2><p class="sub">One library of skills that every AI here uses: Fridae's own, the ones it ships, and the ones found in your other AI tools.</p>
       <details class="moreinfo"><summary>More</summary><p>Fridae looks in Claude Code, its plugins, and the skill folders of Codex, Cursor, OpenCode and Gemini now and then (Import now does it at once), and brings in what is new. When a newcomer covers much the same as a skill you already have, it waits here for you, and the one in use keeps working meanwhile. A cheap AI reads both and suggests what to do. Nothing is deleted: the one you don't keep is set aside in the library's .replaced folder. Pinned skills are in every AI's instructions; the rest are found by search when a chat needs them.</p><p>Your notes get the same care: once a week, while no chat is working (Check notes now does it at once), Fridae looks for notes that say the same thing twice or disagree, and asks you here which one holds. The note you don't keep goes to your notes folder's .trash.</p></details>
+      </header>
+      <h3>Import and tidy up</h3>
       <div class="act"><button class="pill" id="sk-import">Import now</button><span class="sub" id="sk-import-note" role="status"></span></div>
       <div class="act"><button class="pill" id="sk-notes">Check notes now</button><span class="sub" id="sk-notes-note" role="status"></span></div>
       <p class="sub sk-err" id="sk-err" role="status"></p>
@@ -1385,12 +1391,13 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       </div>
     </section>
     <section data-s="permissions">
+      <header class="su-head"><h2>Permissions</h2><p class="sub" id="cmd-state"></p></header>
       <h3>Programs agents may run</h3>
-      <p class="sub" id="cmd-state"></p>
-      <div id="cmd-list" style="margin-top: 8px"></div>
+      <div id="cmd-list"></div>
       <div class="keyrow"><input type="text" id="cmd-name" placeholder="A program name, like git or python" autocomplete="off" spellcheck="false" aria-label="A program to allow"><button class="pill" id="cmd-add">Allow</button></div>
     </section>
     <section data-s="images">
+      <header class="su-head"><h2>Images</h2><p class="sub">How agents make pictures, and how textures are made.</p></header>
       <h3>AI images</h3>
       <label class="sub check-row"><input type="checkbox" id="gem-images"> Agents may generate images with Gemini</label>
       <details class="moreinfo"><summary>More</summary><p>Icons, thumbnail art and UI art are made through Antigravity, and each picture uses some of your Gemini plan. One chat may start 12 an hour and one game's team 30, textures included. Off: agents ask you first.</p></details>
@@ -1401,8 +1408,8 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       <div class="act"><button class="switch" id="gem-api" role="switch" aria-checked="false"><span class="track"><span class="knob"></span></span><span class="swl">Use my API key (Google charges per image)</span></button><button class="pill" id="gem-clear">Remove key</button></div>
     </section>
     <section data-s="chats">
+      <header class="su-head"><h2>Chats</h2><p class="sub" id="saved-state"></p></header>
       <h3>Saved chats</h3>
-      <p class="sub" id="saved-state"></p>
       <div class="act"><button class="pill" id="saved-manage">Delete a chat</button></div>
       <div id="saved-panel" hidden>
         <p class="sub">Type delete to unlock one deletion. A deleted chat can be put back below.</p>
@@ -1413,18 +1420,17 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
       </div>
     </section>
     <section data-s="guide">
-      <h3>Guide</h3>
-      <p class="sub">What it can do. Pick one to put an example in the message box.</p>
+      <header class="su-head"><h2>Guide</h2><p class="sub">What it can do. Pick one to put an example in the message box.</p></header>
       <div id="gd-list"></div>
       <h3>How the app works</h3>
-      <div id="gd-controls" style="margin-top: 8px"></div>
+      <div id="gd-controls"></div>
     </section>
   </div>
 </div>
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
   <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
   <p class="sub" id="pd-path"></p>
-  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, GAME.md, Ideas and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
+  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, GAME.md and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
   <div class="act">
     <button class="pill" id="pd-folder">Open folder</button>
     <button class="pill" id="pd-bible">Open GAME.md</button>
@@ -1485,7 +1491,6 @@ try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (sa
    and a longer explanation that waits behind "More"]. */
 const GUIDE = [
   ["Start a game", [
-    ["Find ideas for a game", "A game's Ideas tab reads Roblox's live charts and proposes ideas.", "@ideas"],
     ["Plan a new game", "It asks about the idea, one question at a time, before building anything.", "This is a new game. Interview me about the idea before building anything."],
     ["Learn an existing game", "It reads the open place and the folder, then writes up how the game works.", "Read through this game and write up how it works."],
   ]],
@@ -1515,7 +1520,7 @@ const GUIDE = [
   ["Bigger jobs", [
     ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first playable of this game and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
     ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
-    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make, or press Start a studio run on an idea in a game's Ideas tab. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
+    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Setup, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
     ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
@@ -1534,7 +1539,7 @@ const GUIDE = [
 const CONTROLS = [
   ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: its Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
   ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for a game or a plain project (a regular program, or anything else). Chats that belong to no project sit under No project."],
-  ["Chat, Review, Ideas, Promos", "A project's tabs: talk to its agent and see what needs you. A game also has Ideas (from Roblox's charts) and Promos (promo videos)."],
+  ["Chat, Review, Promos", "A project's tabs: talk to its agent and see what needs you. A game also has Promos (promo videos)."],
   ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Setup, Chats, and put back afterwards."],
   ["The project's name", "Press it for the project's folder, its kind (Game or Project), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
@@ -1559,7 +1564,7 @@ function guideRow([name, what, example, more]) {
   const item = el("div", "g-item");
   const row = el(example ? "button" : "div", "g-row", "<b>" + esc(name) + "</b>" + (example ? ARROW : "") + "<small>" + esc(what) + "</small>");
   if (example === "@newproj") row.onclick = () => { closeSetup(); showNewProject(); };
-  else if (example === "@promos" || example === "@review" || example === "@ideas") row.onclick = () => { closeSetup(); setView(example.slice(1)); };
+  else if (example === "@promos" || example === "@review") row.onclick = () => { closeSetup(); setView(example.slice(1)); };
   else if (example) row.onclick = () => { closeSetup(); setView("chat"); box.value = example; fit(); box.focus(); box.setSelectionRange(example.length, example.length); };
   item.appendChild(row);
   if (more) item.appendChild(moreInfo(more));
@@ -1577,6 +1582,22 @@ async function api(path, body) {
 }
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+/* The chosen tab's background is one mark that slides from the last one to it (the tab bar and Setup's list). The
+   first time it is simply there; a host it cannot measure (hidden) hides the mark, and the tab keeps its own look. */
+function slideMark(host) {
+  if (!host) return;
+  let m = host.querySelector(":scope > .slide-mark");
+  if (!m) {
+    m = el("span", "slide-mark"); m.setAttribute("aria-hidden", "true"); host.prepend(m); host.classList.add("slide-host");
+    new ResizeObserver(() => slideMark(host)).observe(host);
+  }
+  const on = host.querySelector(":scope > .on");
+  if (!on || on.hidden || !on.offsetWidth) { m.classList.remove("go"); m.style.opacity = "0"; host.classList.remove("marked"); return; }
+  m.style.transform = "translate(" + on.offsetLeft + "px, " + on.offsetTop + "px)";
+  m.style.width = on.offsetWidth + "px"; m.style.height = on.offsetHeight + "px"; m.style.opacity = "1";
+  host.classList.add("marked");
+  if (!m.classList.contains("go")) requestAnimationFrame(() => requestAnimationFrame(() => m.classList.add("go")));
+}
 /* Things fade in once, as they arrive. A chat put back from its log, or shown again, is simply there: thousands of
    lines fading in together make a long chat slow to open. */
 function calm(node) { node.querySelectorAll(".enter").forEach((e) => e.classList.remove("enter")); }
@@ -1622,7 +1643,7 @@ function md(src) {
 const agents = new Map();
 let current = null;
 /* experts and helpers waiting for the chat that started them to open: helper id -> pane */
-const parked = el("div"); parked.hidden = true;   /* where the researcher's log waits while its page is not shown */
+const parked = el("div"); parked.hidden = true;   /* where a researcher's log waits, out of sight */
 function pane(id) {
   let p = agents.get(id);
   if (p) return p;
@@ -1678,10 +1699,12 @@ function showNewProject() { curProj = null; setView("newproj"); }
 function showAll() { curProj = null; setView("all"); }
 /* the page in front is a project's tab, or one of the two pages of no project: Overview and New project */
 const isPage = (v) => v === "newproj" || v === "all";
-/* Ideas and Promos are a game's tabs: a plain project and a chat with no project have neither. A project the list
+/* Promos is a game's tab: a plain project and a chat with no project have none. A project the list
    has not reached yet counts as a game, as every project did before kinds. */
 const isGameProj = (key) => !!key && kindOf(key) === "game";
-const gameTab = (v) => v === "ideas" || v === "promos";
+const gameTab = (v) => v === "promos";
+/* the views there are; any other (a tab saved before it was taken away, such as Ideas) opens Chat */
+const VIEWS = ["chat", "review", "promos", "newproj", "all"];
 /* where a chat's start card goes once it has a project: a game with no GAME.md asks new or existing first */
 /* a project's kind: `type` first, since a chat's "project" event carries its own `kind` ("project") */
 const plainProj = (pr) => !!pr && ((pr.type || pr.kind) === "plain" || (!!pr.path && kindOf(pr.path) === "plain"));
@@ -2071,19 +2094,20 @@ $("proj-list").addEventListener("focusin", (ev) => {
   const group = b.closest(".s-kids[id^='kids-']");
   if (group) for (const r of group.querySelectorAll(".s-row.sx")) { const t = r === b ? 0 : -1; if (r.tabIndex !== t) r.tabIndex = t; }
 });
-/* the bar over the tabs: the project's name and its tabs (a game also has Ideas and Promos) */
+/* the bar over the tabs: the project's name and its tabs (a game also has Promos) */
 function paintView() {
   if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
-  for (const v of ["review", "promos", "ideas", "newproj", "all"]) document.body.classList.toggle(v, view === v);
+  for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
   if (view !== "review") $("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
-  ["chat", "review", "ideas", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
+  ["chat", "review", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
+  requestAnimationFrame(() => slideMark($("tabs")));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
   const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
   $("b-proj").textContent = name; $("b-proj").disabled = !curProj || isPage(view);
   $("b-proj").title = curProj && !isPage(view) ? "The project's folder, notes and git history" : "";
   $("tabs").hidden = isPage(view);
   $("v-review").hidden = !curProj;
-  $("v-ideas").hidden = $("v-promos").hidden = !isGameProj(curProj);
+  $("v-promos").hidden = !isGameProj(curProj);
   paintReviewBadge();
 }
 function selectionHint() {
@@ -2842,8 +2866,7 @@ function onEvent(e) {
     /* a closed expert keeps its line in the chat that started it, and its row in the sidebar: either opens it again */
     if (isHelper(p)) paintExpert(p);
     if (current === e.agent) { current = null; if (bootMark !== Infinity && view === "chat" && curProj !== null) showProject(curProj, "chat"); }
-    /* the researcher closes itself once its ideas are stored: the ideas show, its line goes */
-    if (p === researchPane) { researchPane = null; paintResearchJob(); loadResearch(); }
+    if (p === researchPane) researchPane = null;
     paintSide(); loadHistory(); refresh(); return;   /* refresh: New chat counts the freed slot at once */
   }
   const p = pane(e.agent), wasBusy = p.busy;
@@ -2853,7 +2876,7 @@ function onEvent(e) {
     p.name = e.name; if (e.ai) p.ai = e.ai; if (e.role) p.role = e.role; if (e.parent) p.parent = e.parent; if (e.expert) p.expert = e.expert; if (e.team) p.team = e.team; if (e.runs_on) p.runsOn = e.runs_on;
     if (isHelper(p) || p.role === "research") {
       const h = p.col.querySelector(".hello"); if (h) h.remove(); p.start = null;
-      if (!isHelper(p)) { researchPane = p; parked.appendChild(p.col); paintResearch(); }
+      if (!isHelper(p)) { researchPane = p; parked.appendChild(p.col); }
     }   /* a new chat is opened by whatever made it (ensureChat), never just for appearing: see showDraft */
     if (pendingSelect && pendingSelect.id === p.id) { const t = pendingSelect.tab; pendingSelect = null; select(p.id); if (t) setView(t); }
     loadHistory();
@@ -3040,7 +3063,6 @@ function onEvent(e) {
   /* when it was last at work: a turn that starts or ends now (not one read back from a log), or its own start */
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
-  if (p === researchPane) paintResearchJob();
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
   if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
@@ -3648,22 +3670,24 @@ $("b-out").onclick = () => api("/api/open", { what: "work" });
 $("gd-list").appendChild(guideList(GUIDE));
 CONTROLS.forEach((c) => $("gd-controls").appendChild(guideRow(c)));
 
-/* ---------- tabs: Chat and Review for the project in front (and Ideas and Promos for a game), or the New project page ---------- */
-let research = {}, researchPane = null;
+/* ---------- tabs: Chat and Review for the project in front (and Promos for a game), or the New project page ---------- */
+/* a researcher chat (role "research", from the time a game had an Ideas tab) is kept out of sight, never listed */
+let researchPane = null;
 function setView(v) {
+  if (!VIEWS.includes(v)) v = "chat";
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
   if (v === "review" && !curProj) v = "chat";
   if (gameTab(v) && !isGameProj(curProj)) v = "chat";
   view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
-  if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "ideas") loadResearch(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
+  if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
-$("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos"); $("v-ideas").onclick = () => setView("ideas");
+$("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos");
 $("b-proj").onclick = () => openProject();
 
 /* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
 let npParent = "", npGit = true, npKind = "game";
-const KIND_NOTE = { game: "A Roblox game: the Studio tools, GAME.md, Ideas and Promos.", plain: "A regular program, or anything else that is not a game." };
+const KIND_NOTE = { game: "A Roblox game: the Studio tools, GAME.md and Promos.", plain: "A regular program, or anything else that is not a game." };
 const parentFor = (kind) => (kind === "plain" ? projects.default_parent_plain : projects.default_parent) || "";
 function openNewProject() {
   paintNewProject(); loadProjects().then(paintNewProject);
@@ -3703,101 +3727,6 @@ $("np-add").onclick = async () => {
   openMadeProject(r.project);
 };
 $("np-chat").onclick = () => showProject("", "chat");
-const big = (n) => n == null ? "?" : n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
-const pct = (n) => n == null ? "?" : n + "%";
-/* the agent's answer: a summary, then one json block of ideas */
-function parseIdeas(text) {
-  const m = /```json\s*([\s\S]*?)```/.exec(text || ""); let ideas = [];
-  if (m) { try { ideas = JSON.parse(m[1]).ideas || []; } catch (e) {} }
-  return { summary: (m ? text.slice(0, m.index) : text || "").trim(), ideas };
-}
-function ideaText(i) {
-  return [i.title + (i.genre ? " (" + i.genre + ")" : ""), i.pitch, "Core loop: " + (i.core_loop || ""), "Why now: " + (i.why_now || ""),
-    "Evidence:\n" + (i.evidence || []).map((x) => "- " + x).join("\n"),
-    "Similar games: " + (i.comparables || []).map((c) => c.name + " (" + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes)").join("; "),
-    "First playable: " + (i.first_playable || ""), "Main risk: " + (i.risk || "")].join("\n");
-}
-function ideaCard(i) {
-  const card = el("div", "idea-card");
-  const dd = (label, html) => html ? "<dt>" + label + "</dt><dd>" + html + "</dd>" : "";
-  card.innerHTML = '<span class="kind">' + esc(cap(i.genre || "idea")) + "</span><h3>" + esc(i.title || "Untitled") + '</h3><p class="pitch">' + esc(i.pitch || "") + "</p><dl>"
-    + dd("The loop", esc(i.core_loop || "")) + dd("Why now", esc(i.why_now || ""))
-    + dd("Evidence", (i.evidence || []).length ? "<ul>" + i.evidence.map((x) => "<li>" + esc(String(x)) + "</li>").join("") + "</ul>" : "")
-    + dd("Similar games", (i.comparables || []).length ? "<ul>" + i.comparables.map((c) => "<li>" + esc(c.name || "") + ": " + big(c.players_now) + " playing, " + pct(c.likes_percent) + " likes" + (c.note ? ". " + esc(c.note) : "") + "</li>").join("") + "</ul>" : "")
-    + dd("First version", esc(i.first_playable || "")) + dd("Main risk", esc(i.risk || "")) + "</dl>"
-    + '<div class="act"><button class="pill main">Use this idea</button><button class="pill">Start a studio run</button><button class="pill">Copy</button></div><p class="r-note"></p>';
-  const [start, build, copy] = card.querySelectorAll("button");
-  start.title = "Opens a new chat in this game with the idea, where the agent talks it through with you before building.";
-  build.title = "Starts a studio run in this game with this idea: a Lead hands each stage to an expert and keeps going, and finished work waits for you in Review. Roblox Studio must be open.";
-  const why = card.querySelector(".r-note");
-  build.onclick = async () => {
-    const key = curProj; if (!key) return;
-    why.textContent = ""; build.disabled = true;
-    const r = await api("/api/studio-run", { action: "start", path: key, idea: ideaText(i) });
-    build.disabled = false;
-    if (!r.ok) { why.textContent = r.error || "Could not start the run."; return; }
-    showProject(key, "review");
-  };
-  start.onclick = () => {
-    const key = curProj; if (!key) return;
-    /* a new chat in this game: the idea goes with its first message */
-    draftSeed[key] = ideaText(i);
-    setView("chat"); showDraft(key);
-    box.value = "Let's shape the game around this idea: " + (i.title || "this idea"); fit(); box.focus();
-  };
-  copy.onclick = async () => { copy.textContent = (await copyText(ideaText(i))) ? "Copied" : "Could not copy"; setTimeout(() => (copy.textContent = "Copy"), 1500); };
-  return card;
-}
-let paintedIdeas = null;
-function paintResearch() {
-  const r = research, busy = !!r.researching;
-  $("r-find").disabled = busy; $("r-find").textContent = busy ? "Finding ideas" : "Find ideas";
-  $("r-note").textContent = r.note || (busy ? "Working. This takes a few minutes; you can do other things meanwhile." : r.ideas ? "Ideas from " + ago(r.ideas.when) + ". The charts change daily." : "");
-  paintResearchJob();
-  if (r.ideas && paintedIdeas !== r.ideas.when) {
-    paintedIdeas = r.ideas.when; const box0 = $("r-ideas"); box0.innerHTML = "";
-    const got = parseIdeas(r.ideas.text);
-    if (got.summary) { const pr = el("div", "prose", md(got.summary)); pr.style.marginTop = "16px"; box0.appendChild(pr); }
-    const list = el("div", "r-ideas"); got.ideas.forEach((i) => list.appendChild(ideaCard(i))); box0.appendChild(list);
-  }
-}
-/* the researcher, while it works or until it is closed: one line, like an expert's, opening to its log */
-function paintResearchJob() {
-  const host = $("r-job"), h = researchPane;
-  if (!h || !agents.has(h.id)) { host.replaceChildren(); return; }
-  if (!h.line) {
-    const line = el("div", "xp", '<button class="xp-row" aria-expanded="false"><span class="dot"></span><span class="xp-name"></span><span class="xp-job"></span><span class="xp-on"></span><span class="xp-state"></span>' + CHEVRON + '</button><div class="xp-body" hidden><div class="xp-act"><button class="pill sm" hidden>Stop</button><span></span><button class="linkish xp-remove" hidden title="Close this expert. Its log stays saved, and the line stays here to open it again.">Remove</button></div></div>');
-    const row = line.querySelector(".xp-row");
-    row.onclick = () => { const open = !line.classList.contains("open"); if (open) calm(line); line.classList.toggle("open", open); line.querySelector(".xp-body").hidden = !open; row.setAttribute("aria-expanded", open ? "true" : "false"); };
-    line.querySelector(".xp-act .pill").onclick = () => api("/api/stop", { agent: h.id });
-    line.querySelector(".xp-remove").onclick = () => api("/api/remove", { agent: h.id });
-    line.querySelector(".xp-remove").title = "Close the researcher. Its ideas stay on this page.";
-    h.line = line; h.col.hidden = false; line.querySelector(".xp-body").appendChild(h.col);
-  }
-  if (h.line.parentNode !== host) host.replaceChildren(h.line);
-  h.expert = "Researcher";
-  const line = h.line, [name, job] = splitExpert(h.name, h.expert), [state, dot] = xpState(h);
-  line.querySelector(".xp-name").textContent = name; line.querySelector(".xp-job").textContent = job;
-  line.querySelector(".xp-state").textContent = state;
-  line.querySelector(".dot").className = "dot" + dot;
-  line.classList.toggle("busy", !!h.busy);
-  line.querySelector(".xp-act .pill").hidden = !h.busy;
-  line.querySelector(".xp-remove").hidden = !!h.busy;
-  line.querySelector(".xp-act span").textContent = "Its own log, read only.";
-  line.querySelector(".xp-row").title = [name, job, state].filter(Boolean).join(" · ");
-}
-async function loadResearch() {
-  try { const note0 = research.note; research = await api("/api/research"); research.note = note0; } catch (e) { return; }
-  paintResearch();
-}
-$("r-find").onclick = async () => {
-  const ai = defaultAi();
-  const r = await api("/api/research", { action: "ideas", focus: $("r-focus").value, ai, model: modelOf({ ai }) || null });
-  research.note = r.ok ? "" : (r.error || "Could not start."); if (r.ok) research.researching = r.agent; paintResearch();
-};
-$("r-focus").onkeydown = (e) => { if (e.key === "Enter") $("r-find").click(); };
-setInterval(() => { if (view === "ideas" && research.researching) loadResearch(); }, 2500);
-
 /* typing "/" offers the commands */
 const COMMANDS = [
   ["/texture", "A surface material that tiles: stone, wood, metal"],
@@ -5553,6 +5482,7 @@ $("notes-open-game").onclick = () => api("/api/notes-open", { scope: "game", pat
 function setupSection(name) {
   document.querySelectorAll("#su-nav [data-s]").forEach((b) => b.classList.toggle("on", b.dataset.s === name));
   document.querySelectorAll(".su-body section").forEach((x) => x.classList.toggle("on", x.dataset.s === name));
+  slideMark($("su-nav"));
   document.querySelector(".su-body").scrollTop = 0;
   if (name === "experts") loadExperts();
   if (name === "connections") loadRag();
@@ -6538,6 +6468,7 @@ function paintExperts() {
   }));
 }
 document.querySelectorAll("#su-nav [data-s]").forEach((b) => (b.onclick = () => setupSection(b.dataset.s)));
+slideMark($("su-nav")); document.fonts.ready.then(() => { slideMark($("su-nav")); slideMark($("tabs")); });
 function closeSetup() { if (!document.body.classList.contains("setup")) return; document.body.classList.remove("setup"); panelClosed(); }
 $("b-setup").onclick = () => openSetup(); $("b-close").onclick = closeSetup; $("veil").onclick = () => { closeSetup(); closeProject(); };
 
