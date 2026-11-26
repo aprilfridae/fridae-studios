@@ -1859,6 +1859,7 @@ fridaeWait.unshift((f) => {
     /* the sidebar and Overview: where a press goes */
     showAll, showNewProject, setView, showProject, openChatById, openInReview, projectRenamed, projectDeleted,
     openChat: (id) => { select(id); setView("chat"); },
+    newChat: (key) => { closeSetup(); showProject(key, "chat"); showDraft(key); fridaeDo((f) => f.chat.front(true)); },
     ink: () => INK_RGB,
     anyBusy: () => [...agents.values()].some((x) => x.busy),
     /* a row of the Guide: its page, or its example in the message box */

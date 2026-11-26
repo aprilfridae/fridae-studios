@@ -13,9 +13,11 @@ function draw(r: Row, menuAt: string): any {
   switch (r.t) {
     case "all": return <AllRow key={r.key} on={r.on} busy={r.busy} />;
     case "review": return <ReviewRow key={r.key} on={r.on} n={r.n} k={r.k} strong={r.strong} />;
-    case "proj": return <ProjectRow key={r.key} path={r.path} name={r.name} cls={r.cls} n={r.n} strong={r.strong} working={r.working} menu={menuAt === r.path} />;
-    case "chat": return <ChatRow key={r.key} id={r.id} name={r.name} on={r.on} live={r.live} count={r.count} open={r.open} tip={r.tip} />;
-    case "none": return <NoneRow key={r.key} cls={r.cls} busy={r.busy} />;
+    case "proj": return <ProjectRow key={r.key} path={r.path} name={r.name} cls={r.cls} n={r.n} strong={r.strong} working={r.working} menu={menuAt === r.path} ais={r.ais} />;
+    case "chat": return <ChatRow key={r.key} id={r.id} name={r.name} on={r.on} live={r.live} count={r.count} open={r.open} tip={r.tip} ai={r.ai} />;
+    case "none": return <NoneRow key={r.key} cls={r.cls} busy={r.busy} ais={r.ais} />;
+    /* a project and, the one in front, its chats: a box of its own */
+    case "pbox": return <div key={r.key} class={"pbox" + (r.on ? " on" : "")} data-box={r.path}>{r.rows.map((x) => draw(x, menuAt))}</div>;
     case "add": return <AddRow key={r.key} on={r.on} />;
     case "expert": return <ExpertRowView key={r.key} id={r.id} of={r.of} cls={r.cls} dot={r.dot} who={r.who} job={r.job} small={r.small} turnTip={r.turnTip} tip={r.tip} on={r.on} tab={r.tab} />;
     case "more": return <MoreRowView key={r.key} id={r.id} text={r.text} open={r.open} tip={r.tip} />;

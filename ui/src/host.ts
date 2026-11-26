@@ -10,6 +10,7 @@ export type Host = {
   /* what the sidebar and Overview press */
   showAll(): void; showNewProject(): void; setView(view: string): void;
   showProject(path: string, tab?: string): void;  /* a project comes to the front, on its last tab ("" is No project) */
+  newChat(path: string): void;                    /* a new chat in that project: its empty page and the message box */
   openChat(id: string): void;                     /* an open chat comes to the front */
   openChatById(id: string): void;                 /* the same for any chat: a saved one is opened first */
   openInReview(path: string, id?: string): void;

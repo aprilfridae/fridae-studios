@@ -62,14 +62,17 @@ export type BoxRow = { t: "box"; key: string; id: string; domId: string; cls: st
 export type Row =
   | { t: "all"; key: string; on: boolean; busy: boolean }
   | { t: "review"; key: string; on: boolean; n: number; k: number; strong: boolean }
-  | { t: "proj"; key: string; path: string; name: string; cls: string; n: number; strong: boolean; working: boolean }
-  | { t: "chat"; key: string; id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string }
-  | { t: "none"; key: string; cls: string; busy: boolean }
+  | { t: "proj"; key: string; path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; ais: string }
+  | { t: "chat"; key: string; id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string }
+  | { t: "none"; key: string; cls: string; busy: boolean; ais: string }
+  /* a project with its chats (the one in front), in a box of its own */
+  | { t: "pbox"; key: string; path: string; on: boolean; rows: Row[] }
   | { t: "add"; key: string; on: boolean }
   | ExpertRow | MoreRow | BoxRow;
 
 export function rowsOf(s: Slice, now: number): Row[] {
-  const { nav, chats, projects } = s, view = nav.view, rows: Row[] = [];
+  const { nav, chats, projects } = s, view = nav.view, top: Row[] = [];
+  let rows = top;
   noteWhen(chats, s.saved.chats || []);
   const byId = new Map(chats.map((p) => [p.id, p]));
   const aiName = (id?: string) => { const a = s.ais.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; };
@@ -104,7 +107,7 @@ export function rowsOf(s: Slice, now: number): Row[] {
     for (const p of projectChats(s, key)) {
       const xs = expertsOf(s, p), open = xs.length > 0 && xpOpen(p.id), at = xs.filter((x) => x.pane && x.pane.busy).length, on = p.id === front;
       const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id, many = xs.length === 1 ? "expert" : xs.length + " experts";
-      rows.push({ t: "chat", key: "c:" + p.id, id: p.id, name: p.name, on, live: p.busy || at > 0, count: xs.length, open,
+      rows.push({ t: "chat", key: "c:" + p.id, id: p.id, name: p.name, on, live: p.busy || at > 0, count: xs.length, open, ai: chatAi(p),
         tip: [p.name, aiName(chatAi(p)), state, xs.length ? (xs.length === 1 ? "1 expert" : many) + (at ? ", " + at + " working" : "") : ""].filter(Boolean).join(" · ") });
       if (!open && !shrink.has(kids)) continue;
       /* those at work or lately at work, then one line for the rest, which opens to them */
@@ -123,18 +126,19 @@ export function rowsOf(s: Slice, now: number): Row[] {
     for (const h of chats) if (h.helper && !byId.has(h.parent) && h.project === key) rows.push(expert({ id: h.id, name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h, when: 0 }, null, ""));
   };
 
-  rows.push({ t: "all", key: "all", on: view === "all", busy: chats.some((p) => p.busy) });
-  rows.push({ t: "review", key: "review", on: view === "review", ...totals(s) });
-  for (const x of projects) {
-    const st = projState(s, x.path);
-    rows.push({ t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...st });
-    if (inFront(x.path)) chatsOf(x.path);
-  }
+  top.push({ t: "all", key: "all", on: view === "all", busy: chats.some((p) => p.busy) });
+  top.push({ t: "review", key: "review", on: view === "review", ...totals(s) });
+  /* the AIs a project's open chats run on, in the order first used ("claude gemini") */
+  const aisOf = (key: string) => [...new Set(projectChats(s, key).filter((p) => p.started || p.busy).map(chatAi))].join(" ");
+  const boxed = (key: string, head: Row) => {
+    const inner: Row[] = [head]; rows = inner;
+    if (inFront(key)) chatsOf(key);
+    rows = top;
+    top.push({ t: "pbox", key: "pb:" + key, path: key, on: inFront(key), rows: inner });
+  };
+  for (const x of projects) boxed(x.path, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...projState(s, x.path), ais: aisOf(x.path) });
   const loose = chats.filter((p) => isChat(p) && !p.own && !p.want && (p.started || p.busy));
-  if (loose.length || nav.proj === "") {
-    rows.push({ t: "none", key: "none", cls: marked(""), busy: loose.some((p) => p.busy) });
-    if (inFront("")) chatsOf("");
-  }
-  rows.push({ t: "add", key: "add", on: view === "newproj" });
-  return rows;
+  if (loose.length || nav.proj === "") boxed("", { t: "none", key: "none", cls: marked(""), busy: loose.some((p) => p.busy), ais: aisOf("") });
+  top.push({ t: "add", key: "add", on: view === "newproj" });
+  return top;
 }

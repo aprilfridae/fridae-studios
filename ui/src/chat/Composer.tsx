@@ -1,5 +1,6 @@
 /* The message box: the words on top; under them, what to add, which AI and model, how it works, and Send. An
    expert's chat is read only: one line takes the box's place there. */
+import { AiLogo } from "../ui/AiLogo";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { noticeOf, pressOpenCode, pressSignIn } from "../ai";
@@ -75,7 +76,7 @@ function PickerBody({ p }: { p: any }) {
       {H.AIS.map(([id, name]: [string, string]) => (
         <button class="pk-ai" role="radio" aria-checked={id === ai ? "true" : "false"} onClick={() => switchAi(id, () => byId("model")!.focus())}
           title={id === ai ? "This chat uses " + name + "." : (p && p.started ? "Carry on this chat with " + name + ". It is handed the chat so far." : "Use " + name + " for this chat.") + (have[id] === false ? " " + name + " is not set up on this computer yet: Settings, Connections says how." : "")}>
-          <b>{name}</b>{have[id] === false && <small>Not installed</small>}
+          <AiLogo ai={id} size={14} /><span class="pk-ai-t"><b>{name}</b>{have[id] === false && <small>Not installed</small>}</span>
         </button>
       ))}
     </div>
@@ -182,7 +183,7 @@ export function Dock() {
           <span class="pick">
             <button class="chip" id="model" aria-haspopup="dialog" aria-expanded={C.pop === "model" ? "true" : "false"} onClick={pop("model")}
               title={[H.aiName(ai), cur ? cur[1] : "", own ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
-              <span id="model-name">{H.aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p)}</span>{DOWN}</button>
+              <AiLogo ai={ai} size={13} /><span id="model-name">{H.aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p)}</span>{DOWN}</button>
             {/* the picker behind the button is only painted once it has been opened */}
             <div class={"menu picker" + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
           </span>

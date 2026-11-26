@@ -6,6 +6,7 @@ import { foldSide } from "./ease";
 import { setXpOpen, xpOld, xpOpen } from "./fold";
 import { openMenu } from "./ProjectMenu";
 import type { ExpertRow, MoreRow } from "./model";
+import { AiLogo, AI_NAME } from "../ui/AiLogo";
 
 const CHEVRON = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3" /></svg>;
 const things = (n: number, one: string, many: string) => n + (n === 1 ? one : many);
@@ -30,13 +31,22 @@ export const ReviewRow = memo(function ReviewRow({ on, n, k, strong }: { on: boo
   );
 });
 
-type ProjProps = { path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; menu: boolean };
-export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong, working, menu }: ProjProps) {
+/* the logos of the AIs a project's chats run on */
+const Logos = ({ ais }: { ais: string }) => ais ? <span class="p-ais" title={"Runs on " + ais.split(" ").map((a) => AI_NAME[a] || a).join(", ")}>{ais.split(" ").slice(0, 3).map((a) => <AiLogo ai={a} size={12} />)}</span> : null;
+/* a new chat in this project: the empty page and the message box (nothing is made until the first message) */
+const NewChat = ({ path, name }: { path: string; name: string }) => (
+  <span class="p-new" role="button" aria-label={"New chat in " + name} title="New chat" onClick={(ev) => { ev.stopPropagation(); host.newChat(path); }}>
+    <svg aria-hidden="true" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8" /></svg>
+  </span>
+);
+type ProjProps = { path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; menu: boolean; ais: string };
+export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong, working, menu, ais }: ProjProps) {
   const review = (ev: Event) => { ev.stopPropagation(); host.openInReview(path); };
   return (
     <button class={"proj" + cls} title={path} data-k={"p:" + path} onClick={() => host.showProject(path)}>
-      <b>{name}</b>
+      <span class="p-name"><b>{name}</b><Logos ais={ais} /></span>
       <span class="state" key={!n && working ? "busy" : "idle"} title={!n && working ? "Agents are working on it" : undefined}>
+        <NewChat path={path} name={name} />
         {/* the project's menu (Rename, Open folder, Delete): this button, a right-click, or Shift+F10 on the row */}
         <span class="p-more" role="button" aria-label={"Menu for " + name} aria-haspopup="menu" aria-expanded={menu ? "true" : "false"} title="Rename, open folder, delete" onClick={(ev) => { ev.stopPropagation(); openMenu(path, ev.currentTarget as Element); }}>
           <svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="6" r="1.1" /><circle cx="6" cy="6" r="1.1" /><circle cx="10" cy="6" r="1.1" /></svg>
@@ -49,8 +59,8 @@ export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong,
   );
 });
 
-export const NoneRow = memo(function NoneRow({ cls, busy }: { cls: string; busy: boolean }) {
-  return <button class={"proj none" + cls} title="Chats that belong to no project" data-k="none" onClick={() => host.showProject("")}><b>No project</b><span class="state"><span class={"dot" + (busy ? " live" : "")}></span></span></button>;
+export const NoneRow = memo(function NoneRow({ cls, busy, ais }: { cls: string; busy: boolean; ais: string }) {
+  return <button class={"proj none" + cls} title="Chats that belong to no project" data-k="none" onClick={() => host.showProject("")}><span class="p-name"><b>No project</b><Logos ais={ais} /></span><span class="state"><NewChat path="" name="No project" /><span class={"dot" + (busy ? " live" : "")}></span></span></button>;
 });
 
 export const AddRow = memo(function AddRow({ on }: { on: boolean }) {
@@ -61,15 +71,15 @@ export const AddRow = memo(function AddRow({ on }: { on: boolean }) {
   );
 });
 
-type ChatProps = { id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string };
-export const ChatRow = memo(function ChatRow({ id, name, on, live, count, open, tip }: ChatProps) {
+type ChatProps = { id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string };
+export const ChatRow = memo(function ChatRow({ id, name, on, live, count, open, tip, ai }: ChatProps) {
   const many = count === 1 ? "expert" : count + " experts";
   return (
     <div class="s-chat">
       {count > 0 && <button class="s-tw" data-k={"t:" + id} aria-controls={"kids-" + id} aria-expanded={open ? "true" : "false"} aria-label={(open ? "Hide the " : "Show the ") + many + " of " + name} title={(open ? "Hide" : "Show") + " the experts this chat started"}
         onClick={() => foldSide("k:" + id, xpOpen(id), () => setXpOpen(id, !xpOpen(id)))}>{CHEVRON}</button>}
       <button class={"s-row" + (on ? " on" : "")} data-k={"c:" + id} title={tip} aria-current={on ? "true" : undefined} onClick={() => host.openChat(id)}>
-        <span class={"dot" + (live ? " live" : "")}></span><b>{name}</b><span class="s-n">{count ? String(count) : ""}</span>
+        <span class={"s-ai" + (live ? " live" : "")}><AiLogo ai={ai} size={13} /></span><b>{name}</b><span class="s-n">{count ? String(count) : ""}</span>
       </button>
     </div>
   );
