@@ -264,15 +264,6 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .u-row b { font-weight: 500; }
 .u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
 .u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
-.u-lim { padding: 8px; font-size: 14px; }
-.u-lim .lim-top { display: flex; align-items: baseline; gap: 8px; }
-.u-lim .lim-top b { font-weight: 500; flex: 1; min-width: 0; white-space: nowrap; text-align: left; }
-.u-lim > small { display: block; margin-top: 4px; color: var(--dim); font-size: 12px; }
-.u-lim .lim-top .n { font-family: var(--mono); font-size: 12px; min-width: 32px; text-align: right; }
-.u-lim .bar { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--press); overflow: hidden; }
-.u-lim .bar i { display: block; height: 100%; border-radius: 2px; background: var(--text); }
-.u-lim.high .bar i { background: var(--warn); }
-.u-lim.full .bar i { background: var(--bad); }
 .u-note { margin: 4px 8px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
 .pop .moreinfo { margin: 0 8px 8px; }
 .pop .moreinfo summary, .pop .moreinfo p { font-size: 12px; }
@@ -1170,6 +1161,61 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .light img { max-width: 100%; max-height: 100%; border-radius: var(--r-m); }
 .light.on { opacity: 1; pointer-events: auto; }
 
+/* ---------- Usage: each account's plan limits, and what was used today ----------
+   A limit is one line: its name and how much is left, a bar filled to what is left, and when it starts again. A thin
+   line cut into the bar marks where even spending would be by now; the mark after the bar says whether you are
+   spending faster than that, about on it, or slower. Adapted from T3 Code's usage page (MIT; see THIRD_PARTY.md). */
+.us-page { gap: 24px; }
+.us-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.us-sec > h2, .us-total > h2 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
+.us-note { margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-note:empty { display: none; }
+.us-accounts { display: flex; flex-direction: column; gap: 12px; }
+.us-acct { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; border: 1px solid var(--line); }
+.us-acct > header { display: flex; align-items: baseline; gap: 12px; }
+.us-acct h3 { margin: 0; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
+.us-acct header span { margin-left: auto; font-size: 12px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.us-acct .us-err { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-acct .us-err svg { flex: none; margin-top: 2px; color: var(--warn); }
+.lw { display: grid; grid-template-columns: 176px minmax(0, 1fr) 112px; gap: 4px 16px; align-items: center; }
+.lw.compact { grid-template-columns: minmax(0, 132px) minmax(48px, 1fr) auto; gap: 2px 12px; }
+.lw-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; }
+.lw-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.lw-name > b { flex: none; margin-left: auto; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.lw-bar { position: relative; height: 24px; border-radius: 999px; cursor: default; outline: none; }
+.lw-bar:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+.lw-clip { position: absolute; inset: 0; }
+.lw-track { position: absolute; inset: 6px 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.lw-fill { position: absolute; top: 6px; bottom: 6px; left: 0; border-radius: 999px; background: var(--text); }
+.lw-bar.low .lw-fill { background: var(--warn); }
+.lw-tick { position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 999px; background: var(--text); transform: translateX(-50%); }
+.lw-when { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; white-space: nowrap; color: var(--dim); font-variant-numeric: tabular-nums; }
+.lw-when > span:last-child { flex: none; margin-left: auto; }
+.lw-pace { display: inline-flex; color: var(--dim); }
+.us-today { display: grid; gap: 24px; }
+@media (min-width: 1024px) { .us-today { grid-template-columns: minmax(0, 288px) minmax(0, 1fr); } }
+.us-total { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.us-big { margin: 0; font-size: 36px; line-height: 40px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.us-ais { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.us-ai { display: flex; flex-direction: column; gap: 4px; }
+.us-ai > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.us-ai b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 400; color: var(--text); }
+.us-ai .n { flex: none; font-size: 14px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.us-ai small { font-size: 12px; line-height: 1.5; color: var(--dim); }
+.us-ai > .us-share { display: block; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--text) 8%, transparent); overflow: hidden; }
+.us-share i { display: block; height: 100%; border-radius: 999px; background: var(--text); }
+.us-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; padding: 4px 0; }
+@media (min-width: 768px) { .us-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.us-metrics > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.us-metrics dt { font-size: 12px; line-height: 16px; color: var(--dim); }
+.us-metrics dd { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+#us-refresh.busy svg { animation: logo-turn 800ms linear infinite; }
+/* the same limits, smaller, in the pop-up at the bottom left */
+.pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding-right: 8px; }
+#use-pop { width: 376px; }
+.pop-acct { padding: 4px 8px 8px; }
+.pop-acct > b { display: block; margin-bottom: 2px; font-size: 13px; line-height: 20px; font-weight: 500; }
+.pop-acct > small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.45; color: var(--dim); }
 /* ---------- glass ----------
    A surface that floats over something that scrolls or sits behind it lets it show through, blurred: 16px of blur, a
    touch more colour (saturate 1.08) and the surface's own colour at 80%. Menus and pop-ups, the message box (the chat
@@ -1311,7 +1357,7 @@ applyTheme();
         <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
       </div>
     </div>
-    <div class="pop" id="use-pop"><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
+    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
 
   <main class="stage">
@@ -1802,6 +1848,38 @@ applyTheme();
     </div></section>
 
   </div>
+  </div>
+</div>
+<div class="modal" id="ud" role="dialog" aria-label="Usage">
+  <div class="st-main">
+    <header class="st-head">
+      <nav aria-label="Usage breadcrumb"><ol class="st-crumb"><li aria-current="page">Usage</li></ol></nav>
+      <span class="st-head-note" id="us-checked"></span>
+      <span class="grow"></span>
+      <button class="icon" id="us-refresh" aria-label="Check again" title="Check again"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg></button>
+      <button class="icon su-close" id="us-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+    </header>
+    <div class="su-body" id="us-body"><div class="st-page wide us-page">
+      <section class="us-sec" aria-labelledby="us-h-limits">
+        <h2 id="us-h-limits">Plan limits</h2>
+        <div class="us-accounts" id="us-limits"></div>
+        <p class="us-note" id="us-quiet"></p>
+      </section>
+      <section class="us-today" aria-labelledby="us-h-today">
+        <div class="us-total">
+          <h2 id="us-h-today">Used today</h2>
+          <p class="us-big" id="us-total">0</p>
+          <p class="us-note" id="us-turns"></p>
+        </div>
+        <div class="us-ais" id="us-ais"></div>
+      </section>
+      <section class="us-sec" aria-labelledby="us-h-totals">
+        <h2 id="us-h-totals">Totals</h2>
+        <dl class="us-metrics" id="us-metrics"></dl>
+        <p class="us-note">New tokens, as each AI reports them. A guide, not a bill.</p>
+        <details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details>
+      </section>
+    </div></div>
   </div>
 </div>
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
@@ -2806,7 +2884,7 @@ function panelOpened(first) {
   if (first) first.focus({ preventScroll: true });
 }
 function panelClosed() {
-  if (document.body.classList.contains("setup") || document.body.classList.contains("pd-open")) return;
+  if (document.body.classList.contains("setup") || document.body.classList.contains("usage") || document.body.classList.contains("pd-open")) return;
   document.querySelector(".app").inert = false;
   const back = panelFrom; panelFrom = null;
   if (back && back !== document.body && document.contains(back) && back.getClientRects().length) back.focus({ preventScroll: true });
@@ -3071,38 +3149,153 @@ async function paintUsage() {
   /* nothing counted yet while the day's first turn runs: "…", not a "0" that looks like nothing is happening */
   const first = !now.length && [...agents.values()].some((x) => x.busy);
   $("b-use").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " today";
-  const rows = AIS.map(([id]) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
+  /* every AI that ran today, the ones offered here first (an expert may run on one that is not) */
+  const ran = [...new Set(AIS.map((a) => a[0]).concat(now.map((x) => x.ai).filter(Boolean)))];
+  const rows = ran.map((id) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
+  usageToday = { all, first, rows: rows.map(([id, s]) => [id, s, shown(id, s), said(id, s, true)]) };
   $("use-rows").innerHTML = rows.length ? rows.map(([id, s]) =>
     '<div class="u-row"><b>' + esc(aiName(id)) + '</b><span class="n">' + shown(id, s) + "</span><small>" + esc(said(id, s, true)) + "</small></div>").join("")
     : '<div class="u-row"><small>Nothing yet today.</small></div>';
   paintLimits();
 }
-/* The plan's own limits, as Claude Code reported them after its last turn (the app asks no server for them). */
+/* ---------- Usage: plan limits for each account, and today's tokens ----------
+   status.limits.accounts is one entry per signed-in account: {ai, account, label, checked, error, windows: [{id,
+   label, used (0 to 1), resets (when it starts again, in seconds; 0 when not known), length (the window's length in
+   seconds)}]}. An older app sends only Claude's windows, as {claude: {<window>: {used, resets, seen}}} (or the
+   windows alone): they are shown as one account, so the page works with either. The limits are drawn in the Usage
+   window and, smaller, in the pop-up at the bottom left. How much is left, the even-pace line and the pace mark
+   follow T3 Code's usage limits (MIT; see THIRD_PARTY.md). */
 function limitName(key) {
-  if (key === "five_hour") return "5-hour";
-  if (key === "seven_day") return "Weekly \u00b7 all models";
-  const m = key.match(/^seven_day_(.+)$/);
-  const words = (m ? m[1] : key).split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-  return m ? "Weekly \u00b7 " + words : words;
+  if (key === "five_hour") return "Session";
+  if (key === "seven_day") return "Weekly";
+  const m = String(key).match(/^seven_day_(.+)$/);
+  const words = (m ? m[1] : String(key)).split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  return m ? "Weekly · " + words : words;
 }
+function limitAccounts() {
+  const L = (status && status.limits) || {};
+  const one = (w, id) => ({ id: String(w.id || id || ""), label: String(w.label || limitName(w.id || id || "")), used: Math.max(0, Math.min(1, Number(w.used) || 0)), resets: Number(w.resets) || 0, length: Number(w.length) || 0 });
+  if (Array.isArray(L.accounts)) return L.accounts.filter((a) => a && typeof a === "object").map((a) => ({ ai: String(a.ai || ""), account: String(a.account || ""), label: String(a.label || a.ai || "Account"), checked: Number(a.checked) || 0, error: a.error ? String(a.error) : "", windows: (Array.isArray(a.windows) ? a.windows : []).filter((w) => w && typeof w === "object").map((w) => one(w)) }));
+  const old = L.claude && typeof L.claude === "object" ? L.claude : L;
+  const keys = Object.keys(old).filter((k) => old[k] && typeof old[k] === "object" && typeof old[k].used === "number");
+  if (!keys.length) return [];
+  const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
+  keys.sort((a, b) => order(a) - order(b) || a.localeCompare(b));
+  const length = (k) => (k === "five_hour" ? 18000 : /^seven_day/.test(k) ? 604800 : 0);
+  return [{ ai: "claude", account: "", label: "Claude", checked: Math.max(0, ...keys.map((k) => Number(old[k].seen) || 0)), error: "", windows: keys.map((k) => one({ id: k, used: old[k].used, resets: old[k].resets, length: length(k) })) }];
+}
+const remainingPercent = (w) => Math.round(100 - Math.max(0, Math.min(100, w.used * 100)));
+/* how much of the window has gone by (0 to 1); not known without its end or its length */
+function elapsedShare(w, now) {
+  if (!w.resets || !(w.length > 0)) return null;
+  return Math.max(0, Math.min(1, (w.length - (w.resets - now)) / w.length));
+}
+/* the bar shows what is left, so even pace is the share of the window still to come */
+function paceRemainingPercent(w, now) { const e = elapsedShare(w, now); return e === null ? null : Math.round((1 - e) * 100); }
+function paceOf(w, now) {
+  const e = elapsedShare(w, now); if (e === null) return null;
+  const gap = w.used * 100 - e * 100;
+  return gap > 5 ? "ahead" : gap < -5 ? "under" : "on";
+}
+function formatDuration(secs) {
+  const left = Math.max(0, secs), days = Math.floor(left / 86400), hours = Math.floor((left % 86400) / 3600), minutes = Math.floor((left % 3600) / 60);
+  return days > 0 ? days + "d " + hours + "h" : hours > 0 ? hours + "h " + minutes + "m" : minutes + "m";
+}
+function formatResetsIn(w, now) {
+  if (!w.resets) return "";
+  if (w.resets <= now) return "resets now";
+  if (w.resets - now < 60) return "resets in a moment";
+  return "resets in " + formatDuration(w.resets - now);
+}
+function formatResetsAt(w, now) {
+  if (!w.resets) return "";
+  const d = new Date(w.resets * 1000), t = new Date(now * 1000), time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+  return days <= 0 ? time : days === 1 ? "tomorrow at " + time : d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) + " " + time;
+}
+const PACE = {
+  ahead: ["Ahead of pace: using it up faster than the time goes by", '<path d="M1.5 10.5l4-4 2.5 2.5 5-5"/><path d="M9.5 4H13v3.5"/>'],
+  on: ["On pace with the time left", '<path d="M2.5 11a5.5 5.5 0 1 1 11 0"/><path d="M8 11l2.5-3.5"/>'],
+  under: ["Under pace: room left for the rest of the time", '<path d="M1.5 4.5l4 4 2.5-2.5 5 5"/><path d="M9.5 11H13V7.5"/>'],
+};
+function paceIcon(pace) {
+  const [label, d] = PACE[pace];
+  return '<span class="lw-pace" role="img" aria-label="' + esc(label) + '" title="' + esc(label) + '"><svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + "</svg></span>";
+}
+/* one limit's bar: filled to what is left, with the even-pace line in a gap cut from it (kept inside at 0 and 100) */
+function limitBar(w, now) {
+  const remaining = remainingPercent(w), timeLeft = paceRemainingPercent(w, now), resetsIn = formatResetsIn(w, now), resetsAt = formatResetsAt(w, now);
+  const said = w.label + ": " + remaining + "% left" + (timeLeft === null ? "" : ", " + timeLeft + "% of the time left") + (resetsIn ? ", " + resetsIn : "");
+  const tip = remaining + "% left" + (timeLeft === null ? "" : " · " + timeLeft + "% of the time left. The line is where even spending would be") + "." + (resetsAt ? " Resets " + resetsAt + (resetsIn ? " · " + resetsIn : "") + "." : "");
+  let gap = "", tick = "";
+  if (timeLeft !== null) {
+    const at = "clamp(3px, " + timeLeft + "%, calc(100% - 3px))", left = "calc(" + at + " - 3px)", right = "calc(" + at + " + 3px)", near = "-1px", far = "calc(100% + 1px)";
+    gap = ' style="clip-path: polygon(' + [near + " " + near, left + " " + near, left + " " + far, right + " " + far, right + " " + near, far + " " + near, far + " " + far, near + " " + far].join(", ") + ')"';
+    tick = '<span class="lw-tick" aria-hidden="true" style="left: ' + at + '"></span>';
+  }
+  return '<div class="lw-bar' + (remaining <= 20 ? " low" : "") + '" role="img" tabindex="0" aria-label="' + esc(said) + '" title="' + esc(tip) + '"><div class="lw-clip"' + gap + '><div class="lw-track"></div>' + (remaining > 0 ? '<div class="lw-fill" style="width: ' + remaining + '%"></div>' : "") + "</div>" + tick + "</div>";
+}
+function limitWindows(windows, now, compact) {
+  return '<div class="lw' + (compact ? " compact" : "") + '">' + windows.map((w) => {
+    const pace = paceOf(w, now);
+    return '<span class="lw-name"><span>' + esc(w.label) + "</span><b>" + remainingPercent(w) + "% left</b></span>" + limitBar(w, now)
+      + '<span class="lw-when">' + (pace ? paceIcon(pace) : "") + "<span>" + esc(formatResetsIn(w, now)) + "</span></span>";
+  }).join("") + "</div>";
+}
+/* the AIs whose tools do not report their limits: one line for all of them (those this computer offers) */
+function quietLimits(accounts) {
+  const shown = new Set(accounts.map((a) => (a.ai === "codex" ? "chatgpt" : a.ai)));
+  const quiet = AIS.filter(([id]) => caps(id).limits === false && !shown.has(id)).map((a) => a[1]);
+  return quiet.length ? (quiet.length > 1 ? quiet.slice(0, -1).join(", ") + " and " : "") + quiet[quiet.length - 1] + (quiet.length > 1 ? " do not report their limits." : " does not report its limits.") : "";
+}
+const checkedLine = (a) => (a.checked ? "Checked " + ago(a.checked) : "");
+const WARN_MARK = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 7.5V11M8 5v.1"/></svg>';
+let usageToday = null;   /* {all, rows, first}: today's tokens, kept by paintUsage for the pop-up and the window */
 function paintLimits() {
   const box = $("use-limits"); if (!box) return;
-  const all = (status && status.limits && status.limits.claude) || {};
-  const order = (k) => (k === "five_hour" ? 0 : k === "seven_day" ? 1 : 2);
-  const keys = Object.keys(all).sort((a, b) => order(a) - order(b) || a.localeCompare(b));
-  /* the other AIs' tools do not report their limits: one line for all of them (those this computer offers) */
-  const quiet = AIS.filter(([id]) => caps(id).limits === false).map((a) => a[1]);
-  const others = quiet.length ? '<p class="u-note">' + esc((quiet.length > 1 ? quiet.slice(0, -1).join(", ") + " and " : "") + quiet[quiet.length - 1] + (quiet.length > 1 ? " do not report their limits." : " does not report its limits.")) + "</p>" : "";
-  if (!keys.length) { box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5><div class="u-row"><small>Shown after Claude\u2019s next turn: it reports them each time it answers.</small></div>' + others; return; }
-  const seen = Math.max(...keys.map((k) => all[k].seen || 0));
-  const mins = Math.max(0, Math.round((Date.now() / 1000 - seen) / 60));
-  const when = mins < 2 ? "just now" : mins < 90 ? mins + " min ago" : Math.round(mins / 60) + " h ago";
-  box.innerHTML = '<h5>Plan usage limits \u00b7 Claude</h5>' + keys.map((k) => {
-    const w = all[k], pct = Math.round((w.used || 0) * 100);
-    const resets = w.resets ? "Resets " + new Date(w.resets * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : "";
-    return '<div class="u-lim' + (pct >= 100 ? " full" : pct >= 80 ? " high" : "") + '"><div class="lim-top"><b>' + esc(limitName(k)) + '</b><span class="n">' + pct + '%</span></div><div class="bar"><i style="width:' + Math.min(100, pct) + '%"></i></div><small>' + esc(resets) + "</small></div>";
-  }).join("") + '<p class="u-note" style="margin-top: 2px">As of Claude\u2019s last turn, ' + esc(when) + '.</p>' + others;
+  const accounts = limitAccounts(), now = Date.now() / 1000, quiet = quietLimits(accounts);
+  /* drawn again only when something it shows has changed (the minute, a limit, a check), so a tooltip stays put */
+  const sig = JSON.stringify([accounts, Math.floor(now / 60), quiet]);
+  if (paintLimits.sig === sig) return; paintLimits.sig = sig;
+  const others = quiet ? '<p class="u-note">' + esc(quiet) + "</p>" : "";
+  box.innerHTML = (accounts.length ? accounts.map((a) =>
+    '<div class="pop-acct"><b>' + esc(a.label) + "</b>" + (a.windows.length ? limitWindows(a.windows, now, true) : "")
+    + (a.error ? "<small>" + esc(a.error) + "</small>" : !a.windows.length ? "<small>No limits reported.</small>" : "")
+    + (a.checked ? "<small>" + esc(checkedLine(a)) + ".</small>" : "") + "</div>").join("")
+    : '<div class="u-row"><small>Shown after Claude’s next turn: it reports them each time it answers.</small></div>') + others;
+  paintUsagePage();
 }
+function paintUsagePage() {
+  if (!document.body.classList.contains("usage")) return;
+  const accounts = limitAccounts(), now = Date.now() / 1000;
+  $("us-limits").innerHTML = accounts.length ? accounts.map((a) =>
+    '<article class="us-acct"><header><h3>' + esc(a.label) + "</h3><span>" + esc(checkedLine(a)) + "</span></header>"
+    + (a.windows.length ? limitWindows(a.windows, now, false) : "")
+    + (a.error ? '<p class="us-err">' + WARN_MARK + "<span>" + esc(a.error) + "</span></p>" : !a.windows.length ? '<p class="us-note">No limits reported.</p>' : "") + "</article>").join("")
+    : '<p class="us-note">Shown after Claude’s next turn: it reports them each time it answers.</p>';
+  $("us-quiet").textContent = quietLimits(accounts);
+  const newest = Math.max(0, ...accounts.map((a) => a.checked));
+  $("us-checked").textContent = newest ? "Limits checked " + ago(newest) : "";
+  const u = usageToday || { all: { total: 0, input: 0, output: 0, cached: 0, cost: 0, turns: 0, quiet: 0 }, rows: [], first: false }, all = u.all;
+  $("us-total").textContent = u.first ? "…" : fmtTokens(all.total - all.cached);
+  $("us-turns").textContent = "New tokens · " + all.turns + (all.turns === 1 ? " turn" : " turns") + (all.quiet ? " · " + all.quiet + " not reported" : "");
+  const most = Math.max(1, ...u.rows.map(([, s]) => s.total - s.cached));
+  $("us-ais").innerHTML = u.rows.length ? u.rows.map(([id, s, shown, said]) =>
+    '<div class="us-ai"><div><b>' + esc(aiName(id)) + '</b><span class="n">' + esc(shown) + '</span></div><span class="us-share" aria-hidden="true"><i style="width: ' + Math.round(Math.max(0, s.total - s.cached) / most * 100) + '%"></i></span><small>' + esc(said) + "</small></div>").join("")
+    : '<p class="us-note">Nothing yet today.</p>';
+  const metric = (label, value) => "<div><dt>" + esc(label) + "</dt><dd>" + esc(value) + "</dd></div>";
+  $("us-metrics").innerHTML = metric("New tokens", fmtTokens(all.total - all.cached)) + metric("Read", fmtTokens(all.input)) + metric("Written", fmtTokens(all.output))
+    + metric("Read from cache", fmtTokens(all.cached)) + metric("About, at API prices", all.cost ? "$" + all.cost.toFixed(2) : "–");
+}
+function openUsage() {
+  closePops(); closeProject(); closeSetup();
+  $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
+  document.body.classList.add("usage"); panelOpened($("us-close"));
+  paintUsagePage(); refresh(); paintUsage();
+}
+function closeUsage() { if (!document.body.classList.contains("usage")) return; document.body.classList.remove("usage"); panelClosed(); }
+$("use-open").onclick = openUsage; $("us-close").onclick = closeUsage;
+$("us-refresh").onclick = async () => { const b = $("us-refresh"); b.classList.add("busy"); try { await Promise.all([refresh(), paintUsage()]); } finally { b.classList.remove("busy"); } };
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
 setInterval(paintUsage, 60000); paintUsage();
@@ -5846,7 +6039,7 @@ function studioWaitLine(p, on) {
   }
   p.col.appendChild(p.waitLine); p.last = "Waiting for you";
 }
-function openSetup(section) { closePops(); closeProject(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); stClear(); paintThemes(); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); if (!skillsVisible()) skCount(); else if (typeof section !== "string") loadSkills(true); }
+function openSetup(section) { closePops(); closeProject(); closeUsage(); if (typeof section === "string") setupSection(section); document.body.classList.add("setup"); stClear(); paintThemes(); panelOpened(document.querySelector("#su-nav button.on")); refresh(); loadEngine(); loadNotes(); loadGithub(); loadRag(); if (!skillsVisible()) skCount(); else if (typeof section !== "string") loadSkills(true); }
 /* Settings, General, Your notes: counts for everything and for the game of the chat in front */
 function frontProject() { return curProj || ""; }
 function notesLine(c, what) { return what + ": " + c.notes + (c.notes === 1 ? " note" : " notes") + ", " + c.rules + (c.rules === 1 ? " house rule" : " house rules"); }
@@ -6854,7 +7047,7 @@ function paintExperts() {
 document.querySelectorAll("#su-nav [data-s]").forEach((b) => (b.onclick = () => setupSection(b.dataset.s)));
 document.fonts.ready.then(() => { slideMark($("tabs")); });
 function closeSetup() { if (!document.body.classList.contains("setup")) return; document.body.classList.remove("setup"); panelClosed(); }
-$("b-setup").onclick = () => openSetup(); $("b-close").onclick = closeSetup; $("veil").onclick = () => { closeSetup(); closeProject(); };
+$("b-setup").onclick = () => openSetup(); $("b-close").onclick = closeSetup; $("veil").onclick = () => { closeSetup(); closeUsage(); closeProject(); };
 
 /* ---------- Settings: search, and Appearance ----------
    Search looks through every section and row of every page (their titles, the page's name, and a few extra words in
@@ -7019,7 +7212,7 @@ $("light").onclick = () => $("light").classList.remove("on");
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   const pop = POPS.find(([, m]) => $(m).classList.contains("on") && $(m).contains(document.activeElement));
-  $("light").classList.remove("on"); closeSetup(); closeProject(); closePops(); closeConv();
+  $("light").classList.remove("on"); closeSetup(); closeUsage(); closeProject(); closePops(); closeConv();
   $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false");
   if (pop) $(pop[0]).focus();
 });
