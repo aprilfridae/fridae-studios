@@ -256,10 +256,9 @@ pub fn load_models() {
                 let mut cmd = opencode(&exe);
                 cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
                 // `--standalone` starts a `serve --stdio` of its own beside it (measured, 2.4.1): on Windows that child is
-                // ended with the app by the job the app's own process tree is in, once this runs as a spawned child
+                // in the app's job too, which the command is put in before it runs (`paths::end_with_app`)
                 cmd.stdout(Stdio::piped());
-                let Ok(child) = cmd.start() else { return Default::default() };
-                paths::end_with_app(&child);
+                let Ok(child) = paths::end_with_app(&mut cmd) else { return Default::default() };
                 child.wait_with_output().ok().map(|o| (String::from_utf8_lossy(&o.stdout).to_string(), o.status.success())).unwrap_or_default()
             };
             let list = parse_models(&run(&["models"]).0);
@@ -1375,13 +1374,10 @@ fn start_server() -> Result<Server, String> {
     paths::own_group(&mut cmd);
     // one process is started at a time (`paths::spawn_lock`): a server started while a chat's kept process was being
     // started could otherwise hold that process's pipes for as long as it lives
-    let spawned = {
-        cmd.start()
-    };
-    let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
     // Windows: the server, its `opencode-pty daemon` (a direct child, measured on 2.4.1; it ends by itself when the
-    // server is killed) and the shells the daemon starts all end with the app
-    paths::end_with_app(&child);
+    // server is killed) and the shells the daemon starts all end with the app: it is in the app's job before it runs
+    let spawned = paths::end_with_app(&mut cmd);
+    let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
     procs::record("opencode", child.id());
     let (tx, rx) = mpsc::channel::<u16>();
     let stdout = child.stdout.take();
@@ -2970,15 +2966,12 @@ pub fn login_start() -> Value {
         let mut cmd = opencode(&exe);
         cmd.args(["auth", "login", "opencode", "--method", "device"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         paths::own_group(&mut cmd);
-        let spawned = {
-            cmd.start()
-        };
+        // in the app's job before it runs, with its `serve --stdio` child (measured, 2.4.1)
+        let spawned = paths::end_with_app(&mut cmd);
         let child = match spawned {
             Ok(c) => c,
             Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
         };
-        // with its `serve --stdio` child (measured, 2.4.1)
-        paths::end_with_app(&child);
         procs::record("opencode-login", child.id());
         *l = Login { pid: Some(child.id()), state: "waiting", ..Default::default() };
         child
