@@ -73,19 +73,40 @@ Where things live:
 
 - `ui/index.html` - the old page: every screen that has not moved, the page's shell, and the shared CSS (variables,
   themes, buttons, fields).
-- `ui/src/main.tsx` - the new screens' way in. It sets `window.fridae = { mount(name, el, props), store, zoom }`.
+- `ui/src/main.tsx` - the new screens' way in. It sets `window.fridae`: `mount(name, el, props)`, `store`, `zoom`,
+  `setHost`, and what the old page still needs of a moved screen (`settings.open/close/show`, `usage.load/soon`,
+  `ai.*`, `skills.open/count`).
 - `ui/src/store.ts` - what the page knows, in one place: `store.get()`, `store.set(patch)`, `store.subscribe(f)`,
   and the `useStore(selector)` hook a component reads it with. The old page writes into it where it already receives
-  data (`reviewToStore()` after `loadReview`); a screen only reads, and tells the old page what it did through the
-  props it was mounted with (Review's `onAnswered`).
-- `ui/src/api.ts` - `api(path, body)`, the same call to the app's server the old page makes.
-- `ui/src/<screen>/` - one folder per screen: its components and its own `.css`. So far `review/`: `Review.tsx`
-  (the screen), `Tabs.tsx`, `ItemsBox.tsx`, `PictureItem.tsx`, `PlainItem.tsx`, `Card.tsx` (a thing's box and its
-  buttons), `Lightbox.tsx` (a picture shown large, also used by the chat's pictures), `model.ts` (what to show,
-  worked out from the store) and `review.css`.
+  data: `reviewToStore()` after `loadReview`, `statusToStore()` in `refresh()` (the app's status, with its limits
+  and settings; a new object only when it changed), `ghToStore()`, `savedToStore()`, the promo engine's row, text
+  size, the sidebar's width and the theme. `cell(value)` is the same thing for one screen's own data.
+- `ui/src/host.ts` - what the new screens ask of the old page (`refresh`, `closeSetup`, `say`, `setTheme`, ...): the
+  old page hands these over once with `fridae.setHost({...})`, and a screen reaches the old page no other way.
+- `ui/src/api.ts` - `api(path, body)`, the same call to the app's server the old page makes. `ui/src/util.ts`: `ago`,
+  `fmtTokens`, `post`. `ui/src/ai.ts`: the AIs and signing in to them (the words and the presses), used by Settings
+  and, through `fridae.ai`, by the old page's model picker.
+- `ui/src/ui/` - small pieces every screen may use: `SettingsRow`, `Group`, `Switch`, `Segmented`, `Field`, `More`,
+  `Press` (a button greyed while its press runs), `Row` (`DotRow`, `ListRow`), `icons`.
+- `ui/src/<screen>/` - one folder per screen: its components and its own `.css`.
+  - `review/`: `Review.tsx` (the screen), `Tabs.tsx`, `ItemsBox.tsx`, `PictureItem.tsx`, `PlainItem.tsx`, `Card.tsx`
+    (a thing's box and its buttons), `Lightbox.tsx` (a picture shown large, also used by the chat's pictures),
+    `model.ts` (what to show, worked out from the store) and `review.css`.
+  - `settings/`: `Settings.tsx` (the window: the list of pages, the search and its jump, the header), `nav.tsx` and
+    `state.ts` (the pages, which one shows, what a page does when it comes into view), one file per page (`General`,
+    `Appearance`, `Connections`, `Experts`, `Permissions`, `Images`, `Skills`, `Knowledge` with `Rag` and
+    `Submissions`, `Chats`, `Guide` with `guide-data.ts`, `About`), `skills-data.ts` (what Skills and Knowledge know
+    and every press on them) and `Cards.tsx` (the decision and clash cards).
+  - `usage/`: `UsageWindow.tsx`, `UsagePop.tsx` (the pop-up at the bottom left), `Bars.tsx` (an account's limits as
+    bars), `limits.ts` (the limits worked out from `status.limits`, in any of its three shapes) and `usage.ts`
+    (today's tokens).
+  The old page still opens and closes these windows (`openSetup`, `openUsage`: the veil, the keyboard's way back) and
+  keeps what must run before anything is drawn: the themes and `applyTheme` in the page's head, text size and the
+  sidebar's width. Their CSS is still in `index.html`.
 - `ui/app.js`, `ui/app.css` - the bundle `index.html` loads (`server.rs` serves both). Built files, but committed:
   the Mac build has no esbuild yet and ships them as they are.
-- `ui/vendor/preact/` - Preact, and `tools/esbuild.exe` - the bundler. No Node, no npm, nothing downloaded.
+- `ui/vendor/preact/` - Preact (its built modules are in `dist/` folders, which `.gitignore` lets through here
+  only), and `tools/esbuild.exe` - the bundler. No Node, no npm, nothing downloaded.
 
 To change a screen: edit its files under `ui/src`, run `python ui/build.py` (or `python ui/build.py --watch` while
 working), reload the window, and commit `ui/app.js` and `ui/app.css` with the change. `build_app.py` bundles again
@@ -93,7 +114,7 @@ before its page check and stops if the bundling fails; that check loads the page
 and refuses a page whose script, or whose `app.js`, does not start. Types are stripped, not checked (that needs Node).
 
 To move a screen: write it under `ui/src/<screen>/`, add it to `screens` in `main.tsx`, put what it needs into the
-store's `State` and have the old page write it there, call `fridaeDo((f) => f.mount("<screen>", element, props))`
+store's `State` and have the old page write it there, add to `host.ts` what it needs the old page to do, call `fridaeDo((f) => f.mount("<screen>", element, props))`
 where the old page painted it (`fridaeDo` waits until `app.js` has loaded, which is just after the old script), move
 the screen's own CSS to its `.css`, and delete its old code from `index.html`. Use the page's existing classes and
 CSS variables; no component library, no CSS framework.
