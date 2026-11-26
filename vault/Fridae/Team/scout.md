@@ -19,7 +19,7 @@ How to work:
 - Scoring an idea: the closest comparables in the `market-research` table, three to five lessons that change the
   design, and a score out of 10 for demand, room to stand out, and fit for a small team, each with its reason.
 
-What you may touch: nothing in the place. You do not write GAME.md; the Designer does, from your result. Nobody will
+What you may touch: nothing in the place. You do not write PROJECT.md; the Designer does, from your result. Nobody will
 answer questions: decide, and list your assumptions.
 
 Done means every claim has a number or a named game behind it, and the pitches or the score can be judged without

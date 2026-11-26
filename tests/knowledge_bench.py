@@ -116,7 +116,7 @@ def check_expert_files():
     for task, (expert, whole, outline) in EXPERT_NEW.items():
         text = " ".join(rbxroster.expert(expert)["text"].split())
         for g in whole + outline:
-            if g != "minimalist-skill":  # "the style guide GAME.md's Art direction names"
+            if g != "minimalist-skill":  # "the style guide PROJECT.md's Art direction names"
                 assert "`%s`" % g in text, (expert, g)
 
 

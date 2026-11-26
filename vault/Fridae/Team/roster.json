@@ -3,7 +3,7 @@
   "stage": "all", "guides": ["producer"], "tools": ["rbx_team", "rbx_stage", "rbx_board", "rbx_project"], "kind": "lead", "writes": false},
  {"id": "scout", "name": "Scout", "job": "Pitches ideas from Roblox's charts and scores an idea you bring",
   "stage": "idea", "guides": ["market-research", "game-design"], "tools": ["rbx_research", "rbx_market"], "kind": "worker", "writes": false},
- {"id": "designer", "name": "Designer", "job": "Writes GAME.md and the build plan",
+ {"id": "designer", "name": "Designer", "job": "Writes PROJECT.md and the build plan",
   "stage": "design", "guides": ["game-brainstorm", "game-bible", "game-design"], "tools": ["rbx_project", "rbx_economy"], "kind": "worker", "writes": false},
  {"id": "coder", "name": "Coder", "job": "Writes and fixes the game's scripts and systems",
   "stage": "build", "guides": ["roblox-luau", "roblox-architecture", "roblox-security", "roblox-networking", "lihfolk-systems"],

@@ -1,6 +1,6 @@
 ---
 name: market-research
-description: "Game: comparable live experiences with rbx_market and what to learn from them. Research what works on Roblox before designing - find comparable live experiences with rbx_market, read player counts, visits and like ratios, look up how those games onboard, monetise and update, and record a comparison table and concrete lessons in GAME.md. Use when starting a new game or a major feature."
+description: "Game: comparable live experiences with rbx_market and what to learn from them. Research what works on Roblox before designing - find comparable live experiences with rbx_market, read player counts, visits and like ratios, look up how those games onboard, monetise and update, and record a comparison table and concrete lessons in PROJECT.md. Use when starting a new game or a major feature."
 examples:
   - "Which live games are like my idea?"
   - "Compare player counts of the top tycoons"
@@ -13,7 +13,7 @@ applies: game
 Before fixing a design, look at what players of that kind of game already
 play. The aim is to learn **patterns**: what the genre's players expect,
 what the successful games have in common, where there is room. The output
-is a short table and three to five lessons in `GAME.md`.
+is a short table and three to five lessons in `PROJECT.md`.
 
 Keep it proportionate: about a dozen tool calls for a new game, a handful
 for a feature. Research serves the design; it is not the task.
@@ -150,7 +150,7 @@ Each lesson states the evidence (which games, how many) and the decision
 it leads to. Include at least one about what to leave out or do
 differently, not only what to imitate.
 
-Record the result in `GAME.md` (`game-bible`):
+Record the result in `PROJECT.md` (`game-bible`):
 
 - the table, with the date it was gathered, as a `### Market notes`
   subsection at the end of Player and devices (what else this player
@@ -173,4 +173,4 @@ design; the user decides it.
 - Three to five lessons, each tied to a design decision.
 - Nothing proposed that copies a specific game's name, characters, maps
   or art.
-- Table and accepted lessons written into `GAME.md`.
+- Table and accepted lessons written into `PROJECT.md`.

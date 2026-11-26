@@ -1,20 +1,20 @@
 ---
 name: game-brainstorm
-description: "Game: interview the user about a new idea and write GAME.md. Interview the user about a new Roblox game idea and turn it into GAME.md - one question at a time, from the core fantasy to the scope of a first playable. Use when the user wants to start a new game or brings a new idea, before building anything."
+description: "Game: interview the user about a new idea and write PROJECT.md. Interview the user about a new Roblox game idea and turn it into PROJECT.md - one question at a time, from the core fantasy to the scope of a first playable. Use when the user wants to start a new game or brings a new idea, before building anything."
 examples:
   - "I have an idea for a new game"
-  - "Help me turn my idea into GAME.md"
+  - "Help me turn my idea into PROJECT.md"
   - "What should the first playable of my game be?"
 applies: game
 ---
 
 # Game brainstorm
 
-Turns "I want to make a game about X" into an approved `GAME.md` (format in
+Turns "I want to make a game about X" into an approved `PROJECT.md` (format in
 the `game-bible` guide). Nothing gets built during this guide. Its output is
 a document the user has read and agreed to.
 
-Skip it when the project already has a `GAME.md` and the request is a normal
+Skip it when the project already has a `PROJECT.md` and the request is a normal
 task. Use it again for a new mode or a major change of direction, limited to
 the questions that the change reopens.
 
@@ -157,7 +157,7 @@ If one is missing, ask for it. Do not fill a gap silently.
    player, progression, first playable, out of scope.
 2. Ask for explicit approval: "Is this the game? Anything to change before I
    write it down?" A reply about something else is not approval.
-3. Write `GAME.md` in the project folder using the `game-bible` template.
+3. Write `PROJECT.md` in the project folder using the `game-bible` template.
    Leave unknown sections with a line under Open questions rather than
    inventing content. Numbers that are not designed yet are marked "to be
    set" and are worked out with `economy-design` later.

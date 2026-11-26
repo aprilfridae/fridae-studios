@@ -13,7 +13,7 @@ core: true
 # Game design for Roblox
 
 Use this when deciding what to build and how it should behave, before
-writing the system. Check every decision against the pillars in `GAME.md`
+writing the system. Check every decision against the pillars in `PROJECT.md`
 and record it there (`game-bible`). Numbers are designed with
 `economy-design`; whether the result works is judged with `player-testing`.
 

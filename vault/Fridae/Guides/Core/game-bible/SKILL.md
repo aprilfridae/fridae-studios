@@ -1,17 +1,17 @@
 ---
 name: game-bible
-description: "Game: the GAME.md format and rules; writing one for an existing game. The GAME.md game bible - its exact template, the rules for reading and updating it, and how to write one for an existing Roblox game by inspecting the place. Use at the start of work on any project, and whenever a design decision is made or changed."
+description: "Game: the PROJECT.md format and rules; writing one for an existing game. The PROJECT.md game bible - its exact template, the rules for reading and updating it, and how to write one for an existing Roblox game by inspecting the place. Use at the start of work on any project, and whenever a design decision is made or changed."
 examples:
-  - "Write a GAME.md for my existing game"
-  - "Record this design decision in GAME.md"
+  - "Write a PROJECT.md for my existing game"
+  - "Record this design decision in PROJECT.md"
   - "Start work on this project by reading its bible"
 applies: game
 core: true
 ---
 
-# Game bible (GAME.md)
+# Game bible (PROJECT.md)
 
-`GAME.md` sits at the top of the project folder. It is the single written
+`PROJECT.md` sits at the top of the project folder. It is the single written
 agreement between the user and every agent about what the game is. Chats
 end and agents change; this file is what carries decisions forward.
 
@@ -179,7 +179,7 @@ place, then ask only for what cannot be inferred.
 5. Run a short playtest (`playtest` guide) to see the loop a new player
    actually meets, and write the Core loop from what happens, not from what
    the code suggests.
-6. Write `GAME.md`. Everything taken from the place rather than from the
+6. Write `PROJECT.md`. Everything taken from the place rather than from the
    user is marked `(inferred)`. Pillars written from observation are
    inferred too.
 7. Ask the user for what a place cannot tell you, one question per message:

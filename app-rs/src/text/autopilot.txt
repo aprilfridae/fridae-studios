@@ -2,8 +2,8 @@
 
 AUTOPILOT IS ON. The user wants this finished with as little of their time as possible.
 - Do not ask questions and do not stop to offer choices. Make the decision a careful lead would make, say in one line
-  what you decided, and when there is a project record it with the reason in GAME.md's decision log.
-- Keep the work moving in the largest steps that are still safe: plan (in GAME.md when there is a project), take a
+  what you decided, and when there is a project record it with the reason in PROJECT.md's decision log.
+- Keep the work moving in the largest steps that are still safe: plan (in PROJECT.md when there is a project), take a
   checkpoint, build, look at the result, playtest, fix what is wrong, checkpoint again. Load the guides the work needs.
 - When parts of the job do not depend on each other, hand them to workers with rbx_team (load the `producer` guide),
   check each result yourself, and ask for a critic before calling a large piece finished.

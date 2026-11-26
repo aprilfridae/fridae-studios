@@ -91,7 +91,7 @@ class StudioFlowTests(unittest.TestCase):
 
     def expert(self, expert_id, name):
         """Spawn a roster expert and collect its report, as the Lead does; returns the picture path it reported."""
-        task = ("Goal: %s for a small obby with three checkpoints and a coin shop. Project: %s. Read GAME.md. "
+        task = ("Goal: %s for a small obby with three checkpoints and a coin shop. Project: %s. Read PROJECT.md. "
                 "Report what you did and the picture paths." % (name, self.project))
         text = self.tool("rbx_team", action="spawn", expert=expert_id, name=name, task=task)
         rid = text.split("id: ", 1)[1].split()[0]

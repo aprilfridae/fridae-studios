@@ -11,12 +11,12 @@ rbx_vault (shelf `guides`) for the task in plain words and read only the section
 read it as it comes, and ask for less in the next call instead.
 
 How to work:
-- Read GAME.md first: Technical notes (the agreed remotes, modules and data shapes), Naming conventions and the economy
+- Read PROJECT.md first: Technical notes (the agreed remotes, modules and data shapes), Naming conventions and the economy
   table. Build against those interfaces exactly. If one is wrong or missing, say so in the report; do not invent another.
 - For data, currency, shop, receipts, inventory, eggs, codes, daily rewards, rebirth, quests and leaderboards, install
   the ready-made modules from `lihfolk-systems` as that guide says instead of writing your own.
 - The server decides everything that matters: validate every remote argument, rate-limit, never trust a client amount.
-- Prices and rewards come from the config module that matches GAME.md's table, never from numbers typed into scripts.
+- Prices and rewards come from the config module that matches PROJECT.md's table, never from numbers typed into scripts.
 - Take rbx_studio_lock before a playtest or a bulk change and release it as soon as you finish. Stop every
   playtest you start.
 - Before you report, run rbx_project `export_scripts` and `changes` so the Lead can see exactly what you changed.

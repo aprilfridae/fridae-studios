@@ -1886,10 +1886,10 @@ applyTheme();
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
   <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
   <p class="sub" id="pd-path"></p>
-  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, GAME.md and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
+  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, PROJECT.md and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
   <div class="act">
     <button class="pill" id="pd-folder">Open folder</button>
-    <button class="pill" id="pd-bible">Open GAME.md</button>
+    <button class="pill" id="pd-bible">Open PROJECT.md</button>
   </div>
   <h3>Git</h3>
   <p class="sub" id="pd-git"></p>
@@ -2163,7 +2163,7 @@ const isGameProj = (key) => !!key && kindOf(key) === "game";
 const gameTab = (v) => v === "promos";
 /* the views there are; any other (a tab saved before it was taken away, such as Ideas) opens Chat */
 const VIEWS = ["chat", "review", "promos", "newproj", "all"];
-/* where a chat's start card goes once it has a project: a game with no GAME.md asks new or existing first */
+/* where a chat's start card goes once it has a project: a game with no PROJECT.md asks new or existing first */
 /* a project's kind: `type` first, since a chat's "project" event carries its own `kind` ("project") */
 const plainProj = (pr) => !!pr && ((pr.type || pr.kind) === "plain" || (!!pr.path && kindOf(pr.path) === "plain"));
 const startStep = (pr) => pr.bible || plainProj(pr) ? "ready" : "kind";
@@ -2842,7 +2842,7 @@ function startCard(p) {
         + '<p class="sub">New game: I ask about the idea before building. Already working on it: I read the place and the folder first.</p>';
     } else {
       const game = !plainProj(pr);
-      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (game && pr && pr.bible ? "The game's notes (GAME.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
+      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (game && pr && pr.bible ? "The game's notes (PROJECT.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
         + (game ? '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>' : '<div class="act"><button class="pill" data-a="kp">Read through the project</button></div>');
     }
     if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
@@ -4268,7 +4268,7 @@ $("b-proj").onclick = () => openProject();
 
 /* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
 let npParent = "", npGit = true, npKind = "game";
-const KIND_NOTE = { game: "A Roblox game: the Studio tools, GAME.md and Promos.", plain: "A regular program, or anything else that is not a game." };
+const KIND_NOTE = { game: "A Roblox game: the Studio tools, PROJECT.md and Promos.", plain: "A regular program, or anything else that is not a game." };
 const parentFor = (kind) => (kind === "plain" ? projects.default_parent_plain : projects.default_parent) || "";
 function openNewProject() {
   paintNewProject(); loadProjects().then(paintNewProject);

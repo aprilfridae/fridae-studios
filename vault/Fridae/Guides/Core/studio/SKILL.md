@@ -27,15 +27,15 @@ Your tools:
 - `rbx_stage` `lesson` with `text` and `scope` `game` (this game) or `all` (every game).
 - `rbx_team` `spawn` with `expert` (a roster id), `name` and `task`; `wait` with `ids`; `status`.
   `spawn` also takes optional `ai` (claude, gemini, cursor, opencode) and `model`; see "Experts on another AI".
-- `rbx_board` for the board, `rbx_project` `checkpoint` and `changes`, GAME.md for decisions.
+- `rbx_board` for the board, `rbx_project` `checkpoint` and `changes`, PROJECT.md for decisions.
 
 ## Starting and adopting a run
 
 1. Load this guide and `producer`. Call `rbx_stage` `status`.
-2. Search `rbx_vault` shelves `game` (this game: GAME.md, lessons, the user's notes) and `yours` (the user's notes and
+2. Search `rbx_vault` shelves `game` (this game: PROJECT.md, lessons, the user's notes) and `yours` (the user's notes and
    lessons for every game) for the run's subject. Apply them: a lesson is something a past run got wrong or found slow,
    and a note is something the user steered an agent towards.
-3. Read GAME.md and the board (`rbx_board` `list`).
+3. Read PROJECT.md and the board (`rbx_board` `list`).
 4. If a stage is already under way, carry on from it. Otherwise begin as the kickoff message says.
 
 ## The stages
@@ -43,7 +43,7 @@ Your tools:
 | Stage | Who | Must produce | Done when |
 |---|---|---|---|
 | idea | Scout | One chosen idea: pitches with their reasons, or a score for the user's own idea | The user picked one (or brought one) |
-| design | Designer | GAME.md (pillars, core loop, first five minutes, numbers, art direction) and a build plan cut into milestones, each with its owner expert and the containers it owns | Gate: the user approved the design plan item |
+| design | Designer | PROJECT.md (pillars, core loop, first five minutes, numbers, art direction) and a build plan cut into milestones, each with its owner expert and the containers it owns | Gate: the user approved the design plan item |
 | build | Coder, UI builder, World builder, Effects and sound | Each milestone built in the place, checked by you, checkpointed | Every milestone in the plan is built and checked |
 | test | Playtester, Device tester, Security reviewer, Economy and shop | Bug and balance reports; every real problem fixed by the expert who owns that part (back to build) | A clean playtest as a new player, no open security problems, numbers checked |
 | launch | Icon and thumbnails | Icon, thumbnails, store text, and the ready-to-publish checklist | Gate: the user approved the ready-to-publish item |
@@ -52,10 +52,10 @@ Your tools:
 You may go back (test → build) as often as needed: start the earlier stage again with `stage` `start`.
 
 At each stage end:
-- a line in GAME.md's decision log saying what the stage produced and what was decided;
+- a line in PROJECT.md's decision log saying what the stage produced and what was decided;
 - `rbx_stage` `stage` `done` (the app takes the stage's checkpoint then: no `rbx_project` `checkpoint` of your own);
 - one `rbx_stage` `lesson`: what to do differently next time (`scope` `all` if it holds for every game). One short,
-  specific sentence ("The Coder needs the remotes list from GAME.md in its brief"), not a summary of the stage.
+  specific sentence ("The Coder needs the remotes list from PROJECT.md in its brief"), not a summary of the stage.
 
 ## Gates
 
@@ -74,7 +74,7 @@ store text, set the age rating and devices. Attach the icon and thumbnails. Frid
 ## Briefing an expert
 
 Your own instructions (the Lead's checklist: what every brief says, and how to check a report) apply to every spawn.
-Follow them; in short, an expert starts knowing only its brief, its guides, GAME.md and the place, so the brief carries
+Follow them; in short, an expert starts knowing only its brief, its guides, PROJECT.md and the place, so the brief carries
 everything else. The `task` must be at least 80 characters. Give the spawn a `name` the user will recognise in the
 sidebar ("Shop UI", "Lobby map"). Put the job on the board as doing when you hand it out. Keep each task id that
 `spawn` returns: `rbx_team` `wait` with that id gives you the report again later.
@@ -83,9 +83,9 @@ A template:
 
 ```
 Goal: <what the player gets, two or three sentences>.
-Project: <folder>. Read GAME.md sections: <names>.
+Project: <folder>. Read PROJECT.md sections: <names>.
 You own: <exact folders, ScreenGuis, script folders, modules>. Leave everything else alone.
-Build against: <interfaces from GAME.md's Technical notes>.
+Build against: <interfaces from PROJECT.md's Technical notes>.
 Done means: <checks anyone can observe>.
 Report: what you did, what you checked and how, the picture or clip file paths, anything left undone.
 ```
@@ -148,7 +148,7 @@ in Roblox Studio", carry on with work that needs no Studio, and spawn that exper
 tells you when the user presses Done). Experts that only read, test, review or write documents still start.
 If the slots are full and none of your own experts is running (the user's other chats hold the slots), there is
 nothing to wait on: put one card on the board under needs, "Close a chat to free an agent slot", do work that needs no
-expert (checking, filing, GAME.md, the board), and spawn again next turn. If nothing else is left, end with
+expert (checking, filing, PROJECT.md, the board), and spawn again next turn. If nothing else is left, end with
 `STATUS: WAITING`: the app wakes you with "An agent slot is free. Carry on." when one is.
 Never drop the task, never do a writer's job yourself instead, and never mark the run done because of a refusal. If the
 answer is `NOT STARTED` (the app did not pick the request up), try once more; if it fails again, put a card on the
@@ -183,7 +183,7 @@ Call `rbx_stage` `decisions` at the start of every turn and before choosing the 
 - Before filing anything with `replaces`, call `decisions` once more: the user may have just approved the old item.
   Never replace an item that was just approved (`review` refuses it unless you give `force`).
 - A small addition from the user while a gate item waits (a limit, a detail that does not change the plan's
-  substance) is recorded in GAME.md's decision log and mentioned in your next report. Do not file the gate item again
+  substance) is recorded in PROJECT.md's decision log and mentioned in your next report. Do not file the gate item again
   for it: the user would have to approve twice.
 - The "Pick an idea" item is the exception: a change note naming a pitch is the user's choice. Take that pitch, finish
   idea and start design. Run the Scout again only when the note asks for new ideas.

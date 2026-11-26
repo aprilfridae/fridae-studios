@@ -44,7 +44,7 @@ for every game unless the user's house rules, their own designs or their request
 - **Their designs win.** Illustrator or Photoshop exports, mockups, a style sheet, colour values or fonts from the user
   are the target, ahead of every guide and every genre habit. Build to them exactly; ask for exported slices (PNG or
   SVG), the fonts and the colour values instead of inventing art or "improving" their choices.
-- **Palette:** neutrals plus one or two accents, taken from the game's art direction (GAME.md). Colour marks meaning
+- **Palette:** neutrals plus one or two accents, taken from the game's art direction (PROJECT.md). Colour marks meaning
   (the primary action, a state), not decoration. No rainbows, no candy colours, no colour per button.
 - **Typography does the work:** one or two typefaces, a clear size scale, real hierarchy, generous spacing, everything
   aligned to a grid. Leave space empty rather than filling it.

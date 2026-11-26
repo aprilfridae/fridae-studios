@@ -19,6 +19,7 @@ are not in it: Studio's own undo and the place's version history cover those.
 """
 import difflib, hashlib, json, os, re, subprocess
 
+import rbxpaths
 from rbxpaths import KitError, no_window, read_json, write_json
 import rbxstudio
 
@@ -483,8 +484,10 @@ def info():
         out["note"] = ("No project folder is set for this chat (RBXKIT_PROJECT), so there is nowhere to export scripts or "
                        "keep checkpoints.")
     else:
-        text = _read(os.path.join(root, "GAME.md"))
+        bible = rbxpaths.bible_path(root)
+        text = _read(bible) if bible else None
         out["game_md"] = text is not None
+        out["bible_name"] = os.path.basename(bible) if bible else rbxpaths.BIBLE
         if text is not None:
             out["game_md_head"] = "\n".join(text.splitlines()[:40])
         man = load_manifest(os.path.join(root, "src"))
@@ -529,7 +532,7 @@ def _info_text(r):
     if r.get("note"):
         lines.append(r["note"])
     if r["project"]:
-        lines.append("GAME.md: %s" % ("present" if r["game_md"] else "missing"))
+        lines.append("%s: %s" % (r.get("bible_name") or "PROJECT.md", "present" if r["game_md"] else "missing"))
         lines.append("Scripts exported in src: %d" % r["exported_scripts"])
         if r.get("git"):
             lines.append("Git: branch %s, %d uncommitted change(s)" % (r["branch"], r["uncommitted_changes"]))
@@ -540,7 +543,7 @@ def _info_text(r):
     lines.append("Studio: %s (place id %s, universe id %s)%s" % (st["name"], st["place_id"], st["universe_id"],
                  ", mode %s" % st["mode"] if st.get("mode") else "") if st else "Studio: not reachable. " + r.get("studio_note", ""))
     if r.get("game_md_head"):
-        lines += ["", "GAME.md (first 40 lines):", r["game_md_head"]]
+        lines += ["", "%s (first 40 lines):" % (r.get("bible_name") or "PROJECT.md"), r["game_md_head"]]
     return "\n".join(lines)
 
 

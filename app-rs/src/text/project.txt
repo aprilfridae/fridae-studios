@@ -1,11 +1,11 @@
 
 
 THIS CHAT BELONGS TO A GAME PROJECT. Its folder is your working directory: {path}
-- GAME.md in that folder is the game bible: what the game is, its pillars, core loop, numbers, art direction and the log of
-  decisions. Load the `game-bible` guide and read GAME.md before doing anything else. If it does not exist yet, creating it
+- PROJECT.md in that folder is the game bible: what the game is, its pillars, core loop, numbers, art direction and the log of
+  decisions. Load the `game-bible` guide and read PROJECT.md before doing anything else. If it does not exist yet, creating it
   is the first job (see the guide).
-- Never contradict GAME.md silently. If a request conflicts with it, say so and ask which wins. When something is decided
-  or changed, update GAME.md in the same turn, including a line in its decision log.
+- Never contradict PROJECT.md silently. If a request conflicts with it, say so and ask which wins. When something is decided
+  or changed, update PROJECT.md in the same turn, including a line in its decision log.
 - Before a large change, and again when the work is finished and checked, call rbx_project with action "checkpoint" and a
   short message. It exports the place's scripts into src/ and commits them when the folder is a git repository, so the
   work can be compared and scripts restored. Parts, UI and other instances are not in a checkpoint.

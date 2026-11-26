@@ -12,6 +12,7 @@ FROZEN = bool(getattr(sys, "frozen", False))
 
 if FROZEN:
     KIT = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    # the app is called Fridae; its data folder keeps the old name, Fridae Studios, so nothing moves
     HOME_DIR = os.path.join(os.path.expanduser("~"), "Documents", "Fridae Studios")
 else:
     KIT = os.path.dirname(os.path.abspath(__file__))
@@ -20,6 +21,22 @@ else:
 WORK = os.environ.get("RBXKIT_WORK") or os.path.join(HOME_DIR, "work")
 CONFIG = os.path.join(HOME_DIR, "config.json")
 KNOWLEDGE_DIR = os.path.join(HOME_DIR, "Knowledge")  # the shared Fridae vault's files (Skills/) and its base record
+
+# A project's own notes file (the project bible). Projects from before the rename have GAME.md; the app renames it to
+# PROJECT.md when it opens the project, and until then (or when both exist, PROJECT.md first) it is read as it is.
+BIBLE = "PROJECT.md"
+OLD_BIBLE = "GAME.md"
+
+
+def bible_path(project):
+    """The project's PROJECT.md, else its GAME.md from before the rename; None when it has neither (or no project)."""
+    if not project:
+        return None
+    for name in (BIBLE, OLD_BIBLE):
+        p = os.path.join(project, name)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def _cli_exe():

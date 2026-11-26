@@ -42,7 +42,7 @@ pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The app's standing instructions, with the guide routing table (shared with the tool server) filled in.
 static SYSTEM_PROMPT: LazyLock<String> = LazyLock::new(|| include_str!("text/system.txt").replace("{routing}", include_str!("../../routing.txt")));
-/// The standing instructions with the project's own part: a game's (GAME.md, the board, checkpoints), or for a
+/// The standing instructions with the project's own part: a game's (PROJECT.md, the board, checkpoints), or for a
 /// plain project the note that the game parts do not apply, with the opening line made general.
 fn project_prompt(prompt: String, path: &str, game: bool) -> String {
     if game {
@@ -360,7 +360,7 @@ fn next_step(mode: Mode, got_result: bool, said: &str, state: &mut LoopState) ->
                     Step::CarryOn(if studio {
                         "Studio run: call rbx_stage decisions and act on every answer, then, within any limits I set in this chat, hand the next job the stages need to the right expert. If everything left waits on my answer in Review, end with STATUS: WAITING. If the run is truly finished, say so and end with STATUS: DONE."
                     } else {
-                        "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE."
+                        "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what PROJECT.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE."
                     })
                 }
             } else if said.starts_with("STATUS: NEEDS YOU") {
@@ -6815,7 +6815,7 @@ mod tests {
         assert!(!progress_call("mcp__rbxkit__rbx_team", &json!({"action": "wait", "ids": ["w1"]})));
         assert!(!progress_call("mcp__rbxkit__rbx_team", &json!({"action": "status"})));
         assert!(progress_call("mcp__Roblox_Studio__run_code", &json!({})));
-        assert!(progress_call("Edit", &json!({"file_path": "GAME.md"})));
+        assert!(progress_call("Edit", &json!({"file_path": "PROJECT.md"})));
         assert!(progress_call("Write", &json!({})));
         assert!(!progress_call("Read", &json!({})));
         assert!(!progress_call("mcp__rbxkit__rbx_board", &json!({"action": "list"})));
@@ -6878,7 +6878,7 @@ mod tests {
         paths::end_trees(&[0, 1, std::process::id()]); // the test run (the app here) goes on
     }
 
-    const NIGHT_NEXT: &str = "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what GAME.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE.";
+    const NIGHT_NEXT: &str = "Overnight mode: within any limits I set in this chat, pick the next most valuable thing you can do without me (the board's todo cards first, then what PROJECT.md says is missing, then bugs, polish and playtesting) and do it. If nothing inside my limits is left, say so and end with STATUS: DONE.";
     const NIGHT_AWAY: &str = "I am away. Put what you need from me on the board under needs if it is not there yet, then carry on with the next most valuable thing you can do without me.";
     const FAILED: &str = "The last turn failed. Find out what went wrong, fix or work around it, then carry on.";
     const NEXT: &str = "Carry on with the next step.";
@@ -9017,7 +9017,7 @@ mod tests {
         for word in ["rbx_stage", "rbx_team", "decisions", "STATUS: WAITING", "`studio`", "replaces", "wait"] {
             assert!(STUDIO_PROMPT.contains(word), "studio.txt should mention {word}");
         }
-        for word in ["design", "idea", "scout", "GAME.md", "the plan for this run"] {
+        for word in ["design", "idea", "scout", "PROJECT.md", "the plan for this run"] {
             assert!(KICKOFF_STUDIO.contains(word), "kickoff_studio.txt should mention {word}");
         }
     }

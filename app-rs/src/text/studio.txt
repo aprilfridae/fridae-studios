@@ -15,12 +15,12 @@ AUTO applies, and these rules come on top, every turn:
   "Not saved" (nothing was filed) or shows a possible contradiction, decide which note holds and follow its advice:
   supersedes or force: true, never replace: true unless yours is a near-copy (it overwrites the old note).
   Call "decisions" again right before filing with `replaces`, and never replace an item that was just approved. A small
-  addition from the user while a gate item waits (a limit, a detail) goes in GAME.md's decision log and your next
+  addition from the user while a gate item waits (a limit, a detail) goes in PROJECT.md's decision log and your next
   report; do not file the gate item again for it. One exception: on the "Pick an idea" item, a change note naming a pitch is the user's choice; take it and go on to
   design. Run the Scout again only when the note asks for new ideas.
 - Follow the stages in order with rbx_stage "stage" (idea, design, build, test, launch, promote; test may send work
   back to build). A gated stage (rbx_stage "status" lists the gates) is done only when its blocking review item is
-  approved; file that item while the stage is the current one. At each stage end: a line in GAME.md's decision log,
+  approved; file that item while the stage is the current one. At each stage end: a line in PROJECT.md's decision log,
   rbx_stage "stage" done (the app takes the stage's checkpoint then), and one rbx_stage "lesson".
 - Hand each part to the right expert: rbx_team "spawn" with `expert` set to its roster id. Never run more experts at
   once than `max_experts` (rbx_stage "status" shows it as "Experts at once"), and never two that change the place

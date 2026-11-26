@@ -1,10 +1,10 @@
 ---
 name: critic
-description: "For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work."
+description: "For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against PROJECT.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work."
 examples:
   - "Review the finished shop as a new phone player"
   - "Find exploits in the new trading system"
-  - "Check the build against GAME.md and rank the defects"
+  - "Check the build against PROJECT.md and rank the defects"
 applies: game
 core: true
 owner: app
@@ -38,7 +38,7 @@ was meant to do. Keep that position.
 
 ## Before you start
 
-1. Read `GAME.md` in the project folder: pillars, core loop, player and
+1. Read `PROJECT.md` in the project folder: pillars, core loop, player and
    devices, the economy table, art direction, naming, out of scope.
 2. Read your task to learn **what** to review and where it is. Ignore
    statements about its quality.
@@ -77,7 +77,7 @@ everything with them. Notices quality at once.
 - Does the core action have feedback as good as the genre's leaders:
   sound, motion, numbers, effects, timing? Capture it at known moments.
 - Does it look like one game? Consistent style, palette, fonts, icon
-  style, spacing; matches the Art direction in `GAME.md`.
+  style, spacing; matches the Art direction in `PROJECT.md`.
 - What does this player expect from the genre that is missing?
 - Is there depth after ten minutes, or is it already solved? Check the
   economy table for walls and for trivial stretches.
@@ -115,7 +115,7 @@ with bad arguments through `execute_luau` and read the result on the
 server. This is the one place a critic calls things directly, because that
 is exactly what an exploiter does. Report what the server accepted.
 
-## Check against GAME.md
+## Check against PROJECT.md
 
 After the three passes, compare the work with the bible:
 
@@ -124,7 +124,7 @@ After the three passes, compare the work with the bible:
   number?
 - Does it follow the naming conventions and the architecture notes?
 - Is anything built that is listed as out of scope?
-- Was `GAME.md` updated for what this work changed? A missing update is a
+- Was `PROJECT.md` updated for what this work changed? A missing update is a
   finding.
 
 ## Severity
@@ -147,7 +147,7 @@ VERDICT: [ship / fix first / rework] - [one sentence with the reason]
 
 DEFECTS
 1. [Blocker] [what is wrong, in one line]
-   Seen as: [new player / experienced player / exploiter / GAME.md check]
+   Seen as: [new player / experienced player / exploiter / PROJECT.md check]
    Evidence: [capture, measured value, or path:line and what it does]
    Fix: [the concrete change, specific enough to act on]
 2. [Major] ...

@@ -192,14 +192,14 @@ class StalePairs(unittest.TestCase):
             spec2["id"], spec2["old"] = "S02", "Missing Note"
             spec2["new"]["title"] = "Second"
             exam = {"stale": [self.spec, spec2],
-                    "game": {"GAME.md": "# G\n", "notes": {"Autosave Rules.md": "# Autosave Rules\n\nx\n"}}}
+                    "game": {"PROJECT.md": "# G\n", "notes": {"Autosave Rules.md": "# Autosave Rules\n\nx\n"}}}
             corpus.write_exam_extras(d, exam)
             with open(old) as f:
                 self.assertTrue(f.read().startswith('---\nsuperseded_by: "Light Range Cap Raised"\ntags'))
             self.assertTrue(os.path.isfile(os.path.join(d, "vault", "07 Lighting", "Light Range Cap Raised.md")))
             with open(os.path.join(d, "vault", "07 Lighting", "Second.md")) as f:
                 self.assertIn("[[Missing Note]]", f.read())  # the unmarked half: text only
-            self.assertTrue(os.path.isfile(os.path.join(d, "game", "GAME.md")))
+            self.assertTrue(os.path.isfile(os.path.join(d, "game", "PROJECT.md")))
             self.assertTrue(os.path.isfile(os.path.join(d, "game", ".fridae", "notes", "Autosave Rules.md")))
 
 

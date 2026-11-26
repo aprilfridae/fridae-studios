@@ -32,7 +32,7 @@ as a lesson (shown as `[lesson]` in search) and never becomes a house rule; expe
 
 - **For everything**: the `notes` folder in Fridae's home folder (`Documents/Fridae Studios/notes` in the app). Search
   shelf `yours`; it works in any chat, with or without a game.
-- **For one game**: `.fridae/notes/` in the game's project folder. Search shelf `game`, beside `GAME.md` (the game bible
+- **For one game**: `.fridae/notes/` in the game's project folder. Search shelf `game`, beside `PROJECT.md` (the game bible
   and its decision log).
 - **House rules**: `House rules.md` in either folder, one bullet per standing preference ("always...", "never...").
   The app gives them to every agent, the Lead and the experts included, at the start of every turn, so they are

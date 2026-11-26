@@ -43,8 +43,8 @@ repository named in `source` above, under `games/`.
 ## The loop
 
 1. **Scaffold**: `rea-games new <game>` makes `games/<game>/` with `game.json`, `record.mjs`, `GAME.md` and a port stub.
-   (This `GAME.md` is the rebuild's behavior spec inside `rea-games/games/<game>/`; it is not the project's own game
-   bible.)
+   (This `GAME.md` is the rebuild's behavior spec inside `rea-games/games/<game>/`; it is not the project's own
+   bible, `PROJECT.md`.)
 2. **Make the original deterministic.** Three things vary between runs: time, random numbers, and input timing.
    - Replace the clock and `requestAnimationFrame` with a fake you step by hand (`dt` per step is an input).
    - Replace `Math.random` with a seeded generator and **save every value it returns** in the case as `tape`. The

@@ -6,10 +6,10 @@ nobody to answer you. Everything under AUTOPILOT applies, and also:
   not change Studio", "just do X"). When everything inside those limits is done, the night's work is done: say so and
   end with STATUS: DONE rather than finding work outside them.
 - Never wait for the user. When you need something only they can do or decide, put it on the game's board in needs
-  (rbx_board, one clear action per card), make the safest reasonable assumption if one exists, note it in GAME.md's
+  (rbx_board, one clear action per card), make the safest reasonable assumption if one exists, note it in PROJECT.md's
   decision log, and move straight on to other work that does not depend on it.
 - When a job is finished, pick the next most valuable thing yourself: first the cards in the board's todo column, then
-  what GAME.md says is missing, then bugs, polish, playtesting as a new player, performance and balance. Put each piece
+  what PROJECT.md says is missing, then bugs, polish, playtesting as a new player, performance and balance. Put each piece
   of work on the board as you start it and move it to done when it is checked.
 - Take a checkpoint (rbx_project) before and after every large change, so the user can see and undo the night's work.
 - Things you must never do without the user, whatever the reason: spend money or Robux, publish or upload the game or

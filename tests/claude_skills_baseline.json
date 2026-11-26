@@ -10,7 +10,7 @@
   "files": {
    "SKILL.md": "7c87b89661a196b46093f901ccaa301c0665909c"
   },
-  "frontmatter": "name: critic\ndescription: \"For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against GAME.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work.\"\nexamples:\n  - \"Review the finished shop as a new phone player\"\n  - \"Find exploits in the new trading system\"\n  - \"Check the build against GAME.md and rank the defects\"\napplies: game\ncore: true\nowner: app"
+  "frontmatter": "name: critic\ndescription: \"For an agent spawned as a reviewer: judge finished Roblox work with fresh eyes as a new phone player, an experienced Roblox player and an exploiter, check it against PROJECT.md, and return a ranked list of defects with evidence and fixes. Use when spawned to review, or when asked for a critical review of finished work.\"\nexamples:\n  - \"Review the finished shop as a new phone player\"\n  - \"Find exploits in the new trading system\"\n  - \"Check the build against PROJECT.md and rank the defects\"\napplies: game\ncore: true\nowner: app"
  },
  "economy-design": {
   "files": {
@@ -29,13 +29,13 @@
   "files": {
    "SKILL.md": "8360d5ac887ed399a9a2109bd619bd79554d6928"
   },
-  "frontmatter": "name: game-bible\ndescription: \"Game: the GAME.md format and rules; writing one for an existing game. The GAME.md game bible - its exact template, the rules for reading and updating it, and how to write one for an existing Roblox game by inspecting the place. Use at the start of work on any project, and whenever a design decision is made or changed.\"\nexamples:\n  - \"Write a GAME.md for my existing game\"\n  - \"Record this design decision in GAME.md\"\n  - \"Start work on this project by reading its bible\"\napplies: game\ncore: true"
+  "frontmatter": "name: game-bible\ndescription: \"Game: the PROJECT.md format and rules; writing one for an existing game. The PROJECT.md game bible - its exact template, the rules for reading and updating it, and how to write one for an existing Roblox game by inspecting the place. Use at the start of work on any project, and whenever a design decision is made or changed.\"\nexamples:\n  - \"Write a PROJECT.md for my existing game\"\n  - \"Record this design decision in PROJECT.md\"\n  - \"Start work on this project by reading its bible\"\napplies: game\ncore: true"
  },
  "game-brainstorm": {
   "files": {
    "SKILL.md": "ac46178e77e45bd36f2a46c2edc6a1df0cee30a0"
   },
-  "frontmatter": "name: game-brainstorm\ndescription: \"Game: interview the user about a new idea and write GAME.md. Interview the user about a new Roblox game idea and turn it into GAME.md - one question at a time, from the core fantasy to the scope of a first playable. Use when the user wants to start a new game or brings a new idea, before building anything.\"\nexamples:\n  - \"I have an idea for a new game\"\n  - \"Help me turn my idea into GAME.md\"\n  - \"What should the first playable of my game be?\"\napplies: game"
+  "frontmatter": "name: game-brainstorm\ndescription: \"Game: interview the user about a new idea and write PROJECT.md. Interview the user about a new Roblox game idea and turn it into PROJECT.md - one question at a time, from the core fantasy to the scope of a first playable. Use when the user wants to start a new game or brings a new idea, before building anything.\"\nexamples:\n  - \"I have an idea for a new game\"\n  - \"Help me turn my idea into PROJECT.md\"\n  - \"What should the first playable of my game be?\"\napplies: game"
  },
  "game-design": {
   "files": {
@@ -47,7 +47,7 @@
   "files": {
    "SKILL.md": "be4a94d545e6587399cd29fe8ab48b934ed6a7dd"
   },
-  "frontmatter": "name: market-research\ndescription: \"Game: comparable live experiences with rbx_market and what to learn from them. Research what works on Roblox before designing - find comparable live experiences with rbx_market, read player counts, visits and like ratios, look up how those games onboard, monetise and update, and record a comparison table and concrete lessons in GAME.md. Use when starting a new game or a major feature.\"\nexamples:\n  - \"Which live games are like my idea?\"\n  - \"Compare player counts of the top tycoons\"\n  - \"What can we learn from how those games onboard?\"\napplies: game"
+  "frontmatter": "name: market-research\ndescription: \"Game: comparable live experiences with rbx_market and what to learn from them. Research what works on Roblox before designing - find comparable live experiences with rbx_market, read player counts, visits and like ratios, look up how those games onboard, monetise and update, and record a comparison table and concrete lessons in PROJECT.md. Use when starting a new game or a major feature.\"\nexamples:\n  - \"Which live games are like my idea?\"\n  - \"Compare player counts of the top tycoons\"\n  - \"What can we learn from how those games onboard?\"\napplies: game"
  },
  "minimalist-skill": {
   "files": {

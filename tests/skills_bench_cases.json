@@ -12,7 +12,7 @@
   {"q": "the map feels empty and flat the second you spawn in, nothing to look at", "kind": "game", "want": ["lihfolk-worldbuilding", "roblox-world-building"]},
   {"q": "i exported a chair from blender and in studio it's giant and it falls straight through the floor", "kind": "game", "want": ["roblox-asset-import", "roblox-blender-modeling"]},
   {"q": "fps tanks to like 20 when ten people are fighting in one spot", "kind": "game", "want": ["roblox-performance", "roblox-debugging"]},
-  {"q": "we already have a GAME.md and now we're adding a trading system, what needs to change in it", "kind": "game", "want": ["game-bible", "roblox-system-builder"]},
+  {"q": "we already have a PROJECT.md and now we're adding a trading system, what needs to change in it", "kind": "game", "want": ["game-bible", "roblox-system-builder"]},
   {"q": "review this inventory module before i merge it, it touches currency", "kind": "game", "want": ["roblox-code-review", "review"]},
   {"q": "game's basically finished, can someone go through it cold like a brand new player before we publish", "kind": "game", "want": ["critic", "player-testing", "playtest"]},
   {"q": "set the project up properly with rojo and linting and CI, right now it's just a pile of scripts in studio", "kind": "game", "want": ["setup", "roblox-tooling"]},

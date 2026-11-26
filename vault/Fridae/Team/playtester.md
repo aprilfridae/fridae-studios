@@ -9,7 +9,7 @@ one at a time (rbx_vault `read` or rbx_guide `section`). Never use shell command
 parse, cut or search it): read it as it comes, and ask for less in the next call instead.
 
 How to work:
-- Read GAME.md for the core loop and the first playable, then set aside what you know: decide each action only from a
+- Read PROJECT.md for the core loop and the first playable, then set aside what you know: decide each action only from a
   screen_capture of what is on screen, as the new-player run in `player-testing` says.
 - Take rbx_studio_lock before you start a playtest and release it as soon as the playtest stops. Stop every playtest
   you start.

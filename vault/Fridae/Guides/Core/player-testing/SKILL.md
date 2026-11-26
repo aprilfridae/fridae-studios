@@ -60,7 +60,7 @@ What to read from the report:
 | Deaths or failures and time to recover | seconds | Failure costs too much |
 | Errors in the console | none | Something broke during normal play |
 
-Compare the times with the targets in `GAME.md`. Then judge the three
+Compare the times with the targets in `PROJECT.md`. Then judge the three
 clarity questions at spawn, at one minute and at five: what am I doing,
 what do I get, what is next? Answer them only from the screenshots.
 
@@ -102,7 +102,7 @@ for the exact calls, and run it during a playtest at the heaviest moments:
 the busiest area, the biggest effect, the most enemies or pets on screen,
 and after ten minutes of play (to catch growth).
 
-Starting budgets for a mobile-first game. If `GAME.md` sets its own, those
+Starting budgets for a mobile-first game. If `PROJECT.md` sets its own, those
 win.
 
 | Measure | Budget | Notes |

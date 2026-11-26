@@ -87,7 +87,7 @@ Roblox's live charts. Chats from before projects, or made without one, sit under
   rounds with the Self-test switch.
 
 The agents look things up instead of reading whole manuals: one search covers the bundled Roblox
-notes, Fridae's own how-to guides, the Studio team's notes and your game's own notes (GAME.md and the lessons a run
+notes, Fridae's own how-to guides, the Studio team's notes and your game's own notes (PROJECT.md and the lessons a run
 keeps), and the agent reads only the part it needs. The Roblox notes are a trimmed copy of
 [LihFolk Vault V2](https://github.com/lihfolk-cy/v2-vault) (CC BY 4.0). The rules every agent must follow are always given in full.
 

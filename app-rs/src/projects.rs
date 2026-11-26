@@ -38,6 +38,25 @@ fn run_git(dir: &Path, args: &[&str]) -> (bool, String) {
     }
 }
 
+/// A project's own notes file, the project bible (what it is, its decisions and their log).
+pub const BIBLE: &str = "PROJECT.md";
+/// Its name before the rename: read when a project has only this one, and renamed to `BIBLE` when the project opens.
+pub const OLD_BIBLE: &str = "GAME.md";
+
+/// The project's PROJECT.md, else its GAME.md from before the rename (PROJECT.md first when both are there).
+pub fn bible_path(dir: &Path) -> Option<PathBuf> {
+    [BIBLE, OLD_BIBLE].iter().map(|n| dir.join(n)).find(|p| p.is_file())
+}
+
+/// Rename a project's GAME.md to PROJECT.md, content and all, when it has only the old one. When both are there
+/// both stay (PROJECT.md is the one read). Returns whether it renamed.
+pub fn adopt_bible(dir: &Path) -> bool {
+    let (old, new) = (dir.join(OLD_BIBLE), dir.join(BIBLE));
+    // the exact name: on a disk that ignores case, game.md is the same file and stays as it is
+    let exact = fs::read_dir(dir).into_iter().flatten().flatten().any(|e| e.file_name() == OLD_BIBLE);
+    exact && old.is_file() && !new.exists() && fs::rename(&old, &new).is_ok()
+}
+
 /// Where new game folders go unless the user picks somewhere else.
 pub fn default_parent() -> PathBuf {
     if paths::packaged() { PATHS.home.join("games") } else { paths::work("games") }
@@ -87,7 +106,7 @@ pub fn describe(path: &str) -> Value {
     let name = entry.as_ref().and_then(|p| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| paths::base_name(path));
     let kind = entry.as_ref().map_or("game", kind_of);
     // `type` too: an agent's "project" event puts its own `kind` over this one
-    json!({"name": name, "path": path, "kind": kind, "type": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": dir.join("GAME.md").is_file()})
+    json!({"name": name, "path": path, "kind": kind, "type": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some()})
 }
 
 /// Known projects, most recently used first.
@@ -110,6 +129,7 @@ fn remembered(list: Vec<Value>, name: &str, path: &str, kind: Option<&str>) -> V
 
 /// Move a project to the top of the list.
 pub fn touch(path: &str) {
+    adopt_bible(Path::new(path));
     if let Some(name) = describe(path)["name"].as_str() {
         remember(name, path, None);
     }
@@ -243,6 +263,7 @@ pub fn add(path: &str, kind: Option<&str>) -> Result<Value, String> {
     if !dir.is_dir() {
         return Err("That folder does not exist.".into());
     }
+    adopt_bible(&dir);
     let path = dir.display().to_string();
     let name = describe(&path)["name"].as_str().map(str::to_string).unwrap_or_else(|| paths::base_name(&path));
     remember(&name, &path, kind);
@@ -259,7 +280,7 @@ pub fn open(path: &str, what: &str) -> bool {
         return false;
     }
     let dir = PathBuf::from(path);
-    let target = if what == "bible" { dir.join("GAME.md") } else { dir };
+    let target = if what == "bible" { adopt_bible(&dir); bible_path(&dir).unwrap_or_else(|| dir.join(BIBLE)) } else { dir };
     target.exists() && crate::paths::open_that(target).is_ok()
 }
 
@@ -481,6 +502,31 @@ mod tests {
         for dir in ["/", "/Users", "/Users/me", "/Users/me/Documents", "/Users/me/Documents/Fridae Studios/games"] {
             assert!(trash_refusal(Path::new(dir), &protected, &[]).is_some(), "{dir} should stay");
         }
+    }
+
+    #[test]
+    fn game_md_becomes_project_md_once() {
+        let root = paths::test_dir("project-bible");
+        let (old_only, both, neither) = (root.join("old"), root.join("both"), root.join("neither"));
+        for d in [&old_only, &both, &neither] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(old_only.join("GAME.md"), "# Lake\n\nThe decisions.\n").unwrap();
+        // read as it is until it is renamed
+        assert_eq!(bible_path(&old_only), Some(old_only.join("GAME.md")));
+        assert!(adopt_bible(&old_only));
+        assert!(!old_only.join("GAME.md").exists());
+        assert_eq!(fs::read_to_string(old_only.join("PROJECT.md")).unwrap(), "# Lake\n\nThe decisions.\n", "the content is kept");
+        assert_eq!(bible_path(&old_only), Some(old_only.join("PROJECT.md")));
+        assert!(!adopt_bible(&old_only), "nothing left to rename");
+        // both: both stay, PROJECT.md is the one read
+        fs::write(both.join("GAME.md"), "old").unwrap();
+        fs::write(both.join("PROJECT.md"), "new").unwrap();
+        assert!(!adopt_bible(&both));
+        assert_eq!(fs::read_to_string(both.join("GAME.md")).unwrap(), "old");
+        assert_eq!(bible_path(&both), Some(both.join("PROJECT.md")));
+        assert!(!adopt_bible(&neither));
+        assert_eq!(bible_path(&neither), None);
     }
 
     #[test]

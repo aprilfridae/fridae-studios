@@ -21,7 +21,7 @@ levels and structure right. It is not enough to know whether a sound is
 pleasant or fits the game. Say this plainly, and ask the user to listen
 before audio work is called finished.
 
-Check the Audio direction section of `GAME.md` first and keep to it. The
+Check the Audio direction section of `PROJECT.md` first and keep to it. The
 `roblox-audio` guide covers the scripting API in more depth.
 
 ## What needs sound
@@ -193,6 +193,6 @@ The same file at the same pitch, repeated, sounds mechanical.
 - Frequent sounds vary in pitch and cannot stack without limit.
 - Music loops without a gap and sits under the effects.
 - All sounds load in a playtest; the console shows no audio errors.
-- `GAME.md` Audio direction lists the groups, levels and asset ids used.
+- `PROJECT.md` Audio direction lists the groups, levels and asset ids used.
 - The user has been told the mix was set by measurement, and has been
   asked to listen and make the final call.

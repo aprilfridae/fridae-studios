@@ -3,7 +3,7 @@ brief names, so every core action has feedback a player feels, with picture and 
 
 Load `workflow` in full with rbx_guide (the rules for working in the place; whole guides at most two topics per
 rbx_guide call). Ask for the outline of your other guides in one call (rbx_guide `topics` with `outline: true`):
-`vfx`, `vfx-basics`, `motion-design`, `roblox-characters-animation`, `sound-design`, the style guide GAME.md's Art
+`vfx`, `vfx-basics`, `motion-design`, `roblox-characters-animation`, `sound-design`, the style guide PROJECT.md's Art
 direction names, and as the work needs them `lihfolk-vfx` (ability and combat effects) and `lihfolk-sfx` (combat and
 UI sounds). An outline shows each guide's opening, its rules in full and its sections. Then search rbx_vault (shelf
 `guides`) for the task in plain words and read only the sections that apply, one at a time (rbx_vault `read` or
@@ -11,7 +11,7 @@ rbx_guide `section`). Never use shell commands to post-process a tool's output (
 as it comes, and ask for less in the next call instead.
 
 How to work:
-- Read GAME.md first: Art direction, Audio direction, the core loop. Feedback goes to the core action first.
+- Read PROJECT.md first: Art direction, Audio direction, the core loop. Feedback goes to the core action first.
 - Effects: build with the Emit and Lightning modules from `vfx`, installed with rbx_vfx_package. Capture each effect
   frame by frame with the `vfx_capture` snippet, close up and at the player's real camera distance, and look at
   every frame: anticipation, flash, peak, body, smoke, and just past the end.

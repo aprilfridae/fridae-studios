@@ -2120,7 +2120,7 @@ everything lives in one Obsidian vault, `vault/` (plain Markdown; `vault/Start H
 | `vault` | the Roblox guides (LihFolk's notes and Fridae's), `<home>/Knowledge/Roblox`, downloaded from the Fridae vault | note (BM25F over title, tags, TL;DR, headings, body, symptoms), as before | `work/cache/lihfolk-vault-index.json` |
 | `guides` | every Markdown guide in `rbxkit_mcp.KIT_GUIDES`, plus each guide folder's `references/*.md` | section | `work/cache/knowledge-sections-index.json` |
 | `team` | `vault/Fridae/Team/*.md`; a game's `.fridae/team/experts/` copies replace them | section | same (the game's copies are read on the fly) |
-| `game` | the game's `GAME.md`, an older `.fridae/lessons.md`, and its notes `.fridae/notes/*.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
+| `game` | the game's `PROJECT.md`, an older `.fridae/lessons.md`, and its notes `.fridae/notes/*.md`, only when `RBXKIT_PROJECT` is set | section | never cached |
 | `yours` | the user's notes for everything, `<home>/notes/*.md` (with `House rules.md` and `studio-lessons.md`), with or without a project | section | never cached |
 
 A section is a `##` or `###` heading with its own text (`#` lines inside code fences do not count); the text before

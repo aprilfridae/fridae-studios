@@ -328,7 +328,7 @@ def _refuse_approved(old, a):
     """Replacing an item the user already approved would make them approve twice: refused unless `force`."""
     if old.get("status") == "approved" and not a.get("force"):
         raise KitError("Not filed: [%s] %s was already approved by the user, so it is not replaced. Call 'decisions' and "
-                       "carry on from the approval; record small additions in GAME.md's decision log. Give 'force' true "
+                       "carry on from the approval; record small additions in PROJECT.md's decision log. Give 'force' true "
                        "only when the plan itself must change." % (old.get("id") or "?", old.get("title") or ""))
 
 

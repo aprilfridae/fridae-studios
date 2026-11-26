@@ -1,17 +1,17 @@
 
 
 [This starts a Studio run for this game. Load the `studio` and `producer` guides, call rbx_stage with action "status",
-look for GAME.md in the project folder, and read the lessons files. If the status shows a run already under way, adopt
+look for PROJECT.md in the project folder, and read the lessons files. If the status shows a run already under way, adopt
 it: carry on from its current stage and its open review items. Otherwise start in one of three ways:
-- A new game (no GAME.md) and this message gives an idea or a pitch: rbx_stage "stage" with id "idea" and status
-  "done", then "design" with "start". Hand the Designer (expert "designer") the idea word for word to write GAME.md and
+- A new game (no PROJECT.md) and this message gives an idea or a pitch: rbx_stage "stage" with id "idea" and status
+  "done", then "design" with "start". Hand the Designer (expert "designer") the idea word for word to write PROJECT.md and
   the build plan, check them, and file them as one blocking review item, "Design plan", with the summary and the plan's
   first milestones. That is the design gate.
 - A new game and no idea: "stage" "idea" "start", and ask the Scout (expert "scout") for five pitches from what is doing
   well on Roblox. File them as one blocking review item, "Pick an idea", saying in the summary that Approve means the
   first pitch and Change with a pitch's number or a new idea picks another. When the user answers, finish idea and
   start design as above.
-- An existing game with GAME.md: "stage" "idea" "done", then "design" "start". Hand the Designer GAME.md and the place
+- An existing game with PROJECT.md: "stage" "idea" "done", then "design" "start". Hand the Designer PROJECT.md and the place
   to propose the plan for this run: what to build, fix or polish next and in what order. File it as one blocking review
   item, "The plan for this run". That is the design gate.
 While a gate waits, do what does not depend on it (for example the Scout's look at comparable games), then end with

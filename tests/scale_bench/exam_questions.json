@@ -556,7 +556,7 @@
   },
   {
    "id": "G07",
-   "q": "how do I write the GAME.md game bible for an existing place",
+   "q": "how do I write the PROJECT.md game bible for an existing place",
    "gold": [
     "game-bible"
    ]
@@ -630,7 +630,7 @@
  ],
  "game": {
   "name": "Skystone Isles",
-  "GAME.md": "# Skystone Isles\n\n## One-line pitch\nHop between floating islands, hatch pets and fight sky pirates with friends.\n\n## Pillars\n- Pets you hatch and evolve\n- Short island-hopping sessions on phones\n- Co-op pirate raids\n\n## Core loop\nCollect coins on islands, hatch eggs, raid pirate ships for gems, unlock the next island.\n",
+  "PROJECT.md": "# Skystone Isles\n\n## One-line pitch\nHop between floating islands, hatch pets and fight sky pirates with friends.\n\n## Pillars\n- Pets you hatch and evolve\n- Short island-hopping sessions on phones\n- Co-op pirate raids\n\n## Core loop\nCollect coins on islands, hatch eggs, raid pirate ships for gems, unlock the next island.\n",
   "notes": {
    "Autosave Rules.md": "---\nkind: rule\n---\n# Autosave Rules\n\nSkystone Isles autosaves every player profile every 90 seconds, and saves at once after every shop purchase and every egg hatch. The session lock lease is 5 minutes, so the 90 second autosave always renews it. On BindToClose we save every player in parallel and wait at most 25 seconds.\n",
    "Pet Hatch Odds.md": "---\nkind: rule\n---\n# Pet Hatch Odds\n\nIn Skystone Isles a Mythic pet hatches with a 1 in 2,500 chance from a Sky Egg. Pity guarantees a Mythic on the 3,000th Sky Egg without one; the pity counter is saved in the profile and resets when any Mythic hatches. Legendary pets are 1 in 400.\n",

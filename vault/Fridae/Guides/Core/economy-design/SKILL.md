@@ -13,7 +13,7 @@ applies: game
 
 An economy is a set of numbers that decides how long everything takes. Do
 not choose prices by feel. Choose **times**, derive the prices, simulate
-them with `rbx_economy`, then record the final table in `GAME.md`
+them with `rbx_economy`, then record the final table in `PROJECT.md`
 (`game-bible`) and in the game's one config module.
 
 ## Method
@@ -25,7 +25,7 @@ them with `rbx_economy`, then record the final table in `GAME.md`
 3. Set **time targets**: how many minutes of play each unlock should take.
 4. Derive each cost: `cost = income per minute at that point x target minutes`.
 5. Run `rbx_economy` on the table. Read the result. Adjust. Run again.
-6. Write the final table into `GAME.md` and the config module, and add a
+6. Write the final table into `PROJECT.md` and the config module, and add a
    Decision log line.
 7. After it is built, confirm with a playtest that real income matches the
    income assumed (`player-testing`). The simulation is only as good as the
@@ -197,7 +197,7 @@ one tier's worth each time and a new zone opens at rebirth 1 and 3.
 
 Run this table through `rbx_economy` three times (normal, with a x2 pass,
 at half income), fix what it flags, then copy the final table into
-`GAME.md` and the config module.
+`PROJECT.md` and the config module.
 
 ## Checklist
 
@@ -205,4 +205,4 @@ at half income), fix what it flags, then copy the final table into
 - Costs come from time targets; no step is over twice the previous one.
 - Every random drop has published odds, a pity rule and a time in hours.
 - `rbx_economy` has been run for a normal, a boosted and a slow player.
-- The table in `GAME.md` equals the config module, number for number.
+- The table in `PROJECT.md` equals the config module, number for number.

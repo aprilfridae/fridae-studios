@@ -318,7 +318,7 @@ class Round3Tests(NotesTestCase):
         self.assertRegex(text, r"\[game\] .*\[lesson · this game ")
         self.assertFalse(os.path.exists(os.path.join(self.home, "notes")))
         with self.in_project():  # the Lead or an ordinary chat may save for every game
-            rbxstage.run("lesson", {"project": self.project, "text": "Brief experts with GAME.md's remotes.", "scope": "all"})
+            rbxstage.run("lesson", {"project": self.project, "text": "Brief experts with PROJECT.md's remotes.", "scope": "all"})
         self.assertRegex(self.vault("search", query="brief experts remotes", shelf="yours"), r"\[yours\] .*\[lesson · ")
 
 

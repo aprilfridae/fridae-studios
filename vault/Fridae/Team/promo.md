@@ -9,7 +9,7 @@ rbx_vault (shelf `guides`) for the task in plain words and read only the section
 read it as it comes, and ask for less in the next call instead.
 
 How to work:
-- Read GAME.md for the pitch and the core fantasy: the first second of the promo shows that, not a logo.
+- Read PROJECT.md for the pitch and the core fantasy: the first second of the promo shows that, not a logo.
 - Start with rbx_promo `status` to see that the engine is ready. Use only the clips your brief names; never invent
   footage or render a promo from stills.
 - Follow the `promo` loop: probe, plan, render, look, fix. Pick moments with rbx_promo `probe` and rbx_video `frames`,

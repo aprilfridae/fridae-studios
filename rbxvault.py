@@ -578,7 +578,7 @@ def _list(folder):
 #   vault   the LihFolk vault notes (vault/Roblox)
 #   guides  every guide the app ships (rbxkit_mcp.KIT_GUIDES, whatever user copies exist), references/ too
 #   team    the Studio team's expert files (vault/Fridae/Team/*.md, a game's .fridae/team/experts/ overrides them)
-#   game    this game's GAME.md, lessons and notes (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
+#   game    this project's PROJECT.md (or GAME.md), lessons and notes (only when RBXKIT_PROJECT is set); indexed on the fly, never cached
 #   yours   the user's notes for everything (<home>/notes, rbxnotes.py); indexed on the fly, works with no project
 #   skills  one summary entry per skill of the library (app, shipped, user, project): what it is for and what to ask
 #           it for. Not notes: no sections, never in an ordinary search, found by rbx_skill search (rbxskills.search)
@@ -618,7 +618,7 @@ def split_front(text):
 
 # ------------------------------------------------------------------ note labels, gists and links (both searches)
 # Every note gets four labels, worked out from its front matter and where it lives (no model involved):
-#   game    the game's name for a game's own notes (GAME.md, .fridae/notes, its team overrides), else "all"
+#   game    the game's name for a game's own notes (PROJECT.md, .fridae/notes, its team overrides), else "all"
 #   kind    rule | lesson | taste | reference | guide
 #   source  lihfolk | user | agent | community | game | fridae (Fridae's own guides and team files)
 #   date    YYYY-MM-DD: the front matter's date (updated, date, when, created, verified), else none ("")
@@ -694,7 +694,7 @@ def note_labels(shelf, title, path, fm=None, body="", project=""):
             kind = "lesson"
         elif kb_rel.startswith(_REFERENCE_FOLDERS) or t == "glossary":
             kind = "reference"
-        elif base == "GAME.md":
+        elif base in ("PROJECT.md", "GAME.md"):
             kind = "reference"
         else:
             kind = {"vault": "reference", "guides": "guide", "team": "guide"}.get(shelf, "lesson")
@@ -1339,10 +1339,11 @@ def project_dir():
 
 
 def game_files(project):
-    """(title, path) for this game's own notes that exist: GAME.md, the old lessons file and .fridae/notes/."""
+    """(title, path) for this project's own notes that exist: PROJECT.md (or GAME.md from before the rename), the old
+    lessons file and .fridae/notes/."""
     import rbxnotes
-    cands = [("GAME.md", os.path.join(project, "GAME.md")),
-             ("lessons.md", os.path.join(project, ".fridae", "lessons.md"))]
+    bible = rbxpaths.bible_path(project)
+    cands = ([(os.path.basename(bible), bible)] if bible else []) + [("lessons.md", os.path.join(project, ".fridae", "lessons.md"))]
     return [(t, p) for t, p in cands if os.path.isfile(p)] + rbxnotes.shelf_files(rbxnotes.game_notes(project))
 
 

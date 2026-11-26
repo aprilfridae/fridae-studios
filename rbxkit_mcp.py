@@ -1448,7 +1448,7 @@ TOOLS = [
              "path": {"type": "string", "description": "read: a file inside the skill's folder, as 'load' lists it, such as references/quick-reference.md"}},
             ["action"]), t_skill),
     ("rbx_vault", "One lookup for Roblox knowledge (the Roblox guides of the Fridae vault, which the user downloads in Setup: 1,300+ notes dated October 2026), Fridae's own guides, "
-     "the Studio team's expert notes and this game's own notes (GAME.md with its decision log, lessons). Search first, then "
+     "the Studio team's expert notes and this game's own notes (PROJECT.md with its decision log, lessons). Search first, then "
      "read ONE section. 'search' (query: the task or bug in plain words; shelf: all, vault, guides, team or game; k: results, "
      "default 5) returns ranked sections labelled by shelf and by kind, source (or 'this game') and month, each with a "
      "snippet, its size and the exact arguments to read it; up to two may be notes the first results link to, marked "
@@ -1579,7 +1579,7 @@ TOOLS = [
     ("rbx_vfx_package", "Build the Emit and Lightning modules into one file staged for Studio, and return the one-line Luau that installs "
      "them into ReplicatedStorage.VFX without uploading or pasting source.", schema({}), t_package),
     ("rbx_project", "The game's project folder: the scripts of the open Studio place as files, with checkpoints in git. Talks to Studio "
-     "itself, so script sources never pass through this chat. Actions: 'info' (project folder, GAME.md, git branch and recent "
+     "itself, so script sources never pass through this chat. Actions: 'info' (project folder, PROJECT.md, git branch and recent "
      "checkpoints, the open place); 'export_scripts' (write every Script, LocalScript and ModuleScript to <project>/src with Rojo-style "
      "names; returns counts written, unchanged, removed); 'checkpoint' (export, then commit with `message` if the project is a git "
      "repository, and leave a marker in Studio's undo history; returns the commit and changed files); 'changes' (which scripts in "

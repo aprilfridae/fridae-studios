@@ -253,7 +253,7 @@ def mark_superseded(path, new_title):
 
 def write_exam_extras(root, exam):
     """The exam's additions to a corpus: the stale pairs' newer notes in the vault, and the game project (game/: its
-    GAME.md and .fridae/notes). Returns their estimated chunks."""
+    PROJECT.md and .fridae/notes). Returns their estimated chunks."""
     est = 0
     olds = {}
     for dirpath, _, fs in os.walk(os.path.join(root, "vault")):
@@ -273,8 +273,8 @@ def write_exam_extras(root, exam):
     if game:
         g = os.path.join(root, "game")
         os.makedirs(os.path.join(g, ".fridae", "notes"), exist_ok=True)
-        with open(os.path.join(g, "GAME.md"), "w", encoding="utf-8") as f:
-            f.write(game["GAME.md"])
+        with open(os.path.join(g, "PROJECT.md"), "w", encoding="utf-8") as f:
+            f.write(game["PROJECT.md"])
         for name, text in sorted(game.get("notes", {}).items()):
             with open(os.path.join(g, ".fridae", "notes", name), "w", encoding="utf-8") as f:
                 f.write(text)

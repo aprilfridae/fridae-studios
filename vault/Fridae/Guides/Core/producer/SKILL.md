@@ -17,7 +17,7 @@ agents (action `spawn` with a task), reports on them (`status`) and blocks
 until they finish (`wait`). Check the tool's parameters for exact names.
 
 Workers know **nothing** of this conversation. Each one starts with only
-the brief you write, the guides it loads, `GAME.md` and the place itself.
+the brief you write, the guides it loads, `PROJECT.md` and the place itself.
 
 ## When to split, and when not to
 
@@ -59,7 +59,7 @@ cut, not repaired afterwards.
 - **Shared containers are created by you** before spawning: the Remotes
   folder, the shared config module, the folder for shared types. Workers
   add only the entries named in their brief.
-- **Shared interfaces are agreed first** and written into `GAME.md`
+- **Shared interfaces are agreed first** and written into `PROJECT.md`
   under Technical notes, before anyone starts:
   - remote names, direction and exact arguments;
   - module names, paths and the functions each exposes, with signatures;
@@ -88,11 +88,11 @@ brief is complete on its own and contains:
 
 1. **Goal**: what to build and what it is for, in two or three sentences,
    including how the player meets it.
-2. **Context**: the project folder, that `GAME.md` must be read first,
+2. **Context**: the project folder, that `PROJECT.md` must be read first,
    which guides to load, and which Studio place if several are open.
 3. **Exact names and locations**: every instance, script, remote and
    module it creates or uses, with full paths.
-4. **Interfaces**: copied in full from `GAME.md`: what it must provide
+4. **Interfaces**: copied in full from `PROJECT.md`: what it must provide
    and what it may rely on from others. For things that do not exist yet,
    what to build against (the agreed signature, or a stub you created).
 5. **What done looks like**: checks that can be observed. "The shop opens
@@ -105,7 +105,7 @@ brief is complete on its own and contains:
    brief did not provide.
 
 Also state the style to follow (the style guide and palette from
-`GAME.md`) for any worker producing visible things, so the parts look like
+`PROJECT.md`) for any worker producing visible things, so the parts look like
 one game.
 
 Read each brief once as if you knew nothing else. If a question comes to
@@ -113,7 +113,7 @@ mind, answer it in the brief.
 
 ## Running it
 
-1. Read `GAME.md`. Write the shared interfaces into it. Create the shared
+1. Read `PROJECT.md`. Write the shared interfaces into it. Create the shared
    containers and any stubs in the place.
 2. **Take a checkpoint** with `rbx_project` (action `checkpoint`; run
    `export_scripts` first so the scripts on disk are current). This is the
@@ -140,7 +140,7 @@ mind, answer it in the brief.
    what to review and where it is; do not tell it the work is good. It
    follows the `critic` guide. Fix the blockers and majors it reports, or
    say why not.
-10. Take a second checkpoint, update `GAME.md` (content list, UI
+10. Take a second checkpoint, update `PROJECT.md` (content list, UI
     inventory, Technical notes, Decision log), and report.
 
 If the result is beyond repair, `rbx_project` `restore_scripts` returns
@@ -153,7 +153,7 @@ reason every worker has named containers.
 Request: "Add a pet system: eggs you buy and hatch, pets that follow you
 and boost coins, and an inventory to equip them."
 
-Agreed first and written into `GAME.md`:
+Agreed first and written into `PROJECT.md`:
 
 - `ReplicatedStorage.Shared.PetConfig`: pets (id, name, rarity,
   multiplier, model name) and eggs (id, price, drop weights). Created by
@@ -176,7 +176,7 @@ existing coin script that applies the multiplier, the hatch effect and
 sound once the parts exist, all playtests, and the final wiring.
 
 Brief for worker B, in outline: goal (players open a pets screen from the
-HUD, see what they own, equip up to three); read `GAME.md` and load
+HUD, see what they own, equip up to three); read `PROJECT.md` and load
 `workflow`, `ui-design`, `sim-ui`; create `StarterGui.PetsGui` and
 `StarterPlayerScripts.PetsUI` only; use `PetConfig` for names and
 rarities, listen to `Remotes.PetsChanged`, fire `Remotes.EquipPet`; until
@@ -196,4 +196,4 @@ equip to coin boost as a new player, spawn the critic, fix, checkpoint.
 - What you verified yourself and how (playtest, captures).
 - What the critic found, what was fixed, and what was left and why.
 - What is not done or not verified.
-- That `GAME.md` was updated, and the checkpoints taken.
+- That `PROJECT.md` was updated, and the checkpoints taken.

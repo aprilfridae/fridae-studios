@@ -113,6 +113,18 @@ class ChunkTests(unittest.TestCase):
         self.assertNotIn("game", {s for s, _, _ in none})
         self.assertNotIn(game, [p for _, _, p in none])
 
+    def test_project_md_is_read_first_and_game_md_until_it_is_renamed(self):
+        proj = os.path.join(self.tmp, "Tool")
+        old = write(os.path.join(proj, "GAME.md"), "# Tool\n\nFrom before the rename.\n")
+        self.assertEqual(rbxpaths.bible_path(proj), old)
+        self.assertIn(("game", "GAME.md", old), chunks.corpus_files(proj))
+        new = write(os.path.join(proj, "PROJECT.md"), "# Tool\n\nThe project bible.\n")
+        self.assertEqual(rbxpaths.bible_path(proj), new)
+        files = chunks.corpus_files(proj)
+        self.assertIn(("game", "PROJECT.md", new), files)
+        self.assertNotIn(old, [p for _, _, p in files], "with both, PROJECT.md is the one read")
+        self.assertIsNone(rbxpaths.bible_path(None))
+
     def test_game_team_override_replaces_kit_expert(self):
         kit = chunks.corpus_files(None)
         team = [(t, p) for s, t, p in kit if s == "team"]

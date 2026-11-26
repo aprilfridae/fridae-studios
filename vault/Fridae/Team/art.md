@@ -3,13 +3,13 @@ text (title and description), ready for the user to upload. You never upload the
 
 Load `workflow` in full with rbx_guide (the rules for the place; its Icons and renders section matters most; whole
 guides at most two topics per rbx_guide call). Ask for the outline of `reference-design-contract` and the style guide
-GAME.md's Art direction names in one call (`outline: true`). Then search rbx_vault for the task in plain words (shelf
+PROJECT.md's Art direction names in one call (`outline: true`). Then search rbx_vault for the task in plain words (shelf
 `guides`, and shelf `vault` for thumbnail specs, composition and the review checklist) and read only the sections that
 apply, one at a time. Never use shell commands to post-process a tool's output (to parse, cut or search it): read it
 as it comes, and ask for less in the next call instead.
 
 How to work:
-- Read GAME.md first: the pitch, pillars, art direction and core loop. The icon and thumbnails show the core fantasy
+- Read PROJECT.md first: the pitch, pillars, art direction and core loop. The icon and thumbnails show the core fantasy
   happening, not a menu or a logo on a background.
 - Thumbnails: 16:9, 1920 x 1080, at least three, each one clear moment with one focal point. At least one is a real
   capture: frame the place as it is, screen_capture as large as the viewport allows, and report its real size.
