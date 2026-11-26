@@ -2062,6 +2062,183 @@ pub fn local_time(t: i64) -> Option<Tm> {
     (!unsafe { localtime_r(&t, &mut tm) }.is_null()).then_some(tm)
 }
 
+/// Tie a child to the app's life: when the app ends for any reason (closed, crashed, ended in
+/// Task Manager) Windows ends the child and everything it starts afterwards. Returns whether
+/// the child was tied. Elsewhere a no-op: there the children run in their own process groups.
+pub fn end_with_app(child: &std::process::Child) -> bool {
+    #[cfg(windows)]
+    {
+        // One job for the app's whole life; the handle is never closed, so only the app's end closes it
+        static JOB: std::sync::OnceLock<Option<isize>> = std::sync::OnceLock::new();
+        match *JOB.get_or_init(new_kill_on_close_job) {
+            Some(job) => assign(job, child),
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child;
+        true
+    }
+}
+
+/// JOBOBJECT_EXTENDED_LIMIT_INFORMATION (with its basic limits and IO_COUNTERS inline).
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct JobLimits {
+    per_process_user_time_limit: i64,
+    per_job_user_time_limit: i64,
+    limit_flags: u32,
+    minimum_working_set_size: usize,
+    maximum_working_set_size: usize,
+    active_process_limit: u32,
+    affinity: usize,
+    priority_class: u32,
+    scheduling_class: u32,
+    io_counters: [u64; 6],
+    process_memory_limit: usize,
+    job_memory_limit: usize,
+    peak_process_memory_used: usize,
+    peak_job_memory_used: usize,
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn CreateJobObjectW(attributes: *const std::ffi::c_void, name: *const u16) -> isize;
+    fn SetInformationJobObject(job: isize, class: i32, info: *const std::ffi::c_void, len: u32) -> i32;
+    fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
+    fn CloseHandle(h: isize) -> i32;
+}
+
+/// A new unnamed job that ends every process in it when its last handle closes.
+#[cfg(windows)]
+fn new_kill_on_close_job() -> Option<isize> {
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job == 0 {
+        return None;
+    }
+    let limits = JobLimits { limit_flags: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, ..Default::default() };
+    let ok = unsafe {
+        SetInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            &limits as *const JobLimits as *const std::ffi::c_void,
+            std::mem::size_of::<JobLimits>() as u32,
+        )
+    };
+    if ok == 0 {
+        unsafe { CloseHandle(job) };
+        return None;
+    }
+    Some(job)
+}
+
+/// Put a child in a job; false when Windows refuses (it has exited, or its job forbids nesting).
+#[cfg(windows)]
+fn assign(job: isize, child: &std::process::Child) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    unsafe { AssignProcessToJobObject(job, child.as_raw_handle() as isize) != 0 }
+}
+
+#[cfg(all(test, windows))]
+mod job_tests {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        fn WaitForSingleObject(h: isize, ms: u32) -> u32;
+        fn TerminateProcess(h: isize, code: u32) -> i32;
+        fn CloseHandle(h: isize) -> i32;
+    }
+
+    fn ping() -> Command {
+        let mut c = Command::new("ping");
+        c.args(["-n", "30", "127.0.0.1"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        c
+    }
+
+    #[test]
+    fn the_job_struct_has_the_windows_size() {
+        assert_eq!(std::mem::size_of::<super::JobLimits>(), if cfg!(target_pointer_width = "64") { 144 } else { 112 });
+    }
+
+    #[test]
+    fn a_child_in_the_job_is_ended_when_the_job_closes() {
+        let job = super::new_kill_on_close_job().expect("a job");
+        let mut child = ping().spawn().unwrap();
+        // A grandchild the child starts only after it is in the job: it waits for a line first
+        let mut parent = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$null = [Console]::In.ReadLine(); $p = Start-Process ping -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru; [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Start-Sleep 30",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(super::assign(job, &child));
+        assert!(super::assign(job, &parent));
+        parent.stdin.take().unwrap().write_all(b"go\n").unwrap();
+        let mut line = String::new();
+        BufReader::new(parent.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let pid: u32 = line.trim().parse().expect("the grandchild's pid");
+        // SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION
+        let grandchild = unsafe { OpenProcess(0x0010_0000 | 0x0001 | 0x1000, 0, pid) };
+        assert!(grandchild != 0, "the grandchild is running");
+
+        unsafe { CloseHandle(job) };
+
+        let ended = |c: &mut std::process::Child| {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_secs(3) {
+                if c.try_wait().unwrap().is_some() {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            false
+        };
+        let child_ended = ended(&mut child);
+        let parent_ended = ended(&mut parent);
+        let grandchild_ended = unsafe { WaitForSingleObject(grandchild, 3000) } == 0;
+        // Clean up whatever is left before asserting
+        let _ = child.kill();
+        let _ = parent.kill();
+        let _ = child.wait();
+        let _ = parent.wait();
+        unsafe {
+            if !grandchild_ended {
+                TerminateProcess(grandchild, 1);
+            }
+            CloseHandle(grandchild);
+        }
+        assert!(child_ended, "the child ends with the job");
+        assert!(parent_ended, "the powershell child ends with the job");
+        assert!(grandchild_ended, "a process started after assignment ends with the job");
+    }
+
+    #[test]
+    fn end_with_app_assigns_a_child() {
+        let mut child = ping().spawn().unwrap();
+        let assigned = super::end_with_app(&child);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(assigned);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
