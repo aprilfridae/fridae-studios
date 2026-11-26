@@ -1,10 +1,7 @@
-/* A list in the sidebar opens and shuts with a short ease, and nothing is laid out again while it runs: the page
-   takes its final shape at once, and the ease is only moves and a fade, which the browser does without the page's
-   help. The list is a window (`.s-kids`) over its rows (`.s-in`): the window slides one way and the rows the other,
-   so the rows stay where they are and the window's lower edge uncovers them; what follows the list rides on that
-   edge. A list longer than what can be seen is held to that length for the ease (the rest is under the sidebar's
-   foot already), and New project, which is pinned, goes from where it was to where it is. With less motion the list
-   is simply there, or gone. */
+/* A list in the sidebar opens and shuts with a short ease: the list's own height grows from nothing or shrinks to
+   nothing while its rows fade, so the project's box and everything under it follow its lower edge as one, and
+   nothing jumps when it ends. A list longer than what can be seen still eases over no more than what can be seen
+   (the rest is under the sidebar's foot already). With less motion the list is simply there, or gone. */
 import { store } from "../store";
 import { boxOf, grow, redraw, shrink } from "./fold";
 
@@ -21,7 +18,7 @@ export function endEase() {
 }
 const drop = (key: string) => { shrink.delete(key); };
 
-export function easeList(key: string, open: boolean, addWas?: number | null) {
+export function easeList(key: string, open: boolean, _addWas?: number | null) {
   endEase();
   const box = boxOf(key), list = document.getElementById("proj-list");
   const gone = () => { if (!open) { drop(key); redraw.poke(); } };
@@ -31,37 +28,22 @@ export function easeList(key: string, open: boolean, addWas?: number | null) {
   /* px of the page per px of the window (the text-size setting scales the page; engines differ on what a
      rectangle is measured in) */
   const scale = store.get().scale, lr = list.getBoundingClientRect(), s = (scale > 0 ? scale : 100) / 100, ratio = list.offsetWidth ? lr.width / list.offsetWidth : 1, z = Math.abs(ratio - s) <= Math.abs(ratio - 1) ? s : 1;
-  const top = (n: Element) => n.getBoundingClientRect().top / z, br = box.getBoundingClientRect(), seen = (lr.bottom - br.top) / z;
+  const br = box.getBoundingClientRect(), seen = (lr.bottom - br.top) / z;
   if (seen <= 0) { gone(); return; }   /* all of it is under the foot: nothing to see */
-  /* what follows the list, down to the end of the sidebar: it rides on the list's lower edge; New project is pinned */
-  const after: HTMLElement[] = [];
-  for (let n: Element | null = box; n && n !== list; n = n.parentElement) for (let f = n.nextElementSibling; f; f = f.nextElementSibling) after.push(f as HTMLElement);
-  const add = after.find((f) => f.matches(".proj.add")), rest = after.filter((f) => f !== add);
-  let tall = br.height / z, held = false, moved: number, addMoved = 0;
-  if (tall > seen + 1) { tall = Math.ceil(seen); box.style.height = tall + "px"; held = true; }
-  if (open) {
-    moved = tall + (parseFloat(getComputedStyle(box.parentElement!).rowGap) || 0) + (parseFloat(getComputedStyle(box).marginBottom) || 0);
-    if (add && typeof addWas === "number") addMoved = top(add) - addWas / z;
-  } else {
-    /* where things will be once the list is gone: looked at with the list taken out for a moment */
-    const keep = list.scrollTop, now = rest.length ? top(rest[0]) : 0, addNow = add ? top(add) : 0;
-    box.style.display = "none";
-    moved = rest.length ? now - top(rest[0]) : tall; addMoved = add ? addNow - top(add) : 0;
-    box.style.display = ""; list.scrollTop = keep;
-  }
-  const y = (px: number) => "translateY(" + px.toFixed(2) + "px)", path = (a: number, b: number) => (open ? [{ transform: y(a) }, { transform: y(b) }] : [{ transform: y(b) }, { transform: y(a) }]);
-  const timing: KeyframeAnimationOptions = { duration: Math.round(Math.max(200, Math.min(360, 150 + tall * 0.35))), easing: "cubic-bezier(0.33, 1, 0.68, 1)", fill: open ? "none" : "forwards" };
-  const hidden = { transform: y(tall), opacity: 0 }, shown = { transform: y(0), opacity: 1 };
+  const full = box.offsetHeight, tall = Math.min(full, Math.max(0, seen));
+  /* the list's gap to what follows goes with it, so the last 2px do not jump either */
+  const gap = parseFloat(getComputedStyle(box.parentElement!).rowGap) || 0, mb = parseFloat(getComputedStyle(box).marginBottom) || 0;
+  const shut = { height: "0px", marginBottom: (mb - gap).toFixed(2) + "px" }, wide = { height: full + "px", marginBottom: mb + "px" };
+  const timing: KeyframeAnimationOptions = { duration: Math.round(Math.max(200, Math.min(320, 150 + tall * 0.35))), easing: "cubic-bezier(0.33, 1, 0.68, 1)", fill: open ? "none" : "forwards" };
   box.classList.add("easing");
-  const riders = rest.concat(add ? [add] : []); riders.forEach((f) => { f.style.willChange = "transform"; });
-  const anims = [box.animate(path(-tall, 0), timing), inner.animate(open ? [hidden, { opacity: 1, offset: 0.7 }, shown] : [shown, { opacity: 0, offset: 0.7 }, hidden], timing)]
-    .concat(rest.map((f) => f.animate(path(-moved, 0), timing)), add && addMoved ? [add.animate(path(-addMoved, 0), timing)] : []);
-  const tidy = () => { box.classList.remove("easing"); if (held) box.style.height = ""; riders.forEach((f) => { f.style.willChange = ""; }); if (!open) drop(key); };
+  const anims = [box.animate(open ? [shut, wide] : [wide, shut], timing),
+    inner.animate(open ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0, offset: 0.6 }, { opacity: 0 }], timing)];
+  const tidy = () => { box.classList.remove("easing"); if (!open) drop(key); };
   sideEase = { anims, tidy };
   anims[0].onfinish = () => {
     if (sideEase && sideEase.anims === anims) sideEase = null;
-    if (open) { tidy(); return; }
-    /* shut: the list goes and what rode on it lets go in the same moment, so nothing is seen to jump */
+    if (open) { anims.forEach((a) => a.cancel()); tidy(); return; }
+    /* shut: the list goes in the same moment its ease lets go of it */
     drop(key); afterDraw.push(() => { anims.forEach((a) => a.cancel()); tidy(); }); redraw.poke();
   };
 }

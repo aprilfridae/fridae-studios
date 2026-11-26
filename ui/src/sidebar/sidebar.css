@@ -87,8 +87,8 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .s-x.lone { padding: 0 0 0 24px; background: none; }
 .s-kids.tree { margin-bottom: -2px; }
 /* the 2px under its last row are the list's own gap to what follows */
-.s-kids.easing { overflow: hidden; will-change: transform; }
-.s-kids.easing > .s-in { will-change: transform, opacity; }
+.s-kids.easing { overflow: hidden; }
+.s-kids.easing > .s-in { will-change: opacity; }
 .s-more { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 4px 8px; border-radius: var(--r-s); text-align: left; font-size: 12px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
 .s-more:hover { background: var(--hover); color: var(--text); }
 .s-more:focus-visible { outline-offset: -2px; }
