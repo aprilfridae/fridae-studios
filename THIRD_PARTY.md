@@ -143,3 +143,30 @@ The OpenCode chats (`app-rs/src/opencode.rs`) follow the design of **t3code**'s 
 (MIT, https://github.com/pingdotgg/t3code): one `opencode serve` per app run on 127.0.0.1 behind a random password,
 and the order of its calls (session, tool servers, prompt, event stream, interrupt). No code is copied; the Rust
 client was written against OpenCode's own API description.
+
+## T3 Code
+
+Parts of the app's window (`ui/index.html`) are adapted from T3 Code, https://github.com/pingdotgg/t3code,
+MIT licensed (`licenses/t3code-LICENSE.txt`):
+
+    Copyright (c) 2026 T3 Tools Inc.
+
+Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
+
+- **Settings**: the window's layout (a list of pages with a search that jumps to a setting and pulses its row, a
+  header that says where you are, pages of titled groups whose rows hold a setting and its control), the search's
+  ranking, and the switch, button and field shapes. From `apps/web/src/components/settings/` (`SettingsSidebarNav.tsx`,
+  `settingsLayout.tsx`, `SettingsGroup.tsx`, `settingsSearch.ts`, `ThemeSettings.tsx`, `ThemeWireframe.tsx`),
+  `apps/web/src/components/AppRouteModal.tsx` and `apps/web/src/components/ui/`.
+- **Themes**: the Graphite, Moss, Tide, Clay and Lilac palettes (light and dark) and the way a palette's colours
+  become the page's variables. From `packages/shared/src/themePalettes.ts` and `apps/web/src/index.css`. The palettes
+  are renamed here; Fridae's own theme is not from T3 Code.
+- **Glass**: the blurred, see-through surfaces of menus, pop-ups, the message box and the project panel. From the
+  `surface-glass`, `dropdown-glass`, `dialog-glass` and `dialog-backdrop` utilities in `apps/web/src/index.css`.
+- **Usage**: the Usage window and the limit bars (how much is left, the even-pace line and the pace mark, when a limit
+  starts again). From `apps/web/src/components/usage/` (`UsagePage.tsx`, `UsageLimits.tsx`) and
+  `packages/shared/src/usageLimits.ts` and `usageLimitsCopy.ts`.
+
+Not taken: T3 Code's name, wordmark, logos, icons, artwork and its own branded theme, which its `TRADEMARK.md` keeps
+out of the MIT licence. Fridae Studios is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows
+are drawn for Fridae.
