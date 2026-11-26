@@ -835,6 +835,11 @@ fn guard_locked(st: &Store) -> std::sync::MutexGuard<'static, Option<Guard>> {
 /// The folder copies are kept in: outside the work folder, the games and the kit (macOS `~/Library/Application
 /// Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux `$XDG_CONFIG_HOME/fridae-studios` or
 /// `~/.config/fridae-studios`).
+/// The app's private folder (see `guard_dir`): remote control keeps its pairing files here.
+pub fn private_dir() -> PathBuf {
+    guard_dir()
+}
+
 fn guard_dir() -> PathBuf {
     #[cfg(test)]
     return test_dir("guard-copy");

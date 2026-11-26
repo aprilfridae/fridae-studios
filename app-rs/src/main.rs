@@ -37,6 +37,7 @@ mod projects;
 mod promo;
 mod promo_tab;
 mod rag;
+mod remote_common;
 mod research;
 mod server;
 mod share;
