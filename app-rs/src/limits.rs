@@ -23,6 +23,11 @@
 //!   `{rateLimits: {primary, secondary: {usedPercent, windowDurationMins, resetsAt}, limitId, planType}}`; signed
 //!   out it answers the error "codex account authentication required to read rate limits", and is left out). Codex
 //!   must keep its stdin open until it has answered (measured, codex-cli 0.169.1).
+//!   Each Gemini account is asked by `agy -p /usage --output-format stream-json`, run as a turn of that account runs
+//!   (its home, `accounts::home`): agy answers the slash command itself, with no turn (`num_turns` 0, no tokens;
+//!   measured 2026-11-26), in a first line `{"event":"command_result","command":{"name":"usage","data":{"groups":
+//!   [{"name":"Gemini Models","buckets":[{"window":"weekly"|"5h","remaining_fraction":0.98,"reset_time":
+//!   "2026-12-03T07:17:49Z"},...]},{"name":"Claude and GPT models",...}]}}}` (`tests/fixtures/gemini/usage.json`).
 //! - **Each Claude turn's `rate_limit_event`** (`record`), on the account the turn ran on, between probes.
 //!
 //! Every account is keyed by (ai, account): "own" for the user's own sign-in, an added account's folder name
@@ -238,6 +243,38 @@ pub fn codex_windows(result: &Value) -> Vec<Value> {
     out
 }
 
+/// The windows in agy's answer to `/usage` (its `command_result` line). Each group of models has a 5-hour and a
+/// weekly bucket, given as the share that is left; the first group ("Gemini Models") is the plain "Session" and
+/// "Weekly", another is named after its models ("Weekly · Claude and GPT"). A group nothing has been used of (every
+/// bucket whole, with no reset time) is left out.
+pub fn gemini_windows(line: &Value) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for g in line["command"]["data"]["groups"].as_array().into_iter().flatten() {
+        let buckets: Vec<&Value> = g["buckets"].as_array().into_iter().flatten().collect();
+        let resets = |b: &Value| b["reset_time"].as_str().and_then(iso_secs).filter(|t| *t > 0.0).unwrap_or(0.0);
+        if buckets.iter().all(|b| b["remaining_fraction"].as_f64().is_none_or(|r| r >= 1.0) && resets(b) == 0.0) {
+            continue;
+        }
+        let name = g["name"].as_str().unwrap_or("").trim();
+        let gemini = name.eq_ignore_ascii_case("gemini models");
+        let short = name.strip_suffix(" models").or_else(|| name.strip_suffix(" Models")).unwrap_or(name).trim();
+        for b in buckets {
+            let Some(left) = b["remaining_fraction"].as_f64().filter(|r| r.is_finite()) else { continue };
+            let (id, label, length) = match b["window"].as_str() {
+                Some("5h") => ("five_hour", "Session", SESSION),
+                Some("weekly") => ("seven_day", "Weekly", WEEK),
+                _ => continue,
+            };
+            let (id, label) = if gemini { (id.to_string(), label.to_string()) } else { (format!("{id}_{}", scoped_id(short).trim_start_matches("seven_day_")), format!("{label} · {short}")) };
+            if out.iter().any(|o| o["id"] == id.as_str()) {
+                continue;
+            }
+            out.push(window(&id, &label, 1.0 - left, resets(b), length));
+        }
+    }
+    out
+}
+
 // ------------------------------------------------------------------ the store
 
 /// What one source said about one account.
@@ -325,6 +362,7 @@ pub fn record(event: &Value, account: Option<&str>) {
 fn place(ai: &str, account: &str) -> Option<(String, u8)> {
     let name = match ai {
         "claude" => "Claude",
+        "gemini" => "Gemini",
         "codex" => "ChatGPT",
         _ => return None,
     };
@@ -351,7 +389,8 @@ pub fn shape(store: &Map<String, Value>, now: f64, place: &dyn Fn(&str, &str) ->
         if let Some(err) = e["error"].as_str().filter(|s| !s.is_empty()) {
             row["error"] = json!(err);
         }
-        rows.push((u8::from(ai != "claude"), n, row));
+        let order = ["claude", "gemini", "codex"].iter().position(|a| *a == ai).unwrap_or(9) as u8;
+        rows.push((order, n, row));
     }
     rows.sort_by_key(|(a, n, _)| (*a, *n));
     json!({"accounts": rows.into_iter().map(|(_, _, r)| r).collect::<Vec<_>>()})
@@ -368,11 +407,12 @@ pub fn state() -> Value {
 /// Runs `cmd` with `input` written to its stdin (kept open), until a line of its output satisfies `wanted`, at most
 /// `limit`, or until the app quits (then `Err("")`). Started without a window and tied to the app's life
 /// (`paths::end_with_app`), in the ledger while it runs; its stdin closed and the process ended afterwards.
-fn ask(mut cmd: Command, input: &[String], wanted: &dyn Fn(&Value) -> bool, limit: Duration, what: &str) -> Result<Value, String> {
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+/// With no `input`, its stdin is empty. When it fails, what it wrote to its error output is handed back too.
+fn ask(mut cmd: Command, input: &[String], wanted: &dyn Fn(&Value) -> bool, limit: Duration, what: &str) -> Result<Value, (String, String)> {
+    cmd.stdin(if input.is_empty() { Stdio::null() } else { Stdio::piped() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     paths::quiet(&mut cmd);
     paths::own_group(&mut cmd);
-    let mut child = paths::end_with_app(&mut cmd).map_err(|_| format!("{what} could not be started."))?;
+    let mut child = paths::end_with_app(&mut cmd).map_err(|_| (format!("{what} could not be started."), String::new()))?;
     let pid = child.id();
     crate::procs::record("limits", pid);
     let mut stdin = child.stdin.take();
@@ -381,6 +421,16 @@ fn ask(mut cmd: Command, input: &[String], wanted: &dyn Fn(&Value) -> bool, limi
             let _ = pipe.write_all(line.as_bytes()).and_then(|()| pipe.write_all(b"\n"));
         }
         let _ = pipe.flush();
+    }
+    let err_text = std::sync::Arc::new(Mutex::new(String::new()));
+    if let Some(mut err) = child.stderr.take() {
+        let keep = err_text.clone();
+        std::thread::spawn(move || {
+            let mut all = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut std::io::Read::take(&mut err, 64 * 1024), &mut all);
+            *keep.lock().unwrap_or_else(|e| e.into_inner()) = String::from_utf8_lossy(&all).to_string();
+            let _ = std::io::copy(&mut err, &mut std::io::sink());
+        });
     }
     let (tx, rx) = mpsc::channel::<String>();
     if let Some(out) = child.stdout.take() {
@@ -424,7 +474,13 @@ fn ask(mut cmd: Command, input: &[String], wanted: &dyn Fn(&Value) -> bool, limi
     }
     let _ = child.wait();
     crate::procs::forget(pid);
-    answer
+    // (its error output, read to its end once the process has ended, or what came of it in a moment)
+    let read_by = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < read_by && std::sync::Arc::strong_count(&err_text) > 1 {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let err = err_text.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    answer.map_err(|why| (why, err))
 }
 
 /// The control request that asks Claude Code for the plan's usage (see the top of this file).
@@ -453,7 +509,7 @@ pub fn probe_claude(account: Option<&str>) -> Option<Said> {
     Some(match ask(cmd, &[usage_request()], &wanted, PROBE_WAIT, "Claude Code") {
         Ok(v) if v["response"]["subtype"] == "success" => claude_usage_windows(&v["response"]["response"]).map_or(Said::None, Said::Probed),
         Ok(_) => Said::Failed("Claude Code could not read the usage limits.".into()),
-        Err(why) => Said::Failed(why),
+        Err((why, _)) => Said::Failed(why),
     })
 }
 
@@ -477,8 +533,58 @@ pub fn probe_codex() -> Option<Said> {
         // signed out, or on a key: no plan limits
         Ok(v) if v["error"]["message"].as_str().is_some_and(|m| m.to_lowercase().contains("auth")) => Said::None,
         Ok(_) => Said::Failed("Codex could not read the usage limits.".into()),
-        Err(why) => Said::Failed(why),
+        Err((why, _)) => Said::Failed(why),
     })
+}
+
+/// One Gemini account asked for its limits, with the environment a turn of that account gets (`account`: an added
+/// account's folder name, None for the user's own). None when agy is not installed or the added account's folder
+/// is not there.
+pub fn probe_gemini(account: Option<&str>) -> Option<Said> {
+    let exe = paths::find_antigravity()?;
+    let mut cmd = Command::new(exe);
+    cmd.args(["-p", "/usage", "--output-format", "stream-json"]);
+    let dir = paths::work("probe");
+    let _ = std::fs::create_dir_all(&dir);
+    cmd.current_dir(dir);
+    paths::child_env(&mut cmd, "gemini");
+    if account.is_some() {
+        if !crate::accounts::env_of(&mut cmd, "gemini", account) {
+            return None;
+        }
+    } else if let Some(h) = crate::antigravity::home_override() {
+        cmd.env("HOME", h);
+    }
+    let home = cmd.get_envs().find(|(k, _)| *k == if cfg!(windows) { "USERPROFILE" } else { "HOME" }).and_then(|(_, v)| v.map(std::path::PathBuf::from)).unwrap_or_else(paths::home_dir);
+    let began = std::time::SystemTime::now();
+    let wanted = |v: &Value| v["event"] == "command_result" || v["event"] == "result";
+    let answer = ask(cmd, &[], &wanted, Duration::from_secs(30), "Gemini");
+    if matches!(&answer, Ok(v) if v["event"] == "command_result") {
+        return answer.ok().map(|v| Said::Probed(gemini_windows(&v)));
+    }
+    if matches!(&answer, Err((why, _)) if why.is_empty()) {
+        return Some(Said::Failed(String::new())); // the app is quitting
+    }
+    // Google's "Verify your account to continue" reaches only agy's log (`antigravity::log_asks_to_verify`)
+    if crate::antigravity::log_asks_to_verify(&home, began) {
+        return Some(Said::Failed(VERIFY.into()));
+    }
+    Some(match answer {
+        Err((why, err)) => gemini_failed(&err).unwrap_or(Said::Failed(why)),
+        Ok(_) => Said::Failed("Gemini could not read the usage limits.".into()),
+    })
+}
+
+/// What a Gemini account is told when Google holds it back.
+const VERIFY: &str = "Google wants this Gemini account verified before it can be used.";
+
+/// agy's error output when `/usage` did not answer: signed out (the account is left out), or held back by Google.
+fn gemini_failed(err: &str) -> Option<Said> {
+    if crate::signin::asks_to_verify(err) {
+        return Some(Said::Failed(VERIFY.into()));
+    }
+    let low = err.to_lowercase();
+    (low.contains("please sign in") || low.contains("not authenticated") || low.contains("authentication required") || low.contains("login required")).then_some(Said::None)
 }
 
 /// Every account asked once; true when every probe that ran answered.
@@ -507,6 +613,19 @@ pub fn probe_all() -> bool {
             continue;
         }
         keep("claude", &name, probe_claude(Some(&name)));
+    }
+    if !crate::agents::shutting() {
+        keep("gemini", OWN, probe_gemini(None));
+    }
+    for name in crate::accounts::list("gemini") {
+        if crate::agents::shutting() {
+            return false;
+        }
+        if crate::accounts::signed_out_of("gemini", &name) {
+            note("gemini", &name, Said::None);
+            continue;
+        }
+        keep("gemini", &name, probe_gemini(Some(&name)));
     }
     if !crate::agents::shutting() {
         keep("codex", OWN, probe_codex());
@@ -673,6 +792,37 @@ mod tests {
     }
 
     #[test]
+    fn the_gemini_answer_is_read_into_windows() {
+        let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("gemini").join("usage.json")).unwrap();
+        let line: Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        let w = gemini_windows(&line);
+        assert_eq!(w.len(), 2, "the unused Claude and GPT group is left out: {w:?}");
+        assert_eq!((w[0]["id"].as_str(), w[0]["label"].as_str(), w[0]["length"].as_f64(), w[0]["resets"].as_f64()), (Some("seven_day"), Some("Weekly"), Some(WEEK), iso_secs("2026-12-03T07:17:49Z")));
+        assert!((w[0]["used"].as_f64().unwrap() - (1.0 - 0.983716607093811)).abs() < 1e-9);
+        assert_eq!((w[1]["id"].as_str(), w[1]["label"].as_str(), w[1]["length"].as_f64()), (Some("five_hour"), Some("Session"), Some(SESSION)));
+        // once the other group is used it shows, named after its models; an epoch reset is no reset time
+        let mut used = line.clone();
+        used["command"]["data"]["groups"][1]["buckets"][0]["remaining_fraction"] = json!(0.75);
+        let w = gemini_windows(&used);
+        let other = w.iter().find(|w| w["label"] == "Weekly · Claude and GPT").unwrap();
+        assert_eq!((other["id"].as_str(), other["used"].as_f64(), other["resets"].as_f64()), (Some("seven_day_claude_and_gpt"), Some(0.25), Some(0.0)));
+        assert!(w.iter().any(|w| w["label"] == "Session · Claude and GPT" && w["used"] == 0.0));
+        assert!(gemini_windows(&json!({"event": "result"})).is_empty());
+        // agy's words when it cannot answer
+        assert!(matches!(gemini_failed("Error: Please sign in to continue"), Some(Said::None)));
+        assert!(matches!(gemini_failed("Verify your account to continue."), Some(Said::Failed(w)) if w == VERIFY));
+        assert!(gemini_failed("something else").is_none());
+        // and Gemini sorts between Claude and ChatGPT on the page
+        let mut s = Map::new();
+        for ai in ["codex", "gemini", "claude"] {
+            apply(&mut s, ai, OWN, Said::Probed(vec![]), 1.0);
+        }
+        let v = shape(&s, 2.0, &|ai: &str, _: &str| Some((ai.to_string(), 1)));
+        let order: Vec<&str> = v["accounts"].as_array().unwrap().iter().map(|r| r["ai"].as_str().unwrap()).collect();
+        assert_eq!(order, ["claude", "gemini", "codex"]);
+    }
+
+    #[test]
     fn the_request_is_the_one_claude_code_knows() {
         let r: Value = serde_json::from_str(&usage_request()).unwrap();
         assert_eq!(r["request"], json!({"subtype": "get_usage", "skip_behaviors": true}));
@@ -683,7 +833,7 @@ mod tests {
     #[test]
     #[ignore]
     fn live_probe() {
-        for (who, said) in [("claude", probe_claude(None)), ("codex", probe_codex())] {
+        for (who, said) in [("claude", probe_claude(None)), ("gemini", probe_gemini(None)), ("codex", probe_codex())] {
             match said {
                 Some(Said::Probed(w)) => {
                     for w in w {
