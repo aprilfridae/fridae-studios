@@ -25,9 +25,12 @@
 //! USERPROFILE and `AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1` (`home`): agy then keeps that account's sign-in in a file in
 //! its data folder, `<folder>/.gemini/antigravity-cli`, and never reads or writes the Credential Manager entry
 //! (with the flag a fresh home reads "Please sign in"; without it the user's own sign-in is found there).
-//! `ANTIGRAVITY_APP_DATA_DIR` does not move that folder (measured) and stays taken out. No Mac keychain is made,
-//! and the user's `.gitconfig` is not linked in (`link_into` makes links on Unix only). The user's own account
-//! gets none of this and keeps the Credential Manager.
+//! `ANTIGRAVITY_APP_DATA_DIR` does not move that folder (measured) and stays taken out. No Mac keychain is made.
+//! The user's `.gitconfig` is linked in as on Unix (`link_into`: a symbolic link where allowed, else a hard link
+//! listed in the folder's marker, `LINKS_MARKER`). That data folder must be the account's own: a `.gemini` or
+//! `.gemini/antigravity-cli` that is a link means nothing runs for the account (`gemini_data_its_own`). Since the
+//! token file's name there is not measured, every file in it named like a sign-in is protected (`sign_in_files`).
+//! The user's own account gets none of this and keeps the Credential Manager.
 //!
 //! The first account is the user's own sign-in and is never touched. The second is signed in with the tool's own
 //! sign-in (`signin`, under the id "<ai>:<folder name>"), by the user's click, and removed by deleting the app's
@@ -450,7 +453,31 @@ pub fn sign_in_files() -> Vec<PathBuf> {
         }
     }
     let files = sign_in_names();
-    dirs.iter().flat_map(|d| files.iter().map(move |f| d.join(f))).collect()
+    #[allow(unused_mut)]
+    let mut out: Vec<PathBuf> = dirs.iter().flat_map(|d| files.iter().map(move |f| d.join(f))).collect();
+    // Windows: the name agy gives its token file there has not been seen yet, so whatever is directly in its data
+    // folder (or in `.gemini`) under a name a sign-in would have is protected too (names read, never contents)
+    #[cfg(windows)]
+    for d in &dirs {
+        let gemini = d.join(".gemini");
+        for folder in [gemini.join("antigravity-cli"), gemini] {
+            for e in fs::read_dir(&folder).into_iter().flatten().flatten() {
+                let path = folder.join(e.file_name());
+                if token_like(&e.file_name().to_string_lossy()) && !out.contains(&path) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether a file's name is one a sign-in could be kept under: it has `token`, `oauth`, `cred`, `auth` or `keyring`
+/// in it, in any case.
+#[cfg(windows)]
+fn token_like(name: &str) -> bool {
+    let low = name.to_lowercase();
+    ["token", "oauth", "cred", "auth", "keyring"].iter().any(|w| low.contains(w))
 }
 
 /// The names in `SIGN_IN_FILES`, and on Windows agy's token file as well: there an added Gemini account's sign-in
@@ -480,6 +507,14 @@ fn remove_folder(dir: &Path) -> bool {
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
         if fs::symlink_metadata(entry.path()).is_ok_and(|m| is_link(&m)) {
             remove_link(&entry.path());
+        }
+    }
+    // Windows: a linked name that is a file may be a hard link to the user's own: removed as a name (which never
+    // changes the file under its other name) before anything has its attributes changed (`open_up`)
+    #[cfg(windows)]
+    for name in CLAUDE_LINKED.iter().chain(GEMINI_LINKED.iter()) {
+        if real_file(&dir.join(name)) {
+            let _ = fs::remove_file(dir.join(name));
         }
     }
     for place in SIGN_IN_PLACES {
@@ -522,25 +557,30 @@ fn remove_all(path: &Path) {
     // Windows: the read-only attribute taken off what is in the folder itself (never through a link), then once more
     #[cfg(windows)]
     {
-        fn open_up(path: &Path) {
-            let Ok(meta) = fs::symlink_metadata(path) else { return };
-            if is_link(&meta) {
-                return;
-            }
-            let mut perms = meta.permissions();
-            if perms.readonly() {
-                #[allow(clippy::permissions_set_readonly_false)]
-                perms.set_readonly(false);
-                let _ = fs::set_permissions(path, perms);
-            }
-            if meta.is_dir() {
-                for e in fs::read_dir(path).into_iter().flatten().flatten() {
-                    open_up(&e.path());
-                }
-            }
-        }
         open_up(path);
         let _ = fs::remove_dir_all(path);
+    }
+}
+
+/// Windows: the read-only attribute taken off a folder and what is in it, for its removal. Never through a link,
+/// and never on a file with a second name (a hard link: the attribute is the file's, so the user's own would lose
+/// it); a file whose names cannot be counted is left as it is too, and the folder then stays (Setup says so).
+#[cfg(windows)]
+fn open_up(path: &Path) {
+    let Ok(meta) = fs::symlink_metadata(path) else { return };
+    if is_link(&meta) || (!meta.is_dir() && link_count(path) != Some(1)) {
+        return;
+    }
+    let mut perms = meta.permissions();
+    if perms.readonly() {
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+    if meta.is_dir() {
+        for e in fs::read_dir(path).into_iter().flatten().flatten() {
+            open_up(&e.path());
+        }
     }
 }
 
@@ -594,8 +634,25 @@ fn users_claude() -> PathBuf {
 pub fn prepare_of(ai: &str, name: &str) -> Option<PathBuf> {
     let dir = folder_of(ai, name).filter(|d| in_accounts(d))?;
     match ai {
-        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED).filter(|d| !keychain_changed_in(d) && (!keychain_used() || list_its_own(d))),
+        "gemini" => prepare_in(&dir, &paths::home_dir(), &GEMINI_LINKED).filter(|d| gemini_data_its_own(d) && !keychain_changed_in(d) && (!keychain_used() || list_its_own(d))),
         _ => prepare_in(&dir, &users_claude(), &CLAUDE_LINKED),
+    }
+}
+
+/// Whether agy's data folder in an added Gemini account's home is the home's own. On Windows the account's sign-in
+/// is a file there (`home`), so `.gemini` or `.gemini/antigravity-cli` that is there and is not a folder itself (a
+/// junction to the user's own `~/.gemini`, say) means nothing runs for the account. Elsewhere: always (the sign-in
+/// is in the home's own keychain, `keychain_its_own`).
+fn gemini_data_its_own(home: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let gemini = home.join(".gemini");
+        [gemini.join("antigravity-cli"), gemini].iter().all(|d| fs::symlink_metadata(d).is_err() || real_folder(d))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = home;
+        true
     }
 }
 
@@ -1067,27 +1124,44 @@ fn link_into(dir: &Path, users: &Path, names: &[&str]) {
     // or Developer Mode, measured): a folder is linked by a directory junction, which needs none; a file by a
     // symbolic link where that is allowed, else by a hard link (the same file under a second name, on the same
     // drive only; on another drive it is not linked). Claude Code rewrites its settings by putting a new file in
-    // place of the old, which leaves a hard link behind as a file of its own: so a linked file that is a file there
-    // and no longer reads as the user's is made again from the user's (theirs is what counts, as with a link).
+    // place of the old, which leaves a hard link behind as a file of its own: so a linked file Fridae made (listed
+    // in the folder's marker) that is a file there and no longer reads as the user's is made again from the user's
+    // (theirs is what counts, as with a link).
     // Only ever names inside the account's folder are made, replaced or removed; a junction is removed as a link.
+    // The names made as hard links are listed in the folder's marker (`LINKS_MARKER`): only those are made again, or
+    // taken away when the user's file is gone; a file the tool made under a linked name is never touched.
     #[cfg(windows)]
-    for name in names {
-        let (from, to) = (users.join(name), dir.join(name));
-        let linked = fs::symlink_metadata(&to).is_ok_and(|m| is_link(&m));
-        if linked && !to.exists() {
-            remove_link(&to);
-        }
-        if !from.exists() {
-            continue;
-        }
-        if fs::symlink_metadata(&to).is_err() {
-            if from.is_dir() {
-                let _ = junction(&from, &to) || std::os::windows::fs::symlink_dir(&from, &to).is_ok();
-            } else {
-                let _ = std::os::windows::fs::symlink_file(&from, &to).is_ok() || hard_link_in(dir, name, &from);
+    {
+        let listed = read_marker(dir);
+        let mut made = listed.clone();
+        for name in names {
+            let (from, to) = (users.join(name), dir.join(name));
+            let ours = made.iter().any(|n| n == name);
+            let linked = fs::symlink_metadata(&to).is_ok_and(|m| is_link(&m));
+            if linked && !to.exists() {
+                remove_link(&to);
             }
-        } else if from.is_file() && real_file(&to) && fs::read(&from).ok() != fs::read(&to).ok() {
-            hard_link_in(dir, name, &from);
+            if !from.exists() {
+                if ours && real_file(&to) {
+                    let _ = fs::remove_file(&to);
+                }
+                if ours && fs::symlink_metadata(&to).is_err() {
+                    made.retain(|n| n != name);
+                }
+                continue;
+            }
+            if fs::symlink_metadata(&to).is_err() {
+                if from.is_dir() {
+                    let _ = junction(&from, &to) || std::os::windows::fs::symlink_dir(&from, &to).is_ok();
+                } else if (std::os::windows::fs::symlink_file(&from, &to).is_ok() || hard_link_in(dir, name, &from)) && !ours {
+                    made.push(name.to_string());
+                }
+            } else if ours && from.is_file() && real_file(&to) && fs::read(&from).ok() != fs::read(&to).ok() {
+                hard_link_in(dir, name, &from);
+            }
+        }
+        if made != listed {
+            write_marker(dir, &made);
         }
     }
     #[cfg(not(any(unix, windows)))]
@@ -1107,10 +1181,91 @@ fn junction(target: &Path, link: &Path) -> bool {
     if !target.is_absolute() || !link.is_absolute() || [&t, &l].iter().any(|s| s.contains(['"', '%', '\r', '\n'])) {
         return false;
     }
-    let mut c = std::process::Command::new("cmd");
-    c.raw_arg(format!("/D /C mklink /J \"{l}\" \"{t}\"")).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let mut c = std::process::Command::new(cmd_exe());
+    c.raw_arg(format!("/D /V:OFF /C mklink /J \"{l}\" \"{t}\"")).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     paths::quiet(&mut c);
-    paths::Start::run_status(&mut c).is_ok_and(|s| s.success()) && fs::symlink_metadata(link).is_ok_and(|m| is_link(&m))
+    let made = paths::Start::run_status(&mut c).is_ok_and(|s| s.success()) && fs::symlink_metadata(link).is_ok_and(|m| is_link(&m));
+    // what was made must lead where it was meant to; anything else is taken away again, as a link
+    if made && !leads_to(link, target) {
+        remove_link(link);
+        return false;
+    }
+    made
+}
+
+/// Windows: the names in an account's folder that Fridae made as hard links to the user's files (`link_into`), kept
+/// in a file of the folder's own (dot-named, inside the protected accounts folder). Only these are ever made again
+/// when they no longer read as the user's, or taken away when the user's file is gone: a file under a linked name
+/// that is not listed is the tool's own and is left alone.
+#[cfg(windows)]
+const LINKS_MARKER: &str = ".fridae-links.json";
+
+/// The names listed in a folder's marker (`LINKS_MARKER`). A marker that is missing, is not a file itself, or does
+/// not read as a list of names is an empty one: then nothing is made again or taken away, the safe side.
+#[cfg(windows)]
+fn read_marker(dir: &Path) -> Vec<String> {
+    let file = dir.join(LINKS_MARKER);
+    if !real_file(&file) {
+        return Vec::new();
+    }
+    fs::read(&file).ok().and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok()).unwrap_or_default()
+}
+
+/// A folder's marker written whole: beside its place first, then moved over the old one.
+#[cfg(windows)]
+fn write_marker(dir: &Path, names: &[String]) {
+    let file = dir.join(LINKS_MARKER);
+    let new = beside(&file);
+    let written = fs::write(&new, json!(names).to_string()).is_ok() && fs::rename(&new, &file).is_ok();
+    if !written {
+        let _ = fs::remove_file(&new);
+    }
+}
+
+/// Windows' own command interpreter by its full path (`%SystemRoot%\System32\cmd.exe`), never one found on PATH or
+/// in the current folder.
+#[cfg(windows)]
+fn cmd_exe() -> PathBuf {
+    let root = std::env::var_os("SystemRoot").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    root.join("System32").join("cmd.exe")
+}
+
+/// Whether a link leads to `target`, by what the link itself says (never followed): the two compared without a
+/// `\\?\` or `\??\` prefix, trailing separators or case.
+#[cfg(windows)]
+fn leads_to(link: &Path, target: &Path) -> bool {
+    let plain = |p: &Path| {
+        let s = p.to_string_lossy().replace('/', "\\");
+        s.strip_prefix(r"\\?\").or_else(|| s.strip_prefix(r"\??\")).unwrap_or(&s).trim_end_matches('\\').to_lowercase()
+    };
+    fs::read_link(link).is_ok_and(|to| plain(&to) == plain(target))
+}
+
+/// How many names a file has (`nNumberOfLinks`), asked by a handle to it. None when it cannot be opened or asked.
+#[cfg(windows)]
+fn link_count(path: &Path) -> Option<u32> {
+    use std::os::windows::io::AsRawHandle;
+    // BY_HANDLE_FILE_INFORMATION
+    #[repr(C)]
+    #[derive(Default)]
+    struct Info {
+        attributes: u32,
+        times: [u32; 6],
+        volume: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetFileInformationByHandle(file: *mut std::ffi::c_void, info: *mut Info) -> i32;
+    }
+    let f = fs::File::open(path).ok()?;
+    let mut info = Info::default();
+    let ok = unsafe { GetFileInformationByHandle(f.as_raw_handle(), &mut info) != 0 };
+    ok.then_some(info.links)
 }
 
 /// The user's file `from` put at `dir/name` as a hard link: made beside it under a passing name first, then moved
@@ -1567,7 +1722,8 @@ mod tests {
         fs::rename(users.join("settings.new"), users.join("settings.json")).unwrap();
         prepare_in(&dir, &users, &CLAUDE_LINKED);
         assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"hooks\": {\"x\": 1}}");
-        assert!(fs::read_dir(&dir).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("fridae")), "nothing of the app's left beside it");
+        assert!(fs::read_dir(&dir).unwrap().flatten().all(|e| e.file_name() == LINKS_MARKER || !e.file_name().to_string_lossy().contains("fridae")), "nothing of the app's left beside it but its marker");
+        assert!(read_marker(&dir).iter().any(|n| n == "settings.json"), "the file link Fridae made is listed");
         let _ = remove_folder(&dir);
         assert_eq!(fs::read_to_string(users.join("settings.json")).unwrap(), "{\"hooks\": {\"x\": 1}}");
         let _ = fs::remove_dir_all(&root);
@@ -2337,5 +2493,141 @@ mod tests {
         let window = json!({"rate_limit_info": {"status": "allowed", "unifiedWindows": {"five_hour": {"utilization": 1.0, "resetsAt": 1795000000, "status": "rejected"}, "seven_day": {"utilization": 0.4, "resetsAt": 1795633200, "status": "allowed"}}}});
         assert_eq!(event_reset(&window), Some(1795000000.0));
         assert_eq!(event_reset(&json!({"type": "result"})), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_token_files_are_protected_by_their_names_whatever_agy_calls_them() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_tagged("wintokname");
+        let dir = base().join("gemini-2-wintokname");
+        let _ = fs::remove_dir_all(&dir);
+        let data = dir.join(".gemini").join("antigravity-cli");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(data.join("some-oauth-thing.json"), "a token").unwrap();
+        fs::write(data.join("cli.log"), "a log").unwrap();
+        fs::write(dir.join(".gemini").join("Keyring.dat"), "k").unwrap();
+        fs::write(dir.join(".gemini").join("settings.json"), "{}").unwrap();
+        let files = sign_in_files();
+        assert!(files.contains(&data.join("some-oauth-thing.json")), "a file named like a sign-in is protected");
+        assert!(files.contains(&dir.join(".gemini").join("Keyring.dat")), "in the data folder's parent too, any case");
+        assert!(!files.contains(&data.join("cli.log")) && !files.contains(&dir.join(".gemini").join("settings.json")), "the rest stays readable");
+        assert!(files.contains(&dir.join(GEMINI_TOKEN_FILE)), "and the default name always");
+        let _ = fs::remove_dir_all(&dir);
+        stand_in(false, false);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removal_never_changes_the_users_file_through_a_hard_link() {
+        let (root, users, dir) = windows_setup("accounts-win-hardlink");
+        fs::create_dir_all(&dir).unwrap();
+        let theirs = users.join("keybindings.json");
+        fs::write(&theirs, "[\"mine\"]").unwrap();
+        fs::hard_link(&theirs, dir.join("keybindings.json")).unwrap();
+        let mut ro = fs::metadata(&theirs).unwrap().permissions();
+        ro.set_readonly(true);
+        fs::set_permissions(&theirs, ro).unwrap();
+        // a file of the account's own with a second name (somebody else's file in the end): never opened up
+        let other = root.join("elsewhere.txt");
+        fs::write(&other, "x").unwrap();
+        fs::create_dir_all(dir.join("deep")).unwrap();
+        fs::hard_link(&other, dir.join("deep").join("shared.txt")).unwrap();
+        let mut ro = fs::metadata(&other).unwrap().permissions();
+        ro.set_readonly(true);
+        fs::set_permissions(&other, ro).unwrap();
+        // the fallback alone, as it runs when the plain delete fails
+        open_up(&dir);
+        assert!(fs::metadata(&theirs).unwrap().permissions().readonly(), "the user's file keeps its read-only mark");
+        assert!(fs::metadata(&other).unwrap().permissions().readonly());
+        // and a whole removal
+        remove_folder(&dir);
+        assert!(theirs.is_file() && fs::metadata(&theirs).unwrap().permissions().readonly());
+        assert_eq!(fs::read_to_string(&theirs).unwrap(), "[\"mine\"]");
+        assert!(fs::symlink_metadata(dir.join("keybindings.json")).is_err(), "the account's name for it is gone");
+        assert!(fs::metadata(&other).unwrap().permissions().readonly());
+        for f in [&theirs, &other] {
+            let mut rw = fs::metadata(f).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            rw.set_readonly(false);
+            let _ = fs::set_permissions(f, rw);
+        }
+        let _ = remove_folder(&dir);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn only_files_fridae_made_are_made_again_or_taken_away() {
+        let (root, users, dir) = windows_setup("accounts-win-marker");
+        fs::create_dir_all(&dir).unwrap();
+        // the tool's own memory under a linked name, before anything of the user's is linked
+        fs::write(dir.join("CLAUDE.md"), "the tool's own").unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert_eq!(fs::read_to_string(dir.join("CLAUDE.md")).unwrap(), "the tool's own", "a file Fridae did not make is left alone");
+        assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"hooks\": {}}");
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert_eq!(fs::read_to_string(dir.join("CLAUDE.md")).unwrap(), "the tool's own", "on every prepare");
+        // the user deletes their settings: the account's copy of them goes too
+        fs::remove_file(users.join("settings.json")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(fs::symlink_metadata(dir.join("settings.json")).is_err(), "the user's settings are gone, so are the account's");
+        assert!(!read_marker(&dir).iter().any(|n| n == "settings.json"));
+        // a garbled marker is an empty one: nothing is made again or taken away
+        fs::write(users.join("settings.json"), "{\"hooks\": {}}").unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        fs::write(dir.join(LINKS_MARKER), "not json").unwrap();
+        fs::write(dir.join("settings.new"), "{\"theme\": \"dark\"}").unwrap();
+        fs::rename(dir.join("settings.new"), dir.join("settings.json")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"theme\": \"dark\"}");
+        fs::remove_file(users.join("settings.json")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(dir.join("settings.json").is_file());
+        let _ = remove_folder(&dir);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_checked_to_lead_where_it_was_meant_to() {
+        let root = paths::test_dir("accounts-win-junction");
+        let _ = fs::remove_dir_all(&root);
+        let (target, other) = (root.join("Target"), root.join("other"));
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        assert!(cmd_exe().ends_with(r"System32\cmd.exe") && cmd_exe().is_absolute());
+        let link = root.join("link");
+        assert!(junction(&target, &link));
+        assert!(leads_to(&link, &target) && leads_to(&link, &root.join("target")), "case does not matter");
+        assert!(!leads_to(&link, &other) && !leads_to(&root.join("nothing"), &target));
+        remove_link(&link);
+        assert!(target.is_dir());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn agys_data_folder_must_be_the_accounts_own() {
+        let _l = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        stand_in_tagged("windata");
+        let dir = base().join("gemini-2-windata");
+        let _ = fs::remove_dir_all(&dir);
+        let elsewhere = paths::test_dir("accounts-win-data-elsewhere");
+        fs::create_dir_all(elsewhere.join("antigravity-cli")).unwrap();
+        assert_eq!(prepare_of("gemini", "gemini-2-windata"), Some(dir.clone()), "nothing there yet");
+        cmd_junction(&dir.join(".gemini"), &elsewhere);
+        assert_eq!(prepare_of("gemini", "gemini-2-windata"), None, "a junction to somebody's .gemini");
+        remove_link(&dir.join(".gemini"));
+        fs::create_dir_all(dir.join(".gemini")).unwrap();
+        cmd_junction(&dir.join(".gemini").join("antigravity-cli"), &elsewhere.join("antigravity-cli"));
+        assert_eq!(prepare_of("gemini", "gemini-2-windata"), None, "a junction for agy's data folder");
+        remove_link(&dir.join(".gemini").join("antigravity-cli"));
+        fs::create_dir_all(dir.join(".gemini").join("antigravity-cli")).unwrap();
+        assert_eq!(prepare_of("gemini", "gemini-2-windata"), Some(dir.clone()), "real folders of its own");
+        assert!(elsewhere.join("antigravity-cli").is_dir());
+        let _ = remove_folder(&dir);
+        let _ = fs::remove_dir_all(&elsewhere);
+        stand_in(false, false);
     }
 }
