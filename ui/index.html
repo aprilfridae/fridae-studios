@@ -178,8 +178,14 @@ div.g-row { cursor: default; }
 .proj:active, .s-row:active, .cv-row:active, .cv-new:active, .opt:active:not(:disabled), .pk-ai:active, .rv-line:active, button.rv-who:active, .xp-link:active, .bd-opt:active { background: var(--press); }
 
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
-.app { height: 100%; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
-.side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
+.app { height: 100%; display: grid; grid-template-columns: min(var(--side-w, 232px), 50vw) minmax(0, 1fr); }
+/* the sidebar's right edge is a handle: drag it, or the arrow keys, to set the width; a double press puts it back */
+.side-grip { position: absolute; z-index: 6; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; outline: 0; }
+.side-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--text); opacity: 0; transition: opacity 140ms ease; }
+.side-grip:hover::after, .side-grip:focus-visible::after { opacity: 0.28; }
+.side-grip.drag::after { opacity: 0.6; }
+body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
+.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
 @keyframes logo-turn { to { transform: rotate(360deg); } }
@@ -199,6 +205,7 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .proj .count:hover { background: var(--main-hover); }
 .proj.add { grid-template-columns: 12px minmax(0, 1fr); color: var(--dim); }
 .proj.all { grid-template-columns: 12px minmax(0, 1fr) auto; color: var(--dim); }
+.proj.rev .count:hover { background: var(--text); }
 .proj.add:hover { color: var(--text); }
 /* New project stays in reach under a long list of chats */
 .proj.add { position: sticky; bottom: 0; background: var(--panel); box-shadow: 0 12px 0 var(--panel); }
@@ -253,8 +260,6 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .upd.busy { background: var(--press); color: var(--dim); }
 .conn { width: var(--h-m); height: var(--h-m); display: grid; place-items: center; border-radius: var(--r-s); transition: background-color 140ms ease; }
 .conn:hover { background: var(--hover); }
-.meter { height: var(--h-m); padding: 0 8px; white-space: nowrap; border-radius: var(--r-s); font: 500 12px/1 var(--mono); color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
-.meter:hover, .meter[aria-expanded="true"] { background: var(--hover); color: var(--text); }
 /* the usage panel opens upwards from the sidebar's foot */
 .pop { position: fixed; z-index: 40; left: 8px; bottom: 56px; width: 320px; max-height: calc(100vh - 72px); overflow-y: auto; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
   opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
@@ -264,6 +269,7 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .u-row b { font-weight: 500; }
 .u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
 .u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
+.u-total { margin: 0; padding: 4px 8px; font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .u-note { margin: 4px 8px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
 .pop .moreinfo { margin: 0 8px 8px; }
 .pop .moreinfo summary, .pop .moreinfo p { font-size: 12px; }
@@ -487,7 +493,7 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 #add-menu { width: 240px; }
 #mode-menu { width: 320px; }
 /* the one picker: the AIs down the left, the chosen AI's models on the right, effort under them */
-.picker { width: min(500px, calc(100vw - 296px)); padding: 0; display: grid; grid-template-columns: 148px minmax(0, 1fr); overflow: hidden; }
+.picker { width: min(500px, calc(100vw - min(var(--side-w, 232px), 50vw) - 64px)); padding: 0; display: grid; grid-template-columns: 148px minmax(0, 1fr); overflow: hidden; }
 .pk-ais { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--line); overflow-y: auto; }
 .pk-ai { display: block; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
 .pk-ai:hover { background: var(--hover); color: var(--text); }
@@ -748,8 +754,36 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .promo-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; }
 .promo-line span { color: var(--dim); }
 
-/* review: what is happening on this game and what needs the user, top to bottom in one column */
+/* Review: one page for every project. A line that says how much waits, a way to each project, then a section per
+   project: what is happening on it and what needs the user, top to bottom in one column. */
 .rv-page { max-width: 920px; margin: 0 auto; }
+.rv-top { margin: 0 0 16px; }
+.rv-top-sum { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; }
+.rv-jump { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; color: var(--faint); }
+.rv-jump[hidden] { display: none; }
+.rv-jump button { color: var(--dim); border-radius: 4px; }
+.rv-jump button:hover { color: var(--text); }
+.rv-jump button i { margin-left: 6px; font: 600 12px/1 var(--mono); font-style: normal; color: var(--text); }
+.rv-secs { display: grid; gap: 12px; }
+.rv-sec { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-m); scroll-margin-top: 8px; }
+.rv-sec.settings-search-target-pulse { animation: settings-search-target-pulse 650ms ease-in-out 2; }
+.rv-sec-h { margin: 0; font: inherit; }
+.rv-sec-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 16px; text-align: left; border-radius: calc(var(--r-m) - 1px); transition: background-color var(--t-fast) ease; }
+.rv-sec-head:hover { background: var(--hover); }
+.rv-sec-head:focus-visible { outline-offset: -2px; }
+.rv-sec-head[aria-expanded="true"] { border-radius: calc(var(--r-m) - 1px) calc(var(--r-m) - 1px) 0 0; }
+.rv-sec-head b { min-width: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-kind { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font: 400 12px/16px var(--mono); letter-spacing: 0.01em; color: var(--faint); white-space: nowrap; }
+.rv-sec-note { flex: none; margin-left: auto; font-size: 13px; color: var(--dim); white-space: nowrap; }
+.rv-sec-note.strong { color: var(--text); font-weight: 600; }
+.rv-sec-head svg { flex: none; color: var(--faint); transition: transform 180ms var(--ease); }
+.rv-sec-head[aria-expanded="true"] svg { transform: rotate(90deg); }
+.rv-sec.quiet .rv-sec-head b { font-size: 14px; font-weight: 500; color: var(--dim); }
+.rv-sec.quiet .rv-sec-note { color: var(--faint); }
+.rv-sec-body { padding: 16px 16px 20px; border-top: 1px solid var(--line); }
+/* inside a project's section the run is not a card of its own */
+.rv-sec .rv-run { padding: 0; border: 0; border-radius: 0; background: none; }
+@media (max-width: 760px) { .rv-kind { display: none; } }
 /* the run, in one bar: its state and the button that changes it, then the stages once, with what it has cost */
 .rv-run { padding: 12px 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); }
 .rv-state { display: flex; align-items: center; gap: 8px 12px; min-height: var(--h-m); }
@@ -858,7 +892,7 @@ button.rv-who:hover { background: var(--hover); }
 .rv-past-row b { font-weight: 500; word-break: break-word; }
 .rv-past-row em { font-style: normal; font-size: 13px; color: var(--faint); white-space: nowrap; }
 .rv-past-row small { grid-column: 1 / -1; font-size: 13px; color: var(--dim); word-break: break-word; }
-#rv-past-list { margin-top: 8px; }
+[data-r="rv-past-list"] { margin-top: 8px; }
 .studio-wait { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 8px 0 16px; font-size: 14px; font-weight: 500; color: var(--text); }
 
 /* ---------- Settings, Usage and the project: windows over the page ----------
@@ -1246,6 +1280,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .main > .dock > * { pointer-events: auto; }
 @media (max-width: 980px) {
   .app { grid-template-columns: 200px minmax(0, 1fr); }
+  .side-grip { display: none; }
   .nav .tab { padding: 0 8px; }
 }
 @media (max-width: 760px) {
@@ -1352,13 +1387,14 @@ applyTheme();
     <div class="side-foot">
       <button class="upd" id="b-update" hidden></button>
       <div class="foot-row">
-        <button class="meter" id="b-use" aria-expanded="false" title="New tokens used today, across every chat. Press for the details.">0 today</button>
+        <button class="icon" id="b-use" aria-expanded="false" aria-label="Usage" title="Usage"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V3.5M11.5 11V6"/></svg></button>
         <span class="grow"></span>
         <button class="conn" id="b-conn" hidden><span class="dot miss"></span></button>
-        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v1.8M8 12.7v1.8M14.5 8h-1.8M3.3 8H1.5M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3M12.6 12.6l-1.3-1.3M4.7 4.7 3.4 3.4"/></svg></button>
+        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </div>
-    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
+    <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="480" aria-valuenow="232" tabindex="0" title="Drag to resize. Double-click to reset."></div>
+    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total">0 tokens today</p><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
 
   <main class="stage">
@@ -1367,7 +1403,6 @@ applyTheme();
       <span class="grow"></span>
       <nav class="nav" id="tabs">
         <button class="tab on" id="v-chat">Chat</button>
-        <button class="tab" id="v-review" title="What is happening on this project, and what needs you">Review<span class="n" id="rv-badge" hidden></span></button>
         <button class="tab" id="v-promos" title="Promo videos made from your gameplay clips">Promos</button>
       </nav>
     </header>
@@ -1455,55 +1490,64 @@ applyTheme();
     </div></div>
 
     <div id="review"><div class="rv-page">
+      <header class="rv-top">
+        <p class="rv-top-sum" id="rv-top-sum"></p>
+        <nav class="rv-jump" id="rv-jump" aria-label="Jump to a project" hidden></nav>
+      </header>
+      <p class="rv-none" id="rv-noproj" hidden>No projects yet. New project, on the left, makes one.</p>
+      <div class="rv-secs" id="rv-secs"></div>
+    </div></div>
+    <!-- one project's part of Review: made once per project, when its section is first opened -->
+    <template id="rv-tpl">
       <section class="rv-run" aria-label="The run">
-        <div class="rv-empty" id="rv-empty" hidden>
-          <p id="rv-empty-p"></p>
+        <div class="rv-empty" data-r="rv-empty" hidden>
+          <p data-r="rv-empty-p"></p>
           <span class="rv-cost"></span>
-          <button class="pill" id="rv-to-chat">Go to Chat</button>
+          <button class="pill" data-r="rv-to-chat">Go to Chat</button>
         </div>
-        <div id="rv-live" hidden>
-          <div class="rv-state"><span class="dot" id="rv-dot"></span><b id="rv-state"></b><span class="rv-why" id="rv-why"></span><button class="pill" id="rv-toggle" hidden></button></div>
-          <div class="rv-prog"><div class="rv-stages" id="rv-stages" hidden></div><span class="rv-cost"></span></div>
-          <details class="rv-set" id="rv-set">
+        <div data-r="rv-live" hidden>
+          <div class="rv-state"><span class="dot" data-r="rv-dot"></span><b data-r="rv-state"></b><span class="rv-why" data-r="rv-why"></span><button class="pill" data-r="rv-toggle" hidden></button></div>
+          <div class="rv-prog"><div class="rv-stages" data-r="rv-stages" hidden></div><span class="rv-cost"></span></div>
+          <details class="rv-set" data-r="rv-set">
             <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
             <span class="pr-label">Wait for my approval after</span>
-            <div class="rv-gates" id="rv-gates"></div>
+            <div class="rv-gates" data-r="rv-gates"></div>
             <span class="pr-label">Experts at once</span>
-            <div class="seg" id="rv-max"></div>
+            <div class="seg" data-r="rv-max"></div>
             <p class="sub">More experts finish sooner and use more of your AI plan.</p>
             <span class="pr-label">Go back</span>
-            <button class="pill sm" id="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button>
-            <div id="rv-undo-box"></div>
+            <button class="pill sm" data-r="rv-undo" title="Put the project back as it was at one of the run's checkpoints">Undo this run</button>
+            <div data-r="rv-undo-box"></div>
             <span class="pr-label">Stop for good</span>
-            <button class="pill sm" id="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button>
-            <div id="rv-end-box"></div>
+            <button class="pill sm" data-r="rv-end" title="Stop this run so a new one can start. The project's files, review items and checkpoints stay.">End this run</button>
+            <div data-r="rv-end-box"></div>
           </details>
         </div>
-        <div id="rv-nights"></div>
-        <p class="rv-err" id="rv-err"></p>
+        <div data-r="rv-nights"></div>
+        <p class="rv-err" data-r="rv-err"></p>
       </section>
-      <div id="rv-now-wrap" hidden>
+      <div data-r="rv-now-wrap" hidden>
         <h3 class="rv-h">Right now</h3>
-        <div class="rv-now" id="rv-now"></div>
+        <div class="rv-now" data-r="rv-now"></div>
       </div>
-      <h3 class="rv-h">Needs you <span id="rv-needs-n"></span></h3>
-      <p class="rv-none" id="rv-needs-none">Nothing needs you right now.</p>
-      <div class="rv-list" id="rv-needs"></div>
-      <div id="rv-look-wrap">
-        <h3 class="rv-h">To look at <span id="rv-look-n"></span><button class="pill sm" id="rv-all" hidden>Approve all</button></h3>
-        <p class="rv-none" id="rv-look-none">Finished work lands here, newest first.</p>
-        <div class="rv-rows" id="rv-look"></div>
+      <h3 class="rv-h">Needs you <span data-r="rv-needs-n"></span></h3>
+      <p class="rv-none" data-r="rv-needs-none">Nothing needs you right now.</p>
+      <div class="rv-list" data-r="rv-needs"></div>
+      <div data-r="rv-look-wrap">
+        <h3 class="rv-h">To look at <span data-r="rv-look-n"></span><button class="pill sm" data-r="rv-all" hidden>Approve all</button></h3>
+        <p class="rv-none" data-r="rv-look-none">Finished work lands here, newest first.</p>
+        <div class="rv-rows" data-r="rv-look"></div>
       </div>
-      <div id="rv-tell-wrap">
+      <div data-r="rv-tell-wrap">
         <h3 class="rv-h">Tell the run something</h3>
-        <div class="rv-tell"><textarea id="rv-say" rows="1" placeholder="A message for the Lead, e.g. make the shop brighter" aria-label="A message for the Lead"></textarea><button class="pill main" id="rv-send" title="Send to the Lead" disabled>Send</button></div>
-        <p class="r-note" id="rv-said"></p>
+        <div class="rv-tell"><textarea data-r="rv-say" rows="1" placeholder="A message for the Lead, e.g. make the shop brighter" aria-label="A message for the Lead"></textarea><button class="pill main" data-r="rv-send" title="Send to the Lead" disabled>Send</button></div>
+        <p class="r-note" data-r="rv-said"></p>
       </div>
-      <details class="rv-past" id="rv-past" hidden>
-        <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Earlier decisions <span id="rv-past-n"></span></summary>
-        <div id="rv-past-list"></div>
+      <details class="rv-past" data-r="rv-past" hidden>
+        <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Earlier decisions <span data-r="rv-past-n"></span></summary>
+        <div data-r="rv-past-list"></div>
       </details>
-    </div></div>
+    </template>
 
   <div id="promos"><div class="r-col pr-page">
     <div class="pr-cols"><section class="pr-make" aria-label="New promo">
@@ -1941,6 +1985,7 @@ let AIS = ALL_AIS.slice();
 let curProj = null, view = "chat";
 let draftAi = null;   /* the AI picked on an empty page, for the chat its first message makes */
 const lastChat = {}, lastTab = {};
+const rvSecs = new Map();   /* Review: project path -> its section of the page */
 try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (saved0 && typeof saved0.proj === "string") { curProj = saved0.proj; view = saved0.view || "chat"; } } catch (e) {}
 
 /* Everything the program can do: [name, one short line, an example to put in the message box (or a page to open),
@@ -1958,17 +2003,17 @@ const GUIDE = [
   ]],
   ["Bigger jobs", [
     ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first working version of this and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
-    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the project's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; for a Roblox game, leave Studio open. Pressing stop ends it."],
+    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in Review, in the project's section under Needs you, instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; for a Roblox game, leave Studio open. Pressing stop ends it."],
     ["Studio", "A Lead takes the project through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a project's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
-    ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
+    ["Review", "One page for every project: what is happening on each, and what needs you.", "@review", "Open it from the left, under Overview; its number is everything that waits for you. Each project has a section, the ones that need you first; a project with nothing waiting is one line that opens when pressed. In a section: at the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
     ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
     ["Knowledge vault", "Settings, Knowledge: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
   ]],
   ["Safety net", [
     ["Checkpoint", "Before an overnight or studio run the project is committed to git, so it can go back.", "", "In a Roblox game, \"Take a checkpoint\" also saves every script of the place into the project folder."],
-    ["Undo the night", "A project's Review puts its files (and for a Roblox game, Studio) back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
+    ["Undo the night", "A project's section in Review puts its files (and for a Roblox game, Studio) back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
     ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. A project's Review shows what that project has cost."],
+    ["Usage", "The graph button at the bottom left opens today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), today's total, and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. Review shows what each project has cost."],
     ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Settings, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
   ["Roblox games", [
@@ -1994,9 +2039,10 @@ const GUIDE = [
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
-  ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: its Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
-  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
-  ["Chat, Review, Promos", "A project's tabs: talk to its agent and see what needs you. A Roblox game also has Promos (promo videos)."],
+  ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project to see it in Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: in Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
+  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project in Review. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
+  ["Chat, Promos", "A project's tabs: talk to its agent. A Roblox game also has Promos (promo videos)."],
+  ["Review, on the left", "One page for every project: what needs you, and each project's run.", "", "Under Overview. Its number is everything that waits for you, across every project."],
   ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Settings, Chats, and put back afterwards."],
   ["The project's name", "Press it for the project's folder, its kind (Project or Roblox game), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
@@ -2134,7 +2180,7 @@ function select(id) {
   if (curProj !== key) curProj = key;
   /* an expert in front is shown in the sidebar, under its chat; coming back to the game opens the chat, not it */
   if (isHelper(p)) { if (p.parent) setXpOpen(p.parent, true); } else lastChat[key] = id;
-  if (isPage(view) || (view === "review" && !key)) view = "chat";   /* a chat with no game has no Review */
+  if (isPage(view)) view = "chat";
   savePlace(); paintView();
   following = true; scroller.scrollTop = p.scroll || scroller.scrollHeight;
   following = atBottom();
@@ -2142,8 +2188,10 @@ function select(id) {
 }
 /* a project chosen in the sidebar: its last tab, and in Chat its last conversation (or a new one) */
 function showProject(key, tab) {
+  /* Review is one page for every project: a project's Review is its section there (a chat with no project has none) */
+  if (tab === "review" && key) { openInReview(key); return; }
   curProj = key; view = tab || lastTab[key] || "chat";
-  if (view === "review" && !key) view = "chat";
+  if (view === "review") view = "chat";
   savePlace();
   const p = agents.get(current);
   if (view === "chat" || !p || projKey(p) !== key || isHelper(p)) {
@@ -2156,8 +2204,8 @@ function showProject(key, tab) {
 }
 function showNewProject() { curProj = null; setView("newproj"); }
 function showAll() { curProj = null; setView("all"); }
-/* the page in front is a project's tab, or one of the two pages of no project: Overview and New project */
-const isPage = (v) => v === "newproj" || v === "all";
+/* the page in front is a project's tab, or one of the pages of no one project: Overview, Review and New project */
+const isPage = (v) => v === "newproj" || v === "all" || v === "review";
 /* Promos is a Roblox game's tab: any other project and a chat with no project have none. */
 const isGameProj = (key) => !!key && kindOf(key) === "game";
 const gameTab = (v) => v === "promos";
@@ -2476,6 +2524,15 @@ function paintSide() {
     all.dataset.k = "all"; all.onclick = showAll;
     return all;
   }));
+  /* Review, for every project: the count is everything that waits for the user */
+  const tot = rvTotals();
+  rows.push(sideRow(used, "review", [view === "review", tot.n, tot.k, tot.strong].join("\n"), () => {
+    const b = el("button", "proj all rev" + (view === "review" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3l1.2 1.2L4.4 2M1 8.4l1.2 1.2 2.2-2.2M6.6 3.2H11M6.6 8.6H11"/></svg><b>Review</b><span class="state"></span>');
+    if (tot.n) b.querySelector(".state").appendChild(el("span", "count", String(tot.n)));
+    b.title = (tot.n ? tot.n + (tot.n === 1 ? " thing waits" : " things wait") + " for you" + (tot.k === 1 ? " in one project" : " across " + tot.k + " projects") + (tot.strong ? ", and a run is stopped until you answer" : "") + ". " : "") + "What is happening on every project, and what needs you";
+    b.dataset.k = "review"; b.onclick = () => setView("review");
+    return b;
+  }));
   for (const x of projects.projects || []) {
     const st = projState(x.path), cls = marked(x.path);
     rows.push(sideRow(used, "p:" + x.path, [x.name, st.n, st.strong, st.working].join("\n"), () => {
@@ -2484,8 +2541,8 @@ function paintSide() {
       const mark = b.querySelector(".state");
       if (st.n) {
         const c = el("span", "count", String(st.n)); c.setAttribute("role", "button"); c.tabIndex = 0;
-        c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to open Review.";
-        c.onclick = (ev) => { ev.stopPropagation(); showProject(x.path, "review"); };
+        c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to see them in Review.";
+        c.onclick = (ev) => { ev.stopPropagation(); openInReview(x.path); };
         c.onkeydown = (ev) => { if (ev.key === "Enter") c.onclick(ev); };
         mark.appendChild(c);
       } else if (st.working) { mark.appendChild(el("span", "dot live")); mark.title = "Agents are working on it"; }
@@ -2556,17 +2613,15 @@ $("proj-list").addEventListener("focusin", (ev) => {
 function paintView() {
   if (gameTab(view) && curProj !== null && !isGameProj(curProj)) { setView("chat"); return; }
   for (const v of ["review", "promos", "newproj", "all"]) document.body.classList.toggle(v, view === v);
-  if (view !== "review") $("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
-  ["chat", "review", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
+  if (view !== "review") for (const S of rvSecs.values()) if (S.built) S.$("rv-nights").replaceChildren();   /* an undo card left open in Review does not wait there unseen */
+  ["chat", "promos"].forEach((v) => $("v-" + v).classList.toggle("on", view === v));
   requestAnimationFrame(() => slideMark($("tabs")));
   const pr = (projects.projects || []).find((x) => x.path === curProj);
-  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
+  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : view === "review" ? "Review" : curProj ? (pr ? pr.name : prName(curProj)) : "No project";
   $("b-proj").textContent = name; $("b-proj").disabled = !curProj || isPage(view);
   $("b-proj").title = curProj && !isPage(view) ? "The project's folder, notes and git history" : "";
   $("tabs").hidden = isPage(view);
-  $("v-review").hidden = !curProj;
   $("v-promos").hidden = !isGameProj(curProj);
-  paintReviewBadge();
 }
 function selectionHint() {
   const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
@@ -3155,7 +3210,7 @@ async function paintUsage() {
   const now = recs.filter((x) => x.t >= today), all = sum(now);
   /* nothing counted yet while the day's first turn runs: "…", not a "0" that looks like nothing is happening */
   const first = !now.length && [...agents.values()].some((x) => x.busy);
-  $("b-use").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " today";
+  $("use-total").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " tokens today";
   /* every AI that ran today, the ones offered here first (an expert may run on one that is not) */
   const ran = [...new Set(AIS.map((a) => a[0]).concat(now.map((x) => x.ai).filter(Boolean)))];
   const rows = ran.map((id) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
@@ -3307,7 +3362,7 @@ $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").cl
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
 setInterval(paintUsage, 60000); paintUsage();
 
-/* ---------- undo the night: an overnight run's checkpoint, taken back from the game's Review, or from the chat
+/* ---------- undo the night: an overnight run's checkpoint, taken back from the game's section in Review, or from the chat
    itself when the chat belongs to no game (it has no Review) ---------- */
 /* the night began with something saved to go back to: the project's files (a commit), Studio's steps, or both */
 function nightSaved(p) { return !!(p && p.night && (p.night.commit || p.night.studio)); }
@@ -3333,7 +3388,7 @@ function nightCard(p, onUndone) {
     if (p.nightUndoing) return;                                              /* already on its way */
     if (!nightOpen(p) || !agents.has(p.id)) { card.remove(); return; }       /* undone meanwhile, at work again, or closed */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
-    const repaint = () => { paintNightTag(p); if (view === "review") paintNight(); };
+    const repaint = () => { paintNightTag(p); if (view === "review") paintNight(rvSecs.get(projKey(p))); };
     p.nightUndoing = true; repaint();
     let r; try { r = await api("/api/undo-night", { agent: p.id, files_only: filesOnly }); } catch (e) { r = null; }
     p.nightUndoing = false;
@@ -3348,11 +3403,12 @@ function nightCard(p, onUndone) {
   files.onclick = () => undo1(true);
   return card;
 }
-/* Review: one line per chat of the game in front whose night can be undone, each with its own button and its own
+/* Review: in a project's section, one line per chat of that project whose night can be undone, each with its own button and its own
    card under it. A line goes with its chat, so nothing of another game's (or another chat's) is ever left open. A
    line whose undo is on its way stays where it is, with its card, until the app answers; it is not made anew. */
-function paintNight() {
-  const host = $("rv-nights"), path = rvPathNow(), list = nightChats(path), keep = new Set(list.map((p) => p.id));
+function paintNight(S) {
+  if (!S || !S.built) return;
+  const host = S.$("rv-nights"), path = S.path, list = nightChats(path), keep = new Set(list.map((p) => p.id));
   for (const row of [...host.children]) {
     const p = agents.get(row.dataset.chat), undoing = !!(p && p.nightUndoing && projKey(p) === path);
     if (!keep.has(row.dataset.chat) && !undoing) row.remove(); else row.querySelector("button").disabled = undoing;
@@ -3363,7 +3419,7 @@ function paintNight() {
       row = el("div", "rv-night", '<span></span><button class="pill sm" title="Put Studio and the project back as they were before the overnight run began">Undo the night</button><div class="rv-night-box"></div>');
       row.dataset.chat = p.id;
       row.querySelector("button").onclick = () => {
-        if (!nightOpen(p)) { paintNight(); return; }
+        if (!nightOpen(p)) { paintNight(S); return; }
         row.querySelector(".rv-night-box").replaceChildren(nightCard(p, () => {
           /* its line is gone; the chat holds what went back */
           const b = el("button", "linkish", "Open the chat"); b.onclick = () => { sayTip.classList.remove("on"); openChatById(p.id); };
@@ -3648,7 +3704,7 @@ function onEvent(e) {
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (p.nightTag) paintNightTag(p);   /* where its undo is depends on its game, and on whether it is at work */
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
-  if ((view === "review" && projKey(p) === curProj || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon();
+  if ((view === "review" || view === "all") && ["busy", "done", "tool", "agent_new", "night", "night_undone"].includes(e.kind)) paintNowSoon(projKey(p));
   if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) { paintComposer(); paintHead(); stick(e.kind === "user" || e.kind === "queued"); }
 }
@@ -3807,7 +3863,7 @@ $("mode").onclick = (ev) => { ev.stopPropagation(); if (togglePop("mode")) paint
 const RUN_MODES = [
   ["ask", "Ask me", "Does what you ask, then waits for you.", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks, and keeps going until done.", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in the project's Review under Needs you, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
+  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in Review, in the project's section under Needs you, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
   ["studio", "Studio", "A Lead and its experts build the project, stage by stage.", "A Lead takes this project through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 let runMode = "ask";
@@ -4257,19 +4313,21 @@ $("b-out").onclick = () => api("/api/open", { what: "work" });
 $("gd-list").appendChild(guideList(GUIDE));
 CONTROLS.forEach((c) => $("gd-controls").appendChild(guideRow(c)));
 
-/* ---------- tabs: Chat and Review for the project in front (and Promos for a game), or the New project page ---------- */
+/* ---------- tabs: Chat for the project in front (and Promos for a game), or a page of no one project: Overview,
+   Review and New project ---------- */
 /* a researcher chat (role "research", from the time a game had an Ideas tab) is kept out of sight, never listed */
 let researchPane = null;
 function setView(v) {
   if (!VIEWS.includes(v)) v = "chat";
   if (curProj === null && !isPage(v)) { showProject(homeProj !== null ? homeProj : ((projects.projects || [])[0] || { path: "" }).path, v); return; }
-  if (v === "review" && !curProj) v = "chat";
+  if (v === "review" && curProj !== null) { homeProj = curProj; curProj = null; }   /* Review is every project's */
   if (gameTab(v) && !isGameProj(curProj)) v = "chat";
+  const was = view;
   view = v; savePlace(); paintView(); paintSide(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
-  if (v === "review") openReview(); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
+  if (v === "review") openReview(was !== "review"); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else box.focus();
 }
-$("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setView("review"); $("v-promos").onclick = () => setView("promos");
+$("v-chat").onclick = () => setView("chat"); $("v-promos").onclick = () => setView("promos");
 $("b-proj").onclick = () => openProject();
 
 /* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
@@ -4824,14 +4882,15 @@ function openInPromos(id) {
   it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
 }
 
-/* ---------- the Review tab: what is happening on the game in front, and what needs the user ---------- */
+/* ---------- Review: one page for every project. Each project has a section: what is happening on it, and what
+   needs the user. A section is made when it is first opened, and an event repaints only its own. ---------- */
 const STAGE_NAMES = [["idea", "Idea"], ["design", "Design"], ["build", "Build"], ["test", "Test"], ["launch", "Launch"], ["promote", "Promote"]];
 const LEAD_CARD = "Waiting for your answer in Review";   /* the Lead's own board card points here, so Review leaves it out */
 const rvAll = {};           /* project path -> its GET /api/review reply */
 const rvDone = new Map();   /* item or card id -> { at, gone }: answered here; one line until the next refresh after it */
-const rvCards = new Map();  /* item or card id -> { sig, el } */
-let rvTimer = 0, rvLoadT = 0, rvDeferred = false, rvSetBusy = false, rvUsage = [], rvUsageAt = 0;
-const rvPathNow = () => curProj || "";
+const rvOpen = {};          /* project path -> a section opened (true) or folded (false) by hand */
+let rvOrder = [];           /* the sections' order, set when the page opens: it does not move under the reader */
+let rvTimer = 0, rvLoadT = 0, rvDeferred = false, rvUsage = [], rvUsageAt = 0;
 const stagesDone = (run) => !!(run && run.stages && run.stages.length && run.stages.every((s) => s.status === "done"));
 const runActive = (run) => !!(run && run.on && !stagesDone(run));
 const LEAD_PAUSED_CARD = "The studio run is paused. Resume it in Review";
@@ -4859,22 +4918,128 @@ async function loadReview(only) {
   if (!only) for (const k of Object.keys(rvAll)) if (!(projects.projects || []).some((x) => x.path === k)) delete rvAll[k];
   /* an answer made here stays as one line until a refresh that began well after it */
   for (const d of rvDone.values()) if (d.at < started - 1500) d.gone = true;
-  paintReviewBadge(); paintSide();
-  if (view === "review") paintReview();
+  paintReviewBadge();
+  if (view === "review") { if (only) rvPaint(only); else paintReview(); }
   if (view === "all") paintAll();
   if (view === "chat") { paintSwitch(); paintComposer(); }
 }
 function reloadReview() { clearTimeout(rvLoadT); rvLoadT = setTimeout(() => loadReview(), 300); }
-/* the tab's count for the game in front; heavier when something stops its run */
-function paintReviewBadge() {
-  const b = $("rv-badge"); if (!b) return;
-  const st = curProj ? projState(curProj) : { n: 0, strong: false };
-  b.hidden = !st.n; b.textContent = st.n; b.classList.toggle("strong", st.strong);
-  $("v-review").title = (st.n ? st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you" + (st.strong ? ", and the run is stopped until you answer" : "") + ". " : "") + "What is happening on this " + thingOf(curProj) + ", and what needs you";
+/* everything that waits for the user, over every project: the sidebar's count and the page's first line */
+function rvTotals() {
+  let n = 0, k = 0, strong = false;
+  for (const x of projects.projects || []) { const st = projState(x.path); if (st.n) { n += st.n; k++; } strong = strong || st.strong; }
+  return { n, k, strong };
 }
-function openReview() {
-  paintReview(); loadReview(rvPathNow()); loadRvUsage(true);
-  clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") { loadReview(rvPathNow()); loadRvUsage(); } else clearInterval(rvTimer); }, 5000);
+function paintReviewBadge() { paintSide(); paintRvTop(); }
+/* a run that is stopped until the user answers first, then whatever else waits for the user, then what is at work,
+   then the rest */
+const rvRank = (x) => { const st = projState(x.path), r = rvAll[x.path], going = runActive(r && r.run); return st.n && going ? (st.strong ? 0 : 1) : st.n ? 2 : st.working || going ? 3 : 4; };
+const rvName = (path) => { const pr = (projects.projects || []).find((x) => x.path === path); return pr ? pr.name : prName(path); };
+function openReview(fresh) {
+  if (fresh) {
+    rvOrder = (projects.projects || []).slice().sort((a, b) => rvRank(a) - rvRank(b)).map((x) => x.path);
+    for (const S of rvSecs.values()) S.stay = false;
+    $("review").scrollTop = 0;
+  }
+  paintReview(); loadReview(); loadRvUsage(true);
+  clearInterval(rvTimer); rvTimer = setInterval(() => { if (view === "review") { loadReview(); loadRvUsage(); } else clearInterval(rvTimer); }, 5000);
+}
+/* a project's section: its name as a line that opens and folds it, and under it (made when first opened) the run,
+   who is at work, what needs the user, what there is to look at, and the box for the Lead */
+function rvSec(path) {
+  let S = rvSecs.get(path); if (S) return S;
+  const root = el("section", "rv-sec", '<h2 class="rv-sec-h"><button class="rv-sec-head" aria-expanded="false"><b></b><span class="rv-kind" hidden>Roblox game</span><span class="rv-sec-note"></span>' + CHEVRON + '</button></h2><div class="rv-sec-body" hidden></div>');
+  root.dataset.path = path;
+  S = { path, root, head: root.querySelector(".rv-sec-head"), body: root.querySelector(".rv-sec-body"), name: root.querySelector(".rv-sec-head b"), kind: root.querySelector(".rv-kind"), note: root.querySelector(".rv-sec-note"),
+    built: false, open: false, stay: false, cards: new Map(), setBusy: false, pastSig: null, $: null };
+  S.head.onclick = () => { rvOpen[path] = !S.open; paintSec(S); };
+  rvSecs.set(path, S); return S;
+}
+function rvBuild(S) {
+  S.body.appendChild($("rv-tpl").content.cloneNode(true));
+  const got = new Map();
+  /* the section's own parts, by the names the page's parts had when a project's Review was a tab */
+  S.$ = (id) => { let n = got.get(id); if (!n) { n = S.body.querySelector('[data-r="' + id + '"]') || document.getElementById(id); got.set(id, n); } return n; };
+  S.built = true;
+  rvBindRun(S); rvBindSet(S); rvBindTell(S);
+}
+/* One section. A project with nothing waiting, no run and no one at work is one quiet line until it is pressed; a
+   section that had something stays open while the page is in front, so an answer just given does not fold away.
+   `light`: only who is at work changed. */
+function paintSec(S, light) {
+  const path = S.path, r = rvAll[path], st = projState(path), run = r && r.run && r.run.on ? r.run : null;
+  const look = rvWaiting(r).filter((i) => !i.blocking).length;
+  const quiet = !st.n && !look && !run && !st.working && !nightChats(path).length;
+  if (!quiet) S.stay = true;
+  const open = rvOpen[path] !== undefined ? rvOpen[path] : !quiet || S.stay;
+  S.open = open;
+  putText(S.name, rvName(path)); S.kind.hidden = !isGameProj(path);
+  putText(S.note, st.n ? st.n + (st.n === 1 ? " thing needs you" : " things need you") : run ? runState(r, run)[0] : st.working ? "Chats at work" : look ? look + " to look at" : "Nothing needs you");
+  putClass(S.note, "rv-sec-note" + (st.strong ? " strong" : ""));
+  putAttr(S.head, "aria-expanded", open ? "true" : "false");
+  putTitle(S.head, path);
+  S.body.hidden = !open; S.root.classList.toggle("quiet", !open && quiet);
+  if (!open) return;
+  if (!S.built) { rvBuild(S); light = false; }
+  if (light) paintNow(S); else paintSecBody(S);
+}
+/* the whole page: a section per project, in the order set when the page opened (a new project goes last) */
+function paintReview() {
+  if (view !== "review") return;
+  rvDeferred = false;
+  const have = new Set((projects.projects || []).map((x) => x.path));
+  rvOrder = rvOrder.filter((p) => have.has(p));
+  for (const p of have) if (!rvOrder.includes(p)) rvOrder.push(p);
+  for (const [p, S] of [...rvSecs]) if (!have.has(p)) { S.root.remove(); rvSecs.delete(p); }
+  const host = $("rv-secs"), els = rvOrder.map((p) => rvSec(p).root);
+  if (els.length !== host.children.length || els.some((e, i) => host.children[i] !== e)) setRows(host, els);
+  for (const p of rvOrder) paintSec(rvSecs.get(p));
+  paintRvTop();
+}
+/* one project's section, after something of that project changed */
+function rvPaint(path, light) {
+  if (view !== "review") return;
+  const S = rvSecs.get(path); if (!S) return;
+  paintSec(S, light); paintRvTop();
+}
+/* the page's first lines: how much waits and in how many projects, and a way to each project's section */
+function paintRvTop() {
+  if (view !== "review") return;
+  const t = rvTotals(), any = (projects.projects || []).length > 0;
+  putText($("rv-top-sum"), !any ? "Review" : t.n ? t.n + (t.n === 1 ? " thing needs you" : " things need you") + (t.k === 1 ? " in one project" : " across " + t.k + " projects") : "Nothing needs you right now");
+  $("rv-noproj").hidden = any;
+  const jump = $("rv-jump"), sig = rvOrder.map((p) => [p, rvName(p), projState(p).n].join("\n")).join("\n\n");
+  jump.hidden = rvOrder.length < 2;
+  if (jump.dataset.sig === sig) return;
+  jump.dataset.sig = sig;
+  const had = jump.contains(document.activeElement) ? document.activeElement.dataset.path : null;
+  jump.replaceChildren(el("span", "", "Jump to"), ...rvOrder.map((p) => {
+    const b = el("button", "", "<span></span>"), n = projState(p).n; b.dataset.path = p;
+    b.querySelector("span").textContent = rvName(p);
+    if (n) { const i = el("i"); i.textContent = n; i.title = n + (n === 1 ? " thing needs you" : " things need you"); b.appendChild(i); }
+    b.onclick = () => rvJump(p);
+    return b;
+  }));
+  if (had !== null) { const b = [...jump.querySelectorAll("button")].find((x) => x.dataset.path === had); if (b) b.focus(); }
+}
+/* to a project's section (or one item in it): it opens, comes into sight, and its edge pulses twice, as a Settings
+   search result does */
+function rvJump(path, id) {
+  const S = rvSecs.get(path); if (!S) return;
+  if (!S.open) { rvOpen[path] = true; paintSec(S); }
+  const c = id && S.cards.get(id);
+  if (c) {
+    /* a line of To look at opens to its card */
+    if (c.el.classList.contains("rv-lk") && !c.el.classList.contains("open")) c.el.querySelector(".rv-line").click();
+    c.el.scrollIntoView({ block: "center" });
+    c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
+    return;
+  }
+  S.root.scrollIntoView({ block: "start" });
+  S.head.focus({ preventScroll: true });
+  S.root.classList.remove("settings-search-target-pulse"); void S.root.offsetWidth;
+  S.root.classList.add("settings-search-target-pulse");
+  clearTimeout(S.pulseT); S.pulseT = setTimeout(() => S.root.classList.remove("settings-search-target-pulse"), 1400);
 }
 /* "Undo this run": the run's checkpoints, newest first (one per stage: undo goes to the newest of a stage), then the
    same confirm step as the night's undo */
@@ -4900,7 +5065,6 @@ function undoRunCard(path, onDone) {
   const files = el("button", "pill", "Undo the files only"); files.hidden = true; act.insertBefore(files, keep);
   keep.onclick = () => card.remove();
   const run1 = async (filesOnly) => {
-    if (path !== rvPathNow()) { card.remove(); return; }   /* made for a game no longer in front */
     go.disabled = keep.disabled = files.disabled = true; (filesOnly ? files : go).textContent = "Undoing...";
     let res; try { res = await api("/api/studio-run", { path, action: "undo", stage: pick, files_only: filesOnly }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
     if (res && res.ok) {
@@ -4918,16 +5082,18 @@ function undoRunCard(path, onDone) {
   files.onclick = () => run1(true);
   return card;
 }
-$("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(rvPathNow())); };
+/* a section's Undo this run and End this run */
+function rvBindRun(S) {
+const $ = S.$;
+$("rv-undo").onclick = () => { const box = $("rv-undo-box"); box.replaceChildren(undoRunCard(S.path)); };
 /* "End this run": a confirm, then the run is switched off. Nothing is deleted, and a new run may start. */
 $("rv-end").onclick = () => {
-  const box = $("rv-end-box"), path = rvPathNow();
+  const box = $("rv-end-box"), path = S.path;
   const card = el("div", "ask night-ask enter", '<h4>End this run?</h4><p></p><div class="act"><button class="pill main">End this run</button><button class="pill">Keep it</button></div>');
   card.querySelector("p").textContent = "The Lead and the experts it started are stopped now, and nothing new starts. The " + thingOf(path) + "'s files, review items, checkpoints and task cards stay as they are. Afterwards you can start a new run for it.";
   const [go, keep] = card.querySelectorAll(".pill");
   keep.onclick = () => card.remove();
   go.onclick = async () => {
-    if (path !== rvPathNow()) { card.remove(); return; }   /* made for a game no longer in front */
     go.disabled = keep.disabled = true; go.textContent = "Ending...";
     let r; try { r = await api("/api/studio-run", { path, action: "end" }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
     if (r && r.ok) { card.remove(); if (rvAll[path] && rvAll[path].run) rvAll[path].run.on = false; paintSwitch(); paintComposer(); } else { go.disabled = keep.disabled = false; go.textContent = "End this run"; card.querySelector("p").textContent = (r && r.error) || "Could not end the run."; }
@@ -4935,6 +5101,7 @@ $("rv-end").onclick = () => {
   };
   box.replaceChildren(card);
 };
+}
 /* the run in a few words: [its state, one short line why, the button that changes it, the whole of why (a tooltip)] */
 function runState(r, run) {
   if (stagesDone(run)) return ["Finished", "Every stage is done.", ""];
@@ -4949,7 +5116,9 @@ function runState(r, run) {
   if (r.waiting) return ["Waiting for you", "It has done all it can until you answer under Needs you.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
 }
-{
+/* a section's stages, its Run settings, and Pause or Resume */
+function rvBindSet(S) {
+  const $ = S.$;
   const strip = $("rv-stages"), gates = $("rv-gates"), max = $("rv-max");
   STAGE_NAMES.forEach(([id, name]) => {
     const s = el("div", "rv-stage", "<i></i><span></span><small></small>"); s.dataset.id = id; s.querySelector("span").textContent = name; strip.appendChild(s);
@@ -4957,23 +5126,23 @@ function runState(r, run) {
   });
   [1, 2, 3, 4].forEach((n) => { const b = el("button"); b.textContent = n; b.dataset.n = n; max.appendChild(b); });
   const settings = async (body) => {
-    rvSetBusy = true; $("rv-err").textContent = "";
-    let r; try { r = await api("/api/studio-run", Object.assign({ path: rvPathNow(), action: "settings" }, body)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-    rvSetBusy = false;
+    S.setBusy = true; $("rv-err").textContent = "";
+    let r; try { r = await api("/api/studio-run", Object.assign({ path: S.path, action: "settings" }, body)); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
+    S.setBusy = false;
     if (!r.ok) $("rv-err").textContent = r.error || "Could not change the settings.";
-    loadReview(rvPathNow());
+    loadReview(S.path);
   };
   gates.onchange = () => settings({ gates: [...gates.querySelectorAll("input:checked")].map((i) => i.value) });
   max.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; max.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); settings({ max_experts: +b.dataset.n }); };
-}
 $("rv-toggle").onclick = async () => {
-  const b = $("rv-toggle"), action = b.dataset.action, path = rvPathNow();
+  const b = $("rv-toggle"), action = b.dataset.action, path = S.path;
   b.disabled = true; $("rv-err").textContent = "";
   let r; try { r = await api("/api/studio-run", { path, action }); } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
   b.disabled = false;
   if (!r.ok) $("rv-err").textContent = r.error || "That did not work.";
   loadReview(path);
 };
+}
 /* one stage of the strip: done, now, or to do (and whether it waits for the user's approval) */
 function paintStage(s, run, id) {
   const st = (run.stages || []).find((x) => x.id === id) || {}, gates = run.gates || [];
@@ -4984,11 +5153,12 @@ function paintStage(s, run, id) {
   s.title = stageName(id) + ": " + (st.status === "done" ? "done" : now ? "working on it now" : "to do") + (gate ? ". Waits for your approval before it is done." : ".");
 }
 const runDot = (state) => "dot" + (state === "Working" ? " live" : state === "Finished" || state === "Waiting for you" ? " ok" : "");
-function paintRun(r) {
+function paintRun(S, r) {
+  const $ = S.$;
   const run = r && r.run && r.run.on ? r.run : null;
   $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
   const ended = r && r.run && !r.run.on && r.run.ended;
-  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run for this " + thingOf(rvPathNow()) + ".") + "</b> To start one, pick Studio with the mode button in Chat's message box.";
+  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run for this " + thingOf(S.path) + ".") + "</b> To start one, pick Studio with the mode button in Chat's message box.";
   if (!run) return;
   const [state, why, action, whole] = runState(r, run);
   $("rv-state").textContent = state;
@@ -5003,7 +5173,7 @@ function paintRun(r) {
   t.classList.toggle("main", action === "resume");
   const gates = run.gates || [];
   $("rv-stages").querySelectorAll(".rv-stage").forEach((s) => paintStage(s, run, s.dataset.id));
-  if (!rvSetBusy) {
+  if (!S.setBusy) {
     $("rv-gates").querySelectorAll("input").forEach((i) => (i.checked = gates.includes(i.value)));
     $("rv-max").querySelectorAll("button").forEach((b) => b.classList.toggle("on", +b.dataset.n === (run.max_experts || 2)));
   }
@@ -5038,7 +5208,7 @@ function rvItemCard(it, r, onDone) {
     if (!res.ok) { approve.disabled = false; send0.disabled = !input.value.trim(); err.textContent = res.error || "That did not work."; return; }
     rvDone.set(it.id, { at: Date.now() });
     if (onDone) onDone(said); else { card.querySelector(".rv-said").textContent = said; card.classList.add("done"); }
-    paintReviewBadge(); paintReview();
+    paintReviewBadge(); rvPaint(path);
   };
   approve.onclick = () => decide({ action: "approve" }, "Approved: " + (it.title || "Untitled"));
   const sendChange = () => { const note = input.value.trim(); if (!note) { err.textContent = "Say what to change."; input.focus(); return; } decide({ action: "change", note }, "Changes asked for: " + note); };
@@ -5089,16 +5259,16 @@ function rvNeedCard(c, path) {
     rvDone.set(c.id, { at: Date.now() });
     needsDone(path, c);
     card.querySelector(".rv-said").textContent = "Done: " + (c.title || ""); card.classList.add("done");
-    paintReviewBadge(); paintReview();
+    paintReviewBadge(); rvPaint(path);
   };
   return card;
 }
-function rvCard(key, sig, make) {
-  const had = rvCards.get(key);
+function rvCard(S, key, sig, make) {
+  const had = S.cards.get(key);
   if (had && had.sig === sig) return had.el;
   /* the entrance plays once: a card moved within a list later does not fade in again */
   const card = make(); card.addEventListener("animationend", () => card.classList.remove("enter"), { once: true });
-  rvCards.set(key, { sig, el: card }); return card;
+  S.cards.set(key, { sig, el: card }); return card;
 }
 /* a list is only rebuilt when what is in it changed, and never under a change note being typed */
 function paintRvList(box, els) {
@@ -5107,26 +5277,21 @@ function paintRvList(box, els) {
   if (typing) { rvDeferred = true; return; }
   box.replaceChildren(...els);
 }
-function paintReview() {
-  rvDeferred = false;
-  const path = rvPathNow(), r = rvAll[path], run = r && r.run && r.run.on ? r.run : null;
-  /* another game in front: what was open or typed for the last one goes (an End or Undo card would act on it) */
-  if (paintReview.path !== path) {
-    paintReview.path = path;
-    $("rv-undo-box").replaceChildren(); $("rv-end-box").replaceChildren(); $("rv-nights").replaceChildren(); $("rv-set").open = false;
-    $("rv-err").textContent = ""; $("rv-said").textContent = ""; $("rv-say").value = ""; $("rv-say").style.height = "";
-  }
-  paintRun(r);
+/* what is in an open section */
+function paintSecBody(S) {
+  const $ = S.$;
+  const path = S.path, r = rvAll[path], run = r && r.run && r.run.on ? r.run : null;
+  paintRun(S, r);
   const items = ((r && r.items) || []).filter((i) => (i.status === "waiting" || rvDone.has(i.id)) && rvShown(i.id));
   const needs = rvNeeds(r).filter((c) => rvShown(c.id));
   const keep = new Set();
-  const itemEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvItemCard(i, r)); };
-  const lookEl = (i) => { keep.add(i.id); return rvCard(i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvLookRow(i, r)); };
-  const needEl = (c) => { keep.add(c.id); return rvCard(c.id, [path, c.id, c.title, c.note, c.chat].join("|"), () => rvNeedCard(c, path)); };
+  const itemEl = (i) => { keep.add(i.id); return rvCard(S, i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvItemCard(i, r)); };
+  const lookEl = (i) => { keep.add(i.id); return rvCard(S, i.id, [path, i.id, i.created, (i.media || []).join("/"), i.title, i.summary, i.plain, expertName(r, i)].join("|"), () => rvLookRow(i, r)); };
+  const needEl = (c) => { keep.add(c.id); return rvCard(S, c.id, [path, c.id, c.title, c.note, c.chat].join("|"), () => rvNeedCard(c, path)); };
   const blocking = items.filter((i) => i.blocking), look = items.filter((i) => !i.blocking);
   paintRvList($("rv-needs"), blocking.map(itemEl).concat(needs.map(needEl)));
   paintRvList($("rv-look"), look.map(lookEl));
-  for (const k of [...rvCards.keys()]) if (!keep.has(k)) rvCards.delete(k);
+  for (const k of [...S.cards.keys()]) if (!keep.has(k)) S.cards.delete(k);
   const nNeeds = needsOf(r).length, open = look.filter((i) => !rvDone.has(i.id));
   $("rv-needs-n").textContent = nNeeds || ""; $("rv-look-n").textContent = open.length || "";
   $("rv-needs-none").hidden = blocking.length + needs.length > 0; $("rv-look-none").hidden = look.length > 0;
@@ -5135,14 +5300,14 @@ function paintReview() {
   /* with no run going, only what there is: no empty To look at, no box for a Lead that is not there */
   $("rv-look-wrap").hidden = !run && !look.length;
   $("rv-tell-wrap").hidden = !run;
-  paintTell(r, run);
-  paintCost();
-  paintNow();
-  paintPast(r);
+  paintTell(S, r, run);
+  paintCost(S);
+  paintNow(S);
+  paintPast(S, r);
 }
 /* what the game has cost so far, small, at the right of the run bar: "$85 · 25 turns" and a bar a day for the week */
-function paintCost() {
-  const cost = rvCost(rvPathNow());
+function paintCost(S) {
+  const cost = rvCost(S.path);
   let html = "", title = "";
   if (cost.turns) {
     const money = cost.usd >= 0.01, top = Math.max(0.0001, ...cost.days);
@@ -5150,7 +5315,7 @@ function paintCost() {
     html = '<span class="spark" aria-hidden="true">' + cost.days.map((d) => '<i style="height:' + Math.max(d ? 3 : 1, Math.round((d / top) * 16)) + 'px"></i>').join("") + "</span><span>" + esc(sum + " · " + cost.turns + (cost.turns === 1 ? " turn" : " turns")) + "</span>";
     title = (money ? "About $" + cost.usd.toFixed(2) + " so far, at API prices" + (cost.run ? ", $" + cost.run.toFixed(2) + " of it in this run" : "") : fmtTokens(cost.tokens) + " new tokens so far") + ". The bars are the last seven days.";
   }
-  document.querySelectorAll(".rv-cost").forEach((c) => { if (c.dataset.sig !== html) { c.dataset.sig = html; c.innerHTML = html; c.title = title; } });
+  S.root.querySelectorAll(".rv-cost").forEach((c) => { if (c.dataset.sig !== html) { c.dataset.sig = html; c.innerHTML = html; c.title = title; } });
 }
 /* the usage log, for what the game in front has cost: a turn counts when it names the game, or (older lines) its chat does */
 async function loadRvUsage(force) {
@@ -5158,7 +5323,7 @@ async function loadRvUsage(force) {
   rvUsageAt = Date.now();
   try { const r = await api("/api/usage", { since: 0 }); rvUsage = (r && r.records) || []; } catch (e) { return; }
   if (view === "all") paintAll();
-  if (view === "review") paintCost();
+  if (view === "review") for (const S of rvSecs.values()) if (S.built && S.open) paintCost(S);
 }
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
 const samePath = (a, b) => { const n = (x) => String(x || "").replace(/\\/g, "/").replace(/\/+$/, ""); return n(a) === n(b); };
@@ -5184,7 +5349,11 @@ function rvCost(path) {
 }
 /* who is working on the game right now: the Lead, each expert at work, and any other chat of the game at work */
 let nowT = 0;
-function paintNowSoon() { clearTimeout(nowT); nowT = setTimeout(() => { if (view === "review") paintNow(); else if (view === "all") paintAll(); }, 250); }
+const nowPaths = new Set();   /* the projects whose agents did something since the last repaint */
+function paintNowSoon(path) {
+  nowPaths.add(path || ""); clearTimeout(nowT);
+  nowT = setTimeout(() => { const ps = [...nowPaths]; nowPaths.clear(); if (view === "review") ps.forEach((p) => rvPaint(p, true)); else if (view === "all") paintAll(); }, 250);
+}
 /* one line per agent at work on the game: the Lead, then each expert or chat. In a card (still) they are plain lines. */
 function nowRows(path, still) {
   const r = rvAll[path], run = r && r.run && r.run.on ? r.run : null, lead = run && agents.get(run.lead);
@@ -5207,19 +5376,21 @@ function nowRows(path, still) {
   return rows;
 }
 /* Right now is there only while someone is working on the game */
-function paintNow() {
-  const rows = nowRows(rvPathNow());
+function paintNow(S) {
+  const $ = S.$;
+  const rows = nowRows(S.path);
   $("rv-now-wrap").hidden = !rows.length;
   $("rv-now").replaceChildren(...rows);
-  paintNight();
+  paintNight(S);
 }
 const elapsed = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : s < 3600 ? Math.floor(s / 60) + "m" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"; };
 /* earlier decisions: approved, or changes asked for, newest first, folded away */
-function paintPast(r) {
+function paintPast(S, r) {
+  const $ = S.$;
   const done = ((r && r.items) || []).filter((i) => (i.status === "approved" || i.status === "changes") && !rvDone.has(i.id) || (rvDone.has(i.id) && rvDone.get(i.id).gone && i.status !== "waiting"));
   done.sort((a, b) => (b.decided || b.created || 0) - (a.decided || a.created || 0));
   $("rv-past").hidden = !done.length; $("rv-past-n").textContent = done.length ? "(" + done.length + ")" : "";
-  const sig = done.map((i) => i.id + i.status).join("|"); if (sig === paintPast.sig) return; paintPast.sig = sig;
+  const sig = done.map((i) => i.id + i.status).join("|"); if (sig === S.pastSig) return; S.pastSig = sig;
   $("rv-past-list").replaceChildren(...done.slice(0, 60).map((i) => {
     const row = el("div", "rv-past-row", "<b></b><em></em><small></small>");
     row.querySelector("b").textContent = i.title || "Untitled";
@@ -5229,16 +5400,20 @@ function paintPast(r) {
   }));
 }
 /* Tell the run something: a message to the Lead, from here */
-function paintTell(r, run) {
+function paintTell(S, r, run) {
+  const $ = S.$;
   const can = !!(run && r.lead_live), txt = $("rv-say").value.trim();
   $("rv-send").disabled = !can || !txt;
   $("rv-say").disabled = !can;
   $("rv-say").placeholder = can ? (run.paused ? "A message for the Lead. It waits until you press Resume." : "A message for the Lead, e.g. make the shop brighter") : "The Lead's chat is closed. Press Resume first.";
 }
-$("rv-say").oninput = () => { const t = $("rv-say"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; const r = rvAll[rvPathNow()]; paintTell(r, r && r.run && r.run.on ? r.run : null); };
+/* a section's message box for the Lead, its way to Chat, and Approve all */
+function rvBindTell(S) {
+const $ = S.$;
+$("rv-say").oninput = () => { const t = $("rv-say"); t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; const r = rvAll[S.path]; paintTell(S, r, r && r.run && r.run.on ? r.run : null); };
 $("rv-say").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("rv-send").click(); } };
 $("rv-send").onclick = async () => {
-  const r = rvAll[rvPathNow()], run = r && r.run, text = $("rv-say").value.trim();
+  const r = rvAll[S.path], run = r && r.run, text = $("rv-say").value.trim();
   if (!run || !run.lead || !text) return;
   const lead = agents.get(run.lead) || { ai: undefined };
   $("rv-send").disabled = true;
@@ -5247,11 +5422,11 @@ $("rv-send").onclick = async () => {
   $("rv-say").value = ""; $("rv-say").style.height = "";
   $("rv-said").textContent = run.paused ? "Kept for the Lead. It goes when you press Resume." : lead.busy ? "Sent. The Lead gets it the moment it finishes what it is doing." : "Sent to the Lead.";
   setTimeout(() => { $("rv-said").textContent = ""; }, 6000);
-  paintTell(r, run.on ? run : null);
+  paintTell(S, r, run.on ? run : null);
 };
-$("rv-to-chat").onclick = () => setView("chat");
+$("rv-to-chat").onclick = () => showProject(S.path, "chat");
 $("rv-all").onclick = async () => {
-  const b = $("rv-all"), path = rvPathNow(), r = rvAll[path];
+  const b = $("rv-all"), path = S.path, r = rvAll[path];
   const open = ((r && r.items) || []).filter((i) => i.status === "waiting" && !i.blocking && !rvDone.has(i.id));
   b.disabled = true; $("rv-err").textContent = "";
   let res; try { res = await api("/api/review", { path, action: "approve_all", ids: open.map((i) => i.id) }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
@@ -5259,10 +5434,11 @@ $("rv-all").onclick = async () => {
   if (!res.ok) { $("rv-err").textContent = res.error || "Could not approve them."; return; }
   open.forEach((i) => {
     rvDone.set(i.id, { at: Date.now() });
-    const c = rvCards.get(i.id); if (c) { c.el.querySelector(".rv-said").textContent = "Approved: " + (i.title || "Untitled"); c.el.classList.add("done"); }
+    const c = S.cards.get(i.id); if (c) { c.el.querySelector(".rv-said").textContent = "Approved: " + (i.title || "Untitled"); c.el.classList.add("done"); }
   });
-  paintReviewBadge(); paintReview();
+  paintReviewBadge(); rvPaint(path);
 };
+}
 /* ---------- Overview: the live graph of every game, and beside it one card per game and one to start a new game ---------- */
 let apTimer = 0;
 function openAll() {
@@ -5296,8 +5472,8 @@ function apCard(x) {
     c.appendChild(n);
   }
   c.dataset.to = needs.length ? "review" : "chat";
-  c.title = needs.length ? "Open " + x.name + "'s Review" : "Open " + x.name;
-  c.onclick = () => showProject(x.path, needs.length ? "review" : "chat");
+  c.title = needs.length ? "See what " + x.name + " needs, in Review" : "Open " + x.name;
+  c.onclick = () => { if (needs.length) openInReview(x.path); else showProject(x.path, "chat"); };
   return c;
 }
 function paintAll() {
@@ -5619,7 +5795,7 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
     if (!d.node) return;
     const n = d.node;
     /* a game opens its Review; a chat opens in Chat; an expert opens its Lead's chat with its line open */
-    if (n.kind === "project") { if (n.lead) openChatById(n.lead); else showProject(n.path, n.path ? "review" : "chat"); }
+    if (n.kind === "project") { if (n.lead) openChatById(n.lead); else if (n.path) openInReview(n.path); else showProject(n.path, "chat"); }
     else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
     else if (n.kind === "saved") openChatById(n.chat);
   });
@@ -6031,16 +6207,13 @@ function paintCap() {
   $("sw-cap").setAttribute("aria-busy", capWant ? "true" : "false");
 }
 function onStudioRun(e) {
-  if (rvAll[e.project]) { rvAll[e.project].run = e.run; if (view === "review" && e.project === rvPathNow()) paintReview(); }
+  if (rvAll[e.project]) { rvAll[e.project].run = e.run; rvPaint(e.project); }
   reloadReview();
 }
+/* Review, at a project's section (and, with `id`, at one item in it) */
 function openInReview(path, id) {
-  if (path && path !== curProj) showProject(path, "review"); else setView("review");
-  const c = id && rvCards.get(id); if (!c) return;
-  /* a line of To look at opens to its card */
-  if (c.el.classList.contains("rv-lk") && !c.el.classList.contains("open")) c.el.querySelector(".rv-line").click();
-  c.el.scrollIntoView({ block: "center" });
-  c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
+  setView("review");
+  if (path) rvJump(path, id);
 }
 /* "Waiting for you in Review": one line at the end of a Lead's chat while its run waits at a gate */
 function studioWaitLine(p, on) {
@@ -7543,6 +7716,38 @@ function setScale(v) {
   $("sc-range").value = scale; $("sc-val").textContent = scale + "%";
 }
 setScale(scale);
+/* The sidebar's width: dragged at its right edge (or the arrow keys, 16px a press), between 200px and 480px; a double
+   press puts it back to 232px. Remembered on this computer. Narrow windows set their own width and hide the handle. */
+{
+  const grip = $("side-grip"), MIN = 200, MAX = 480, BASE = 232;
+  let w = BASE;
+  const put = (v, keep) => {
+    w = Math.max(MIN, Math.min(MAX, Math.round(v)));
+    document.documentElement.style.setProperty("--side-w", w + "px");
+    grip.setAttribute("aria-valuenow", String(w));
+    if (keep) { try { if (w === BASE) localStorage.removeItem("side-w"); else localStorage.setItem("side-w", String(w)); } catch (e) {} }
+  };
+  try { const v = parseInt(localStorage.getItem("side-w") || "", 10); if (v) put(v); } catch (e) {}
+  grip.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    ev.preventDefault(); grip.focus({ preventScroll: true });
+    const x0 = ev.clientX, w0 = w, z = scale / 100;
+    grip.classList.add("drag"); document.body.classList.add("side-drag");
+    try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
+    const move = (e) => put(w0 + (e.clientX - x0) / z);
+    const end = () => {
+      grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", end); grip.removeEventListener("pointercancel", end);
+      grip.classList.remove("drag"); document.body.classList.remove("side-drag"); put(w, true);
+    };
+    grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", end); grip.addEventListener("pointercancel", end);
+  });
+  grip.addEventListener("dblclick", () => put(BASE, true));
+  grip.addEventListener("keydown", (ev) => {
+    const to = ev.key === "ArrowLeft" ? w - 16 : ev.key === "ArrowRight" ? w + 16 : ev.key === "Home" ? MIN : ev.key === "End" ? MAX : ev.key === "Enter" ? BASE : null;
+    if (to === null) return;
+    ev.preventDefault(); ev.stopPropagation(); put(to, true);
+  });
+}
 $("sc-range").oninput = () => setScale(+$("sc-range").value);
 $("sc-down").onclick = () => setScale(scale - 10); $("sc-up").onclick = () => setScale(scale + 10); $("sc-reset").onclick = () => setScale(100);
 document.addEventListener("keydown", (e) => {

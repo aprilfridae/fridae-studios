@@ -232,14 +232,15 @@ from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/C
   The Lead's note says only what really went back. Overnight's Undo the night uses the same `put_back` with `exact:
   false`: the agents' Studio steps since the night began are undone by time, as before, even when Studio was closed
   when it began (the scripts are still saved to disk first, so it too needs the current plugin).
-- `ui/index.html`: the Review tab, Studio in the run-mode menu, experts by name, the undo picker.
+- `ui/index.html`: Review (one page for every project, a section each: `rvSec`, `paintSec`; a section's parts are
+  `data-r` names looked up with `S.$`), Studio in the run-mode menu, experts by name, the undo picker.
 
 **The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists Overview, the games
 (`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
 front (`""` for No project, `null` on the Overview and New project pages) and `view` is `chat`, `review`,
 `promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start Overview opens when a
 game has a run going or something waiting for the user (`needsOf`: blocking review items and needs cards, the one
-count the sidebar, the Review tab and Needs you share). Chats are grouped by `agent.project`, not by AI. The game
+count the sidebar, Review and Needs you share). Chats are grouped by `agent.project`, not by AI. The game
 in front shows its open chats under it (`sideChats`), and under a chat the experts it started (`expertsOf`: those its
 log names in `helper_started`, the saved chats with it as `parent` from `/api/history`, and the open ones; newest
 first). An arrow beside the chat shows or hides them, kept per chat in `localStorage` under `experts-shown`. Only

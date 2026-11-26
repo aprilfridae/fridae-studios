@@ -137,9 +137,11 @@ and in Right now says what it runs on when that differs from the Lead.
 plan**, and at **ready to publish**, which is a checklist of what you do
 yourself (publish, make it public, set prices live). Fridae never publishes,
 spends money or Robux, or deletes your work. You can change where it stops in
-the Review tab's Run settings.
+Review, in the project's Run settings.
 
-**The Review tab.** At the top, the run's state with Pause or Resume, its
+**Review.** One page for every project, opened from the left under Overview;
+its number is everything that waits for you. Each project has a section, the
+ones that need you first. In a section: at the top, the run's state with Pause or Resume, its
 stages, and Run settings; under it **Right now** (who is working on what, and
 what the game has cost so far). What stops the run is under **Needs you**,
 with the to-dos only you can do (press **Done** on those). Everything else the
