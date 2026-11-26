@@ -6,7 +6,9 @@
 //! account is a config folder of the app's own, beside Fridae's OpenCode copy in the app's data folder, outside every
 //! folder an AI is given. The user's own settings, skills and plugins are linked into it (`prepare`), so a turn there
 //! loads what a turn on the first account loads (measured from Claude Code's `init` line); who is signed in, and the
-//! conversations, are the folder's own.
+//! conversations, are the folder's own. On Windows (sign-in: `.credentials.json` in the folder, measured) the links
+//! are directory junctions and file links that need no admin rights (`link_into`), and every reparse point is a
+//! link that is never followed or deleted through (`is_link`, `remove_link`).
 //!
 //! Gemini: agy keeps the user's sign-in in one keychain entry, which a command finds by HOME alone, and its data
 //! folder under HOME (measured). So Gemini's second account is a home folder of the app's own, in the same place:
@@ -236,36 +238,87 @@ pub fn stand_in_here(given: &StandIn) {
     STAND_IN.with(|s| *s.borrow_mut() = Some(given.clone()));
 }
 
+/// Whether another account is offered for an AI on this system. Claude: everywhere (on Windows its sign-in is a
+/// file in its config folder, measured, and the user's setup is linked in by junctions and file links: `link_into`).
+/// Gemini: not on Windows yet.
+pub fn offered(ai: &str) -> bool {
+    match ai {
+        "claude" => true,
+        "gemini" => !cfg!(windows),
+        _ => false,
+    }
+}
+
+/// Random bytes for a new folder's name. Unix: `/dev/urandom`. Windows (which has no such file): the standard
+/// library's randomly seeded hasher, over the time, the process and a counter, so two names in a row differ.
+fn random_bytes(bytes: &mut [u8]) -> bool {
+    #[cfg(not(windows))]
+    return fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, bytes)).is_ok();
+    #[cfg(windows)]
+    {
+        use std::hash::{BuildHasher, Hasher};
+        static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
+        for chunk in bytes.chunks_mut(8) {
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u128(nanos);
+            h.write_u32(std::process::id());
+            h.write_u64(COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            chunk.copy_from_slice(&h.finish().to_le_bytes()[..chunk.len()]);
+        }
+        true
+    }
+}
+
 /// A new added account: a new folder under a new name (never a name used before: on a Mac the tool's sign-in for a
 /// folder may outlive the folder in the keychain, and must not come back with it), put last in the AI's list. Its
 /// name.
 pub fn add(ai: &str) -> Result<String, String> {
-    if !AIS.contains(&ai) || cfg!(windows) {
+    if !offered(ai) {
         return Err("Another account is not offered for that AI here.".to_string());
     }
     if list(ai).len() >= MOST {
         return Err(format!("{MOST} added accounts is the most Fridae keeps for one AI. Remove one first."));
     }
     let mut bytes = [0u8; 6];
-    let random = fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes)).is_ok();
-    if !random {
+    if !random_bytes(&mut bytes) {
         return Err("Fridae could not make a name for the account's folder.".to_string());
     }
     let name = format!("{ai}-2-{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
     debug_assert!(name_ok(ai, &name));
-    paths::update_config(|cfg| {
-        let mut all = cfg.get(SETTING).and_then(Value::as_object).cloned().unwrap_or_default();
-        let mut names = names_in(ai, all.get(ai).unwrap_or(&Value::Null));
-        names.push(name.clone());
-        all.insert(ai.to_string(), json!(names));
-        cfg.insert(SETTING.into(), Value::Object(all));
-    });
+    change_list(ai, |names| names.push(name.clone()));
     note_left(ai, None);
     if prepare_of(ai, &name).is_none() {
         return Err("Fridae could not make the account's folder.".to_string());
     }
     // (Gemini: with its keychain, so the sign-in that follows finds one and the Mac asks nothing)
     ready_of(ai, &name).map(|_| name).ok_or_else(|| "Fridae could not make a keychain for the account.".to_string())
+}
+
+/// One AI's list of added accounts changed in the guarded setting (only names the app could have made, as read).
+/// (Tests with a stand-in: the stand-in's list instead, so a test that adds or removes an account never writes the
+/// settings other tests read meanwhile.)
+fn change_list(ai: &str, change: impl FnOnce(&mut Vec<String>)) {
+    #[cfg(test)]
+    if STAND_IN.with(|s| s.borrow().is_some()) {
+        let mut names = list(ai);
+        change(&mut names);
+        let prefix = format!("{ai}-2-");
+        STAND_IN.with(|s| {
+            if let Some(s) = s.borrow_mut().as_mut() {
+                let extras = names.iter().filter_map(|n| n.strip_prefix(&prefix)).map(|tag| s.extras.iter().find(|e| e.tag == tag).cloned().unwrap_or_else(|| Extra { tag: Box::leak(tag.to_string().into_boxed_str()), signed_in: false, out: false })).collect();
+                s.extras = extras;
+            }
+        });
+        return;
+    }
+    paths::update_config(|cfg| {
+        let mut all = cfg.get(SETTING).and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut names = names_in(ai, all.get(ai).unwrap_or(&Value::Null));
+        change(&mut names);
+        all.insert(ai.to_string(), json!(names));
+        cfg.insert(SETTING.into(), Value::Object(all));
+    });
 }
 
 /// How many added accounts one AI may have: far more than anyone signs in to, and few enough that a setting cannot
@@ -282,12 +335,7 @@ pub const MOST: usize = 20;
 /// may take, and deleted again.
 pub fn remove(ai: &str, name: &str) -> Option<PathBuf> {
     let dir = folder_of(ai, name);
-    paths::update_config(|cfg| {
-        let mut all = cfg.get(SETTING).and_then(Value::as_object).cloned().unwrap_or_default();
-        let names: Vec<String> = names_in(ai, all.get(ai).unwrap_or(&Value::Null)).into_iter().filter(|n| n != name).collect();
-        all.insert(ai.to_string(), json!(names));
-        cfg.insert(SETTING.into(), Value::Object(all));
-    });
+    change_list(ai, |names| names.retain(|n| n != name));
     if let Some(used) = USED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
         used.remove(&(ai.to_string(), name.to_string()));
     }
@@ -356,7 +404,7 @@ fn left(ai: &str) -> Vec<PathBuf> {
 /// swapped for a link (nothing of the app's does that) is never followed: not for a sign-in, a status, a turn or a
 /// removal, since everything done "in the second account's folder" would then be done wherever the link leads.
 fn real_folder(dir: &Path) -> bool {
-    fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir())
+    fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_dir() && !is_link(&m))
 }
 
 /// Where a tool keeps an account's sign-in inside the account's folder: deleted before anything else, so that
@@ -399,12 +447,12 @@ pub fn sign_in_files() -> Vec<PathBuf> {
 /// is made the user's to write and tried once more. Whether it is gone.
 fn remove_folder(dir: &Path) -> bool {
     if !real_folder(dir) {
-        let _ = fs::remove_file(dir);
+        remove_link(dir);
         return fs::symlink_metadata(dir).is_err();
     }
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        if entry.file_type().is_ok_and(|t| t.is_symlink()) {
-            let _ = fs::remove_file(entry.path());
+        if fs::symlink_metadata(entry.path()).is_ok_and(|m| is_link(&m)) {
+            remove_link(&entry.path());
         }
     }
     for place in SIGN_IN_PLACES {
@@ -415,9 +463,14 @@ fn remove_folder(dir: &Path) -> bool {
 }
 
 /// A file or a folder and all in it, deleted; what cannot be deleted for its mode is made writable and tried again
-/// (links are never followed: a link is removed as a link).
+/// (links are never followed: a link is removed as a link; `remove_dir_all` does not follow a junction inside the
+/// folder either, measured on Windows 11).
 fn remove_all(path: &Path) {
     let Ok(meta) = fs::symlink_metadata(path) else { return };
+    if is_link(&meta) {
+        remove_link(path);
+        return;
+    }
     if !meta.file_type().is_dir() {
         let _ = fs::remove_file(path);
         return;
@@ -439,6 +492,57 @@ fn remove_all(path: &Path) {
         open_up(path);
         let _ = fs::remove_dir_all(path);
     }
+    // Windows: the read-only attribute taken off what is in the folder itself (never through a link), then once more
+    #[cfg(windows)]
+    {
+        fn open_up(path: &Path) {
+            let Ok(meta) = fs::symlink_metadata(path) else { return };
+            if is_link(&meta) {
+                return;
+            }
+            let mut perms = meta.permissions();
+            if perms.readonly() {
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = fs::set_permissions(path, perms);
+            }
+            if meta.is_dir() {
+                for e in fs::read_dir(path).into_iter().flatten().flatten() {
+                    open_up(&e.path());
+                }
+            }
+        }
+        open_up(path);
+        let _ = fs::remove_dir_all(path);
+    }
+}
+
+/// Whether a path (by its own metadata, never what it leads to) is a link: a symbolic link, or on Windows any reparse
+/// point (`FILE_ATTRIBUTE_REPARSE_POINT`), which a directory junction is. Rust reports a junction as a symlink as
+/// well (measured on Windows 11: `is_symlink()` true, `is_dir()` false); the attribute is checked all the same, so
+/// no other kind of reparse point is ever taken for a folder of its own and walked into.
+fn is_link(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// A link removed as a link, never what it leads to. Windows: a junction or a link to a folder cannot be removed as
+/// a file (measured: access denied) and is removed as an (empty) folder entry instead, which takes away the link
+/// alone and leaves its target as it is (measured). On a real folder that would only ever remove an empty one.
+fn remove_link(path: &Path) {
+    let removed = fs::remove_file(path);
+    #[cfg(windows)]
+    if removed.is_err() {
+        let _ = fs::remove_dir(path);
+    }
+    #[cfg(not(windows))]
+    let _ = removed;
 }
 
 /// What of the user's own Claude Code setup a turn on the second account gets as well, by links to it: settings
@@ -447,7 +551,11 @@ fn remove_all(path: &Path) {
 const CLAUDE_LINKED: [&str; 9] = ["settings.json", "skills", "plugins", "agents", "commands", "CLAUDE.md", "rules", "output-styles", "keybindings.json"];
 
 /// The user's own Claude Code config folder: `CLAUDE_CONFIG_DIR` when the app was started with one, else `~/.claude`.
+/// (Tests: a folder of the test run's own, never the user's real one.)
 fn users_claude() -> PathBuf {
+    #[cfg(test)]
+    return paths::test_dir("users-claude");
+    #[allow(unreachable_code)]
     std::env::var_os("CLAUDE_CONFIG_DIR").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| paths::home_dir().join(".claude"))
 }
 
@@ -577,7 +685,7 @@ fn keychain_used() -> bool {
 
 /// Whether a path is a file itself: there, a regular file, and not a link to one.
 fn real_file(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file())
+    fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_file() && !is_link(&m))
 }
 
 /// Whether what a home of the app's own (an added Gemini account's) has for a keychain is its own and nobody
@@ -927,8 +1035,70 @@ fn link_into(dir: &Path, users: &Path, names: &[&str]) {
             }
         }
     }
-    #[cfg(not(unix))]
+    // Windows, where making a symbolic link needs rights a user mostly does not have (os error 1314 without admin
+    // or Developer Mode, measured): a folder is linked by a directory junction, which needs none; a file by a
+    // symbolic link where that is allowed, else by a hard link (the same file under a second name, on the same
+    // drive only; on another drive it is not linked). Claude Code rewrites its settings by putting a new file in
+    // place of the old, which leaves a hard link behind as a file of its own: so a linked file that is a file there
+    // and no longer reads as the user's is made again from the user's (theirs is what counts, as with a link).
+    // Only ever names inside the account's folder are made, replaced or removed; a junction is removed as a link.
+    #[cfg(windows)]
+    for name in names {
+        let (from, to) = (users.join(name), dir.join(name));
+        let linked = fs::symlink_metadata(&to).is_ok_and(|m| is_link(&m));
+        if linked && !to.exists() {
+            remove_link(&to);
+        }
+        if !from.exists() {
+            continue;
+        }
+        if fs::symlink_metadata(&to).is_err() {
+            if from.is_dir() {
+                let _ = junction(&from, &to) || std::os::windows::fs::symlink_dir(&from, &to).is_ok();
+            } else {
+                let _ = std::os::windows::fs::symlink_file(&from, &to).is_ok() || hard_link_in(dir, name, &from);
+            }
+        } else if from.is_file() && real_file(&to) && fs::read(&from).ok() != fs::read(&to).ok() {
+            hard_link_in(dir, name, &from);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = (users, names);
+}
+
+/// A directory junction at `link` to the folder `target` (both full paths), made by `mklink /J` with no window.
+/// Whether the junction is there. Paths cmd would read anything into (a quote, a percent sign) are not linked.
+#[cfg(windows)]
+fn junction(target: &Path, link: &Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    let plain = |p: &Path| {
+        let s = p.to_string_lossy().replace('/', "\\");
+        s.strip_prefix(r"\\?\").map(str::to_string).unwrap_or(s)
+    };
+    let (t, l) = (plain(target), plain(link));
+    if !target.is_absolute() || !link.is_absolute() || [&t, &l].iter().any(|s| s.contains(['"', '%', '\r', '\n'])) {
+        return false;
+    }
+    let mut c = std::process::Command::new("cmd");
+    c.raw_arg(format!("/D /C mklink /J \"{l}\" \"{t}\"")).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    paths::quiet(&mut c);
+    paths::Start::run_status(&mut c).is_ok_and(|s| s.success()) && fs::symlink_metadata(link).is_ok_and(|m| is_link(&m))
+}
+
+/// The user's file `from` put at `dir/name` as a hard link: made beside it under a passing name first, then moved
+/// over what is there, so a failure (another drive) leaves the account's file as it was. Whether it was made.
+#[cfg(windows)]
+fn hard_link_in(dir: &Path, name: &str, from: &Path) -> bool {
+    let (to, new) = (dir.join(name), dir.join(format!(".{name}.fridae-link")));
+    let _ = fs::remove_file(&new);
+    if fs::hard_link(from, &new).is_err() {
+        return false;
+    }
+    if fs::rename(&new, &to).is_err() {
+        let _ = fs::remove_file(&new);
+        return false;
+    }
+    true
 }
 
 /// The environment that makes a tool's process run on an account, which is named: nothing for the user's own
@@ -1161,7 +1331,7 @@ pub fn state() -> Value {
             .map(|(i, name)| json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": !usable_of(ai, name), "changed": keychain_changed(ai, name), "used": used_until_of(ai, Some(name), now)}))
             .collect();
         let left: Vec<String> = left(ai).iter().map(|d| d.display().to_string()).collect();
-        out.insert(ai.to_string(), json!({"offered": !cfg!(windows), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
+        out.insert(ai.to_string(), json!({"offered": offered(ai), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
     }
     Value::Object(out)
 }
@@ -1228,6 +1398,141 @@ mod tests {
         assert!(users.join("skills").join("mine").join("SKILL.md").is_file() && users.join("plugins").is_dir() && users.join(".claude.json").is_file(), "the user's own setup is untouched");
     }
 
+    /// A fake user's Claude folder (skills with a file in it, settings, memory) and an account's folder beside it.
+    #[cfg(windows)]
+    fn windows_setup(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = paths::test_dir(tag);
+        let _ = fs::remove_dir_all(&root);
+        let (users, base) = (root.join("users"), root.join("accounts"));
+        fs::create_dir_all(users.join("skills").join("mine")).unwrap();
+        fs::write(users.join("skills").join("mine").join("SKILL.md"), "x").unwrap();
+        fs::write(users.join("settings.json"), "{\"hooks\": {}}").unwrap();
+        fs::write(users.join("CLAUDE.md"), "memory").unwrap();
+        fs::write(users.join(".credentials.json"), "the user's own sign-in").unwrap();
+        fs::create_dir_all(&base).unwrap();
+        (root, users, base.join("claude-2-abcdef"))
+    }
+
+    #[cfg(windows)]
+    fn reparse_point(path: &Path) -> bool {
+        use std::os::windows::fs::MetadataExt;
+        fs::symlink_metadata(path).is_ok_and(|m| m.file_attributes() & 0x400 != 0)
+    }
+
+    /// A junction made by the test itself (not by the code under test).
+    #[cfg(windows)]
+    fn cmd_junction(link: &Path, target: &Path) {
+        let ok = paths::Start::run_output(std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(link).arg(target)).unwrap().status.success();
+        assert!(ok, "the test's junction");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_links_folders_as_junctions_and_files() {
+        let (root, users, dir) = windows_setup("accounts-win-link");
+        assert_eq!(prepare_in(&dir, &users, &CLAUDE_LINKED), Some(dir.clone()));
+        assert!(reparse_point(&dir.join("skills")), "skills is a link (a junction), not a copy");
+        assert_eq!(fs::read_to_string(dir.join("skills").join("mine").join("SKILL.md")).unwrap(), "x");
+        assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"hooks\": {}}");
+        assert_eq!(fs::read_to_string(dir.join("CLAUDE.md")).unwrap(), "memory");
+        assert!(fs::symlink_metadata(dir.join(".credentials.json")).is_err() && !dir.join("plugins").exists(), "no sign-in shared, nothing made up");
+        // the user adds plugins later; a linked folder of theirs goes: linked, and the dead link taken away
+        fs::create_dir_all(users.join("plugins")).unwrap();
+        fs::create_dir_all(users.join("agents")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(reparse_point(&dir.join("plugins")) && reparse_point(&dir.join("agents")));
+        fs::remove_dir(users.join("agents")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(fs::symlink_metadata(dir.join("agents")).is_err(), "a junction whose target is gone is taken away");
+        // a folder of the tool's own under a linked name is left alone
+        fs::create_dir_all(dir.join("commands")).unwrap();
+        fs::write(dir.join("commands").join("own.md"), "own").unwrap();
+        fs::create_dir_all(users.join("commands")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(!reparse_point(&dir.join("commands")) && dir.join("commands").join("own.md").is_file());
+        assert!(real_folder(&dir) && !real_folder(&dir.join("skills")), "a junction is never a folder of its own");
+        let _ = remove_folder(&dir);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn removing_an_account_never_touches_the_users_files_through_a_junction() {
+        let (root, users, dir) = windows_setup("accounts-win-remove");
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert!(reparse_point(&dir.join("skills")));
+        fs::write(dir.join(".credentials.json"), "the account's sign-in").unwrap();
+        // a read-only file the tool left in its own folder
+        fs::create_dir_all(dir.join("projects")).unwrap();
+        fs::write(dir.join("projects").join("kept.jsonl"), "x").unwrap();
+        let mut ro = fs::metadata(dir.join("projects").join("kept.jsonl")).unwrap().permissions();
+        ro.set_readonly(true);
+        fs::set_permissions(dir.join("projects").join("kept.jsonl"), ro).unwrap();
+        assert!(remove_folder(&dir), "the account's folder is gone");
+        assert!(fs::symlink_metadata(&dir).is_err());
+        assert_eq!(fs::read_to_string(users.join("skills").join("mine").join("SKILL.md")).unwrap(), "x");
+        assert_eq!(fs::read_to_string(users.join("settings.json")).unwrap(), "{\"hooks\": {}}");
+        assert_eq!(fs::read_to_string(users.join("CLAUDE.md")).unwrap(), "memory");
+        assert_eq!(fs::read_to_string(users.join(".credentials.json")).unwrap(), "the user's own sign-in");
+        // an account's folder swapped for a junction to the user's own folder: only the junction goes
+        cmd_junction(&dir, &users);
+        assert!(reparse_point(&dir) && !real_folder(&dir));
+        assert_eq!(prepare_in(&dir, &users, &CLAUDE_LINKED), None, "never prepared, so nothing runs there");
+        assert!(remove_folder(&dir) && fs::symlink_metadata(&dir).is_err());
+        assert_eq!(fs::read_to_string(users.join(".credentials.json")).unwrap(), "the user's own sign-in");
+        assert!(users.join("skills").join("mine").join("SKILL.md").is_file() && users.join("settings.json").is_file());
+        // a junction deeper in a tool's own folder is not followed either
+        fs::create_dir_all(dir.join("plans")).unwrap();
+        cmd_junction(&dir.join("plans").join("deep"), &users);
+        assert!(remove_folder(&dir));
+        assert!(fs::symlink_metadata(&dir).is_err() && users.join(".credentials.json").is_file() && users.join("skills").join("mine").join("SKILL.md").is_file());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_replaced_settings_file_is_linked_again() {
+        let (root, users, dir) = windows_setup("accounts-win-relink");
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        // Claude Code rewrites its settings by putting a new file in place of the old
+        fs::write(dir.join("settings.new"), "{\"theme\": \"dark\"}").unwrap();
+        fs::rename(dir.join("settings.new"), dir.join("settings.json")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"hooks\": {}}", "the user's own is the source");
+        // the user's own changed by an editor that also writes a new file: the account follows
+        fs::write(users.join("settings.new"), "{\"hooks\": {\"x\": 1}}").unwrap();
+        fs::rename(users.join("settings.new"), users.join("settings.json")).unwrap();
+        prepare_in(&dir, &users, &CLAUDE_LINKED);
+        assert_eq!(fs::read_to_string(dir.join("settings.json")).unwrap(), "{\"hooks\": {\"x\": 1}}");
+        assert!(fs::read_dir(&dir).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("fridae")), "nothing of the app's left beside it");
+        let _ = remove_folder(&dir);
+        assert_eq!(fs::read_to_string(users.join("settings.json")).unwrap(), "{\"hooks\": {\"x\": 1}}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn offered_per_ai() {
+        assert!(offered("claude"));
+        assert_eq!(offered("gemini"), !cfg!(windows));
+        assert!(!offered("cursor") && !offered("opencode") && !offered(""));
+        assert_eq!(state()["claude"]["offered"], true);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn add_works_on_windows() {
+        let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // (a stand-in list, so the settings other tests read are not written)
+        stand_in_many(&[]);
+        let first = add("claude").expect("added");
+        let second = add("claude").expect("added again");
+        assert!(name_ok("claude", &first) && name_ok("claude", &second) && first != second, "{first} {second}");
+        assert!(real_folder(&base().join(&first)) && list("claude").ends_with(&[first.clone(), second.clone()]));
+        assert_eq!(remove("claude", &first), None);
+        assert_eq!(remove("claude", &second), None);
+        assert!(!list("claude").contains(&first) && fs::symlink_metadata(base().join(&first)).is_err());
+    }
+
     #[test]
     fn a_new_chat_starts_on_the_first_account_that_can_take_one_and_a_chat_moves_to_the_next_once() {
         // which accounts can take a chat, in their order: the user's own, then the added ones
@@ -1251,7 +1556,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn what_is_done_for_an_account_goes_by_its_name_and_the_list_is_never_longer_than_the_app_keeps() {
         // a command is pointed at the account that is named, wherever it stands: the third's folder for the third
         stand_in_many(&[("b", true), ("c", true), ("d", true)]);
@@ -1260,9 +1564,12 @@ mod tests {
         let mut third = std::process::Command::new("claude");
         assert!(env_of(&mut third, "claude", Some("claude-2-d")));
         assert_eq!((get(&third, "CLAUDE_CONFIG_DIR"), get(&third, "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (Some(folder("claude-2-d")), Some(folder("claude-2-d"))));
-        let mut agy = std::process::Command::new("agy");
-        assert!(env_of(&mut agy, "gemini", Some("gemini-2-c")));
-        assert_eq!(get(&agy, "HOME"), Some(folder("gemini-2-c")));
+        // (Gemini: where it is offered)
+        if offered("gemini") {
+            let mut agy = std::process::Command::new("agy");
+            assert!(env_of(&mut agy, "gemini", Some("gemini-2-c")));
+            assert_eq!(get(&agy, "HOME"), Some(folder("gemini-2-c")));
+        }
         // a mark stays with its account when one BEFORE it is removed: "d" is used up at place 4, and still at place 3
         let now = 1_000.0;
         mark_used_of("claude", Some("claude-2-d"), now + 60.0);
@@ -1788,7 +2095,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_second_accounts_commands_keep_its_sign_in_in_its_own_folder_whatever_the_app_inherited() {
         stand_in(true, true);
         let get = |cmd: &std::process::Command, key: &str| cmd.get_envs().find(|(k, _)| *k == key).map(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
@@ -1804,17 +2110,20 @@ mod tests {
         let mut first = std::process::Command::new("claude");
         assert!(env_of(&mut first, "claude", None));
         assert_eq!(first.get_envs().count(), 0);
-        // Gemini's second account: its own HOME, and nothing that could name another home or another data folder
-        let mut agy = std::process::Command::new("agy");
-        assert!(env_of(&mut agy, "gemini", Some("gemini-2-standin")));
-        let home_dir = base().join("gemini-2-standin").to_string_lossy().to_string();
-        assert_eq!(get(&agy, "HOME"), Some(Some(home_dir)));
-        for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
-            assert_eq!(get(&agy, gone), Some(None), "{gone} is taken out");
-        }
-        // nor a key that could stand in for a sign-in: only the sign-in made in that home signs it in
-        for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"] {
-            assert_eq!(get(&agy, key), Some(None), "{key} is kept from the second account's agy");
+        // Gemini's second account (where it is offered): its own HOME, and nothing that could name another home or
+        // another data folder
+        if offered("gemini") {
+            let mut agy = std::process::Command::new("agy");
+            assert!(env_of(&mut agy, "gemini", Some("gemini-2-standin")));
+            let home_dir = base().join("gemini-2-standin").to_string_lossy().to_string();
+            assert_eq!(get(&agy, "HOME"), Some(Some(home_dir)));
+            for gone in ["CFFIXED_USER_HOME", "ANTIGRAVITY_APP_DATA_DIR", "ANTIGRAVITY_EXECUTABLE_DATA_DIR", "ANTIGRAVITY_CONFIG_REL_DIR"] {
+                assert_eq!(get(&agy, gone), Some(None), "{gone} is taken out");
+            }
+            // nor a key that could stand in for a sign-in: only the sign-in made in that home signs it in
+            for key in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"] {
+                assert_eq!(get(&agy, key), Some(None), "{key} is kept from the second account's agy");
+            }
         }
         let mut agy_first = std::process::Command::new("agy");
         assert!(env_of(&mut agy_first, "gemini", None));

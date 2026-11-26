@@ -161,13 +161,14 @@ fn with<R>(ai: &str, f: impl FnOnce(&mut Entry) -> R) -> Option<R> {
     Some(f(g.get_or_insert_with(HashMap::new).entry(key).or_default()))
 }
 
-/// Whether the app offers this sign-in: one of the three AIs' own, or a second account that exists, and not on
-/// Windows (not measured there: the lines keep saying what they said before).
+/// Whether the app offers this sign-in: one of the three AIs' own, not on Windows (not measured there: the lines keep
+/// saying what they said before); or an added account that exists, wherever its AI's added accounts are offered
+/// (`accounts::offered`: on Windows Claude's, whose sign-in is a file in the account's own folder, measured).
 pub fn offered(id: &str) -> bool {
-    if cfg!(windows) {
-        return false;
+    if let Some((ai, name)) = extra(id) {
+        return crate::accounts::offered(ai) && crate::accounts::folder_of(ai, name).is_some();
     }
-    AIS.contains(&id) || extra(id).is_some_and(|(ai, name)| crate::accounts::folder_of(ai, name).is_some())
+    !cfg!(windows) && AIS.contains(&id)
 }
 
 /// Whether an added account can take a chat as far as its sign-in goes: an account is signed in there (not a key
@@ -384,7 +385,9 @@ fn ask(ai: &str) -> Answer {
             // about the sign-in is not shown)
             return antigravity::ask_models().map(|(out, err, ok)| parse_agy(&out, &err, ok)).unwrap_or_default();
         }
-        if !offered(ai) {
+        // (Claude's own on Windows too, where its sign-in is not offered: an added account signed in to the very
+        // account of the user's own adds nothing, `same_as_first`, and that is told by the user's own answer)
+        if !offered(ai) && !(ai == "claude" && crate::accounts::offered("claude")) {
             return Answer::default();
         }
         if let Some(("gemini", name)) = extra(ai) {
@@ -1008,7 +1011,8 @@ mod tests {
         crate::accounts::stand_in_many(&[("standin", true), ("third", false)]);
         let with_three = state();
         assert_eq!(with_three.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(), ["claude", "claude:claude-2-standin", "claude:claude-2-third", "cursor", "gemini", "gemini:gemini-2-standin", "gemini:gemini-2-third"]);
-        assert!(offered("claude:claude-2-third") == !cfg!(windows) && with_three["claude:claude-2-third"]["offered"] == !cfg!(windows));
+        assert!(offered("claude:claude-2-third") && with_three["claude:claude-2-third"]["offered"] == true, "an added Claude account signs in on Windows too");
+        assert!(offered("gemini:gemini-2-third") == crate::accounts::offered("gemini") && with_three["gemini:gemini-2-third"]["offered"] == crate::accounts::offered("gemini"));
         assert!(extra("claude:claude-2-third") == Some(("claude", "claude-2-third")) && extra("claude").is_none() && extra("claude:../../x").is_none() && extra("cursor:cursor-2-abcdef").is_none());
         crate::accounts::stand_in(false, false);
         assert_eq!(login_start("gemini:gemini-2-standin", true)["ok"], false);
@@ -1124,7 +1128,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_second_account_takes_chats_only_with_an_account_of_its_own() {
         let _one = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         crate::accounts::stand_in_many(&[("standin", true), ("third", true)]);
@@ -1190,11 +1193,13 @@ mod tests {
         assert!(get(&third, "CLAUDE_CONFIG_DIR").is_some_and(|d| d.ends_with("claude-2-dddd")));
         assert!(!tool_env(&mut Command::new("claude"), "claude:claude-2-gone"), "a well-formed name that is no account of the AI's");
         crate::accounts::stand_in(false, false);
-        // Gemini's second account: its commands run in its own home, and not at all without it
-        crate::accounts::stand_in(true, true);
-        let mut agy = Command::new("agy");
-        assert!(tool_env(&mut agy, "gemini:gemini-2-standin"));
-        assert!(get(&agy, "HOME").is_some_and(|h| h.ends_with("gemini-2-standin")));
+        // Gemini's second account (where it is offered): its commands run in its own home, and not at all without it
+        if crate::accounts::offered("gemini") {
+            crate::accounts::stand_in(true, true);
+            let mut agy = Command::new("agy");
+            assert!(tool_env(&mut agy, "gemini:gemini-2-standin"));
+            assert!(get(&agy, "HOME").is_some_and(|h| h.ends_with("gemini-2-standin")));
+        }
         crate::accounts::stand_in(false, false);
         assert!(!tool_env(&mut Command::new("agy"), "gemini:gemini-2-standin"));
         // a turn on it that failed as signed out says so in the second account's name, with its button

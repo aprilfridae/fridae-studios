@@ -7457,7 +7457,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
+    #[cfg_attr(windows, ignore = "the tool's clock time is not read on Windows (accounts::day_secs)")]
     fn a_chat_goes_back_to_the_users_own_account_only_when_the_second_runs_out() {
         crate::accounts::stand_in(true, true);
         let a = chat_on_first("c-roll-back");
@@ -8340,7 +8340,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "second accounts are not offered on Windows yet (accounts::add)")]
     fn a_chat_on_the_second_account_is_started_in_that_accounts_folder_and_one_on_the_first_is_not() {
         crate::accounts::stand_in(true, true);
         let chat = |id: &str, ai: &str, account: u8| {
@@ -8368,11 +8367,19 @@ mod tests {
         // (the account's sign-in files are named, in the read rules every turn gets, and nothing else of it)
         let mut key = l[0].0.clone();
         for f in crate::accounts::SIGN_IN_FILES {
-            key = key.replace(&format!("{}/{f}", folder("claude")), "");
+            let p = format!("{}/{f}", folder("claude"));
+            // (as the rules write it: on Windows a path is in POSIX form there)
+            for dir in [true, false] {
+                key = key.replace(&claude_rule("Read", &p, dir, cfg!(windows)), "");
+            }
+            key = key.replace(&p, "");
         }
         assert!(!key.contains("claude-2-standin"));
-        // Gemini on the second account: agy's HOME is the account's own home, no key reaches it, and the app's tool
-        // server has the app's own HOME back
+        // Gemini on the second account (where it is offered): agy's HOME is the account's own home, no key reaches
+        // it, and the app's tool server has the app's own HOME back
+        if !crate::accounts::offered("gemini") {
+            return;
+        }
         let c = chat("c-launch-gemini-2", "gemini", 2);
         let l = launches(&c, "Carry on");
         assert_eq!(l.len(), 1);
@@ -8390,16 +8397,24 @@ mod tests {
         assert!(!l[0].0.contains("gemini-2-standin"));
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_second_accounts_folder_that_is_not_usable_when_the_turn_starts_sends_the_chat_to_the_first_with_the_chat_so_far() {
         // its folder has been swapped for a link (so nothing may run there), while the setting still names it
         crate::accounts::stand_in_tagged("swappedm1");
         let dir = crate::accounts::base().join("claude-2-swappedm1");
         let _ = fs::remove_dir_all(&dir);
+        #[cfg(windows)]
+        let _ = fs::remove_dir(&dir);
         let _ = fs::remove_file(&dir);
         fs::create_dir_all(crate::accounts::base()).unwrap();
+        #[cfg(unix)]
         std::os::unix::fs::symlink(paths::test_dir("accounts-swapped-target"), &dir).unwrap();
+        #[cfg(windows)]
+        {
+            // (a directory junction: a link any user can make there)
+            fs::create_dir_all(paths::test_dir("accounts-swapped-target")).unwrap();
+            assert!(Command::new("cmd").args(["/C", "mklink", "/J"]).arg(&dir).arg(paths::test_dir("accounts-swapped-target")).run_output().unwrap().status.success());
+        }
         assert_eq!(crate::accounts::state()["claude"]["accounts"][0]["broken"], true, "Setup is told that the app will not use it");
         let a = chat_on_first("c-launch-swapped");
         {
@@ -8411,6 +8426,8 @@ mod tests {
         }
         let l = launches(&a, "Carry on");
         let _ = fs::remove_file(&dir);
+        #[cfg(windows)]
+        let _ = fs::remove_dir(&dir);
         // started on the user's own account, with nothing of the second's
         assert_eq!(l.len(), 1);
         assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
