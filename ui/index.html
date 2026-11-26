@@ -70,7 +70,7 @@ input, select, textarea { font: inherit; color: inherit; }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 /* a page or a Settings section shown again plays this once (display: none to shown restarts it); only the inside
    moves, so nothing fixed inside a scrolling page is caught by a transform */
-#review > .rv-page, #promos > .r-col, #newproj > .r-col, .ap-side, .su-body > section.on > .st-page { animation: arrive var(--t-slow) var(--ease) backwards; }
+#review > .rv-page, #promos > .r-col, #newproj > .r-col, .su-body > section.on > .st-page { animation: arrive var(--t-slow) var(--ease) backwards; }
 .body > .main, .scroll > .col { animation: fade var(--t-mid) ease backwards; }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--text) 40%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
@@ -667,11 +667,10 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .r-note:empty { min-height: 0; margin: 0; }
 .r-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 
-/* overview: the live graph of every game, its chats and its experts; beside it, one card per game and one to start
-   a new one. The layout goes by the space the page really has (the text-size setting scales everything, so the
-   window's width says little): the cards take a share of it, and under 760px of it they go under the graph. */
+/* overview: the live graph of every game, its chats and its experts, over the whole page. One quiet line over its
+   top edge says how much is going, with the way to stop it all. */
 #allproj { padding: 0; overflow: hidden; container: overview / size; }
-.ov { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 40%, 400px); overflow: hidden; }
+.ov { position: relative; height: 100%; display: grid; grid-template-columns: minmax(0, 1fr); overflow: hidden; }
 .o-graph { position: relative; min-width: 0; min-height: 0; }
 .o-graph canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 .o-graph canvas.over { cursor: pointer; }
@@ -681,32 +680,9 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .o-key summary::-webkit-details-marker { display: none; }
 .o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
 .o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); max-width: min(460px, calc(100cqw - 32px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
-.ap-side { border-left: 1px solid var(--line); padding: 24px 16px 48px; overflow-y: auto; min-width: 0; min-height: 0; }
-.ap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-m); margin: 0 0 16px; }
-.ap-head .sub { margin: 0; font-size: 14px; }
-.ap-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
-@container overview (max-width: 760px) {
-  .ov { grid-template-columns: minmax(0, 1fr); grid-template-rows: clamp(240px, 60cqh, 460px) auto; overflow-y: auto; }
-  .ap-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; min-height: auto; padding: 24px 24px 48px; }
-  .ap-cards { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
-}
-.ap-card { display: flex; flex-direction: column; width: 100%; min-height: 136px; text-align: left; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease, transform var(--t-fast) var(--ease); }
-.ap-card:hover { border-color: var(--dim); }
-.ap-card:active { transform: scale(0.99); }
-.ap-card.hot { border-color: var(--text); }
-.ap-card h3 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: baseline; gap: 12px; }
-.ap-card h3 span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ap-card h3 em { margin-left: auto; font-style: normal; font-size: 13px; font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ap-card .ap-state { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-size: 14px; color: var(--dim); }
-.ap-card .rv-stages { margin-top: 16px; }
-.ap-card .rv-stage small { display: none; }
-.ap-card .rv-now { margin: 8px -8px 0; }
-.ap-card .rv-who { padding: 4px 8px; font-size: 13px; }
-.ap-need { margin: 12px 0 0; font-size: 14px; line-height: 1.45; }
-.ap-need b { font-weight: 600; }
-.ap-need span { color: var(--dim); }
-.ap-card.new { flex-direction: row; align-items: center; justify-content: center; gap: 8px; background: none; border-style: dashed; color: var(--dim); font-size: 14px; }
-.ap-card.new:hover { color: var(--text); background: var(--hover); }
+.ap-head { position: absolute; z-index: 1; left: 24px; right: 24px; top: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: var(--h-s); pointer-events: none; }
+.ap-head .sub { margin: 0; font-size: 13px; }
+.ap-head button { pointer-events: auto; }
 
 /* new project: Game or Project, a name and Create */
 .np-make { display: grid; gap: 4px; padding: 16px; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); max-width: 640px; }
@@ -1631,10 +1607,7 @@ applyTheme();
       <div class="o-graph">
         <canvas id="o-canvas" role="img" aria-label="Graph of every project, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
         <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
-      </div>
-      <div class="ap-side">
         <div class="ap-head"><p class="sub grow"><span id="ap-totals"></span><span id="ap-sk" hidden> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills"></button></span></p><button class="pill sm" id="ap-stop-all" hidden>Stop everything</button></div>
-        <div class="ap-cards" id="ap-cards"></div>
       </div>
     </div></div>
 
@@ -2206,7 +2179,7 @@ const GUIDE = [
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
-  ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project to see it in Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: in Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
+  ["Overview", "A live graph of every project, its chats and its experts.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project to see it in Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. What needs you is in Review. This page opens first when a project has a run going or something waits for you."],
   ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project in Review. Right-click a project (or press the button that shows on its row, or Shift+F10) to rename it, open its folder or delete it. Renaming changes the name Fridae shows, not the folder. Deleting asks first: remove it from Fridae and keep its files, or move its folder to the Recycle Bin or Trash. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
   ["Chat, Promos", "A project's tabs: talk to its agent. A Roblox game also has Promos (promo videos)."],
   ["Review, on the left", "One page for every project: what needs you, and each project's run.", "", "Under Overview. Its number is everything that waits for you, across every project."],
@@ -5642,7 +5615,6 @@ async function loadRvUsage(force) {
   if (!force && Date.now() - rvUsageAt < 30000) return;
   rvUsageAt = Date.now();
   try { const r = await api("/api/usage", { since: 0 }); rvUsage = (r && r.records) || []; } catch (e) { return; }
-  if (view === "all") paintAll();
   if (view === "review") for (const S of rvSecs.values()) if (S.built && S.open) paintCost(S);
 }
 /* a folder path as one string, however it was written (a trailing slash, the other kind of slash) */
@@ -5674,15 +5646,15 @@ function paintNowSoon(path) {
   nowPaths.add(path || ""); clearTimeout(nowT);
   nowT = setTimeout(() => { const ps = [...nowPaths]; nowPaths.clear(); if (view === "review") ps.forEach((p) => rvPaint(p, true)); else if (view === "all") paintAll(); }, 250);
 }
-/* one line per agent at work on the game: the Lead, then each expert or chat. In a card (still) they are plain lines. */
-function nowRows(path, still) {
+/* one line per agent at work on the game: the Lead, then each expert or chat */
+function nowRows(path) {
   const r = rvAll[path], run = r && r.run && r.run.on ? r.run : null, lead = run && agents.get(run.lead);
   const rows = [];
   const row = (p, who, what, when) => {
-    const b = el(still ? "div" : "button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
+    const b = el("button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
     b.querySelector("b").textContent = who; b.querySelector("b + span").textContent = what; b.querySelector("em").textContent = when || "";
     b.dataset.chat = p.id;
-    if (!still) { b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert's chat" : "Open this chat"; }
+    b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert's chat" : "Open this chat";
     return b;
   };
   const since = (p) => p.busy && p.since ? elapsed(Date.now() - p.since) : "";
@@ -5763,54 +5735,22 @@ $("rv-all").onclick = async () => {
   paintReviewBadge(); rvPaint(path);
 };
 }
-/* ---------- Overview: the live graph of every game, and beside it one card per game and one to start a new game ---------- */
+/* ---------- Overview: the live graph of every game, and over its top edge one line of totals ---------- */
 let apTimer = 0;
 function openAll() {
-  loadHistory(); paintAll(); overviewOpen(); loadReview(); loadRvUsage(true); skCount();
-  clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); loadRvUsage(); skCount(); } else clearInterval(apTimer); }, 5000);
+  loadHistory(); paintAll(); overviewOpen(); loadReview(); skCount();
+  clearInterval(apTimer); apTimer = setInterval(() => { if (view === "all") { loadReview(); skCount(); } else clearInterval(apTimer); }, 5000);
 }
 /* what needs the user on a game: items the run waits for, then to-dos only they can do. The one count of it: the
-   sidebar, the Review tab, Review's Needs you and the Overview cards all use this. */
+   sidebar, Review's summary and Needs you, and Overview's totals all use this. */
 function needsOf(r) {
   return rvWaiting(r).filter((i) => i.blocking).concat(rvNeeds(r).filter((c) => !rvDone.has(c.id)));
 }
-const costText = (c) => !c.turns ? "" : c.usd >= 0.01 ? "$" + (c.usd >= 10 ? Math.round(c.usd) : c.usd.toFixed(2)) + " so far" : fmtTokens(c.tokens) + " tokens so far";
-/* A game's card: its name and what it has cost, the run's state and stages, who is at work, and what needs the user.
-   Pressing it opens the game: its Review when something needs the user, else its Chat. */
-function apCard(x) {
-  const r = rvAll[x.path], run = r && r.run && r.run.on ? r.run : null, st = projState(x.path), cost = rvCost(x.path);
-  const c = el("button", "ap-card" + (st.strong ? " hot" : ""), '<h3><span></span><em></em></h3><p class="ap-state"><span></span><span></span></p>');
-  c.querySelector("h3 span").textContent = x.name;
-  const em = c.querySelector("h3 em"); em.textContent = costText(cost); if (cost.turns) em.title = "About, at API prices, counted from the usage log";
-  const ended = r && r.run && !r.run.on && r.run.ended;
-  const state = run ? runState(r, run)[0] : st.working ? "Chats at work" : ended ? "Last run ended " + ago(ended) : "No studio run";
-  const [dot, words] = c.querySelectorAll(".ap-state span");
-  dot.className = run ? runDot(state) : "dot" + (st.working ? " live" : ""); words.textContent = state;
-  const rows = nowRows(x.path, true);
-  if (rows.length) { const d = el("div", "rv-now"); d.append(...rows); c.appendChild(d); }
-  const needs = needsOf(r);
-  if (needs.length) {
-    const n = el("p", "ap-need", "<b></b> <span></span>");
-    n.querySelector("b").textContent = needs.length + (needs.length === 1 ? " thing needs you" : " things need you");
-    n.querySelector("span").textContent = "· first: " + (needs[0].title || "Untitled");
-    c.appendChild(n);
-  }
-  c.dataset.to = needs.length ? "review" : "chat";
-  c.title = needs.length ? "See what " + x.name + " needs, in Review" : "Open " + x.name;
-  c.onclick = () => { if (needs.length) openInReview(x.path); else showProject(x.path, "chat"); };
-  return c;
-}
 function paintAll() {
   if (view !== "all") return;
-  const list = (projects.projects || []).slice();
-  /* what stops a run first, then what waits for the user, then what is at work, then the rest */
-  const rank = (x) => { const st = projState(x.path), r = rvAll[x.path]; return st.strong ? 0 : st.n ? 1 : st.working || runActive(r && r.run) ? 2 : 3; };
-  list.sort((a, b) => rank(a) - rank(b));
-  const add = el("button", "ap-card new", '<svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8"/></svg><span>New project</span>');
-  add.onclick = showNewProject;
-  /* a card is only swapped when what it says changed, so the pointer and keyboard focus stay put */
-  const box = $("ap-cards"), cards = list.map(apCard).concat([add]);
-  if (cards.length !== box.children.length || cards.some((c, i) => c.outerHTML !== box.children[i].outerHTML)) box.replaceChildren(...cards);
+  const list = projects.projects || [];
+  /* at work: something waits for the user, a chat is working, or a run is going */
+  const rank = (x) => { const st = projState(x.path), r = rvAll[x.path]; return st.n || st.working || runActive(r && r.run) ? 0 : 3; };
   const going = list.filter((x) => rank(x) < 3).length, working = [...agents.values()].filter((p) => p.busy).length, wait = list.reduce((n, x) => n + projState(x.path).n, 0);
   $("ap-totals").textContent = [!list.length ? "No projects yet" : going ? going + (going === 1 ? " project at work" : " projects at work") : "Nothing going", working ? working + (working === 1 ? " agent working" : " agents working") : "", wait ? wait + (wait === 1 ? " thing waits for you" : " things wait for you") : ""].filter(Boolean).join(" · ");
   $("ap-stop-all").hidden = !working;
@@ -5824,7 +5764,7 @@ $("ap-stop-all").onclick = () => { for (const p of agents.values()) if (p.busy) 
    what there is to draw every 900 ms (`overviewTick`) and the pointer wake it again.
    The layout cools as it goes (`og.heat`): at full strength for two seconds after it starts, then easing off over
    about five more, so it always comes to rest instead of drifting for ever. */
-const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, armed: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", shape: "", drawn: 0, last: 0, still: false };
+const og = { nodes: new Map(), links: [], zoom: 1, cx: 0, cy: 0, panX: 0, panY: 0, hover: null, drag: null, raf: 0, timer: 0, mine: false, asleep: false, heat: 1, age: 0, calm: 0, sig: "", shape: "", drawn: 0, last: 0, still: false };
 /* less motion: nothing drifts or pulses. The nodes are put straight where they come to rest, and a working chat is
    bright with a ring that does not move. */
 { const m = window.matchMedia("(prefers-reduced-motion: reduce)"); og.still = m.matches; m.addEventListener("change", () => { og.still = m.matches; overviewPoke(); }); }
@@ -5909,7 +5849,7 @@ function overviewSync() {
   og.sig = sig;
   const shape = [...want.values()].filter((n) => n.kind !== "step").map((n) => n.id).join("\n") + "\n" + og.links.filter((l) => !l[1].startsWith("step:")).map((l) => l[0] + ">" + l[1]).join("\n");
   const kind = shape === og.shape ? "look" : "layout"; og.shape = shape;
-  /* the same picture in words, for a reader who cannot see the canvas (the cards beside it say the rest) */
+  /* the same picture in words, for a reader who cannot see the canvas */
   const all = [...og.nodes.values()], count = (k) => all.filter((n) => n.kind === k).length, plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
   const busy = all.filter((n) => n.busy && n.kind !== "project").map((n) => n.label);
   $("o-canvas").setAttribute("aria-label", "Graph: " + [plural(count("project"), "project"), plural(count("chat"), "open chat"), plural(count("expert"), "expert"), plural(count("saved"), "saved chat")].join(", ") + ". " + (busy.length ? "Working now: " + busy.slice(0, 8).join(", ") + "." : "Nothing is working."));
@@ -6087,10 +6027,6 @@ function overviewAt(ev) {
   for (const n of og.nodes.values()) { const d = Math.hypot(n.x - x, n.y - y); if (d < radius(n) + 7 / og.zoom && d < best) { best = d; hit = n; } }
   return { x, y, px, py, hit };
 }
-/* the cards are under the graph (a narrow space, or large text) */
-function overviewStacked() { const host = $("o-canvas").parentNode, side = document.querySelector(".ap-side"); return side.offsetTop >= host.offsetTop + host.offsetHeight - 1; }
-/* and the page has to be scrolled to reach them all */
-function overviewScrolls() { const ov = $("o-canvas").closest(".ov"); return overviewStacked() && ov.scrollHeight > ov.clientHeight + 1; }
 /* a press that never got its release (a menu opened over it, the window lost the keyboard) is over */
 function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = null; if (d.moved && d.node) overviewWake(); else overviewPoke(); }
 {
@@ -6109,7 +6045,7 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
     cv.classList.toggle("over", !!at.hit && at.hit.kind !== "step");
   });
   /* the left button only: any other leaves the graph alone (and opens nothing) */
-  cv.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; const at = overviewAt(ev); og.drag = { node: at.hit, moved: false, px0: at.px, py0: at.py, px: at.px, py: at.py }; og.armed = true; });
+  cv.addEventListener("mousedown", (ev) => { if (ev.button !== 0) return; const at = overviewAt(ev); og.drag = { node: at.hit, moved: false, px0: at.px, py0: at.py, px: at.px, py: at.py }; });
   cv.addEventListener("contextmenu", overviewDrop);
   window.addEventListener("blur", overviewDrop);
   window.addEventListener("mouseup", (ev) => {
@@ -6123,7 +6059,7 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
     else if (n.kind === "chat" || n.kind === "expert") openChatById(n.pane);
     else if (n.kind === "saved") openChatById(n.chat);
   });
-  cv.addEventListener("mouseleave", () => { og.armed = false; if (og.hover) { og.hover = null; overviewPoke(); } });
+  cv.addEventListener("mouseleave", () => { if (og.hover) { og.hover = null; overviewPoke(); } });
   cv.addEventListener("dblclick", () => { og.mine = false; og.panX = og.panY = 0; overviewPoke(); });   /* double-click: fit it to the space again */
   /* The wheel zooms the graph, down to the smallest zoom the fit itself may choose (ZOOM_MIN). A pinch (the wheel with Ctrl or
      Command) always does, and stops here, so it never also changes the page's text size. When the cards are under
@@ -6131,7 +6067,6 @@ function overviewDrop() { if (!og.drag) return; const d = og.drag; og.drag = nul
      after a press on the graph, until the pointer leaves it. */
   cv.addEventListener("wheel", (ev) => {
     const pinch = ev.ctrlKey || ev.metaKey;
-    if (!pinch && !og.armed && overviewScrolls()) return;
     ev.preventDefault(); ev.stopPropagation();
     const by = pinch ? Math.max(0.8, Math.min(1.25, Math.exp(-ev.deltaY * 0.01))) : ev.deltaY < 0 ? 1.1 : 0.9;
     og.mine = true; og.zoom = Math.max(ZOOM_MIN, Math.min(3, og.zoom * by)); overviewPoke();

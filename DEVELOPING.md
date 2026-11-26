@@ -259,8 +259,8 @@ one line (`xpLink`), placed where the parent's log has the `helper_started` even
 its dot, words and mark are changed in place (`sideRow`), so a press is never lost to a repaint; after an event the
 sidebar is painted at most once a frame (`paintSideSoon`). A card in a helper's chat that asks to allow a program is
 live only while the helper is stopped on it (`approvalCard`). Restored agents carry `role`, `parent`, `team` and
-`expert` in `agent_new`. Overview (`view` `all`) is the graph beside a column of cards. The cards, one per game and a New project card
-(`apCard`, `paintAll`), open the game's Review when something needs the user, else its Chat. The graph (`og`,
+`expert` in `agent_new`. Overview (`view` `all`) is the graph over the whole page, with one line of totals over its top edge
+(`paintAll`); what needs the user is in Review. The graph (`og`,
 `overviewWanted`, `overviewSync`, `overviewStep`, `overviewDraw`) draws games, their open and saved chats, experts
 tied to their Lead and a working chat's last steps (`overviewNote`, called from `poll` beside `onEvent`). It asks
 for a frame only while something changes: the layout cools (`og.heat`) and goes to sleep, after which nothing is
