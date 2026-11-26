@@ -170,3 +170,16 @@ Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
 Not taken: T3 Code's name, wordmark, logos, icons, artwork and its own branded theme, which its `TRADEMARK.md` keeps
 out of the MIT licence. Fridae is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows
 are drawn for Fridae.
+
+## The front end's screens (`ui/src`, `ui/app.js`)
+
+- **Preact** 11.2.0 by Jason Miller and contributors, https://github.com/preactjs/preact, MIT
+  (`licenses/preact-LICENSE.txt`, also `ui/vendor/preact/LICENSE`). `ui/vendor/preact/` is a trimmed copy of the npm
+  package `preact`: the built `preact`, `preact/hooks` and `preact/jsx-runtime` modules, their type files,
+  `package.json` and the licence; its other add-ons, sources and source maps are left out. It is bundled into
+  `ui/app.js`, which ships with the app.
+- **esbuild** 0.28.2 by Evan Wallace, https://github.com/evanw/esbuild, MIT (`licenses/esbuild-LICENSE.txt`).
+  `tools/esbuild.exe` is the unchanged Windows program from the npm package `@esbuild/win32-x64`. It bundles
+  `ui/src` into `ui/app.js` and `ui/app.css` when the app is built (`ui/build.py`); it is not part of the built app.
+
+Both were checked against the npm registry's sha512 when they were added (2026-11-26).
