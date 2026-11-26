@@ -1373,17 +1373,31 @@ pub fn find_cursor() -> Option<PathBuf> {
 /// OpenCode's command-line tool, if it is installed. Its installer puts it in ~/.opencode/bin, which is on no PATH an
 /// app gets (the installer adds it in the shell's start-up file).
 pub fn find_opencode() -> Option<PathBuf> {
-    // not on Windows yet: see DEVELOPING.md, "OpenCode as a chat's AI"
-    if cfg!(windows) {
-        return None;
-    }
+    #[cfg(windows)]
+    return opencode_in(env::var_os("FRIDAE_OPENCODE"), env::var_os("PATH"), &home_dir(), &PathBuf::from(env::var_os("LOCALAPPDATA").unwrap_or_default()));
+    #[cfg(not(windows))]
     env::var("FRIDAE_OPENCODE").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("opencode")).or_else(|| {
         Some(home_dir().join(".opencode").join("bin").join("opencode")).filter(|p| p.is_file())
     })
 }
 
-/// The AIs a chat can run on. Cursor and OpenCode are not offered on Windows yet (see DEVELOPING.md).
-pub const AIS: &[&str] = if cfg!(windows) { &["claude", "gemini", "chatgpt"] } else { &["claude", "gemini", "chatgpt", "cursor", "opencode"] };
+/// Windows: `FRIDAE_OPENCODE`; then `opencode.exe` on PATH (scoop, winget, a download) or npm's `opencode.cmd` (never
+/// the shell script npm puts beside it, which Windows cannot run); then OpenCode's installer's
+/// `~\.opencode\bin\opencode.exe`; then the command line OpenCode's desktop app ships,
+/// `%LOCALAPPDATA%\Programs\ai.opencode.desktop\resources\opencode-cli.exe` (measured: opencode v2.4.1).
+#[cfg(windows)]
+fn opencode_in(set: Option<std::ffi::OsString>, path: Option<std::ffi::OsString>, home: &Path, local: &Path) -> Option<PathBuf> {
+    let on_path = |name: &str| path.as_ref().and_then(|p| env::split_paths(p).map(|d| d.join(name)).find(|f| f.is_file()));
+    set.map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(|| on_path("opencode.exe"))
+        .or_else(|| on_path("opencode.cmd"))
+        .or_else(|| Some(home.join(".opencode").join("bin").join("opencode.exe")).filter(|p| p.is_file()))
+        .or_else(|| Some(local.join("Programs").join("ai.opencode.desktop").join("resources").join("opencode-cli.exe")).filter(|p| p.is_file()))
+}
+
+/// The AIs a chat can run on. Cursor is not offered on Windows yet (see DEVELOPING.md).
+pub const AIS: &[&str] = if cfg!(windows) { &["claude", "gemini", "chatgpt", "opencode"] } else { &["claude", "gemini", "chatgpt", "cursor", "opencode"] };
 
 /// The program behind one of them, if it is installed.
 pub fn find_ai(kind: &str) -> Option<PathBuf> {
@@ -1563,7 +1577,10 @@ pub fn program_name(command: &str) -> Option<String> {
 /// Nowhere `$`, a backtick, a backslash or a line break. A redirection only as a whole word: `2>&1`, `>/dev/null`, `2>/dev/null` (or `>`/`2>`
 /// then the word `/dev/null`); any other `<` or `>` refuses. Parts joined by `;`, `&&`, `||` or `|` must each pass; a
 /// lone `&`, `|&` or an empty part refuses. Nor does anything that reads another process's environment pass
-/// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`). When unsure, no: the card
+/// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`; on Windows `WIN_RUNNERS` too).
+/// On Windows OpenCode runs commands in Windows PowerShell (`opencode::settings`), whose grammar the same whitelist
+/// keeps to plain words: no `$`, backtick, parentheses or braces leaves nothing for it to run, and it never runs a
+/// program from the current folder by a bare name (measured: a planted `git.bat`, `.cmd` or `.ps1` never ran). When unsure, no: the card
 /// shows, with the reason (`refusal_reason`). The native allow lists of Claude Code (`Bash(<p>:*)`)
 /// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AI whose requests the app answers and whose shell
 /// is the app's own (OpenCode). Not for Gemini's kept process (`acp::decide`): agy runs commands through zsh and the
@@ -1688,6 +1705,25 @@ pub const ARG_RUNNERS: &[(&str, Runs)] = {
     ]
 };
 
+/// Windows only, where OpenCode's commands run in Windows PowerShell: its commands and Windows' own programs that run
+/// a command, a script or a file they are given (names as `program_name` gives them: lower case, no `.exe`).
+const WIN_RUNNERS: &[(&str, Runs)] = {
+    use Runs::*;
+    &[
+        ("cmd", Always), ("powershell", Always), ("pwsh", Always), ("powershell_ise", Always), ("iex", Always), ("invoke-expression", Always),
+        ("icm", Always), ("invoke-command", Always), ("saps", Always), ("start-process", Always), ("sajb", Always), ("start-job", Always),
+        ("start-threadjob", Always), ("ii", Always), ("invoke-item", Always), ("foreach-object", Always), ("where-object", Always),
+        ("invoke-cimmethod", Always), ("invoke-wmimethod", Always), ("rundll32", Always), ("mshta", Always), ("cscript", Always),
+        ("wscript", Always), ("msiexec", Always), ("forfiles", Always), ("schtasks", Always), ("at", Always), ("conhost", Always),
+        ("explorer", Always), ("regsvr32", Always), ("pcalua", Always), ("scriptrunner", Always), ("wt", Always),
+    ]
+};
+
+/// The runners this system has: on Windows PowerShell's and Windows' own as well (`WIN_RUNNERS`).
+fn runners() -> impl Iterator<Item = &'static (&'static str, Runs)> {
+    ARG_RUNNERS.iter().chain(if cfg!(windows) { WIN_RUNNERS } else { &[] }.iter())
+}
+
 /// Options of a runner that take the next word as their value (so it is not the program run).
 fn value_options(runner: &str) -> &'static [&'static str] {
     match runner {
@@ -1809,7 +1845,7 @@ pub fn git_runs(words: &[String]) -> Option<Vec<String>> {
 /// would run.
 fn runner_in(words: &[String]) -> Option<(&'static str, Vec<String>)> {
     let first = words.first().map(|w| program_name(w).unwrap_or_default())?;
-    let (name, runs) = ARG_RUNNERS.iter().find(|(n, _)| *n == first)?;
+    let (name, runs) = runners().find(|(n, _)| *n == first)?;
     match runs {
         Runs::Git => git_runs(words).map(|p| (*name, p)),
         Runs::Find => {
@@ -1847,7 +1883,7 @@ fn runner_in(words: &[String]) -> Option<(&'static str, Vec<String>)> {
 fn runs_env_reader(words: &[String], depth: usize) -> bool {
     let Some((name, payload)) = runner_in(words) else { return false };
     let reader = |t: &str| ENV_READERS.contains(&base_name(t).to_lowercase().as_str());
-    if matches!(ARG_RUNNERS.iter().find(|(n, _)| *n == name).map(|r| r.1), Some(Runs::Always)) {
+    if matches!(runners().find(|(n, _)| *n == name).map(|r| r.1), Some(Runs::Always)) {
         let Some(first) = payload.first() else { return false };
         reader(first) || (depth < 8 && runs_env_reader(&payload, depth + 1))
     } else {
@@ -2074,10 +2110,52 @@ mod tests {
         assert_eq!(super::ai_choice(Some("cursor")), if cfg!(windows) { "claude" } else { "cursor" });
         assert_eq!(super::AIS.contains(&"cursor"), !cfg!(windows));
         assert_eq!(super::find_cursor().is_none() || !cfg!(windows), true);
-        // OpenCode likewise
-        assert_eq!(super::ai_choice(Some("opencode")), if cfg!(windows) { "claude" } else { "opencode" });
-        assert_eq!(super::AIS.contains(&"opencode"), !cfg!(windows));
-        assert!(super::find_opencode().is_none() || !cfg!(windows));
+        // OpenCode is offered everywhere (on Windows since 2.4.1 was measured there, DEVELOPING.md)
+        assert_eq!(super::ai_choice(Some("opencode")), "opencode");
+        assert!(super::AIS.contains(&"opencode"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn opencode_is_found_where_windows_installs_put_it() {
+        use std::path::PathBuf;
+        let t = super::test_dir("find-opencode");
+        let _ = std::fs::remove_dir_all(&t);
+        let (path_dir, npm, home, local) = (t.join("path"), t.join("npm"), t.join("home"), t.join("local"));
+        let desktop = local.join("Programs").join("ai.opencode.desktop").join("resources").join("opencode-cli.exe");
+        let installer = home.join(".opencode").join("bin").join("opencode.exe");
+        let touch = |p: &PathBuf| {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "x").unwrap();
+        };
+        let find = |set: Option<&PathBuf>, dirs: &[&PathBuf]| super::opencode_in(set.map(|p| p.as_os_str().to_owned()), std::env::join_paths(dirs).ok(), &home, &local);
+        assert_eq!(find(None, &[&path_dir]), None, "nothing installed");
+        touch(&desktop);
+        assert_eq!(find(None, &[&path_dir]), Some(desktop.clone()), "the desktop app's own command line");
+        touch(&installer);
+        assert_eq!(find(None, &[&path_dir]), Some(installer.clone()), "OpenCode's installer before the desktop app");
+        // npm puts a shell script (no extension) beside its .cmd: never the script, which Windows cannot run
+        touch(&npm.join("opencode"));
+        assert_eq!(find(None, &[&npm]), Some(installer.clone()));
+        touch(&npm.join("opencode.cmd"));
+        assert_eq!(find(None, &[&npm]), Some(npm.join("opencode.cmd")), "npm's shim on PATH");
+        touch(&path_dir.join("opencode.exe"));
+        assert_eq!(find(None, &[&path_dir, &npm]), Some(path_dir.join("opencode.exe")), "PATH before the fixed places");
+        assert_eq!(find(Some(&desktop), &[&path_dir]), Some(desktop.clone()), "FRIDAE_OPENCODE first");
+        assert_eq!(find(Some(&t.join("gone.exe")), &[&path_dir]), Some(path_dir.join("opencode.exe")), "a FRIDAE_OPENCODE that is not there is passed over");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_and_windows_programs_that_run_what_they_are_given_are_never_approved() {
+        // OpenCode's commands run in Windows PowerShell there: these run any command or file they are handed
+        let allowed: Vec<String> = ["git", "cmd", "powershell", "pwsh", "iex", "invoke-expression", "start-process", "saps", "ii", "invoke-item", "icm", "rundll32", "mshta", "cscript", "wscript", "forfiles", "Start-Process", "cmd.exe"].iter().map(|s| s.to_string()).collect();
+        for bad in ["cmd /c x", "powershell -c x", "pwsh -c x", "iex x", "invoke-expression x", "start-process x", "saps x", "ii x.bat", "invoke-item x", "icm x", "rundll32 x", "mshta x", "cscript x.js", "wscript x.vbs", "forfiles /c x", "Start-Process x", "cmd.exe /c x", "git status; cmd /c x"] {
+            assert!(!super::command_allowed(bad, &allowed), "{bad}");
+            assert!(super::refusal_reason(bad, &allowed).contains("runs"), "{bad}: {}", super::refusal_reason(bad, &allowed));
+        }
+        assert!(super::command_allowed("git status", &allowed));
     }
 
     #[test]

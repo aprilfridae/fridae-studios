@@ -9,13 +9,15 @@
 //! step's tokens and cost), `permission.asked`, and one of `session.execution.succeeded|failed|interrupted` at the
 //! end. Stop is `POST /api/session/<id>/interrupt`. Checked against opencode v2.3.2 and its own API description
 //! (`/openapi.json`). The server's lifecycle and the order of these calls follow t3code's OpenCode 2.x provider
-//! (MIT, see THIRD_PARTY.md). Not offered on Windows yet (DEVELOPING.md).
+//! (MIT, see THIRD_PARTY.md). On Windows too, checked against opencode v2.4.1 there (25 November 2026): commands run
+//! in Windows PowerShell (`shell_program`), paths are written as OpenCode names them there (`as_pattern`), and the
+//! server's process tree ends with the app (DEVELOPING.md, "OpenCode as a chat's AI").
 //!
 //! How this differs from Claude Code, and why:
 //! - OpenCode's desktop app and its command line share one database and a background service. Fridae's chats must
 //!   neither show up there nor touch it, so the app's server (and the few one-off commands below) run with folders of
 //!   the app's own (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under Application
-//!   Support on a Mac), read no project settings (`OPENCODE_DISABLE_PROJECT_CONFIG`) and nothing of Claude Code's.
+//!   Support on a Mac, `%LOCALAPPDATA%\Fridae Studios\opencode` on Windows, with its own TEMP there), read no project settings (`OPENCODE_DISABLE_PROJECT_CONFIG`) and nothing of Claude Code's.
 //!   The user's `~/.config/opencode` and `~/.local/share/opencode` are never written, and the user's own background
 //!   service is never used; only the user's default model is read from `opencode.json`.
 //! - The server listens on 127.0.0.1 only, on a free port, behind a random password that lives only in its
@@ -99,6 +101,9 @@ fn store() -> PathBuf {
         let home = paths::home_dir();
         let base = if cfg!(target_os = "macos") {
             home.join("Library").join("Application Support")
+        } else if cfg!(windows) {
+            // the per-user local app data folder (not Roaming: the database is large and holds the sign-in)
+            env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Local"))
         } else {
             env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local").join("share"))
         };
@@ -107,13 +112,16 @@ fn store() -> PathBuf {
 }
 
 /// The XDG folders as the user's own programs see them: what the app was started with, else the usual defaults. Our
-/// tool servers get these back, since the OpenCode server itself runs with the app's.
+/// tool servers and shell commands get these back, since the OpenCode server itself runs with the app's. On Windows
+/// the temporary folder too (the server's is in the app's store, see `environment`).
 fn users_xdg() -> Vec<(String, String)> {
     let home = paths::home_dir();
-    [("XDG_DATA_HOME", home.join(".local").join("share")), ("XDG_STATE_HOME", home.join(".local").join("state")), ("XDG_CACHE_HOME", home.join(".cache"))]
-        .into_iter()
-        .map(|(k, dflt)| (k.to_string(), env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| dflt.display().to_string())))
-        .collect()
+    let mut v: Vec<(&str, PathBuf)> = vec![("XDG_DATA_HOME", home.join(".local").join("share")), ("XDG_STATE_HOME", home.join(".local").join("state")), ("XDG_CACHE_HOME", home.join(".cache"))];
+    if cfg!(windows) {
+        let temp = env::temp_dir();
+        v.extend([("TEMP", temp.clone()), ("TMP", temp)]);
+    }
+    v.into_iter().map(|(k, dflt)| (k.to_string(), env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| dflt.display().to_string()))).collect()
 }
 
 /// Environment variables that would point OpenCode back at the user's setup, a server, a password or a username: every
@@ -124,10 +132,28 @@ const DROPPED: [&str; 1] = ["XDG_CONFIG_DIRS"];
 /// shell command (`shell_wrapper`) and tool server (`servers_config`) it starts, so the model cannot read them.
 const SECRETS: [&str; 4] = ["OPENCODE_PASSWORD", "OPENCODE_SERVER_PASSWORD", "OPENCODE_USERNAME", "OPENCODE_SERVER_USERNAME"];
 
-/// The shell OpenCode runs commands with (its `shell` setting): a small script of the app's that removes the password
-/// variables, then runs `/bin/sh`, never the user's `$SHELL`: the app approves commands by a check written for sh's
-/// grammar (`paths::command_allowed`), and zsh or fish would run programs from forms sh does not have (glob
+/// The shell OpenCode runs commands with (its `shell` setting). Unix: a small script of the app's that removes the
+/// password variables, then runs `/bin/sh`, never the user's `$SHELL`: the app approves commands by a check written for
+/// sh's grammar (`paths::command_allowed`), and zsh or fish would run programs from forms sh does not have (glob
 /// qualifiers, `=( )`, bare parentheses). OpenCode passes its arguments on (`-c <command>`).
+///
+/// Windows: the system's own Windows PowerShell 5.1 by its full path (measured, opencode 2.4.1: OpenCode picks its shell
+/// by the file's name and starts `powershell` as `-NoLogo -NoProfile -NonInteractive -Command <command>`, so no
+/// profile of the user's runs). Not a wrapper script: OpenCode would start a `.cmd` with `-c <command>` through
+/// cmd.exe, which reads `&`, `|` and `%` in the command itself. Not cmd.exe (it expands `%VAR%` inside words the check
+/// lets through), nor pwsh or Git Bash (the user's, and maybe missing). PowerShell never runs a program from the current
+/// folder by a bare name (measured: a planted `git.bat`, `git.cmd`, `git.ps1` never ran), and without `$`, backticks,
+/// parentheses and braces (the check allows none) a word stays a word. The password variables are kept from commands
+/// by the session's command environment, which OpenCode uses in place of its own (measured: with it put, a command saw
+/// none of `OPENCODE_PASSWORD` and the rest; without it, it saw them all), see `shell_environment`.
+fn shell_program() -> PathBuf {
+    #[cfg(windows)]
+    return env::var_os("SystemRoot").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows")).join("System32").join("WindowsPowerShell").join("v1.0").join("powershell.exe");
+    #[cfg(not(windows))]
+    shell_wrapper()
+}
+
+#[cfg(not(windows))]
 fn shell_wrapper() -> PathBuf {
     let path = store().join("bin").join("fridae-shell");
     let text = format!("#!/bin/sh\n# Fridae Studios: OpenCode's shell, without the app's server password\nunset {}\nexec /bin/sh \"$@\"\n", SECRETS.join(" "));
@@ -150,7 +176,7 @@ fn shell_wrapper() -> PathBuf {
 /// language servers in the game's folder, and policies that leave only the chats' own tool servers and no skills.
 fn settings() -> Value {
     json!({
-        "shell": shell_wrapper(),
+        "shell": shell_program(),
         "update": "disable", "autoupdate": false, "share": "disabled", "snapshots": false, "lsp": false, "formatter": false,
         "automations": false, "warming": false,
         "policies": [rule("mcp.use", "*", "deny"), rule("mcp.use", "fr*", "allow"), rule("skill.use", "*", "deny")],
@@ -184,6 +210,14 @@ fn environment(cmd: &mut Command) {
         .env("OPENCODE_DISABLE_PROJECT_CONFIG", "1")
         .env("OPENCODE_DISABLE_CLAUDE_CODE", "1")
         .env("OPENCODE_DISABLE_AUTOUPDATE", "1");
+    // Windows: OpenCode keeps temporary files in `%TEMP%\opencode`, the same folder as the user's own OpenCode (measured,
+    // 2.4.1, `opencode debug paths tmp`); it follows TEMP, so the app's copy gets one in its store. Shell commands and
+    // tool servers get the user's back (`users_xdg`).
+    if cfg!(windows) {
+        let tmp = s.join("tmp");
+        let _ = fs::create_dir_all(&tmp);
+        cmd.env("TEMP", &tmp).env("TMP", &tmp);
+    }
     let cfg = s.join("config");
     let _ = fs::create_dir_all(&cfg);
     // replaced whole (several threads may start commands at once)
@@ -224,6 +258,9 @@ pub fn load_models() {
             let run = |args: &[&str]| {
                 let mut cmd = opencode(&exe);
                 cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
+                // `--standalone` starts a `serve --stdio` of its own beside it (measured, 2.4.1): on Windows that child is
+                // ended with the app by the job the app's own process tree is in, once this runs as a spawned child
+                // TODO(merge): paths::end_with_app(&child)
                 cmd.run_output().ok().map(|o| (String::from_utf8_lossy(&o.stdout).to_string(), o.status.success())).unwrap_or_default()
             };
             let list = parse_models(&run(&["models"]).0);
@@ -799,9 +836,40 @@ pub fn gaps() -> Value {
 // -------------------------------------------------------------- permissions
 
 /// A path as a pattern: OpenCode's patterns know only `*` and `?`, so those characters in a path become `?` (one
-/// character), and the rule still covers the path.
+/// character), and the rule still covers the path. On Windows with `/`, as OpenCode names files there (measured,
+/// 2.4.1: `H:/games/g/x.lua`), and without the verbatim prefix a resolved path has (`\\?\C:\x` is `C:/x`,
+/// `\\?\UNC\srv\share` is `//srv/share`).
 fn as_pattern(path: &Path) -> String {
-    path.display().to_string().chars().map(|c| if matches!(c, '*' | '?') { '?' } else { c }).collect()
+    let s = path.display().to_string();
+    #[cfg(windows)]
+    let s = {
+        let s = s.replace('\\', "/");
+        if let Some(rest) = s.strip_prefix("//?/UNC/") { format!("//{rest}") } else { s.strip_prefix("//?/").map(str::to_string).unwrap_or(s) }
+    };
+    s.chars().map(|c| if matches!(c, '*' | '?') { '?' } else { c }).collect()
+}
+
+/// A protected place's patterns: its spellings, and on Windows also any spelling through the home folder's old
+/// junctions to its AppData folders (`Local Settings`, `Application Data`, and `AppData\Local\Application Data`, which
+/// leads back to itself): the part from the home folder to `AppData\<Local|Roaming|LocalLow>` becomes `*` (a deny rule
+/// may over-match: another folder of that same name and tail under the home folder is refused too).
+fn deny_spellings(p: &Path) -> Vec<String> {
+    let mut out = spellings(p);
+    if cfg!(windows) {
+        for s in out.clone() {
+            let lower = s.to_ascii_lowercase();
+            for kind in ["local", "roaming", "locallow"] {
+                let mark = format!("/appdata/{kind}/");
+                if let Some(at) = lower.find(&mark) {
+                    let alias = format!("{}/*/{}", &s[..at], &s[at + mark.len()..]);
+                    if !out.contains(&alias) {
+                        out.push(alias);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A folder's patterns, as written and as the system resolves it (/tmp is /private/tmp on a Mac): OpenCode matches
@@ -879,6 +947,11 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
         // in the chat's folders
         r.push(rule("edit", "*", "allow"));
         r.push(rule("edit", "/*", "deny"));
+        if cfg!(windows) {
+            // an absolute path there: a drive (`C:/x`), or a device or network path (`//?/C:/x`, `//host/share/x`)
+            r.push(rule("edit", "?:/*", "deny"));
+            r.push(rule("edit", "//*", "deny"));
+        }
         r.push(rule("edit", "../*", "deny"));
         let mut dirs: Vec<&Path> = vec![folders.location, folders.kit];
         dirs.extend(folders.project);
@@ -942,7 +1015,7 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
             // (measured, 2.3.2: `edit <kit>/config.json deny` let `<kit>/CONFIG.JSON` through): every letter becomes
             // `?`, its one-character wildcard (it has no `[cC]`; measured), so a few same-shaped names are refused too
             // (given back below)
-            for f in if paths::case_blind() { any_case_all(&f) } else { vec![f] } {
+            for f in if blind() { any_case_all(&f) } else { vec![f] } {
                 r.push(rule("edit", &f, "deny"));
                 r.push(rule("edit", &format!("{f}/*"), "deny"));
             }
@@ -951,7 +1024,7 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
     for p in protect {
         deny_protected(&mut r, p);
     }
-    if paths::case_blind() {
+    if blind() {
         // the `?` forms also refuse folders of the same shape (`~/Desktop` and `~/Dropbox` look like `~/Library`): give
         // back, by their exact names, in Full auto each such folder that exists, and in Ask me the chat's own folders
         // when they are hit. Then the protected places inside what was given back, and the fixed denies, again.
@@ -1015,7 +1088,7 @@ pub fn deny_secrets(r: &mut Vec<Value>, secrets: &[PathBuf], location: &Path) {
     let bases = spellings(location);
     for p in secrets {
         let mut forms: Vec<String> = Vec::new();
-        for s in spellings(p) {
+        for s in deny_spellings(p) {
             for b in &bases {
                 if let Some(rel) = relative_pattern(b, &s) {
                     forms.push(rel);
@@ -1023,7 +1096,7 @@ pub fn deny_secrets(r: &mut Vec<Value>, secrets: &[PathBuf], location: &Path) {
             }
             forms.push(s);
         }
-        if paths::case_blind() {
+        if blind() {
             let blind: Vec<String> = forms.iter().flat_map(|f| any_case_all(f)).collect();
             forms.extend(blind);
         }
@@ -1035,6 +1108,24 @@ pub fn deny_secrets(r: &mut Vec<Value>, secrets: &[PathBuf], location: &Path) {
             }
         }
     }
+    // Windows: a file can be named past every pattern above (OpenCode keeps the name as typed; measured, 2.4.1): by a
+    // device or network path (`\\?\C:\x`, `\\localhost\C$\x`, named `//?/C:/x`, `//localhost/C$/x`; both wrote
+    // through an `edit` deny of `C:/x/*`) or by a short 8.3 name (`C:\Users\a\APPDAT~1`). No tool uses either, in any
+    // mode; a file whose own name has `~` and one or two characters before its end or its extension is refused too.
+    if cfg!(windows) {
+        for f in ["//*", "*~?", "*~?/*", "*~?.*", "*~??", "*~??/*", "*~??.*"] {
+            for a in ["read", "glob", "grep", "list", "edit", "external_directory"] {
+                r.push(rule(a, f, "deny"));
+            }
+        }
+    }
+}
+
+/// Whether protected patterns must be written for every case of letters (`any_case_all`): where the disk ignores case
+/// and OpenCode does not. On Windows OpenCode itself compares patterns without regard to case (measured, 2.4.1:
+/// `edit h:/RUST/x/* deny` refused `H:\rust\x\a.txt`), so plain patterns hold and no look-alike name is refused.
+fn blind() -> bool {
+    paths::case_blind() && !cfg!(windows)
 }
 
 /// Whether OpenCode's pattern matches a text: `*` any text (also across `/`), `?` any one character, the rest literal.
@@ -1112,7 +1203,10 @@ fn any_case_all(pattern: &str) -> Vec<String> {
 fn relative_pattern(base: &str, pattern: &str) -> Option<String> {
     let b: Vec<&str> = base.split('/').filter(|c| !c.is_empty()).collect();
     let p: Vec<&str> = pattern.split('/').filter(|c| !c.is_empty()).collect();
-    let common = b.iter().zip(&p).take_while(|(x, y)| x == y).count();
+    // Windows: one folder whatever the case of its letters (OpenCode names a file inside the working folder relative to
+    // it in any case: measured, 2.4.1)
+    let same = |x: &&str, y: &&str| if cfg!(windows) { x.to_lowercase() == y.to_lowercase() } else { x == y };
+    let common = b.iter().zip(&p).take_while(|(x, y)| same(x, y)).count();
     if common == 0 {
         return None;
     }
@@ -1130,7 +1224,7 @@ fn protected(home: &Path) -> Vec<String> {
     for place in paths::never_written(home, &[store()]) {
         match place {
             paths::NoWrite::Place(p) if p.parent() == Some(home) => list.extend(spellings(home).into_iter().map(|h| format!("{h}/{}", p.file_name().unwrap_or_default().to_string_lossy()))),
-            paths::NoWrite::Place(p) => list.extend(spellings(&p)),
+            paths::NoWrite::Place(p) => list.extend(deny_spellings(&p)),
             paths::NoWrite::HiddenIn(h) => list.extend(spellings(&h).into_iter().map(|h| format!("{h}/.*"))), // a pattern on purpose: every hidden name
         }
     }
@@ -1286,6 +1380,9 @@ fn start_server() -> Result<Server, String> {
         cmd.start()
     };
     let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
+    // Windows: the server, its `opencode-pty daemon` (a direct child, measured on 2.4.1; it ends by itself when the
+    // server is killed) and the shells the daemon starts all end with the app
+    // TODO(merge): paths::end_with_app(&child)
     procs::record("opencode", child.id());
     let (tx, rx) = mpsc::channel::<u16>();
     let stdout = child.stdout.take();
@@ -2073,7 +2170,7 @@ static WRITER_SETUP: Mutex<()> = Mutex::new(());
 /// gave (the call itself then tells). Once it has: for each family the name the user gave when it is listed, else
 /// the first listed model of that family, always under `opencode-go/` and never a "-free" model.
 pub fn writers() -> Vec<String> {
-    if cfg!(windows) || paths::find_opencode().is_none() || free_only() {
+    if paths::find_opencode().is_none() || free_only() {
         return Vec::new();
     }
     let listed: Vec<String> = models().into_iter().map(|(id, _)| id).collect();
@@ -2881,6 +2978,8 @@ pub fn login_start() -> Value {
             Ok(c) => c,
             Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
         };
+        // with its `serve --stdio` child (measured, 2.4.1)
+        // TODO(merge): paths::end_with_app(&child)
         procs::record("opencode-login", child.id());
         *l = Login { pid: Some(child.id()), state: "waiting", ..Default::default() };
         child
@@ -2992,6 +3091,110 @@ mod tests {
             let _ = std::process::Command::new(&w).arg("-c").arg(c).current_dir(&dir).env("SHELL", "/bin/zsh")
                 .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).run_status();
             assert!(!mark.exists(), "{c} ran the planted script");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn commands_run_in_windows_powershell_where_a_planted_script_never_runs() {
+        // OpenCode's shell on Windows is the system's own Windows PowerShell, by its full path (never cmd.exe, which
+        // expands %VAR% inside words the check lets through, nor pwsh or Git Bash, which may be missing or the user's);
+        // OpenCode starts it as measured: `-NoLogo -NoProfile -NonInteractive -Command <command>`
+        let shell = PathBuf::from(settings()["shell"].as_str().unwrap());
+        assert!(shell.is_absolute() && shell.is_file(), "{}", shell.display());
+        assert!(shell.display().to_string().to_lowercase().ends_with(r"\system32\windowspowershell\v1.0\powershell.exe"), "{}", shell.display());
+        // a program the user allowed is looked up on PATH only: one planted in the folder never runs by its bare name
+        let dir = paths::test_dir("planted-ps");
+        fs::create_dir_all(&dir).unwrap();
+        for n in ["git", "fridaeplanted"] {
+            fs::write(dir.join(format!("{n}.bat")), format!("@echo off\r\necho x> \"%~dp0ran-{n}-bat\"\r\n")).unwrap();
+            fs::write(dir.join(format!("{n}.cmd")), format!("@echo off\r\necho x> \"%~dp0ran-{n}-cmd\"\r\n")).unwrap();
+            fs::write(dir.join(format!("{n}.ps1")), format!("Set-Content -LiteralPath (Join-Path $PSScriptRoot 'ran-{n}-ps1') x\r\n")).unwrap();
+        }
+        for c in ["fridaeplanted", "fridaeplanted x", "git --version", "git --version; fridaeplanted", "git status | fridaeplanted"] {
+            let mut cmd = Command::new(&shell);
+            cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", c]).current_dir(&dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            paths::quiet(&mut cmd);
+            let _ = cmd.run_status();
+            let ran: Vec<String> = fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("ran-")).collect();
+            assert!(ran.is_empty(), "{c} ran a planted script: {ran:?}");
+        }
+        // the password variables never reach a command: each turn puts the whole command environment on the session,
+        // which OpenCode uses in place of its own (measured, 2.4.1), and that environment has none of them
+        let _state = TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: set and removed while holding TEST_STATE; no other test reads this variable
+        unsafe { env::set_var("OPENCODE_PASSWORD", "sekrit") };
+        let vars = shell_environment();
+        unsafe { env::remove_var("OPENCODE_PASSWORD") };
+        assert!(SECRETS.iter().all(|s| !vars.contains_key(*s)));
+        assert!(["SystemRoot", "PATH"].iter().all(|n| vars.keys().any(|k| k.eq_ignore_ascii_case(n))), "the rest of the app's environment");
+        // and commands get the user's own temporary folder back (the server's is in the app's store)
+        assert_eq!(vars["TEMP"].as_str().map(PathBuf::from), env::var_os("TEMP").map(PathBuf::from));
+        let mut server = Command::new("x");
+        environment(&mut server);
+        let set: HashMap<String, String> = server.get_envs().filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string()))).collect();
+        assert_eq!(set.get("TEMP").map(PathBuf::from), Some(store().join("tmp")), "OpenCode's own temporary files stay in the app's store");
+        assert_eq!(set.get("TMP"), set.get("TEMP"));
+        assert_eq!(set.get("XDG_DATA_HOME").map(PathBuf::from), Some(store().join("data")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_written_as_opencode_names_them() {
+        // measured, opencode 2.4.1 on Windows (25 November 2026): a file outside the working folder is named with /,
+        // its drive and letters as the model typed them, \\?\ and \\host\share kept (as //?/ and //host/share);
+        // patterns are compared without regard to case, and \ in a pattern counts as /
+        assert_eq!(as_pattern(Path::new(r"H:\games\Odd\x.lua")), "H:/games/Odd/x.lua");
+        assert_eq!(as_pattern(Path::new(r"\\?\H:\games\g")), "H:/games/g", "a resolved path drops the verbatim prefix");
+        assert_eq!(as_pattern(Path::new(r"\\?\UNC\srv\share\g")), "//srv/share/g");
+        assert_eq!(relative_pattern("C:/Users/A/games/g", "c:/users/a/.*").as_deref(), Some("../../.*"), "one folder in any case");
+        assert_eq!(relative_pattern("C:/Users/a/games/g", "D:/Users/a/.*").as_deref(), None, "another drive: absolute");
+        assert!(!blind(), "OpenCode itself ignores case on Windows: no ? patterns");
+        let home = PathBuf::from(r"C:\Users\a");
+        let store = home.join(r"AppData\Local\Fridae Studios\opencode");
+        let game = PathBuf::from(r"H:\games\Odd One");
+        let kit = PathBuf::from(r"H:\kit");
+        let f = Folders { location: &game, project: Some(&game), kit: &kit, reads: vec![PathBuf::from(r"H:\work\attachments")] };
+        let mut protect = vec![format!("{}/.*", as_pattern(&home))];
+        protect.extend(deny_spellings(&store));
+        protect.push("H:/kit/config.json".to_string());
+        let secrets = [store.join(r"data\opencode\auth.json")];
+        for full in [false, true] {
+            let mut r = permissions(full, "c1", &[], &f, &protect);
+            deny_secrets(&mut r, &secrets, f.location);
+            assert!(r.iter().all(|x| !x["resource"].as_str().unwrap().contains('\\')), "full {full}: no backslash in any rule");
+            let ed = |p: &str| decides(&r, "edit", p);
+            assert_eq!(ed("H:/games/Odd One/src/a.lua"), "allow", "full {full}");
+            assert_eq!(ed("h:/GAMES/odd one/src/a.lua"), "allow", "full {full}: any case");
+            assert_eq!(ed("src/a.lua"), "allow", "full {full}: relative inside the game");
+            for bad in [
+                "H:/kit/config.json", "h:/KIT/Config.JSON", "C:/Users/a/.gitconfig", "c:/users/A/.ssh/x",
+                "C:/Users/a/AppData/Local/Fridae Studios/opencode/config/opencode.json",
+                // the same places by other names: the old junctions in the home folder, short 8.3 names, a device or
+                // network path
+                "C:/Users/a/Local Settings/Fridae Studios/opencode/config/opencode.json",
+                "C:/Users/a/AppData/Local/FRIDAE~1/opencode/config/opencode.json", "C:/Users/a/APPDAT~1/Local/Fridae Studios/opencode/x",
+                "//?/C:/Users/a/.gitconfig", "//./C:/Users/a/.gitconfig", "//localhost/C$/Users/a/.gitconfig", "//?/UNC/localhost/H$/kit/config.json",
+            ] {
+                assert_eq!(ed(bad), "deny", "full {full}: {bad}");
+            }
+            for a in ["read", "grep", "list"] {
+                for bad in [
+                    "C:/Users/a/AppData/Local/Fridae Studios/opencode/data/opencode/auth.json",
+                    "//?/C:/Users/a/AppData/Local/Fridae Studios/opencode/data/opencode/auth.json",
+                    "C:/Users/a/APPDAT~1/Local/FRIDAE~1/opencode/data/opencode/auth.json",
+                    "C:/Users/a/Local Settings/Fridae Studios/opencode/data/opencode/auth.json",
+                ] {
+                    assert_eq!(decides(&r, a, bad), "deny", "full {full}: {a} {bad}");
+                }
+            }
+            assert_eq!(decides(&r, "read", "H:/games/Odd One/x.lua"), "allow");
+            if !full {
+                assert_eq!(ed("D:/elsewhere/x"), "deny", "Ask me: an absolute path outside the chat's folders");
+                assert_eq!(decides(&r, "external_directory", "H:/work/attachments/*"), "allow");
+                assert_eq!(decides(&r, "external_directory", "H:/kit/*"), "allow");
+                assert_eq!(decides(&r, "external_directory", "D:/elsewhere/*"), "deny");
+            }
         }
     }
 
@@ -3527,7 +3730,40 @@ mod tests {
         assert!(free_only_of(true, &[]) && !free_only_of(true, &["OpenCode Console".to_string()]));
     }
 
-    #[cfg(unix)]
+    /// A stand-in for the server: a process that waits a minute, in a group of its own.
+    fn stand_in() -> Command {
+        #[cfg(unix)]
+        let mut cmd = {
+            let mut c = Command::new("/bin/sleep");
+            c.arg("60");
+            c
+        };
+        #[cfg(windows)]
+        let mut cmd = {
+            let root = env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+            let mut c = Command::new(root.join("System32").join("PING.EXE"));
+            c.args(["-n", "60", "127.0.0.1"]);
+            paths::quiet(&mut c);
+            c
+        };
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        paths::own_group(&mut cmd);
+        cmd
+    }
+
+    /// Whether a process still runs.
+    fn still_runs(pid: u32) -> bool {
+        #[cfg(unix)]
+        return Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).run_status().is_ok_and(|s| s.success());
+        #[cfg(windows)]
+        {
+            let mut c = Command::new("tasklist");
+            c.args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"]).stderr(Stdio::null());
+            paths::quiet(&mut c);
+            c.run_output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")))
+        }
+    }
+
     #[test]
     fn a_sign_in_during_a_turn_keeps_the_old_list_and_server_until_the_turn_is_over() {
         let _state = TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -3538,10 +3774,7 @@ mod tests {
         login_ended(true);
         assert!(RESTART.load(Ordering::SeqCst), "the restart stays wanted while a turn is starting its server");
         // a stand-in for the server: a process in a group of its own
-        let mut cmd = Command::new("/bin/sleep");
-        cmd.arg("60").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        paths::own_group(&mut cmd);
-        let child = cmd.start().unwrap();
+        let child = stand_in().start().unwrap();
         let pid = child.id();
         *SERVER.lock().unwrap() = Some(Server { child, port: 1, auth: "Basic test".into(), last_used: Instant::now() });
         // the sign-in ends while the turn runs (again, as the sign-in's own thread calls it): the server is left alone,
@@ -3559,8 +3792,7 @@ mod tests {
         let restart = leave("restart-test", &turn).expect("the restart that waited");
         restart.join().unwrap();
         assert!(SERVER.lock().unwrap().is_none() && !RESTART.load(Ordering::SeqCst));
-        let alive = Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).run_status().is_ok_and(|s| s.success());
-        assert!(!alive, "the old server is gone");
+        assert!(!still_runs(pid), "the old server is gone");
         assert!(models().is_empty() && state()["known"] == false, "asked for again: nothing is claimed meanwhile");
         assert_eq!(remember_pick("opencode/flint-40b-free"), Err("That model is not in the list any more. Pick another."));
         // nothing wanted: a turn's end restarts nothing
@@ -3598,17 +3830,21 @@ mod tests {
 
     /// A protected pattern as the rules write it on this disk.
     fn cb(p: &str) -> String {
-        if case_blind() { any_case(p) } else { p.to_string() }
+        if blind() { any_case(p) } else { p.to_string() }
     }
 
-    use crate::paths::case_blind;
+    /// Whether OpenCode refuses a protected name in every case of letters: by the `?` patterns where the disk ignores
+    /// case (`blind`), and on Windows by its own comparison.
+    fn case_blind() -> bool {
+        blind() || cfg!(windows)
+    }
 
     /// What OpenCode 2.3.2 decides for a tool and a path under these rules: the last rule whose action and resource
     /// match wins; in a pattern `*` is any text and `?` any one character, everything else literal and case as written
     /// (measured: `[cC]` is literal, `?onfig.json` matched `Config.json`).
     fn decides(rules: &[Value], action: &str, path: &str) -> String {
         let m = |pat: &str, text: &str| {
-            let re = format!("^{}$", pat.chars().map(|c| match c { '*' => ".*".to_string(), '?' => ".".to_string(), c => regex::escape(&c.to_string()) }).collect::<String>());
+            let re = format!("{}^{}$", if cfg!(windows) { "(?i)" } else { "" }, pat.chars().map(|c| match c { '*' => ".*".to_string(), '?' => ".".to_string(), c => regex::escape(&c.to_string()) }).collect::<String>());
             regex::Regex::new(&re).unwrap().is_match(text)
         };
         rules.iter().rev().find(|r| m(r["action"].as_str().unwrap(), action) && m(r["resource"].as_str().unwrap(), path)).map(|r| r["effect"].as_str().unwrap().to_string()).unwrap_or_default()
@@ -3648,23 +3884,22 @@ mod tests {
         // the rules a turn gets carry every secret, the GitHub sign-in among them
         let mut r = permissions(true, "c1", &[], &f, &[]);
         deny_secrets(&mut r, &paths::app_secrets(), f.location);
-        assert_eq!(decides(&r, "read", &format!("{}/token", crate::github::folder().display())), "deny");
+        assert_eq!(decides(&r, "read", &format!("{}/token", as_pattern(&crate::github::folder()))), "deny");
         // OpenCode's own sign-in is, its data folder around it is not: it saves cut-off tool output there for the
         // agent to read and search (a deny rule would beat every mode)
         let data = own_store().join("data").join("opencode");
         for a in ["read", "grep"] {
-            assert_eq!(decides(&r, a, &data.join("auth.json").display().to_string()), "deny", "{a}");
-            assert_eq!(decides(&r, a, &data.join("mcp-auth.json").display().to_string()), "deny", "{a}");
+            assert_eq!(decides(&r, a, &as_pattern(&data.join("auth.json"))), "deny", "{a}");
+            assert_eq!(decides(&r, a, &as_pattern(&data.join("mcp-auth.json"))), "deny", "{a}");
         }
         for own in [data.join("tool-output/tool_1"), data.join("storage/part/x.json")] {
-            assert_ne!(decides(&r, "read", &own.display().to_string()), "deny", "{}", own.display());
+            assert_ne!(decides(&r, "read", &as_pattern(&own)), "deny", "{}", own.display());
         }
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "Cursor and OpenCode are not offered on Windows yet (paths::AIS)")]
     fn same_shaped_folders_are_given_back_by_their_exact_names() {
-        if !case_blind() {
+        if !blind() {
             return;
         }
         let t = crate::paths::test_dir("same-shaped").canonicalize().unwrap_or_else(|_| crate::paths::test_dir("same-shaped"));
