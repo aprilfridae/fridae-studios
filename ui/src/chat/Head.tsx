@@ -117,7 +117,7 @@ export function ChatHead() {
     document.addEventListener("click", out);
     return () => document.removeEventListener("click", out);
   }, []);
-  useEffect(() => { if (renaming && input.current) { input.current.focus(); input.current.select(); } }, [renaming]);
+  useEffect(() => { if (renaming && input.current) { input.current.value = p ? p.name : ""; input.current.focus(); input.current.select(); } }, [renaming]);
   const rename = () => { if (!p) return; close(); done.current = false; setRenaming(true); };
   const finish = async (save: boolean) => {
     if (done.current) return; done.current = true;
@@ -130,7 +130,7 @@ export function ChatHead() {
       <span class="conv">
         <button class="title" id="chat-title" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} title="This project's chats" hidden={renaming}
           onClick={(ev) => { ev.stopPropagation(); if (!open) { setEver(true); H.loadHistory(); } setOpen(!open); }}><span id="chat-name">{p ? p.name : "New chat"}</span>{DOWN}</button>
-        {renaming && <input class="title-edit" ref={input} aria-label="Chat name" defaultValue={p ? p.name : ""} onBlur={() => finish(true)}
+        {renaming && <input class="title-edit" ref={input} aria-label="Chat name" onBlur={() => finish(true)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.stopPropagation(); finish(false); } }} />}
         <div class={"menu down" + (open ? " on" : "")} id="conv-menu" role="menu">{ever && <ConvMenu close={close} rename={rename} />}</div>
       </span>

@@ -4,6 +4,11 @@
 .main > .scroll { position: relative; overflow-anchor: none; }
 /* the way back to the end of a chat the reader has scrolled up in: over the message box, in its middle */
 .main > .dock { position: relative; }
-.to-latest { position: absolute; left: 50%; bottom: 100%; display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); padding: 0 12px; border-radius: 999px; font-size: 12px; color: var(--dim); background: var(--raised); border: 1px solid var(--line-strong); white-space: nowrap; opacity: 0; visibility: hidden; transform: translate(-50%, 4px); transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms, color var(--t-fast) ease; }
+.to-latest { position: absolute; left: 50%; bottom: 100%; display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); padding: 0 12px; border-radius: 999px; font-size: 12px; color: var(--dim); white-space: nowrap;
+  /* the same glass as the page's other floating pieces (.menu, .saytip) */
+  background: color-mix(in srgb, var(--raised) 18%, color-mix(in srgb, var(--raised) var(--glass-opacity), transparent));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent); opacity: 0; visibility: hidden; transform: translate(-50%, 4px); transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms, color var(--t-fast) ease; }
 .to-latest.on { opacity: 1; visibility: visible; transform: translate(-50%, -4px); transition: opacity 140ms ease, transform 160ms var(--ease), color var(--t-fast) ease; }
 .to-latest:hover { color: var(--text); }
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest { background: var(--raised); } }
