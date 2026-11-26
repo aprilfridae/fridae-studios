@@ -464,6 +464,12 @@ fn lead_ask(ask: &Ask, run: studio_undo::LeadOf, waiting: bool, last: &Ask) -> O
     Some(if ask.studio { ordinary(ask) } else { effective_ask(ask, false, last) })
 }
 
+/// A helper (an expert, a worker, a verifier, the researcher) always runs in full auto: the user does not answer
+/// its questions, so nothing it does waits for an approval (the user's word, 2026-11-25).
+fn helper_ask(ask: &Ask, helper: bool) -> Ask {
+    Ask { full: ask.full || helper, ..ask.clone() }
+}
+
 /// What a Lead is told when its run was ended in Review while it worked or waited.
 const RUN_ENDED: &str = "Studio run ended in Review. Its files and review items are kept.";
 
@@ -3268,7 +3274,7 @@ impl Agent {
         };
         // a wake or carry-on for a run that was ended in Review goes nowhere
         let Some(ask) = lead else { return };
-        let ask = &ask;
+        let ask = &helper_ask(&ask, is_helper(&self.st.lock().unwrap()));
         let (mut ask, fallback) = studio_fallback(ask, has_project);
         // a mode this chat's AI cannot keep to by its own rules is not run: the message goes as Ask me (`caps`)
         let (full, studio, mode_note) = crate::caps::mode_for(&self.ai(), ask.full, ask.studio);
@@ -6642,6 +6648,13 @@ mod tests {
         assert!(!drop_wakes(&mut q, true), "nothing more to change");
         let mut plain = vec![typed("hello", false)];
         assert!(!drop_wakes(&mut plain, true), "an ordinary message is left alone");
+    }
+
+    #[test]
+    fn a_helper_always_runs_in_full_auto() {
+        assert!(helper_ask(&Ask::default(), true).full);
+        assert!(!helper_ask(&Ask::default(), false).full);
+        assert!(helper_ask(&Ask { full: true, ..Default::default() }, false).full);
     }
 
     #[test]
