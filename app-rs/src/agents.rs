@@ -3652,6 +3652,11 @@ impl Agent {
                 let mut servers = servers.clone();
                 if agy_home.is_some() {
                     servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
+                    // on Windows the home is found by USERPROFILE (Python's too), which a second account's agy has
+                    // set to its own folder (`accounts::home`)
+                    if cfg!(windows) {
+                        servers["rbxkit"]["env"]["USERPROFILE"] = json!(paths::home_dir().display().to_string());
+                    }
                 }
                 // the second account's agy is given no Gemini key (`accounts::home`): the app's own tool server,
                 // whose textures may use one, gets them in its own entry (as OpenCode's launch gives them)
@@ -7457,7 +7462,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore = "the tool's clock time is not read on Windows (accounts::day_secs)")]
     fn a_chat_goes_back_to_the_users_own_account_only_when_the_second_runs_out() {
         crate::accounts::stand_in(true, true);
         let a = chat_on_first("c-roll-back");
@@ -8366,7 +8370,7 @@ mod tests {
         assert_eq!((env_of(&l[0], "CLAUDE_CONFIG_DIR"), env_of(&l[0], "CLAUDE_SECURESTORAGE_CONFIG_DIR")), (None, None));
         // (the account's sign-in files are named, in the read rules every turn gets, and nothing else of it)
         let mut key = l[0].0.clone();
-        for f in crate::accounts::SIGN_IN_FILES {
+        for f in crate::accounts::sign_in_names() {
             let p = format!("{}/{f}", folder("claude"));
             // (as the rules write it: on Windows a path is in POSIX form there)
             for dir in [true, false] {
@@ -8388,8 +8392,15 @@ mod tests {
             assert_eq!(env_of(&l[0], key), Some(None), "{key}");
         }
         assert!(l[0].0.contains("gemini-2-standin"));
-        let real = serde_json::to_string(&paths::home_dir().display().to_string()).unwrap();
-        assert!(l[0].0.contains(&format!("\\\"HOME\\\":{}", real.replace('"', "\\\""))), "the tool server's own entry has the app's HOME: {}", &l[0].0[..l[0].0.len().min(900)]);
+        // the tool server's own entry (the servers' JSON, one of the launch's strings) has the app's HOME back, and
+        // on Windows the app's USERPROFILE too (where Python and the app find the user's home there)
+        let launch: Value = serde_json::from_str(&l[0].0).unwrap();
+        let servers = launch.as_array().unwrap().iter().filter_map(|v| v.as_str()).filter_map(|t| serde_json::from_str::<Value>(t).ok()).find(|v| v.get("rbxkit").is_some()).expect("the servers' JSON");
+        let real = paths::home_dir().display().to_string();
+        assert_eq!(servers["rbxkit"]["env"]["HOME"], json!(real), "the tool server has the app's HOME");
+        if cfg!(windows) {
+            assert_eq!(servers["rbxkit"]["env"]["USERPROFILE"], json!(real), "and the app's USERPROFILE");
+        }
         // Gemini on the user's own: the app sets no HOME for agy and takes no key away
         let d = chat("c-launch-gemini-1", "gemini", 1);
         let l = launches(&d, "Carry on");

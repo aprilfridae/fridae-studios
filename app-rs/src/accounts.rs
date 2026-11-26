@@ -250,11 +250,12 @@ pub fn stand_in_here(given: &StandIn) {
 
 /// Whether another account is offered for an AI on this system. Claude: everywhere (on Windows its sign-in is a
 /// file in its config folder, measured, and the user's setup is linked in by junctions and file links: `link_into`).
-/// Gemini: not on Windows yet.
+/// Gemini: everywhere too (on Windows an added account keeps its sign-in in a token file in its own folder,
+/// `AGY_CLI_FORCE_FILE_TOKEN_STORAGE`, never in the Credential Manager entry that holds the user's own: `home`).
 pub fn offered(ai: &str) -> bool {
     match ai {
         "claude" => true,
-        "gemini" => !cfg!(windows),
+        "gemini" => true,
         _ => false,
     }
 }
@@ -448,12 +449,17 @@ pub fn sign_in_files() -> Vec<PathBuf> {
             dirs.push(e.path());
         }
     }
-    // on Windows an added Gemini account's sign-in is always agy's token file (`home`)
-    #[cfg(windows)]
-    let files: Vec<&str> = SIGN_IN_FILES.iter().copied().chain([GEMINI_TOKEN_FILE]).collect();
-    #[cfg(not(windows))]
-    let files: Vec<&str> = SIGN_IN_FILES.to_vec();
+    let files = sign_in_names();
     dirs.iter().flat_map(|d| files.iter().map(move |f| d.join(f))).collect()
+}
+
+/// The names in `SIGN_IN_FILES`, and on Windows agy's token file as well: there an added Gemini account's sign-in
+/// is always that file (`home`). The one list every reader of an account's sign-in files uses.
+pub fn sign_in_names() -> Vec<&'static str> {
+    #[cfg(windows)]
+    return SIGN_IN_FILES.iter().copied().chain([GEMINI_TOKEN_FILE]).collect();
+    #[cfg(not(windows))]
+    SIGN_IN_FILES.to_vec()
 }
 
 /// Where agy keeps a sign-in it keeps in a file (`fileTokenStorage`), in its home: the name seen in an account's
@@ -1310,13 +1316,36 @@ pub fn resets_at_clock(said: &str, day_secs: f64) -> Option<f64> {
     Some(if ahead <= 0.0 { ahead + 86_400.0 } else { ahead })
 }
 
-/// The seconds since midnight on this computer's clock. None where the app does not read it (Windows: no second
-/// accounts there).
+/// The seconds since midnight on this computer's clock at `now` (seconds since 1970), in its own time zone and
+/// daylight saving. None when the system cannot say.
 pub fn day_secs(now: f64) -> Option<f64> {
     #[cfg(windows)]
     {
-        let _ = now;
-        None
+        // Windows: the time as a FILETIME (100 ns steps since 1601), turned into this computer's local time
+        #[repr(C)]
+        #[derive(Default)]
+        struct SystemTime {
+            y: u16,
+            mo: u16,
+            wd: u16,
+            d: u16,
+            h: u16,
+            mi: u16,
+            s: u16,
+            ms: u16,
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn FileTimeToSystemTime(ft: *const u64, st: *mut SystemTime) -> i32;
+            fn SystemTimeToTzSpecificLocalTime(tz: *const std::ffi::c_void, utc: *const SystemTime, local: *mut SystemTime) -> i32;
+        }
+        if !(0.0..1.0e11).contains(&now) {
+            return None;
+        }
+        let ft: u64 = (now as u64 + 11_644_473_600) * 10_000_000;
+        let (mut utc, mut local) = (SystemTime::default(), SystemTime::default());
+        let ok = unsafe { FileTimeToSystemTime(&ft, &mut utc) != 0 && SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) != 0 };
+        ok.then(|| f64::from(u32::from(local.h) * 3600 + u32::from(local.mi) * 60 + u32::from(local.s)))
     }
     #[cfg(not(windows))]
     {
@@ -1547,9 +1576,10 @@ mod tests {
     #[test]
     fn offered_per_ai() {
         assert!(offered("claude"));
-        assert_eq!(offered("gemini"), !cfg!(windows));
+        assert!(offered("gemini"), "Gemini's added accounts are offered on Windows too (a token file of their own)");
         assert!(!offered("cursor") && !offered("opencode") && !offered(""));
         assert_eq!(state()["claude"]["offered"], true);
+        assert_eq!(state()["gemini"]["offered"], true);
     }
 
     #[cfg(windows)]
@@ -2275,9 +2305,24 @@ mod tests {
         for other in ["You've hit your weekly limit \u{b7} resets Nov 28 at 9am", "resets at 9am on Nov 28", "resets 9am, Nov 28", "resets 13pm", "resets 9:75am", "resets soon", "resets 9", "it presets 9am"] {
             assert_eq!(resets_at_clock(other, 0.0), None, "{other}");
         }
-        assert!(day_secs(1_795_000_000.0).is_some_and(|d| (0.0..86_400.0).contains(&d)) || cfg!(windows));
+        assert!(day_secs(1_795_000_000.0).is_some_and(|d| (0.0..86_400.0).contains(&d)), "read on every system, Windows too");
+        // an hour later on the clock is an hour later in the day (a November afternoon: no clock change near it)
+        let (a, b) = (day_secs(1_795_000_000.0).unwrap(), day_secs(1_795_003_600.0).unwrap());
+        assert_eq!((b - a).rem_euclid(86_400.0), 3_600.0);
+        // and the time itself, not only a difference: a minute and a second show
+        assert_eq!((day_secs(1_795_000_061.0).unwrap() - a).rem_euclid(86_400.0), 61.0);
         assert_eq!(in_words(1_000.0 + 7_608.0, 1_000.0), "in about 2 hours");
         assert_eq!(in_words(1_000.0 + 2_400.0, 1_000.0), "in about 40 minutes");
+    }
+
+    #[test]
+    fn the_time_of_day_is_this_computers_own_clock() {
+        // the same moment as the computer's own local-time stamp (YYYYMMDD-HHMMSS), within a couple of seconds
+        let (before, stamp) = (crate::paths::now_secs(), crate::paths::stamp());
+        let clock = stamp.split('-').nth(1).and_then(|t| Some(t.get(0..2)?.parse::<f64>().ok()? * 3600.0 + t.get(2..4)?.parse::<f64>().ok()? * 60.0 + t.get(4..6)?.parse::<f64>().ok()?)).unwrap();
+        let ours = day_secs(before).unwrap();
+        let off = (ours - clock).rem_euclid(86_400.0);
+        assert!(off <= 2.0 || off >= 86_398.0, "{ours} vs the clock's {clock} ({stamp})");
     }
 
     #[test]

@@ -1277,7 +1277,7 @@ Nothing runs a tool's logout.
   still hold its sign-in"). Nothing is deleted when the accounts folder itself is a link. The name is never used
   again. The keychain entry of a removed Claude folder stays ("Claude Code-credentials-" and 8 hex of the folder's
   path): the app deletes nothing in the keychain.
-- **Windows** (`accounts::offered`: Claude's added accounts are offered there; Gemini's not yet). Claude Code keeps
+- **Windows** (`accounts::offered`: Claude's and Gemini's added accounts are both offered there; Gemini's below, under "On Windows: a token file"). Claude Code keeps
   its sign-in as `.credentials.json` in its config folder (measured), so the folder alone separates the sign-in, as
   on the Mac. A user without admin rights or Developer Mode cannot make symbolic links (os error 1314, measured), so
   `link_into` links the user's folders (skills, plugins, agents, commands, rules, output styles) by directory
@@ -1561,8 +1561,9 @@ of the kept process's key. Nothing is set for account 1.
   - So every agy command of an added account gets HOME = USERPROFILE = the account's folder and the flag; the
     token file is then `<folder>/.gemini/antigravity-cli/...` (presumably `antigravity-oauth-token`, the name seen
     on the Mac; added to the sign-in files on Windows; under `.gemini`, which Remove deletes first). The user's own
-    account gets none of it. No Mac keychain is made on Windows, and `.gitconfig` is not linked in (links are made
-    on Unix only), so git in a turn there has no user identity.
+    account gets none of it. No Mac keychain is made on Windows. `.gitconfig` is linked in as on the Mac, by
+    `link_into`'s Windows links (a symbolic link where allowed, else a hard link on the same drive, made again from
+    the user's file when git replaces it), so git in a turn there has the user's identity.
   - Not measured: a real sign-in of a second account on Windows (only the user can do that), the token file's name
     there, and a turn on it.
 
