@@ -1686,7 +1686,8 @@ second try at a summary.
    per use, so nobody writes then. Chats going to Gemini, Cursor or OpenCode have no step 2. On Windows too
    (measured 25 November 2026, Claude Code 2.1.326, Windows 11: these flags accepted, answered in 5 s on
    `claude-haiku-5-5`, nothing left in its folder; a run stopped with `taskkill /T /F` was gone with its child in
-   about 0.1 s). There is no OpenCode on Windows yet, so there it is the only writer of summaries and advice.
+   about 0.1 s). On Windows OpenCode's writers are tried first as everywhere (since OpenCode runs there, see
+   "OpenCode as a chat's AI").
 3. Else nobody: the hand-over goes as it was before.
 One wall-clock limit for everything, two minutes (`LIMITS.all`), 45 seconds for one try, Stop looked at before the
 first try. When there is a fall-back, half a minute of the two is its own (`LIMITS.reserve`): OpenCode's models
@@ -1747,6 +1748,9 @@ OpenCode is `app-rs/src/opencode.rs`, checked against opencode 2.3.2 and the ser
 order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see THIRD_PARTY.md).
 
 - **Found** by `paths::find_opencode`: `FRIDAE_OPENCODE`, then `opencode` on PATH, then `~/.opencode/bin/opencode`.
+  On Windows (`paths::opencode_in`): `FRIDAE_OPENCODE`, then `opencode.exe` on PATH, then npm's `opencode.cmd` (never
+  the extensionless shell script npm puts beside it), then `~\.opencode\bin\opencode.exe`, then the command line
+  OpenCode's desktop app ships, `%LOCALAPPDATA%\Programs\ai.opencode.desktop\resources\opencode-cli.exe`.
 - **One server per app run**: `opencode serve --hostname 127.0.0.1 --port 0`, started on a chat's first OpenCode turn
   (`ensure`, one start at a time: `STARTING`). It listens on 127.0.0.1 only, on the free port it prints, behind basic
   auth with a random password (24 bytes from `/dev/urandom`; no password, no server) that is only in its environment
@@ -1994,8 +1998,62 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
   limited to the chat's folders; `opencode_worktree_remove` is offered (it is gated by the edit rules: refused outside
   the allowed folders in Ask me, and only removes OpenCode worktrees in Full auto); a kill on Stop ends every running
   OpenCode chat; the rules on publishing, spending and deleting are the app's prompts, as for every AI.
-- **Not on Windows yet**: `find_opencode` finds nothing and `paths::AIS` leaves it out. To turn it on, test there:
-  the permission patterns with `\` paths, ending the server's process tree (a Job Object), and the pty daemon.
+- **Windows** (measured 25 November 2026, opencode v2.4.1 from the desktop app, Windows 11, scratch stores under
+  `H:\rust\tmp`, a scripted local model through `FRIDAE_OPENCODE_TEST_CONFIG`'s route; no sign-in, no real model):
+  - *Isolation*: with `environment()`'s variables, `opencode debug paths` puts data, config, cache, state, log, bin and
+    repos in the scratch store, and `models`, `auth list`, `serve`, a turn and the device sign-in's start wrote
+    nothing in the user's `~\.local\share\opencode` (where the user's desktop app keeps its data), `~\.config`,
+    `~\.cache`, `~\.local\state`, `%APPDATA%`/`%LOCALAPPDATA%` `opencode` or `ai.opencode.desktop` (names and times
+    compared before and after; only the running desktop app's own Chromium caches and log moved, on their own
+    schedule). Its temporary folder is `%TEMP%\opencode`, the same as the user's copy, and follows TEMP: the server
+    gets `TEMP`/`TMP` in its store (`<store>\tmp`), commands and tool servers get the user's back (`users_xdg`). The
+    store is `%LOCALAPPDATA%\Fridae Studios\opencode` (`store()`).
+  - *Shell*: OpenCode picks a shell by its file's name (`powershell`/`pwsh` get `-NoLogo -NoProfile -NonInteractive
+    -Command`, `cmd` gets `/c`, any other `-c`) from its `shell` setting, else `SHELL`, else pwsh, Windows PowerShell,
+    Git Bash, `%COMSPEC%`. Fridae sets the system's Windows PowerShell by its full path (`shell_program`), not a
+    wrapper: a `.cmd` would be started through cmd.exe, which reads `&`, `|` and `%` in the command. cmd.exe is not
+    used either (it expands `%VAR%` inside words the check lets through). The password variables are kept from
+    commands by the session's command environment, which OpenCode uses in place of its own: without it a command saw
+    `OPENCODE_PASSWORD` (the real one), `OPENCODE_SERVER_PASSWORD` and both usernames; with it, none (only OpenCode's
+    own `OPENCODE`, `OPENCODE_SESSION_ID`, `OPENCODE_TERMINAL`). A planted `git.bat`, `git.cmd`, `git.ps1` and
+    `fridaeplanted.*` in the working folder never ran from `git --version`, `fridaeplanted`, `git --version;
+    fridaeplanted` through OpenCode (and `commands_run_in_windows_powershell_where_a_planted_script_never_runs`).
+    The sh whitelist (`paths::command_allowed`) holds for PowerShell: without `$`, backticks, parentheses and braces
+    a word stays a word, and smart quotes or dashes are not in the allowed set. `paths::WIN_RUNNERS` adds PowerShell's
+    and Windows' own runners (`cmd`, `powershell`, `iex`, `start-process`, `ii`, `rundll32`, `mshta`, `cscript`...), never
+    approved. `2>/dev/null` in PowerShell is a path on the current drive, not the null device (the command still runs).
+  - *Paths in rules*: inside the working folder (or its git repository) a file is named relative to it with `/`
+    (`sub\b.txt` is `sub/b.txt`, and `h:\RUST\...\GAME\x` is `x`: containment ignores case); outside, by the path
+    as typed with `/`, drive and letters as typed (`h:/rust/TMP/x`), `..` resolved, and `\\?\C:\x` and
+    `\\localhost\C$\x` kept as `//?/C:/x` and `//localhost/C$/x` (both wrote through an `edit C:/x/* deny`),
+    `\\.\C:\x` failing to write. An `external_directory` question names `<folder>/*`. Patterns are compared
+    without regard to case and a `\` in a pattern counts as `/` (`edit h:/RUST/x/* deny` and `edit H:\rust\x\*
+    deny` both refused `H:\rust\x\a.txt`). So on Windows the rules are written with `/` (`as_pattern`, which also
+    drops a resolved path's `\\?\`), relative names are compared in any case (`relative_pattern`), and no `?`
+    any-case patterns are written (`blind()` is false there: OpenCode ignores case itself). Ask me also refuses
+    `?:/*` and `//*` as absolute paths. Every mode refuses, for every file tool, `//*` (device and network paths) and
+    8.3 short names (`*~?`, `*~?/*`, `*~?.*` and the same with two characters: a file whose own name ends that way is
+    refused too); and every protected place under `<home>\AppData\<Local|Roaming|LocalLow>` is also refused through
+    any folder between the home folder and its tail (`deny_spellings`: `Local Settings`, `Application Data` and
+    `AppData\Local\Application Data` are junctions back to those folders). Run against the real OpenCode with the
+    rules the code writes (Ask me and Full auto): writes in the game (absolute, other case, relative) and the kit went
+    through; the kit's `config.json` (any case), `.opencode`, `opencode.json`, `~\.x`, the app's OpenCode store by its
+    path and through both junctions, `\\?\` and `\\localhost\C$` spellings, reading the store's `auth.json`
+    directly and by `\\?\` were refused; an outside folder was refused in Ask me and written in Full auto; `.git` refused
+    in Ask me. 8.3 names were not run (H: has none); a short-named path is refused by pattern, not by measurement.
+  - *Processes*: the server starts `opencode-pty.exe daemon --runtime-dir <store>\state\opencode\pty\<id>` (from
+    `<store>\cache\opencode\bin\opencode-pty\<version>`, talking over a named pipe) as a direct child, and commands
+    run as the daemon's children. `taskkill /T` (`paths::end_trees`) ends all of them; killing the server alone, the
+    daemon and its running command were gone within 4 s by themselves. `--standalone` one-off commands (`models`,
+    `auth list`, `auth login`) start a `serve --stdio --port 0` child. These spawn sites are where the app's job
+    (ending a process tree when the app exits) is attached on Windows. `sweep_helpers` finds nothing there
+    (`procs::orphans_under` is Unix only), which the daemon's own exit makes up for.
+  - *Sign-in*: `opencode --standalone auth login opencode --method device` printed the code and the
+    `https://opencode.ai/console/device?...` page in the lines `login_line` reads; it was ended before anyone approved
+    it. Setup's row and the notice need nothing of Windows' own (`status.ai.installed`, `offered`).
+  - Not run on Windows: a real model (free or paid) end to end through the app's page, a completed sign-in, an 8.3
+    name, a network share as a chat's folder (its writes are named relative to it, but `//*` is refused for anything
+    else), and the app's own job object (wired at merge).
 - **Trying it by hand** with the scratch copy above: put `{"chat_ai": "opencode"}` in the kit's `config.json` and
   set `FRIDAE_OPENCODE` to the program. Without a sign-in only the free models work, and they have a daily limit.
   To test the app's handling without a real model, debug builds read `FRIDAE_OPENCODE_TEST_CONFIG` (compiled out of
