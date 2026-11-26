@@ -972,5 +972,29 @@ class TransparentToolTests(ToolCase):
         self.assertEqual(len(self.turns()), 1, "one picture was generated, and no second one by the tool")
 
 
+class AgyEnvironment(ToolCase):
+    """Images are always made on the user's own account. An added Gemini account's chat on Windows runs agy with its
+    token kept in a file (AGY_CLI_FORCE_FILE_TOKEN_STORAGE=1), and the tool server agy starts inherits that; the agy
+    the tool server starts must not, or it would look for a file token in the user's own folder and not be signed in."""
+
+    def test_agy_is_never_started_with_its_token_forced_into_a_file(self):
+        seen = []
+
+        def run(args, **kw):
+            seen.append((args[1] if len(args) > 1 else "", kw.get("env")))
+            raise self.rbxgen.subprocess.TimeoutExpired(args, kw.get("timeout"))
+        with mock.patch.dict(os.environ, {"AGY_CLI_FORCE_FILE_TOKEN_STORAGE": "1", "FRIDAE_KEEP_ME": "kept"}):
+            with mock.patch.object(self.rbxgen.subprocess, "run", run):
+                with self.assertRaises(RuntimeError):
+                    self.rbxgen.antigravity_image(self.agy, "x", timeout=100)
+        self.assertEqual([s[0] for s in seen], ["models", "--input-format"], "both ways agy is started were seen")
+        for what, env in seen:
+            self.assertIsNotNone(env, what)
+            self.assertNotIn("AGY_CLI_FORCE_FILE_TOKEN_STORAGE", env, what)
+            self.assertEqual(env.get("FRIDAE_KEEP_ME"), "kept", what)
+            self.assertEqual(env.get("HOME"), self.home, what)
+        self.assertEqual(os.environ.get("AGY_CLI_FORCE_FILE_TOKEN_STORAGE"), None, "the tool server's own is left as it was")
+
+
 if __name__ == "__main__":
     unittest.main()
