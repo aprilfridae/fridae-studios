@@ -1580,15 +1580,40 @@ pub fn program_name(command: &str) -> Option<String> {
 /// (`reads_other_env`), nor a part whose program runs what it is given (`ARG_RUNNERS`; on Windows `WIN_RUNNERS` too).
 /// On Windows OpenCode runs commands in Windows PowerShell (`opencode::settings`), whose grammar the same whitelist
 /// keeps to plain words: no `$`, backtick, parentheses or braces leaves nothing for it to run, and it never runs a
-/// program from the current folder by a bare name (measured: a planted `git.bat`, `.cmd` or `.ps1` never ran). When unsure, no: the card
+/// program from the current folder by a bare name (measured: a planted `git.bat`, `.cmd` or `.ps1` never ran). Its
+/// own traps are refused there too (`Shell::PowerShell`; each measured in real powershell.exe 5.1 with a program
+/// that prints its words): anything outside ASCII (curly quotes are quotes, long dashes dashes), `,` except inside
+/// single quotes (an array), `@` starting a word (splatting), `--%`, every redirection but `2>&1` (`>/dev/null` writes
+/// `\dev\null`), a quote of the other kind inside quotes, an empty quote, a quote that does not end its word, `-x.y`,
+/// the aliases in `WIN_ALIASES`, and for a batch file (`batch_on_path`) any quoted word or `%`, `^`, `!`
+/// (`ps_words_pass`). When unsure, no: the card
 /// shows, with the reason (`refusal_reason`). The native allow lists of Claude Code (`Bash(<p>:*)`)
 /// and Cursor (`Shell(<p>)`) decide for those AIs; this is for the AI whose requests the app answers and whose shell
 /// is the app's own (OpenCode). Not for Gemini's kept process (`acp::decide`): agy runs commands through zsh and the
 /// user's `.zshenv` whatever SHELL says (measured), so there every command is asked about.
-#[allow(unused_assignments)] // the last word's end leaves its flags unread
 pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
+    if cfg!(windows) { command_allowed_in(command, allowed, Shell::PowerShell, &batch_on_path) } else { command_allowed_in(command, allowed, Shell::Sh, &|_| false) }
+}
+
+/// The shell a command is checked for: `/bin/sh` (macOS, Linux) or Windows PowerShell 5.1 (Windows).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Shell {
+    Sh,
+    PowerShell,
+}
+
+/// `command_allowed` for one shell; `is_batch` says whether a program name would start a batch file (`.bat`,
+/// `.cmd`), whose arguments cmd.exe reads again (`batch_on_path`).
+#[allow(unused_assignments)] // the last word's end leaves its flags unread
+pub fn command_allowed_in(command: &str, allowed: &[String], shell: Shell, is_batch: &dyn Fn(&str) -> bool) -> bool {
+    let ps = shell == Shell::PowerShell;
     let c = command.trim_matches([' ', '\t']);
     if c.is_empty() || c.contains(['`', '\n', '\r', '$', '\\']) || reads_other_env(c) {
+        return false;
+    }
+    // Windows PowerShell reads curly quotes as quotes and dashes as `-`, and `--%` (quoted or not) passes the rest of
+    // the line unparsed with cmd's `%NAME%` filled in (measured)
+    if ps && (!c.is_ascii() || c.contains("--%")) {
         return false;
     }
     let plain = |ch: char| ch.is_ascii_alphanumeric() || "_@%+=:,./-!".contains(ch);
@@ -1629,12 +1654,14 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
                 parts.push(Vec::new());
             }
             '<' | '>' | '2' if !in_word && (ch != '2' || at(i + 1) == Some('>')) => {
-                // a redirection: only the harmless ones, each a whole word
-                if let Some(r) = ["2>&1", "2>/dev/null", ">/dev/null"].into_iter().find(|r| starts(i, r) && ends(i + r.chars().count())) {
+                // a redirection: only the harmless ones, each a whole word; in Windows PowerShell only `2>&1` (there
+                // `/dev/null` is a file on the drive, `\dev\null`)
+                let harmless: &[&str] = if ps { &["2>&1"] } else { &["2>&1", "2>/dev/null", ">/dev/null"] };
+                if let Some(r) = harmless.iter().find(|r| starts(i, r) && ends(i + r.chars().count())) {
                     i += r.chars().count();
                     continue;
                 }
-                let op = if starts(i, "2>") { 2 } else if starts(i, ">") { 1 } else { return false };
+                let op = if ps { return false } else if starts(i, "2>") { 2 } else if starts(i, ">") { 1 } else { return false };
                 let mut j = i + op;
                 if !matches!(at(j), Some(' ' | '\t')) {
                     return false;
@@ -1649,6 +1676,14 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
             }
             '\'' | '"' => {
                 let Some(len) = chars[i + 1..].iter().position(|&x| x == ch) else { return false };
+                // Windows PowerShell 5.1 passes these to a program as other words than written (measured): a quote of
+                // the other kind inside (split or merged words), an empty quote (dropped), a `,` (outside single
+                // quotes an array), and a quote that does not end its word (`'a b'c` is two words, `'a''b'` is a'b,
+                // `'-x'.y` reads a property)
+                let inside = &chars[i + 1..i + 1 + len];
+                if ps && (len == 0 || inside.contains(&if ch == '\'' { '"' } else { '\'' }) || (ch == '"' && inside.contains(&',')) || !ends(i + len + 2)) {
+                    return false;
+                }
                 word.extend(&chars[i..i + len + 2]);
                 quoted = true;
                 in_word = true;
@@ -1657,6 +1692,10 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
             _ => {
                 let after_letter = i > 0 && in_word && chars[i - 1].is_ascii_alphanumeric();
                 if !(plain(ch) || (matches!(ch, '~' | '^') && after_letter)) || (!in_word && ch == '=') {
+                    return false;
+                }
+                // Windows PowerShell: `,` builds an array (`a, b`, `log ,--output=x`), and `@name` splats a variable
+                if ps && (ch == ',' || (ch == '@' && !in_word)) {
                     return false;
                 }
                 word.push(ch);
@@ -1673,9 +1712,34 @@ pub fn command_allowed(command: &str, allowed: &[String]) -> bool {
             && first.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
             && !first.starts_with('.')
             && allowed.iter().any(|a| a == first)
-            && runner_in(&plain_words).is_none()
+            && runner_in_for(&plain_words, ps).is_none()
+            && (!ps || ps_words_pass(words, is_batch))
     })
 }
+
+/// Windows PowerShell 5.1's own traps for a part that passed the shared whitelist (each measured in real
+/// powershell.exe): a name that is an alias for another command there (`WIN_ALIASES`); `-x.y` (not quoted), which
+/// it passes as `-x` `.y`; and a batch file's arguments (`batch_on_path`), which cmd.exe reads again: there no quoted
+/// word and no `%`, `^` or `!` (`'x&echo'` runs echo; `&`, `|`, `<`, `>` and `"` are refused already). What is left,
+/// letters, digits and `_ @ + = : . / - ~`, means nothing to cmd.exe. Safer than refusing batch programs outright,
+/// which would leave npm, npx, yarn, pnpm and tsc with a card for every command, and no less safe: the check counts
+/// a program as a batch file when any folder of PATH has one by that name, whichever PowerShell would pick.
+fn ps_words_pass(words: &[(String, bool)], is_batch: &dyn Fn(&str) -> bool) -> bool {
+    let Some((first, _)) = words.first() else { return false };
+    let name = program_name(first).unwrap_or_default();
+    if WIN_ALIASES.iter().any(|(a, _)| *a == name) {
+        return false;
+    }
+    let dash_dot = |w: &str| w.starts_with('-') && !w.starts_with("--") && w.split(['\'', '"']).next().unwrap_or("").contains('.');
+    if words.iter().any(|(w, _)| dash_dot(w)) {
+        return false;
+    }
+    !is_batch(first) || words[1..].iter().all(|(w, quoted)| !quoted && !w.contains(['%', '^', '!']))
+}
+
+/// Names that in Windows PowerShell 5.1 are aliases for a command other than the program of that name: the user who
+/// allowed `sc` (Service Control) or `curl` gets Set-Content (writes files) or Invoke-WebRequest. Never approved there.
+pub const WIN_ALIASES: &[(&str, &str)] = &[("sc", "Set-Content"), ("curl", "Invoke-WebRequest"), ("wget", "Invoke-WebRequest")];
 
 /// Programs that run what they are given as a command: the app never approves a part they lead by itself, however
 /// the user's list reads, because what they would run is not what the list was asked about (`time ps eww`). `Always`:
@@ -1716,12 +1780,46 @@ const WIN_RUNNERS: &[(&str, Runs)] = {
         ("invoke-cimmethod", Always), ("invoke-wmimethod", Always), ("rundll32", Always), ("mshta", Always), ("cscript", Always),
         ("wscript", Always), ("msiexec", Always), ("forfiles", Always), ("schtasks", Always), ("at", Always), ("conhost", Always),
         ("explorer", Always), ("regsvr32", Always), ("pcalua", Always), ("scriptrunner", Always), ("wt", Always),
+        ("wmic", Always), ("foreach", Always), ("where", Always), ("sal", Always), ("set-alias", Always), ("nal", Always), ("new-alias", Always),
+        ("ipmo", Always), ("import-module", Always), ("cmstp", Always), ("msbuild", Always), ("installutil", Always), ("regasm", Always),
+        ("regsvcs", Always), ("control", Always), ("hh", Always), ("bitsadmin", Always), ("certutil", Always), ("r", Always),
+        ("invoke-history", Always), ("add-type", Always),
     ]
 };
 
 /// The runners this system has: on Windows PowerShell's and Windows' own as well (`WIN_RUNNERS`).
 fn runners() -> impl Iterator<Item = &'static (&'static str, Runs)> {
-    ARG_RUNNERS.iter().chain(if cfg!(windows) { WIN_RUNNERS } else { &[] }.iter())
+    runners_for(cfg!(windows))
+}
+
+/// The runners of one shell: Windows PowerShell's and Windows' own as well when `win`.
+fn runners_for(win: bool) -> impl Iterator<Item = &'static (&'static str, Runs)> {
+    ARG_RUNNERS.iter().chain(if win { WIN_RUNNERS } else { &[] }.iter())
+}
+
+/// Whether a program name, looked up on PATH as Windows PowerShell would (each folder, each PATHEXT ending), finds
+/// a batch file (`.bat`, `.cmd`) in any folder of PATH: then its arguments are read again by cmd.exe.
+pub fn batch_on_path(name: &str) -> bool {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let pathext = std::env::var("PATHEXT").unwrap_or_default();
+    batch_on_path_in(name, &path, &pathext)
+}
+
+/// `batch_on_path` for a given PATH and PATHEXT.
+pub fn batch_on_path_in(name: &str, path: &std::ffi::OsStr, pathext: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(".bat") || lower.ends_with(".cmd") {
+        return true;
+    }
+    // .bat and .cmd whatever PATHEXT says (Windows' default has both), and any other batch ending PATHEXT gives
+    let mut endings = vec![".bat".to_string(), ".cmd".to_string()];
+    for e in pathext.split(';').map(|e| e.trim().to_ascii_lowercase()) {
+        if (e.ends_with(".bat") || e.ends_with(".cmd")) && !endings.contains(&e) {
+            endings.push(e);
+        }
+    }
+    // Windows' file names ignore case, so one look per ending finds `NPM.CMD` too
+    std::env::split_paths(path).filter(|d| !d.as_os_str().is_empty()).any(|dir| endings.iter().any(|e| dir.join(format!("{name}{e}")).is_file()))
 }
 
 /// Options of a runner that take the next word as their value (so it is not the program run).
@@ -1844,8 +1942,13 @@ pub fn git_runs(words: &[String]) -> Option<Vec<String>> {
 /// The runner leading a part (its words, quotes removed), when it runs something given to it here, and the words it
 /// would run.
 fn runner_in(words: &[String]) -> Option<(&'static str, Vec<String>)> {
+    runner_in_for(words, cfg!(windows))
+}
+
+/// `runner_in` for one shell: with Windows PowerShell's runners when `win`.
+fn runner_in_for(words: &[String], win: bool) -> Option<(&'static str, Vec<String>)> {
     let first = words.first().map(|w| program_name(w).unwrap_or_default())?;
-    let (name, runs) = runners().find(|(n, _)| *n == first)?;
+    let (name, runs) = runners_for(win).find(|(n, _)| *n == first)?;
     match runs {
         Runs::Git => git_runs(words).map(|p| (*name, p)),
         Runs::Find => {
@@ -1905,6 +2008,18 @@ fn rough_parts(command: &str) -> Vec<Vec<String>> {
 
 /// Why the app did not approve a command by itself, in plain words for the card.
 pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
+    if cfg!(windows) { refusal_reason_in(command, allowed, Shell::PowerShell, &batch_on_path) } else { refusal_reason_in(command, allowed, Shell::Sh, &|_| false) }
+}
+
+/// `refusal_reason` for one shell (`command_allowed_in`).
+pub fn refusal_reason_in(command: &str, allowed: &[String], shell: Shell, is_batch: &dyn Fn(&str) -> bool) -> String {
+    let ps = shell == Shell::PowerShell;
+    if ps && !command.is_ascii() {
+        return "it has characters outside plain ASCII, and Windows PowerShell reads curly quotes as quotes and long dashes as dashes.".into();
+    }
+    if ps && command.contains("--%") {
+        return "it uses --%, which makes Windows PowerShell pass the rest of the line on unchecked.".into();
+    }
     if reads_other_env(command) {
         return "it would run a program that can read other programs' settings (such as ps), where the password of OpenCode's server is kept. That never runs in a Fridae chat.".into();
     }
@@ -1918,7 +2033,7 @@ pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
         return "it is more than one line.".into();
     }
     for words in rough_parts(command) {
-        if let Some((r, _)) = runner_in(&words) {
+        if let Some((r, _)) = runner_in_for(&words, ps) {
             return format!("{r} runs another program given to it{}, so it is asked about every time.", if words[0] == "git" || words[0] == "find" { " in this form" } else { "" });
         }
         let first = &words[0];
@@ -1931,6 +2046,11 @@ pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
     }
     if command.contains(['<', '>']) {
         return "it reads or writes a file with < or >.".into();
+    }
+    if ps {
+        if let Some(reason) = powershell_reason(command, is_batch) {
+            return reason;
+        }
     }
     let odd: String = command.chars().filter(|c| "*?[](){}#~^".contains(*c)).fold(String::new(), |mut a, c| {
         if !a.contains(c) {
@@ -1945,6 +2065,36 @@ pub fn refusal_reason(command: &str, allowed: &[String]) -> String {
         return "Fridae could not check how it is written.".into();
     }
     "it runs a program you have not allowed.".into()
+}
+
+/// Why Windows PowerShell 5.1 would pass a command on as other words than written (`ps_words_pass` and the
+/// PowerShell rules of `command_allowed_in`), in plain words; none when it is none of those.
+fn powershell_reason(command: &str, is_batch: &dyn Fn(&str) -> bool) -> Option<String> {
+    let command = command.replace("2>&1", " ");
+    let raw: Vec<Vec<&str>> = command.split([';', '|', '&']).map(|p| p.split_whitespace().collect::<Vec<&str>>()).filter(|w| !w.is_empty()).collect();
+    for words in &raw {
+        let name = program_name(words[0]).unwrap_or_default();
+        if let Some((_, is)) = WIN_ALIASES.iter().find(|(a, _)| *a == name) {
+            return Some(format!("in Windows PowerShell {name} is {is}, not the program of that name."));
+        }
+        if is_batch(words[0]) && words[1..].iter().any(|w| w.contains(['\'', '"', '%', '^', '!'])) {
+            return Some(format!("{name} is a batch file, whose words cmd.exe reads again: quotes, %, ^ and ! do not reach it safely."));
+        }
+    }
+    let words: Vec<&str> = raw.iter().flatten().copied().collect();
+    if words.iter().any(|w| w.starts_with('@')) {
+        return Some("a word starts with @, which Windows PowerShell reads as a variable to fill in.".into());
+    }
+    if command.contains(',') {
+        return Some("it has a comma, which Windows PowerShell reads as a list of words.".into());
+    }
+    if words.iter().any(|w| w.starts_with('-') && !w.starts_with("--") && w.split(['\'', '"']).next().unwrap_or("").contains('.')) {
+        return Some("it has a word like -x.y, which Windows PowerShell splits in two.".into());
+    }
+    if command.contains(['\'', '"']) {
+        return Some("it quotes in a way Windows PowerShell passes on differently (a quote inside the other kind, an empty quote, or a quote that does not end its word).".into());
+    }
+    None
 }
 
 /// Programs that can read another process's environment or memory (the OpenCode server's password travels in its
@@ -2335,11 +2485,211 @@ mod tests {
         assert!(super::command_allowed("git status", &allowed));
     }
 
+    /// The check for `/bin/sh` (macOS, Linux), whatever system the tests run on.
+    fn sh_ok(c: &str, allowed: &[String]) -> bool {
+        super::command_allowed_in(c, allowed, super::Shell::Sh, &|_| false)
+    }
+
+    /// The check for Windows PowerShell 5.1, whatever system the tests run on; `npm` and `batchy` are batch files.
+    fn ps_ok(c: &str, allowed: &[String]) -> bool {
+        super::command_allowed_in(c, allowed, super::Shell::PowerShell, &|p| p == "npm" || p == "batchy")
+    }
+
+    #[test]
+    fn windows_powershell_grammar_is_kept_to_words_it_passes_unchanged() {
+        let allowed: Vec<String> = ["git", "echoargs", "npm", "batchy", "ls", "sc", "curl", "wget", "where", "wmic", "certutil", "msbuild", "ipmo", "foreach", "sal", "control"].map(String::from).to_vec();
+        // (command, approved in Windows PowerShell, approved in /bin/sh): each refusal measured to change what the
+        // program sees, or to run something, in real powershell.exe 5.1 (see the argv test below and DEVELOPING)
+        let table: &[(&str, bool, bool)] = &[
+            // still approved, and passed exactly as written (measured)
+            ("git status", true, true),
+            ("git commit -m 'a b; c | d & e (f) {g} [h] #i *j <k> @l, m'", true, true),
+            ("git commit -m \"two  spaces \"", true, true),
+            ("git log --format='%H %an' -n5 HEAD~1 HEAD^ a=b x@y +z :w !v --since=1.week -- p/q.r", true, true),
+            ("git status 2>&1; git log | ls", true, true),
+            ("git config --global user.email a@b.c", true, true),
+            ("git -C sub status", true, true),
+            ("git log -'x.y'", true, true),
+            ("npm install left-pad@1.3.0 --save-dev a=b HEAD~1 -x:y", true, true),
+            // C1: `,` builds an array: `a, b` and `log ,--output=x` pass other words than written
+            ("git -C '.','-c','core.fsmonitor=x' status", false, true),
+            ("git log ,--output=x", false, true),
+            ("git log a, b", false, true),
+            ("git log --format=%H,%an", false, true),
+            ("git commit -m \"a, b\"", false, true),
+            // C2: curly quotes are quotes to PowerShell, and en dashes are dashes; nothing outside ASCII at all
+            ("git log 'x\u{2019}; git status; \u{2018}y'", false, true),
+            ("git log \"x\u{201d}; git status; \u{201c}y\"", false, true),
+            ("git log \u{201e}x\u{201c}", false, false),
+            ("git log \u{2013}\u{2013}oneline", false, false),
+            ("git commit -m 'caf\u{e9}'", false, true),
+            // C3: a quote inside the other kind is passed to the program wrongly (split or merged words)
+            ("git log '\"a b\" --output=x'", false, true),
+            ("git log 'a\"b' c", false, true),
+            ("git commit -m \"don't\"", false, true),
+            // ... and so are empty quotes (dropped), doubled quotes (`'a''b'` is a'b), and a quote that does not end
+            // its word (`'a b'c` is two words, `'-x'.y` reads a property)
+            ("git commit -m '' x", false, true),
+            ("git commit -m \"\" x", false, true),
+            ("git log 'a''b'", false, true),
+            ("git log \"a\"\"b\"", false, true),
+            ("git log 'a b'c", false, true),
+            ("git log '-x'.y", false, true),
+            ("git log a'b c'd", false, true),
+            // C4: a batch file's arguments are read again by cmd.exe: no quotes, no % ^ ! there
+            ("npm 'x&echo.PWNED'", false, true),
+            ("npm x'&echo.PWNED'", false, true),
+            ("npm run %PATH%", false, true),
+            ("npm run x^", false, true),
+            ("npm run x!y", false, true),
+            ("batchy \"a b\"", false, true),
+            // I3: only 2>&1; `>/dev/null` writes the file \dev\null on the drive
+            ("ls >/dev/null", false, true),
+            ("ls 2>/dev/null", false, true),
+            ("ls > /dev/null", false, true),
+            ("ls 2> /dev/null", false, true),
+            // M1: the stop-parsing token, quoted or not
+            ("git log --% %USERNAME%", false, true),
+            ("git log '--%' x", false, true),
+            // M3: splatting a variable (`@PWD`, `@HOME`)
+            ("git log @PWD", false, true),
+            ("git log @HOME x", false, true),
+            // `-x.y` is split by PowerShell into `-x` `.y`
+            ("git log -x.y", false, true),
+            ("git log -x.'y'", false, true),
+            // I2: Windows programs and PowerShell commands that run what they are given, and aliases that are not
+            // the program of that name in Windows PowerShell 5.1 (sc is Set-Content; curl and wget Invoke-WebRequest)
+            ("wmic process list", false, false),
+            ("where x", false, true),
+            ("certutil -urlcache -f http://x y", false, true),
+            ("msbuild x.proj", false, true),
+            ("ipmo ./x.psm1", false, true),
+            ("git log | foreach ToUpper", false, true),
+            ("sal x y", false, true),
+            ("control x.cpl", false, true),
+            ("sc x y", false, true),
+            ("curl http://x -o y", false, true),
+            ("wget http://x", false, true),
+        ];
+        for (c, ps, sh) in table {
+            assert_eq!(ps_ok(c, &allowed), *ps, "PowerShell: {c}");
+            assert_eq!(sh_ok(c, &allowed), *sh, "/bin/sh: {c}");
+        }
+        // every PowerShell refusal has a reason in plain words other than "could not check"
+        for (c, ps, _) in table {
+            if !ps {
+                let r = super::refusal_reason_in(c, &allowed, super::Shell::PowerShell, &|p| p == "npm" || p == "batchy");
+                assert!(!r.contains("could not check"), "{c}: {r}");
+            }
+        }
+    }
+
+    #[test]
+    fn windows_runners_are_known_in_any_case_with_or_without_exe() {
+        for name in ["wmic", "foreach", "where", "sal", "set-alias", "nal", "new-alias", "ipmo", "import-module", "cmstp", "msbuild", "installutil", "regasm", "regsvcs", "control", "hh", "bitsadmin", "certutil"] {
+            for spelled in [name.to_string(), name.to_uppercase(), format!("{name}.exe"), format!("{}.EXE", name.to_uppercase())] {
+                assert!(super::runner_in_for(&[spelled.clone(), "x".to_string()], true).is_some(), "{spelled}");
+                assert!(!ps_ok(&format!("{spelled} x"), std::slice::from_ref(&spelled)), "{spelled}");
+            }
+        }
+        // the Windows-only names are no runners for /bin/sh
+        assert!(super::runner_in_for(&["where".to_string(), "x".to_string()], false).is_none());
+    }
+
+    #[test]
+    fn a_batch_file_is_found_on_path_as_powershell_would_look() {
+        let t = std::env::temp_dir().join(format!("fridae-batch-{}", super::random_hex(1)));
+        let (a, b) = (t.join("a"), t.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("tool.exe"), b"").unwrap();
+        std::fs::write(b.join("tool.cmd"), b"").unwrap();
+        std::fs::write(b.join("other.BAT"), b"").unwrap();
+        std::fs::write(a.join("plain.exe"), b"").unwrap();
+        let path = std::env::join_paths([&a, &b]).unwrap();
+        let ext = ".COM;.EXE;.BAT;.CMD;.VBS";
+        // a batch file of that name anywhere on PATH counts, even behind an .exe (PowerShell may also prefer a .ps1)
+        assert!(super::batch_on_path_in("tool", &path, ext));
+        if cfg!(windows) {
+            // other.BAT: Windows' file names ignore case
+            assert!(super::batch_on_path_in("other", &path, ext));
+            assert!(super::batch_on_path_in("OTHER", &path, ext));
+        }
+        assert!(!super::batch_on_path_in("plain", &path, ext));
+        assert!(!super::batch_on_path_in("missing", &path, ext));
+        // named with its ending, and with an empty PATHEXT (Windows' default endings then)
+        assert!(super::batch_on_path_in("plain.cmd", &path, ext));
+        assert!(super::batch_on_path_in("tool", &path, ""));
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Real Windows PowerShell 5.1, run as OpenCode runs it, with a program that prints the words it was given: every
+    /// approved command gives the program exactly the words the check assumed, and the refused forms really do not.
+    #[cfg(windows)]
+    #[test]
+    fn approved_commands_reach_the_program_as_written_in_real_powershell() {
+        use std::process::Command;
+        let t = std::env::temp_dir().join(format!("fridae-argv-{}", super::random_hex(1)));
+        let bin = t.join("bin");
+        let cwd = t.join("cwd");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        let ps = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        let src = "using System; public static class P { public static void Main(string[] a) { var s = new System.Text.StringBuilder(); foreach (var x in a) s.Append(x).Append((char)1); Console.Out.Write(s.ToString()); Console.Out.Write((char)10); } }";
+        std::fs::write(t.join("echoargs.cs"), src).unwrap();
+        let build = format!("Add-Type -TypeDefinition (Get-Content -Raw '{}') -OutputAssembly '{}' -OutputType ConsoleApplication", t.join("echoargs.cs").display(), bin.join("echoargs.exe").display());
+        let ok = Command::new(&ps).args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", &build]).status().unwrap();
+        assert!(ok.success() && bin.join("echoargs.exe").exists(), "the echo program is built");
+        std::fs::write(bin.join("batchy.cmd"), "@\"%~dp0echoargs.exe\" %*\r\n").unwrap();
+        let path = format!("{};{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let run = |c: &str| -> Vec<Vec<String>> {
+            let out = Command::new(&ps).args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", c]).env("PATH", &path).current_dir(&cwd).output().unwrap();
+            String::from_utf8_lossy(&out.stdout).lines().map(|l| l.split('\u{1}').filter(|w| !w.is_empty()).map(String::from).collect()).collect()
+        };
+        let allowed: Vec<String> = ["echoargs", "batchy"].map(String::from).to_vec();
+        let is_batch = |p: &str| super::batch_on_path_in(p, std::ffi::OsStr::new(&path), &std::env::var("PATHEXT").unwrap_or_default());
+        let check = |c: &str| super::command_allowed_in(c, &allowed, super::Shell::PowerShell, &is_batch);
+        let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        for (c, want) in [
+            ("echoargs status", vec![words(&["status"])]),
+            ("echoargs commit -m 'a b; c | d & e (f) {g} [h] #i *j <k> @l, m'", vec![words(&["commit", "-m", "a b; c | d & e (f) {g} [h] #i *j <k> @l, m"])]),
+            ("echoargs commit -m \"two  spaces \"", vec![words(&["commit", "-m", "two  spaces "])]),
+            ("echoargs log --format='%H %an' -n5 HEAD~1 HEAD^ a=b x@y +z :w !v --since=1.week -- p/q.r", vec![words(&["log", "--format=%H %an", "-n5", "HEAD~1", "HEAD^", "a=b", "x@y", "+z", ":w", "!v", "--since=1.week", "--", "p/q.r"])]),
+            ("echoargs a 2>&1; echoargs b | echoargs c", vec![words(&["a"]), words(&["c"])]),
+            ("echoargs -1 0x10 1kb 1e3 % x -'x.y'", vec![words(&["-1", "0x10", "1kb", "1e3", "%", "x", "-x.y"])]),
+            ("batchy install left-pad@1.3.0 --save-dev a=b HEAD~1 -x:y", vec![words(&["install", "left-pad@1.3.0", "--save-dev", "a=b", "HEAD~1", "-x:y"])]),
+        ] {
+            assert!(check(c), "approved: {c}");
+            assert_eq!(run(c), want, "{c}");
+        }
+        // the refused forms: what the program really gets is not what the words say (harmless echo payloads only)
+        for (c, got) in [
+            ("echoargs log ,--output=x", vec![words(&["log", "--output=x"])]),
+            ("echoargs log a, b", vec![words(&["log", "a", "b"])]),
+            ("echoargs 'x\u{2019}; echoargs PWNED; \u{2018}y'", vec![words(&["x"]), words(&["PWNED"]), words(&["y"])]),
+            ("echoargs '\"a b\" --output=x'", vec![words(&["a", "b --output=x"])]),
+            ("echoargs 'a\"b' c", vec![words(&["ab c"])]),
+            ("echoargs -m '' x", vec![words(&["-m", "x"])]),
+            ("echoargs 'a b'c", vec![words(&["a b", "c"])]),
+            ("batchy 'x&echo.PWNED'", vec![words(&["x"]), words(&["PWNED"])]),
+            ("echoargs --% a ; b", vec![words(&["a", ";", "b"])]),
+            ("echoargs @PWD", vec![vec![cwd.display().to_string().replace('/', "\\")]]),
+            ("echoargs -x.y", vec![words(&["-x", ".y"])]),
+        ] {
+            assert!(!check(c), "refused: {c}");
+            let real = run(c);
+            // the cmd.exe line prints PWNED as plain text, not as the echo program's words
+            let real: Vec<Vec<String>> = real.into_iter().map(|l| if l == ["PWNED\r"] || l == ["PWNED"] { words(&["PWNED"]) } else { l }).collect();
+            assert_eq!(real, got, "{c}");
+        }
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
     #[test]
     fn only_an_exactly_named_allowed_program_is_approved() {
         let allowed = vec!["git".to_string(), "ls".to_string(), "python3".to_string()];
         for ok in ["git status", "git", "ls -la", "git log --oneline | ls", "git add . && git commit -m 'a; b'", "ls 2>&1", "ls >/dev/null", "git status; ls"] {
-            assert!(command_allowed(ok, &allowed), "{ok}");
+            assert!(sh_ok(ok, &allowed), "{ok}");
         }
         for bad in [
             "./git status", "bin/git", "/tmp/x/python3 -c 1", "/usr/bin/git", "GIT status", "gitk", "git; curl x", "git && ./x",
@@ -2360,26 +2710,26 @@ mod tests {
             // look-alikes
             "git\u{a0}status", "\u{ff47}it status",
         ] {
-            assert!(!command_allowed(bad, &allowed), "{bad}");
+            assert!(!sh_ok(bad, &allowed), "{bad}");
         }
         // python2 is not python
-        assert!(!command_allowed("python2>&1 x.py", &["python".to_string()]));
-        assert!(!command_allowed("git status", &["gitk".to_string()]));
+        assert!(!sh_ok("python2>&1 x.py", &["python".to_string()]));
+        assert!(!sh_ok("git status", &["gitk".to_string()]));
         // ps is refused even when the user allowed it, and so is a runner the user allowed, and an env reader behind one
-        assert!(!command_allowed("ps -ax", &["ps".to_string()]));
+        assert!(!sh_ok("ps -ax", &["ps".to_string()]));
         let runners: Vec<String> = ["time", "nice", "nohup", "xargs", "env", "command", "exec", "ps", "git", "find"].map(String::from).to_vec();
         for c in ["time ps eww", "nice ps", "nohup ps", "xargs ps", "env ps", "command ps", "exec ps", "time /bin/ps eww", "git -c core.pager=ps log", "git -c alias.x='!ps eww' x", "find . -exec ps ;"] {
             assert!(reads_other_env(c), "{c}");
-            assert!(!command_allowed(c, &runners), "{c}");
+            assert!(!sh_ok(c, &runners), "{c}");
         }
         for c in ["time git status", "env FOO=1 git", "xargs git add", "find . -execdir rm {} ;", "git -c x=y log"] {
-            assert!(!command_allowed(c, &runners), "{c}");
+            assert!(!sh_ok(c, &runners), "{c}");
             assert!(refusal_reason(c, &runners).contains("runs another program"), "{c}: {}", refusal_reason(c, &runners));
         }
         // a name holding the letters is not /proc, and git's own use of words is not an env reader
         for c in ["git add src/procgen.lua", "git add proceed.txt procs.md/x", "git commit -m \"fix ps output\"", "find . -name x", "git log --grep=top"] {
             assert!(!reads_other_env(c), "{c}");
-            assert!(command_allowed(c, &runners), "{c}");
+            assert!(sh_ok(c, &runners), "{c}");
         }
         // the bare word proc is no environment reader; only the folder's path is
         for c in ["git commit -m \"tune proc rate\"", "git checkout proc", "grep proc notes.md", "git add proc/gen.lua", "ls src/proc/x"] {
@@ -2391,21 +2741,21 @@ mod tests {
         // git's command-running forms, precisely, both ways
         let git = vec!["git".to_string()];
         for c in ["git config user.name \"A B\"", "git config --global user.email a@b.c", "cat ./proc/x", "cat ../proc/x"] {
-            assert!(command_allowed(&c.replace("cat ", "git show "), &git) || c.starts_with("cat"), "{c}");
+            assert!(sh_ok(&c.replace("cat ", "git show "), &git) || c.starts_with("cat"), "{c}");
             assert!(!reads_other_env(c), "{c}");
         }
         for c in ["git rebase --exe 'sh x.sh' HEAD~1", "git clone --conf core.sshCommand=x url", "git fetch --upload-pa=x origin", "git difftool --extc=x", "git log -1 --output=/tmp/x", "git log --outp=x", "git format-patch -o /tmp/x", "git config core.pager less", "git config alias.x \"!ls\""] {
-            assert!(!command_allowed(c, &git), "{c}");
+            assert!(!sh_ok(c, &git), "{c}");
         }
         for c in ["git switch -c feature", "git checkout -b x", "git branch -c a b", "git cherry-pick -x abc", "git clean -xdf", "git grep -c x", "git log -c",
                   "git checkout run", "git commit -m run", "git add foreach", "git config --get user.name", "git config user.name", "git --exec-path", "git -C sub status"] {
-            assert!(command_allowed(c, &git), "{c}");
+            assert!(sh_ok(c, &git), "{c}");
         }
         for c in ["git -c core.pager=less log", "git -c alias.x=y x", "git --config-env=a=B log", "git --exec-path=/tmp/x log", "git rebase -x make", "git rebase --exec=make",
                   "git rebase -i --exec make main", "git bisect run make", "git submodule foreach ls", "git submodule --quiet foreach ls", "git filter-branch --tree-filter x",
                   "git difftool -x meld", "git grep -Ofoo x", "git clone --config core.sshCommand=x url", "git clone -u x url", "git fetch --upload-pack=x origin",
                   "git push --receive-pack=x origin", "git config alias.x '!ls'", "git config --add core.pager less", "git -C sub -c a=b log"] {
-            assert!(!command_allowed(c, &git), "{c}");
+            assert!(!sh_ok(c, &git), "{c}");
             assert!(refusal_reason(c, &git).contains("runs another program"), "{c}");
         }
         // a reader's name as an argument of what a runner runs is not running the reader
@@ -2425,7 +2775,7 @@ mod tests {
         for ok in ["ls 2>/dev/null", "ls > /dev/null", "ls 2> /dev/null && git status", "git commit -m \"a (b) {c} ~d *\"", "git log --format=%H:%an,x@y+z", "git log -- 'a ~ * ( ) ! \"'", "ls 2",
             // ~ and ^ after a letter or digit, and !, are taken literally by /bin/sh and dash
             "git diff HEAD~1", "git show HEAD^", "git commit -m \"Fixed it!\"", "git log HEAD~2^..HEAD", "git log !x", "git log \"!x\"", "git commit -m Done!"] {
-            assert!(command_allowed(ok, &allowed), "{ok}");
+            assert!(sh_ok(ok, &allowed), "{ok}");
         }
     }
 
