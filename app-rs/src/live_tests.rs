@@ -216,6 +216,7 @@ fn settings<'a>(servers: &'a Value, allowed: &'a [String], denied: &'a [String])
         work: Path::new("/work"),
         keys_on: false,
         config_dir: None,
+        settings: None,
     }
 }
 
@@ -246,6 +247,7 @@ fn the_launch_key_changes_with_everything_a_turn_is_started_with() {
         ("the account (the second account's folder)", ClaudeSettings { config_dir: Some(Path::new("/app/accounts/claude-2-abcdef")), ..base() }),
         ("the program", ClaudeSettings { exe: Path::new("/other/claude"), ..base() }),
         ("the kit folder", ClaudeSettings { kit: Path::new("/kit2"), ..base() }),
+        ("the session's own settings (the board's hook)", ClaudeSettings { settings: Some("{\"hooks\":{}}"), ..base() }),
     ];
     let mut seen = vec![same.clone()];
     for (what, s) in changed {

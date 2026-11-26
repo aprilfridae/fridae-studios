@@ -2944,6 +2944,11 @@ function onEvent(e) {
     p.col.appendChild(t); p.turn = null;
   } else if (e.kind === "queued") {
     paintQueue(p, e.items || [], !!e.paused, !!e.kept);
+  } else if (e.kind === "user" && e.steered) {
+    /* written to a Lead while it works: given to it at its next step, so the turn it is on carries on */
+    const u = el("div", "you enter"); u.appendChild(el("div", "", esc(e.text))); p.col.appendChild(u);
+    p.col.appendChild(el("span", "tag enter", "Given to it at its next step"));
+    p.turn = null;
   } else if (e.kind === "user") {
     const h = p.col.querySelector(".hello"); if (h) h.remove();
     p.turn = null; p.started = true; p.autopilot = !!e.autopilot; p.overnight = e.overnight && e.until ? e.until : 0;

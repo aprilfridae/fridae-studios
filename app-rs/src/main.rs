@@ -153,6 +153,13 @@ fn main() {
     if let Some(code) = github::askpass_main() {
         std::process::exit(code);
     }
+    // run by an AI before its next step: what is new on its swarm's board (swarm/live.rs). First, so it starts fast
+    {
+        let args: Vec<String> = env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--board-hook") {
+            std::process::exit(swarm::live::hook_main(&args[i + 1..]));
+        }
+    }
     #[cfg(target_os = "macos")]
     widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)

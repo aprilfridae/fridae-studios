@@ -362,3 +362,112 @@ fn a_runs_lead_never_plans_on_a_cheap_model() {
     // verifiers and the Librarian keep their own rules
     assert_eq!(verifier_model("opencode", Some("opencode-go/glm-5.3"), None), ("claude".to_string(), None));
 }
+
+#[test]
+fn a_member_sees_new_posts_mid_turn_and_is_not_sent_them_again() {
+    let _s = serial();
+    TEST_CEILING.with(|c| c.set(Some(4)));
+    let d = repo("live");
+    let lead = lead_of(&d, "live");
+    let (_, a) = member(&lead, "alpha", false);
+    let (_, b) = member(&lead, "beta", false);
+    let run = run_of(&lead.id);
+    // alpha works: a post to it waits, and its next step shows it (the hook), marking it seen
+    a.set_running_for_test(true);
+    post_from(&b.id, &["@alpha".into()], "msg", "the shop uses the coins key").unwrap();
+    post_from(&b.id, &["@lead".into()], "msg", "only for the lead").unwrap();
+    let said = live::unseen_text(&a.id);
+    assert!(said.contains("@beta -> @alpha (msg): the shop uses the coins key"), "{said}");
+    assert!(!said.contains("only for the lead"), "{said}");
+    assert_eq!(live::unseen_text(&a.id), "", "shown once");
+    let out = live::hook_output("claude", &said);
+    assert_eq!(out["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    assert!(out["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("coins key"));
+    let g = live::hook_output("gemini", &said);
+    assert!(g["injectSteps"][0]["systemMessage"]["systemMessage"].as_str().unwrap().contains("coins key"));
+    assert_eq!(live::hook_output("claude", ""), json!({}));
+    // its turn ends: what it saw is not sent again as a message
+    a.set_running_for_test(false);
+    turn_ended(&a, false);
+    assert!(sent_to(&a.id).is_empty(), "{:?}", sent_to(&a.id));
+    // one it did not see is
+    a.set_running_for_test(true);
+    post_from(&b.id, &["@alpha".into()], "msg", "and the gems key").unwrap();
+    a.set_running_for_test(false);
+    turn_ended(&a, false);
+    let got = sent_to(&a.id);
+    assert_eq!(got.len(), 1);
+    assert!(got[0].contains("and the gems key") && !got[0].contains("coins key"));
+    // a parked member woken by a post has seen it: its next step does not show it again
+    assert_eq!(live::unseen_text(&a.id), "");
+    // the Lead hears every post but its own
+    let lead_said = live::unseen_text(&lead.id);
+    assert!(lead_said.contains("only for the lead") && lead_said.contains("coins key"), "{lead_said}");
+    assert!(live::seen(&run, &lead.id) > 0.0);
+    done(&lead.id);
+}
+
+#[test]
+fn a_busy_lead_is_never_queued_board_posts_and_an_idle_one_is_woken_once() {
+    let _s = serial();
+    TEST_CEILING.with(|c| c.set(Some(4)));
+    let d = repo("leadwake");
+    let lead = lead_of(&d, "leadwake");
+    let (_, a) = member(&lead, "alpha", false);
+    let (_, b) = member(&lead, "beta", false);
+    lead.set_running_for_test(true);
+    post_from(&a.id, &["@lead".into()], "msg", "alpha is half done").unwrap();
+    post_from(&b.id, &["@lead".into()], "msg", "beta needs a decision").unwrap();
+    tick_run(&lead.id, paths::now_secs());
+    assert!(sent_to(&lead.id).is_empty(), "nothing queued behind its turn");
+    assert_eq!(lead.queued(), 0);
+    // idle: one line for both
+    lead.set_running_for_test(false);
+    tick_run(&lead.id, paths::now_secs());
+    let got = sent_to(&lead.id);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].starts_with("2 new posts for you") && got[0].contains("@alpha, @beta"), "{}", got[0]);
+    tick_run(&lead.id, paths::now_secs());
+    assert_eq!(sent_to(&lead.id).len(), 1, "once");
+    // posts it saw at a step wake nothing
+    lead.set_running_for_test(true);
+    post_from(&a.id, &["@lead".into()], "msg", "alpha done soon").unwrap();
+    assert!(live::unseen_text(&lead.id).contains("alpha done soon"));
+    lead.set_running_for_test(false);
+    tick_run(&lead.id, paths::now_secs());
+    assert_eq!(sent_to(&lead.id).len(), 1);
+    // the standing instructions: steer, keep the user told, end the turn while experts work
+    let p = member_prompt(&lead.id);
+    assert!(p.contains("live thread") && p.contains("end your turn") && p.contains("short update"), "{p}");
+    done(&lead.id);
+}
+
+#[test]
+fn the_users_message_to_a_busy_lead_reaches_it_at_its_next_step() {
+    let _s = serial();
+    TEST_CEILING.with(|c| c.set(Some(4)));
+    let d = repo("steer");
+    let lead = lead_of(&d, "steer");
+    assert!(lead.set_ai("claude"));
+    let (_, a) = member(&lead, "alpha", false);
+    lead.set_running_for_test(true);
+    lead.ask("you gotta update me occasionally lead", &Ask::default());
+    assert_eq!(lead.queued(), 0, "not queued behind its turn");
+    let said = live::unseen_text(&lead.id);
+    assert!(said.contains("THE USER WROTE TO YOU") && said.contains("> you gotta update me occasionally lead"), "{said}");
+    assert!(!live::unseen_text(&lead.id).contains("THE USER"), "given once");
+    // not given over before the turn ended: it goes first in the queue, as a message already shown
+    lead.ask("and keep it short", &Ask::default());
+    lead.ask("Review: approved", &Ask { wake: true, ..Default::default() });
+    assert_eq!(lead.queued(), 1, "the app's wake is queued");
+    steer_left(&lead);
+    assert_eq!(lead.queued(), 2);
+    // a member, or an AI with no hook, is queued as before (what the user typed still ahead of the app's own)
+    a.set_running_for_test(true);
+    a.ask("Review: x", &Ask { app: true, ..Default::default() });
+    a.ask("typed", &Ask::default());
+    assert_eq!(a.queued(), 2);
+    a.set_running_for_test(false);
+    lead.set_running_for_test(false);
+    done(&lead.id);
+}

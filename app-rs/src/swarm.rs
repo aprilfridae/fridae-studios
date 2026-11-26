@@ -9,6 +9,11 @@
 //!   WORK/swarm-trees/<run>/<name>      a writing member's own git worktree, on branch `fridae/swarm-<run>-<name>`
 //!   WORK/swarm-trees/<run>/_integration  the run's integration branch `fridae/swarm-<run>`, where verified work merges
 //!
+//! - The board is a live thread (`live`): a member at work sees new posts for it at its next step (the Lead sees every
+//!   post but its own), through a hook of the app's for Claude Code and Gemini and through every rbxkit tool result,
+//!   and what it saw (WORK/swarm/<run>/seen/<agent id>) is not sent to it again when its turn ends. The Lead is never
+//!   queued a post behind its turn: when it is idle it is woken once, with one line, for whatever is new
+//!   (`wake_idle_lead`). What the user writes to a busy Lead reaches it the same way at its next step (`steer`).
 //! - A member that ends its turn is parked: its chat stays, and it holds no agent slot (`agents::holds_slot`). A post
 //!   that mentions it resumes it (`pump`), within the user's ceiling (`ceiling`).
 //! - A writing member posts `done`: the app commits its copy and starts a verifier on a capable model. PASS merges the
@@ -96,8 +101,9 @@ struct Member {
     branch: Option<String>,
     tree: Option<PathBuf>,
     brief: String,
-    /// Posts that mention it, waiting to resume it.
-    pending: Vec<String>,
+    /// Posts that mention it, waiting to resume it: (the post's time, its line). Those it was shown mid-turn
+    /// (`live::seen`) are left out when it is resumed.
+    pending: Vec<(f64, String)>,
     /// When the watchdog nudged it (silent while working).
     nudged: Option<f64>,
     /// A verifier: the member it checks; the verdict it posted.
@@ -143,6 +149,8 @@ struct Run {
     /// Posts on the board, and how many there were when the Lead was last woken for an idle run.
     posts: usize,
     woke_at: usize,
+    /// The newest post the Lead was woken for (`wake_idle_lead`), so it is woken once for each.
+    lead_woke: f64,
     /// Review items filed for landing the integration branch.
     reviews: u32,
 }
@@ -255,7 +263,7 @@ fn new_run(lead: &str, project: &str) -> Result<Run, String> {
     librarian.model = model;
     librarian.brief = "Answers knowledge questions from the vault and files what the swarm learns.".into();
     let _ = fs::create_dir_all(root().join(&id));
-    Ok(Run { id, lead: lead.to_string(), project: project.to_string(), base: base.trim().to_string(), integration, int_tree, members: vec![librarian], posts: 0, woke_at: 0, reviews: 0 })
+    Ok(Run { id, lead: lead.to_string(), project: project.to_string(), base: base.trim().to_string(), integration, int_tree, members: vec![librarian], posts: 0, woke_at: 0, lead_woke: 0.0, reviews: 0 })
 }
 
 // ------------------------------------------------------------------ names and models
@@ -471,7 +479,8 @@ fn post_in(run: &mut Run, from: &str, to: &[String], kind: &str, text: &str) -> 
     // the app's own posts go to whom they name; a member's also to everyone its text @mentions
     let to = recipients(to, if from == "system" { "" } else { text });
     let text: String = text.trim().chars().take(TEXT_MAX).collect();
-    let post = json!({"t": paths::now_secs(), "from": from, "to": to, "kind": kind, "text": text});
+    let t = paths::now_secs();
+    let post = json!({"t": t, "from": from, "to": to, "kind": kind, "text": text});
     append_line(&run.id, &post);
     run.posts += 1;
     agents::BUS.put("swarm", json!({"lead": run.lead}));
@@ -492,18 +501,41 @@ fn post_in(run: &mut Run, from: &str, to: &[String], kind: &str, text: &str) -> 
                 ask_librarian = true;
                 continue;
             }
-            m.pending.push(line.clone());
+            m.pending.push((t, line.clone()));
         }
     }
     if ask_librarian {
         librarian_asked(run, from, &text);
     }
-    if from != "lead" && from != "system" && to.iter().any(|t| t == "@lead") {
-        if let Some(lead) = agents::get(&run.lead) {
-            wake_lead(&lead, &format!("New on your swarm's board for you: {line}\nRead the board with rbx_team action 'board'."));
+    // the Lead is not sent the post: it sees it at its next step (`live`), or is woken once if idle (`wake_idle_lead`)
+    post
+}
+
+/// Posts for the Lead that it has neither seen (`live::seen`) nor been woken for, while it is idle: one short line
+/// wakes it for all of them. Never while it works or has messages waiting (it would be queued behind its turn): it
+/// sees them at its next step then.
+fn wake_idle_lead(run: &mut Run) {
+    let Some(lead) = agents::get(&run.lead) else { return };
+    if lead.busy() || lead.queued() > 0 {
+        return;
+    }
+    let since = live::seen(&run.id, &run.lead).max(run.lead_woke);
+    let new: Vec<Value> = read_board(&run.id)
+        .into_iter()
+        .filter(|p| p["t"].as_f64().unwrap_or(0.0) > since && !matches!(p["from"].as_str(), Some("lead" | "system")))
+        .filter(|p| p["to"].as_array().is_some_and(|to| to.iter().any(|t| t == "@lead")))
+        .collect();
+    let Some(last) = new.iter().filter_map(|p| p["t"].as_f64()).reduce(f64::max) else { return };
+    run.lead_woke = last;
+    let mut who: Vec<String> = Vec::new();
+    for p in &new {
+        let f = format!("@{}", p["from"].as_str().unwrap_or("?"));
+        if !who.contains(&f) {
+            who.push(f);
         }
     }
-    post
+    let n = new.len();
+    wake_lead(&lead, &format!("{n} new post{} for you on your swarm's board (from {}). Read them with rbx_team action 'board', act on what needs you, give the user a short update if it matters to them, then end your turn.", if n == 1 { "" } else { "s" }, who.join(", ")));
 }
 
 // ------------------------------------------------------------------ acting on agents (recorded in tests)
@@ -726,6 +758,7 @@ pub fn post_from(agent_id: &str, to: &[String], kind: &str, text: &str) -> Resul
         }
     }
     pump(run);
+    wake_idle_lead(run);
     write_index(&all);
     Ok(said)
 }
@@ -740,6 +773,7 @@ pub fn post_as_user(lead: &str, to: &[String], text: &str) -> Result<(), String>
     let to = if to.is_empty() { vec!["@lead".to_string()] } else { to.to_vec() };
     post_in(run, "you", &to, "msg", text);
     pump(run);
+    wake_idle_lead(run);
     Ok(())
 }
 
@@ -956,6 +990,7 @@ pub fn land(project: &str, item: &Value) -> String {
 
 /// A chat's turn ended (`team::finished`): a verifier's verdict is acted on; parked members with posts waiting are resumed.
 pub fn turn_ended(agent: &Agent, stopped: bool) {
+    steer_left(agent);
     let mut all = runs();
     let Some(run) = all.iter_mut().find(|r| r.members.iter().any(|m| m.id == agent.id)) else { return };
     if let Some(vi) = run.members.iter().position(|m| m.id == agent.id && m.verifies.is_some() && m.state == "active") {
@@ -977,6 +1012,15 @@ fn pump(run: &mut Run) {
         if m.pending.is_empty() || m.state == "stopped" || m.state == "verifying" || busy(m) {
             continue;
         }
+        // what it was shown mid-turn is not sent again
+        if !m.id.is_empty() {
+            let seen = live::seen(&run.id, &m.id);
+            run.members[i].pending.retain(|(t, _)| *t > seen);
+        }
+        let m = &run.members[i];
+        if m.pending.is_empty() {
+            continue;
+        }
         let librarian = m.role == "librarian";
         if !librarian && at_work(run) >= ceiling {
             continue;
@@ -986,17 +1030,20 @@ fn pump(run: &mut Run) {
         }
         let text = format!(
             "New on the swarm's board for you:\n{}\n\nAnswer or act on it (reply with rbx_team action 'post'), then end your turn.",
-            run.members[i].pending.join("\n")
+            run.members[i].pending.iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>().join("\n")
         );
+        let last = run.members[i].pending.iter().map(|(t, _)| *t).fold(0.0, f64::max);
         if m.id.is_empty() {
             if librarian && start_librarian(run, i, &text) {
                 run.members[i].pending.clear();
+                live::mark_seen(&run.id, &run.members[i].id, last);
             }
             continue;
         }
         if let Some(agent) = agents::get(&m.id) {
             run.members[i].pending.clear();
             run.members[i].nudged = None;
+            live::mark_seen(&run.id, &agent.id, last);
             deliver(&agent, &text, false);
         }
     }
@@ -1109,6 +1156,7 @@ fn watch_run(run: &mut Run, now: f64) {
         }
     }
     pump(run);
+    wake_idle_lead(run);
     // everyone parked or idle, but work unfinished: the Lead is woken once per quiet spell
     let lead_busy = agents::get(&run.lead).is_some_and(|a| a.busy());
     let anyone = run.members.iter().any(|m| busy(m) || m.answering > 0 || !m.pending.is_empty() || m.verify_wanted || m.state == "verifying");
@@ -1140,9 +1188,14 @@ pub fn member_prompt(agent_id: &str) -> String {
         let list: Vec<String> = run.members.iter().map(|m| format!("@{} ({}, {})", m.name, m.role, shown_status(m))).collect();
         return format!(
             "\n\nYOUR SWARM (the experts you started work at once): {}. Every writer has its own copy and branch; the app merges \
-             each verified part into {} and files a Review item for the user's yes. Read the board with rbx_team action 'board', \
-             post with 'post' (to [\"@name\"], [\"@role\"] or [\"@all\"]). Parked members cost nothing and wake when mentioned. Ask \
-             @librarian knowledge questions instead of reading whole notes.",
+             each verified part into {} and files a Review item for the user's yes. Post with rbx_team action 'post' (to \
+             [\"@name\"], [\"@role\"] or [\"@all\"]). The board is a live thread: what is new on it, and anything the user writes \
+             to you while you work, is shown to you at your next step, so never wait or poll for it ('wait_board' returns \
+             within a minute for you). Parked members cost nothing and wake when mentioned. Ask @librarian knowledge questions \
+             instead of reading whole notes.\n- Your job is to steer, and to be free for the user. Post the plan (who does what) \
+             once, give the user a short update in your reply at each milestone (a part started, merged, failed, or a decision \
+             needed), and answer the user first whenever they write. While your experts work, end your turn: you are woken \
+             with one line when a post needs you. Do no busy work and no long waits to fill the time.",
             list.join(", "),
             run.integration
         );
@@ -1158,7 +1211,7 @@ pub fn member_prompt(agent_id: &str) -> String {
             } else {
                 out += "\n- You only read and report: change no project files.";
             }
-            out += "\n- The board: rbx_team action 'post' (to: [\"@name\"], [\"@role\"], [\"@all\"] or [\"@lead\"]; text) asks or tells another member directly; 'board' reads the recent posts; 'wait_board' waits for a post that mentions you.\n- Knowledge questions (how we do something, what the user likes, what was learned before): ask @librarian on the board rather than reading whole notes. To keep something worth knowing: post \"@librarian remember: ...\".\n- Roblox Studio is one shared place: before changing it, rbx_team action 'studio_turn' op 'take'; give it back with op 'give' as soon as your Studio part is done. File work needs no turn.\n- When your part is done, post kind 'done' with a one-line summary, then end your turn. When you are waiting on someone, post your question to them and end your turn: you are parked at no cost and woken when a post mentions you.";
+            out += "\n- The board is a live thread: posts for you are shown to you at your next step while you work (no need to read the board for them). rbx_team action 'post' (to: [\"@name\"], [\"@role\"], [\"@all\"] or [\"@lead\"]; text) asks or tells another member directly; 'board' reads the recent posts; 'wait_board' waits for a post that mentions you.\n- Knowledge questions (how we do something, what the user likes, what was learned before): ask @librarian on the board rather than reading whole notes. To keep something worth knowing: post \"@librarian remember: ...\".\n- Roblox Studio is one shared place: before changing it, rbx_team action 'studio_turn' op 'take'; give it back with op 'give' as soon as your Studio part is done. File work needs no turn.\n- When your part is done, post kind 'done' with a one-line summary, then end your turn. When you are waiting on someone, post your question to them and end your turn: you are parked at no cost and woken when a post mentions you.";
         }
     }
     let _ = run;
@@ -1207,6 +1260,44 @@ pub fn api_post(body: &Value) -> Value {
 }
 
 pub(crate) mod librarian;
+pub(crate) mod live;
+
+// ------------------------------------------------------------------ the user steering a busy Lead
+
+/// What the user wrote to a busy Lead and was kept for its next step (`steer`), with how it was sent, by chat: put back
+/// in its queue if the turn ends before the hook gave it over (`steer_left`).
+static STEERED: Mutex<Vec<(String, String, Ask)>> = Mutex::new(Vec::new());
+
+/// Whether a chat is shown what is new at its next step (the hook: Claude Code and Gemini, `live`).
+pub fn steerable(agent: &Agent) -> bool {
+    matches!(agent.ai().as_str(), "claude" | "gemini") && leads(&agent.id)
+}
+
+/// The user wrote to a run's Lead while it works: kept for its next step, where the hook shows it as the user's (the
+/// chat says so at once). False when this chat cannot be reached that way: the message is queued as before.
+pub fn steer(agent: &Agent, text: &str, ask: &Ask) -> bool {
+    if !steerable(agent) || !live::put_steer(&agent.id, text) {
+        return false;
+    }
+    STEERED.lock().unwrap_or_else(|e| e.into_inner()).push((agent.id.clone(), text.to_string(), ask.clone()));
+    true
+}
+
+/// A chat's turn ended: what the user wrote to it that the hook did not give over goes first in its queue, as it was
+/// sent (it is in the chat already, so it is not shown again).
+pub fn steer_left(agent: &Agent) {
+    let kept: Vec<(String, Ask)> = {
+        let mut all = STEERED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|(id, _, _)| *id == agent.id);
+        *all = rest;
+        mine.into_iter().map(|(_, t, a)| (t, a)).collect()
+    };
+    let left = live::take_steer(&agent.id);
+    for text in left.iter().rev() {
+        let ask = kept.iter().find(|(t, _)| t == text).map(|(_, a)| a.clone()).unwrap_or_default();
+        agent.queue_first(text, Ask { shown: true, ..ask });
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod tests;

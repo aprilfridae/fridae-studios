@@ -1714,11 +1714,26 @@ def handle(msg, began=None, placed=None):
             raise KeyError("unknown tool: %s" % params.get("name"))
         budget = _budget()
         if budget is not None:      # an AI that cuts calls off: answered in time (see "long calls")
-            return _budgeted(params.get("name"), fn, params.get("arguments") or {}, (began or time.monotonic()) + budget, mid, placed)
-        return _run_tool(fn, params.get("arguments") or {})
+            return _with_board(_budgeted(params.get("name"), fn, params.get("arguments") or {}, (began or time.monotonic()) + budget, mid, placed))
+        return _with_board(_run_tool(fn, params.get("arguments") or {}))
     if mid is None:
         return None  # a notification we do not act on
     raise NotImplementedError(method)
+
+
+def _with_board(res):
+    # A tool result with what is new for this chat on its swarm's board added (the live thread, rbxteam.unseen_note):
+    # every AI sees new posts at its next tool call, mid-turn. Unchanged outside a swarm.
+    if not isinstance(res, dict) or not isinstance(res.get("content"), list):
+        return res
+    try:
+        import rbxteam
+        note = rbxteam.unseen_note()
+    except Exception:
+        note = ""
+    if note:
+        res["content"].append({"type": "text", "text": note})
+    return res
 
 
 def _reply(msg, began=None, placed=None):
