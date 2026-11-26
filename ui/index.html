@@ -841,7 +841,7 @@ applyTheme();
 
   <main class="stage">
     <!-- the bar over the tabs (the project's name and its tabs) is ui/src/chat, put here by fridae.mount("chat-top") -->
-    <header class="top" id="top"></header>
+    <header class="top" id="top" data-drag></header>
 
     <div class="body">
     <!-- the chat (the bar above the conversation, the conversation and the message box) is ui/src/chat, put here by
@@ -888,6 +888,8 @@ applyTheme();
 <aside class="drawer" id="pd" aria-label="Project"></aside>
 <!-- a picture shown large: ui/src/review/Lightbox.tsx -->
 <div id="light-host"></div>
+<!-- the window's minimise, maximise and close, on Windows: ui/src/ui/WindowBar.tsx, put here by fridae.mount("win-bar") -->
+<div id="win-bar"></div>
 
 <script>
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
@@ -1876,6 +1878,7 @@ fridaeWait.unshift((f) => {
   f.store.set({ theme: Object.assign({}, themeChoice) });
   f.mount("sidebar", $("side")); f.mount("side-over", $("side-over")); f.mount("overview", $("allproj"));
   f.mount("settings", $("sd")); f.mount("usage", $("ud"));
+  f.mount("win-bar", $("win-bar"));
   f.mount("promos", $("promos")); f.mount("newproj", $("newproj")); f.mount("project", $("pd"));
 });
 

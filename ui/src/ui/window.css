@@ -1,0 +1,17 @@
+/* The window's own bar (Windows): its controls sit at the right end of the top bar, over the page, and the top bar
+   leaves them room. The empty parts of the top bar and the sidebar's head move the window. */
+#win-bar { display: contents; }
+.win-ctl { position: fixed; z-index: 80; top: 0; right: 0; display: flex; height: 48px; }
+.win-b { width: 46px; height: 100%; display: grid; place-items: center; color: var(--dim); background: transparent; border-radius: 0; transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
+.win-b:hover { background: var(--hover); color: var(--text); }
+.win-b:active { background: var(--press); }
+.win-b.close:hover { background: #c42b1c; color: #fff; }
+.win-b.close:active { background: #b22a1b; color: #fff; }
+.win-b:focus-visible { outline-offset: -2px; }
+/* a thin strip along the top edge resizes the window (the sides and the bottom are the frame's own) */
+.win-edge { position: fixed; z-index: 81; top: 0; left: 0; right: 138px; height: 4px; cursor: ns-resize; }
+body.win-max .win-edge { display: none; }
+body.framed .top { padding-right: 154px; }
+body.framed [data-drag] { -webkit-user-select: none; user-select: none; }
+/* the project panel and windows over the page keep clear of the controls */
+body.framed .drawer { top: 52px; }

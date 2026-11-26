@@ -17,7 +17,7 @@ export function Sidebar() {
   useEffect(() => { document.body.classList.toggle("working", busy); }, [busy]);
   return (
     <>
-      <span class="mark"><img src="/logo.png" alt="" /><span>Fridae</span></span>
+      <span class="mark" data-drag><img src="/logo.png" alt="" /><span>Fridae</span></span>
       <List />
       <Foot />
       <RenameBox />

@@ -60,11 +60,22 @@ use tao::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoopBuilder},
-    window::{Icon, Theme, WindowBuilder},
+    window::{Icon, ResizeDirection, Theme, WindowBuilder},
 };
 use wry::{WebContext, WebViewBuilder};
 
 use paths::{APP, PATHS, VERSION};
+
+/* What reaches the event loop from elsewhere: the end (a developer's timer), or a press on the window's own bar,
+   which the page draws on Windows in place of the system's title bar (`window.ipc.postMessage("win:...")`). */
+enum Ui {
+    Quit,
+    Drag,
+    Minimize,
+    Maximize,
+    Close,
+    ResizeTop,
+}
 
 fn window_icon() -> Option<Icon> {
     let img = image::open(PATHS.kit.join("ui").join("fridae.ico")).ok()?.to_rgba8();
@@ -209,16 +220,22 @@ fn main() {
     let url = server::start(paths::random_hex(3));
     thread::spawn(vault_sync::watch); // the shared skill vault: a check once a day, after the first Download
 
-    let event_loop = EventLoopBuilder::<()>::with_user_event().build();
+    let event_loop = EventLoopBuilder::<Ui>::with_user_event().build();
     let icon = window_icon();
-    let window = WindowBuilder::new()
+    let builder = WindowBuilder::new()
         .with_title(APP)
         .with_inner_size(LogicalSize::new(1180.0, 820.0))
         .with_min_inner_size(LogicalSize::new(520.0, 480.0))
         .with_theme(Some(Theme::Dark))
-        .with_window_icon(icon)
-        .build(&event_loop)
-        .expect("could not create the window");
+        .with_window_icon(icon);
+    // On Windows the page's own top bar is the window's: no system title bar over it (the page draws minimise,
+    // maximise and close, and its empty parts move the window). The frame stays, unseen, for resizing and the shadow.
+    #[cfg(windows)]
+    let builder = {
+        use tao::platform::windows::WindowBuilderExtWindows;
+        builder.with_decorations(false).with_undecorated_shadow(true)
+    };
+    let window = builder.build(&event_loop).expect("could not create the window");
     #[cfg(windows)]
     {
         use tao::platform::windows::WindowExtWindows;
@@ -227,6 +244,23 @@ fn main() {
     let data = if paths::packaged() { PATHS.home.join("webview") } else { paths::work("webview") };
     let mut context = WebContext::new(Some(data));
     let builder = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url);
+    #[cfg(windows)]
+    let builder = {
+        let proxy = event_loop.create_proxy();
+        builder
+            .with_initialization_script("window.__fridaeFrame = true;")
+            .with_ipc_handler(move |req: wry::http::Request<String>| {
+                let ui = match req.body().as_str() {
+                    "win:drag" => Ui::Drag,
+                    "win:min" => Ui::Minimize,
+                    "win:max" => Ui::Maximize,
+                    "win:close" => Ui::Close,
+                    "win:resize-top" => Ui::ResizeTop,
+                    _ => return,
+                };
+                let _ = proxy.send_event(ui);
+            })
+    };
     // videos and music dropped on the window are used by path, never uploaded; other drops go to the page as before.
     // Not on Windows: there wry's handler replaces WebView2's own, which would stop cards dragging on the board, so a
     // dropped video reaches the page, which points to Add clips instead.
@@ -270,15 +304,34 @@ fn main() {
         let proxy = event_loop.create_proxy();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(secs));
-            let _ = proxy.send_event(());
+            let _ = proxy.send_event(Ui::Quit);
         });
     }
+    let mut was_max = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(()) => {
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } | Event::UserEvent(Ui::Quit | Ui::Close) => {
                 agents::shut_down();
                 *control_flow = ControlFlow::Exit;
+            }
+            Event::UserEvent(Ui::Drag) => {
+                let _ = window.drag_window();
+            }
+            Event::UserEvent(Ui::Minimize) => window.set_minimized(true),
+            Event::UserEvent(Ui::Maximize) => window.set_maximized(!window.is_maximized()),
+            Event::UserEvent(Ui::ResizeTop) => {
+                if !window.is_maximized() {
+                    let _ = window.drag_resize_window(ResizeDirection::North);
+                }
+            }
+            // the page's maximise button shows restore while the window fills the screen
+            Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+                let max = window.is_maximized();
+                if max != was_max {
+                    was_max = max;
+                    let _ = _webview.evaluate_script(&format!("window.fridaeMax && window.fridaeMax({max})"));
+                }
             }
             _ => {}
         }
