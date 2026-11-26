@@ -305,7 +305,7 @@ fn commit_all(dir: &Path, message: &str) -> Option<String> {
     }
     let mut args: Vec<&str> = Vec::new();
     if !run_git(dir, &["config", "user.name"]).0 {
-        args.extend(["-c", "user.name=Fridae Studios", "-c", "user.email=fridae-studios@localhost"]);
+        args.extend(["-c", "user.name=Fridae", "-c", "user.email=fridae-studios@localhost"]);
     }
     if !run_git(dir, &["add", "-A"]).0 {
         return None;
@@ -327,7 +327,7 @@ pub fn night_checkpoint(path: &str, studio: bool) -> Option<String> {
 
 /// The start commit's message: a studio run says so; an ordinary Overnight keeps its wording.
 pub fn night_message(studio: bool) -> &'static str {
-    if studio { "Before the studio run (Fridae Studios checkpoint)" } else { "Before the overnight run (Fridae Studios checkpoint)" }
+    if studio { "Before the studio run (Fridae checkpoint)" } else { "Before the overnight run (Fridae checkpoint)" }
 }
 
 /// A checkpoint of the project's files with this commit message. None when the folder has no git repository.
@@ -352,7 +352,7 @@ pub struct Undoing<'a> {
     pub undo_commit: &'a str,
 }
 
-const NIGHT: Undoing<'static> = Undoing { whose: "night's", end_commit: "End of the overnight run (kept in history)", undo_commit: "Undo the overnight run (Fridae Studios)" };
+const NIGHT: Undoing<'static> = Undoing { whose: "night's", end_commit: "End of the overnight run (kept in history)", undo_commit: "Undo the overnight run (Fridae)" };
 
 /// Put the project's files back as they were at `commit`, as a new commit, so the night's work stays in the history
 /// and this can itself be undone. The board (.fridae) is left as it is, so the night's cards can still be read.

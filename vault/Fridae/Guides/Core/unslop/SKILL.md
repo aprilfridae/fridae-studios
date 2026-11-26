@@ -26,10 +26,10 @@ The difference between slop and craft is where the richness goes. Slop spreads c
 
 Work like a designer doing a redline pass, one layer at a time, across the whole screen.
 
-## In Roblox (added by Fridae Studios)
+## In Roblox (added by Fridae)
 
 This guide was written for web pages. In a Roblox game it applies to ScreenGuis, SurfaceGuis and BillboardGuis, and
-its judgement holds unchanged. Fridae Studios adapted it as follows (the rest of this file is the original):
+its judgement holds unchanged. Fridae adapted it as follows (the rest of this file is the original):
 
 - **Look at the screen** with Studio's `screen_capture` (in a playtest for UI built at runtime) and read real values with
   `inspect_instance`. The `scripts/` snapshot and story-video tools are not bundled: skip step 1's snapshot and step 8.

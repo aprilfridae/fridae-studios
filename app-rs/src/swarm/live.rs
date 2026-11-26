@@ -157,7 +157,7 @@ pub fn hook_output(ai: &str, text: &str) -> Value {
     if text.is_empty() {
         return json!({});
     }
-    let text = format!("[Fridae Studios, live]\n{text}");
+    let text = format!("[Fridae, live]\n{text}");
     match ai {
         "gemini" => json!({"injectSteps": [{"systemMessage": {"systemMessage": text}}]}),
         _ => json!({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}),

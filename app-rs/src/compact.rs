@@ -314,7 +314,7 @@ fn prompt_with(older: &str, mark: &str) -> String {
     format!(
         "You are writing a summary for another AI assistant. You have no tools: answer with the summary's text only.\n\n\
          Between the lines BEGIN {mark} and END {mark} below is the older part of a conversation between a user and one \
-         or more AI assistants working on a Roblox game in the app Fridae Studios. The assistant that carries the \
+         or more AI assistants working on a Roblox game in the app Fridae. The assistant that carries the \
          conversation on gets your summary in place of this part, followed by the newest part word for word.\n\n\
          Write what it needs to carry on: what the user asked for and how they want it done, what was decided, what was \
          built or changed (with the names of files, scripts, places and assets as they are written), what was tried and \
@@ -699,7 +699,7 @@ pub fn plain_prompt_for(material: &str) -> String {
 
 fn plain_prompt_with(material: &str, mark: &str) -> String {
     format!(
-        "You are writing for the person whose Roblox game is being built in the app Fridae Studios. They are not a \
+        "You are writing for the person whose Roblox game is being built in the app Fridae. They are not a \
          programmer and do not read code. An expert (an AI helper) has just finished a task on their game. Between the \
          lines BEGIN {mark} and END {mark} below is that expert's own report and a short list of what it changed.\n\n\
          Write 2 to 4 short sentences, in plain everyday English, that tell the person what this expert did: what it \

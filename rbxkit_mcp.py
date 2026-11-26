@@ -1651,7 +1651,7 @@ TOOLS = [
              "text": {"type": "string", "description": "lesson: one short sentence"},
              "scope": {"type": "string", "enum": ["game", "all"], "description": "lesson: this game or every game (default game)"}},
             ["action"]), t_stage),
-    ("rbx_team", "Start extra agents through the Fridae Studios app and collect their reports. Only works when this chat runs inside the "
+    ("rbx_team", "Start extra agents through the Fridae app and collect their reports. Only works when this chat runs inside the "
      "app. Action 'spawn' (role, name, task): role 'worker' does an independent piece of the job, 'critic' reviews work and reports "
      "problems; the task must be a full brief (at least 80 characters: what to do, where, what is done already, what to leave alone, "
      "what to report), because the new agent knows nothing about this chat. Returns an id and status, or says the app did not pick "

@@ -1,7 +1,7 @@
 """The game's board: what is being worked on, what is done, and what the user needs to do.
 
 One board per game project, kept in <project>/.fridae/board.json so it travels with the game (and its git history).
-The Fridae Studios app shows it as a board the user can move cards on; agents read and update it with rbx_board.
+The Fridae app shows it as a board the user can move cards on; agents read and update it with rbx_board.
 """
 import json
 import os

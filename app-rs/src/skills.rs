@@ -828,7 +828,7 @@ pub fn note_advice_prompt(relation: &str, a: &str, b: &str) -> String {
         "These two say much the same thing."
     };
     format!(
-        "You are comparing two notes for a user of the app Fridae Studios. A note is a short Markdown file their AI \
+        "You are comparing two notes for a user of the app Fridae. A note is a short Markdown file their AI \
          assistants wrote to remember something for them: a fact, a preference, a decision (front matter with its \
          title and date, then the text). The user keeps one note per fact. {how} Note A is the older one, note B the \
          newer. You have no tools.\n\n\
@@ -869,7 +869,7 @@ fn prompt_for(dec: &Value, a: &str, b: &str) -> String {
 
 fn advice_prompt_with(a: &str, b: &str, mark: &str) -> String {
     format!(
-        "You are comparing two skills for a user of the app Fridae Studios. A skill is a SKILL.md file of instructions \
+        "You are comparing two skills for a user of the app Fridae. A skill is a SKILL.md file of instructions \
          an AI assistant follows for one kind of task (front matter with its name and description, then the \
          instructions). The user keeps one library of skills for every AI they use, one skill per job. Skill A is in \
          their library and in use. Skill B is a newcomer that overlaps it. You have no tools.\n\n\

@@ -798,7 +798,7 @@ pub fn put(path: &str, name: &str, private: bool) -> Value {
 }
 
 fn put_now(path: &str, dir: &Path, branch: &str, name: &str, private: bool, token: String) -> (bool, String) {
-    let body = json!({"name": name, "private": private, "description": "Made with Fridae Studios", "auto_init": false});
+    let body = json!({"name": name, "private": private, "description": "Made with Fridae", "auto_init": false});
     let (code, v) = match api("POST", "/user/repos", &token, Some(body)) {
         Ok(got) => got,
         Err(e) => return (false, e),

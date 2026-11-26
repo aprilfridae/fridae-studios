@@ -60,7 +60,7 @@ pub fn acquire_with(project: &Path, wait: Duration, stale: Duration) -> Result<G
                     Err(_) => {}
                 }
                 if Instant::now() > deadline {
-                    return Err("Another Fridae Studios process is updating this game's Studio files. Try again in a moment.".into());
+                    return Err("Another Fridae process is updating this game's Studio files. Try again in a moment.".into());
                 }
                 thread::sleep(Duration::from_millis(20));
             }

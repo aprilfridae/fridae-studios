@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Fridae Studios for macOS:  python3 build_mac.py  ->  build-out/Fridae-Studios-macOS.dmg
+"""Build Fridae for macOS:  python3 build_mac.py  ->  build-out/Fridae-macOS.dmg
 
 Needs Rust (cargo), and PyInstaller, numpy, pillow, opencv-python, fastembed 0.9 and qdrant-client 1.20 (the
 knowledge index) in the Python running this (`python3 install.py` installs the libraries).
@@ -14,7 +14,9 @@ sys.path.insert(0, KIT)
 from rbxpaths import VERSION
 
 OUT = os.environ.get("FRIDAE_BUILD_DIR") or os.path.join(KIT, "build-out")
-APP_NAME = "Fridae Studios"
+APP_NAME = "Fridae"
+# the folder PyInstaller makes (rbxkit.spec's COLLECT name)
+TOOLS_NAME = "Fridae"
 
 
 def run(*cmd, **kw):
@@ -50,7 +52,7 @@ def main():
     macos = os.path.join(app, "Contents", "MacOS")
     os.makedirs(macos)
     # the tools go in Resources: code signing allows only programs in Contents/MacOS
-    shutil.copytree(os.path.join(dist, APP_NAME), os.path.join(app, "Contents", "Resources", "tools"), symlinks=True)
+    shutil.copytree(os.path.join(dist, TOOLS_NAME), os.path.join(app, "Contents", "Resources", "tools"), symlinks=True)
     shutil.copyfile(os.path.join(KIT, "app-rs", "target", "release", "fridae"), os.path.join(macos, APP_NAME))
     os.chmod(os.path.join(macos, APP_NAME), 0o755)
     res = os.path.join(app, "Contents", "Resources")
@@ -62,7 +64,7 @@ def main():
 <plist version="1.0"><dict>
 <key>CFBundleName</key><string>{n}</string>
 <key>CFBundleDisplayName</key><string>{n}</string>
-<key>CFBundleIdentifier</key><string>io.github.aprilfridae.fridae-studios</string>
+<key>CFBundleIdentifier</key><string>io.github.aprilfridae.fridae-studios</string><!-- kept: macOS ties permissions to it -->
 <key>CFBundleVersion</key><string>{v}</string>
 <key>CFBundleShortVersionString</key><string>{v}</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -74,7 +76,7 @@ def main():
 """.format(n=APP_NAME, v=VERSION))
     run("codesign", "--force", "--deep", "--sign", "-", app)
 
-    dmg = os.path.join(OUT, "Fridae-Studios-macOS.dmg")
+    dmg = os.path.join(OUT, "Fridae-macOS.dmg")
     with tempfile.TemporaryDirectory() as stage:
         shutil.copytree(app, os.path.join(stage, APP_NAME + ".app"), symlinks=True)
         os.symlink("/Applications", os.path.join(stage, "Applications"))

@@ -1,7 +1,7 @@
 //! Installing a downloaded update, with a small splash window instead of console windows.
 //!
 //! The old app starts the NEW program from the download folder as
-//!   `Fridae Studios.exe --apply-update <old pid> <install folder> <version> [relaunch]`
+//!   `Fridae.exe --apply-update <old pid> <install folder> <version> [relaunch]`
 //! and exits. The new program waits for the old one to close, copies its own folder over the install folder
 //! while a progress bar fills, opens the installed app and quits. Nothing here runs a console program, so no
 //! console window can appear. It uses nothing from `paths`, which would point at the download folder here.
@@ -23,7 +23,14 @@ use tao::{
 };
 use wry::{WebContext, WebViewBuilder};
 
-const EXE_NAME: &str = "Fridae Studios.exe";
+const EXE_NAME: &str = "Fridae.exe";
+/// The program's name before the rename (`paths::OLD_EXE_NAME`): an install folder may still hold only this one.
+const OLD_EXE_NAME: &str = "Fridae Studios.exe";
+
+/// Whether `folder` holds the app's program, under its new or its old name.
+fn has_program(folder: &Path) -> bool {
+    folder.join(EXE_NAME).is_file() || folder.join(OLD_EXE_NAME).is_file()
+}
 
 enum Msg {
     Progress(f64, String),
@@ -103,7 +110,7 @@ fn stale_folders(source: &Path, target: &Path, source_has: impl Fn(&Path) -> boo
 
 /// Remove the stale folders, only inside the app's own install folder (the one holding the app's program).
 fn remove_stale(source: &Path, target: &Path) {
-    if !target.join(EXE_NAME).is_file() {
+    if !has_program(target) {
         return;
     }
     for dir in stale_folders(source, target, |p| p.is_dir()) {
@@ -115,7 +122,7 @@ fn remove_stale(source: &Path, target: &Path) {
 }
 
 fn install(source: &Path, target: &Path, pid: u32, report: impl Fn(f64, &str)) -> bool {
-    report(0.0, "Waiting for Fridae Studios to close");
+    report(0.0, "Waiting for Fridae to close");
     wait_for_exit(pid, 60);
     let mut files = Vec::new();
     files_under(source, &mut files);
@@ -152,7 +159,7 @@ h1{{margin:0;font-size:15px;font-weight:600;letter-spacing:.01em}}
 .s{{color:#8a8a8f;font-size:12px;height:16px}}
 </style></head><body>
 <img src="data:image/png;base64,{logo}" alt="">
-<h1>Updating Fridae Studios</h1><div class="v">Version {version}</div>
+<h1>Updating Fridae</h1><div class="v">Version {version}</div>
 <div class="bar"><div class="fill" id="f"></div></div><div class="s" id="s">Starting</div>
 <script>function set(p,t){{document.getElementById('f').style.width=(p*100).toFixed(1)+'%';document.getElementById('s').textContent=t;}}</script>
 </body></html>"#
@@ -179,9 +186,10 @@ pub fn run(args: &[String]) {
             let ok = install(&source, &target, pid, |f, text| {
                 let _ = p.send_event(Msg::Progress(f, text.to_string()));
             });
-            let _ = proxy.send_event(Msg::Progress(1.0, if ok { "Opening Fridae Studios".into() } else { "Some files could not be replaced. Opening anyway".into() }));
+            let _ = proxy.send_event(Msg::Progress(1.0, if ok { "Opening Fridae".into() } else { "Some files could not be replaced. Opening anyway".into() }));
             if relaunch {
-                let exe = target.join(EXE_NAME);
+                // the new name once it is copied in; the old one only if this update did not carry the new program
+                let exe = Some(target.join(EXE_NAME)).filter(|p| p.is_file()).unwrap_or_else(|| target.join(OLD_EXE_NAME));
                 let _ = Command::new(&exe).current_dir(&target).start();
             }
             thread::sleep(Duration::from_millis(if ok { 900 } else { 2500 }));
@@ -190,7 +198,7 @@ pub fn run(args: &[String]) {
     };
 
     let window = WindowBuilder::new()
-        .with_title("Updating Fridae Studios")
+        .with_title("Updating Fridae")
         .with_inner_size(LogicalSize::new(380.0, 220.0))
         .with_resizable(false)
         .with_decorations(false)
@@ -271,7 +279,8 @@ mod tests {
         fs::create_dir_all(target.join("_internal").join("vault")).unwrap();
         remove_stale(&source, &target);
         assert!(target.join("_internal").join("skills").exists(), "no app program here: nothing removed");
-        fs::write(target.join(EXE_NAME), b"").unwrap();
+        fs::write(target.join(OLD_EXE_NAME), b"").unwrap();
+        assert!(has_program(&target), "an install folder from before the rename holds the old program only");
         remove_stale(&source, &target);
         assert!(!target.join("_internal").join("skills").exists());
         assert!(target.join("_internal").join("vault").exists());

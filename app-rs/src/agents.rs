@@ -3550,13 +3550,13 @@ impl Agent {
             let missing = match kind.as_str() {
                 // a chat saved on Cursor or OpenCode, reopened where they are not offered (Windows, for now)
                 k if !crate::caps::available(k) => {
-                    "This chat was set to an AI that Fridae Studios does not offer on this computer yet. Pick Claude or Gemini in the message box and send your message again: the chat so far is handed over."
+                    "This chat was set to an AI that Fridae does not offer on this computer yet. Pick Claude or Gemini in the message box and send your message again: the chat so far is handed over."
                 }
-                "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae Studios.",
-                "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae Studios.",
-                "opencode" => "This chat is set to OpenCode, but OpenCode's command-line tool (opencode) was not found. Install it from https://opencode.ai, then reopen Fridae Studios. Fridae signs in to it on its own (Setup, Connections).",
-                "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae Studios.",
-                _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae Studios. Or pick another AI in the message box.",
+                "gemini" => "This chat is set to Gemini, but Google's Antigravity command-line tool (agy) was not found. Install it from https://antigravity.google, run `agy` once to sign in, then reopen Fridae.",
+                "cursor" => "This chat is set to Cursor, but the Cursor Agent command-line tool (cursor-agent) was not found. Install it from https://cursor.com/cli, run `cursor-agent login` once in a terminal, then reopen Fridae.",
+                "opencode" => "This chat is set to OpenCode, but OpenCode's command-line tool (opencode) was not found. Install it from https://opencode.ai, then reopen Fridae. Fridae signs in to it on its own (Setup, Connections).",
+                "chatgpt" => "This chat is set to ChatGPT, but OpenAI's command-line tool (codex) was not found. Install it (npm install -g @openai/codex), run `codex login` once, then reopen Fridae.",
+                _ => "This chat is set to Claude, but Claude Code is not installed. Install it from https://claude.com/claude-code, sign in once, then reopen Fridae. Or pick another AI in the message box.",
             };
             self.put("error", json!({"text": missing}));
             self.put("done", json!({}));
@@ -5910,7 +5910,7 @@ mod tests {
         let plain = project_prompt(SYSTEM_PROMPT.to_string(), "/p/Tool", false);
         assert!(plain.contains("PLAIN PROJECT, NOT A GAME") && plain.contains("/p/Tool"));
         assert!(!plain.contains("THIS CHAT BELONGS TO A GAME PROJECT"));
-        assert!(plain.starts_with("You are running inside the Fridae Studios desktop app, helping the user with their project."));
+        assert!(plain.starts_with("You are running inside the Fridae desktop app, helping the user with their project."));
     }
 
     #[test]
@@ -6328,7 +6328,7 @@ mod tests {
     fn an_experts_lead_is_told_of_work_its_turns_end_threw_away() {
         let lost = crate::jobs::dropped_text(&["rbx_blender".to_string()]);
         let told = team::with_lost_work("The chair model is done.".to_string(), Some(lost.clone()));
-        assert!(told.starts_with("The chair model is done.\n\n[Fridae Studios, not the agent: The turn ended before the result of rbx_blender was collected"), "{told}");
+        assert!(told.starts_with("The chair model is done.\n\n[Fridae, not the agent: The turn ended before the result of rbx_blender was collected"), "{told}");
         assert!(told.contains("it was not finished"));
         assert_eq!(team::with_lost_work("Done.".to_string(), None), "Done.", "nothing lost: the reply as it is");
     }
@@ -6363,8 +6363,8 @@ mod tests {
 
     #[test]
     fn studio_run_start_commit_says_studio() {
-        assert_eq!(projects::night_message(true), "Before the studio run (Fridae Studios checkpoint)");
-        assert_eq!(projects::night_message(false), "Before the overnight run (Fridae Studios checkpoint)");
+        assert_eq!(projects::night_message(true), "Before the studio run (Fridae checkpoint)");
+        assert_eq!(projects::night_message(false), "Before the overnight run (Fridae checkpoint)");
     }
 
     #[test]

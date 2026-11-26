@@ -523,7 +523,7 @@ pub fn probe_codex() -> Option<Said> {
     cmd.current_dir(dir);
     paths::child_env(&mut cmd, "chatgpt");
     let input = [
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "fridae_studios", "title": "Fridae Studios", "version": env!("CARGO_PKG_VERSION")}, "capabilities": {"experimentalApi": false}}}).to_string(),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "fridae_studios", "title": "Fridae", "version": env!("CARGO_PKG_VERSION")}, "capabilities": {"experimentalApi": false}}}).to_string(),
         json!({"jsonrpc": "2.0", "method": "initialized"}).to_string(),
         json!({"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read"}).to_string(),
     ];

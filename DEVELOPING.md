@@ -41,8 +41,17 @@ attached and shows the images they return. The tools stay in Python: the window
 starts them as `fridae-cli.exe --mcp` and `fridae-cli.exe --rbx`. `build_exe.bat`
 (or `python build_app.py`) builds both and puts them in one folder; it needs
 Rust and PyInstaller. On a Mac, `python3 build_mac.py` builds
-`build-out/Fridae-Studios-macOS.dmg` the same way. The packaged app needs no Python or Rust installed; it keeps
+`build-out/Fridae-macOS.dmg` the same way. The packaged app needs no Python or Rust installed; it keeps
 its output in `Documents/Fridae Studios/work`.
+
+**The name.** The app is called Fridae (`paths::APP`: the window title, the copy, the program `Fridae.exe`,
+`dist/Fridae`, `Fridae.app`). Its data folders keep the old name, Fridae Studios (`paths::DATA_DIR`,
+`rbxpaths.HOME_DIR`): `Documents/Fridae Studios`, `%APPDATA%\Fridae Studios`, `~/.local/share/Fridae Studios`, the
+Mac's `Application Support/Fridae Studios`, so nothing a user has moves. The updater accepts a release holding either
+`Fridae.exe` or the old `Fridae Studios.exe` (`update::program_in`), and `publish.py` puts a copy of the program under
+the old name in the zip so copies from before the rename can update themselves. Kept on purpose: the Studio plugin's
+file name (`FridaeStudios.rbxmx`, so the installed plugin is replaced, not doubled), the Codex config marker
+(`# fridae-studios:begin`), the git author email and the Mac bundle id.
 
 ## Using it
 
@@ -361,7 +370,7 @@ spec is `docs/superpowers/specs/2026-11-23-ui-cleanup-design.md`.
   `url.txt` gets the page's address with its token; open it in a browser. With that HOME and PATH no AI is found
   (or Claude Code is signed out), so nothing uses an AI plan; write `studio.json` and review items by hand, or with
   `python3 rbx.py stage ... --project <game>`, and the page follows them. The packaged app
-  (`build-out/Fridae Studios.app/Contents/MacOS/Fridae Studios`) ignores `FRIDAE_KIT` and keeps its config, games
+  (`build-out/Fridae.app/Contents/MacOS/Fridae`) ignores `FRIDAE_KIT` and keeps its config, games
   and work folder in `$HOME/Documents/Fridae Studios`, so give it the scratch `HOME` and put `config.json` there.
   `FRIDAE_NO_STUDIO=1` gives agents no Roblox_Studio server and passes the variable to rbxkit, whose Studio tools
   (`rbxstudio.Studio`, so `rbx_project` checkpoint and restore waypoints, and `rbx_studio_snippet`) answer "Studio is
@@ -1251,7 +1260,7 @@ and nothing of the user's keychain was read but two names):
 the sign-in in `signin.rs` (id `claude2`). Written for Claude; Gemini's differs in one thing (the section after this).
 
 **The account.** The first account is the user's own sign-in and nothing here changes it. The second is a Claude
-Code config folder of the app's own, `<app data>/Fridae Studios/accounts/claude-2-<12 hex>`. `prepare` links the
+Code config folder of the app's own, `<app data>/Fridae/accounts/claude-2-<12 hex>`. `prepare` links the
 user's own `settings.json`, skills, plugins, agents, commands, `CLAUDE.md`, rules, output styles and key bindings
 into it before every command there, so a turn on the second account has the same setup; who is signed in and the
 conversations are the folder's own. Whether there is one is the guarded setting `second_accounts`
@@ -1453,7 +1462,7 @@ rollover, Remove, the swapped-folder rule all hold as written; `accounts::AIS` i
 difference: what separates the two accounts.
 
 **A home of its own** (`accounts::home`, `GeminiLaunch.home`). Gemini's second account is a folder of the app's own,
-`<app data>/Fridae Studios/accounts/gemini-2-<12 hex>`, given to every agy command of that account as HOME: its
+`<app data>/Fridae/accounts/gemini-2-<12 hex>`, given to every agy command of that account as HOME: its
 status (`agy models`, `antigravity::ask_models_of`), its sign-in (`agy acp` with `authenticate`, the same
 one-click flow), the kept process and the process per message. agy's data folder
 (`<HOME>/.gemini/antigravity-cli`: conversations, settings) is then inside it, and so is the keychain agy keeps the
@@ -1716,7 +1725,7 @@ so.
 **The session that only writes** (`opencode::write_only`, on Fridae's own server, never the user's OpenCode):
 one rule, "deny everything" (a denied tool is not offered, so the model has no tools); no tool servers, no
 environment for commands, no standing instructions; in the writers' folder (`compact::folder`:
-`<app data>/Fridae Studios/writers`, outside OpenCode's store, in `paths::app_protected()`); the rules are read
+`<app data>/Fridae/writers`, outside OpenCode's store, in `paths::app_protected()`); the rules are read
 back before the text is sent; a model that calls a tool or asks for anything is interrupted and counts as failed;
 the session is deleted however it went. Sessions left behind are deleted by a later writer (`sweep_writers`): only
 one the server lists for that folder (`directory=`, measured; a parameter it does not know lists everything), that

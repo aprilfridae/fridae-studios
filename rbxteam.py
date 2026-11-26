@@ -168,7 +168,7 @@ def _ask_app(op, fields):
     except OSError:
         pass
     raise TeamError("The app did not answer within %d seconds. The board only works when this chat runs inside the "
-                    "Fridae Studios app with it open." % PICKUP)
+                    "Fridae app with it open." % PICKUP)
 
 
 def _me():
@@ -262,7 +262,7 @@ def unseen_note():
         if not new:
             return ""
         left = max(0, len(new) - UNSEEN_SHOWN)
-        lines = ["[Fridae Studios, live] New on the swarm's board for you (no need to read the board for these%s):"
+        lines = ["[Fridae, live] New on the swarm's board for you (no need to read the board for these%s):"
                  % (", and %d older ones are on the board" % left if left else "")]
         lines.append(_show(new[left:]))
         lines.append("Answer with rbx_team action 'post' only when one needs an answer, then carry on.")
@@ -438,8 +438,8 @@ def models(ai=None):
     data = read_json(MODELS)
     ais = data.get("ais") if isinstance(data, dict) else None
     if not isinstance(ais, list) or not ais:
-        raise TeamError("The app has not listed its AIs' models. This only works when this chat runs inside the Fridae "
-                        "Studios app with it open; if it is, try again in a few seconds.")
+        raise TeamError("The app has not listed its AIs' models. This only works when this chat runs inside the Fridae app "
+                        "with it open; if it is, try again in a few seconds.")
     # only entries shaped as the app writes them (the file is the app's, but nothing here trusts its shape)
     ais = [a for a in ais if isinstance(a, dict) and isinstance(a.get("id"), str) and a["id"]]
     if not ais:
@@ -489,7 +489,7 @@ def run(action, a=None):
                          model=a.get("model"), member=a.get("member"))
         if res is None:
             return ("NOT STARTED. The app did not pick up the request within %d seconds, so it was withdrawn. Extra agents "
-                    "only work when this chat runs inside the Fridae Studios app with it open. Carry on by yourself." % PICKUP)
+                    "only work when this chat runs inside the Fridae app with it open. Carry on by yourself." % PICKUP)
         status = res.get("status")
         if status == "refused":
             return "REFUSED: %s\nThe agent was not started. Carry on by yourself." % (res.get("reason") or "the app gave no reason")

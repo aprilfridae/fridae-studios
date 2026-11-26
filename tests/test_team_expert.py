@@ -193,7 +193,7 @@ class ModelsListTests(unittest.TestCase):
     def test_without_the_app_it_says_so(self):
         with self.assertRaises(KitError) as cm:
             rbxteam.run("models", {})
-        self.assertIn("inside the Fridae Studios app", str(cm.exception))
+        self.assertIn("inside the Fridae app", str(cm.exception))
 
     def test_a_file_of_another_shape_is_an_answer_never_a_crash(self):
         # only possible if something other than the app wrote the file (the app keeps agents' file tools off it)

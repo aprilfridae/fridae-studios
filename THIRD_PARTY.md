@@ -168,5 +168,5 @@ Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
   `packages/shared/src/usageLimits.ts` and `usageLimitsCopy.ts`.
 
 Not taken: T3 Code's name, wordmark, logos, icons, artwork and its own branded theme, which its `TRADEMARK.md` keeps
-out of the MIT licence. Fridae Studios is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows
+out of the MIT licence. Fridae is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows
 are drawn for Fridae.

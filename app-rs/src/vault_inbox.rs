@@ -32,7 +32,7 @@ const NOT_MAINTAINER: &str = "Only the vault's maintainer can see submissions.";
 const MADE_NOT_FILLED: &str = "The vault repo was made, but Fridae could not add its first files to it. Add them on GitHub, or delete the repo and try again.";
 const BUSY: &str = "The vault repo is already being made. Wait a moment.";
 const TOO_MANY: &str = "The vault has too many files for Fridae to compare against.";
-const REPO_DESCRIPTION: &str = "The shared Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.";
+const REPO_DESCRIPTION: &str = "The shared Fridae vault: skills and Roblox guides, reviewed by Fridae's maintainer.";
 pub(crate) const NO_GUIDES: &str = "This copy of Fridae has no Roblox guides to upload. Run Fridae from its source folder to create the vault.";
 
 /// How long the role is kept: 10 minutes; a failed look (offline) only a minute.
@@ -181,7 +181,7 @@ THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMP
 
 const CONTRIBUTING: &str = "# Contributing
 
-The skills in this vault were made by people who use Fridae Studios. The guides in `Roblox/` are from LihFolk Vault V2 by LihFolk,
+The skills in this vault were made by people who use Fridae. The guides in `Roblox/` are from LihFolk Vault V2 by LihFolk,
 under his licence (`Roblox/LICENSE.md`). Everything added since was looked at by the vault's maintainer before it was added.
 
 ## How sharing works
@@ -208,9 +208,9 @@ who downloads the vault without that review.
 
 const README: &str = "# Fridae vault
 
-The Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.
+The Fridae vault: skills and Roblox guides, reviewed by Fridae's maintainer.
 
-Fridae Studios downloads this vault for anyone who asks, with no sign-in: Download once, then
+Fridae downloads this vault for anyone who asks, with no sign-in: Download once, then
 Pull newest, which never overwrites what you changed.
 
 - `Skills/` holds the skills. Each one is a folder with a `SKILL.md` and, sometimes, scripts.
@@ -227,7 +227,7 @@ const SKILLS_README: &str = "# Skills
 
 One folder per skill, each with a `SKILL.md` in it, and sometimes a `scripts` folder.
 
-Every skill here was made by someone who uses Fridae Studios and was reviewed by the vault's maintainer before it was
+Every skill here was made by someone who uses Fridae and was reviewed by the vault's maintainer before it was
 added. Its front matter says who made it and under which licence: CC BY 4.0 for the text, MIT for the scripts.
 ";
 
@@ -1402,7 +1402,7 @@ mod tests {
     fn licence_credits_lihfolk_and_fridae() {
         // Roblox/ is credited whole, by reference to LihFolk's own licence: no per-note split, no Fridae claim on it
         for text in [LICENSE, README, CONTRIBUTING] {
-            for gone in ["that credit LihFolk", "(c) Fridae Studios", "Everything else in this vault", "the rest is the Fridae Studios"] {
+            for gone in ["that credit LihFolk", "(c) Fridae", "Everything else in this vault", "the rest is the Fridae"] {
                 assert!(!text.contains(gone), "{gone}");
             }
         }
@@ -1425,14 +1425,14 @@ mod tests {
         assert!(README.contains("Roblox/") && !README.contains("LihFolk's vault"));
         assert!(README.contains("Pull newest, which never overwrites what you changed"));
         // the guides were not made by Fridae's users, and the vault is not presented as his
-        assert!(!CONTRIBUTING.contains("Skills and guides in this vault were made by people who use Fridae Studios"));
+        assert!(!CONTRIBUTING.contains("Skills and guides in this vault were made by people who use Fridae"));
         assert!(CONTRIBUTING.contains("The guides in `Roblox/` are from LihFolk Vault V2 by LihFolk"));
         assert!(CONTRIBUTING.contains("Share your knowledge"));
         assert!(CONTRIBUTING.contains("By sharing a skill") && CONTRIBUTING.contains("By sharing a change to a guide"));
         // guides and changed vault skills can be shared, not only skills the sender made
         assert!(!CONTRIBUTING.contains("Only skills you made yourself can be shared."));
         assert!(CONTRIBUTING.contains("guides you changed or added") && CONTRIBUTING.contains("changes to the vault's own skills"));
-        assert_eq!(REPO_DESCRIPTION, "The shared Fridae Studios vault: skills and Roblox guides, reviewed by Fridae's maintainer.");
+        assert_eq!(REPO_DESCRIPTION, "The shared Fridae vault: skills and Roblox guides, reviewed by Fridae's maintainer.");
     }
 
     #[test]
@@ -1961,11 +1961,11 @@ mod tests {
 
     #[test]
     fn a_change_to_a_vault_skill_keeps_its_credit_and_adds_the_sender() {
-        let theirs = "---\nname: tidy\ndescription: Put things away.\nowner: shipped\ncredit: alice\nlicence: CC-BY-4.0 (text), MIT (scripts)\nsource: Fridae Studios\n---\n\nPut things away.\n";
+        let theirs = "---\nname: tidy\ndescription: Put things away.\nowner: shipped\ncredit: alice\nlicence: CC-BY-4.0 (text), MIT (scripts)\nsource: Fridae\n---\n\nPut things away.\n";
         let (_g, s) = setup("o", maint(vec![("Skills/tidy/SKILL.md", TIDY)], vec![("Skills/tidy/SKILL.md", theirs)], vec![], None));
         assert_eq!(decide(5, "Skills/tidy", "add", None, None)["ok"], true);
         let md = blobs_sent(&s).into_iter().find(|b| b.contains("name: tidy")).unwrap();
-        for line in ["owner: shipped", "credit: alice, ada", "source: Fridae Studios"] {
+        for line in ["owner: shipped", "credit: alice, ada", "source: Fridae"] {
             assert_eq!(md.lines().filter(|l| *l == line).count(), 1, "{line} in {md:?}");
         }
         assert!(md.contains("Put things away when you finish with them."));

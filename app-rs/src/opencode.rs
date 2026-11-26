@@ -110,7 +110,7 @@ fn store_at(home: &Path, xdg_data: Option<std::ffi::OsString>) -> PathBuf {
     } else {
         xdg_data.filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local").join("share"))
     };
-    base.join("Fridae Studios").join("opencode")
+    base.join(paths::DATA_DIR).join("opencode")
 }
 
 /// The XDG folders as the user's own programs see them: what the app was started with, else the usual defaults. Our
@@ -158,7 +158,7 @@ fn shell_program() -> PathBuf {
 #[cfg(not(windows))]
 fn shell_wrapper() -> PathBuf {
     let path = store().join("bin").join("fridae-shell");
-    let text = format!("#!/bin/sh\n# Fridae Studios: OpenCode's shell, without the app's server password\nunset {}\nexec /bin/sh \"$@\"\n", SECRETS.join(" "));
+    let text = format!("#!/bin/sh\n# Fridae: OpenCode's shell, without the app's server password\nunset {}\nexec /bin/sh \"$@\"\n", SECRETS.join(" "));
     if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
         let _ = fs::create_dir_all(path.parent().unwrap());
         let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
@@ -3132,7 +3132,7 @@ pub fn explain(err: &str, got_result: bool) -> Option<String> {
     let low = err.to_lowercase();
     // a 401 from the app's own server is its password, not a sign-in
     if err.contains("(401)") {
-        return Some("Fridae's own OpenCode server refused its password. Quit and reopen Fridae Studios, then send your message again.".to_string());
+        return Some("Fridae's own OpenCode server refused its password. Quit and reopen Fridae, then send your message again.".to_string());
     }
     if low.contains("unauthorized") || low.contains("not authenticated") || low.contains("no credentials") {
         return Some("Fridae's OpenCode is not signed in. Open Setup, Connections, press Sign in, then send your message again.".to_string());

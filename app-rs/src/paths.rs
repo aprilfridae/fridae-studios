@@ -13,12 +13,20 @@ use std::{
 
 use serde_json::{Map, Value};
 
-pub const APP: &str = "Fridae Studios";
+/// The app's name, as the user sees it (window title, notices, the program's file name).
+pub const APP: &str = "Fridae";
+/// The name of the app's data folders (`Documents\Fridae Studios`, `%APPDATA%\Fridae Studios`, the accounts and
+/// OpenCode stores under `~/.local/share`, the Mac's Application Support): the app's old name, kept so nothing the
+/// user already has moves.
+pub const DATA_DIR: &str = "Fridae Studios";
 pub const VERSION: &str = env!("FRIDAE_VERSION");
 pub const UPDATE_REPO: &str = env!("FRIDAE_REPO");
 /// The shared skill vault on GitHub.
 pub const VAULT_REPO: &str = "aprilfridae/fridae-vault";
-pub const EXE_NAME: &str = "Fridae Studios.exe";
+pub const EXE_NAME: &str = "Fridae.exe";
+/// The program's file name before the rename. An update unpacked by an older copy, or an install folder that still
+/// holds the old program beside the new one, may only have this name.
+pub const OLD_EXE_NAME: &str = "Fridae Studios.exe";
 #[cfg(windows)]
 const NO_WINDOW: u32 = 0x0800_0000;
 
@@ -47,7 +55,7 @@ pub static PATHS: LazyLock<Paths> = LazyLock::new(|| {
     } else {
         env::var("FRIDAE_KIT").map(PathBuf::from).unwrap_or_else(|_| install.clone())
     };
-    let home = if cli_exe.is_some() { home_dir().join("Documents").join(APP) } else { kit.clone() };
+    let home = if cli_exe.is_some() { home_dir().join("Documents").join(DATA_DIR) } else { kit.clone() };
     // tests never write to a real work folder, whatever RBXKIT_WORK says: one temp folder per test run
     #[cfg(test)]
     let work = test_dir("work");
@@ -834,9 +842,9 @@ fn guard_dir() -> PathBuf {
     {
         let home = home_dir();
         if cfg!(target_os = "macos") {
-            home.join("Library").join("Application Support").join(APP)
+            home.join("Library").join("Application Support").join(DATA_DIR)
         } else if cfg!(windows) {
-            env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(APP)
+            env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(DATA_DIR)
         } else {
             env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("fridae-studios")
         }

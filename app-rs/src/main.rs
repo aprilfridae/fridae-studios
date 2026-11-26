@@ -1,4 +1,4 @@
-//! Fridae Studios: a chat window that runs an AI agent with the rbxkit and
+//! Fridae: a chat window that runs an AI agent with the rbxkit and
 //! Roblox Studio tools attached.
 //!
 //! The window is a local web page (ui/index.html) shown in a native WebView2

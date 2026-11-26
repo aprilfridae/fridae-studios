@@ -1,10 +1,10 @@
 #!/usr/bin/env python
-"""fridae-cli: the Python tools behind Fridae Studios.
+"""fridae-cli: the Python tools behind Fridae.
 
     fridae-cli.exe --mcp       MCP server (what agents connect to)
     fridae-cli.exe --rbx ...   command line (fridae-cli.exe --rbx doctor)
 
-The window itself is the Rust program in app-rs (Fridae Studios.exe).
+The window itself is the Rust program in app-rs (Fridae.exe).
 """
 import os, sys
 

@@ -121,7 +121,7 @@ Kits: build modular pieces on a stud grid (multiples of 1, 2 or 4 studs), shared
 
 ## Reusing the LihFolk Asset Pack
 
-If the pack is installed (`LIHFOLK_ASSETS` env var or `~/LihFolk-Assets`), check its original LihFolk models and materials before modelling from scratch; pack assets already passed this gate. See the LihFolk Asset Pack (not bundled with Fridae Studios; it is a separate download from github.com/lihfolk-cy/v2-vault releases).
+If the pack is installed (`LIHFOLK_ASSETS` env var or `~/LihFolk-Assets`), check its original LihFolk models and materials before modelling from scratch; pack assets already passed this gate. See the LihFolk Asset Pack (not bundled with Fridae; it is a separate download from github.com/lihfolk-cy/v2-vault releases).
 
 ## Open questions (verify in Studio before relying on them)
 

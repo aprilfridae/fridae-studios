@@ -49,9 +49,9 @@ a = Analysis(["cli_main.py"], pathex=[HERE], datas=datas, binaries=binaries, hid
                        "onnxruntime.training", "onnxruntime.quantization", "onnxruntime.transformers", "onnxruntime.tools", "onnx", "sympy"])
 pyz = PYZ(a.pure)
 
-# the window (Fridae Studios.exe) is the Rust program in app-rs; build_app.py puts it beside these tools
+# the window (Fridae.exe) is the Rust program in app-rs; build_app.py puts it beside these tools
 cli = EXE(pyz, a.scripts, [], exclude_binaries=True, name="fridae-cli", console=True, upx=False, icon=os.path.join(HERE, "ui", "fridae.ico"))
 import shutil
-coll = COLLECT(cli, a.binaries, a.datas, name="Fridae Studios", upx=False)
+coll = COLLECT(cli, a.binaries, a.datas, name="Fridae", upx=False)
 
-shutil.copyfile(os.path.join(HERE, "START-HERE-app.txt"), os.path.join(DISTPATH, "Fridae Studios", "START HERE.txt"))
+shutil.copyfile(os.path.join(HERE, "START-HERE-app.txt"), os.path.join(DISTPATH, "Fridae", "START HERE.txt"))

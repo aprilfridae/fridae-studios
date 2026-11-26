@@ -1,4 +1,4 @@
-//! The link to the Fridae Studios plugin inside Roblox Studio.
+//! The link to the Fridae plugin inside Roblox Studio.
 //!
 //! The plugin (studio/plugin/FridaeStudios.lua) calls this app on a fixed local
 //! port about once a second. It reports what is selected and any errors in the
@@ -29,7 +29,7 @@ pub const PORT: u16 = 34931;
 const FILE_NAME: &str = "FridaeStudios.rbxmx";
 /// The plugin's own version. Raise it only when studio/plugin/FridaeStudios.lua changes: that is what asks
 /// people to update the plugin and restart Studio, so it must not move with every app release.
-const PLUGIN_VERSION: &str = "2.8.0";
+const PLUGIN_VERSION: &str = "2.9.0";
 
 #[derive(Default)]
 struct Live {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Build Fridae Studios: the Rust window plus the Python tools, in one folder.
+"""Build Fridae: the Rust window plus the Python tools, in one folder.
 
-    python build_app.py            ->  <build dir>/dist/Fridae Studios
+    python build_app.py            ->  <build dir>/dist/Fridae  (the program is Fridae.exe)
 
 Needs Rust (cargo), PyInstaller, numpy, pillow, opencv-python, fastembed 0.9 and qdrant-client 1.20 (the knowledge index).
 
@@ -17,7 +17,8 @@ import glob, os, shutil, subprocess, sys
 KIT = os.path.dirname(os.path.abspath(__file__))
 APP_RS = os.path.join(KIT, "app-rs")
 BUILD = os.environ.get("FRIDAE_BUILD_DIR") or (r"H:\rbxkit-build" if os.path.isdir("H:\\") else os.path.join(KIT, "build-out"))
-EXE_NAME = "Fridae Studios.exe"
+APP_NAME = "Fridae"
+EXE_NAME = APP_NAME + ".exe"
 
 
 def rust_env():
@@ -99,7 +100,7 @@ def check_page():
 def build(quiet=False):
     check_page()
     dist = os.path.join(BUILD, "dist")
-    app = os.path.join(dist, "Fridae Studios")
+    app = os.path.join(dist, APP_NAME)
     print("Building the window (Rust) ...")
     out, env = build_window()
     print("Building the tools (Python) ...")

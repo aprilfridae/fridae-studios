@@ -540,7 +540,7 @@ fn undo_with(project: &str, stage: Option<&str>, files_only: bool, link: &dyn St
     let name = checkpoint_name(cp["stage"].as_str().unwrap_or(""));
     let log = live.as_ref().map(|l| l.run_log()).unwrap_or_else(|| agents::saved_run_log(&lead));
     let since: Vec<&Value> = log.iter().filter(|s| s["t"].as_f64().unwrap_or(0.0) >= at).collect();
-    let undo_commit = format!("Undo the studio run to {name} (Fridae Studios)");
+    let undo_commit = format!("Undo the studio run to {name} (Fridae)");
     let words = projects::Undoing { whose: "run's", end_commit: "Before undoing the studio run (kept in history)", undo_commit: &undo_commit };
     let back = put_back(
         &Checkpoint {
@@ -702,7 +702,7 @@ fn take_stage_checkpoint(req: &Value) {
     if !STAGES.contains(&stage) || !read_run(dir).is_some_and(|r| r["on"] == true) {
         return;
     }
-    let saved = take(&project, &format!("After the {stage} stage of the studio run (Fridae Studios checkpoint)"));
+    let saved = take(&project, &format!("After the {stage} stage of the studio run (Fridae checkpoint)"));
     let _ = add_checkpoint(dir, stage, &saved);
 }
 

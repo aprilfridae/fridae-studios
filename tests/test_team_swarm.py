@@ -107,7 +107,7 @@ class SwarmBoardTests(unittest.TestCase):
         self.add(t=1.0, **{"from": "lead"}, to=["@shop-ui"], kind="msg", text="start the shop")
         self.add(t=2.0, **{"from": "lead"}, to=["@tests"], kind="msg", text="not you")
         note = rbxteam.unseen_note()
-        self.assertIn("[Fridae Studios, live]", note)
+        self.assertIn("[Fridae, live]", note)
         self.assertIn("@lead -> @shop-ui (msg): start the shop", note)
         self.assertNotIn("not you", note)
         self.assertEqual(rbxteam.seen("r1", "c1"), 1.0)

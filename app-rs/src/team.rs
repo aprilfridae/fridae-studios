@@ -360,7 +360,7 @@ pub fn result_text(reply: &str, stopped: bool) -> String {
 /// chat alone was told otherwise. Whoever waits for it is told too.
 pub fn with_lost_work(text: String, lost: Option<String>) -> String {
     match lost {
-        Some(lost) => format!("{text}\n\n[Fridae Studios, not the agent: {lost} Whatever the reply above says about that work, it was not finished: have it done again if it is needed.]"),
+        Some(lost) => format!("{text}\n\n[Fridae, not the agent: {lost} Whatever the reply above says about that work, it was not finished: have it done again if it is needed.]"),
         None => text,
     }
 }
@@ -369,7 +369,7 @@ pub fn with_lost_work(text: String, lost: Option<String>) -> String {
 /// its AI's list of models had not arrived when it was started, say). Whoever waits for it is told, not only its chat.
 pub fn with_model_note(text: String, note: Option<String>) -> String {
     match note {
-        Some(note) => format!("{text}\n\n[Fridae Studios, not the agent: {note}]"),
+        Some(note) => format!("{text}\n\n[Fridae, not the agent: {note}]"),
         None => text,
     }
 }
@@ -384,7 +384,7 @@ pub fn one_liner(report: &str) -> String {
 /// words (not the expert's), so the Lead can tell it apart and weave it into the progress it reports (see lead.md).
 pub fn with_plain(text: String, plain: Option<&str>) -> String {
     match plain.map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) => format!("{text}\n\nIn plain words (for the user, from Fridae Studios): {p}"),
+        Some(p) => format!("{text}\n\nIn plain words (for the user, from Fridae): {p}"),
         None => text,
     }
 }
@@ -510,7 +510,7 @@ mod tests {
     fn a_helpers_result_names_the_model_it_really_ran_on() {
         assert_eq!(with_model_note("Done.".into(), None), "Done.");
         let told = with_model_note("Done.".into(), Some("it ran on the model auto, not \"x\" as set: Cursor does not offer that one.".into()));
-        assert_eq!(told, "Done.\n\n[Fridae Studios, not the agent: it ran on the model auto, not \"x\" as set: Cursor does not offer that one.]");
+        assert_eq!(told, "Done.\n\n[Fridae, not the agent: it ran on the model auto, not \"x\" as set: Cursor does not offer that one.]");
     }
 
     #[test]
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(with_plain("report".into(), None), "report");
         assert_eq!(with_plain("report".into(), Some("  ")), "report", "an empty plain line is not appended");
         let out = with_plain("the full report".into(), Some("Added a shop."));
-        assert_eq!(out, "the full report\n\nIn plain words (for the user, from Fridae Studios): Added a shop.");
+        assert_eq!(out, "the full report\n\nIn plain words (for the user, from Fridae): Added a shop.");
     }
 
     #[test]
@@ -832,7 +832,7 @@ mod tests {
         let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-plain.json")).unwrap()).unwrap();
         // the summary was ready within the wait: it is on the result, structured and woven into the text the Lead reads
         assert_eq!(res["plain"], "Added a shop where players spend coins on hats.");
-        assert!(res["text"].as_str().unwrap().contains("In plain words (for the user, from Fridae Studios): Added a shop where players spend coins on hats."), "{}", res["text"]);
+        assert!(res["text"].as_str().unwrap().contains("In plain words (for the user, from Fridae): Added a shop where players spend coins on hats."), "{}", res["text"]);
         // and it is stored on the expert's own chat (the chat's "In plain words:" line, and its sidebar row)
         assert_eq!(x.stored_plain().as_deref(), Some("Added a shop where players spend coins on hats."));
         // and reaches the Review item for this work through the expert chat

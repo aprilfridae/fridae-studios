@@ -2,7 +2,7 @@
 """Proof that a form of the tool server runs long calls as jobs: six calls against a real server process, each
 answer checked, then that nothing is left running. For the packaged build before it is installed:
 
-    python tests/long_calls_proof.py "build-out/Fridae Studios.app/Contents/Resources/tools/fridae-cli" --mcp
+    python tests/long_calls_proof.py "build-out/Fridae.app/Contents/Resources/tools/fridae-cli" --mcp
     python tests/long_calls_proof.py python3 rbxkit_mcp.py          (the source form)
 
 It uses a temporary work folder of its own and nothing of the user's. Exit status 0 only if every check holds;

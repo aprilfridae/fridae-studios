@@ -1,6 +1,6 @@
 # Start Here
 
-This folder is Fridae Studios' knowledge vault: everything the app's AI agents know about making Roblox games, in
+This folder is Fridae' knowledge vault: everything the app's AI agents know about making Roblox games, in
 plain Markdown. Open the whole `vault` folder in Obsidian (or any Markdown editor) to read it. The agents never load
 it all at once: they search it with the `rbx_vault` tool and read only the section they need.
 

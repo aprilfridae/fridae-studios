@@ -1,4 +1,4 @@
--- Fridae Studios link: the Studio side of the Fridae Studios app.
+-- Fridae link: the Studio side of the Fridae app.
 --
 -- What it does, and all it does:
 --   * tells the app what is selected in Studio, so "this" and "the selected part" mean something to the agent
@@ -6,7 +6,7 @@
 --   * keeps track of the undo steps the agent's work adds, and remembers every script's text at the
 --     start of a turn, so the app can undo a whole turn (script edits are not in Studio's own undo)
 --   * shows a small panel with what the app's chats are doing
--- It talks only to the Fridae Studios app on this computer (127.0.0.1), with a secret that the app
+-- It talks only to the Fridae app on this computer (127.0.0.1), with a secret that the app
 -- wrote into this file when it installed it. It never runs code sent to it: the app can only ask
 -- for the fixed actions in `handle` below.
 
@@ -34,7 +34,7 @@ end)
 
 -- ------------------------------------------------------------------ output
 local logs = {}
-local OWN = "[Fridae Studios]"
+local OWN = "[Fridae]"
 LogService.MessageOut:Connect(function(message, kind)
 	local level = kind == Enum.MessageType.MessageError and "error" or kind == Enum.MessageType.MessageWarning and "warning" or nil
 	if not level or string.find(message, OWN, 1, true) then
@@ -363,11 +363,11 @@ end
 -- -------------------------------------------------------------- the panel
 local statusLine, agentLines, widget
 if EDIT then
-	local toolbar = plugin:CreateToolbar("Fridae Studios")
-	local button = toolbar:CreateButton("Fridae", "Show what the Fridae Studios app is doing", "")
+	local toolbar = plugin:CreateToolbar("Fridae")
+	local button = toolbar:CreateButton("Fridae", "Show what the Fridae app is doing", "")
 	button.ClickableWhenViewportHidden = true
 	widget = plugin:CreateDockWidgetPluginGui("FridaeStudiosPanel", DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, false, 280, 200, 220, 120))
-	widget.Title = "Fridae Studios"
+	widget.Title = "Fridae"
 	widget.Name = "FridaeStudiosPanel"
 	local frame = Instance.new("Frame")
 	frame.Size = UDim2.fromScale(1, 1)
@@ -405,7 +405,7 @@ local function paint(connected, reply)
 		return
 	end
 	if not connected then
-		statusLine.Text = "The Fridae Studios app is not open."
+		statusLine.Text = "The Fridae app is not open."
 		agentLines.Text = "Open it and this connects by itself."
 		return
 	end

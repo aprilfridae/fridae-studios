@@ -165,7 +165,7 @@ fn store() -> PathBuf {
         } else {
             env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local").join("share"))
         };
-        base.join("Fridae Studios").join("cursor")
+        base.join(paths::DATA_DIR).join("cursor")
     }
 }
 

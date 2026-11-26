@@ -1,4 +1,4 @@
-# Fridae Studios
+# Fridae
 
 An AI helper for building Roblox games. You say what you want in plain words;
 it works in your open Roblox Studio place and in Blender, and shows you what
@@ -10,13 +10,13 @@ Pick the download for your computer from the [latest release](../../releases/lat
 
 | Your computer | Download | Status |
 |---|---|---|
-| **Windows** 10 or 11 | `Fridae-Studios.zip` | Supported, updates itself |
-| **macOS** 12+ on Apple Silicon (M1 or newer) | `Fridae-Studios-macOS.dmg` | New, no self-update yet |
+| **Windows** 10 or 11 | `Fridae.zip` | Supported, updates itself |
+| **macOS** 12+ on Apple Silicon (M1 or newer) | `Fridae-macOS.dmg` | New, no self-update yet |
 | **Linux** | none | Not available: Roblox Studio has no Linux version |
 
 ### Windows
 
-Unzip `Fridae-Studios.zip` anywhere and run `Fridae Studios.exe`. After that it
+Unzip `Fridae.zip` anywhere and run `Fridae.exe`. After that it
 updates itself.
 
 Windows may warn the first time because the program is not signed: choose
@@ -24,12 +24,12 @@ Windows may warn the first time because the program is not signed: choose
 
 ### macOS
 
-Open `Fridae-Studios-macOS.dmg` and drag **Fridae Studios** into Applications.
+Open `Fridae-macOS.dmg` and drag **Fridae** into Applications.
 
 The app is not signed with an Apple Developer ID, so the first time you open it
 macOS will refuse. Open **System Settings > Privacy & Security**, scroll down,
-and click **Open Anyway** next to Fridae Studios. (Or run
-`xattr -dr com.apple.quarantine "/Applications/Fridae Studios.app"` once in
+and click **Open Anyway** next to Fridae. (Or run
+`xattr -dr com.apple.quarantine "/Applications/Fridae.app"` once in
 Terminal.)
 
 On a Mac:
@@ -40,7 +40,7 @@ On a Mac:
 
 ## You need
 
-1. **Claude Code**, signed in with your own account. Fridae Studios has no AI
+1. **Claude Code**, signed in with your own account. Fridae has no AI
    of its own; it drives Claude Code for you. It can drive Gemini (Google's
    Antigravity tool, `agy`) or **Cursor** instead, chat by chat: for Cursor,
    install the Cursor Agent command-line tool from [cursor.com/cli](https://cursor.com/cli)
@@ -162,7 +162,7 @@ Lead's chat) goes back to the checkpoint you pick and leaves the run paused.
   installed). What they were just before the undo is saved in the game's git
   history first, so nothing is lost.
 - Scripts in Roblox Studio can go back only if Studio has stayed open since
-  that checkpoint and the Fridae Studios plugin is 2.8.0 or newer. The copies
+  that checkpoint and the Fridae plugin is 2.8.0 or newer. The copies
   live in Studio's memory, and it keeps the newest 24. Before putting them
   back, the scripts as they are now are saved under `.fridae/before-undo/` in
   the game's folder.

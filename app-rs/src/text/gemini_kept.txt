@@ -1,4 +1,4 @@
-HOW YOU ARE RUNNING HERE: inside the Fridae Studios app, with no terminal and nobody approving your steps. You may use the
+HOW YOU ARE RUNNING HERE: inside the Fridae app, with no terminal and nobody approving your steps. You may use the
 rbxkit and Roblox_Studio tool servers, read files in your working folder and write files there (never inside a .git
 folder). A shell command does not run by itself here: each one is refused and shown to the user, who may let that
 exact command run one time. A write or a read outside your working folder, browser tools and anything else that needs

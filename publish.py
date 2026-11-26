@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Publish a new version of Fridae Studios so every installed copy updates itself.
+"""Publish a new version of Fridae so every installed copy updates itself.
 
     python publish.py 1.9.2 "What changed, in a line or two"
 
@@ -13,6 +13,8 @@ import os, re, subprocess, sys, zipfile
 KIT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, KIT)
 from build_app import BUILD
+
+OLD_EXE_NAME = "Fridae Studios.exe"
 
 
 def main():
@@ -31,18 +33,21 @@ def main():
     import build_app
     app = build_app.build(quiet=True)
     dist = os.path.dirname(app)
-    zpath = os.path.join(BUILD, "Fridae-Studios.zip")
+    zpath = os.path.join(BUILD, "Fridae.zip")
     count = 0
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for root, _dirs, files in os.walk(os.path.join(dist, "Fridae Studios")):
+        for root, _dirs, files in os.walk(app):
             for f in files:
                 full = os.path.join(root, f)
                 z.write(full, os.path.relpath(full, dist))
                 count += 1
+        # copies from before the rename look for "Fridae Studios.exe" in the update: the same program under that
+        # name lets them update; it installs and opens Fridae.exe
+        z.write(os.path.join(app, build_app.EXE_NAME), os.path.join(os.path.basename(app), OLD_EXE_NAME))
     print("Zipped %d files (%.0f MB)" % (count, os.path.getsize(zpath) / 1e6))
     print("Publishing to %s ..." % repo)
     subprocess.run(["gh", "release", "create", "v" + version, zpath, "--repo", repo,
-                    "--title", "Fridae Studios " + version, "--notes", notes], check=True)
+                    "--title", "Fridae " + version, "--notes", notes], check=True)
     print("Published. Installed copies pick it up within a few hours, or at once from Setup > Check now.")
 
 

@@ -22,7 +22,12 @@ use std::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::paths::{self, EXE_NAME, PATHS, UPDATE_REPO, VERSION};
+use crate::paths::{self, EXE_NAME, OLD_EXE_NAME, PATHS, UPDATE_REPO, VERSION};
+
+/// The program in an unpacked update: `Fridae.exe`, or `Fridae Studios.exe` in a release from before the rename.
+fn program_in(folder: &std::path::Path) -> Option<PathBuf> {
+    [EXE_NAME, OLD_EXE_NAME].iter().map(|n| folder.join(n)).find(|p| p.is_file())
+}
 
 fn stage() -> PathBuf {
     PATHS.home.join("update")
@@ -94,7 +99,7 @@ fn check() -> Result<Option<Release>, String> {
 pub fn staged_version() -> Option<String> {
     let info: Value = serde_json::from_str(&fs::read_to_string(stage().join("ready.json")).ok()?).ok()?;
     let folder = PathBuf::from(info["folder"].as_str()?);
-    folder.join(EXE_NAME).is_file().then(|| info["version"].as_str().unwrap_or("").to_string()).filter(|v| !v.is_empty())
+    program_in(&folder).is_some().then(|| info["version"].as_str().unwrap_or("").to_string()).filter(|v| !v.is_empty())
 }
 
 pub fn clear_stage() {
@@ -154,8 +159,8 @@ fn download(info: &Release, progress: impl Fn(f64)) -> Result<(), String> {
     drop(zip);
     let _ = fs::remove_file(&zpath);
     let mut folder = out.clone();
-    if !folder.join(EXE_NAME).is_file() {
-        let inner = fs::read_dir(&out).into_iter().flatten().flatten().map(|e| e.path()).find(|p| p.join(EXE_NAME).is_file());
+    if program_in(&folder).is_none() {
+        let inner = fs::read_dir(&out).into_iter().flatten().flatten().map(|e| e.path()).find(|p| program_in(p).is_some());
         match inner {
             Some(p) => folder = p,
             None => return fail("The update archive does not contain the program."),
@@ -175,7 +180,8 @@ pub fn apply(relaunch: bool) -> bool {
     let Some(folder) = info["folder"].as_str() else { return false };
     let version = info["version"].as_str().unwrap_or("");
     // the new program installs itself, showing a splash (splash.rs); no console programs, so no console windows
-    let mut cmd = Command::new(PathBuf::from(folder).join(EXE_NAME));
+    let Some(program) = program_in(std::path::Path::new(folder)) else { return false };
+    let mut cmd = Command::new(program);
     cmd.arg("--apply-update").arg(std::process::id().to_string()).arg(&PATHS.install).arg(version);
     if relaunch {
         cmd.arg("relaunch");
@@ -284,5 +290,28 @@ pub fn run_forever() {
     loop {
         run(None);
         thread::sleep(Duration::from_secs(6 * 3600));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_update_may_carry_the_program_under_either_name() {
+        let root = paths::test_dir("update-program-in");
+        let (new, old, both, none) = (root.join("new"), root.join("old"), root.join("both"), root.join("none"));
+        for d in [&new, &old, &both, &none] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(new.join("Fridae.exe"), b"").unwrap();
+        fs::write(old.join("Fridae Studios.exe"), b"").unwrap();
+        fs::write(both.join("Fridae.exe"), b"").unwrap();
+        fs::write(both.join("Fridae Studios.exe"), b"").unwrap();
+        assert_eq!(program_in(&new), Some(new.join("Fridae.exe")));
+        assert_eq!(program_in(&old), Some(old.join("Fridae Studios.exe")), "a release from before the rename");
+        assert_eq!(program_in(&both), Some(both.join("Fridae.exe")), "the new name first");
+        assert_eq!(program_in(&none), None);
+        assert_eq!((paths::APP, paths::EXE_NAME, paths::DATA_DIR), ("Fridae", "Fridae.exe", "Fridae Studios"));
     }
 }

@@ -1,7 +1,7 @@
 """Studio mode, the agents' side: the run, review items for the user to sign off, decisions and lessons.
 
 Everything is small JSON in <project>/.fridae/ (studio.json, review/<id>.json, review/<id>/ media), so it travels
-with the game; lessons are the user's notes (rbxnotes.py, .fridae/notes/). The Fridae Studios app shows the review
+with the game; lessons are the user's notes (rbxnotes.py, .fridae/notes/). The Fridae app shows the review
 items; agents use rbx_stage. Nothing here prints: functions return text, because the MCP server speaks JSON-RPC over
 stdout.
 
@@ -78,7 +78,7 @@ def locked(project):
                 time.sleep(0.02)
                 continue
             if time.time() > deadline:
-                raise KitError("Another Fridae Studios process is updating this game's Studio files. Try again in a moment.")
+                raise KitError("Another Fridae process is updating this game's Studio files. Try again in a moment.")
             time.sleep(0.02)
     try:
         with os.fdopen(fd, "w") as f:

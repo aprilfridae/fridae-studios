@@ -1004,7 +1004,7 @@ impl Client<'_> {
         let reply = if m["method"] == "session/request_permission" {
             json!({"jsonrpc": "2.0", "id": m["id"], "result": answer(&m["params"]["options"], false)})
         } else {
-            json!({"jsonrpc": "2.0", "id": m["id"], "error": {"code": -32601, "message": "Fridae Studios does not offer this."}})
+            json!({"jsonrpc": "2.0", "id": m["id"], "error": {"code": -32601, "message": "Fridae does not offer this."}})
         };
         self.send(&reply);
     }

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Remotion project that renders Fridae Studios promo videos.",
+  "description": "Remotion project that renders Fridae promo videos.",
   "dependencies": {
     "@huggingface/transformers": "3.8.1",
     "@remotion/bundler": "4.0.545",

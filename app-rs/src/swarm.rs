@@ -200,7 +200,7 @@ fn git(dir: &Path, args: &[&str]) -> (bool, String) {
 fn git_id(dir: &Path, args: &[&str]) -> (bool, String) {
     let mut all: Vec<&str> = Vec::new();
     if !git(dir, &["config", "user.name"]).0 {
-        all.extend(["-c", "user.name=Fridae Studios", "-c", "user.email=fridae-studios@localhost"]);
+        all.extend(["-c", "user.name=Fridae", "-c", "user.email=fridae-studios@localhost"]);
     }
     all.extend(args);
     git(dir, &all)
@@ -239,7 +239,7 @@ fn new_run(lead: &str, project: &str) -> Result<Run, String> {
     // the base: the project as it is now (a checkpoint when anything is uncommitted, or there is no commit yet)
     let dirty = !git(dir, &["status", "--porcelain"]).1.trim().is_empty();
     let has_head = git(dir, &["rev-parse", "-q", "--verify", "HEAD"]).0;
-    if (dirty || !has_head) && projects::checkpoint(project, "Before the swarm (Fridae Studios checkpoint)").is_none() {
+    if (dirty || !has_head) && projects::checkpoint(project, "Before the swarm (Fridae checkpoint)").is_none() {
         return Err("Could not save the project's files before the swarm.".into());
     }
     let (ok, base) = git(dir, &["rev-parse", "HEAD"]);
@@ -976,7 +976,7 @@ pub fn land(project: &str, item: &Value) -> String {
     if !git(dir, &["rev-parse", "-q", "--verify", branch]).0 {
         return format!("The swarm's branch {branch} is gone, so nothing was merged.");
     }
-    let _ = projects::checkpoint(project, "Before merging the team's work (Fridae Studios checkpoint)");
+    let _ = projects::checkpoint(project, "Before merging the team's work (Fridae checkpoint)");
     let (ok, _) = git_id(dir, &["merge", "--no-ff", "-q", "-m", &format!("Merge the team's verified work ({branch})"), branch]);
     if ok {
         return format!("The team's verified work ({branch}) was merged into the project.");
@@ -1166,7 +1166,7 @@ fn watch_run(run: &mut Run, now: f64) {
         post_in(run, "system", &[], "system", &text);
         run.woke_at = run.posts;
         if let Some(lead) = agents::get(&run.lead) {
-            wake_lead(&lead, &format!("Fridae Studios (swarm watchdog): {text} Read the board with rbx_team action 'board'."));
+            wake_lead(&lead, &format!("Fridae (swarm watchdog): {text} Read the board with rbx_team action 'board'."));
         }
     }
 }
