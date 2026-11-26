@@ -1073,6 +1073,10 @@ pub fn permissions(full: bool, agent_id: &str, allowed: &[String], folders: &Fol
         // allowed program with a redirection to any file without asking (measured, 2.3.2: `git --version > /tmp/x`)
         let _ = allowed;
         r.push(rule("shell", "*", "ask"));
+        // a search asks too, and the app answers by the folder its call named (`decide_search`): OpenCode checks it by
+        // its pattern only, and its folder not at all inside the working folder's repository or the chat's folders
+        r.push(rule("grep", "*", "ask"));
+        r.push(rule("glob", "*", "ask"));
         // writing in the working folder: OpenCode names a file inside the git repository around it relative to the
         // working folder (measured, 2.3.2: `abs.txt`, `sub/x.txt`, and `../sibling/x.txt` for a file beside the game in
         // the same repository, with no folder question), and anything outside that repository by its absolute path,
@@ -2173,7 +2177,7 @@ fn turn_steps(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out), 
             put(o);
         }
         if let Some(ask) = step.ask.filter(|a| asked.insert(a.id.clone())) {
-            let mut d = decide(&ask.action, &ask.resources, &paths::allowed_commands());
+            let mut d = decision_for(&ask, &spec.location, &paths::app_secrets());
             // a command the user said on its card may run one time, asked for again exactly as it was
             if !d.once && take_once(&spec.agent_id, &ask.action, &ask.resources, &paths::allowed_commands()) {
                 d = Decision { once: true, message: String::new(), blocked: Vec::new(), refused: Vec::new() };
@@ -2792,6 +2796,52 @@ pub fn visible(command: &str) -> String {
     out
 }
 
+/// The app's answer to a request: a search by its folder (`decide_search`), anything else by `decide`.
+fn decision_for(ask: &Ask, location: &Path, secrets: &[PathBuf]) -> Decision {
+    if ask.action == "grep" || ask.action == "glob" {
+        decide_search(ask.search.as_deref(), location, secrets)
+    } else {
+        decide(&ask.action, &ask.resources, &paths::allowed_commands())
+    }
+}
+
+/// Ask me: whether a grep or glob may search the folder its call named (`search`: the call's `path`, empty for the
+/// working folder `location`; None when the call was not seen). OpenCode checks these tools by their pattern only,
+/// and their folder only outside the working folder's repository and the chat's folders, and runs ripgrep with
+/// `--no-config` (measured, 2.4.1: grep with `path` the kit returned the kit's config.json; from a game in a
+/// repository that holds the app's folders, `..` returned every sign-in file; glob listed their names). So each search
+/// asks, and runs only when its folder, as the system resolves it (links, junctions, short names, case), neither
+/// holds a place with a sign-in or a key (`paths::app_secrets`) nor lies in one. A folder that cannot be resolved (it
+/// does not exist, a drive-relative `C:x`) is refused. ripgrep follows no links, so what it walks stays below it.
+pub fn decide_search(search: Option<&str>, location: &Path, secrets: &[PathBuf]) -> Decision {
+    let refuse = |why: &str| Decision { once: false, message: why.to_string(), blocked: Vec::new(), refused: Vec::new() };
+    let Some(asked) = search else { return refuse("That search was not run: Fridae could not tell which folder it was for.") };
+    let p = Path::new(asked);
+    // Windows: `C:x` is relative to that drive's current folder, which the app cannot know for OpenCode
+    if p.has_root() != p.is_absolute() || (cfg!(windows) && p.components().next().is_some_and(|c| matches!(c, std::path::Component::Prefix(_))) && !p.has_root()) {
+        return refuse("That search was not run: write its folder in full (as C:\\folder), or relative to the working folder.");
+    }
+    let root = if asked.is_empty() { location.to_path_buf() } else if p.is_absolute() { p.to_path_buf() } else { location.join(p) };
+    let Ok(root) = root.canonicalize() else { return refuse("That search was not run: its folder was not found.") };
+    let key = |q: &Path| {
+        let t = q.display().to_string();
+        if cfg!(windows) || paths::case_blind() { t.to_lowercase() } else { t }
+    };
+    let under = |inner: &Path, outer: &Path| {
+        let (i, o) = (key(inner), key(outer));
+        i == o || i.starts_with(&format!("{}{}", o.trim_end_matches(std::path::MAIN_SEPARATOR), std::path::MAIN_SEPARATOR))
+    };
+    for s in secrets {
+        // a secret that is not there yet is checked where it would be (its folder resolved)
+        let real = s.canonicalize().ok().or_else(|| Some(s.parent()?.canonicalize().ok()?.join(s.file_name()?)));
+        let Some(real) = real else { continue };
+        if under(&real, &root) || under(&root, &real) {
+            return refuse("That search was not run: its folder holds, or lies in, a place where Fridae keeps a sign-in or a key, which no tool here may read. Search a folder below it that holds none (for the kit, one of its subfolders), or name the files you need.");
+        }
+    }
+    Decision { once: true, message: String::new(), blocked: Vec::new(), refused: Vec::new() }
+}
+
 pub fn decide(action: &str, resources: &[String], allowed: &[String]) -> Decision {
     if action == "shell" && !resources.is_empty() {
         let mut blocked: Vec<Value> = Vec::new();
@@ -2869,6 +2919,9 @@ pub struct Ask {
     pub id: String,
     pub action: String,
     pub resources: Vec<String>,
+    /// A grep or glob request: the folder its call named (`path`; empty for the working folder). None when the call
+    /// was not seen, and for every other request.
+    pub search: Option<String>,
 }
 
 /// What one event means for the turn.
@@ -2892,6 +2945,9 @@ pub struct Turn {
     /// The command each shell call was given (`session.tool.called`), by the call's id: a request to run it is
     /// checked against this as well as against what the request lists.
     commands: HashMap<String, String>,
+    /// The folder each grep and glob call named (`path`, empty when none), by the call's id: OpenCode's request for
+    /// it lists only the pattern (`decide_search`).
+    searches: HashMap<String, String>,
 }
 
 impl Turn {
@@ -2899,7 +2955,7 @@ impl Turn {
     pub fn new(agent_id: &str, servers: &Value, model: Option<String>) -> Turn {
         let mut prefixes: Vec<(String, String)> = servers.as_object().map(|o| o.keys().map(|n| (server_name(agent_id, n) + "_", n.clone())).collect()).unwrap_or_default();
         prefixes.sort_by_key(|(p, _)| std::cmp::Reverse(p.len())); // the longest name first
-        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false, open: Default::default(), commands: HashMap::new() }
+        Turn { model, prefixes, tools: HashMap::new(), usage: Default::default(), cost: 0.0, answered: false, open: Default::default(), commands: HashMap::new(), searches: HashMap::new() }
     }
 
     /// Whether one of the app's tools that waits long on purpose is running (no stall then).
@@ -2957,6 +3013,9 @@ impl Turn {
                     if let Some(c) = d["input"]["command"].as_str().filter(|_| name == "run_command") {
                         self.commands.insert(id.to_string(), c.to_string());
                     }
+                    if name == "Grep" || name == "Glob" {
+                        self.searches.insert(id.to_string(), d["input"]["path"].as_str().unwrap_or("").to_string());
+                    }
                 }
                 step.outs.push(if name.starts_with("mcp__") { Out::ToolArgs(name, d["input"].clone()) } else { Out::Tool(name) });
             }
@@ -3000,7 +3059,8 @@ impl Turn {
                         resources.push(c.clone());
                     }
                 }
-                step.ask = Some(Ask { id: d["id"].as_str().unwrap_or("").to_string(), action: d["action"].as_str().unwrap_or("").to_string(), resources });
+                let search = if d["action"] == "grep" || d["action"] == "glob" { d["source"]["id"].as_str().and_then(|id| self.searches.get(id)).cloned() } else { None };
+                step.ask = Some(Ask { id: d["id"].as_str().unwrap_or("").to_string(), action: d["action"].as_str().unwrap_or("").to_string(), resources, search });
                 step.ask = step.ask.filter(|a| !a.id.is_empty());
             }
             "session.execution.succeeded" => {
@@ -3373,9 +3433,10 @@ mod tests {
                 c.push((a, ok, "allow"));
             }
         }
-        // glob and grep are checked by their pattern
-        for (a, ok) in [("grep", "// TODO"), ("grep", "local x: number"), ("grep", "end "), ("glob", "*.lua"), ("glob", "src/**/*.")] {
-            c.push((a, ok, "allow"));
+        // glob and grep are checked by their pattern; in Ask me they ask, and the app answers by their folder
+        // (`decide_search`)
+        for (a, pat) in [("grep", "// TODO"), ("grep", "local x: number"), ("grep", "end "), ("glob", "*.lua"), ("glob", "src/**/*.")] {
+            c.push((a, pat, if full { "allow" } else { "ask" }));
         }
         if full {
             for ok in ["D:/elsewhere/x", "../sibling/x.lua", "../../other/a/b.lua", "C:/Users/a/Documents/x~1/y.txt"] {
@@ -3523,6 +3584,172 @@ mod tests {
         if cfg!(windows) {
             assert_eq!(store_at(&home, None), PathBuf::from(r"C:\Users\a\.local\share\Fridae Studios\opencode"));
         }
+    }
+
+    #[test]
+    fn a_search_never_covers_a_place_with_a_sign_in_or_a_key() {
+        // OpenCode checks grep and glob by their pattern only, and their folder only outside the working folder's
+        // repository and the chat's folders (measured, 2.4.1: in Ask me, grep with `path` the kit returned the kit's
+        // config.json, and with `..` from a game in a repository holding the app's folders every sign-in file); its
+        // ripgrep runs with `--no-config`. So in Ask me each search asks, and is let run only when its folder neither
+        // holds such a place nor lies in one
+        let t = paths::test_dir("search-roots");
+        let _ = fs::remove_dir_all(&t);
+        for d in ["kit/vault", "store/data/opencode/tool-output", "github", "game/src"] {
+            fs::create_dir_all(t.join(d)).unwrap();
+        }
+        for f in ["kit/config.json", "kit/vault/n.md", "store/data/opencode/auth.json", "store/data/opencode/tool-output/tool_1", "github/token", "game/src/a.lua"] {
+            fs::write(t.join(f), "x").unwrap();
+        }
+        let secrets = [t.join("kit").join("config.json"), t.join("github"), t.join("store/data/opencode/auth.json"), t.join("gone/never.json")];
+        let loc = t.join("game");
+        let at = |p: &Path| p.display().to_string();
+        for ok in [String::new(), "src".into(), "src/a.lua".into(), at(&t.join("kit/vault")), "../kit/vault".into(), at(&t.join("store/data/opencode/tool-output")), at(&loc)] {
+            let d = decide_search(Some(&ok), &loc, &secrets);
+            assert!(d.once, "{ok:?}: {}", d.message);
+        }
+        let mut no = vec![at(&t.join("kit")), "../kit".into(), "..".into(), at(&t), at(&t.join("github")), at(&t.join("store/data/opencode")), at(&t.join("store")),
+            at(&t.join("store/data/opencode/auth.json")), "../kit/vault/..".into(), "../nowhere".into(), "../kit/config.json".into()];
+        if cfg!(windows) {
+            no.extend(["H:x".to_string(), at(&t.join("KIT")), at(&t.join("kit")).to_uppercase()]);
+        }
+        for bad in &no {
+            let d = decide_search(Some(bad), &loc, &secrets);
+            assert!(!d.once && !d.message.is_empty(), "{bad:?}");
+        }
+        assert!(!decide_search(None, &loc, &secrets).once, "a search whose call was not seen");
+    }
+
+    #[test]
+    fn a_search_request_carries_the_folder_its_call_named() {
+        let mut t = Turn::new("c1", &json!({}), None);
+        let ev = |ty: &str, data: Value| {
+            let mut d = data;
+            d["sessionID"] = json!(SID);
+            json!({"type": ty, "data": d})
+        };
+        t.feed(SID, &ev("session.tool.input.started", json!({"id": "call_g", "name": "grep"})));
+        t.feed(SID, &ev("session.tool.called", json!({"id": "call_g", "input": {"pattern": "x", "path": "../kit"}})));
+        t.feed(SID, &ev("session.tool.input.started", json!({"id": "call_h", "name": "glob"})));
+        t.feed(SID, &ev("session.tool.called", json!({"id": "call_h", "input": {"pattern": "**/*"}})));
+        let asked = |t: &mut Turn, action: &str, call: &str| t.feed(SID, &ev("permission.asked", json!({"id": format!("per_{call}"), "action": action, "resources": ["x"], "source": {"type": "tool", "id": call}}))).ask.unwrap();
+        assert_eq!(asked(&mut t, "grep", "call_g").search.as_deref(), Some("../kit"));
+        assert_eq!(asked(&mut t, "glob", "call_h").search.as_deref(), Some(""), "no path: the working folder");
+        assert_eq!(asked(&mut t, "grep", "call_unseen").search, None);
+        assert_eq!(asked(&mut t, "shell", "call_g").search, None, "only searches");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn searches_never_reach_a_sign_in_in_the_real_opencode() {
+        // End to end with the real OpenCode and a scripted model (a local stand-in, no real model): a game inside a
+        // git repository that also holds the kit, whose config.json is a secret. In Ask me the model greps and globs
+        // the kit (relative and absolute) and `..`, then the kit's vault; the app answers each request as a turn does
+        // (`decision_for`). The secret's text and name never come back; the vault's does.
+        let Some(exe) = desktop_opencode() else {
+            eprintln!("skipped: OpenCode's desktop app is not installed");
+            return;
+        };
+        let _one = REAL.lock().unwrap_or_else(|e| e.into_inner());
+        let t = paths::test_dir("real-search");
+        let _ = fs::remove_dir_all(&t);
+        let (game, kit) = (t.join("repo").join("games").join("g"), t.join("repo").join("kit"));
+        for d in [game.join("src"), kit.join("vault")] {
+            fs::create_dir_all(d).unwrap();
+        }
+        let _ = Command::new("git").args(["init", "-q"]).current_dir(t.join("repo")).stdout(Stdio::null()).stderr(Stdio::null()).run_status();
+        assert!(t.join("repo").join(".git").exists(), "a repository");
+        fs::write(kit.join("config.json"), "SECRET-MARK-KEY").unwrap();
+        fs::write(kit.join("vault").join("n.md"), "SAFE-MARK-NOTE").unwrap();
+        fs::write(game.join("src").join("a.lua"), "x").unwrap();
+        let secrets = [kit.join("config.json")];
+        let f = Folders { location: &game, project: Some(&game), kit: &kit, reads: vec![] };
+        let mut rules = permissions(false, "c1", &[], &f, &[]);
+        deny_secrets(&mut rules, &secrets, &game);
+
+        // the scripted model: one tool call per request, then a line of text; what each tool returned is kept
+        let kit_abs = kit.display().to_string();
+        let steps: Vec<Value> = vec![
+            json!({"tool": "grep", "args": {"pattern": "MARK", "path": "../../kit"}}),
+            json!({"tool": "grep", "args": {"pattern": "MARK", "path": kit_abs.clone(), "include": "*.json"}}),
+            json!({"tool": "grep", "args": {"pattern": "MARK", "path": "../.."}}),
+            json!({"tool": "glob", "args": {"pattern": "**/*", "path": kit_abs}}),
+            json!({"tool": "grep", "args": {"pattern": "MARK", "path": "../../kit/vault"}}),
+            json!({"text": "done"}),
+        ];
+        let model = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let mport = model.server_addr().to_ip().unwrap().port();
+        let results: Arc<Mutex<Vec<String>>> = Arc::default();
+        let kept = results.clone();
+        std::thread::spawn(move || {
+            let mut left = steps.into_iter();
+            for mut rq in model.incoming_requests() {
+                let mut body = String::new();
+                let _ = rq.as_reader().read_to_string(&mut body);
+                let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                if rq.method().as_str() != "POST" {
+                    let _ = rq.respond(tiny_http::Response::from_string(json!({"data": [{"id": "m", "object": "model"}]}).to_string()));
+                    continue;
+                }
+                if let Some(last) = v["messages"].as_array().and_then(|m| m.last()).filter(|m| m["role"] == "tool") {
+                    kept.lock().unwrap().push(last["content"].to_string());
+                }
+                let step = left.next().unwrap_or(json!({"text": "done"}));
+                let chunk = |delta: Value, finish: Value| format!("data: {}\n\n", json!({"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m", "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}));
+                let mut out = if let Some(tool) = step["tool"].as_str() {
+                    let call = json!({"index": 0, "id": format!("call_{}", kept.lock().unwrap().len()), "type": "function", "function": {"name": tool, "arguments": step["args"].to_string()}});
+                    chunk(json!({"role": "assistant", "tool_calls": [call]}), Value::Null) + &chunk(json!({}), json!("tool_calls"))
+                } else {
+                    chunk(json!({"role": "assistant", "content": step["text"]}), Value::Null) + &chunk(json!({}), json!("stop"))
+                };
+                out.push_str(&format!("data: {}\n\ndata: [DONE]\n\n", json!({"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m", "choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}})));
+                let _ = rq.respond(tiny_http::Response::from_string(out).with_header(tiny_http::Header::from_bytes("Content-Type", "text/event-stream").unwrap()));
+            }
+        });
+        let cfg = t.join("model.json");
+        fs::write(&cfg, json!({"provider": {"mock": {"npm": "@ai-sdk/openai-compatible", "name": "Mock", "options": {"baseURL": format!("http://127.0.0.1:{mport}/v1"), "apiKey": "x"}, "models": {"m": {"name": "m", "tool_call": true}}}}}).to_string()).unwrap();
+        let server = {
+            let _state = TEST_STATE.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: set and removed while holding TEST_STATE; read only by `environment` while the server starts
+            unsafe { env::set_var("FRIDAE_OPENCODE_TEST_CONFIG", &cfg) };
+            let s = start_server_at(&exe);
+            unsafe { env::remove_var("FRIDAE_OPENCODE_TEST_CONFIG") };
+            s.expect("Fridae's OpenCode server starts")
+        };
+        let conn = Conn { port: server.port, auth: server.auth.clone() };
+        let body = json!({"title": "search", "location": {"directory": game.display().to_string()}, "permissions": rules, "model": {"providerID": "mock", "id": "m"}});
+        let (st, v) = call(&conn, "POST", "/api/session", Some(&body)).unwrap();
+        assert_eq!(st, 200, "{v}");
+        let session = v["data"]["id"].as_str().unwrap().to_string();
+        let mut events = Events::open(&conn).unwrap();
+        let (st, _) = call(&conn, "POST", &format!("/api/session/{session}/prompt"), Some(&json!({"text": "go"}))).unwrap();
+        assert!(st < 300);
+        let mut turn = Turn::new("c1", &json!({}), None);
+        let mut answers: Vec<(String, Option<String>, bool)> = Vec::new();
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(120) {
+            let Ok(Some(e)) = events.next() else { break };
+            let step = turn.feed(&session, &e);
+            if let Some(ask) = step.ask {
+                let d = decision_for(&ask, &game, &secrets);
+                answers.push((ask.action.clone(), ask.search.clone(), d.once));
+                let mut reply = json!({"decision": if d.once { "once" } else { "reject" }});
+                if !d.once {
+                    reply["message"] = json!(d.message);
+                }
+                call(&conn, "POST", &format!("/api/session/{session}/permission/{}/reply", ask.id), Some(&reply)).unwrap();
+            }
+            if step.ended {
+                break;
+            }
+        }
+        end_server(server);
+        let got = results.lock().unwrap().clone();
+        assert_eq!(got.len(), 5, "every call came back: {got:?} {answers:?}");
+        for (i, r) in got.iter().enumerate().take(4) {
+            assert!(!r.contains("SECRET-MARK") && !r.contains("config.json"), "call {i} reached the secret: {r} {answers:?}");
+        }
+        assert!(got[4].contains("SAFE-MARK-NOTE"), "the vault is still searched: {} {answers:?}", got[4]);
     }
 
     #[cfg(windows)]

@@ -1913,6 +1913,21 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     run without asking: measured, `git --version > /tmp/x`); edits allowed in the chat's folder, the game and the kit,
     the same set as Claude Code (each spelling, `/private` included), never the whole work folder; `external_directory`
     allowed for those folders and, to read only, the attachments and chat-picture folders.
+  - Ask me: `grep *` and `glob *` ask, and the app answers by the folder the call named (`decide_search`, the call's
+    `path` kept from `session.tool.called`, since the request lists only the pattern). OpenCode checks these tools
+    by their pattern only and their folder only through `external_directory`, which it skips inside the working
+    folder's git repository, and the chat's folders (the kit) are allowed there; its ripgrep runs with
+    `--no-config` (so `RIPGREP_CONFIG_PATH` cannot hide anything). Measured, 2.4.1 on Windows, scripted model,
+    stand-in secrets: in Ask me grep with `path` the kit returned the kit's `config.json` (no repository needed),
+    and from a game in a repository holding the app's folders, grep with `..` or any of their folders returned the
+    settings, the guard copy, the GitHub token, an added account's sign-in and OpenCode's `auth.json` and
+    `mcp-auth.json`; glob listed their names. Full auto the same (not changed there: its shell can read any file
+    anyway, as Claude Code's bypass mode). Now a search runs only when its folder, resolved by the system (links,
+    junctions, short names, case), neither holds a place of `paths::app_secrets` nor lies in one; an unresolvable
+    folder (missing, drive-relative) is refused, and the model is told to search a folder below. So the kit itself
+    is not searched in Ask me (its subfolders are), nor `..` from a game in such a repository; OpenCode's own
+    `tool-output` folder still is. `searches_never_reach_a_sign_in_in_the_real_opencode` runs this end to end
+    (Windows, real OpenCode, scripted model; skipped without the desktop app).
   - Full auto and Studio: shell, edit, `external_directory` allowed for `*`; the denies above still hold.
   - A `permission.asked` for a shell command (`decide`, `paths::command_allowed`): answered `once` only when every
     part (split on `;`, `&&`, `||`, `|`, as OpenCode itself asks per part) starts with a program the user allowed,
