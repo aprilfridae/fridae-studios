@@ -3,7 +3,9 @@
    when what it reads has changed. */
 import { useEffect, useReducer, useRef } from "preact/hooks";
 
-export type Project = { path: string; name: string; type?: string };
+export type Project = { path: string; name: string; type?: string; kind?: string; bible?: boolean; kind_set?: boolean };
+/* GET /api/projects as a whole: where new projects go and whether git is there, beside the list */
+export type ProjReply = { projects: Project[]; default_parent?: string; default_parent_plain?: string; git?: boolean };
 export type ReviewItem = { id: string; title?: string; summary?: string; plain?: string; status: string; blocking?: boolean; created?: number; media?: string[] };
 export type NeedCard = { id: string; title?: string; note?: string };
 /* a project's GET /api/review reply, as far as Review uses it */
@@ -14,6 +16,7 @@ export type Light = { list: string[]; at: number; from: HTMLElement | null };
 
 export type State = {
   projects: Project[];
+  projReply: ProjReply;                      /* the same list with the rest of its reply (New project reads where and git) */
   review: Record<string, ReviewReply>;       /* project path -> its review reply */
   reviewDone: Record<string, Answered>;      /* item or card id -> the answer made here */
   reviewOrder: string[];                     /* the tabs' order, set when the page opens */
@@ -30,7 +33,7 @@ export type State = {
   usage: UsageToday | null;                  /* today's tokens (usage/usage.ts) */
   gh: any;                                   /* GET /api/github/status; null until it has been asked */
   ghNote: string; ghBusy: boolean;           /* GitHub's row: a press that failed, a press on its way */
-  engine: EngineRow | null;                  /* the promo engine's row, as the old page words it */
+  engine: EngineRow | null;                  /* the promo engine's row (promos/engine.ts) */
   saved: { chats: any[]; deleted: any[] };   /* GET /api/history */
   setupOut: string;                          /* what Run a full check printed */
   scale: number; sideW: number;              /* text size (%) and the sidebar's width (px) */
@@ -66,9 +69,10 @@ export type Team = { run: string | null; members: Member[] };
 export type Ai = [string, string, string, string];
 export type Sum = { total: number; input: number; output: number; cached: number; cost: number; turns: number; quiet: number };
 export type UsageToday = { all: Sum; first: boolean; rows: [string, Sum, string, string][] };
-export type EngineRow = { text: string; button: string; error: string; bar: number; ready: boolean; running: boolean; title: string };
+/* `text` is Settings' longer words, `short` the Promos tab's */
+export type EngineRow = { text: string; short: string; button: string; error: string; bar: number; ready: boolean; running: boolean; title: string };
 
-let state: State = { projects: [], review: {}, reviewDone: {}, reviewOrder: [], reviewTab: "", reviewJump: null, light: null,
+let state: State = { projects: [], projReply: { projects: [] }, review: {}, reviewDone: {}, reviewOrder: [], reviewTab: "", reviewJump: null, light: null,
   status: {}, polls: 0, ais: [], curProj: "", settings: { open: false, page: "general", n: 0 }, usageOpen: false, usage: null, gh: null, ghNote: "", ghBusy: false,
   engine: null, saved: { chats: [], deleted: [] }, setupOut: "", scale: 100, sideW: 232, theme: { id: "fridae", mode: "dark" },
   nav: { view: "chat", proj: null, chat: null }, chats: [], steps: {}, teams: {}, notConnected: null };

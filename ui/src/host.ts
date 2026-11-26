@@ -6,7 +6,7 @@ export type Host = {
   panelOpened(first: Element | null): void;       /* a window opened over the page: the keyboard goes to `first` */
   panelClosed(): void;                            /* and closed: the keyboard goes back, unless another is still open */
   closePops(): void; closeProject(): void;        /* the message box's menus, and the project's panel */
-  loadEngine(): void; loadGithub(): void;         /* what Settings shows of the promo engine and GitHub is asked for again */
+  loadProjects(): Promise<void>;                  /* the list of projects is asked for again (and put in the store) */
   /* what the sidebar and Overview press */
   showAll(): void; showNewProject(): void; setView(view: string): void;
   showProject(path: string, tab?: string): void;  /* a project comes to the front, on its last tab ("" is No project) */
@@ -20,8 +20,6 @@ export type Host = {
   anyBusy(): boolean;                             /* some chat is working */
   example(text: string): void;                    /* a Guide row: close Settings and put its example in the message box (or open its page) */
   allowCommands(names: string[], allow: boolean): Promise<boolean>;
-  ghAct(action: string): Promise<any>;            /* a press on GitHub's row */
-  engineInstall(): void;
   reloadSaved(): Promise<void>;
   setScale(v: number): void; setTheme(next: { id: string; mode: string }): void;
   themes(): { THEMES: any; ORDER: string[]; colors(id: string, appearance: string): any };

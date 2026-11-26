@@ -5,6 +5,8 @@ import { useRef, useState } from "preact/hooks";
 import { api } from "../api";
 import { cell, store, useStore } from "../store";
 import { host } from "../host";
+import { ghAct } from "../project/github";
+import { engineInstall } from "../promos/engine";
 import { accError, accountOf, accountsOf, noticeOf, openCodeSignIn, pressAccount, pressOpenCode, pressSignIn, signInLine, signInOf } from "../ai";
 import { Group } from "../ui/Group";
 import { SettingsRow } from "../ui/SettingsRow";
@@ -106,10 +108,10 @@ function GitHub() {
         <small class="gh-note">{gh.configured !== false ? "In Full auto, an AI runs commands as you and could read this sign-in." : ""}</small>
         <div class="notice">{note || gh.error ? note || gh.error : gh.forgot ? <><span>Fridae forgot your sign-in. To fully remove access, revoke Fridae Studios on GitHub.</span>{act("Open GitHub settings", () => api("/api/github/open", { what: "settings" }))}</> : null}</div>
         <div class="act">
-          {gh.connected ? act("Disconnect", () => host.ghAct("disconnect"))
-            : p ? <>{act(copied || "Copy", copy)}{act("Open GitHub", () => api("/api/github/open", { what: "device" }))}{act("Cancel", () => host.ghAct("cancel"))}</>
+          {gh.connected ? act("Disconnect", () => ghAct("disconnect"))
+            : p ? <>{act(copied || "Copy", copy)}{act("Open GitHub", () => api("/api/github/open", { what: "device" }))}{act("Cancel", () => ghAct("cancel"))}</>
             : gh.configured === false ? act("Connect", () => {}, true)
-            : act("Connect", () => host.ghAct("connect"))}
+            : act("Connect", () => ghAct("connect"))}
         </div>
       </DotRow>
     </div>
@@ -161,7 +163,7 @@ function Engine() {
   return (
     <Group id="set-engine" find="promo video" title="Promo engine">
       <SettingsRow cls={"eng-row" + (e.ready ? " ready" : "")} title="Promo engine" desc={e.text} descCls="eng-state" descTitle={e.title} ctlCls="act"
-        ctl={<button class="pill eng-install" hidden={!e.button} disabled={e.running} onClick={() => host.engineInstall()}>{e.button || "Install"}</button>}>
+        ctl={<button class="pill eng-install" hidden={!e.button} disabled={e.running} onClick={() => engineInstall()}>{e.button || "Install"}</button>}>
         <div class="eng-bar" hidden={e.bar < 0}><i style={bar.current >= 0 ? "width: " + bar.current + "%" : undefined}></i></div><pre class="eng-error">{e.error}</pre>
       </SettingsRow>
     </Group>

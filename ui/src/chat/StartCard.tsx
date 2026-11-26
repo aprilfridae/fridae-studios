@@ -1,6 +1,7 @@
 /* A new chat's setup: a folder and repository for the project, then (a Roblox game) new game or existing. Its state
    is the chat's own `p.start` ({ step, name, parent, git, kind, msg, paint }), which the page also sets when the chat
    is tied to a project. On an empty page (`p.draft`) the chat is made first; its own card then carries on. */
+import { KIND_NOTE } from "../project/NewProject";
 import { api } from "../api";
 import { H } from "./host";
 import { effortOf, focusBox, kickoffChat, modelOf } from "./compose";
@@ -43,7 +44,7 @@ export function StartCard({ p }: { p: any }) {
     body = <>
       <h4>New project folder</h4>
       <div class="seg np-kind" role="radiogroup" aria-label="What kind of project">{[["plain", "Project"], ["game", "Roblox game"]].map(([k, t]) => <button role="radio" class={st.kind === k ? "on" : ""} aria-checked={st.kind === k ? "true" : "false"} onClick={() => { st.kind = k; st.paint(); }}>{t}</button>)}</div>
-      <p class="sub">{H.KIND_NOTE[st.kind]}</p>
+      <p class="sub">{KIND_NOTE[st.kind]}</p>
       <div class="keyrow"><input type="text" placeholder="Name of the project" aria-label="Name of the project" autocomplete="off" value={st.name} ref={(i) => { if (i && st.focus) { st.focus = false; i.focus(); } }}
         onInput={(e) => (st.name = e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); create(); } }} /></div>
       <p class="sub where">It goes in {st.parent || H.parentFor(st.kind)} &nbsp;<button class="linkish" onClick={acts.where}>Change</button></p>

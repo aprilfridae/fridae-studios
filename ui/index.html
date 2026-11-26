@@ -871,45 +871,11 @@ applyTheme();
     <!-- Review is ui/src/review, put here by fridae.mount("review") -->
     <div id="review"></div>
 
-  <div id="promos"><div class="r-col pr-page">
-    <div class="pr-cols"><section class="pr-make" aria-label="New promo">
-    <h2>New promo</h2>
-    <div class="eng-row compact" id="pr-engine"><p class="sub eng-state">Checking the promo engine...</p><div class="act"><button class="pill sm eng-install" hidden>Install</button></div><div class="eng-bar" hidden><i></i></div><pre class="eng-error"></pre></div>
-    <div class="pr-form" id="pr-form">
-      <div class="pr-field"><span class="pr-label">Clips</span><div class="pr-files" id="pr-clips"></div><div class="act"><button class="pill" id="pr-add-clips">Add clips</button><span class="sub" id="pr-drop-hint">or drop video files here</span></div></div>
-      <div class="pr-field"><label class="pr-label" for="pr-brief">What should it show?</label><textarea class="pr-text" id="pr-brief" rows="2" placeholder="e.g. the new boss fight and the shop"></textarea></div>
-      <div class="pr-field"><span class="pr-label">Style</span><div class="pr-styles" id="pr-styles"></div><p class="sub" id="pr-styles-note"></p></div>
-      <div class="pr-field"><span class="pr-label">Length</span><div class="seg" id="pr-length"></div></div>
-      <details class="pr-more" id="pr-more">
-        <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>More options<span id="pr-more-n"></span></summary>
-        <div>
-          <div class="pr-field"><span class="pr-label">Music</span><div class="pr-files" id="pr-music"></div><div class="act"><button class="pill" id="pr-pick-music">Pick music</button><span class="sub" id="pr-no-music">None. The game sound stays.</span></div><label class="sub check-row"><input type="checkbox" id="pr-mute"> Mute game sound (I'll add a TikTok sound)</label></div>
-          <div class="pr-field"><span class="pr-label">In the style of a TikTok</span><div class="pr-files" id="pr-ref"></div><div class="act"><button class="pill" id="pr-pick-ref" title="TikTok links can't be used: save the video file first, then pick it here.">Pick saved video</button><span class="sub">Its pacing is copied, not its footage.</span></div></div>
-          <div class="pr-field"><label class="pr-label" for="pr-voice">Voiceover script</label><textarea class="pr-text" id="pr-voice" rows="3" placeholder="Leave empty for no voice" title="The agent asks before making claims about your game."></textarea></div>
-        </div>
-      </details>
-      <div class="pr-field" id="pr-proj-field"><label class="pr-label" for="pr-proj">Project</label><select class="r-sel" id="pr-proj"></select></div>
-      <div class="pr-go"><button class="pill main" id="pr-make" disabled>Make promo</button><span class="r-note" id="pr-why"></span></div>
-    </div>
-    <div id="pr-progress-wrap" hidden><h2>In progress</h2><div id="pr-progress"></div></div>
-    </section><section class="pr-lib" aria-label="Library">
-    <h2>Library <small id="pr-count"></small></h2>
-    <p class="r-note" id="pr-empty">Promos you make appear here, newest first.</p>
-    <div id="pr-library"></div>
-    </section></div>
-  </div></div>
+    <!-- Promos is ui/src/promos, put here by fridae.mount("promos") -->
+    <div id="promos"></div>
 
-    <div id="newproj"><div class="r-col">
-      <div class="np-make">
-        <div class="seg np-kind" id="np-kind" role="radiogroup" aria-label="What kind of project"><button role="radio" data-k="plain">Project</button><button role="radio" data-k="game">Roblox game</button></div>
-        <p class="sub kind-note" id="np-kind-note"></p>
-        <div class="keyrow"><input type="text" id="np-name" placeholder="Name of the project" autocomplete="off" aria-label="Name of the project"><button class="pill main" id="np-create">Create</button></div>
-        <p class="sub where" id="np-where"></p>
-        <div class="act" id="np-git-row"><button class="switch" id="np-git" role="switch" aria-checked="true"><span class="track"><span class="knob"></span></span><span class="swl">Start a git repository</span></button></div>
-        <p class="sub warn" id="np-note" hidden></p>
-      </div>
-      <p class="np-other"><button class="linkish" id="np-add">Add a folder you already have</button><button class="linkish" id="np-chat">Just chat, without a project</button></p>
-    </div></div>
+    <!-- New project is ui/src/project/NewProject.tsx, put here by fridae.mount("newproj") -->
+    <div id="newproj"></div>
   </main>
 </div>
 
@@ -918,43 +884,8 @@ applyTheme();
 <div id="side-over"></div>
 <div class="modal" id="sd" role="dialog" aria-label="Settings"><!-- ui/src/settings, put here by fridae.mount("settings") --></div>
 <div class="modal" id="ud" role="dialog" aria-label="Usage"><!-- ui/src/usage, put here by fridae.mount("usage") --></div>
-<aside class="drawer" id="pd" aria-label="Project"><div class="plate">
-  <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
-  <p class="sub" id="pd-path"></p>
-  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A Roblox game also gets Roblox Studio, the Roblox tools and guides, and Promos. Fridae marks a folder with a place file, a Rojo project or Luau scripts as one by itself."><button role="radio" data-k="plain">Project</button><button role="radio" data-k="game">Roblox game</button></div>
-  <div class="act">
-    <button class="pill" id="pd-folder">Open folder</button>
-    <button class="pill" id="pd-bible">Open PROJECT.md</button>
-  </div>
-  <h3>Git</h3>
-  <p class="sub" id="pd-git"></p>
-  <div class="act" id="pd-norepo" hidden><button class="pill" id="pd-init">Start a git repository</button></div>
-  <div id="pd-repo" hidden>
-    <pre id="pd-changes"></pre>
-    <div class="keyrow"><input type="text" id="pd-msg" placeholder="What changed?" autocomplete="off" aria-label="What changed"><button class="pill" id="pd-commit">Commit</button></div>
-    <div id="pd-ident" hidden>
-      <p class="sub">Git needs a name and email for your commits. They are saved for this project only.</p>
-      <div class="keyrow"><input type="text" id="pd-uname" placeholder="Your name" autocomplete="off" aria-label="Your name"></div>
-      <div class="keyrow"><input type="text" id="pd-email" placeholder="Email" autocomplete="off" aria-label="Email"><button class="pill" id="pd-ident-save">Save</button></div>
-    </div>
-    <pre id="pd-out"></pre>
-    <h3>History</h3>
-    <pre id="pd-log"></pre>
-    <p class="sub" id="pd-nolog" hidden>Nothing committed yet.</p>
-    <h3>Online copy</h3>
-    <div id="pd-gh"></div>
-    <p class="sub">Paste a repository's address (an empty one on GitHub, say) to keep a copy online.</p>
-    <div class="keyrow"><input type="text" id="pd-remote" placeholder="https://github.com/you/project.git" autocomplete="off" spellcheck="false" aria-label="Repository address"><button class="pill" id="pd-remote-save">Save</button></div>
-    <div class="act"><button class="pill" id="pd-push" title="Uploads this project's files to the online copy">Push</button><button class="pill" id="pd-pull">Pull</button></div>
-  </div>
-  <h3>Delete</h3>
-  <div class="act" id="pd-del-start"><button class="pill" id="pd-del">Delete project…</button></div>
-  <div id="pd-del-ask" hidden>
-    <p class="sub">Remove it from Fridae and keep its files, or also move its folder to the Trash (you can put it back from there). Its chats stay in your history.</p>
-    <div class="act"><button class="pill" id="pd-del-list">Remove from Fridae</button><button class="pill danger" id="pd-del-trash">Move folder to Trash</button><button class="pill" id="pd-del-no">Cancel</button></div>
-  </div>
-  <p class="sub" id="pd-del-out" hidden></p>
-</div></aside>
+<!-- the project panel: ui/src/project/Project.tsx, put here by fridae.mount("project") -->
+<aside class="drawer" id="pd" aria-label="Project"></aside>
 <!-- a picture shown large: ui/src/review/Lightbox.tsx -->
 <div id="light-host"></div>
 
@@ -1152,7 +1083,7 @@ function sideToStore() {
     sideKept = keep;
     const same = was.chats.length === chats.length && chats.every((c, i) => c === was.chats[i]);
     const nav = was.nav.view === view && was.nav.proj === curProj && was.nav.chat === current ? was.nav : { view, proj: curProj, chat: current };
-    f.store.set({ nav, chats: same ? was.chats : chats, projects: projList() });
+    f.store.set({ nav, chats: same ? was.chats : chats, projects: projList(), projReply: projects });
   });
   paintHead();
 }
@@ -1210,7 +1141,7 @@ function leadsRun(p) {
 /* What the chat (ui/src/chat) asks of this page: its state, read as it is now, and the functions it already had. */
 fridaeWait.unshift((f) => {
   f.chat.init({
-    agents, rvAll, SW, STAGE_NAMES, KIND_NOTE,
+    agents, rvAll, SW, STAGE_NAMES,
     get current() { return current; }, get curProj() { return curProj; }, get view() { return view; }, get status() { return status; },
     get projects() { return projects; }, get saved() { return saved; }, get AIS() { return AIS; }, get bootMark() { return bootMark; }, get draftOn() { return draftOn; },
     setDraftAi: (id) => { draftAi = id; }, tied: (p) => { delete wantProj[p.id]; },
@@ -1275,182 +1206,13 @@ function panelClosed() {
 }
 /* the project in front, as the app's list has it */
 const frontProj = () => (curProj && (projects.projects || []).find((x) => x.path === curProj)) || (curProj ? { path: curProj, name: prName(curProj) } : null);
-function paintGit(state, r) {
-  const out = $("pd-out");
-  if (r && r.text !== undefined) { out.textContent = r.text; out.classList.toggle("warn", !r.ok); }
-  if (!state) return;
-  $("pd-norepo").hidden = !(state.installed && !state.repo);
-  $("pd-repo").hidden = !state.repo;
-  if (!state.installed) { $("pd-git").textContent = "Git is not installed, so this project has no history. Get it from git-scm.com, then reopen the app."; return; }
-  if (!state.repo) { $("pd-git").textContent = "This folder is not a git repository yet."; return; }
-  const n = state.changes.length;
-  $("pd-git").textContent = "On " + (state.branch || "a new branch") + ". " + (n ? n + (n === 1 ? " file has" : " files have") + " changes that are not committed." : "Everything is committed.");
-  $("pd-changes").textContent = state.changes.slice(0, 40).join("\n") + (n > 40 ? "\n... and " + (n - 40) + " more" : "");
-  $("pd-log").textContent = state.commits.map((c) => c.hash + "  " + c.when + "  " + c.subject).join("\n");
-  $("pd-nolog").hidden = state.commits.length > 0;
-  $("pd-ident").hidden = !!state.identity;
-  if (document.activeElement !== $("pd-remote")) $("pd-remote").value = state.remote || "";
-  $("pd-push").disabled = $("pd-pull").disabled = !state.remote;
-  githubProject(state);
-}
-async function git(action, extra) {
-  const pr = frontProj(); if (!pr) return null;
-  const r = await api("/api/git", Object.assign({ path: pr.path, action }, extra || {}));
-  paintGit(r.state, action === "status" ? null : r);
-  return r;
-}
-function openProject() {
-  const pr = frontProj(); if (!pr || isPage(view)) return;
-  closeSetup();
-  $("pd-name").textContent = pr.name; $("pd-path").textContent = pr.path; $("pd-out").textContent = "";
-  $("pd-bible").hidden = !pr.bible; paintPdKind(pr);
-  document.body.classList.add("pd-open"); panelOpened($("pd-close")); git("status");
-  api("/api/projects").then((r) => { projects = r; const now = r.projects.find((x) => x.path === pr.path); if (now) $("pd-bible").hidden = !now.bible; });
-}
-function paintPdKind(pr) {
-  for (const b of $("pd-kind").querySelectorAll("button")) { const on = b.dataset.k === (plainProj(pr) ? "plain" : "game"); b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
-  /* a Roblox game nobody marked: say how Fridae knew */
-  const found = !!pr && pr.kind_set === false && !plainProj(pr);
-  $("pd-kind").querySelector('[data-k="game"]').title = found ? "Fridae found a Roblox place, a Rojo project or Luau scripts in this folder. Press Project if it is not a Roblox game." : "";
-}
-for (const b of $("pd-kind").querySelectorAll("button")) b.onclick = async () => {
-  const pr = frontProj(); if (!pr) return;
-  const r = await api("/api/project", { action: "kind", path: pr.path, kind: b.dataset.k });
-  if (!r.ok) { $("pd-out").textContent = r.error || "That did not work."; return; }
-  await loadProjects(); paintPdKind(r.project);
-};
-function closeProject() { if (!document.body.classList.contains("pd-open")) return; document.body.classList.remove("pd-open"); panelClosed(); }
-$("pd-close").onclick = closeProject;
-$("pd-folder").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "folder" }); };
-$("pd-bible").onclick = () => { const pr = frontProj(); if (pr) api("/api/project", { action: "open", path: pr.path, what: "bible" }); };
-$("pd-init").onclick = () => git("init");
-$("pd-commit").onclick = async () => { const r = await git("commit", { message: $("pd-msg").value }); if (r && r.ok) $("pd-msg").value = ""; };
-$("pd-msg").onkeydown = (e) => { if (e.key === "Enter") $("pd-commit").click(); };
-$("pd-ident-save").onclick = () => git("identity", { name: $("pd-uname").value, email: $("pd-email").value });
-$("pd-remote-save").onclick = () => git("remote", { url: $("pd-remote").value });
-$("pd-push").onclick = async () => { $("pd-out").textContent = "Pushing..."; git("push"); };
-$("pd-pull").onclick = async () => { $("pd-out").textContent = "Pulling..."; git("pull"); };
-/* Delete: two steps (Delete project…, then which kind), so one stray click never removes anything */
-function delAsk(on) { $("pd-del-start").hidden = on; $("pd-del-ask").hidden = !on; if (on) $("pd-del-no").focus(); }
-$("pd-del").onclick = () => { $("pd-del-out").hidden = true; delAsk(true); };
-$("pd-del-no").onclick = () => { delAsk(false); $("pd-del").focus(); };
-async function delProject(trash) {
-  const pr = frontProj(); if (!pr) return;
-  $("pd-del-list").disabled = $("pd-del-trash").disabled = true;
-  let r; try { r = await api("/api/project", { action: "delete", path: pr.path, trash }); } catch (e) { r = { ok: false, error: "The app did not answer." }; }
-  $("pd-del-list").disabled = $("pd-del-trash").disabled = false;
-  if (!r.ok) { const o = $("pd-del-out"); o.textContent = r.error || "That did not work."; o.hidden = false; return; }
-  delAsk(false); closeProject();
-  projects = await api("/api/projects"); showAll();
-  say((pr.name || "The project") + (trash ? " is in the Trash." : " is no longer in Fridae. Its folder is untouched."));
-}
-$("pd-del-list").onclick = () => delProject(false);
-$("pd-del-trash").onclick = () => delProject(true);
-
-/* ---------- GitHub: Settings, Connections (connect with a one-time code entered on GitHub) and Project details (Put on
-   GitHub, Push now). Fridae keeps the sign-in to itself: agents never get it, and nothing is sent to GitHub unless you
-   press one of these buttons. Put on GitHub and Push now run in the background: the page follows the project's
-   last_push ("running", "ok", "error") and keeps the buttons greyed while one runs. ---------- */
-let gh = {}, ghProj = { path: "", info: null }, ghState = null, ghPoll = 0, ghBusy = false, ghNote = "";
-const ghLine = {}, ghName = {};
-const ghRunning = () => !!(ghProj.info && ghProj.info.last_push && ghProj.info.last_push.state === "running");
-async function loadGithub(project) {
-  const pr = document.body.classList.contains("pd-open") && frontProj() ? frontProj().path : "";
-  project = project || pr;
-  let r = null;
-  try { r = await api("/api/github/status" + (project ? "?project=" + encodeURIComponent(project) : "")); } catch (e) { return; }
-  if (!r) return;
-  gh = r;
-  if (project) ghProj = { path: project, info: r.project || null };
-  ghToStore(); paintGithubProject();
-  clearTimeout(ghPoll);
-  /* while a code waits for you on GitHub, or a project is being sent there, the page follows it */
-  if (gh.pending || (project && ghRunning())) ghPoll = setTimeout(() => loadGithub(project), gh.pending ? 2000 : 1500);
-}
-function ghButton(label, onclick, cls) {
-  const b = el("button", cls || "pill sm", esc(label));
-  b.onclick = onclick;
-  return b;
-}
-/* GitHub's row in Settings, Connections is ui/src/settings/Connections.tsx: it reads this from the store */
-function ghToStore() { fridaeDo((f) => f.store.set({ gh, ghNote, ghBusy })); }
-/* One press at a time. A press while another is on its way is simply dropped ({busy}), never shown as a failure. */
-async function ghAct(action, body) {
-  if (ghBusy) return { busy: true };
-  ghBusy = true; ghToStore();
-  document.querySelectorAll("#pd-gh button").forEach((x) => { x.disabled = true; });
-  let r = null; try { r = await api("/api/github/" + action, body || {}); } catch (e) {}
-  ghBusy = false;
-  ghNote = r ? "" : "Could not reach the app. Try again.";
-  paintGithubProject.sig = ""; ghToStore();
-  await loadGithub();
-  return r;
-}
-/* Project details: Put on GitHub (a new repository under your account, private unless you untick it), or once the
-   project is on GitHub, Push now and how the last push went. The paste-an-address box below stays for other places. */
-function githubProject(state) {
-  ghState = state;
-  const pr = frontProj();
-  if (pr) loadGithub(pr.path);
-}
-function ghRepoName(name) { return (name || "").trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 100) || "my-project"; }
-function ghWhen(at) {
-  const d = new Date(at * 1000), today = new Date().toDateString() === d.toDateString();
-  return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-/* a press of Put on GitHub or Push now: started (the page follows it), refused at once (said under the buttons), or
-   dropped because another press is on its way (nothing said) */
-async function ghStart(path, action, body) {
-  delete ghLine[path];
-  const r = await ghAct(action, Object.assign({ project: path }, body || {}));
-  if (r && r.busy) return;
-  if (!r) ghLine[path] = { ok: false, text: "Could not reach the app. Try again." };
-  else if (!r.ok) ghLine[path] = { ok: false, text: r.text };
-  paintGithubProject.sig = ""; paintGithubProject();
-  if (r && r.ok) git("status");
-}
-function paintGithubProject() {
-  const box = $("pd-gh"), pr = frontProj(); if (!box) return;
-  const st = ghState, info = pr && ghProj.path === pr.path ? ghProj.info : null;
-  const show = !!(pr && st && st.repo && gh.configured !== undefined && gh.configured !== false);
-  const last = info && info.last_push, running = !!(last && last.state === "running");
-  const sig = JSON.stringify([show, pr && pr.path, gh.connected, gh.login, info, st && st.commits && st.commits.length, pr && ghLine[pr.path]]);
-  if (paintGithubProject.sig === sig) return;
-  paintGithubProject.sig = sig;
-  if (!show) { box.replaceChildren(); return; }
-  const path = pr.path, out = el("p", "sub"), said = ghLine[path], parts = [];
-  if (!gh.connected) {
-    const act = el("div", "act"); act.appendChild(ghButton("Open Settings", () => openSetup("connections"), "pill"));
-    parts.push(el("p", "sub", "Connect GitHub in Settings, Connections, and this project can go on GitHub with one press."), act);
-  } else if (info && info.repo) {
-    const p = el("p", "sub");
-    p.textContent = "This project is on GitHub at " + info.repo + ". Push now sends your latest commits there.";
-    const act = el("div", "act");
-    const pushB = ghButton("Push now to " + info.repo, () => ghStart(path, "push"), "pill");
-    pushB.disabled = running;
-    act.appendChild(pushB);
-    act.appendChild(ghButton("Open on GitHub", () => api("/api/github/open", { what: "repo", project: path }), "pill"));
-    parts.push(p, act);
-  } else if (!(st.commits || []).length) {
-    parts.push(el("p", "sub", "Commit your files first, then you can put this project on GitHub."));
-  } else {
-    const p = el("p", "sub");
-    p.textContent = "Make a new repository under your GitHub account" + (gh.login ? " (" + gh.login + ")" : "") + " and send this project there. Nothing goes to GitHub until you press the button.";
-    const row = el("div", "keyrow", '<input type="text" id="pd-gh-name" autocomplete="off" spellcheck="false" aria-label="Name on GitHub"><button class="pill" id="pd-gh-put">Put on GitHub</button>');
-    const name = row.querySelector("input"); name.value = ghName[path] || ghRepoName(pr.name);
-    name.oninput = () => { ghName[path] = name.value; };
-    const priv = el("label", "sub check-row", '<input type="checkbox" checked> Private: only you can see it');
-    const putB = row.querySelector("button");
-    putB.disabled = running;
-    putB.onclick = () => ghStart(path, "put", { name: name.value.trim(), private: priv.querySelector("input").checked });
-    parts.push(p, row, priv);
-  }
-  /* under the buttons: a refusal from the last press, else what the app says about the last Put on GitHub or push */
-  if (said) { out.textContent = said.text; out.classList.add("warn"); }
-  else if (running) out.textContent = last.text;
-  else if (last) { out.textContent = "Last push " + ghWhen(last.at) + ": " + last.text; out.classList.toggle("warn", !last.ok); }
-  box.replaceChildren(...parts, out);
-}
+/* sentence case for words that arrive in lower case, like a stage name */
+function cap(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
+/* "H:/games/obby-rush" -> "obby-rush" */
+const prName = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+/* the panel itself, and GitHub in it and in Settings, are ui/src/project */
+function openProject() { if (!isPage(view)) fridaeDo((f) => f.project.open()); }
+function closeProject() { if (window.fridae) fridae.project.close(); }
 /* What a new chat may be missing, as rows: [ok, name, one line]. The AIs first, then Studio. (Settings, Connections
    lists all of it, with the plugin and Blender: ui/src/settings/Connections.tsx.) */
 function needRows() {
@@ -1489,10 +1251,10 @@ function closeSetup() { if (window.fridae) fridae.windows.closeSetup(); }
    and its conversation); what the rest of the page does about it is here. ---------- */
 function onEvent(e) {
   if (e.kind === "setup") { fridaeDo((f) => f.store.set({ setupOut: e.text })); return; }
-  if (e.kind === "promo_engine") { onEngine(e); return; }
+  if (e.kind === "promo_engine") { fridaeDo((f) => f.promos.onEngine(e)); return; }
   if (e.kind === "rag_setup") { fridaeDo((f) => f.settings.rag()); return; }
   if (e.kind === "mode") { if (e.id > bootMark || bootMark === Infinity) fridae.chat.setGemini(e.gemini); return; }
-  if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? prAddPaths : addClips)(e.paths || []); return; }
+  if (e.kind === "clips") { if (e.id > bootMark) (view === "promos" ? fridae.promos.addPaths : addClips)(e.paths || []); return; }
   if (e.kind === "attached") { if (e.id > bootMark) attachedHere(e); return; }
   if (e.kind === "promo") { onPromo(e); return; }
   if (e.kind === "review") { onReviewItem(e); return; }
@@ -1526,60 +1288,14 @@ function onEvent(e) {
     if (p.busy && e.id > bootMark) loadUsage();
   } else if (e.kind === "done") {
     refresh(); loadHistory();
-    if (p.project && projKey(p) === curProj && document.body.classList.contains("pd-open")) git("status");
+    if (p.project && projKey(p) === curProj) fridaeDo((f) => f.project.done(curProj));
   }
   /* an expert: its row in the sidebar when its words change */
   const xpWords = isHelper(p) ? xpState(p)[0] : "";
   /* when it was last at work: a turn that starts or ends now (not one read back from a log), or its own start */
   if (xpWords && e.id > bootMark && (e.kind === "busy" || (e.kind === "done" && wasBusy) || (e.kind === "agent_new" && !e.restored))) xpWhen.set(p.id, Date.now());
   if (["busy", "done", "agent_new", "project", "error", "handed_back"].includes(e.kind) || xpWords !== (p.xpWords || "")) { p.xpWords = xpWords; paintSideSoon(); }
-  if (prChats.some((x) => x.agent === e.agent)) paintPromoProgress();
   if (e.agent === current) chatPoke();
-}
-
-/* ---------- promo card: a finished promo, as the Promos tab's library shows it ---------- */
-/* sentence case for words that arrive in lower case, like a style name or a genre */
-function cap(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
-/* a style's name as people read it: "update-log" is "Update log" */
-function styleName(s) { return cap(String(s || "").replace(/-/g, " ")); }
-const promoLen = (secs) => { const s = Math.round(Number(secs) || 0); return s ? Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") : ""; };
-const promoWhen = (c) => Date.parse(c.created || "") || (c.mtime || 0) * 1000;
-function promoCard(c) {
-  /* the file's mtime in the address: a promo rendered again into the same folder loads its new video */
-  const id = encodeURIComponent(c.id || ""), src = (what) => "/media/promo/" + id + "/" + what + "?t=" + TOKEN + "&v=" + encodeURIComponent(c.mtime || c.created || "");
-  const card = el("div", "ask promo enter", "<h4></h4><video controls playsinline preload=\"metadata\"></video><div class=\"meta\"></div><textarea aria-label=\"Post caption\" spellcheck=\"true\"></textarea><div class=\"saved\"></div><div class=\"check\"></div><div class=\"act\"><button class=\"pill main\">Download</button><button class=\"pill\">Show in folder</button><button class=\"pill\" hidden>Open chat</button><label><input type=\"checkbox\"> Include cover and caption</label></div><div class=\"promo-post\"></div>");
-  card.dataset.id = c.id || "";
-  card.querySelector("h4").textContent = c.folder ? c.folder.split(/[\\/]/).filter(Boolean).pop() : c.id || "Promo";
-  const video = card.querySelector("video"); video.src = src("video"); video.poster = src("cover");
-  const when = promoWhen(c);
-  card.querySelector(".meta").textContent = [styleName(c.style), promoLen(c.duration), when ? new Date(when).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""].filter(Boolean).join("  \u00b7  ");
-  const caption = card.querySelector("textarea"), saved = card.querySelector(".saved");
-  caption.value = c.caption_text || "";
-  let timer = null;
-  caption.oninput = () => {
-    saved.textContent = ""; clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const r = await api("/api/promo", { action: "caption", id: c.id, text: caption.value });
-      if (r.ok) c.caption_text = caption.value;
-      saved.textContent = r.ok ? "Caption saved" : "Could not save the caption.";
-    }, 600);
-  };
-  const ck = c.check || {}, check = card.querySelector(".check");
-  const notes = (ck.notes || []).filter(Boolean);   /* e.g. "loudness was not checked": one line each under the check line */
-  check.textContent = (ck.passed ? "Checked: safe areas, hook, loudness" : "Problems:\n" + ((ck.problems || []).join("\n") || "the check did not run"))
-    + (notes.length ? "\n" + notes.join("\n") : "");
-  check.classList.toggle("bad", !ck.passed);
-  const [download, reveal, chat] = card.querySelectorAll(".act button"), extras = card.querySelector(".act input");
-  download.onclick = async () => {
-    download.disabled = true;
-    const r = await api("/api/promo", { action: "save", id: c.id, extras: extras.checked });
-    download.disabled = false;
-    saved.textContent = r.ok ? "Saved to " + r.path : r.cancelled ? "" : r.error || "Could not save the promo.";
-  };
-  reveal.onclick = async () => { const r = await api("/api/promo", { action: "reveal", id: c.id }); if (!r.ok) saved.textContent = r.error || "The video is no longer there."; };
-  chat.onclick = () => openChatById(c.agent);
-  card._chat = chat;
-  return card;
 }
 
 /* ---------- attachments: a file pasted or dropped anywhere on the window goes to the message box (ui/src/chat keeps
@@ -1595,14 +1311,14 @@ document.addEventListener("paste", (e) => {
 });
 const composerEl = () => document.querySelector(".composer");
 const dropTarget = () => view === "promos" ? $("pr-form") : composerEl();
-const dropOff = () => { const c = composerEl(); if (c) c.classList.remove("drop"); $("pr-form").classList.remove("drop"); };
+const dropOff = () => { const c = composerEl(); if (c) c.classList.remove("drop"); const pf = $("pr-form"); if (pf) pf.classList.remove("drop"); };
 ["dragenter", "dragover"].forEach((n) => document.addEventListener(n, (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; const t = dropTarget(); if (t) t.classList.add("drop"); } }));
 ["dragleave", "drop"].forEach((n) => document.addEventListener(n, dropOff));
 document.addEventListener("drop", (e) => {
   if (!e.dataTransfer || !e.dataTransfer.files.length) return;
   e.preventDefault();
   /* the page never learns where a dropped file is, so videos reach the Promos form only through the app (not on Windows) or Add clips */
-  if (view === "promos") { prNote([...e.dataTransfer.files].some((f) => /^(video|audio)\//.test(f.type || "")) ? "Use Add clips to choose videos: a video dropped here can't be used where it is." : "Only video and music files can be used here."); return; }
+  if (view === "promos") { fridae.promos.note([...e.dataTransfer.files].some((f) => /^(video|audio)\//.test(f.type || "")) ? "Use Add clips to choose videos: a video dropped here can't be used where it is." : "Only video and music files can be used here."); return; }
   [...e.dataTransfer.files].forEach(addFile);
 });
 /* videos and music the app was handed (dropped on the window): [clip: <path>] lines in the message box */
@@ -1622,51 +1338,11 @@ function setView(v) {
   const was = view;
   view = v; savePlace(); paintView(); sideToStore(); paintBoard();
   if (v !== "chat") { closeSetup(); closeProject(); }
-  if (v === "review") openReview(was !== "review"); else if (v === "promos") openPromos(); else if (v === "newproj") openNewProject(); else if (v === "all") openAll(); else fridaeDo((f) => f.chat.focus());
+  if (v === "review") openReview(was !== "review"); else if (v === "promos") fridaeDo((f) => f.promos.open()); else if (v === "newproj") fridaeDo((f) => f.newProject.open()); else if (v === "all") openAll(); else fridaeDo((f) => f.chat.focus());
 }
 
-/* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
-let npParent = "", npGit = true, npKind = "plain";
-const KIND_NOTE = { plain: "Any project: an app, a site, a tool, or anything else.", game: "A Roblox game: also gets Roblox Studio, the Roblox tools and guides, and Promos." };
+/* ---------- New project is ui/src/project/NewProject.tsx; where a new project goes by default: ---------- */
 const parentFor = (kind) => (kind === "plain" ? projects.default_parent_plain : projects.default_parent) || "";
-function openNewProject() {
-  paintNewProject(); loadProjects().then(paintNewProject);
-  setTimeout(() => $("np-name").focus(), 0);
-}
-function paintNewProject() {
-  $("np-where").innerHTML = "It goes in " + esc(npParent || parentFor(npKind) || (npKind === "plain" ? "your projects folder" : "your Roblox games folder")) + ' &nbsp;<button class="linkish" id="np-where-b">Change</button>';
-  $("np-where-b").onclick = async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { npParent = r.path; paintNewProject(); } };
-  $("np-git-row").hidden = !projects.git;
-  $("np-git").setAttribute("aria-checked", npGit ? "true" : "false");
-  for (const b of $("np-kind").querySelectorAll("button")) { const on = b.dataset.k === npKind; b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
-  $("np-kind-note").textContent = KIND_NOTE[npKind];
-}
-for (const b of $("np-kind").querySelectorAll("button")) b.onclick = () => { npKind = b.dataset.k; paintNewProject(); $("np-name").focus(); };
-function npNote(text) { $("np-note").textContent = text || ""; $("np-note").hidden = !text; }
-$("np-git").onclick = () => { npGit = !npGit; paintNewProject(); };
-/* a folder made or added here opens in its Chat, with a chat ready for it */
-async function openMadeProject(project) {
-  await loadProjects();
-  showProject(project.path, "chat");
-}
-$("np-create").onclick = async () => {
-  const name = $("np-name").value.trim(); if (!name) { npNote("Give the project a name first."); $("np-name").focus(); return; }
-  $("np-create").disabled = true; npNote("");
-  const r = await api("/api/project", { action: "create", name, parent: npParent || null, git: npGit && !!projects.git, kind: npKind });
-  $("np-create").disabled = false;
-  if (!r.ok) { npNote(r.error || "Could not make the folder."); return; }
-  $("np-name").value = "";
-  if (r.project.note) note(r.project.note);
-  openMadeProject(r.project);
-};
-$("np-name").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("np-create").click(); } };
-$("np-add").onclick = async () => {
-  const pick = await api("/api/project", { action: "pick" }); if (!pick.path) return;
-  const r = await api("/api/project", { action: "add", path: pick.path, kind: npKind });
-  if (!r.ok) { npNote(r.error || "Could not add that folder."); return; }
-  openMadeProject(r.project);
-};
-$("np-chat").onclick = () => showProject("", "chat");
 /* a short word from the app, shown for a few seconds: over the message box in Chat, at the foot of any other page.
    `more` is a button to go with it. */
 const sayTip = el("div", "saytip"); sayTip.setAttribute("role", "status");
@@ -1678,184 +1354,7 @@ function say(text, more) {
   sayTip.classList.add("on"); clearTimeout(say.t); say.t = setTimeout(() => sayTip.classList.remove("on"), more ? 8000 : 6000);
 }
 
-/* Promo engine: downloaded on first use. Its install runs in the background and resumes where it stopped. */
-const ENG_STEPS = { node: "Node.js", renderer: "the Remotion renderer", browser: "the headless browser", whisper: "the speech recognition model", voice: "the voice model" };
-const ENG_ORDER = Object.keys(ENG_STEPS);
-let engine = null, engCheckError = "", engJob = {};
-function paintEngine() {
-  const label = (s) => ENG_STEPS[s] || "the promo engine";
-  let text, short, button = "", error = "", bar = -1, ready = false;
-  if (engJob.running) {
-    const at = Math.max(0, ENG_ORDER.indexOf(engJob.step)), f = engJob.fraction || 0;
-    text = short = engJob.step ? "Installing " + label(engJob.step) + " (part " + (at + 1) + " of " + ENG_ORDER.length + ", " + Math.round(f * 100) + "%)." : "Starting the install...";
-    bar = Math.round(((at + f) / ENG_ORDER.length) * 100); button = "Installing...";
-  } else if (engJob.error) {
-    text = short = "Could not install " + label(engJob.step) + ". Retry continues where it stopped.";
-    error = engJob.error; button = "Retry";
-  } else if (!engine) {
-    text = engCheckError ? "Could not check the promo engine." : "Checking...";
-    short = engCheckError ? text : "Checking the promo engine...";
-    error = engCheckError;
-  } else if (engine.ready) {
-    text = "Ready. Promo videos are made on this computer.";
-    short = "Promo engine ready"; ready = true;
-  } else {
-    const all = engine.missing.length === ENG_ORDER.length;
-    text = (all ? "Not installed" : "Partly installed (missing " + engine.missing.map(label).join(", ") + ")") + ": about " + engine.download_mb + " MB " + (all ? "to download" : "left to download") + ". Promos need it.";
-    short = "Promo engine " + (all ? "not installed" : "partly installed") + " (about " + engine.download_mb + " MB" + (all ? "" : " left") + ")";
-    button = all ? "Install" : "Continue install";
-  }
-  /* the row at the top of the Promos tab says it shortly; Settings, Connections reads the longer words from the store */
-  const folder = engine && engine.folder ? "The engine's folder: " + engine.folder + ". Nothing is installed system-wide." : "";
-  fridaeDo((f) => f.store.set({ engine: { text, button, error, bar, ready, running: !!engJob.running, title: folder } }));
-  document.querySelectorAll(".eng-row.compact").forEach((row) => {
-    const btn = row.querySelector(".eng-install"), b = row.querySelector(".eng-bar");
-    row.querySelector(".eng-state").textContent = short;
-    /* where it lives is a tooltip: a long path, and nothing to act on */
-    row.querySelector(".eng-state").title = folder;
-    row.querySelector(".eng-error").textContent = error;
-    row.classList.toggle("ready", ready);
-    b.hidden = bar < 0; if (bar >= 0) b.querySelector("i").style.width = bar + "%";
-    btn.hidden = !button; btn.textContent = button; btn.disabled = !!engJob.running;
-  });
-  paintPromoForm();
-}
-async function loadEngine() {
-  try { const r = await api("/api/promo-engine", { action: "status" }); engine = r.engine || null; engCheckError = r.error || ""; engJob = r.install || {}; } catch (e) {}
-  paintEngine();
-}
-function onEngine(e) {
-  if (e.failed) engJob = { running: false, step: e.step, error: e.error };
-  else if (e.done || e.stopped) { engJob = {}; loadEngine(); }   /* stopped: the app is closing; the row then shows what is left */
-  else engJob = { running: true, step: e.step, fraction: e.fraction };
-  paintEngine();
-}
-async function engineInstall() { engJob = { running: true }; paintEngine(); const r = await api("/api/promo-engine", { action: "install" }); if (r && r.install) { engJob = r.install; paintEngine(); } }
-document.querySelectorAll(".eng-install").forEach((btn) => (btn.onclick = engineInstall));
-/* ---------- the Promos tab: new promo form, promos being made, and the library ---------- */
-const PR_VIDEO = ["mp4", "mov", "mkv", "webm"], PR_AUDIO = ["mp3", "wav", "m4a", "ogg"];
-const prExt = (p) => (/\.([A-Za-z0-9]+)$/.exec(p) || ["", ""])[1].toLowerCase();
-const prName = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
-const prForm = { clips: [], music: "", reference: "", style: "", length: 30, project: null };
-let prStyles = null, prStylesBusy = false, prOpened = false;
-const promoLib = new Map();   /* card id -> { card, el } */
-/* chats this tab started: [{ agent, title, at }], kept in this browser */
-let prChats = [];
-try { prChats = JSON.parse(localStorage.getItem("promo-chats") || "[]").filter((x) => x && typeof x.agent === "string"); } catch (e) { prChats = []; }
-function savePrChats() { try { localStorage.setItem("promo-chats", JSON.stringify(prChats.slice(-30))); } catch (e) {} }
-/* a passing message beside Make promo; the reason it is disabled comes back after it */
-let prMsg = "", prMsgUntil = 0;
-function prNote(text) { prMsg = text; prMsgUntil = Date.now() + 5000; paintPromoForm(); setTimeout(paintPromoForm, 5100); }
-function prChip(path, remove) {
-  const chip = el("span", "pr-file", '<span></span><button aria-label="Remove"><svg width="8" height="8" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></button>');
-  chip.querySelector("span").textContent = prName(path); chip.title = path;
-  chip.querySelector("button").setAttribute("aria-label", "Remove " + prName(path));
-  chip.querySelector("button").onclick = () => { remove(); paintPromoForm(); };
-  return chip;
-}
-/* videos become clips; a music file becomes the music when none is chosen yet */
-function prAddPaths(paths) {
-  $("pr-form").classList.remove("drop");
-  let skipped = 0;
-  for (const p of paths) {
-    const x = prExt(p);
-    if (PR_VIDEO.includes(x)) { if (!prForm.clips.includes(p)) prForm.clips.push(p); }
-    else if (PR_AUDIO.includes(x) && !prForm.music) prForm.music = p;
-    else skipped++;
-  }
-  paintPromoForm();
-  if (skipped) prNote(skipped === 1 ? "One file was left out: only videos can be clips, and one music file." : skipped + " files were left out: only videos can be clips, and one music file.");
-}
-function paintPromoForm() {
-  if (!$("pr-form")) return;
-  const ready = !!(engine && engine.ready);
-  $("pr-form").classList.toggle("off", !ready);
-  const clips = $("pr-clips"); clips.innerHTML = "";
-  prForm.clips.forEach((c) => clips.appendChild(prChip(c, () => { prForm.clips = prForm.clips.filter((x) => x !== c); })));
-  const music = $("pr-music"); music.innerHTML = "";
-  if (prForm.music) music.appendChild(prChip(prForm.music, () => { prForm.music = ""; }));
-  $("pr-no-music").hidden = !!prForm.music; $("pr-pick-music").textContent = prForm.music ? "Change music" : "Pick music";
-  const ref = $("pr-ref"); ref.innerHTML = "";
-  if (prForm.reference) ref.appendChild(prChip(prForm.reference, () => { prForm.reference = ""; }));
-  $("pr-pick-ref").textContent = prForm.reference ? "Change video" : "Pick saved video";
-  /* what is set under More options shows on its line, so nothing chosen there is forgotten while it is folded */
-  const set = [prForm.music ? "music" : "", $("pr-mute").checked ? "game sound muted" : "", prForm.reference ? "a TikTok's style" : "", $("pr-voice").value.trim() ? "voiceover" : ""].filter(Boolean);
-  $("pr-more-n").textContent = set.length ? " · " + set.join(", ") : "";
-  const len = $("pr-length"); len.innerHTML = "";
-  [15, 30, 60].forEach((n) => { const b = el("button", n === prForm.length ? "on" : ""); b.textContent = n + " s"; b.onclick = () => { prForm.length = n; paintPromoForm(); }; len.appendChild(b); });
-  paintPromoStyles();
-  const brief = $("pr-brief").value.trim();
-  const why = !ready ? (engine ? "Install the promo engine first." : "Checking the promo engine...") : !prForm.clips.length ? "Add at least one clip." : !brief ? "Say what it should show." : "";
-  $("pr-make").disabled = !!why || $("pr-make").dataset.busy === "1";
-  $("pr-why").textContent = Date.now() < prMsgUntil ? prMsg : why;
-}
-function paintPromoStyles() {
-  const grid = $("pr-styles");
-  const tiles = [["", "Let the agent choose", "It picks the style that suits your clips.", ""]].concat((prStyles || []).map((x) => [x.name, x.name, x.about, x.url]));
-  if (grid.childElementCount !== tiles.length) {
-    grid.innerHTML = "";
-    tiles.forEach(([name, label, about, url]) => {
-      const b = el("button", "pr-style"); b.dataset.style = name;
-      let still;
-      if (url) { still = new Image(); still.loading = "lazy"; still.alt = ""; still.src = url + (url.includes("?") ? "&" : "?") + "t=" + TOKEN; }
-      else { still = el("span"); still.textContent = "Agent's choice"; }
-      still.classList.add("still");
-      const t = el("b"), a = el("small"); t.textContent = name ? styleName(label) : label; a.textContent = about;
-      b.append(still, t, a);
-      b.onclick = () => { prForm.style = name; paintPromoStyles(); };
-      grid.appendChild(b);
-    });
-  }
-  grid.querySelectorAll(".pr-style").forEach((b) => b.setAttribute("aria-pressed", b.dataset.style === prForm.style ? "true" : "false"));
-}
-async function loadPromoStyles() {
-  if (prStyles || prStylesBusy || !(engine && engine.ready)) return;
-  prStylesBusy = true; $("pr-styles-note").textContent = "Making the style previews. The first time takes a minute or two.";
-  try {
-    const r = await api("/api/promo-styles", {});
-    if (r.ok) { prStyles = r.styles || []; $("pr-styles-note").textContent = ""; }
-    else $("pr-styles-note").textContent = "Could not make the style previews: " + (r.error || "unknown error") + " You can still let the agent choose.";
-  } catch (e) { $("pr-styles-note").textContent = "Could not make the style previews."; }
-  prStylesBusy = false; paintPromoForm();
-}
-function paintPromoProjects() {
-  const sel = $("pr-proj"), list = projects.projects || [];
-  if (prForm.project === null || prForm.forProj !== curProj) { prForm.project = curProj || ""; prForm.forProj = curProj; }
-  if (prForm.project && !list.some((x) => x.path === prForm.project)) prForm.project = "";
-  /* the tab belongs to a game: its promos are that game's, and there is nothing to choose */
-  if (curProj) prForm.project = curProj;
-  $("pr-proj-field").hidden = !!curProj;
-  sel.innerHTML = "";
-  sel.appendChild(new Option("No project", ""));
-  list.filter((x) => !plainProj(x)).forEach((x) => sel.appendChild(new Option(x.name, x.path)));
-  sel.value = prForm.project;
-  sel.onchange = () => { prForm.project = sel.value; };
-}
-async function openPromos() {
-  prOpened = true;
-  paintPromoForm(); paintPromoProjects(); paintPromoProgress(); paintLibrary();
-  await Promise.all([loadEngine(), loadProjects()]);
-  paintPromoProjects(); loadPromoStyles();
-}
-$("pr-brief").oninput = paintPromoForm; $("pr-voice").oninput = paintPromoForm; $("pr-mute").onchange = paintPromoForm;
-$("pr-add-clips").onclick = async () => { const r = await api("/api/pick-files", { kind: "clips" }); prAddPaths(r.paths || []); };
-$("pr-pick-music").onclick = async () => { const r = await api("/api/pick-files", { kind: "music" }); if (r.paths && r.paths[0]) { prForm.music = r.paths[0]; paintPromoForm(); } };
-$("pr-pick-ref").onclick = async () => { const r = await api("/api/pick-files", { kind: "reference" }); if (r.paths && r.paths[0]) { prForm.reference = r.paths[0]; paintPromoForm(); } };
-if (/Windows/.test(navigator.userAgent)) $("pr-drop-hint").hidden = true;   /* no dropping videos by path there: Add clips only */
-$("pr-make").onclick = async () => {
-  const make = $("pr-make"), brief = $("pr-brief").value.trim();
-  make.dataset.busy = "1"; make.disabled = true;
-  let r;
-  try {
-    r = await api("/api/promo-start", { clips: prForm.clips, music: prForm.music || null, reference: prForm.reference || null, style: prForm.style, length: prForm.length, voice_text: $("pr-voice").value.trim(), brief, project: prForm.project || null, mute_game_sound: $("pr-mute").checked });
-  } catch (e) { r = { ok: false, error: "Could not reach the app." }; }
-  make.dataset.busy = "";
-  if (!r.ok) { paintPromoForm(); prNote(r.error || "Could not start the promo."); return; }
-  prChats.push({ agent: r.agent, title: "Promo: " + brief.split(/\s+/).slice(0, 5).join(" "), at: Date.now() }); savePrChats();
-  prForm.clips = []; prForm.music = ""; prForm.reference = ""; $("pr-brief").value = ""; $("pr-voice").value = ""; $("pr-mute").checked = false;
-  paintPromoForm(); paintPromoProgress();
-  prNote("Started in a chat of its own. It keeps working while you do other things.");
-};
+/* ---------- the Promos tab is ui/src/promos; a chat it (or anything else) opens: ---------- */
 function openChatById(id) {
   if (agents.has(id)) { select(id); setView("chat"); return; }
   openSaved(id, "chat");
@@ -1870,105 +1369,17 @@ async function openSaved(id, tab) {
   else pendingSelect = { id: r.agent, tab };
 }
 const chatKnown = (id) => !!id && (agents.has(id) || ((saved && saved.chats) || []).some((c) => c.id === id));
-/* a promo chat's state, from the same events the chat list shows */
-function promoChatState(p) {
-  if (!p) return "closed";
-  if (p.busy) return "working" + (p.now ? " · " + p.now : "");
-  if (p.last === "Needs you") return "needs you";
-  if (p.last === "Needs attention") return "failed";
-  if (p.last === "Stopped") return "stopped";
-  return p.started ? "done, no promo yet" : "starting";
-}
-function paintPromoProgress() {
-  /* a chat leaves the list when its promo arrives */
-  const madeBy = new Set([...promoLib.values()].map((x) => x.card.agent).filter(Boolean));
-  const before = prChats.length;
-  prChats = prChats.filter((x) => !madeBy.has(x.agent));
-  if (prChats.length !== before) savePrChats();
-  const box = $("pr-progress"); box.innerHTML = "";
-  const here = prChats.filter((x) => promoHere(x.agent).show);
-  $("pr-progress-wrap").hidden = !here.length;
-  here.slice().reverse().forEach((x) => {
-    const p = agents.get(x.agent);
-    const row = el("div", "pr-row", '<span class="dot"></span><span class="grow"><b></b><small></small></span><button class="pill sm">Open chat</button><button class="icon" aria-label="Remove from this list" title="Remove from this list"><svg width="10" height="10" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6"/></svg></button>');
-    row.querySelector(".dot").className = "dot" + (p && p.busy ? " live" : p ? " ok" : "");
-    row.querySelector("b").textContent = (p && p.name) || x.title;
-    row.querySelector("small").textContent = promoChatState(p) + (promoHere(x.agent).nogame ? " · no game" : "");
-    const [open, drop] = row.querySelectorAll("button");
-    open.hidden = !chatKnown(x.agent);
-    open.onclick = () => openChatById(x.agent);
-    drop.onclick = () => { prChats = prChats.filter((y) => y !== x); savePrChats(); paintPromoProgress(); };
-    box.appendChild(row);
-  });
-}
-/* newest data wins: an older copy of a card (a replayed event) never replaces a newer one */
-function upsertPromo(card) {
-  if (!card || !card.id) return false;
-  const had = promoLib.get(card.id);
-  if (had && (had.card.mtime || 0) >= (card.mtime || 0)) return false;
-  promoLib.set(card.id, { card, el: promoCard(card) });
-  return true;
-}
-/* the game a promo (or a promo chat) belongs to: its chat's project, "" for none, null when its chat is not known */
-function promoProj(agentId) {
-  const p = agentId && agents.get(agentId);
-  if (p) return projKey(p);
-  const c = agentId && ((saved && saved.chats) || []).find((x) => x.id === agentId);
-  return c ? c.project || "" : null;
-}
-/* shown for the game in front: its own, and those of no game (marked so) */
-function promoHere(agentId) {
-  const k = promoProj(agentId);
-  return { show: k === null || k === "" || k === (curProj || ""), nogame: (k === null || k === "") && !!curProj };
-}
-function paintLibrary() {
-  const lib = $("pr-library"), items = [...promoLib.values()].filter((x) => promoHere(x.card.agent).show);
-  for (const x of items) x.el.classList.toggle("nogame", promoHere(x.card.agent).nogame);
-  items.sort((a, b) => promoWhen(b.card) - promoWhen(a.card) || (b.card.mtime || 0) - (a.card.mtime || 0));
-  $("pr-count").textContent = items.length ? items.length + (items.length === 1 ? " promo" : " promos") : "";
-  $("pr-empty").hidden = items.length > 0;
-  const day = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
-  const today = day(Date.now()), groups = [];
-  for (const it of items) {
-    const t = promoWhen(it.card), d = t ? day(t) : 0;
-    const label = !d ? "Earlier" : d === today ? "Today" : Math.round((today - d) / 86400000) === 1 ? "Yesterday"
-      : new Date(d).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: new Date(d).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
-    if (!groups.length || groups[groups.length - 1][0] !== label) groups.push([label, []]);
-    groups[groups.length - 1][1].push(it);
-    it.el._chat.hidden = !chatKnown(it.card.agent);
-  }
-  /* rebuilt only when the order changes, so a playing video or a caption being typed is left alone */
-  const sig = (curProj || "") + "#" + groups.map(([l, xs]) => l + ":" + xs.map((x) => x.card.id + "@" + (x.card.mtime || 0)).join(",")).join("|");
-  if (sig === paintLibrary.sig) return;
-  paintLibrary.sig = sig;
-  lib.innerHTML = "";
-  for (const [label, xs] of groups) {
-    const h = el("div", "pr-day"); h.textContent = label; lib.appendChild(h);
-    const grid = el("div", "pr-grid"); xs.forEach((x) => grid.appendChild(x.el)); lib.appendChild(grid);
-  }
-}
-async function loadPromos() {
-  try { const r = await api("/api/promos"); (r.cards || []).forEach(upsertPromo); } catch (e) { return; }
-  paintLibrary(); paintPromoProgress();
-}
-/* a finished promo: into the library always; in its chat, one line pointing there */
+/* a finished promo: into the library always (ui/src/promos); in its chat, one line pointing there */
 function onPromo(e) {
   const c = e.card || {};
-  if (upsertPromo(c)) { paintLibrary(); paintPromoProgress(); }
+  fridaeDo((f) => f.promos.add(c));
   const p = e.agent && agents.get(e.agent);
   if (!p || !c.id) return;
   p.promoSeen = p.promoSeen || {};
   const prev = p.promoSeen[c.id];
   if (prev !== undefined && prev >= (c.mtime || 0)) return;
   p.promoSeen[c.id] = c.mtime || 0;
-  fridae.chat.line(p, (prev === undefined ? "Promo ready: " : "Promo updated: ") + (c.folder ? prName(c.folder) : c.id) + " —", "Open in Promos", () => openInPromos(c.id));
-}
-function openInPromos(id) {
-  const p = [...agents.values()].find((x) => x.promoSeen && x.promoSeen[id]);
-  if (p && p.project && projKey(p) !== curProj) showProject(projKey(p), "promos"); else setView("promos");
-  const it = promoLib.get(id); if (!it) return;
-  it.el.scrollIntoView({ block: "center" });   /* the view is showing now: scrolling lays it out */
-  it.el.classList.add("flash"); setTimeout(() => it.el.classList.remove("flash"), 1800);
+  fridae.chat.line(p, (prev === undefined ? "Promo ready: " : "Promo updated: ") + (c.folder ? prName(c.folder) : c.id) + " —", "Open in Promos", () => fridae.promos.show(c.id, e.agent));
 }
 
 /* ---------- Review: one page for every project. The page itself is ui/src/review; here is what every project has
@@ -2444,7 +1855,7 @@ function statusToStore(asked) {
 function savedToStore() { fridaeDo((f) => f.store.set({ saved })); }
 fridaeWait.unshift((f) => {
   f.setHost({
-    refresh, panelOpened, panelClosed, closePops, closeProject, loadEngine, loadGithub, say, allowCommands, ghAct, engineInstall, reloadSaved, setScale,
+    refresh, panelOpened, panelClosed, closePops, closeProject, loadProjects, say, allowCommands, reloadSaved, setScale,
     /* the sidebar and Overview: where a press goes */
     showAll, showNewProject, setView, showProject, openChatById, openInReview, projectRenamed, projectDeleted,
     openChat: (id) => { select(id); setView("chat"); },
@@ -2464,6 +1875,7 @@ fridaeWait.unshift((f) => {
   f.store.set({ theme: Object.assign({}, themeChoice) });
   f.mount("sidebar", $("side")); f.mount("side-over", $("side-over")); f.mount("overview", $("allproj"));
   f.mount("settings", $("sd")); f.mount("usage", $("ud"));
+  f.mount("promos", $("promos")); f.mount("newproj", $("newproj")); f.mount("project", $("pd"));
 });
 
 /* a picture, large, over the page: the lightbox is ui/src/review/Lightbox.tsx (its own keys: arrows and Escape) */
@@ -2570,7 +1982,7 @@ async function poll() {
   }
 }
 /* (the events build the chats, which are ui/src/chat: they are read once app.js is here) */
-refresh(); loadProjects().then(async () => { await loadReview(); fridaeDo(() => poll()); }); loadPromos(); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
+refresh(); loadProjects().then(async () => { await loadReview(); fridaeDo(() => poll()); }); fridaeDo((f) => f.promos.load()); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);
 if (!ONCE) setInterval(() => { const st = (status.update || {}).status; if (st === "downloading" || st === "checking") refresh(); }, 1500);
 if (!ONCE) setInterval(() => { if (view !== "review") loadReview(); }, 20000);   /* the Review count: board cards have no event */
 </script>

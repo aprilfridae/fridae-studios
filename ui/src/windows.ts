@@ -4,6 +4,8 @@ import { store } from "./store";
 import { host } from "./host";
 import { closeSettings, openSettings } from "./settings/state";
 import { loadUsage } from "./usage/usage";
+import { loadGithub } from "./project/github";
+import { loadEngine } from "./promos/engine";
 
 const body = () => document.body.classList;
 export function openSetup(page?: string) {
@@ -11,7 +13,7 @@ export function openSetup(page?: string) {
   body().add("setup"); host.panelOpened(null);
   store.set({ curProj: store.get().nav.proj || "" });
   openSettings(typeof page === "string" ? page : undefined);
-  host.refresh(); host.loadEngine(); host.loadGithub();
+  host.refresh(); loadEngine(); loadGithub();
 }
 export function closeSetup() {
   if (!body().contains("setup")) return;
