@@ -180,10 +180,11 @@ div.g-row { cursor: default; }
 /* ---------- frame: the projects on the left, the chosen project's tabs on the right ---------- */
 .app { height: 100%; display: grid; grid-template-columns: min(var(--side-w, 232px), 50vw) minmax(0, 1fr); }
 /* the sidebar's right edge is a handle: drag it, or the arrow keys, to set the width; a double press puts it back */
-.side-grip { position: absolute; z-index: 6; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; outline: 0; }
-.side-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: var(--text); opacity: 0; transition: opacity 140ms ease; }
-.side-grip:hover::after, .side-grip:focus-visible::after { opacity: 0.28; }
-.side-grip.drag::after { opacity: 0.6; }
+.side-grip { position: absolute; z-index: 6; top: 0; bottom: 0; right: -6px; width: 12px; cursor: col-resize; touch-action: none; outline: 0; }
+.side-grip::after { content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px; background: var(--text); opacity: 0; transition: opacity var(--t-mid) ease 80ms; }
+.side-grip:hover::after { opacity: 0.28; }
+.side-grip.drag::after { opacity: 0.6; transition-delay: 0s; }
+.side-grip:focus-visible::after { background: var(--focus); opacity: 1; transition-delay: 0s; }
 body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
 .side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
@@ -269,7 +270,11 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .u-row b { font-weight: 500; }
 .u-row .n { font-family: var(--mono); font-size: 12px; color: var(--text); text-align: right; }
 .u-row small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.45; }
-.u-total { margin: 0; padding: 4px 8px; font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+/* today's total is the pop-up's one figure; the rows under it say where it went */
+.u-total { margin: 0; padding: 0 8px 8px; font-size: 13px; line-height: 28px; color: var(--dim); }
+.u-total b { margin-right: 4px; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); font-variant-numeric: tabular-nums; }
+.pop h5 + #use-rows, #use-rows { border-top: 1px solid var(--line); padding-top: 4px; }
+#use-rows:empty { display: none; }
 .u-note { margin: 4px 8px 8px; color: var(--faint); font-size: 12px; line-height: 1.45; }
 .pop .moreinfo { margin: 0 8px 8px; }
 .pop .moreinfo summary, .pop .moreinfo p { font-size: 12px; }
@@ -757,30 +762,53 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 /* Review: one page for every project. A line that says how much waits, a way to each project, then a section per
    project: what is happening on it and what needs the user, top to bottom in one column. */
 .rv-page { max-width: 920px; margin: 0 auto; }
-.rv-top { margin: 0 0 16px; }
-.rv-top-sum { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; }
-.rv-jump { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin: 8px 0 0; font-size: 13px; color: var(--faint); }
+/* the first lines stay in reach while the sections scroll under them */
+.rv-top { position: sticky; top: -24px; z-index: 3; margin: -24px -24px 16px; padding: 24px 24px 12px; border-bottom: 1px solid transparent; background: color-mix(in srgb, var(--bg) var(--glass-opacity), transparent); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); transition: border-color var(--t-mid) ease; }
+.rv-top.stuck { border-bottom-color: var(--line); }
+.rv-top-sum { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: -0.01em; text-wrap: balance; }
+.rv-jump { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 8px 0 0 -8px; font-size: 13px; }
 .rv-jump[hidden] { display: none; }
-.rv-jump button { color: var(--dim); border-radius: 4px; }
-.rv-jump button:hover { color: var(--text); }
-.rv-jump button i { margin-left: 6px; font: 600 12px/1 var(--mono); font-style: normal; color: var(--text); }
+.rv-jump > span { padding: 0 4px 0 8px; color: var(--faint); }
+.rv-jump button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); padding: 0 8px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
+.rv-jump button:hover { background: var(--hover); color: var(--text); }
+.rv-jump button:active { background: var(--press); }
+.rv-jump button[aria-current="true"] { background: var(--press); color: var(--text); }
+.rv-jump button i { font: 600 12px/1 var(--mono); font-style: normal; color: var(--text); }
 .rv-secs { display: grid; gap: 12px; }
-.rv-sec { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-m); scroll-margin-top: 8px; }
+.rv-sec { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); scroll-margin-top: calc(var(--rv-top-h, 104px) + 8px); }
 .rv-sec.settings-search-target-pulse { animation: settings-search-target-pulse 650ms ease-in-out 2; }
 .rv-sec-h { margin: 0; font: inherit; }
 .rv-sec-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 8px 16px; text-align: left; border-radius: calc(var(--r-m) - 1px); transition: background-color var(--t-fast) ease; }
 .rv-sec-head:hover { background: var(--hover); }
+.rv-sec-head:active { background: var(--press); }
 .rv-sec-head:focus-visible { outline-offset: -2px; }
 .rv-sec-head[aria-expanded="true"] { border-radius: calc(var(--r-m) - 1px) calc(var(--r-m) - 1px) 0 0; }
-.rv-sec-head b { min-width: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-sec-head b { min-width: 0; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rv-kind { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font: 400 12px/16px var(--mono); letter-spacing: 0.01em; color: var(--faint); white-space: nowrap; }
-.rv-sec-note { flex: none; margin-left: auto; font-size: 13px; color: var(--dim); white-space: nowrap; }
+.rv-sec-note { flex: none; margin-left: auto; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rv-sec-note.strong { color: var(--text); font-weight: 600; }
 .rv-sec-head svg { flex: none; color: var(--faint); transition: transform 180ms var(--ease); }
 .rv-sec-head[aria-expanded="true"] svg { transform: rotate(90deg); }
+/* a project with nothing going is one quiet line: no surface, lighter words */
+.rv-sec.quiet { background: none; }
+.rv-sec.quiet .rv-sec-head { min-height: var(--h-l); padding: 4px 16px; }
 .rv-sec.quiet .rv-sec-head b { font-size: 14px; font-weight: 500; color: var(--dim); }
+.rv-sec.quiet .rv-sec-head:hover b { color: var(--text); }
 .rv-sec.quiet .rv-sec-note { color: var(--faint); }
-.rv-sec-body { padding: 16px 16px 20px; border-top: 1px solid var(--line); }
+.rv-sec-body { padding: 16px 16px 24px; border-top: 1px solid var(--line); }
+/* Inside a section the scale steps down: the project's name leads, the run's state is one line under it, and the
+   parts are labelled quietly. Lists are rows between hairlines, never cards inside the section's card. */
+.rv-sec .rv-state b { font-size: 14px; }
+.rv-sec .rv-h { margin: 24px 0 8px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dim); }
+.rv-sec .rv-list { gap: 0; border-top: 1px solid var(--line); }
+.rv-sec .rv-list:empty { display: none; }
+.rv-sec .rv-list > .rv-item { padding: 16px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
+.rv-sec .rv-list > .rv-item:last-child { border-bottom: 0; }
+.rv-sec .rv-list > .rv-item.done { padding: 12px 0; }
+.rv-sec .rv-item.block .meta { color: var(--text); }
+.rv-sec .rv-full .rv-item { padding: 0 8px 4px 60px; border: 0; border-radius: 0; background: none; }
+.rv-sec .rv-past { margin-top: 24px; }
+@media (max-width: 760px) { .rv-sec .rv-full .rv-item { padding-left: 8px; } }
 /* inside a project's section the run is not a card of its own */
 .rv-sec .rv-run { padding: 0; border: 0; border-radius: 0; background: none; }
 @media (max-width: 760px) { .rv-kind { display: none; } }
@@ -1387,14 +1415,14 @@ applyTheme();
     <div class="side-foot">
       <button class="upd" id="b-update" hidden></button>
       <div class="foot-row">
-        <button class="icon" id="b-use" aria-expanded="false" aria-label="Usage" title="Usage"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V3.5M11.5 11V6"/></svg></button>
+        <button class="icon" id="b-use" aria-expanded="false" aria-controls="use-pop" aria-label="Usage" title="Usage"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V3.5M11.5 11V6"/></svg></button>
         <span class="grow"></span>
         <button class="conn" id="b-conn" hidden><span class="dot miss"></span></button>
-        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </div>
     <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="480" aria-valuenow="232" tabindex="0" title="Drag to resize. Double-click to reset."></div>
-    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total">0 tokens today</p><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
+    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total"><b>0</b> tokens today</p><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
 
   <main class="stage">
@@ -1491,7 +1519,7 @@ applyTheme();
 
     <div id="review"><div class="rv-page">
       <header class="rv-top">
-        <p class="rv-top-sum" id="rv-top-sum"></p>
+        <p class="rv-top-sum" id="rv-top-sum" role="status" aria-atomic="true"></p>
         <nav class="rv-jump" id="rv-jump" aria-label="Jump to a project" hidden></nav>
       </header>
       <p class="rv-none" id="rv-noproj" hidden>No projects yet. New project, on the left, makes one.</p>
@@ -1667,6 +1695,12 @@ applyTheme();
         <div class="st-sec-head"><h2>Text</h2></div>
         <div class="sg">
           <div class="sr" id="set-text-size" data-find="zoom font bigger smaller scale"><div class="sr-in"><div class="sr-text"><h3>Text size</h3><p>Ctrl (Cmd on a Mac) and + or - does the same; 0 resets it.</p></div><div class="sr-ctl"><div class="scale-row"><button class="pill" id="sc-down" aria-label="Smaller">A&minus;</button><input type="range" id="sc-range" min="70" max="200" step="5" aria-label="Text size"><button class="pill" id="sc-up" aria-label="Bigger">A+</button><output id="sc-val">100%</output><button class="linkish" id="sc-reset">Reset</button></div></div></div></div>
+        </div>
+      </section>
+      <section class="st-sec" id="set-side">
+        <div class="st-sec-head"><h2>Sidebar</h2></div>
+        <div class="sg">
+          <div class="sr" id="set-side-width" data-find="sidebar width resize narrow wide projects list"><div class="sr-in"><div class="sr-text"><h3>Sidebar width</h3><p>Or drag the sidebar's right edge. A double-click there puts it back.</p></div><div class="sr-ctl"><div class="seg" id="side-w-seg" role="group" aria-label="Sidebar width"><button data-w="200">Narrow</button><button data-w="232">Default</button><button data-w="320">Wide</button></div></div></div></div>
         </div>
       </section>
     </div></section>
@@ -2527,8 +2561,9 @@ function paintSide() {
   /* Review, for every project: the count is everything that waits for the user */
   const tot = rvTotals();
   rows.push(sideRow(used, "review", [view === "review", tot.n, tot.k, tot.strong].join("\n"), () => {
-    const b = el("button", "proj all rev" + (view === "review" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3l1.2 1.2L4.4 2M1 8.4l1.2 1.2 2.2-2.2M6.6 3.2H11M6.6 8.6H11"/></svg><b>Review</b><span class="state"></span>');
-    if (tot.n) b.querySelector(".state").appendChild(el("span", "count", String(tot.n)));
+    const b = el("button", "proj all rev" + (view === "review" ? " on" : ""), '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 3l1.2 1.2L4.4 2M1 8.4l1.2 1.2 2.2-2.2M6.6 3.2H11M6.6 8.6H11"/></svg><b>Review</b><span class="state"></span>');
+    if (tot.n) { const c = el("span", "count", String(tot.n)); c.setAttribute("aria-hidden", "true"); b.querySelector(".state").appendChild(c); b.setAttribute("aria-label", "Review, " + tot.n + (tot.n === 1 ? " thing needs you" : " things need you")); }
+    if (view === "review") b.setAttribute("aria-current", "page");
     b.title = (tot.n ? tot.n + (tot.n === 1 ? " thing waits" : " things wait") + " for you" + (tot.k === 1 ? " in one project" : " across " + tot.k + " projects") + (tot.strong ? ", and a run is stopped until you answer" : "") + ". " : "") + "What is happening on every project, and what needs you";
     b.dataset.k = "review"; b.onclick = () => setView("review");
     return b;
@@ -3210,7 +3245,7 @@ async function paintUsage() {
   const now = recs.filter((x) => x.t >= today), all = sum(now);
   /* nothing counted yet while the day's first turn runs: "…", not a "0" that looks like nothing is happening */
   const first = !now.length && [...agents.values()].some((x) => x.busy);
-  $("use-total").textContent = (first ? "\u2026" : fmtTokens(all.total - all.cached)) + " tokens today";
+  $("use-total").firstChild.textContent = first ? "\u2026" : fmtTokens(all.total - all.cached);
   /* every AI that ran today, the ones offered here first (an expert may run on one that is not) */
   const ran = [...new Set(AIS.map((a) => a[0]).concat(now.map((x) => x.ai).filter(Boolean)))];
   const rows = ran.map((id) => [id, sum(now.filter((x) => x.ai === id))]).filter(([, s]) => s.turns);
@@ -3360,6 +3395,8 @@ $("use-open").onclick = openUsage; $("us-close").onclick = closeUsage;
 $("us-refresh").onclick = async () => { const b = $("us-refresh"); b.classList.add("busy"); try { await Promise.all([refresh(), paintUsage()]); } finally { b.classList.remove("busy"); } };
 $("b-use").onclick = (ev) => { ev.stopPropagation(); const on = !$("use-pop").classList.contains("on"); $("use-pop").classList.toggle("on", on); $("b-use").setAttribute("aria-expanded", on ? "true" : "false"); if (on) paintUsage(); };
 document.addEventListener("click", (ev) => { if (!ev.target.closest("#use-pop") && !ev.target.closest("#b-use")) { $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); } });
+/* Escape closes the pop-up and gives the keyboard back to its button */
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && $("use-pop").classList.contains("on")) { ev.stopPropagation(); $("use-pop").classList.remove("on"); $("b-use").setAttribute("aria-expanded", "false"); $("b-use").focus(); } }, true);
 setInterval(paintUsage, 60000); paintUsage();
 
 /* ---------- undo the night: an overnight run's checkpoint, taken back from the game's section in Review, or from the chat
@@ -5021,7 +5058,22 @@ function paintRvTop() {
     return b;
   }));
   if (had !== null) { const b = [...jump.querySelectorAll("button")].find((x) => x.dataset.path === had); if (b) b.focus(); }
+  rvSpy();
 }
+/* The first lines stay at the top of the page: a hairline shows once something has scrolled under them, a jump lands
+   below them (their height is kept in --rv-top-h), and the section in sight is the one marked in Jump to. */
+function rvSpy() {
+  const page = $("review"), top = page.querySelector(".rv-top"), h = top.offsetHeight;
+  if (!h) return;
+  page.style.setProperty("--rv-top-h", h + "px");
+  top.classList.toggle("stuck", page.scrollTop > 0);
+  const line = top.getBoundingClientRect().bottom + 24;
+  let cur = rvOrder[0];
+  for (const p of rvOrder) { const S = rvSecs.get(p); if (S && S.root.getBoundingClientRect().top <= line) cur = p; }
+  if (page.scrollTop + page.clientHeight >= page.scrollHeight - 2 && page.scrollTop > 0) { const vis = rvOrder.filter((p) => { const S = rvSecs.get(p); return S && S.root.getBoundingClientRect().top >= line; }); if (vis.length) cur = vis[0]; }
+  for (const b of $("rv-jump").querySelectorAll("button")) putAttr(b, "aria-current", b.dataset.path === cur ? "true" : null);
+}
+{ let spyT = 0; $("review").addEventListener("scroll", () => { if (!spyT) spyT = requestAnimationFrame(() => { spyT = 0; rvSpy(); }); }, { passive: true }); }
 /* to a project's section (or one item in it): it opens, comes into sight, and its edge pulses twice, as a Settings
    search result does */
 function rvJump(path, id) {
@@ -5035,7 +5087,7 @@ function rvJump(path, id) {
     c.el.classList.add("flash"); setTimeout(() => c.el.classList.remove("flash"), 1800);
     return;
   }
-  S.root.scrollIntoView({ block: "start" });
+  S.root.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   S.head.focus({ preventScroll: true });
   S.root.classList.remove("settings-search-target-pulse"); void S.root.offsetWidth;
   S.root.classList.add("settings-search-target-pulse");
@@ -7719,22 +7771,27 @@ setScale(scale);
 /* The sidebar's width: dragged at its right edge (or the arrow keys, 16px a press), between 200px and 480px; a double
    press puts it back to 232px. Remembered on this computer. Narrow windows set their own width and hide the handle. */
 {
-  const grip = $("side-grip"), MIN = 200, MAX = 480, BASE = 232;
+  const grip = $("side-grip"), seg = $("side-w-seg"), MIN = 200, MAX = 480, BASE = 232;
   let w = BASE;
   const put = (v, keep) => {
     w = Math.max(MIN, Math.min(MAX, Math.round(v)));
     document.documentElement.style.setProperty("--side-w", w + "px");
     grip.setAttribute("aria-valuenow", String(w));
+    for (const b of seg.querySelectorAll("button")) { const on = +b.dataset.w === w; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }
     if (keep) { try { if (w === BASE) localStorage.removeItem("side-w"); else localStorage.setItem("side-w", String(w)); } catch (e) {} }
   };
+  put(BASE);
   try { const v = parseInt(localStorage.getItem("side-w") || "", 10); if (v) put(v); } catch (e) {}
+  /* the same without dragging: three widths in Settings, Appearance */
+  seg.onclick = (ev) => { const b = ev.target.closest("button"); if (b) put(+b.dataset.w, true); };
   grip.addEventListener("pointerdown", (ev) => {
     if (ev.button !== 0) return;
     ev.preventDefault(); grip.focus({ preventScroll: true });
     const x0 = ev.clientX, w0 = w, z = scale / 100;
+    let moved = false;   /* a press that does not travel is not a drag: nothing moves until it has gone 3px */
     grip.classList.add("drag"); document.body.classList.add("side-drag");
     try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
-    const move = (e) => put(w0 + (e.clientX - x0) / z);
+    const move = (e) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; put(w0 + (e.clientX - x0) / z); };
     const end = () => {
       grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", end); grip.removeEventListener("pointercancel", end);
       grip.classList.remove("drag"); document.body.classList.remove("side-drag"); put(w, true);
