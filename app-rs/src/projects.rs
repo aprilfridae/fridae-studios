@@ -220,6 +220,32 @@ pub fn set_kind(path: &str, kind: &str) -> Result<Value, String> {
     Ok(describe(path))
 }
 
+/// Give a known project another name. It is the name Fridae shows: the folder on disk keeps its own, so the project's
+/// chats, its git history and every saved path still point at it.
+pub fn rename(path: &str, name: &str) -> Result<Value, String> {
+    if !known(path) {
+        return Err("That is not one of your projects.".into());
+    }
+    save(renamed(saved(), path, name)?);
+    Ok(describe(path))
+}
+
+fn renamed(list: Vec<Value>, path: &str, name: &str) -> Result<Vec<Value>, String> {
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return Err("Give the project a name.".into());
+    }
+    if name.chars().count() > 80 {
+        return Err("That name is too long: keep it under 80 characters.".into());
+    }
+    Ok(list.into_iter().map(|mut p| {
+        if same(p["path"].as_str().unwrap_or(""), path) {
+            p["name"] = json!(name);
+        }
+        p
+    }).collect())
+}
+
 pub fn forget(path: &str) {
     save(saved().into_iter().filter(|p| !same(p["path"].as_str().unwrap_or(""), path)).collect());
 }
@@ -562,6 +588,19 @@ mod tests {
         assert_eq!((new[0]["kind"].as_str(), new.len()), (Some("plain"), 3));
         let fresh = remembered(list, "Other", "/p/Other", None);
         assert!(fresh[0].get("kind").is_none());
+    }
+
+    #[test]
+    fn renaming_a_project_changes_only_the_name_fridae_shows() {
+        let list = vec![json!({"name": "Lake", "path": "/g/Lake", "kind": "game"}), json!({"name": "Tool", "path": "/p/Tool"})];
+        let out = renamed(list.clone(), "/g/Lake/", "  Lake   of Fire ").unwrap();
+        assert_eq!(out[0], json!({"name": "Lake of Fire", "path": "/g/Lake", "kind": "game"}), "the folder and the kind stay");
+        assert_eq!(out[1], list[1], "other projects are untouched, and the order stays");
+        assert!(renamed(list.clone(), "/g/Lake", "   ").is_err(), "no empty name");
+        assert!(renamed(list.clone(), "/g/Lake", &"x".repeat(81)).is_err(), "no endless name");
+        // the new name outlives the project being used again: only its place in the list moves
+        let used = remembered(out, "Lake of Fire", "/g/Lake", None);
+        assert_eq!(used[0], json!({"name": "Lake of Fire", "path": "/g/Lake", "kind": "game"}));
     }
 
     #[test]

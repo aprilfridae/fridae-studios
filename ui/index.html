@@ -204,6 +204,33 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 .proj .state { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 16px; }
 .proj .count { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; display: grid; place-items: center; font: 600 12px/1 var(--mono); background: var(--text); color: var(--ink); }
 .proj .count:hover { background: var(--main-hover); }
+/* a project's own menu: a button that shows with the pointer or the keyboard on its row (a right-click opens it too) */
+.proj .state { gap: 4px; }
+.proj .p-more { display: none; width: 20px; height: 20px; border-radius: 4px; place-items: center; color: var(--dim); }
+.proj:hover .p-more, .proj:focus-visible .p-more, .proj .p-more[aria-expanded="true"] { display: grid; }
+.proj .p-more:hover, .proj .p-more[aria-expanded="true"] { background: var(--press); color: var(--text); }
+.menu.ctx { position: fixed; left: 0; top: 0; bottom: auto; z-index: 45; width: 208px; padding: 4px; border-radius: var(--r-m); transform: none; }
+.menu.ctx button { display: flex; align-items: center; width: 100%; height: var(--h-m); padding: 0 8px; border-radius: var(--r-s); font-size: 13px; text-align: left; color: var(--text); }
+.menu.ctx button:hover, .menu.ctx button:focus-visible { background: var(--hover); outline: 0; }
+.menu.ctx button:active { background: var(--press); }
+.menu.ctx hr { margin: 4px; border: 0; border-top: 1px solid var(--line); }
+/* a project's name, being changed where it stands */
+.p-rename { position: absolute; z-index: 7; flex: none; padding: 0 7px; font-size: 14px; font-weight: 500; background: var(--raised); border-color: var(--focus); }
+.p-rename[hidden] { display: none; }
+/* a small dialog that asks before something goes away */
+.dlg-wrap { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 64%, transparent); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.dlg-wrap[hidden] { display: none; }
+.dlg { width: min(440px, 100%); padding: 20px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-dialog); animation: arrive var(--t-slow) var(--ease) backwards; }
+.dlg h2 { margin: 0 0 4px; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dlg .sub { margin: 0; font-size: 13px; line-height: 1.45; color: var(--dim); overflow-wrap: anywhere; }
+.dlg-opts { display: grid; gap: 8px; margin: 16px 0 12px; }
+.dlg-opt { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-s); cursor: pointer; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease; }
+.dlg-opt:hover { background: var(--hover); }
+.dlg-opt:has(input:checked) { border-color: var(--line-strong); background: var(--hover); }
+.dlg-opt input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--main); }
+.dlg-opt b { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
+.dlg-opt small { display: block; font-size: 13px; line-height: 1.45; color: var(--dim); }
+.dlg .act { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0 0; }
 .proj.add { grid-template-columns: 12px minmax(0, 1fr); color: var(--dim); }
 .proj.all { grid-template-columns: 12px minmax(0, 1fr) auto; color: var(--dim); }
 .proj.rev .count:hover { background: var(--text); }
@@ -1448,6 +1475,7 @@ applyTheme();
         <button class="icon" id="b-setup" aria-label="Settings" title="Settings"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
       </div>
     </div>
+    <input class="field p-rename" id="proj-rename" type="text" maxlength="80" aria-label="The project's name" hidden>
     <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="480" aria-valuenow="232" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total"><b>0</b> tokens today</p><div id="use-rows"></div><details class="moreinfo"><summary>How this is counted</summary><p>New tokens, as each AI reports them: a guide, not a bill. Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
@@ -1647,6 +1675,18 @@ applyTheme();
 </div>
 
 <div class="veil" id="veil"></div>
+<div class="menu ctx" id="proj-menu" role="menu" aria-label="Project"></div>
+<div class="dlg-wrap" id="pj-del" hidden><div class="dlg" role="dialog" aria-modal="true" aria-labelledby="pj-del-h" aria-describedby="pj-del-path">
+  <h2 id="pj-del-h"></h2>
+  <p class="sub" id="pj-del-path"></p>
+  <div class="dlg-opts" role="radiogroup" aria-label="What happens to it">
+    <label class="dlg-opt"><input type="radio" name="pj-del-how" value="list" checked><span><b>Remove from Fridae</b><small>It leaves Fridae's list. The folder and every file in it stay where they are.</small></span></label>
+    <label class="dlg-opt"><input type="radio" name="pj-del-how" value="trash"><span><b id="pj-del-bin"></b><small id="pj-del-bin-note"></small></span></label>
+  </div>
+  <p class="sub">Its chats stay in your history. Nothing is deleted for good.</p>
+  <p class="rv-err" id="pj-del-err"></p>
+  <div class="act"><button class="pill" id="pj-del-no">Cancel</button><button class="pill main" id="pj-del-go"></button></div>
+</div></div>
 <div class="modal" id="sd" role="dialog" aria-label="Settings">
   <nav class="st-nav" aria-label="Settings sections">
     <div class="st-nav-in">
@@ -2101,7 +2141,7 @@ const GUIDE = [
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
   ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project to see it in Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: in Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
-  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project in Review. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
+  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project in Review. Right-click a project (or press the button that shows on its row, or Shift+F10) to rename it, open its folder or delete it. Renaming changes the name Fridae shows, not the folder. Deleting asks first: remove it from Fridae and keep its files, or move its folder to the Recycle Bin or Trash. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
   ["Chat, Promos", "A project's tabs: talk to its agent. A Roblox game also has Promos (promo videos)."],
   ["Review, on the left", "One page for every project: what needs you, and each project's run.", "", "Under Overview. Its number is everything that waits for you, across every project."],
   ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Settings, Chats, and put back afterwards."],
@@ -2601,6 +2641,11 @@ function paintSide() {
       const b = el("button", "proj", "<b></b><span class=\"state\"></span>");
       b.querySelector("b").textContent = x.name; b.title = x.path; b.dataset.k = "p:" + x.path;
       const mark = b.querySelector(".state");
+      /* the project's menu (Rename, Open folder, Delete): this button, a right-click, or Shift+F10 on the row */
+      const more = el("span", "p-more", '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="2" cy="6" r="1.1"/><circle cx="6" cy="6" r="1.1"/><circle cx="10" cy="6" r="1.1"/></svg>');
+      more.setAttribute("role", "button"); more.setAttribute("aria-label", "Menu for " + x.name); more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.title = "Rename, open folder, delete";
+      more.onclick = (ev) => { ev.stopPropagation(); projMenu(x.path, more); };
+      mark.appendChild(more);
       if (st.n) {
         const c = el("span", "count", String(st.n)); c.setAttribute("role", "button"); c.tabIndex = 0;
         c.title = st.n + (st.n === 1 ? " thing waits" : " things wait") + " for you in Review" + (st.strong ? ", and the run is stopped until you answer" : "") + ". Press to see them in Review.";
@@ -2652,6 +2697,130 @@ function paintSideSoon() {
 }
 /* an expert leaves the list half an hour after its last work, with nothing else happening: looked at twice a minute */
 setInterval(() => { if (!document.hidden) paintSide(); }, 30000);
+/* ---------- a project's menu: Rename, Open folder, Delete. It opens at the pointer on a right-click, under the
+   row's button, or beside the row for Shift+F10 and the Menu key. The arrow keys move in it, Escape closes it, and
+   the keyboard goes back to the row. ---------- */
+const BIN = /Mac/.test(navigator.userAgent) ? "Trash" : "Recycle Bin";
+const projRow = (path) => [...$("proj-list").querySelectorAll(".proj")].find((b) => b.dataset.k === "p:" + path);
+let pmPath = null;
+function closeProjMenu(refocus) {
+  const m = $("proj-menu"); if (!m.classList.contains("on")) return;
+  m.classList.remove("on");
+  const row = projRow(pmPath), more = row && row.querySelector(".p-more");
+  if (more) more.setAttribute("aria-expanded", "false");
+  if (refocus && row) row.focus();
+  pmPath = null;
+}
+/* `at`: the row's button or the row itself (the menu opens under it), or a pointer's { x, y } */
+function projMenu(path, at) {
+  const pr = (projects.projects || []).find((x) => x.path === path), m = $("proj-menu");
+  if (!pr) return;
+  closeProjMenu(false); closePops();
+  const item = (text, run) => { const b = el("button"); b.setAttribute("role", "menuitem"); b.tabIndex = -1; b.textContent = text; b.onclick = () => { closeProjMenu(false); run(); }; m.appendChild(b); };
+  m.replaceChildren(); m.setAttribute("aria-label", pr.name);
+  item("Rename", () => renameProject(path));
+  item("Open folder", () => { api("/api/project", { action: "open", path, what: "folder" }); const row = projRow(path); if (row) row.focus(); });
+  m.appendChild(el("hr"));
+  item("Delete project\u2026", () => askDeleteProject(path));
+  /* where: the pointer, or under what opened it; kept inside the window */
+  const z = scale / 100, r = at.getBoundingClientRect ? at.getBoundingClientRect() : null;
+  const x = (r ? r.left : at.x) / z, y = (r ? r.bottom + 4 : at.y) / z, w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(x, innerWidth / z - w - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(y, innerHeight / z - h - 8)) + "px";
+  pmPath = path; m.classList.add("on");
+  const row = projRow(path), more = row && row.querySelector(".p-more"); if (more) more.setAttribute("aria-expanded", "true");
+  m.querySelector("button").focus();
+}
+$("proj-menu").addEventListener("keydown", (ev) => {
+  const items = [...$("proj-menu").querySelectorAll("button")], i = items.indexOf(document.activeElement);
+  if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeProjMenu(true); }
+  else if (ev.key === "Tab") { ev.preventDefault(); closeProjMenu(true); }
+  else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); items[(i + (ev.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+  else if (ev.key === "Home" || ev.key === "End") { ev.preventDefault(); items[ev.key === "Home" ? 0 : items.length - 1].focus(); }
+});
+document.addEventListener("mousedown", (ev) => { if (pmPath !== null && !ev.target.closest("#proj-menu") && !ev.target.closest(".p-more")) closeProjMenu(false); });
+window.addEventListener("blur", () => closeProjMenu(false)); window.addEventListener("resize", () => closeProjMenu(false));
+$("proj-list").addEventListener("scroll", () => closeProjMenu(false), { passive: true });
+$("proj-list").addEventListener("contextmenu", (ev) => {
+  const row = ev.target.closest(".proj"); if (!row || !(row.dataset.k || "").startsWith("p:")) return;
+  ev.preventDefault();
+  /* from the keyboard there is no pointer: the menu opens under the row */
+  projMenu(row.dataset.k.slice(2), ev.button === 2 || ev.clientX || ev.clientY ? { x: ev.clientX, y: ev.clientY } : row);
+});
+$("proj-list").addEventListener("keydown", (ev) => {
+  if (!(ev.key === "ContextMenu" || (ev.key === "F10" && ev.shiftKey))) return;
+  const row = ev.target.closest(".proj"); if (!row || !(row.dataset.k || "").startsWith("p:")) return;
+  ev.preventDefault(); ev.stopPropagation(); projMenu(row.dataset.k.slice(2), row);
+});
+/* Rename: the name is typed where it stands. Enter (or leaving the box) keeps it, Escape leaves it as it was. Only the
+   name Fridae shows changes: the folder on disk keeps its own, so chats and git still find it. */
+function renameProject(path) {
+  const pr = (projects.projects || []).find((x) => x.path === path), row = projRow(path), inp = $("proj-rename");
+  if (!pr || !row) return;
+  const list = $("proj-list");
+  Object.assign(inp.style, { left: row.offsetLeft + "px", top: row.offsetTop - list.scrollTop + "px", width: row.offsetWidth + "px", height: row.offsetHeight + "px" });
+  inp.value = pr.name; inp.title = "Fridae's name for it. The folder keeps its own: " + path;
+  inp.hidden = false; inp.focus(); inp.select();
+  let over = false;
+  const end = async (keep) => {
+    if (over) return; over = true;
+    const name = inp.value.replace(/\s+/g, " ").trim(), back = document.activeElement === inp;
+    inp.onkeydown = inp.onblur = null; inp.hidden = true;
+    if (keep && name && name !== pr.name) {
+      let r; try { r = await api("/api/project", { action: "rename", path, name }); } catch (e) { r = null; }
+      if (!r || !r.ok) say((r && r.error) || "Could not rename the project.");
+      else {
+        for (const p of agents.values()) if (p.project && samePath(p.project.path, path)) p.project.name = name;
+        await loadProjects();
+        if (view === "review") paintReview(); else if (view === "all") paintAll();
+      }
+    }
+    if (back) { const again = projRow(path); if (again) again.focus(); }
+  };
+  inp.onkeydown = (ev) => { ev.stopPropagation(); if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); end(true); } else if (ev.key === "Escape") { ev.preventDefault(); end(false); } };
+  inp.onblur = () => end(true);
+}
+/* Delete: a dialog that names the project and its folder and says what each choice does. The first choice keeps
+   every file; the other moves the folder where it can be put back from. Nothing happens without a press here. */
+let pdPath = null;
+function askDeleteProject(path) {
+  const pr = (projects.projects || []).find((x) => x.path === path); if (!pr) return;
+  pdPath = path;
+  $("pj-del-h").textContent = "Delete " + pr.name + "?"; $("pj-del-path").textContent = path;
+  $("pj-del-bin").textContent = "Move the folder to the " + BIN; $("pj-del-bin-note").textContent = "It leaves Fridae's list, and its folder goes to the " + BIN + ". You can put it back from there.";
+  $("pj-del-err").textContent = "";
+  const first = $("pj-del").querySelector('input[value="list"]'); first.checked = true; paintDeleteGo();
+  $("pj-del-go").disabled = $("pj-del-no").disabled = false;
+  $("pj-del").hidden = false; first.focus();
+}
+const deleteHow = () => ($("pj-del").querySelector("input:checked") || {}).value === "trash";
+function paintDeleteGo() { $("pj-del-go").textContent = deleteHow() ? "Move to " + BIN : "Remove from Fridae"; }
+function closeDeleteProject() { const path = pdPath; pdPath = null; $("pj-del").hidden = true; const row = path && projRow(path); if (row) row.focus(); }
+$("pj-del").addEventListener("change", paintDeleteGo);
+$("pj-del-no").onclick = closeDeleteProject;
+$("pj-del").addEventListener("mousedown", (ev) => { if (ev.target === $("pj-del")) closeDeleteProject(); });
+$("pj-del").addEventListener("keydown", (ev) => {
+  ev.stopPropagation();
+  if (ev.key === "Escape") { ev.preventDefault(); closeDeleteProject(); return; }
+  if (ev.key !== "Tab") return;
+  /* the keyboard stays in the dialog while it is open */
+  const stops = [$("pj-del").querySelector("input:checked"), $("pj-del-no"), $("pj-del-go")], i = stops.indexOf(document.activeElement.matches("input") ? stops[0] : document.activeElement);
+  ev.preventDefault(); stops[(i + (ev.shiftKey ? stops.length - 1 : 1)) % stops.length].focus();
+});
+$("pj-del-go").onclick = async () => {
+  const path = pdPath, trash = deleteHow(), pr = (projects.projects || []).find((x) => x.path === path);
+  if (!path || !pr) { closeDeleteProject(); return; }
+  $("pj-del-go").disabled = $("pj-del-no").disabled = true; $("pj-del-err").textContent = "";
+  let r; try { r = await api("/api/project", { action: "delete", path, trash }); } catch (e) { r = { ok: false, error: "The app did not answer." }; }
+  $("pj-del-go").disabled = $("pj-del-no").disabled = false;
+  if (!r || !r.ok) { $("pj-del-err").textContent = (r && r.error) || "That did not work."; return; }
+  pdPath = null; $("pj-del").hidden = true;
+  try { projects = await api("/api/projects"); } catch (e) {}
+  delete rvAll[path];
+  if (curProj === path || homeProj === path) { homeProj = null; showAll(); }
+  else { paintSide(); paintView(); if (view === "review") paintReview(); else if (view === "all") paintAll(); }
+  say(pr.name + (trash ? " is in the " + BIN + "." : " is no longer in Fridae. Its folder is untouched."));
+};
 /* in the sidebar the arrow keys go from row to row; right and left show and hide a chat's experts (and its earlier
    ones), and left on an expert goes to its chat */
 $("proj-list").addEventListener("keydown", (ev) => {

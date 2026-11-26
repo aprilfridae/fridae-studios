@@ -292,6 +292,8 @@ fn post(path: &str, body: Value) -> Reply {
                 "create" => done(projects::create(&text_of("name"), body["parent"].as_str(), body["git"].as_bool().unwrap_or(false), body["kind"].as_str())),
                 "add" | "use" => done(projects::add(&path, body["kind"].as_str())),
                 "kind" => done(projects::set_kind(&path, &text_of("kind"))),
+                // the name Fridae shows; the folder keeps its own
+                "rename" => done(projects::rename(&path, &text_of("name"))),
                 "pick" => send_json(json!({"ok": true, "path": projects::pick_folder()})),
                 "open" => send_json(json!({"ok": projects::open(&path, &text_of("what"))})),
                 "forget" => {
