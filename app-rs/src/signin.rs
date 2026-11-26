@@ -131,6 +131,8 @@ pub enum Known {
 pub struct Answer {
     pub known: Known,
     pub by_key: bool,
+    /// Google holds the account back until the user verifies it ("Verify your account to continue"; Gemini)
+    pub verify: bool,
 }
 
 /// A sign-in the user started with the button: "" none, "waiting" for the browser, "done", "failed".
@@ -146,6 +148,8 @@ struct Login {
 struct Entry {
     known: Known,
     by_key: bool,
+    /// the last answer said Google wants the account verified (`Answer::verify`)
+    verify: bool,
     asked: Option<Instant>,
     asking: bool,
     /// asked for again while an answer was on its way (a sign-in ended meanwhile): that answer is not taken, and the
@@ -228,7 +232,7 @@ pub fn parse_claude(stdout: &str) -> Answer {
         Some(false) => Known::Out,
         None => Known::Unknown,
     };
-    Answer { by_key: by_key && matches!(known, Known::In(_)), known }
+    Answer { by_key: by_key && matches!(known, Known::In(_)), known, verify: false }
 }
 
 /// `cursor-agent status --format json`.
@@ -239,11 +243,12 @@ pub fn parse_cursor(stdout: &str) -> Answer {
         Some(false) => Known::Out,
         None => Known::Unknown,
     };
-    Answer { known, by_key: false }
+    Answer { known, by_key: false, verify: false }
 }
 
 /// `agy models`: a list means signed in (agy does not say as whom); its own "Please sign in" means signed out;
-/// anything else (offline, say) is no answer.
+/// anything else (offline, say) is no answer. Google's "Verify your account to continue" (in what agy printed, or
+/// added by `antigravity::ask_models_of` from agy's own log of the run) is said beside whatever the list says.
 pub fn parse_agy(stdout: &str, stderr: &str, ok: bool) -> Answer {
     let known = if ok && stdout.lines().any(|l| l.split_once('\t').is_some_and(|(id, name)| !id.trim().is_empty() && !name.trim().is_empty())) {
         Known::In(None)
@@ -252,7 +257,19 @@ pub fn parse_agy(stdout: &str, stderr: &str, ok: bool) -> Answer {
     } else {
         Known::Unknown
     };
-    Answer { known, by_key: false }
+    Answer { known, by_key: false, verify: asks_to_verify(stderr) }
+}
+
+/// Google's words when it holds an account back until it is verified (measured, agy's log, 2026-11-25).
+pub fn asks_to_verify(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.contains("verify your account to continue") || t.contains("not eligible for antigravity") || t.contains("validation_required")
+}
+
+/// What decides how soon a tool is asked again (`due`): an account Google holds back counts as not signed in, so the
+/// row changes within minutes of the user verifying it.
+fn timer_known(e: &Entry) -> &Known {
+    if e.verify { &Known::Unknown } else { &e.known }
 }
 
 /// Whether the tool should be asked again now: never while it is being asked or a sign-in waits for the browser; the
@@ -276,7 +293,7 @@ pub fn check(ai: &str, now: bool) {
             e.again = true;
             return false;
         }
-        let go = now || due(&e.known, e.asked.map(|t| t.elapsed()), e.asking, e.login.state == "waiting");
+        let go = now || due(timer_known(e), e.asked.map(|t| t.elapsed()), e.asking, e.login.state == "waiting");
         if go {
             e.asking = true;
             e.asked = Some(Instant::now());
@@ -304,6 +321,7 @@ fn take_answer(e: &mut Entry, answer: Answer) -> bool {
     }
     e.known = answer.known;
     e.by_key = answer.by_key;
+    e.verify = answer.verify;
     e.asking = false;
     false
 }
@@ -761,7 +779,9 @@ fn state_of(e: &Entry, offered: bool, kept_key: bool) -> Value {
         Known::Out => ("out", None),
         Known::Unknown => ("unknown", None),
     };
-    json!({"offered": offered, "state": state, "who": who, "kept_key": kept_key, "login": {"state": e.login.state, "message": e.login.message}})
+    // `checked`: an answer has come back (so "unknown" is one the app could not read, not one on its way)
+    let checked = e.asked.is_some() && !e.asking;
+    json!({"offered": offered, "state": state, "who": who, "kept_key": kept_key, "verify": e.verify, "checked": checked, "login": {"state": e.login.state, "message": e.login.message}})
 }
 
 /// Whether a key for this AI is set on this computer and kept from it (the Setup switch "Use API keys from my
@@ -864,7 +884,7 @@ mod tests {
 
     #[test]
     fn each_tools_own_answer_says_who_is_signed_in() {
-        assert_eq!(parse_claude(CLAUDE_IN), Answer { known: Known::In(Some("someone@example.com".into())), by_key: false });
+        assert_eq!(parse_claude(CLAUDE_IN), Answer { known: Known::In(Some("someone@example.com".into())), by_key: false, verify: false });
         assert_eq!(parse_claude(CLAUDE_OUT).known, Known::Out, "its exit code is 1 then; the answer is read all the same");
         assert_eq!(parse_cursor(CURSOR_IN).known, Known::In(Some("someone@example.com".into())));
         assert_eq!(parse_cursor(CURSOR_OUT).known, Known::Out);
@@ -882,12 +902,42 @@ mod tests {
         // Claude Code 2.1.319: `authMethod` with ANTHROPIC_API_KEY, with a base URL and token, with a key helper,
         // with Bedrock)
         for method in ["api_key", "oauth_token", "api_key_helper", "third_party"] {
-            assert_eq!(parse_claude(&json!({"loggedIn": true, "authMethod": method}).to_string()), Answer { known: Known::In(None), by_key: true }, "{method}");
+            assert_eq!(parse_claude(&json!({"loggedIn": true, "authMethod": method}).to_string()), Answer { known: Known::In(None), by_key: true, verify: false }, "{method}");
         }
         assert!(!parse_claude(r#"{"loggedIn": false, "authMethod": "none"}"#).by_key);
         // an account is shown as text: nothing that would not show as itself, and not without end
         let odd = parse_cursor(&json!({"isAuthenticated": true, "userInfo": {"email": format!("a\u{202e}b{}@x.io", "c".repeat(200))}}).to_string());
         assert!(matches!(&odd.known, Known::In(Some(w)) if w.chars().count() == 80 && !w.contains('\u{202e}')), "{odd:?}");
+    }
+
+    /// Google may hold an account back until it is verified (measured, 2026-11-25, an added account: agy's log said
+    /// "Account ineligible: Your current account is not eligible for Antigravity. Verify your account to continue.",
+    /// and a 403 VALIDATION_REQUIRED, while `agy models` still listed models).
+    #[test]
+    fn google_asking_to_verify_the_account_is_told_apart() {
+        const NOT_ELIGIBLE: &str = "Fetching available models...\nAccount ineligible: Your current account is not eligible for Antigravity. Verify your account to continue.\n";
+        let a = parse_agy("", NOT_ELIGIBLE, false);
+        assert!(a.verify, "{a:?}");
+        assert_eq!(a.known, Known::Unknown, "not a guess at signed out: no Sign in button for it");
+        assert!(parse_agy(AGY_IN, NOT_ELIGIBLE, true).verify, "the list comes all the same");
+        assert!(!parse_agy(AGY_IN, "Fetching available models...\n", true).verify);
+        assert!(!parse_agy("", AGY_OUT_ERR, false).verify);
+        let e = Entry { known: Known::In(None), verify: true, asked: Some(Instant::now()), ..Default::default() };
+        assert_eq!(state_of(&e, true, false)["verify"], true);
+        // and it is asked again on the shorter timer, as one not signed in
+        assert_eq!(timer_known(&e), &Known::Unknown);
+        assert_eq!(timer_known(&Entry { known: Known::In(None), ..Default::default() }), &Known::In(None));
+    }
+
+    /// "Checking" only while the first answer is on its way; an answer the app could not read says so.
+    #[test]
+    fn the_page_is_told_when_a_check_has_come_back() {
+        assert_eq!(state_of(&Entry::default(), true, false)["checked"], false, "never asked");
+        let asking = Entry { asked: Some(Instant::now()), asking: true, ..Default::default() };
+        assert_eq!(state_of(&asking, true, false)["checked"], false, "the first answer is on its way");
+        let back = Entry { asked: Some(Instant::now()), ..Default::default() };
+        assert_eq!(state_of(&back, true, false)["checked"], true);
+        assert_eq!(state_of(&back, true, false)["state"], "unknown");
     }
 
     #[test]
@@ -907,9 +957,9 @@ mod tests {
     fn an_answer_that_was_on_its_way_when_a_sign_in_ended_is_not_taken() {
         // asked at start; the user signs in meanwhile; the sign-in's end asks again while the first answer is out
         let mut e = Entry { asking: true, again: true, known: Known::Unknown, ..Default::default() };
-        assert!(take_answer(&mut e, Answer { known: Known::Out, by_key: false }), "the old answer is dropped and the tool asked once more");
+        assert!(take_answer(&mut e, Answer { known: Known::Out, by_key: false, verify: false }), "the old answer is dropped and the tool asked once more");
         assert_eq!((e.known.clone(), e.asking, e.again), (Known::Unknown, true, false));
-        assert!(!take_answer(&mut e, Answer { known: Known::In(None), by_key: true }));
+        assert!(!take_answer(&mut e, Answer { known: Known::In(None), by_key: true, verify: false }));
         assert_eq!((e.known.clone(), e.asking, e.by_key), (Known::In(None), false, true));
     }
 
@@ -996,9 +1046,9 @@ mod tests {
     #[test]
     fn the_page_is_told_where_each_sign_in_stands() {
         let e = Entry { known: Known::In(Some("someone@example.com".into())), ..Default::default() };
-        assert_eq!(state_of(&e, true, false), json!({"offered": true, "state": "in", "who": "someone@example.com", "kept_key": false, "login": {"state": "", "message": ""}}));
+        assert_eq!(state_of(&e, true, false), json!({"offered": true, "state": "in", "who": "someone@example.com", "kept_key": false, "verify": false, "checked": false, "login": {"state": "", "message": ""}}));
         let e = Entry { known: Known::Out, login: Login { pid: Some(1), state: "waiting", message: String::new(), since: None }, ..Default::default() };
-        assert_eq!(state_of(&e, true, true), json!({"offered": true, "state": "out", "who": null, "kept_key": true, "login": {"state": "waiting", "message": ""}}));
+        assert_eq!(state_of(&e, true, true), json!({"offered": true, "state": "out", "who": null, "kept_key": true, "verify": false, "checked": false, "login": {"state": "waiting", "message": ""}}));
         assert_eq!(state_of(&Entry::default(), false, false)["state"], "unknown");
         // every one of the three is in the status, and nothing else
         let all = state();
@@ -1026,7 +1076,7 @@ mod tests {
     /// A stand-in tool for the tests below, and the state as a fresh app has it.
     #[cfg(unix)]
     fn stand_in(status: Known, login: Option<&str>) {
-        *STAND_IN.lock().unwrap() = Some(StandIn { status: ids().into_iter().map(|a| (a, Answer { known: status.clone(), by_key: false })).collect(), login: login.map(str::to_string) });
+        *STAND_IN.lock().unwrap() = Some(StandIn { status: ids().into_iter().map(|a| (a, Answer { known: status.clone(), by_key: false, verify: false })).collect(), login: login.map(str::to_string) });
         *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 

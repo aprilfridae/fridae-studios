@@ -60,13 +60,30 @@ pub fn ask_models_of(account: Option<&str>) -> Option<(String, String, bool)> {
     } else if let Some(h) = home_override() {
         cmd.env("HOME", h);
     }
+    // the home agy runs in, for its log: an added account's own (`accounts::home`), else the user's
+    let home = cmd.get_envs().find(|(k, _)| *k == if cfg!(windows) { "USERPROFILE" } else { "HOME" }).and_then(|(_, v)| v.map(PathBuf::from)).unwrap_or_else(paths::home_dir);
+    let began = std::time::SystemTime::now();
     // with a time limit, in a group of its own and in the ledger: one that hangs (offline) is ended
-    let (stdout, stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
+    let (stdout, mut stderr, ok) = crate::signin::run_limited(cmd, crate::signin::CHECK_WAIT)?;
+    // Google's "Verify your account to continue" reaches only agy's log, never what it prints (measured, 2026-11-25)
+    if log_asks_to_verify(&home, began) {
+        stderr.push_str("\nVerify your account to continue.\n");
+    }
     let list = model_lines(&stdout);
     if !list.is_empty() && account.is_none() {
         let _ = MODELS.set(list);
     }
     Some((stdout, stderr, ok))
+}
+
+/// Whether a log agy wrote in `home` since `began` (`<home>/.gemini/antigravity-cli/log/cli-*.log`, one per run) has
+/// Google's request to verify the account (`signin::asks_to_verify`). Read only; a missing folder is no.
+fn log_asks_to_verify(home: &Path, began: std::time::SystemTime) -> bool {
+    let dir = home.join(".gemini").join("antigravity-cli").join("log");
+    let Ok(entries) = fs::read_dir(&dir) else { return false };
+    // a moment's slack: the file's time is when agy last wrote it, which is after the run began
+    let since = began - std::time::Duration::from_secs(2);
+    entries.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("cli-")).filter(|e| e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t >= since)).any(|e| fs::read_to_string(e.path()).is_ok_and(|t| crate::signin::asks_to_verify(&t)))
 }
 
 /// The "id<tab>name" lines of `agy models`.
@@ -582,6 +599,27 @@ pub fn explain(stderr: &str, got_result: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `agy models` does not print Google's "verify your account"; agy's own log of that run does (measured,
+    /// 2026-11-25). Only a log written since the run began counts.
+    #[test]
+    fn googles_verify_request_is_read_from_the_runs_own_log() {
+        let t = paths::test_dir("agy-verify-log");
+        let _ = fs::remove_dir_all(&t);
+        let log = t.join(".gemini").join("antigravity-cli").join("log");
+        fs::create_dir_all(&log).unwrap();
+        let old = log.join("cli-20261125_224950.log");
+        fs::write(&old, "W1125 server_oauth.go:133] Account ineligible: Your current account is not eligible for Antigravity. Verify your account to continue.\n").unwrap();
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        fs::File::options().write(true).open(&old).unwrap().set_modified(long_ago).unwrap();
+        let began = std::time::SystemTime::now() - std::time::Duration::from_secs(5);
+        assert!(!log_asks_to_verify(&t, began), "an older run's log is not this run's");
+        fs::write(log.join("cli-20261125_225128.log"), "I1125 fine\nE1125 errorreport.go:282] PERMISSION_DENIED (code 403): Verify your account to continue.\n").unwrap();
+        assert!(log_asks_to_verify(&t, began));
+        fs::write(log.join("cli-20261125_225128.log"), "I1125 fine\nW1125 You are not logged into Antigravity.\n").unwrap();
+        assert!(!log_asks_to_verify(&t, began), "agy's own start-up noise is not it");
+        assert!(!log_asks_to_verify(&t.join("nowhere"), began));
+    }
 
     #[test]
     fn a_model_that_names_its_level_is_told_apart() {

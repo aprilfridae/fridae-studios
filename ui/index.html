@@ -3505,6 +3505,7 @@ function accountRow(ai, a) {
     : s.state === "in" && s.same ? "Signed in as " + s.who + ", the same account as one above it, so it adds no usage. Remove it, sign out of that account in your browser, and add another."
     : s.state === "in" && s.by_key ? "A key or token on this computer signs it in, not an account of its own, so chats do not move to it."
     : s.state === "in" ? "Signed in" + (s.who ? " as " + s.who : "") + "." + (a.used ? " Out of usage for now." : "")
+    : s.checked ? "Could not check this account just now. Fridae tries again every few minutes."
     : "Checking the sign-in...";
   const act = row.querySelector(".act");
   /* (an account the app will not use offers no sign-in: only Remove) */
@@ -3552,6 +3553,8 @@ function signInLine(ai) {
      failed message while the tool still said "signed in") */
   if (login.state === "waiting") return { text: "Sign in on the page that opened in your browser. If none opened, cancel and try again.", buttons: [["Cancel", "cancel"]] };
   if (signInConfirm(ai)) return { text: signInConfirm(ai), buttons: [["Sign in anyway", "sure"]] };
+  /* Google holds the account back until it is verified: nothing to press here, it is done in the browser */
+  if (s.verify) return { text: "Google wants this account verified before Gemini will work on it. Sign in to it at accounts.google.com and finish Google's check. Fridae looks again every few minutes.", buttons: [] };
   if (s.state === "in") return { text: "", buttons: [] };
   const why = login.message ? ": " + login.message + (/[.!?]$/.test(login.message) ? "" : ".") : ".";
   const text = sgError[ai] ? sgError[ai]
