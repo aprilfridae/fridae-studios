@@ -2007,7 +2007,8 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     compared before and after; only the running desktop app's own Chromium caches and log moved, on their own
     schedule). Its temporary folder is `%TEMP%\opencode`, the same as the user's copy, and follows TEMP: the server
     gets `TEMP`/`TMP` in its store (`<store>\tmp`), commands and tool servers get the user's back (`users_xdg`). The
-    store is `%LOCALAPPDATA%\Fridae Studios\opencode` (`store()`).
+    store is `~\.local\share\Fridae Studios\opencode` (`store()`, as on Linux), beside the app's other data: `accounts::base`
+    is worked out from it, so the store must not move while added accounts live there.
   - *Shell*: OpenCode picks a shell by its file's name (`powershell`/`pwsh` get `-NoLogo -NoProfile -NonInteractive
     -Command`, `cmd` gets `/c`, any other `-c`) from its `shell` setting, else `SHELL`, else pwsh, Windows PowerShell,
     Git Bash, `%COMSPEC%`. Fridae sets the system's Windows PowerShell by its full path (`shell_program`), not a

@@ -17,7 +17,7 @@
 //! - OpenCode's desktop app and its command line share one database and a background service. Fridae's chats must
 //!   neither show up there nor touch it, so the app's server (and the few one-off commands below) run with folders of
 //!   the app's own (`XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` and `OPENCODE_CONFIG_DIR` under Application
-//!   Support on a Mac, `%LOCALAPPDATA%\Fridae Studios\opencode` on Windows, with its own TEMP there), read no project settings (`OPENCODE_DISABLE_PROJECT_CONFIG`) and nothing of Claude Code's.
+//!   Support on a Mac, `~\.local\share\Fridae Studios\opencode` on Windows (beside the added accounts, whose folder `accounts::base` is worked out from it), with its own TEMP there), read no project settings (`OPENCODE_DISABLE_PROJECT_CONFIG`) and nothing of Claude Code's.
 //!   The user's `~/.config/opencode` and `~/.local/share/opencode` are never written, and the user's own background
 //!   service is never used; only the user's default model is read from `opencode.json`.
 //! - The server listens on 127.0.0.1 only, on a free port, behind a random password that lives only in its
@@ -101,9 +101,6 @@ fn store() -> PathBuf {
         let home = paths::home_dir();
         let base = if cfg!(target_os = "macos") {
             home.join("Library").join("Application Support")
-        } else if cfg!(windows) {
-            // the per-user local app data folder (not Roaming: the database is large and holds the sign-in)
-            env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Local"))
         } else {
             env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".local").join("share"))
         };
@@ -260,8 +257,10 @@ pub fn load_models() {
                 cmd.args(args).stdin(Stdio::null()).stderr(Stdio::null());
                 // `--standalone` starts a `serve --stdio` of its own beside it (measured, 2.4.1): on Windows that child is
                 // ended with the app by the job the app's own process tree is in, once this runs as a spawned child
-                // TODO(merge): paths::end_with_app(&child)
-                cmd.run_output().ok().map(|o| (String::from_utf8_lossy(&o.stdout).to_string(), o.status.success())).unwrap_or_default()
+                cmd.stdout(Stdio::piped());
+                let Ok(child) = cmd.start() else { return Default::default() };
+                paths::end_with_app(&child);
+                child.wait_with_output().ok().map(|o| (String::from_utf8_lossy(&o.stdout).to_string(), o.status.success())).unwrap_or_default()
             };
             let list = parse_models(&run(&["models"]).0);
             if !list.is_empty() {
@@ -1382,7 +1381,7 @@ fn start_server() -> Result<Server, String> {
     let mut child = spawned.map_err(|e| format!("Could not start OpenCode: {e}"))?;
     // Windows: the server, its `opencode-pty daemon` (a direct child, measured on 2.4.1; it ends by itself when the
     // server is killed) and the shells the daemon starts all end with the app
-    // TODO(merge): paths::end_with_app(&child)
+    paths::end_with_app(&child);
     procs::record("opencode", child.id());
     let (tx, rx) = mpsc::channel::<u16>();
     let stdout = child.stdout.take();
@@ -2979,7 +2978,7 @@ pub fn login_start() -> Value {
             Err(e) => return json!({"ok": false, "error": format!("Could not start OpenCode: {e}")}),
         };
         // with its `serve --stdio` child (measured, 2.4.1)
-        // TODO(merge): paths::end_with_app(&child)
+        paths::end_with_app(&child);
         procs::record("opencode-login", child.id());
         *l = Login { pid: Some(child.id()), state: "waiting", ..Default::default() };
         child
