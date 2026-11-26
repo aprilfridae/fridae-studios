@@ -49,7 +49,9 @@ fn claude_plain_reply_with_its_rate_limit_event() {
     assert_eq!(said(&ev, "text"), ["ok"]);
     assert_eq!(session.as_deref(), Some(C1));
     let lim = crate::limits::state();
-    assert!(lim.to_string().contains("seven_day"), "the rate_limit_event was recorded: {lim}");
+    // (on the user's own account; the recorded window's reset time has passed since, so the page shows none of it)
+    let own = lim["accounts"].as_array().into_iter().flatten().any(|r| r["ai"] == "claude" && r["account"] == crate::limits::OWN && r["checked"].as_f64().is_some_and(|t| t > 0.0));
+    assert!(own, "the rate_limit_event was recorded: {lim}");
 }
 
 #[test]

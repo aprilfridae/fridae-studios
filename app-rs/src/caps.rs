@@ -29,7 +29,7 @@ pub struct Caps {
     pub resume: bool,
     /// Reports tokens or cost per turn (the usage log).
     pub usage: bool,
-    /// Reports its plan's usage limits (only Claude Code's `rate_limit_event` today).
+    /// Reports its plan's usage limits (`limits`: Claude Code's probe and `rate_limit_event`, Codex's app-server).
     pub limits: bool,
     /// Returns pictures from tools, which the chat shows.
     pub images: bool,
@@ -69,7 +69,7 @@ const ALL_MODES: Modes = Modes { ask: true, full: true, studio: true };
 pub const TABLE: [Caps; 5] = [
     Caps { id: "claude", experts: true, pickable: true, resume: true, usage: true, limits: true, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
     Caps { id: "gemini", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: false, effort: true, grouped_models: false, live: true, tool_call_limit: None, tool_call_limit_kept: Some(180), modes: ALL_MODES },
-    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
+    Caps { id: "chatgpt", experts: true, pickable: false, resume: true, usage: true, limits: true, images: true, sandbox: true, live_permissions: false, effort: true, grouped_models: false, live: false, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
     Caps { id: "cursor", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: true, live_permissions: false, effort: false, grouped_models: false, live: true, tool_call_limit: Some(60), tool_call_limit_kept: Some(60), modes: ALL_MODES },
     Caps { id: "opencode", experts: true, pickable: true, resume: true, usage: true, limits: false, images: true, sandbox: false, live_permissions: true, effort: false, grouped_models: true, live: false, tool_call_limit: None, tool_call_limit_kept: None, modes: ALL_MODES },
 ];
@@ -145,7 +145,7 @@ mod tests {
         //                       experts pick  resume usage limits images sandbox asks   effort group  live   ask   full  studio
         assert_eq!(row("claude"), [true, true, true, true, true, true, false, false, true, false, true, true, true, true]);
         assert_eq!(row("gemini"), [true, true, true, true, false, true, false, false, true, false, true, true, true, true]);
-        assert_eq!(row("chatgpt"), [true, false, true, true, false, true, true, false, true, false, false, true, true, true]);
+        assert_eq!(row("chatgpt"), [true, false, true, true, true, true, true, false, true, false, false, true, true, true]);
         assert_eq!(row("cursor"), [true, true, true, true, false, true, true, false, false, false, true, true, true, true]);
         assert_eq!(row("opencode"), [true, true, true, true, false, true, false, true, false, true, false, true, true, true]);
         assert_eq!(TABLE.len(), 5);

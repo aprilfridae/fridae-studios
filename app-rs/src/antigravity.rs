@@ -78,7 +78,7 @@ pub fn ask_models_of(account: Option<&str>) -> Option<(String, String, bool)> {
 
 /// Whether a log agy wrote in `home` since `began` (`<home>/.gemini/antigravity-cli/log/cli-*.log`, one per run) has
 /// Google's request to verify the account (`signin::asks_to_verify`). Read only; a missing folder is no.
-fn log_asks_to_verify(home: &Path, began: std::time::SystemTime) -> bool {
+pub(crate) fn log_asks_to_verify(home: &Path, began: std::time::SystemTime) -> bool {
     let dir = home.join(".gemini").join("antigravity-cli").join("log");
     let Ok(entries) = fs::read_dir(&dir) else { return false };
     // a moment's slack: the file's time is when agy last wrote it, which is after the run began

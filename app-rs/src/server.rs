@@ -695,6 +695,7 @@ pub fn start(token: String) -> String {
     thread::spawn(textures::watch);
     thread::spawn(team::watch);
     thread::spawn(promo::watch);
+    thread::spawn(crate::limits::watch); // each account's usage limits, asked every five minutes (no tokens)
     thread::spawn(studio_watch::watch);
     thread::spawn(crate::studio_undo::watch);
     thread::spawn(crate::skills::upkeep_watch); // the user's notes checked once a week while no agent works
