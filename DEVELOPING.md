@@ -2032,28 +2032,52 @@ order of its calls follow t3code's OpenCode 2.x provider (ideas, not code; see T
     deny` both refused `H:\rust\x\a.txt`). So on Windows the rules are written with `/` (`as_pattern`, which also
     drops a resolved path's `\\?\`), relative names are compared in any case (`relative_pattern`), and no `?`
     any-case patterns are written (`blind()` is false there: OpenCode ignores case itself). Ask me also refuses
-    `?:/*` and `//*` as absolute paths. Every mode refuses, for every file tool, `//*` (device and network paths) and
-    8.3 short names (`*~?`, `*~?/*`, `*~?.*` and the same with two characters: a file whose own name ends that way is
-    refused too); and every protected place under `<home>\AppData\<Local|Roaming|LocalLow>` is also refused through
-    any folder between the home folder and its tail (`deny_spellings`: `Local Settings`, `Application Data` and
-    `AppData\Local\Application Data` are junctions back to those folders). Run against the real OpenCode with the
+    `?:?*` and `//*` as absolute paths. Every protected place under `<home>\AppData\<Local|Roaming|LocalLow>` is also
+    refused through any folder between the home folder and its tail (`deny_spellings`: `Local Settings`, `Application
+    Data` and `AppData\Local\Application Data` are junctions back to those folders), and every one under
+    `<drive>:\Users` also through `<drive>:\Documents and Settings` (`junction_spellings`).
+  - *Other names for the same file* (fix round, 25 November 2026; OpenCode's own rule check,
+    `POST /api/session/<id>/permission`, and a scripted model, scratch stores): OpenCode's patterns ignore case, read
+    `\` as `/`, `*` crosses `/`, `?` is one character, the last matching rule wins, and a pattern ending ` *` also
+    matches without its tail. Its tools keep a name as typed, except that `..` inside it is resolved and a
+    drive-relative `C:x` is resolved against the drive's current folder before the check (so `C:x` itself never
+    reaches the rules; `?:?*` is refused anyway). Measured to reach the real file: a stream (`a.lua::$DATA` read the
+    file, `config.json::$DATA` wrote `config.json`), a short 8.3 name and `Documents and Settings` (named as typed,
+    `CLAUDE~1`, `FRIDAE~1`). A trailing dot or space did not (2.4.1 made a new file of that very name), but Windows
+    itself drops them, so they are refused too. The rules, every mode, for the tools that take a path (read, list,
+    edit, external_directory; glob and grep are checked by their pattern, so `// TODO` and `a: b` stay searchable):
+    `??*:*` (a colon past the drive's), `* `, `* /*`, `?:/*.`, `?:/*./*`, `//*`, written last (`deny_secrets`). A
+    relative name with a part ending in a dot is refused right after each `*` allow (`windows_open`, `dot_chain`):
+    the patterns cannot say "not `..`", so a relative name that goes up (`../sibling/x`) is given back one `../` at a
+    time, eight deep (deeper ones are refused). Short names: no longer every name with `~` (`notes~1.txt`, `a~b.lua`
+    are written), but for each protected path, each of its parts that has a short name, by its start
+    (`short_starts`: `FRIDAE~*` and the hashed `FR????~*`; `<home>/?~*` to `<home>/??????~*` for the hidden names),
+    `short_forms`. `windows_rules_hold_in_the_real_opencode` runs 207 such checks against the real OpenCode (skipped
+    when the desktop app is not installed), `windows_paths_are_written_as_opencode_names_them` the same through the
+    test's copy of the matching.
+  - *Settings*: with the app's environment OpenCode reads only the store's settings, never `~\.config\opencode` or
+    `%XDG_CONFIG_HOME%\opencode` (a stand-in home and XDG folder with marked settings: `opencode debug config`
+    listed only the store; without `OPENCODE_CONFIG_DIR` it listed the stand-in's;
+    `the_users_own_opencode_settings_are_never_read`).
+  - Run against the real OpenCode with the
     rules the code writes (Ask me and Full auto): writes in the game (absolute, other case, relative) and the kit went
     through; the kit's `config.json` (any case), `.opencode`, `opencode.json`, `~\.x`, the app's OpenCode store by its
     path and through both junctions, `\\?\` and `\\localhost\C$` spellings, reading the store's `auth.json`
     directly and by `\\?\` were refused; an outside folder was refused in Ask me and written in Full auto; `.git` refused
-    in Ask me. 8.3 names were not run (H: has none); a short-named path is refused by pattern, not by measurement.
+    in Ask me. (8.3 names: C: has them; reads through `CLAUDE~1` and `FRIDAE~1` were named as typed, above.)
   - *Processes*: the server starts `opencode-pty.exe daemon --runtime-dir <store>\state\opencode\pty\<id>` (from
     `<store>\cache\opencode\bin\opencode-pty\<version>`, talking over a named pipe) as a direct child, and commands
     run as the daemon's children. `taskkill /T` (`paths::end_trees`) ends all of them; killing the server alone, the
     daemon and its running command were gone within 4 s by themselves. `--standalone` one-off commands (`models`,
-    `auth list`, `auth login`) start a `serve --stdio --port 0` child. These spawn sites are where the app's job
-    (ending a process tree when the app exits) is attached on Windows. `sweep_helpers` finds nothing there
+    `auth list`, `auth login`) start a `serve --stdio --port 0` child. These spawn sites start through
+    `paths::end_with_app`: suspended, put in the app's kill-on-close job, then resumed, so a child started at once
+    cannot escape the job (`a_grandchild_the_child_starts_at_once_is_in_the_job`). `sweep_helpers` finds nothing there
     (`procs::orphans_under` is Unix only), which the daemon's own exit makes up for.
   - *Sign-in*: `opencode --standalone auth login opencode --method device` printed the code and the
     `https://opencode.ai/console/device?...` page in the lines `login_line` reads; it was ended before anyone approved
     it. Setup's row and the notice need nothing of Windows' own (`status.ai.installed`, `offered`).
-  - Not run on Windows: a real model (free or paid) end to end through the app's page, a completed sign-in, an 8.3
-    name, a network share as a chat's folder (its writes are named relative to it, but `//*` is refused for anything
+  - Not run on Windows: a real model (free or paid) end to end through the app's page, a completed sign-in, a write
+    through an 8.3 name (only reads were run), a network share as a chat's folder (its writes are named relative to it, but `//*` is refused for anything
     else), and the app's own job object (wired at merge).
 - **Trying it by hand** with the scratch copy above: put `{"chat_ai": "opencode"}` in the kit's `config.json` and
   set `FRIDAE_OPENCODE` to the program. Without a sign-in only the free models work, and they have a daily limit.

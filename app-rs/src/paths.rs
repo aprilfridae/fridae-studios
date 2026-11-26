@@ -2248,24 +2248,82 @@ pub fn local_time(t: i64) -> Option<Tm> {
     (!unsafe { localtime_r(&t, &mut tm) }.is_null()).then_some(tm)
 }
 
-/// Tie a child to the app's life: when the app ends for any reason (closed, crashed, ended in
-/// Task Manager) Windows ends the child and everything it starts afterwards. Returns whether
-/// the child was tied. Elsewhere a no-op: there the children run in their own process groups.
-pub fn end_with_app(child: &std::process::Child) -> bool {
+/// Start a command tied to the app's life: when the app ends for any reason (closed, crashed, ended in Task Manager)
+/// Windows ends the child and everything it starts. The child is put in the app's kill-on-close job before it runs a
+/// single instruction (`spawn_in_job`), so nothing it starts at once can escape the job. A child the job refuses (its
+/// own job forbids nesting) still runs, outside it, as before. Windows: started without a window (as `quiet`, which
+/// every caller sets). Elsewhere a plain start: there the children run in their own process groups.
+pub fn end_with_app(cmd: &mut std::process::Command) -> std::io::Result<std::process::Child> {
     #[cfg(windows)]
     {
         // One job for the app's whole life; the handle is never closed, so only the app's end closes it
         static JOB: std::sync::OnceLock<Option<isize>> = std::sync::OnceLock::new();
         match *JOB.get_or_init(new_kill_on_close_job) {
-            Some(job) => assign(job, child),
-            None => false,
+            Some(job) => spawn_in_job(job, cmd, || {}),
+            None => cmd.start(),
         }
     }
     #[cfg(not(windows))]
-    {
-        let _ = child;
-        true
+    cmd.start()
+}
+
+/// Start `cmd` in `job`: suspended (`CREATE_SUSPENDED`, with no window), put in the job, then its main thread resumed,
+/// so not one instruction of it runs outside the job. A child that cannot be resumed is ended (it would wait for
+/// ever). (`before_assign` runs between the start and the assignment: tests widen that moment.)
+#[cfg(windows)]
+fn spawn_in_job(job: isize, cmd: &mut std::process::Command, before_assign: impl FnOnce()) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_SUSPENDED: u32 = 0x0000_0004;
+    cmd.creation_flags(NO_WINDOW | CREATE_SUSPENDED);
+    let mut child = cmd.start()?;
+    before_assign();
+    let _ = assign(job, &child);
+    if !resume(child.id()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(std::io::Error::other("the new process could not be resumed"));
     }
+    Ok(child)
+}
+
+/// THREADENTRY32.
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Default)]
+struct ThreadEntry {
+    size: u32,
+    usage: u32,
+    thread_id: u32,
+    owner_process_id: u32,
+    base_priority: i32,
+    delta_priority: i32,
+    flags: u32,
+}
+
+/// Resume every thread of a process started suspended (it has one, its main thread); false when none was resumed.
+#[cfg(windows)]
+fn resume(pid: u32) -> bool {
+    const TH32CS_SNAPTHREAD: u32 = 0x4;
+    const THREAD_SUSPEND_RESUME: u32 = 0x2;
+    let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snap == -1 {
+        return false;
+    }
+    let mut resumed = false;
+    let mut e = ThreadEntry { size: std::mem::size_of::<ThreadEntry>() as u32, ..Default::default() };
+    let mut more = unsafe { Thread32First(snap, &mut e) } != 0;
+    while more {
+        if e.owner_process_id == pid {
+            let t = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, e.thread_id) };
+            if t != 0 {
+                resumed |= unsafe { ResumeThread(t) } != u32::MAX;
+                unsafe { CloseHandle(t) };
+            }
+        }
+        more = unsafe { Thread32Next(snap, &mut e) } != 0;
+    }
+    unsafe { CloseHandle(snap) };
+    resumed
 }
 
 /// JOBOBJECT_EXTENDED_LIMIT_INFORMATION (with its basic limits and IO_COUNTERS inline).
@@ -2296,6 +2354,11 @@ unsafe extern "system" {
     fn SetInformationJobObject(job: isize, class: i32, info: *const std::ffi::c_void, len: u32) -> i32;
     fn AssignProcessToJobObject(job: isize, process: isize) -> i32;
     fn CloseHandle(h: isize) -> i32;
+    fn CreateToolhelp32Snapshot(flags: u32, pid: u32) -> isize;
+    fn Thread32First(snap: isize, entry: *mut ThreadEntry) -> i32;
+    fn Thread32Next(snap: isize, entry: *mut ThreadEntry) -> i32;
+    fn OpenThread(access: u32, inherit: i32, tid: u32) -> isize;
+    fn ResumeThread(thread: isize) -> u32;
 }
 
 /// A new unnamed job that ends every process in it when its last handle closes.
@@ -2355,6 +2418,7 @@ mod job_tests {
     #[test]
     fn the_job_struct_has_the_windows_size() {
         assert_eq!(std::mem::size_of::<super::JobLimits>(), if cfg!(target_pointer_width = "64") { 144 } else { 112 });
+        assert_eq!(std::mem::size_of::<super::ThreadEntry>(), 28);
     }
 
     #[test]
@@ -2415,13 +2479,66 @@ mod job_tests {
         assert!(grandchild_ended, "a process started after assignment ends with the job");
     }
 
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn IsProcessInJob(process: isize, job: isize, result: *mut i32) -> i32;
+    }
+
+    /// Whether a process is in `job` (0: any job).
+    fn in_job(process: isize, job: isize) -> bool {
+        let mut r = 0;
+        unsafe { IsProcessInJob(process, job, &mut r) != 0 && r != 0 }
+    }
+
     #[test]
-    fn end_with_app_assigns_a_child() {
-        let mut child = ping().spawn().unwrap();
-        let assigned = super::end_with_app(&child);
+    fn end_with_app_starts_a_child_in_the_job() {
+        let mut child = super::end_with_app(&mut ping()).unwrap();
+        use std::os::windows::io::AsRawHandle;
+        let inside = in_job(child.as_raw_handle() as isize, 0);
         let _ = child.kill();
         let _ = child.wait();
-        assert!(assigned);
+        assert!(inside);
+    }
+
+    #[test]
+    fn a_grandchild_the_child_starts_at_once_is_in_the_job() {
+        // The child starts a grandchild as its very first act; the moment between the start and the assignment is
+        // widened to 3 s. Started suspended and resumed only once it is in the job, the child cannot start anything
+        // before that, so its grandchild is in the job too (assigned after a plain start, the grandchild escaped).
+        let job = super::new_kill_on_close_job().expect("a job");
+        let mut cmd = Command::new("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$p = Start-Process ping -ArgumentList '-n','30','127.0.0.1' -WindowStyle Hidden -PassThru; [Console]::Out.WriteLine($p.Id); [Console]::Out.Flush(); Start-Sleep 30",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+        let mut parent = super::spawn_in_job(job, &mut cmd, || std::thread::sleep(Duration::from_secs(3))).unwrap();
+        let mut line = String::new();
+        BufReader::new(parent.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        let pid: u32 = line.trim().parse().expect("the grandchild's pid");
+        // SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION
+        let grandchild = unsafe { OpenProcess(0x0010_0000 | 0x0001 | 0x1000, 0, pid) };
+        assert!(grandchild != 0, "the grandchild is running");
+        use std::os::windows::io::AsRawHandle;
+        let parent_inside = in_job(parent.as_raw_handle() as isize, job);
+        let grandchild_inside = in_job(grandchild, job);
+        unsafe { CloseHandle(job) };
+        let grandchild_ended = unsafe { WaitForSingleObject(grandchild, 3000) } == 0;
+        let _ = parent.kill();
+        let _ = parent.wait();
+        unsafe {
+            if !grandchild_ended {
+                TerminateProcess(grandchild, 1);
+            }
+            CloseHandle(grandchild);
+        }
+        assert!(parent_inside, "the child is in the job");
+        assert!(grandchild_inside, "the grandchild it started at once is in the job");
+        assert!(grandchild_ended, "and ends with it");
     }
 }
 
