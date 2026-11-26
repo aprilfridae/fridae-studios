@@ -21,6 +21,10 @@ The swarm (app-rs/src/swarm.rs): a Lead's experts work at once, each writer in i
   board     WORK/swarm/<run>/board.jsonl   the app's: one post per line {"t", "from", "to", "kind", "text"}
   post and the Studio turn go through the app as requests {"id", "op": "post" | "studio", "from", ...}; their results
   are read once and removed (so 'status' never lists them).
+  seen      WORK/swarm/<run>/seen/<agent id>  the time of the newest post this member was shown (only moved forward):
+            the board is a live thread (app-rs/src/swarm/live.rs). The app's hook shows Claude and Gemini what is new at
+            their next step; every tool result of ours carries it too (`unseen_note`), and 'board' and 'wait_board' mark
+            what they show. The app does not send a member again what it was shown.
 """
 import json, os, random, time
 
@@ -40,6 +44,8 @@ FINISHED = ("done", "refused")
 PICKUP = 15       # seconds to wait for the app to answer a spawn
 MAX_WAIT = 840
 LEAD_WAIT = 120   # a studio run's Lead waits at most this long at a time, so messages and decisions reach it
+LEAD_BOARD_WAIT = 60  # a swarm's Lead waits on the board at most this long: it sees new posts at its next step anyway
+UNSEEN_SHOWN = 12     # posts appended to a tool result at once
 RUN_ENDED = "This game's studio run was ended."
 
 
@@ -193,6 +199,79 @@ def read_board(path):
     return out
 
 
+def _plain(s):
+    s = str(s or "")
+    return bool(s) and len(s) <= 80 and all(c.isalnum() or c in "-_" for c in s)
+
+
+def _seen_file(run, agent):
+    if not (_plain(run) and _plain(agent)):
+        return None
+    return os.path.join(SWARM, run, "seen", agent)
+
+
+def seen(run, agent):
+    """The time of the newest post this member was shown (0 when never)."""
+    path = _seen_file(run, agent)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return float(f.read().strip())
+    except (OSError, ValueError, TypeError):
+        return 0.0
+
+
+def mark_seen(run, agent, t):
+    """This member was shown every post up to `t` (never moved back)."""
+    path = _seen_file(run, agent)
+    try:
+        t = float(t)
+    except (TypeError, ValueError):
+        return
+    if not path or not t > seen(run, agent):
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(repr(t))
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+def _mark_shown(me, posts):
+    ts = [p.get("t") for p in posts if for_me(p, me) and isinstance(p.get("t"), (int, float))]
+    if ts:
+        mark_seen(me["run"], os.environ.get("RBXKIT_AGENT_ID") or "", max(ts))
+
+
+def unseen_note():
+    """New posts for this chat it has not been shown, as lines to add to a tool result (marking them shown), or ""
+    when it is in no swarm or there is nothing new. Never raises."""
+    try:
+        me = _me()
+    except Exception:
+        return ""
+    try:
+        agent = os.environ.get("RBXKIT_AGENT_ID") or ""
+        since = seen(me["run"], agent)
+        new = [p for p in read_board(me["board"]) if (p.get("t") or 0) > since and for_me(p, me)]
+        if not new:
+            return ""
+        left = max(0, len(new) - UNSEEN_SHOWN)
+        lines = ["[Fridae Studios, live] New on the swarm's board for you (no need to read the board for these%s):"
+                 % (", and %d older ones are on the board" % left if left else "")]
+        lines.append(_show(new[left:]))
+        lines.append("Answer with rbx_team action 'post' only when one needs an answer, then carry on.")
+        _mark_shown(me, new)
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def for_me(post, me):
     """Whether a post mentions this member (name, role or everyone); the Lead hears every post but its own."""
     if post.get("from") == me["name"]:
@@ -236,6 +315,7 @@ def board(since=None, limit=None):
         return "The board has no posts%s." % (" since then" if since not in (None, "") else "")
     head = "You are @%s. Posts marked * are for you.%s Newest last; pass since=<the last [t]> to read only newer ones.\n" % (
         me["name"], " (%d older posts not shown.)" % left if left else "")
+    _mark_shown(me, posts)
     return head + _show(posts, me)
 
 
@@ -243,13 +323,20 @@ def wait_board(timeout=300, since=None):
     """Wait for a post that mentions this member (the Lead: any post), newer than `since` (default: now)."""
     me = _me()
     timeout = max(1, min(MAX_WAIT, int(timeout or 300)))
+    if me.get("is_lead"):
+        timeout = min(timeout, LEAD_BOARD_WAIT)  # the Lead stays free for the user: see LEAD_BOARD_WAIT
     since = float(since) if since not in (None, "") else time.time()
     deadline = time.time() + timeout
     while True:
         new = [p for p in read_board(me["board"]) if (p.get("t") or 0) > since and for_me(p, me)]
         if new:
+            _mark_shown(me, new)
             return "New for you:\n" + _show(new[-BOARD_SHOWN:], me)
         if time.time() >= deadline:
+            if me.get("is_lead"):
+                return ("Nothing new after %d seconds. Do not wait again: give the user a short update if there is news, "
+                        "then end your turn. You are woken with one line when a post needs you, and new posts are shown "
+                        "to you at your next step while you work." % timeout)
             return ("Nothing new for you after %d seconds. If you have nothing else to do, end your turn: you are woken "
                     "when a post mentions you." % timeout)
         time.sleep(0.5)

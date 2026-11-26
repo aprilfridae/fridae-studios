@@ -103,6 +103,38 @@ class SwarmBoardTests(unittest.TestCase):
         self.assertNotIn("not you", out)
         self.assertIn("Nothing new", rbxteam.run("wait_board", {"timeout": 1}))
 
+    def test_new_posts_ride_on_tool_results_once(self):
+        self.add(t=1.0, **{"from": "lead"}, to=["@shop-ui"], kind="msg", text="start the shop")
+        self.add(t=2.0, **{"from": "lead"}, to=["@tests"], kind="msg", text="not you")
+        note = rbxteam.unseen_note()
+        self.assertIn("[Fridae Studios, live]", note)
+        self.assertIn("@lead -> @shop-ui (msg): start the shop", note)
+        self.assertNotIn("not you", note)
+        self.assertEqual(rbxteam.seen("r1", "c1"), 1.0)
+        self.assertEqual(rbxteam.unseen_note(), "", "shown once")
+        rbxteam.mark_seen("r1", "c1", 0.5)
+        self.assertEqual(rbxteam.seen("r1", "c1"), 1.0, "never moved back")
+        # reading the board marks what it shows; outside a swarm there is nothing and nothing raises
+        self.add(t=3.0, **{"from": "x"}, to=["@all"], kind="msg", text="everyone")
+        rbxteam.run("board", {})
+        self.assertEqual(rbxteam.unseen_note(), "")
+        with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": "stranger"}):
+            self.assertEqual(rbxteam.unseen_note(), "")
+        # a tool result carries it
+        import rbxkit_mcp
+        self.add(t=4.0, **{"from": "x"}, to=["@shop-ui"], kind="msg", text="the coins key")
+        res = rbxkit_mcp._with_board(rbxkit_mcp.result("done"))
+        self.assertEqual(res["content"][0]["text"], "done")
+        self.assertIn("the coins key", res["content"][-1]["text"])
+        self.assertEqual(len(rbxkit_mcp._with_board(rbxkit_mcp.result("again"))["content"]), 1)
+
+    def test_the_leads_board_wait_is_short(self):
+        with mock.patch.dict(os.environ, {"RBXKIT_AGENT_ID": "L"}), mock.patch.object(rbxteam, "LEAD_BOARD_WAIT", 1):
+            t0 = time.time()
+            out = rbxteam.run("wait_board", {"timeout": 300})
+            self.assertLess(time.time() - t0, 5)
+            self.assertIn("end your turn", out)
+
     def test_the_lead_hears_everything_but_itself(self):
         me = {"name": "lead", "role": "lead", "is_lead": True}
         self.assertTrue(rbxteam.for_me({"from": "tests", "to": ["@shop-ui"]}, me))

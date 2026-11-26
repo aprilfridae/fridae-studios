@@ -17,6 +17,14 @@
 //!   which tells the model no and lets the turn carry on. Anything else that needs approval (the browser) is
 //!   refused because nobody is there to approve it, and that refusal ends its turn with a note on stderr, which
 //!   `explain` turns into a message for the user. Full auto refuses nothing but writes to the app's own files.
+//! - Reading files: `read_file(*)` is allowed, as Claude Code's Read is, but never the places that hold a sign-in or a
+//!   key (`paths::app_secrets`: a `read_file(<path>)` deny rule each). A deny rule beats an allow (measured, agy with
+//!   `gemini-3.8-flash-low`, 2026-11-25: under these two rules a file outside the workspace was read and one in a denied
+//!   folder was refused with "permission check failed", and the turn carried on). Without the allow, Ask me ended the
+//!   turn at the first read outside the workspace ("auto-denied").
+//! - The swarm board's hook (`swarm::live`): `<workspace>/.agents/hooks.json` holds a `PreInvocation` hook of the app's
+//!   (`write_hooks`), which shows a Lead or member what is new for it before each model call. agy runs whatever that
+//!   file names, so it is the app's to write, as the list of tool servers is (`own_list`).
 //! - Its own `generate_image` tool needs no approval. The picture lands in agy's folder for the conversation and
 //!   is shown in the chat from there (`Generated`); `rbx_image keep` copies it into the game's project.
 //! - Tools on a server are all called through one built-in tool, `call_mcp_tool`, which names the real one in
@@ -165,7 +173,11 @@ pub fn model_name(id: &str) -> String {
 /// Antigravity looks for them.
 pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, model: Option<&str>, effort: Option<&str>, full: bool) -> Vec<String> {
     write_servers(workspace, servers);
-    let allowed: Vec<String> = servers.as_object().map(|s| s.keys().map(|name| format!("mcp({name}/*)")).collect()).unwrap_or_default();
+    write_hooks(workspace, servers["rbxkit"]["env"]["RBXKIT_AGENT_ID"].as_str().unwrap_or(""));
+    let mut allowed: Vec<String> = servers.as_object().map(|s| s.keys().map(|name| format!("mcp({name}/*)")).collect()).unwrap_or_default();
+    // reading files anywhere, as Claude Code may (a turn in Ask me otherwise ends at the first file outside the
+    // workspace); the places with a sign-in or a key are denied below, and a deny beats an allow (module comment)
+    allowed.push(READ_ANY.into());
     let mut args: Vec<String> = ["--input-format", "stream-json", "--output-format", "stream-json", "--mode", "accept-edits", "--settings"].iter().map(|a| a.to_string()).collect();
     // the app's settings are never written by an agent (Antigravity's `write_file(<absolute path>)` rule)
     let mut deny = denied();
@@ -174,6 +186,8 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     // Ask me (`commands-refused-softly-and-own-server-list.ndjson`): the write was refused, the turn went on, and
     // another file in the workspace was written.
     deny.extend(own_list(workspace));
+    // never a sign-in or a key
+    deny.extend(paths::app_secrets().iter().map(|p| format!("read_file({})", p.display())));
     if !full {
         // A command needs approval nobody is there to give, and a step refused for that ends the turn at once
         // ("auto-denied", `explain`). Refused by a rule of ours instead, the model is told no and the turn carries
@@ -194,6 +208,9 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     args
 }
 
+/// Antigravity's rule that lets it read any file (the app's secrets are denied: `turn_args`).
+const READ_ANY: &str = "read_file(*)";
+
 /// Antigravity's rule that refuses every shell command.
 const COMMANDS_REFUSED: &str = "command(*)";
 
@@ -207,12 +224,37 @@ fn denied() -> Vec<String> {
 /// it, and by the path with links followed where that is another (agy names a file by its real path: a Mac's /tmp is
 /// /private/tmp).
 fn own_list(workspace: &Path) -> Vec<String> {
-    let list = |ws: &Path| ws.join(".agents").join("mcp_config.json");
-    let mut paths = vec![list(workspace)];
+    let mut wss = vec![workspace.to_path_buf()];
     if let Some(real) = fs::canonicalize(workspace).ok().filter(|r| r != workspace) {
-        paths.push(list(&real));
+        wss.push(real);
     }
-    paths.iter().map(|p| format!("write_file({})", p.display())).collect()
+    // and its hooks (`write_hooks`): agy runs those too
+    wss.iter().flat_map(|ws| OWN_FILES.iter().map(move |f| ws.join(".agents").join(f))).map(|p| format!("write_file({})", p.display())).collect()
+}
+
+/// The files in a workspace's `.agents` folder that name programs agy runs, and that the app keeps.
+pub const OWN_FILES: [&str; 2] = ["mcp_config.json", "hooks.json"];
+
+/// The name of the app's own entry in a workspace's `.agents/hooks.json`.
+const HOOK_NAME: &str = "fridae-board";
+
+/// Put the swarm board's hook for this chat (`swarm::live::gemini_hook`) in the workspace's `.agents/hooks.json`,
+/// leaving any hooks the user put there. Nothing for a chat without an id, or where that file is a link
+/// (`list_is_link`).
+pub(crate) fn write_hooks(workspace: &Path, agent_id: &str) {
+    let Some(hook) = crate::swarm::live::gemini_hook(agent_id) else { return };
+    let dir = workspace.join(".agents");
+    let path = dir.join("hooks.json");
+    if is_link(&dir) || is_link(&path) {
+        return;
+    }
+    let mut cfg = fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    if cfg[HOOK_NAME] == hook {
+        return;
+    }
+    cfg[HOOK_NAME] = hook;
+    let _ = fs::create_dir_all(&dir);
+    replace_whole(&path, serde_json::to_string_pretty(&cfg).unwrap_or_default().as_bytes());
 }
 
 /// Add our servers to the workspace's list, leaving any the user put there.
@@ -653,11 +695,20 @@ mod tests {
         // nor its own list of tool servers (agy starts what that names), where agy runs its image tool, or the count
         let own = format!("write_file({})", ws.join(".agents").join("mcp_config.json").display());
         assert!(deny.contains(&own), "{deny:?}");
+        // nor its hooks (agy runs what they name)
+        assert!(deny.contains(&format!("write_file({})", ws.join(".agents").join("hooks.json").display())), "{deny:?}");
         assert!(deny.contains(&format!("write_file({})", paths::work("antigravity").display())), "{deny:?}");
-        // the app's two tool servers and nothing else: no program is handed to agy, also not one the user allowed
+        // the app's two tool servers and reading files, and nothing else: no program is handed to agy, also not one
+        // the user allowed
         let mut allow = texts(&s["permissions"]["allow"]);
         allow.sort();
-        assert_eq!(allow, ["mcp(Roblox_Studio/*)", "mcp(rbxkit/*)"]);
+        assert_eq!(allow, ["mcp(Roblox_Studio/*)", "mcp(rbxkit/*)", "read_file(*)"]);
+        // but never a place with a sign-in or a key (a deny beats an allow in agy, measured)
+        let secrets = paths::app_secrets();
+        assert!(!secrets.is_empty());
+        for p in secrets {
+            assert!(deny.contains(&format!("read_file({})", p.display())), "{p:?} {deny:?}");
+        }
         assert!(!ask.iter().any(|a| a == "--dangerously-skip-permissions"));
         // Full auto: commands run, so the rule is not there
         let full = turn_args(&ws, &servers, None, None, None, true);
@@ -678,6 +729,25 @@ mod tests {
                 assert!(deny.contains(&format!("write_file({})", ws.join(".agents").join("mcp_config.json").display())), "{deny:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_board_hook_is_kept_in_the_workspace_beside_the_users_own() {
+        let ws = paths::test_dir("agy-hooks");
+        let _ = fs::remove_dir_all(&ws);
+        fs::create_dir_all(ws.join(".agents")).unwrap();
+        fs::write(ws.join(".agents").join("hooks.json"), r#"{"mine": {"Stop": []}}"#).unwrap();
+        let servers = json!({"rbxkit": {"command": "py", "env": {"RBXKIT_AGENT_ID": "c1abc"}}});
+        turn_args(&ws, &servers, None, None, None, false);
+        let hooks: Value = serde_json::from_str(&fs::read_to_string(ws.join(".agents").join("hooks.json")).unwrap()).unwrap();
+        assert_eq!(hooks["mine"], json!({"Stop": []}), "the user's own hook stays");
+        let cmd = hooks[HOOK_NAME]["PreInvocation"][0]["command"].as_str().unwrap();
+        assert!(cmd.starts_with('"') && cmd.ends_with("\" --board-hook gemini c1abc"), "{cmd}");
+        // a chat without an id gets none, and nothing is written for it
+        let other = paths::test_dir("agy-hooks-none");
+        let _ = fs::remove_dir_all(&other);
+        turn_args(&other, &json!({"rbxkit": {"command": "py"}}), None, None, None, false);
+        assert!(!other.join(".agents").join("hooks.json").exists());
     }
 
     fn picture(path: &Path, seconds_old: u64) {

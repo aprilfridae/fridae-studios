@@ -129,6 +129,9 @@ pub struct Ask {
     /// account's usage limit and the AI's other account takes over (`Agent::roll_over`): what was typed, and what
     /// the AI was sent. Nothing about it is shown or counted a second time.
     pub resend: Option<(String, String)>,
+    /// The message is in the chat already: what the user wrote to a busy Lead for its next step (`swarm::steer`),
+    /// which its turn ended before it was given, and goes now as a message of its own. It is not shown again.
+    pub shown: bool,
 }
 
 /// Messages that go out as one turn: when typed ones and the app's own are mixed, the typed part (see `Ask::typed`).
@@ -1760,6 +1763,8 @@ struct ClaudeSettings<'a> {
     keys_on: bool,
     /// the second account's folder, when the turn runs on it
     config_dir: Option<&'a std::path::Path>,
+    /// settings for this session only (`--settings`): the swarm board's hook (`swarm::live::claude_settings`)
+    settings: Option<&'a str>,
 }
 
 impl ClaudeLaunch {
@@ -1788,6 +1793,11 @@ impl ClaudeLaunch {
         }
         if let Some(e) = s.effort {
             args.extend(["--effort".into(), e.into()]);
+        }
+        // the board's hook: what is new for this chat on its swarm's board, and what the user wrote to it while it
+        // worked, at its next step (`swarm::live`). Per session only, never the user's own settings
+        if let Some(st) = s.settings {
+            args.extend(["--settings".into(), st.into()]);
         }
         // the conversation lives in the project folder when there is one, so the agent works among the game's files
         let cwd = s.project.map(std::path::PathBuf::from).unwrap_or_else(|| s.work.to_path_buf());
@@ -1981,7 +1991,7 @@ impl GeminiLaunch {
             writes: vec![s.workspace.to_path_buf()],
             reads: vec![s.kit.to_path_buf(), s.work.join("attachments"), s.work.join("chat-images")],
             // the app's own files, and the workspace's list of tool servers: agy starts whatever that list names
-            protected: s.protected.iter().cloned().chain([s.workspace.join(".agents").join("mcp_config.json")]).collect(),
+            protected: s.protected.iter().cloned().chain(antigravity::OWN_FILES.iter().map(|f| s.workspace.join(".agents").join(f))).collect(),
             hidden_in: s.hidden_in.to_vec(),
             // the places that hold a sign-in or a key: never read or written, in any mode
             secrets: paths::app_secrets(),
@@ -2134,6 +2144,8 @@ impl Kept for GeminiLaunch {
         // the servers a process per message left in the workspace's list would be started a second time: taken out
         // for the turn, and the list put back as it was when the turn is over, however it ends
         let list_was = antigravity::unwrite_servers(&self.spec.cwd, &self.spec.servers);
+        // the board's hook, before each model call (`swarm::live`)
+        antigravity::write_hooks(&self.spec.cwd, &a.id);
         // this turn's pictures start from nothing
         if let Some(file) = &self.spec.pictures {
             let _ = file.parent().map(fs::create_dir_all);
@@ -2954,6 +2966,18 @@ impl Agent {
         working(&self.st.lock().unwrap())
     }
 
+    /// How many messages wait for this chat's turn to end.
+    pub fn queued(&self) -> usize {
+        self.st.lock().unwrap().queue.len()
+    }
+
+    /// A message first in the queue (sent when the turn that is ending is over): what the user wrote to a busy Lead
+    /// that its turn ended before it was given (`swarm::steer_left`).
+    pub fn queue_first(&self, text: &str, ask: Ask) {
+        let qid = paths::random_hex(1)[..8].to_string();
+        self.st.lock().unwrap().queue.insert(0, (qid, text.to_string(), ask));
+    }
+
     fn has_messages(&self) -> bool {
         self.st.lock().unwrap().log.iter().any(is_user)
     }
@@ -3026,11 +3050,19 @@ impl Agent {
             self.put("error", json!({"text": crate::team::NO_SLOT}));
             return;
         }
+        // the user's own words to a run's Lead at work reach it at its next step, not after its turn (`swarm::steer`)
+        let typed = !auto && !ask.wake && !ask.app && ask.resend.is_none() && ask.attachments.is_empty();
+        if typed && !hold && self.busy() && crate::swarm::steer(self, text, ask) {
+            self.put("user", json!({"text": text, "steered": true}));
+            return;
+        }
         let (queued, held) = {
             let mut st = self.st.lock().unwrap();
             if working(&st) || hold {
                 let qid = paths::random_hex(1)[..8].to_string();
-                st.queue.push((qid, text.to_string(), ask.clone()));
+                // what the user typed goes before the app's own messages (wakes, carry-ons) waiting there
+                let at = if typed { st.queue.iter().position(|(_, _, a)| a.wake || a.app || a.kickoff.as_deref() == Some("auto")).unwrap_or(st.queue.len()) } else { st.queue.len() };
+                st.queue.insert(at, (qid, text.to_string(), ask.clone()));
                 (true, Vec::new())
             } else {
                 // messages kept while the run was paused go first, in the same turn
@@ -3409,8 +3441,8 @@ impl Agent {
         // differs from it ("--model gemini-3.8-flash-low conflicts with --effort=high", agy 1.5.15)
         let effort = ask.effort.as_deref().filter(|e| EFFORTS.contains(e)).filter(|_| crate::caps::of(&self.ai()).effort).filter(|_| !(self.ai() == "gemini" && model.is_some_and(antigravity::names_its_level)));
         let infos: Vec<attach::Info> = attachments.iter().take(MAX_ATTACH).map(|n| paths::base_name(n)).filter_map(|n| attach::info(&n)).collect();
-        // (a message sent again is in the chat already)
-        if !resend {
+        // (a message sent again, or one the user wrote to a busy Lead, is in the chat already)
+        if !resend && !ask.shown {
             self.put(
             "user",
             json!({
@@ -3779,6 +3811,7 @@ impl Agent {
                     work: &PATHS.work,
                     keys_on: paths::env_keys_on(),
                     config_dir: second_dir.as_deref(),
+                    settings: crate::swarm::live::claude_settings(&self.id).as_deref(),
                 });
                 return self.claude_turn(&launch, &text);
             }
@@ -6160,7 +6193,7 @@ mod tests {
         }
         // Claude's launch hands the entry on as it is, and OpenCode's server is given `send`'s own
         let servers = test_servers(true);
-        let launch = ClaudeLaunch::new(&ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false });
+        let launch = ClaudeLaunch::new(&ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, settings: None });
         assert!(!launch.key().contains("RBXKIT_CALL_BUDGET") && !launch.key().contains("FRIDAE_TOOL_JOBS"));
         assert_eq!((crate::caps::call_budget("claude", true), crate::caps::call_budget("opencode", false)), (None, None));
         // and only agents on an AI that cuts calls off are told what "not finished yet" means
@@ -6471,7 +6504,7 @@ mod tests {
         assert_eq!(claude_rule("Read", r"C:\Users\a\AppData\Fridae Studios\github", true, true), "Read(//c/Users/a/AppData/Fridae Studios/github/**)");
         // and they reach Claude Code as deny rules (held in bypass mode too)
         let servers = json!({});
-        let s = ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &denied, full: true, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false };
+        let s = ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &denied, full: true, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, settings: None };
         let args: Vec<String> = ClaudeLaunch::new(&s).args.iter().map(|a| a.to_string_lossy().to_string()).collect();
         let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
         assert!(args[at..].contains(&claude_rule("Read", &crate::github::folder().display().to_string(), true, cfg!(windows))));
@@ -7414,7 +7447,7 @@ mod tests {
         assert_eq!(account_for(2, None, false, true, &free), 1);
         // the launch: the second account's folder is given to the tool, and is part of the kept process's key
         let servers = json!({});
-        let with = |dir: Option<&'static str>| ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, config_dir: dir.map(std::path::Path::new) });
+        let with = |dir: Option<&'static str>| ClaudeLaunch::new(&ClaudeSettings { exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, config_dir: dir.map(std::path::Path::new), settings: None });
         let env = |l: &ClaudeLaunch| l.command(false, None).get_envs().find(|(k, _)| *k == "CLAUDE_CONFIG_DIR").and_then(|(_, v)| v.map(|v| v.to_string_lossy().to_string()));
         assert_eq!(env(&with(None)), None, "the user's own account: Claude Code's own folder, untouched");
         assert_eq!(env(&with(Some("/app/accounts/claude-2-abcdef"))).as_deref(), Some("/app/accounts/claude-2-abcdef"));

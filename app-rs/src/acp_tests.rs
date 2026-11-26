@@ -332,7 +332,7 @@ fn the_launch_key_changes_with_everything_a_gemini_process_is_started_with_or_de
     let l = GeminiLaunch::new(&GeminiSettings { full: true, ..base() });
     assert!(l.spec.rules.full);
     assert_eq!(l.spec.rules.writes, [c.dir.clone()]);
-    assert_eq!(l.spec.rules.protected, [protected[0].clone(), c.dir.join(".agents").join("mcp_config.json")], "and the workspace's list of tool servers");
+    assert_eq!(l.spec.rules.protected, [protected[0].clone(), c.dir.join(".agents").join("mcp_config.json"), c.dir.join(".agents").join("hooks.json")], "and the workspace's list of tool servers and its hooks");
     // the app's tool server is told where to note its pictures, on the kept path only
     let notes = Path::new("/work/tool-pictures/c1.jsonl");
     let with_notes = GeminiLaunch::new(&GeminiSettings { pictures: Some(notes), ..base() });
