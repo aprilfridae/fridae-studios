@@ -64,6 +64,40 @@ the old name in the zip so copies from before the rename can update themselves. 
 file name (`FridaeStudios.rbxmx`, so the installed plugin is replaced, not doubled), the Codex config marker
 (`# fridae-studios:begin`), the git author email and the Mac bundle id.
 
+## Front end
+
+The window's page is moving from one vanilla file to Preact components in TypeScript, one screen at a time
+(`docs/superpowers/specs/2026-11-26-preact-move-design.md`). Until the last screen has moved, both live side by side.
+
+Where things live:
+
+- `ui/index.html` - the old page: every screen that has not moved, the page's shell, and the shared CSS (variables,
+  themes, buttons, fields).
+- `ui/src/main.tsx` - the new screens' way in. It sets `window.fridae = { mount(name, el, props), store, zoom }`.
+- `ui/src/store.ts` - what the page knows, in one place: `store.get()`, `store.set(patch)`, `store.subscribe(f)`,
+  and the `useStore(selector)` hook a component reads it with. The old page writes into it where it already receives
+  data (`reviewToStore()` after `loadReview`); a screen only reads, and tells the old page what it did through the
+  props it was mounted with (Review's `onAnswered`).
+- `ui/src/api.ts` - `api(path, body)`, the same call to the app's server the old page makes.
+- `ui/src/<screen>/` - one folder per screen: its components and its own `.css`. So far `review/`: `Review.tsx`
+  (the screen), `Tabs.tsx`, `ItemsBox.tsx`, `PictureItem.tsx`, `PlainItem.tsx`, `Card.tsx` (a thing's box and its
+  buttons), `Lightbox.tsx` (a picture shown large, also used by the chat's pictures), `model.ts` (what to show,
+  worked out from the store) and `review.css`.
+- `ui/app.js`, `ui/app.css` - the bundle `index.html` loads (`server.rs` serves both). Built files, but committed:
+  the Mac build has no esbuild yet and ships them as they are.
+- `ui/vendor/preact/` - Preact, and `tools/esbuild.exe` - the bundler. No Node, no npm, nothing downloaded.
+
+To change a screen: edit its files under `ui/src`, run `python ui/build.py` (or `python ui/build.py --watch` while
+working), reload the window, and commit `ui/app.js` and `ui/app.css` with the change. `build_app.py` bundles again
+before its page check and stops if the bundling fails; that check loads the page with `app.js` in a headless browser
+and refuses a page whose script, or whose `app.js`, does not start. Types are stripped, not checked (that needs Node).
+
+To move a screen: write it under `ui/src/<screen>/`, add it to `screens` in `main.tsx`, put what it needs into the
+store's `State` and have the old page write it there, call `fridaeDo((f) => f.mount("<screen>", element, props))`
+where the old page painted it (`fridaeDo` waits until `app.js` has loaded, which is just after the old script), move
+the screen's own CSS to its `.css`, and delete its old code from `index.html`. Use the page's existing classes and
+CSS variables; no component library, no CSS framework.
+
 ## Using it
 
 Just ask your agent for what you want: "model a street lamp and put it by the
@@ -232,10 +266,12 @@ from the kit at run time. The `studio` guide is the skill `vault/Fridae/Guides/C
   The Lead's note says only what really went back. Overnight's Undo the night uses the same `put_back` with `exact:
   false`: the agents' Studio steps since the night began are undone by time, as before, even when Studio was closed
   when it began (the scripts are still saved to disk first, so it too needs the current plugin).
-- `ui/index.html`: Review (what waits for the user, a tab per project: `paintReview`, `rvThings`, `rvItemCard`,
-  `rvNeedCard`), the run's menu at the top of a chat (`paintRunBar`, `RB`), Studio in the run-mode menu, experts by name, the undo picker.
+- `ui/src/review/`: Review (what waits for the user, a tab per project; see Front end below). `ui/index.html` fetches
+  what it shows (`loadReview`, `reviewToStore`).
+- `ui/index.html`: the run's menu at the top of a chat (`paintRunBar`, `RB`), Studio in the run-mode menu, experts by name, the undo picker.
 
-**The page's shape** (`ui/index.html`, one file, no framework). The sidebar lists Overview, the games
+**The page's shape** (`ui/index.html`, one file, no framework, but for the screens that have moved to `ui/src`: see
+Front end below). The sidebar lists Overview, the games
 (`GET /api/projects`), No project (only while chats without a game exist) and New project; `curProj` is the game in
 front (`""` for No project, `null` on the Overview and New project pages) and `view` is `chat`, `review`,
 `promos`, `all` or `newproj`. The place is kept in `localStorage` under `place`; on start Overview opens when a
