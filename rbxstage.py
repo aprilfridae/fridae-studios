@@ -74,11 +74,11 @@ def locked(project):
                 if isinstance(e, FileExistsError):
                     continue  # it vanished between the two calls: try again at once
                 if time.time() > deadline:  # no lock file, and still denied: the folder cannot be written
-                    raise KitError("Could not lock the game's Studio files: %s." % e)
+                    raise KitError("Could not lock the project's studio run files: %s." % e)
                 time.sleep(0.02)
                 continue
             if time.time() > deadline:
-                raise KitError("Another Fridae process is updating this game's Studio files. Try again in a moment.")
+                raise KitError("Another Fridae process is updating this project's studio run files. Try again in a moment.")
             time.sleep(0.02)
     try:
         with os.fdopen(fd, "w") as f:
@@ -165,7 +165,7 @@ def load_items(project):
 def _find_project(a):
     project = (a.get("project") or os.environ.get("RBXKIT_PROJECT") or "").strip()
     if not project or not os.path.isdir(project):
-        raise KitError("This chat has no game project, so there is no Studio run. Studio mode belongs to project folders.")
+        raise KitError("This chat has no project, so there is no studio run. Studio mode belongs to project folders.")
     return project
 
 
@@ -407,7 +407,7 @@ def _lesson(project, a):
         raise KitError("scope must be 'game' or 'all'.")
     title, _ = rbxnotes.lesson(a.get("text"), scope, project)
     return ("Lesson saved for %s as the note '%s'. Notes are searchable: rbx_vault action 'search' with shelf '%s'." % (
-        "this game" if scope == "game" else "all games", title, "game" if scope == "game" else "yours"))
+        "this project" if scope == "game" else "all projects", title, "game" if scope == "game" else "yours"))
 
 
 def run(action, a):

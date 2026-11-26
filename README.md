@@ -1,8 +1,13 @@
 # Fridae
 
-An AI helper for building Roblox games. You say what you want in plain words;
-it works in your open Roblox Studio place and in Blender, and shows you what
-it made.
+A desktop harness for AI coding agents (Claude Code, Gemini, Codex, OpenCode):
+projects, chats, helpers that work at the same time on a shared board, review,
+checkpoints, your notes and skills. You say what you want in plain words, and
+it shows you what it did.
+
+Roblox is an add-on: mark a project as a Roblox game (or let Fridae find a
+place file, a Rojo project or Luau scripts in it) and its agents also work in
+your open Roblox Studio place and in Blender.
 
 ## Download
 

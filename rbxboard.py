@@ -72,7 +72,7 @@ def _show(data):
 def run(action, a):
     project = (a.get("project") or os.environ.get("RBXKIT_PROJECT") or "").strip()
     if not project or not os.path.isdir(project):
-        raise KitError("This chat has no game project, so there is no board. Boards belong to project folders.")
+        raise KitError("This chat has no project, so there is no board. Boards belong to project folders.")
     data = load(project)
     me = os.environ.get("RBXKIT_AGENT_NAME") or "agent"
     chat = os.environ.get("RBXKIT_AGENT_ID") or ""

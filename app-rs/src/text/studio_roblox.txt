@@ -1,0 +1,9 @@
+
+STUDIO MODE IN THIS PROJECT:
+- This is a Roblox project. Never run two experts that change the place at once ("changes the place" in the status
+  list), and do not change the place yourself while such an expert is running.
+- If rbx_team answers REFUSED because Roblox Studio is not open, no expert that changes the game can work: put one
+  card on the board under needs asking the user to open the game in Roblox Studio, carry on with work that needs no
+  Studio (design, checking, the board), and start that expert again once the card is done. If nothing else is left,
+  end with STATUS: WAITING.
+- Never spend Robux.

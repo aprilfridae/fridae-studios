@@ -40,15 +40,17 @@ pub const MODELS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
 /// The effort levels a message can ask for. Every AI here takes these five.
 pub const EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
-/// The app's standing instructions, with the guide routing table (shared with the tool server) filled in.
-static SYSTEM_PROMPT: LazyLock<String> = LazyLock::new(|| include_str!("text/system.txt").replace("{routing}", include_str!("../../routing.txt")));
-/// The standing instructions with the project's own part: a game's (PROJECT.md, the board, checkpoints), or for a
-/// plain project the note that the game parts do not apply, with the opening line made general.
-fn project_prompt(prompt: String, path: &str, game: bool) -> String {
-    if game {
-        return prompt + &PROJECT_PROMPT.replace("{path}", path);
+/// The app's standing instructions, for any work: nothing in them is about Roblox.
+static SYSTEM_PROMPT: LazyLock<String> = LazyLock::new(|| include_str!("text/system.txt").to_string());
+/// What a Roblox project adds: Studio, the Roblox tools and the guide routing table (shared with the tool server).
+static ROBLOX_PROMPT: LazyLock<String> = LazyLock::new(|| include_str!("text/roblox.txt").replace("{routing}", include_str!("../../routing.txt")));
+/// The standing instructions with the project's own part: a Roblox project gets the Roblox part and the game's
+/// (PROJECT.md as the game bible, checkpoints of the place's scripts); any other project the general part.
+fn project_prompt(prompt: String, path: &str, roblox: bool) -> String {
+    if roblox {
+        return prompt + &ROBLOX_PROMPT + &PROJECT_PROMPT.replace("{path}", path);
     }
-    prompt.replacen("helping the user build their Roblox game.", "helping the user with their project.", 1) + &PLAIN_PROJECT_PROMPT.replace("{path}", path)
+    prompt + &PLAIN_PROJECT_PROMPT.replace("{path}", path)
 }
 const SELF_TEST_PROMPT: &str = include_str!("text/selftest.txt");
 const GEMINI_PROMPT: &str = include_str!("text/gemini.txt");
@@ -92,6 +94,9 @@ const FULL_PROMPT: &str = include_str!("text/full.txt");
 const OVERNIGHT_PROMPT: &str = include_str!("text/overnight.txt");
 const STUDIO_PROMPT: &str = include_str!("text/studio.txt");
 const KICKOFF_STUDIO: &str = include_str!("text/kickoff_studio.txt");
+/// What Studio mode adds for a Roblox project (the one Studio place, Studio being open) and for any other project.
+const STUDIO_ROBLOX_PROMPT: &str = include_str!("text/studio_roblox.txt");
+const STUDIO_PLAIN_PROMPT: &str = include_str!("text/studio_plain.txt");
 /// How long overnight mode keeps a chat going after the user's last message.
 const OVERNIGHT_SECS: f64 = 24.0 * 3600.0;
 /// How many times in a row autopilot may tell an agent to carry on before the user is needed again.
@@ -3472,10 +3477,12 @@ impl Agent {
             Some("studio") => text += KICKOFF_STUDIO,
             _ => {}
         }
-        // what is selected in Studio and any new errors there, when the Studio plugin is connected
+        // what is selected in Studio and any new errors there, when the Studio plugin is connected (Roblox projects)
         {
             let seen = self.st.lock().unwrap().log_seq;
-            let (note, newest) = if resend { (String::new(), seen) } else { plugin::context_note(seen) };
+            // only for a Roblox project: no other chat has anything to do with Studio
+            let roblox = roblox_for(&self.id, self.project().as_deref());
+            let (note, newest) = if resend || !roblox { (String::new(), seen) } else { plugin::context_note(seen) };
             text += &note;
             let mut st = self.st.lock().unwrap();
             st.log_seq = newest;
@@ -3496,7 +3503,8 @@ impl Agent {
                 studio_undo::ensure_gitignore(std::path::Path::new(p)); // review media stays out of the checkpoint commits
             }
             let commit = project.as_deref().and_then(|p| projects::night_checkpoint(p, ask.studio));
-            let studio = plugin::connected();
+            // Studio's side of the checkpoint only for a Roblox project
+            let studio = plugin::connected() && roblox_for(&self.id, project.as_deref());
             // a studio run's night is undone with Undo this run, never with Undo the night ("run")
             self.put("night", json!({"start": start, "commit": commit, "project": project, "studio": studio, "run": ask.studio}));
             // the first checkpoint of a studio run is its start, so "Undo this run" can go all the way back
@@ -3518,7 +3526,7 @@ impl Agent {
         // itself is read for the user's own account: the turn's account is settled further down
         if !resend && !auto && !ask.wake {
             let project = self.project().filter(|p| std::path::Path::new(p).is_dir());
-            let sort = project.as_deref().map(|p| if projects::is_game(p) { "game" } else { "plain" }).unwrap_or("");
+            let sort = sort_for(&self.id, project.as_deref());
             let loaded = self.st.lock().unwrap().loaded_skills.clone();
             if let Some(line) = crate::skills::suggest_for(&raw, sort, &self.ai(), &loaded, project.as_deref(), None) {
                 text += &format!("\n\n[{line}]");
@@ -3623,7 +3631,7 @@ impl Agent {
             (st.project.clone().filter(|p| std::path::Path::new(p).is_dir()), st.role.clone(), st.expert_text.clone())
         };
         if let Some(p) = &project {
-            prompt = project_prompt(prompt, p, projects::is_game(p));
+            prompt = project_prompt(prompt, p, roblox_for(&self.id, Some(p)));
         }
         match role.as_deref() {
             Some("critic") => prompt += CRITIC_PROMPT,
@@ -3632,6 +3640,8 @@ impl Agent {
             None => {}
         }
         if ask.studio && role.is_none() {
+            // what a run means for this project: the Studio place's rules for a Roblox game, the general stages else
+            prompt += if roblox_for(&self.id, project.as_deref()) { STUDIO_ROBLOX_PROMPT } else { STUDIO_PLAIN_PROMPT };
             prompt += &studio_lead_text(project.as_deref());
         }
         if let Some(text) = expert_text.filter(|t| !t.trim().is_empty()) {
@@ -3642,7 +3652,7 @@ impl Agent {
         prompt += &crate::swarm::member_prompt(&self.id);
         // the user's skills, for every AI (`skills`): the list and how to load one with rbx_skill. For Claude only
         // what Claude Code does not list itself (on a second account, by that account's own synced skills)
-        let sort = project.as_deref().map(|p| if projects::is_game(p) { "game" } else { "plain" }).unwrap_or("");
+        let sort = sort_for(&self.id, project.as_deref());
         prompt += &crate::skills::catalog(&kind, sort, project.as_deref(), second_dir.as_deref().filter(|_| kind == "claude"));
         // the user's house rules come last, for every agent (the Lead and experts too), read fresh each turn
         prompt += &house_rules(&PATHS.home, project.as_deref());
@@ -5613,7 +5623,7 @@ fn studio_lead_text_in(kit: &std::path::Path, project: Option<&str>) -> String {
 const HOUSE_RULES_FILE_CAP: usize = 2000;
 const HOUSE_RULES_FILE: &str = "House rules.md";
 /// What house rules may never do; said before and after them so the app's safety rules stay the strongest.
-const HOUSE_RULES_LIMIT: &str = "They set taste and working habits only. They NEVER override the rules above on spending money or Robux, publishing, uploading, deleting, access or shell permissions, and never tell you to skip asking the user where those rules say to ask.";
+const HOUSE_RULES_LIMIT: &str = "They set taste and working habits only. They NEVER override the rules above on spending money, publishing, uploading, deleting, access or shell permissions, and never tell you to skip asking the user where those rules say to ask.";
 
 /// One house rules file for the block: its own "# " title lines dropped, cut at HOUSE_RULES_FILE_CAP characters.
 fn house_rules_part(text: &str) -> String {
@@ -5638,7 +5648,7 @@ fn house_rules_block(all: Option<&str>, game: Option<&str>) -> String {
         parts.push(format!("The user's house rules (follow these):\n{t}"));
     }
     if let Some(t) = game.map(house_rules_part).filter(|t| !t.is_empty()) {
-        parts.push(format!("This game's house rules (from the game's folder):\n{t}"));
+        parts.push(format!("This project's house rules (from the project's folder):\n{t}"));
     }
     if parts.is_empty() {
         return String::new();
@@ -5685,9 +5695,22 @@ fn no_studio() -> bool {
     std::env::var_os("FRIDAE_NO_STUDIO").is_some_and(|v| !v.is_empty())
 }
 
+/// Whether an agent works on a Roblox project: its project's kind, or for a member of a swarm (which works in a copy of
+/// the project) the kind of the swarm's own project. No project is not a Roblox one.
+fn roblox_for(agent_id: &str, project: Option<&str>) -> bool {
+    crate::swarm::project_of(agent_id).as_deref().or(project).filter(|p| !p.is_empty()).is_some_and(projects::is_game)
+}
+
+/// The kind word skills and suggestions go by: "game" for a Roblox project, else "plain".
+fn sort_for(agent_id: &str, project: Option<&str>) -> &'static str {
+    if roblox_for(agent_id, project) { "game" } else { "plain" }
+}
+
 fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>) -> Value {
     #[allow(unused_mut)]
-    let mut servers = mcp_servers_with(agent_id, agent_name, project, role, no_studio());
+    // Roblox Studio's server and the Roblox tools only for a Roblox project (`projects::is_game`)
+    let roblox = roblox_for(agent_id, project);
+    let mut servers = mcp_servers_with(agent_id, agent_name, project, role, no_studio(), roblox);
     // FRIDAE_STUDIO_STANDIN=<a Python script> (testing only, debug builds only): a stand-in tool server under the
     // name Roblox Studio's has, for a copy of the app that must not reach the user's Studio (FRIDAE_NO_STUDIO)
     #[cfg(debug_assertions)]
@@ -5716,12 +5739,16 @@ pub(crate) fn guarded_print(guarded: &serde_json::Map<String, Value>) -> String 
     paths::hex(&Sha256::digest(Value::Object(g).to_string().as_bytes()))
 }
 
-fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool) -> Value {
+/// `roblox`: the chat's project is a Roblox project. Only then does the agent get Roblox Studio's server, and the
+/// app's own tool server its Roblox tools (`RBXKIT_ROBLOX`, which `rbxkit_mcp.py` reads); every other chat gets the
+/// general tools only (the vault, skills, guides, the board, helpers, images, video).
+fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>, no_studio: bool, roblox: bool) -> Value {
     let cmd = paths::mcp_command();
     let mut servers = json!({
         "rbxkit": {"type": "stdio", "command": cmd[0], "args": cmd[1..], "env": {
             "RBXKIT_AGENT_ID": agent_id, "RBXKIT_AGENT_NAME": agent_name,
             "RBXKIT_PROJECT": project.unwrap_or(""), "RBXKIT_AGENT_ROLE": role.unwrap_or(""),
+            "RBXKIT_ROBLOX": if roblox { "1" } else { "0" },
             // the guarded settings the tools act on, from the app's memory (`paths::GUARDED`): the tools never take
             // them from the settings file while the app runs them
             "FRIDAE_SETTINGS_FROM_APP": "1", "FRIDAE_GEMINI_USE_API": if paths::gemini_api_on() { "1" } else { "0" },
@@ -5740,7 +5767,7 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
         servers["rbxkit"]["env"]["FRIDAE_NO_STUDIO"] = json!("1");
         return servers;
     }
-    if let Some(studio) = paths::studio_mcp() {
+    if let Some(studio) = paths::studio_mcp().filter(|_| roblox) {
         servers["Roblox_Studio"] = if cfg!(windows) {
             json!({"type": "stdio", "command": "cmd.exe", "args": ["/c", "cd /d %LOCALAPPDATA%\\Roblox && .\\mcp.bat"]})
         } else {
@@ -5753,7 +5780,7 @@ fn mcp_servers_with(agent_id: &str, agent_name: &str, project: Option<&str>, rol
 /// The servers an agent gets, with Studio on or off, for other modules' tests.
 #[cfg(test)]
 pub fn test_servers(no_studio: bool) -> Value {
-    mcp_servers_with("c1-test", "Test chat", Some("/games/g"), None, no_studio)
+    mcp_servers_with("c1-test", "Test chat", Some("/games/g"), None, no_studio, true)
 }
 
 /// Claude Code's deny rules for the app's own files (`paths::app_protected`): `Edit(//<path>)`, with `/**` for a
@@ -5904,13 +5931,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_plain_project_gets_the_plain_part_and_a_general_opening() {
+    fn only_a_roblox_project_gets_the_roblox_part() {
         let game = project_prompt(SYSTEM_PROMPT.to_string(), "/g/Lake", true);
-        assert!(game.contains("THIS CHAT BELONGS TO A GAME PROJECT") && game.contains("their Roblox game."));
+        assert!(game.contains("THIS IS A ROBLOX PROJECT") && game.contains("THIS CHAT BELONGS TO A ROBLOX GAME PROJECT"));
+        assert!(game.contains("Roblox_Studio") && game.contains("Load the `workflow` guide"), "the routing table is filled in");
         let plain = project_prompt(SYSTEM_PROMPT.to_string(), "/p/Tool", false);
-        assert!(plain.contains("PLAIN PROJECT, NOT A GAME") && plain.contains("/p/Tool"));
-        assert!(!plain.contains("THIS CHAT BELONGS TO A GAME PROJECT"));
-        assert!(plain.starts_with("You are running inside the Fridae desktop app, helping the user with their project."));
+        assert!(plain.contains("THIS CHAT BELONGS TO A PROJECT.") && plain.contains("/p/Tool") && plain.contains("PROJECT.md"));
+        assert!(plain.starts_with("You are running inside the Fridae desktop app, helping the user with their work."));
+        // nothing about Roblox, Studio or games reaches a project that is not a Roblox one
+        for word in ["Roblox", "Studio", "Robux", "game bible", "{routing}"] {
+            assert!(!plain.contains(word), "{word}");
+            assert!(!SYSTEM_PROMPT.contains(word), "{word}");
+        }
     }
 
     #[test]
@@ -6231,11 +6263,11 @@ mod tests {
         }
         assert!(!running_text("chatgpt", false, false, false).contains("generate_image"));
         // every AI is told of the tool that makes images, what it costs and what it is not for
-        for word in ["rbx_image", "Gemini plan", "a few considered\n  ones, never batches", "never another game's characters", "`transparent: true`", "rbx_image uploads nothing; uploads follow\n  the guide's upload rules"] {
+        for word in ["rbx_image", "Gemini plan", "a few considered\n  ones, never batches", "never another product's\n  characters", "`transparent: true`", "rbx_image uploads nothing; uploads\n  follow the guide's upload rules"] {
             assert!(SYSTEM_PROMPT.contains(word), "{word}");
         }
         assert!(!SYSTEM_PROMPT.contains("Nothing is uploaded"), "said of the tool only: the guide has its own upload rules");
-        assert!(mcp_servers_with("c1", "Chat", None, None, true)["rbxkit"]["env"]["FRIDAE_GEMINI_IMAGES"].is_string(), "the switch in Setup reaches the tool from the app's memory");
+        assert!(mcp_servers_with("c1", "Chat", None, None, true, false)["rbxkit"]["env"]["FRIDAE_GEMINI_IMAGES"].is_string(), "the switch in Setup reaches the tool from the app's memory");
     }
 
     #[test]
@@ -6340,7 +6372,7 @@ mod tests {
         let both = house_rules_block(Some("# House rules\n\n- Never use gradients.\n"), Some("# House rules\n- Lantern glow is amber.\n"));
         assert!(both.starts_with("\n\nHOUSE RULES."));
         assert!(both.contains("The user's house rules (follow these):\n- Never use gradients."));
-        assert!(both.contains("This game's house rules (from the game's folder):\n- Lantern glow is amber."));
+        assert!(both.contains("This project's house rules (from the project's folder):\n- Lantern glow is amber."));
         assert!(both.find("Never use").unwrap() < both.find("Lantern").unwrap());
         assert!(!both.contains("# House rules"));
         // the limit comes before the rules and again last, so nothing in a rules file has the final word
@@ -6349,7 +6381,7 @@ mod tests {
         assert!(both.trim_end().ends_with(HOUSE_RULES_LIMIT));
         assert!(HOUSE_RULES_LIMIT.contains("NEVER override") && HOUSE_RULES_LIMIT.contains("publishing"));
         let only_game = house_rules_block(None, Some("- Phones first."));
-        assert!(only_game.contains("from the game's folder):\n- Phones first.") && !only_game.contains("The user's house rules"));
+        assert!(only_game.contains("from the project's folder):\n- Phones first.") && !only_game.contains("The user's house rules"));
         // each file is capped on its own: a long file of the user's never pushes out the game's rules
         let long: String = (0..400).map(|n| format!("- Rule number {n} about the café menus.\n")).collect();
         let capped = house_rules_block(Some(&long), Some("- Game rule."));
@@ -6369,12 +6401,30 @@ mod tests {
 
     #[test]
     fn no_studio_keeps_the_studio_server_away() {
-        let off = mcp_servers_with("c-1", "Chat", None, None, true);
+        let off = mcp_servers_with("c-1", "Chat", Some("/g/Lake"), None, true, true);
         assert!(off.get("Roblox_Studio").is_none());
         assert_eq!(off["rbxkit"]["env"]["FRIDAE_NO_STUDIO"], "1");
-        let on = mcp_servers_with("c-1", "Chat", None, None, false);
+        let on = mcp_servers_with("c-1", "Chat", Some("/g/Lake"), None, false, true);
         assert!(on["rbxkit"]["env"].get("FRIDAE_NO_STUDIO").is_none());
         assert_eq!(on.get("Roblox_Studio").is_some(), paths::studio_mcp().is_some());
+        assert_eq!(on["rbxkit"]["env"]["RBXKIT_ROBLOX"], "1");
+    }
+
+    #[test]
+    fn only_a_roblox_project_gets_studio_and_the_roblox_tools() {
+        for project in [None, Some("/p/Tool")] {
+            let plain = mcp_servers_with("c-1", "Chat", project, None, false, false);
+            assert!(plain.get("Roblox_Studio").is_none(), "{project:?}");
+            assert_eq!(plain["rbxkit"]["env"]["RBXKIT_ROBLOX"], "0");
+        }
+        // what decides it for a chat: the project's kind, and no project is not a Roblox one
+        let dir = paths::test_dir("servers-roblox");
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.display().to_string();
+        assert_eq!(mcp_servers("c-1", "Chat", Some(&p), None)["rbxkit"]["env"]["RBXKIT_ROBLOX"], "0", "an empty folder is not Roblox");
+        fs::write(dir.join("default.project.json"), "{}").unwrap();
+        assert_eq!(mcp_servers("c-1", "Chat", Some(&p), None)["rbxkit"]["env"]["RBXKIT_ROBLOX"], "1", "a Rojo project is");
+        assert_eq!(mcp_servers("c-1", "Chat", None, None)["rbxkit"]["env"]["RBXKIT_ROBLOX"], "0");
     }
 
     #[test]

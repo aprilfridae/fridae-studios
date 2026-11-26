@@ -34,7 +34,7 @@ pub const STAGES: [&str; 6] = ["idea", "design", "build", "test", "launch", "pro
 const DEFAULT_GATES: [&str; 2] = ["design", "launch"];
 const NOTE_MAX: usize = 600;
 const IDEA_MAX: usize = 4000;
-const ALREADY: &str = "This game already has a studio run. Resume it from Review.";
+const ALREADY: &str = "This project already has a studio run. Resume it from Review.";
 
 /// Review item files the app wrote itself, and their times, shared with the watcher so it does not report them.
 pub(crate) static SEEN: LazyLock<Mutex<HashMap<PathBuf, SystemTime>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -57,7 +57,7 @@ pub(crate) fn mtime(path: &Path) -> Option<SystemTime> {
 
 pub(crate) fn write_json(path: &Path, v: &Value) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?;
-    if write_atomic(path, &bytes) { Ok(()) } else { Err("Could not save the game's Studio files.".into()) }
+    if write_atomic(path, &bytes) { Ok(()) } else { Err("Could not save the project's studio run files.".into()) }
 }
 
 /// Change studio.json under the project's lock: `f` gets the run (Null when there is none or it does not read) and
@@ -304,7 +304,7 @@ pub(crate) fn running(run: &Value) -> bool {
 
 fn can_start(project: &Path) -> Result<(), String> {
     if !project.is_dir() {
-        return Err("That game's folder is missing.".into());
+        return Err("That project's folder is missing.".into());
     }
     match read_run(project) {
         Some(run) if running(&run) => Err(ALREADY.into()),
@@ -428,9 +428,9 @@ fn start_lead(project: &str, agent: Option<&str>) -> Result<(Arc<Agent>, bool), 
     }
     match chat.project() {
         Some(p) if projects::same(&p, project) => {}
-        Some(_) => return Err("That chat belongs to another game.".into()),
+        Some(_) => return Err("That chat belongs to another project.".into()),
         None if chat.set_project(project) => {}
-        None => return Err("That chat has already started without this game. Start the run from a new chat.".into()),
+        None => return Err("That chat has already started without this project. Start the run from a new chat.".into()),
     }
     Ok((chat, false))
 }
@@ -451,7 +451,7 @@ fn start(project: &str, body: &Value) -> Result<Value, String> {
     can_start(dir)?;
     let (lead, made) = start_lead(project, body["agent"].as_str())?;
     let warning = finish_start(dir, &lead, made, &idea, gates, max.unwrap_or(2))?;
-    kickoff(&lead, if idea.is_empty() { "Start a studio run for this game.".into() } else { idea });
+    kickoff(&lead, if idea.is_empty() { "Start a studio run for this project.".into() } else { idea });
     let mut out = json!({"ok": true, "agent": lead.id});
     if let Some(w) = warning {
         out["warning"] = json!(w);
@@ -468,7 +468,7 @@ fn finish_start(dir: &Path, lead: &Arc<Agent>, made: bool, idea: &str, gates: Ve
     wrote
 }
 
-const NO_RUN: &str = "This game has no studio run to resume.";
+const NO_RUN: &str = "This project has no studio run to resume.";
 
 /// What Resume found under the lock.
 #[derive(Debug, PartialEq)]
@@ -518,7 +518,7 @@ fn resume(project: &str) -> Result<Value, String> {
             let chat = new_lead_chat(project).ok_or(NO_SLOT)?;
             match claim_lead(dir, &expected, Some(&chat.id)) {
                 Ok(Claim::Ours) => {
-                    kickoff(&chat, "Adopt this game's studio run and carry on.".into());
+                    kickoff(&chat, "Adopt this project's studio run and carry on.".into());
                     chat.id.clone()
                 }
                 Ok(Claim::Taken(other)) => {
@@ -535,7 +535,7 @@ fn resume(project: &str) -> Result<Value, String> {
     Ok(json!({"ok": true, "agent": id}))
 }
 
-const NO_RUN_TO_END: &str = "This game has no studio run going to end.";
+const NO_RUN_TO_END: &str = "This project has no studio run going to end.";
 
 /// Under the lock: a run that is going is switched off with its end time ("on": false, "ended"); its stages, files,
 /// review items and checkpoints all stay. Returns the Lead's id.
@@ -578,7 +578,7 @@ fn set_run(project: &Path, f: impl FnOnce(&mut Value)) -> Result<(), String> {
         f(run);
         (true, true)
     })?;
-    if had { Ok(()) } else { Err("This game has no studio run yet.".into()) }
+    if had { Ok(()) } else { Err("This project has no studio run yet.".into()) }
 }
 
 /// The project a request names, as the app's list of projects has it: only folders the user added, and that exist.
@@ -587,7 +587,7 @@ pub(crate) fn project_of(path: &str) -> Option<String> {
 }
 
 fn not_ours() -> Value {
-    json!({"ok": false, "error": "That game is not one of your projects."})
+    json!({"ok": false, "error": "That is not one of your projects."})
 }
 
 pub(crate) fn answer(r: Result<Value, String>) -> Value {
@@ -691,7 +691,7 @@ pub fn review(body: &Value) -> Value {
 pub fn studio_run(body: &Value) -> Value {
     let path = body["path"].as_str().unwrap_or("");
     if body["action"] == "start" && !Path::new(path).is_dir() {
-        return json!({"ok": false, "error": "That game's folder is missing."});
+        return json!({"ok": false, "error": "That project's folder is missing."});
     }
     let Some(project) = project_of(path) else { return not_ours() };
     let dir = Path::new(&project);
@@ -990,7 +990,7 @@ mod tests {
         let mut stages: Vec<Value> = STAGES.iter().map(|s| json!({"id": s, "status": "done"})).collect();
         stages[3]["status"] = json!("doing");
         put_run(&d, json!({"on": true, "stages": stages}));
-        assert_eq!(can_start(&d).unwrap_err(), "This game already has a studio run. Resume it from Review.");
+        assert_eq!(can_start(&d).unwrap_err(), "This project already has a studio run. Resume it from Review.");
         stages[3]["status"] = json!("done");
         put_run(&d, json!({"on": true, "stages": stages}));
         assert!(can_start(&d).is_ok(), "a finished run may be followed by a new one");
@@ -1046,7 +1046,7 @@ mod tests {
         let (chat, made) = start_lead(&p, Some(&mine.id)).unwrap();
         assert_eq!((chat.id.as_str(), made), (mine.id.as_str(), false));
         let why = |id: &str| start_lead(&p, Some(id)).err();
-        assert_eq!(why(&theirs.id).as_deref(), Some("That chat belongs to another game."));
+        assert_eq!(why(&theirs.id).as_deref(), Some("That chat belongs to another project."));
         assert_eq!(why(&helper.id).as_deref(), Some("Only a chat of your own can lead a studio run."));
         assert_eq!(why("c-no-such-chat").as_deref(), Some("That chat is gone."));
         for a in [&mine, &theirs, &helper] {

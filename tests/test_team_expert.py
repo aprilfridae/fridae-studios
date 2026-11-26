@@ -321,7 +321,7 @@ class LeadWaitTests(unittest.TestCase):
         self.run_file(on=False, ended=time.time())
         with self.assertRaises(KitError) as e:
             rbxteam.spawn("worker", "More", ExpertSpawnTests.TASK, expert="coder")
-        self.assertIn("This game's studio run was ended.", str(e.exception))
+        self.assertIn("This project's studio run was ended.", str(e.exception))
         self.assertEqual(os.listdir(self.tmp).count("req"), 0, "no request was written")
         # a plain helper (no expert) is not part of the run, and an ended run of another chat refuses nothing
         self.run_file(on=False, ended=time.time(), lead="someone-else")

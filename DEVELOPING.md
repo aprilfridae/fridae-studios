@@ -44,6 +44,17 @@ Rust and PyInstaller. On a Mac, `python3 build_mac.py` builds
 `build-out/Fridae-macOS.dmg` the same way. The packaged app needs no Python or Rust installed; it keeps
 its output in `Documents/Fridae Studios/work`.
 
+**Roblox is an add-on.** A project's kind is "plain" or "game" (a Roblox game: the stored word stays "game"),
+set by the user in the project's settings or, when unset, found in its folder (`projects::looks_roblox`: .rbxl or
+.rbxlx files, a Rojo project, wally/rokit/aftman.toml, .luau under src, or src/.manifest.json). A new project is
+plain. Only a Roblox project's chats get the Roblox part of the instructions (`text/roblox.txt` with routing.txt,
+`text/project.txt`), Roblox Studio's tool server, the Roblox rbxkit tools (`RBXKIT_ROBLOX=1`; `rbxkit_mcp.ROBLOX_TOOLS`
+are left out otherwise), Studio's selection note, Studio's side of checkpoints and Studio mode's place rules
+(`text/studio_roblox.txt`); every other chat, and a chat with no project, gets the general instructions
+(`text/system.txt`, `text/plain_project.txt`, `text/studio_plain.txt`). A swarm member, which works in a copy, goes by
+its swarm's project (`agents::roblox_for`). A project's notes file is PROJECT.md; a lone GAME.md is renamed to it when
+the project is opened (`projects::adopt_bible`) and read until then (`rbxpaths.bible_path`).
+
 **The name.** The app is called Fridae (`paths::APP`: the window title, the copy, the program `Fridae.exe`,
 `dist/Fridae`, `Fridae.app`). Its data folders keep the old name, Fridae Studios (`paths::DATA_DIR`,
 `rbxpaths.HOME_DIR`): `Documents/Fridae Studios`, `%APPDATA%\Fridae Studios`, `~/.local/share/Fridae Studios`, the

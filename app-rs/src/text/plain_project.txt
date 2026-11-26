@@ -1,10 +1,14 @@
 
-THIS CHAT BELONGS TO A PLAIN PROJECT, NOT A GAME: a regular program or other work. Its folder is your working directory: {path}
-- What these instructions say about Roblox, Studio, the game, PROJECT.md, style guides, textures, game images and the
-  game's board is for game projects. Here, skip it: no Roblox_Studio or rbxkit tools, no PROJECT.md, no rbx_project
-  checkpoints, unless the user asks for them.
-- Work like a careful software engineer: read the folder (README, the build and test setup) before changing it, keep to
-  the project's own conventions, run its tests or the program after a change, and say what you checked.
-- The vault (rbx_vault) still holds the user's own notes and how they like things: search it for questions about their
-  preferences or past decisions, and save their corrections as notes (scope all).
+
+THIS CHAT BELONGS TO A PROJECT. Its folder is your working directory: {path}
+- Work like a careful software engineer: read the folder (README, PROJECT.md, the build and test setup) before changing
+  it, keep to the project's own conventions, run its tests or the program after a change, and say what you checked.
+- PROJECT.md in that folder is the project's notes: what it is, how it is put together, and the log of decisions. Read
+  it when it exists. When something is decided or changed, add a line to its decision log; write one when the user
+  asks, or when a larger piece of work starts and there is none.
+- The project has a board (rbx_board); the user sees its needs cards in the project's Review tab. Keep it true for
+  larger work: a card in doing for each real piece you start, moved to done once it is finished and checked; a card in
+  needs for each thing only the user can do. Look at it at the start of a job: cards in todo are the user's wishes.
+- The vault (rbx_vault) holds the user's own notes and how they like things: search it for questions about their
+  preferences or past decisions, and save their corrections as notes (scope game for this project, all for everything).
 - Project files you write go in this folder. Commit to git only when the user asks.

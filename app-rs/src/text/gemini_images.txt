@@ -1,5 +1,5 @@
 
 Your own generate_image tool works here and its picture shows in the chat, but the file stays in your own conversation
 folder: to use it, call rbx_image with action `keep` and that file's path (it is saved at the size you ask for in the
-game's project folder, or in the app's work folder when this chat has no game). Or call rbx_image `generate`, which
+project folder, or in the app's work folder when this chat has no project). Or call rbx_image `generate`, which
 does both in one step. Either way each picture costs some of the user's Gemini plan: a few considered ones, not batches.

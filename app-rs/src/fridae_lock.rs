@@ -37,7 +37,7 @@ pub fn acquire(project: &Path) -> Result<Guard, String> {
 pub fn acquire_with(project: &Path, wait: Duration, stale: Duration) -> Result<Guard, String> {
     let path = lock_path(project);
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("Could not open the game's Studio folder: {e}"))?;
+        fs::create_dir_all(dir).map_err(|e| format!("Could not open the project's .fridae folder: {e}"))?;
     }
     let deadline = Instant::now() + wait;
     loop {
@@ -56,15 +56,15 @@ pub fn acquire_with(project: &Path, wait: Duration, stale: Duration) -> Result<G
                     }
                     Ok(_) => {}
                     Err(_) if e.kind() == std::io::ErrorKind::AlreadyExists => continue, // it vanished between the two calls: try again at once
-                    Err(_) if Instant::now() > deadline => return Err(format!("Could not lock the game's Studio files: {e}")), // no lock file, still denied
+                    Err(_) if Instant::now() > deadline => return Err(format!("Could not lock the project's studio run files: {e}")), // no lock file, still denied
                     Err(_) => {}
                 }
                 if Instant::now() > deadline {
-                    return Err("Another Fridae process is updating this game's Studio files. Try again in a moment.".into());
+                    return Err("Another Fridae process is updating this project's studio run files. Try again in a moment.".into());
                 }
                 thread::sleep(Duration::from_millis(20));
             }
-            Err(e) => return Err(format!("Could not lock the game's Studio files: {e}")),
+            Err(e) => return Err(format!("Could not lock the project's studio run files: {e}")),
         }
     }
 }

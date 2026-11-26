@@ -314,7 +314,7 @@ fn prompt_with(older: &str, mark: &str) -> String {
     format!(
         "You are writing a summary for another AI assistant. You have no tools: answer with the summary's text only.\n\n\
          Between the lines BEGIN {mark} and END {mark} below is the older part of a conversation between a user and one \
-         or more AI assistants working on a Roblox game in the app Fridae. The assistant that carries the \
+         or more AI assistants working on a project (often a Roblox game) in the app Fridae. The assistant that carries the \
          conversation on gets your summary in place of this part, followed by the newest part word for word.\n\n\
          Write what it needs to carry on: what the user asked for and how they want it done, what was decided, what was \
          built or changed (with the names of files, scripts, places and assets as they are written), what was tried and \
@@ -699,12 +699,12 @@ pub fn plain_prompt_for(material: &str) -> String {
 
 fn plain_prompt_with(material: &str, mark: &str) -> String {
     format!(
-        "You are writing for the person whose Roblox game is being built in the app Fridae. They are not a \
-         programmer and do not read code. An expert (an AI helper) has just finished a task on their game. Between the \
+        "You are writing for the person whose project is being built in the app Fridae. They are not a \
+         programmer and do not read code. An expert (an AI helper) has just finished a task on their project. Between the \
          lines BEGIN {mark} and END {mark} below is that expert's own report and a short list of what it changed.\n\n\
          Write 2 to 4 short sentences, in plain everyday English, that tell the person what this expert did: what it \
-         set out to do, what changed in their game, and anything they should know. Describe it the way you would to a \
-         friend who plays the game, not a programmer. No file paths, no code, no technical words, no names of scripts, \
+         set out to do, what changed in their project, and anything they should know. Describe it the way you would to a \
+         friend who uses it, not a programmer. No file paths, no code, no technical words, no names of scripts, \
          services or systems. For example write \"Added a shop where players spend coins on hats, and made the buy \
          button bigger\", not \"Implemented ShopService and the shop GUI\". Answer with those sentences only: no \
          heading, no preamble, no closing remark. Say only what is in the text below; add nothing.\n\n\

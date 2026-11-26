@@ -1445,7 +1445,7 @@ applyTheme();
 
     <div id="allproj"><div class="ov">
       <div class="o-graph">
-        <canvas id="o-canvas" role="img" aria-label="Graph of every game, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
+        <canvas id="o-canvas" role="img" aria-label="Graph of every project, its chats and the experts at work" aria-describedby="o-key-text"></canvas>
         <details class="o-key" id="o-key"><summary aria-label="What the graph shows" title="What the graph shows">?</summary><p id="o-key-text">Square: a project. Dot: a chat. Small dot: an expert, tied to its Lead.<br>Bright and pulsing: working. Grey: open. Dim: saved.<br>A faint expert is parked; a ring means its work is being checked.<br>Click a project for its Review, a chat to open it.<br>Drag to arrange, scroll to zoom, double-click to fit.</p></details>
       </div>
       <div class="ap-side">
@@ -1535,7 +1535,7 @@ applyTheme();
 
     <div id="newproj"><div class="r-col">
       <div class="np-make">
-        <div class="seg np-kind" id="np-kind" role="radiogroup" aria-label="What kind of project"><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
+        <div class="seg np-kind" id="np-kind" role="radiogroup" aria-label="What kind of project"><button role="radio" data-k="plain">Project</button><button role="radio" data-k="game">Roblox game</button></div>
         <p class="sub kind-note" id="np-kind-note"></p>
         <div class="keyrow"><input type="text" id="np-name" placeholder="Name of the project" autocomplete="off" aria-label="Name of the project"><button class="pill main" id="np-create">Create</button></div>
         <p class="sub where" id="np-where"></p>
@@ -1667,7 +1667,7 @@ applyTheme();
     </div></section>
 
     <section data-s="experts" data-name="Experts"><div class="st-page">
-      <p class="st-lede">In a studio run, the Lead hands each part of the game to an expert. Pick an AI and model for any of them; the rest run on the Lead's.</p>
+      <p class="st-lede">In a studio run, the Lead hands each part of the project to an expert. Pick an AI and model for any of them; the rest run on the Lead's.</p>
       <section class="st-sec" id="set-lead">
         <div class="st-sec-head"><h2>The Lead and its experts</h2></div>
         <div class="sg">
@@ -1701,7 +1701,7 @@ applyTheme();
         <div class="st-sec-head"><h2>AI images</h2></div>
         <div class="sg">
           <div class="sr" id="set-gem-images" data-find="icons thumbnail art gemini antigravity"><div class="sr-in"><div class="sr-text"><h3><label for="gem-images">Agents may generate images with Gemini</label></h3><p>Icons, thumbnail art and UI art, each using some of your Gemini plan. Off: agents ask you first.</p>
-            <details class="moreinfo"><summary>More</summary><p>Icons, thumbnail art and UI art are made through Antigravity, and each picture uses some of your Gemini plan. One chat may start 12 an hour and one game's team 30, textures included. Off: agents ask you first.</p></details></div><div class="sr-ctl"><input type="checkbox" class="sw" role="switch" id="gem-images"></div></div></div>
+            <details class="moreinfo"><summary>More</summary><p>Icons, thumbnail art and UI art are made through Antigravity, and each picture uses some of your Gemini plan. One chat may start 12 an hour and one project's team 30, textures included. Off: agents ask you first.</p></details></div><div class="sr-ctl"><input type="checkbox" class="sw" role="switch" id="gem-images"></div></div></div>
         </div>
       </section>
       <section class="st-sec" id="set-textures">
@@ -1736,7 +1736,7 @@ applyTheme();
       <section class="st-sec" id="set-your-skills" data-find="library pinned">
         <div class="st-sec-head"><h2 class="sk-h">Your skills <span id="sk-n"></span></h2><div class="st-sec-act"><button class="pill sm" id="sk-fold" aria-expanded="false" aria-controls="sk-body">Show</button></div></div>
         <div class="sg" id="sk-body" hidden>
-          <div class="sr"><div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, games" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div></div>
+          <div class="sr"><div class="keyrow"><input type="text" id="sk-filter" placeholder="Filter: a name, a word, yours, pinned, roblox" autocomplete="off" spellcheck="false" aria-label="Filter your skills"></div></div>
           <div class="sk-list sg-list" id="sk-list"><p class="sub">Loading...</p></div>
         </div>
       </section>
@@ -1886,7 +1886,7 @@ applyTheme();
 <aside class="drawer" id="pd" aria-label="Project"><div class="plate">
   <header><h2 id="pd-name">Project</h2><button class="icon" id="pd-close" aria-label="Close"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button></header>
   <p class="sub" id="pd-path"></p>
-  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A game gets the Roblox tools, PROJECT.md and Promos. A plain project is a regular program or anything else."><button role="radio" data-k="game">Game</button><button role="radio" data-k="plain">Project</button></div>
+  <div class="seg np-kind" id="pd-kind" role="radiogroup" aria-label="What kind of project" title="A Roblox game also gets Roblox Studio, the Roblox tools and guides, and Promos. Fridae marks a folder with a place file, a Rojo project or Luau scripts as one by itself."><button role="radio" data-k="plain">Project</button><button role="radio" data-k="game">Roblox game</button></div>
   <div class="act">
     <button class="pill" id="pd-folder">Open folder</button>
     <button class="pill" id="pd-bible">Open PROJECT.md</button>
@@ -1946,11 +1946,34 @@ try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (sa
 /* Everything the program can do: [name, one short line, an example to put in the message box (or a page to open),
    and a longer explanation that waits behind "More"]. */
 const GUIDE = [
-  ["Start a game", [
+  ["Start", [
+    ["Plan something new", "It asks about the idea, one question at a time, before building anything.", "This is a new project. Interview me about the idea before building anything, then write PROJECT.md."],
+    ["Learn an existing project", "It reads the folder, then writes up how the project works in PROJECT.md.", "Read through this project and write up how it works in PROJECT.md."],
+  ]],
+  ["Build and test", [
+    ["Features and fixes", "Reads the code first, keeps to the project's own conventions, and runs its tests after a change.", "Add a settings page that remembers the theme"],
+    ["Run the tests", "Runs the project's tests and the program itself, and fixes what fails.", "Run the tests and fix what fails"],
+    ["Images", "Icons, illustrations and UI art, made on your Gemini plan.", "Make an app icon: a paper plane on a soft blue square"],
+    ["Get a review", "A separate reviewer looks at finished work with fresh eyes, as a new user would.", "Have a critic review what we just built"],
+  ]],
+  ["Bigger jobs", [
+    ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first working version of this and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
+    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the project's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; for a Roblox game, leave Studio open. Pressing stop ends it."],
+    ["Studio", "A Lead takes the project through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a project's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
+    ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
+    ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
+    ["Knowledge vault", "Settings, Knowledge: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
+  ]],
+  ["Safety net", [
+    ["Checkpoint", "Before an overnight or studio run the project is committed to git, so it can go back.", "", "In a Roblox game, \"Take a checkpoint\" also saves every script of the place into the project folder."],
+    ["Undo the night", "A project's Review puts its files (and for a Roblox game, Studio) back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
+    ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
+    ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. A project's Review shows what that project has cost."],
+    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Settings, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
+  ]],
+  ["Roblox games", [
     ["Plan a new game", "It asks about the idea, one question at a time, before building anything.", "This is a new game. Interview me about the idea before building anything."],
     ["Learn an existing game", "It reads the open place and the folder, then writes up how the game works.", "Read through this game and write up how it works."],
-  ]],
-  ["Build", [
     ["3D models", "Modelled in Blender, checked from several angles, then placed in Studio.", "Model a street lamp and put it by the spawn"],
     ["Menus and HUDs", "Built from native Roblox UI and checked at phone size.", "Build a shop menu that matches the rest of the UI"],
     ["Visual effects", "Particles, beams and meshes, captured in slow motion to check the timing.", "Make a ground-slam effect with dust and a shockwave"],
@@ -1958,46 +1981,24 @@ const GUIDE = [
     ["Icons", "Renders items from the place as icons with clear backgrounds.", "Render icons for everything in ReplicatedStorage.Items"],
     ["Animations", "Poses a rig in Blender and brings the animation into Studio.", "Animate a two-handed sword swing for R15"],
     ["Scripts and systems", "Gameplay code, with saving, security and networking handled properly.", "Add a daily reward that saves between sessions"],
-  ]],
-  ["Test", [
     ["Playtest", "Plays the game with real clicks and key presses and reads the output.", "Playtest the shop and tell me what breaks"],
     ["Play like a new player", "Records a first session: where it got stuck and what was never found.", "Play the first five minutes like a new player and tell me what was confusing"],
     ["Performance", "Frame time, memory and part counts, compared with what a phone can take.", "Check performance in a playtest and tell me what is over budget"],
     ["Check a toolbox model", "Scans a model for hidden or risky scripts before you keep it.", "Check the model I have selected for hidden scripts"],
-  ]],
-  ["Design", [
     ["Balance the numbers", "Simulates prices, rewards and drop rates, and shows where progress stalls.", "Simulate our upgrade prices and tell me where progression stalls"],
     ["Look at the market", "Live player counts and ratings for similar Roblox games.", "Find the most played games like ours and what they do well"],
     ["Sound", "Finds sounds and measures them, so the loud part lands on the action.", "Add sounds to the sword swing and line them up with the hit"],
-  ]],
-  ["Promote", [
     ["Promo videos", "The Promos tab cuts a TikTok, Short or Reel from your gameplay clips.", "@promos", "An agent cuts it in a chat of its own, checks it, and keeps every promo in the tab's library. Your clips are used where they are, and nothing is posted anywhere."],
-  ]],
-  ["Bigger jobs", [
-    ["Full auto", "It never asks for permission, and keeps going until the job is done.", "Build a first playable of this game and keep going until it works: ", "Pick Full auto with the mode button in the message box. Every tool and command runs straight away. It still won't spend money or Robux, publish, or delete your work unless you asked in the chat. Pick Ask me to get the Allow buttons back."],
-    ["Overnight", "Full auto for up to 24 hours without you.", "", "Pick Overnight with the mode button in the message box. Questions wait for you in the game's Review under Needs you instead of stopping it, and when a job is done it picks the next one itself. It never spends money or publishes. It keeps the computer awake; leave Studio open. Pressing stop ends it."],
-    ["Studio", "A Lead takes the game through its stages and hands each part to an expert.", "@review", "Pick Studio with the mode button in a game's Chat and say what to make. The Lead goes through design, build, test, launch and promotion and keeps going. Each expert shows as one line in the Lead's chat: open it to read what that expert is doing. It stops only for your yes on the design plan and on ready to publish; it never publishes, spends or deletes. It runs on your own AI plan: set Experts at once to 1 in Review to use less, or Pause. Before the first run: sign in to the AI (claude auth login), keep Studio open with the Fridae plugin connected, and update the plugin to 2.8.0 (Settings, Connections, then restart Studio). Experts ask before running programs you haven't allowed."],
-    ["Review", "What is happening on a project, and what needs you.", "@review", "At the top, the run's state with Pause or Resume, its stages, what it has cost, and Run settings (where it waits for your approval, Experts at once, Undo this run, End this run). Needs you holds what stops the run, and the project's own to-dos. To look at lists finished work: open a line for its pictures or clips, then Approve, or write what should change and press Ask for changes, and a fresh expert of the same kind redoes it. Tell the run something sends a message to the Lead without leaving the page. A paused run keeps your messages until you press Resume."],
-    ["Split the work", "Hands parts of a big job to helpers that work at the same time.", "Split this into parallel tasks and build it: ", "It checks each helper's work. Each helper is one line in the chat that started it."],
-    ["Get a review", "A separate reviewer looks at finished work as a new player, a veteran and a cheater.", "Have a critic review what we just built"],
-    ["Knowledge vault", "Settings, Knowledge: get the skills and Roblox guides in Fridae's vault, and share yours.", "", "Download gets Fridae's vault, with no sign-in: skills, and the Roblox guides Fridae searches. Pull newest brings in what changed without overwriting yours: a file you never changed is updated; one you changed is left alone or, when both changes fit together, combined. When they clash, Fridae asks you here: keep the vault's or keep yours. Keeping the vault's sets yours aside, never deletes it. A skill that overlaps one you have waits for your decision too. To share your own skills and your changes to guides, turn on Share your knowledge, connect GitHub, and look over exactly what will be sent: keys, emails and your computer's username are hidden first, and scripts are shown first. Fridae's maintainer reads each one before anyone else gets it."],
-  ]],
-  ["Safety net", [
-    ["Checkpoint", "Saves every script into the project folder and its history.", "Take a checkpoint", "Changes can then be compared and restored."],
     ["Undo a turn", "The link under a finished turn takes back what it changed in Studio.", "", "Scripts included. It needs the Studio plugin (Settings, Connections)."],
-    ["Undo the night", "A game's Review puts Studio and the files back as they were before an overnight run.", "", "An overnight run starts with a checkpoint. In a chat with no project, which has no Review, the link is on the chat's own Checkpoint saved line. Studio must stay open, with the Fridae plugin 2.8.0 or newer (an older one blocks Studio's part); the night's files stay in git history."],
-    ["Undo this run", "Review, Run settings: go back to one of a studio run's checkpoints.", "", "A studio run takes a checkpoint when it starts and after each finished stage. Undoing leaves the run paused. The project's files can always go back, and today's versions stay in git history. Studio's scripts go back only if Studio has stayed open since that checkpoint (plugin 2.8.0 or newer; it keeps copies from the newest 24 checkpoints in its memory); your scripts as they were are saved first in the game's .fridae/before-undo folder. Otherwise it offers to undo the files only."],
-    ["Usage", "The count at the bottom left is today's tokens across every chat.", "", "Press it for your Claude plan limits (as of its last turn), and today's use by AI. Gemini, Cursor and OpenCode do not report their limits. A project's Review shows what that project has cost."],
-    ["Your notes", "When you correct an agent it saves a short note, and later agents read it first.", "", "Notes for every project are in your notes folder; notes for one project are in its .fridae/notes folder. A standing preference (always, never, from now on) becomes a house rule that every agent follows (Claude and OpenCode chats from their next turn; Gemini and Cursor chats from their next new chat). House rules never override the app's rules on spending, publishing or deleting. Settings, General, Your notes opens the folder: edit or delete any note there, and edit House rules.md like any text file. Ask an agent to forget a note and it moves it to the folder's .trash."],
   ]],
 ];
 /* How the app itself works, the same way: one short line, the rest behind "More". */
 const CONTROLS = [
   ["Overview", "A live graph of every project, its chats and its experts, with one card per project beside it.", "", "In the graph a square is a project, a dot a chat, and a small dot an expert tied to its Lead; what is working is bright. Press a project for its Review, a chat or an expert to open it; drag to arrange, scroll to zoom, double-click to fit. A card shows a project's run, what needs you and what it has cost; press it to open the project: its Review when something needs you, else its Chat. This page opens first when a project has a run going or something waits for you."],
-  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for a game or a plain project (a regular program, or anything else). Chats that belong to no project sit under No project."],
-  ["Chat, Review, Promos", "A project's tabs: talk to its agent and see what needs you. A game also has Promos (promo videos)."],
+  ["Projects, on the left", "A number means that many things wait for you; a pulsing dot means agents are working.", "", "Press the number to go to that project's Review. New project makes a folder for any project; mark it a Roblox game to add Roblox Studio and the Roblox tools. Chats that belong to no project sit under No project."],
+  ["Chat, Review, Promos", "A project's tabs: talk to its agent and see what needs you. A Roblox game also has Promos (promo videos)."],
   ["The chat's name", "Press it for the project's other chats, New chat and Rename.", "", "Closing a chat never deletes it: it stays under Earlier there. A chat can be deleted from that list or in Settings, Chats, and put back afterwards."],
-  ["The project's name", "Press it for the project's folder, its kind (Game or Project), notes and git history."],
+  ["The project's name", "Press it for the project's folder, its kind (Project or Roblox game), notes and git history."],
   ["The + in the message box", "Adds images, documents or video clips. Pasting or dropping them does the same."],
   ["The AI and model button", "Which AI and model this chat uses, and how much effort it puts in.", "", "You can switch at any time: a chat that has started carries on with the other AI, which is handed the chat so far (your messages and its replies) with your next message. When the chat is long, its older part goes as a short summary, written by a DeepSeek or GLM model of your OpenCode plan (or, for a chat going to Claude, by Claude's smallest model when OpenCode cannot). Common keys and passwords are masked where recognised, and the summary runs on your own plan either way. A Cursor or OpenCode model carries its own effort, so none is set for those. It applies from your next message. An AI that is not signed in says so there, with a Sign in button (OpenCode: \"Free models only\", until Fridae's OpenCode is signed in). Sign in opens the tool's usual sign-in: your Claude account, your Cursor account, your Google account. If you use an API key, a company gateway or an Enterprise plan, sign in in the tool itself instead."],
   ["More accounts", "Settings, Connections: more accounts for Claude or for Gemini, as many as you have.", "", "When the account a chat is on runs out of usage, the chat carries on with the next one that has usage left, by itself: a new conversation there, handed the chat so far, and your message is sent again. One line in the chat says so, and the account is shown beside the model. They are used in the order of the list in Settings, your own account first, and new chats use your own account again once it is back. Add account signs you in with the tool's usual sign-in, kept in a folder of Fridae's own: your own sign-in is never changed. Sign in to each with another account (sign out of the last one in your browser first), or it adds no usage. On an added Gemini account a command the agent runs sees that folder as its home, so your own keys and logins for other tools are not there. An added Gemini account keeps its sign-in in a keychain of its own, which Fridae makes in that folder and opens by itself: your Mac's own keychain is not used for it and is never changed."],
@@ -2006,7 +2007,7 @@ const CONTROLS = [
   ["Experts in a chat", "Each expert is a chat of its own, listed under the chat that started it in the sidebar.", "", "The arrow beside that chat shows or hides its experts; each row says who it is, what for, whether it is working and its AI. Those that have not worked for half an hour are behind one line (\"12 earlier\"); press it to see them. Press an expert to read its chat (read only; Stop is there while it works). In the chat that started it, one line marks where it began and opens it too. You never need to talk to them: the agent you talk to does."],
   ["Experts on another AI", "Settings, Experts: pick an AI and model for any expert.", "", "Until you do, each one runs on the Lead's AI and the same model as the Lead (so a Lead on a big model uses up that plan faster), and your choice always wins over the Lead's. OpenCode experts use the models Fridae's own OpenCode sign-in offers (Settings, Connections). The Lead may ask for another AI now and then too, unless you switch off \"The Lead may pick an AI for a job\" there. When an expert runs on something other than its Lead, its row says so (\"Cursor · Auto\")."],
   ["The amber dot (bottom left)", "Something is not connected. Press it to see what, in Settings."],
-  ["Selected in Studio", "With the Studio plugin connected, the agent is told what you have selected.", "", "The message box shows it, so \"this\" means that."],
+  ["Selected in Studio", "In a Roblox game, with the Studio plugin connected, the agent is told what you have selected.", "", "The message box shows it, so \"this\" means that."],
   ["Text size", "Ctrl (Cmd on a Mac) and + or - makes everything bigger or smaller; 0 resets it."],
   ["API keys on this computer", "Settings, Connections, Use API keys from my environment. Off unless you turn it on.", "", "An AI signed in with your plan is never billed to an API key set on this computer (such as ANTHROPIC_API_KEY). Turn it on if you sign in with a key or a company gateway; a failed sign-in says so when such a key is set. OpenCode never gets these keys, whatever the switch says: each would add a provider billed to it; sign in to OpenCode in Settings instead."],
   ["Settings changed mid-turn", "A change in Settings reaches a working agent from its next turn.", "", "This goes for the paid Gemini textures switch and the Blender path: a turn already running keeps what it started with (turning paid textures off mid-turn still lets that turn's textures be billed)."],
@@ -2157,8 +2158,7 @@ function showNewProject() { curProj = null; setView("newproj"); }
 function showAll() { curProj = null; setView("all"); }
 /* the page in front is a project's tab, or one of the two pages of no project: Overview and New project */
 const isPage = (v) => v === "newproj" || v === "all";
-/* Promos is a game's tab: a plain project and a chat with no project have none. A project the list
-   has not reached yet counts as a game, as every project did before kinds. */
+/* Promos is a Roblox game's tab: any other project and a chat with no project have none. */
 const isGameProj = (key) => !!key && kindOf(key) === "game";
 const gameTab = (v) => v === "promos";
 /* the views there are; any other (a tab saved before it was taken away, such as Ideas) opens Chat */
@@ -2570,6 +2570,7 @@ function paintView() {
 }
 function selectionHint() {
   const pl = status.plugin; if (!pl || !pl.connected || !pl.selection || !pl.selection.count) return "";
+  const p = agents.get(current); if (!isGameProj(p ? p.project : curProj)) return "";   /* Studio's selection: Roblox projects only */
   const it = pl.selection.items || []; const first = it[0] ? it[0].path.split(".").pop() + " (" + it[0].class + ")" : "";
   return '<span class="sel" title="The agent is told what you have selected in Studio.">Selected in Studio: ' + esc(first) + (pl.selection.count > 1 ? " +" + (pl.selection.count - 1) : "") + "</span>";
 }
@@ -2806,7 +2807,7 @@ async function loadProjects() {
 }
 function startCard(p) {
   const card = el("div", "ask start");
-  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, kind: "game", msg: "", paint };
+  const st = { step: p.project ? "ready" : "folder", name: "", parent: "", git: true, kind: "plain", msg: "", paint };
   p.start = st;
   const go = (step, msg) => { st.step = step; st.msg = msg || ""; paint(); };
   /* on an empty page (`p.draft`) the chat is made first; its own card then carries on */
@@ -2828,7 +2829,7 @@ function startCard(p) {
       if (projects.projects.length) h += '<p class="sub">Or carry on with a project:</p><div class="act">' + projects.projects.slice(0, 6).map((x, i) => '<button class="pill" data-p="' + i + '">' + esc(x.name) + "</button>").join("") + "</div>";
     } else if (st.step === "new") {
       h = "<h4>New project folder</h4>"
-        + '<div class="seg np-kind" role="radiogroup" aria-label="What kind of project">' + [["game", "Game"], ["plain", "Project"]].map(([k, t]) => '<button role="radio" data-a="k-' + k + '" class="' + (st.kind === k ? "on" : "") + '" aria-checked="' + (st.kind === k) + '">' + t + "</button>").join("") + "</div>"
+        + '<div class="seg np-kind" role="radiogroup" aria-label="What kind of project">' + [["plain", "Project"], ["game", "Roblox game"]].map(([k, t]) => '<button role="radio" data-a="k-' + k + '" class="' + (st.kind === k ? "on" : "") + '" aria-checked="' + (st.kind === k) + '">' + t + "</button>").join("") + "</div>"
         + '<p class="sub">' + esc(KIND_NOTE[st.kind]) + "</p>"
         + '<div class="keyrow"><input type="text" data-f="name" placeholder="Name of the project" aria-label="Name of the project" autocomplete="off" value="' + esc(st.name) + '"></div>'
         + '<p class="sub where">It goes in ' + esc(st.parent || parentFor(st.kind)) + ' &nbsp;<button class="linkish" data-a="where">Change</button></p>'
@@ -2842,7 +2843,7 @@ function startCard(p) {
         + '<p class="sub">New game: I ask about the idea before building. Already working on it: I read the place and the folder first.</p>';
     } else {
       const game = !plainProj(pr);
-      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (game && pr && pr.bible ? "The game's notes (PROJECT.md) are read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
+      h = "<h4>" + esc(pr ? pr.name : "Project") + "</h4><p>" + (pr && pr.bible ? "PROJECT.md is read first. Say what you want to work on." : "Say what you want to work on.") + "</p>"
         + (game ? '<div class="act"><button class="pill" data-a="ke">Read through the game again</button></div>' : '<div class="act"><button class="pill" data-a="kp">Read through the project</button></div>');
     }
     if (st.msg) h += '<p class="sub warn">' + esc(st.msg) + "</p>";
@@ -2926,6 +2927,9 @@ function openProject() {
 }
 function paintPdKind(pr) {
   for (const b of $("pd-kind").querySelectorAll("button")) { const on = b.dataset.k === (plainProj(pr) ? "plain" : "game"); b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false"); }
+  /* a Roblox game nobody marked: say how Fridae knew */
+  const found = !!pr && pr.kind_set === false && !plainProj(pr);
+  $("pd-kind").querySelector('[data-k="game"]').title = found ? "Fridae found a Roblox place, a Rojo project or Luau scripts in this folder. Press Project if it is not a Roblox game." : "";
 }
 for (const b of $("pd-kind").querySelectorAll("button")) b.onclick = async () => {
   const pr = frontProj(); if (!pr) return;
@@ -3106,9 +3110,9 @@ function paintGithubProject() {
 function needRows() {
   const have = (status.ai || {}).installed || {}, pl = status.plugin || {};
   const rows = AIS.map(([id, name, via, how]) => [!!have[id], name + " · " + via, have[id] ? (status.ai && status.ai.default === id ? "Ready. New chats start on it." : "Ready.") : "Not found. " + how]);
-  rows.push([!!status.studio, "Roblox Studio", status.studio ? "Its MCP server is on, so agents can work in your place." : "In Studio, open Assistant settings and turn on the MCP server."]);
+  rows.push([!!status.studio, "Roblox Studio", status.studio ? "Its MCP server is on, so agents in Roblox projects can work in your place." : "For Roblox projects. In Studio, open Assistant settings and turn on the MCP server."]);
   rows.push([!!pl.connected, "Studio plugin", pluginLine()]);
-  rows.push([!!status.blender, "Blender", status.blender ? "Found. Used for 3D models, icons and animations." : "Not found. Install Blender, then open Settings again."]);
+  rows.push([!!status.blender, "Blender", status.blender ? "Found. Roblox projects use it for 3D models, icons and animations." : "For Roblox projects. Not found: install Blender, then open Settings again."]);
   return rows;
 }
 function rowHtml([ok, name, what]) { return '<div class="c-row"><span class="dot' + (ok ? " ok" : "") + '"></span><div><b>' + esc(name) + "</b><small>" + esc(what) + "</small></div></div>"; }
@@ -3120,12 +3124,14 @@ function paintNeeds() {
   $("needs").innerHTML = rows.slice(AIS.length, AIS.length + 2).map(rowHtml).join("");
   $("needs-blender").innerHTML = rows.slice(AIS.length + 2).map(rowHtml).join("");
   /* the one dot at the bottom left: there only while something is not connected, and it opens Settings on what */
-  const off = [have[ai] ? "" : aiName(ai), status.studio ? "" : "Roblox Studio", status.blender ? "" : "Blender"].filter(Boolean);
+  /* Studio and Blender count only while a Roblox project is in front: nothing else uses them */
+  const rbx = isGameProj(curProj);
+  const off = [have[ai] ? "" : aiName(ai), status.studio || !rbx ? "" : "Roblox Studio", status.blender || !rbx ? "" : "Blender"].filter(Boolean);
   const dot = $("b-conn"); dot.hidden = !off.length;
   dot.title = "Not connected: " + off.join(", ") + ". Press to see how to fix it.";
   dot.setAttribute("aria-label", dot.title);
-  /* a new chat mentions only what is missing for building in Studio */
-  const missing = rows.filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === ai : r[1] === "Roblox Studio"));
+  /* a new chat mentions only what is missing for its work: its AI, and Studio for a Roblox project */
+  const missing = rows.filter((r, i) => !r[0] && (AIS[i] ? AIS[i][0] === ai : rbx && r[1] === "Roblox Studio"));
   document.querySelectorAll(".hello-needs").forEach((h) => (h.innerHTML = missing.map(rowHtml).join("")));
 }
 $("b-conn").onclick = () => openSetup("connections");
@@ -3374,8 +3380,8 @@ function paintNight() {
    With no checkpoint it says so, and points at no undo. */
 function paintNightTag(p) {
   const t = p.nightTag; if (!t) return;
-  const run = !!(p.studio || (p.night && p.night.run)), game = !!p.project;
-  t.querySelector("span").textContent = !nightSaved(p) ? (game ? "No checkpoint: no git in the project and Studio not connected" : "No checkpoint: Studio not connected")
+  const run = !!(p.studio || (p.night && p.night.run)), game = !!p.project, rbx = isGameProj(p.project);
+  t.querySelector("span").textContent = !nightSaved(p) ? (game ? (rbx ? "No checkpoint: no git in the project and Studio not connected" : "No checkpoint: the project has no git") : "No checkpoint: Studio not connected")
     : "Checkpoint saved" + (run ? " · Undo this run is in Review, under Run settings" : game ? " · Undo the night is in Review" : "");
   const b = t.querySelector("button"); if (b) b.hidden = run || game || !nightOpen(p);
 }
@@ -3624,7 +3630,7 @@ function onEvent(e) {
     if (p.busy) { p.replay = false; p.handedBack = false; pastApprovals(p); }   /* it has gone on: what it asked before is history */
   } else if (e.kind === "done") {
     const finished = p.turn;
-    if (finished && !isHelper(p) && e.id > bootMark && status.plugin && status.plugin.connected && finished.querySelector(".step")) {
+    if (finished && !isHelper(p) && e.id > bootMark && status.plugin && status.plugin.connected && isGameProj(p.project) && finished.querySelector(".step")) {
       p.col.querySelectorAll(".undo-turn:not(.said)").forEach((x) => x.remove());
       const u = el("button", "undo-turn", "Undo this turn in Studio");
       u.title = "Undoes the changes agents made in Studio since this turn began, and puts scripts back as they were. It stops if your own edit is the newest step.";
@@ -3765,7 +3771,7 @@ async function studioSend(p, text, ready, chosen) {
     return;
   }
   if (!chosen) { paintSwitch(); plainSend(p, text, names); return; }
-  if (runActive(r.run)) return back("This game's studio run is led by another chat.", pr.path);
+  if (runActive(r.run)) return back("This project's studio run is led by another chat.", pr.path);
   if (names.length) return back("Send files once the run has started: the message that starts it is words only.");
   if (!text) return back("Say what to make, then send.");
   startingRun = p.id; paintComposer();
@@ -3801,8 +3807,8 @@ $("mode").onclick = (ev) => { ev.stopPropagation(); if (togglePop("mode")) paint
 const RUN_MODES = [
   ["ask", "Ask me", "Does what you ask, then waits for you.", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks, and keeps going until done.", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in the game's Review under Needs you, it picks its own next job, and the computer stays awake. Leave Studio open. Pressing stop ends it."],
-  ["studio", "Studio", "A Lead and its experts build the game, stage by stage.", "A Lead takes this game through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
+  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in the project's Review under Needs you, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
+  ["studio", "Studio", "A Lead and its experts build the project, stage by stage.", "A Lead takes this project through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 let runMode = "ask";
 try {
@@ -3877,7 +3883,7 @@ function paintSwitch() {
   let n = $("mode").querySelector(".extra");
   if (extras.length && !n) { n = el("span", "extra"); $("mode-name").after(n); }
   if (n) { n.textContent = extras.length ? "+" + extras.length : ""; n.hidden = !extras.length; }
-  $("mode").title = cur.name + ": " + cur.line + (runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a game folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works.";
+  $("mode").title = cur.name + ": " + cur.line + (runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works.";
 }
 $("selftest").onclick = () => { selfTest = !selfTest; try { localStorage.setItem("selftest", selfTest ? "1" : "0"); } catch (e) {} paintSwitch(); };
 function setGeminiMode(v) { geminiMode = !!v; try { localStorage.setItem("gemini", geminiMode ? "1" : "0"); } catch (e) {} paintSwitch(); }
@@ -4267,15 +4273,15 @@ $("v-chat").onclick = () => setView("chat"); $("v-review").onclick = () => setVi
 $("b-proj").onclick = () => openProject();
 
 /* ---------- New project: Game or Project, a name and Create, or an existing folder ---------- */
-let npParent = "", npGit = true, npKind = "game";
-const KIND_NOTE = { game: "A Roblox game: the Studio tools, PROJECT.md and Promos.", plain: "A regular program, or anything else that is not a game." };
+let npParent = "", npGit = true, npKind = "plain";
+const KIND_NOTE = { plain: "Any project: an app, a site, a tool, or anything else.", game: "A Roblox game: also gets Roblox Studio, the Roblox tools and guides, and Promos." };
 const parentFor = (kind) => (kind === "plain" ? projects.default_parent_plain : projects.default_parent) || "";
 function openNewProject() {
   paintNewProject(); loadProjects().then(paintNewProject);
   setTimeout(() => $("np-name").focus(), 0);
 }
 function paintNewProject() {
-  $("np-where").innerHTML = "It goes in " + esc(npParent || parentFor(npKind) || (npKind === "plain" ? "your projects folder" : "your games folder")) + ' &nbsp;<button class="linkish" id="np-where-b">Change</button>';
+  $("np-where").innerHTML = "It goes in " + esc(npParent || parentFor(npKind) || (npKind === "plain" ? "your projects folder" : "your Roblox games folder")) + ' &nbsp;<button class="linkish" id="np-where-b">Change</button>';
   $("np-where-b").onclick = async () => { const r = await api("/api/project", { action: "pick" }); if (r.path) { npParent = r.path; paintNewProject(); } };
   $("np-git-row").hidden = !projects.git;
   $("np-git").setAttribute("aria-checked", npGit ? "true" : "false");
@@ -4982,7 +4988,7 @@ function paintRun(r) {
   const run = r && r.run && r.run.on ? r.run : null;
   $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
   const ended = r && r.run && !r.run.on && r.run.ended;
-  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run for this game.") + "</b> To start one, pick Studio with the mode button in Chat's message box.";
+  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run for this " + thingOf(rvPathNow()) + ".") + "</b> To start one, pick Studio with the mode button in Chat's message box.";
   if (!run) return;
   const [state, why, action, whole] = runState(r, run);
   $("rv-state").textContent = state;
@@ -5687,12 +5693,13 @@ function swTip(status, thing, role) {
     : status === "failed" ? "Its check did not pass. The board says what failed, and it is asked to fix it."
     : "";
 }
-/* Game wording for a game, plain words for anything else (the plain projects spec): a project of another type says
-   "project". An older project with no type is a game; chats with no project say "project". */
+/* A project is a Roblox game ("game") when the user marked it so or the app found a place, a Rojo project or Luau
+   scripts in its folder; every other project, one the list has not reached yet and a chat with no project are plain.
+   Game wording for a Roblox game, plain words for anything else. */
 function kindOf(path) {
   if (!path) return "plain";
   const pr = (projects.projects || []).find((x) => x.path === path), t = pr && (pr.type || pr.kind);
-  return !t || t === "game" || t === "roblox" ? "game" : "plain";
+  return t === "game" || t === "roblox" ? "game" : "plain";
 }
 const thingOf = (path) => (kindOf(path) === "game" ? "game" : "project");
 
@@ -6054,7 +6061,7 @@ async function loadNotes() {
   let r;
   try { r = await api("/api/notes?path=" + encodeURIComponent(path)); } catch (e) { return; }
   const lines = [notesLine(r.all, "For everything")];
-  if (r.game) lines.push(notesLine(r.game, "For this game"));
+  if (r.game) lines.push(notesLine(r.game, "For this project"));
   $("notes-state").textContent = lines.join(". ") + ".";
   $("notes-open-game").hidden = !r.game;
 }
@@ -6085,7 +6092,7 @@ let skData = null, skLoading = null, skAgain = false, skAt = 0, skPollT = 0, skP
 const skCards = new Map();   /* decision id -> {el, sig} */
 const skDone = new Map();    /* decision id -> what was decided, folded to one line until Skills is opened again */
 const SK_OWNER = { app: "Fridae's own", shipped: "Shipped with Fridae", community: "Community", user: "Yours" };
-const SK_APPLIES = { game: "Games", plain: "Projects", both: "Games and projects" };
+const SK_APPLIES = { game: "Roblox games", plain: "Projects", both: "Any project" };
 const SK_DONE = { keep: "Kept", replace: "Using the new one", merge: "Merged", keep_both: "Kept both" };
 const SK_DONE_NOTE = { keep: "Kept the first", replace: "Kept the second", merge: "Merged", keep_both: "Kept both" };
 const SCRIPTS_MARK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5L1.5 6 4 8.5M8 3.5L10.5 6 8 8.5M7 2L5 10"/></svg>';

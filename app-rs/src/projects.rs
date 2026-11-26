@@ -1,5 +1,7 @@
-//! Projects: one folder each, usually a git repository. A project is a game (GAME.md, the game bible, and the
-//! place's exported scripts; the Roblox tools, Ideas and Promos) or a plain one: a regular program or anything else.
+//! Projects: one folder each, usually a git repository, with its notes in PROJECT.md. Any kind of software project
+//! works the same way. A Roblox project (kind "game", the name it had when the app was for Roblox games only)
+//! also gets the Roblox tools: Studio, the place's exported scripts, the Roblox guides and Promos. The user marks it
+//! in the project's settings, or the app sees it in the folder (`looks_roblox`); every other project is "plain".
 
 use crate::paths::Start;
 use std::{
@@ -67,19 +69,72 @@ pub fn default_parent_plain() -> PathBuf {
     if paths::packaged() { PATHS.home.join("projects") } else { paths::work("projects") }
 }
 
-/// A project's kind as asked for: "plain" for a plain project, "game" for anything else.
-pub fn kind_word(asked: Option<&str>) -> &'static str {
-    if asked.is_some_and(|k| k.trim().eq_ignore_ascii_case("plain")) { "plain" } else { "game" }
+/// A project's kind as asked for: "game" for a Roblox project ("roblox" means the same), "plain" for any other; None
+/// for anything else ("auto": let the folder decide, `looks_roblox`).
+pub fn kind_word(asked: Option<&str>) -> Option<&'static str> {
+    match asked.map(|k| k.trim().to_ascii_lowercase()).as_deref() {
+        Some("game" | "roblox") => Some("game"),
+        Some("plain") => Some("plain"),
+        _ => None,
+    }
 }
 
-/// A saved project's kind. Projects saved before kinds existed are games.
+/// A saved project's kind: the one the user set, else what its folder looks like.
 fn kind_of(entry: &Value) -> &'static str {
-    kind_word(entry["kind"].as_str())
+    kind_word(entry["kind"].as_str()).unwrap_or_else(|| detected_kind(Path::new(entry["path"].as_str().unwrap_or(""))))
 }
 
-/// Whether a known project is a game (and an unknown folder is taken as one, as before kinds existed).
+/// "game" when the folder looks like a Roblox project, else "plain".
+fn detected_kind(dir: &Path) -> &'static str {
+    if looks_roblox(dir) { "game" } else { "plain" }
+}
+
+/// Whether a folder looks like a Roblox project: a place or model file (.rbxl, .rbxlx), a Rojo project
+/// (default.project.json or any *.project.json), Wally, Rokit or Aftman (wally.toml, rokit.toml, aftman.toml), Luau
+/// sources in `src` (a few folders down), or the place's scripts the app exported there (src/.manifest.json).
+pub fn looks_roblox(dir: &Path) -> bool {
+    const MARKERS: [&str; 4] = ["default.project.json", "wally.toml", "rokit.toml", "aftman.toml"];
+    let place = |name: &str| {
+        let n = name.to_ascii_lowercase();
+        n.ends_with(".rbxl") || n.ends_with(".rbxlx")
+    };
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+        if MARKERS.contains(&name.as_str()) || name.ends_with(".project.json") || place(&name) {
+            return true;
+        }
+    }
+    let src = dir.join("src");
+    src.join(".manifest.json").is_file() || has_luau(&src, 3, &mut 0)
+}
+
+/// Whether a folder holds a .luau file within `depth` folders, looking at no more than 2000 entries in all.
+fn has_luau(dir: &Path, depth: u32, seen: &mut u32) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else { return false };
+    let mut subs = Vec::new();
+    for e in entries.flatten() {
+        *seen += 1;
+        if *seen > 2000 {
+            return false;
+        }
+        let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".luau") {
+            return true;
+        }
+        if depth > 0 && !name.starts_with('.') && name != "node_modules" && e.file_type().is_ok_and(|t| t.is_dir()) {
+            subs.push(e.path());
+        }
+    }
+    subs.iter().any(|s| has_luau(s, depth - 1, seen))
+}
+
+/// Whether a project is a Roblox project: as the user set it, else as its folder looks (also for a folder that is not
+/// on the list).
 pub fn is_game(path: &str) -> bool {
-    saved().iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)).is_none_or(|p| kind_of(p) == "game")
+    match saved().iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)) {
+        Some(p) => kind_of(p) == "game",
+        None => looks_roblox(Path::new(path)),
+    }
 }
 
 pub fn same(a: &str, b: &str) -> bool {
@@ -104,9 +159,12 @@ pub fn describe(path: &str) -> Value {
     let dir = PathBuf::from(path);
     let entry = saved().into_iter().find(|p| same(p["path"].as_str().unwrap_or(""), path));
     let name = entry.as_ref().and_then(|p| p["name"].as_str().map(str::to_string)).unwrap_or_else(|| paths::base_name(path));
-    let kind = entry.as_ref().map_or("game", kind_of);
-    // `type` too: an agent's "project" event puts its own `kind` over this one
-    json!({"name": name, "path": path, "kind": kind, "type": kind, "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some()})
+    let set = entry.as_ref().and_then(|p| kind_word(p["kind"].as_str()));
+    let kind = set.unwrap_or_else(|| detected_kind(&dir));
+    // `type` too: an agent's "project" event puts its own `kind` over this one. `roblox`: the same as kind "game";
+    // `kind_set`: the user chose it (else the folder decided)
+    json!({"name": name, "path": path, "kind": kind, "type": kind, "roblox": kind == "game", "kind_set": set.is_some(),
+           "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some()})
 }
 
 /// Known projects, most recently used first.
@@ -114,16 +172,21 @@ pub fn list() -> Vec<Value> {
     saved().iter().filter_map(|p| p["path"].as_str()).map(describe).filter(|p| p["exists"] == true).collect()
 }
 
-/// Put a project at the top of the list. Without a `kind`, a project already on the list keeps its own.
+/// Put a project at the top of the list. Without a `kind`, a project already on the list keeps its own, and a new one
+/// has none: its folder decides (`looks_roblox`).
 fn remember(name: &str, path: &str, kind: Option<&str>) {
     save(remembered(saved(), name, path, kind));
 }
 
 fn remembered(list: Vec<Value>, name: &str, path: &str, kind: Option<&str>) -> Vec<Value> {
-    let was = list.iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)).map(kind_of);
-    let kind = kind.map(|k| kind_word(Some(k))).or(was).unwrap_or("game");
+    let was = list.iter().find(|p| same(p["path"].as_str().unwrap_or(""), path)).and_then(|p| kind_word(p["kind"].as_str()));
+    let kind = kind_word(kind).or(was);
     let mut list: Vec<Value> = list.into_iter().filter(|p| !same(p["path"].as_str().unwrap_or(""), path)).collect();
-    list.insert(0, json!({"name": name, "path": path, "kind": kind}));
+    let mut entry = json!({"name": name, "path": path});
+    if let Some(k) = kind {
+        entry["kind"] = json!(k);
+    }
+    list.insert(0, entry);
     list
 }
 
@@ -135,7 +198,8 @@ pub fn touch(path: &str) {
     }
 }
 
-/// Make a known project a game or a plain project.
+/// Make a known project a Roblox project ("game" or "roblox") or a plain one ("plain"); anything else ("auto") lets
+/// its folder decide again.
 pub fn set_kind(path: &str, kind: &str) -> Result<Value, String> {
     if !known(path) {
         return Err("That is not one of your projects.".into());
@@ -143,7 +207,13 @@ pub fn set_kind(path: &str, kind: &str) -> Result<Value, String> {
     let kind = kind_word(Some(kind));
     save(saved().into_iter().map(|mut p| {
         if same(p["path"].as_str().unwrap_or(""), path) {
-            p["kind"] = json!(kind);
+            match (kind, p.as_object_mut()) {
+                (Some(k), _) => p["kind"] = json!(k),
+                (None, Some(o)) => {
+                    o.remove("kind");
+                }
+                (None, None) => {}
+            }
         }
         p
     }).collect());
@@ -227,9 +297,12 @@ fn to_trash(_dir: &Path) -> Result<(), String> {
     Err("Fridae cannot move folders to the Trash here. Remove the project from Fridae, then delete its folder yourself.".into())
 }
 
-/// Make a new folder for a game or a plain project, optionally as a git repository.
+/// Make a new folder for a project, optionally as a git repository. A new project is plain unless `kind` makes it a
+/// Roblox project ("game" or "roblox").
 pub fn create(name: &str, parent: Option<&str>, git: bool, kind: Option<&str>) -> Result<Value, String> {
-    let kind = kind_word(kind);
+    // kept only when asked for: otherwise the folder decides later too (a Rojo project made in it later is Roblox)
+    let asked = kind_word(kind);
+    let kind = asked.unwrap_or("plain");
     let name = name.trim();
     let folder: String = name.chars().map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_') { c } else { '_' }).collect();
     let folder = folder.trim().to_string();
@@ -250,14 +323,14 @@ pub fn create(name: &str, parent: Option<&str>, git: bool, kind: Option<&str>) -
             note = format!("The folder was made, but git could not start a repository: {text}");
         }
     }
-    remember(name, &path, Some(kind));
+    remember(name, &path, asked);
     let mut p = describe(&path);
     p["note"] = json!(note);
     Ok(p)
 }
 
-/// Start using a folder that already exists. A `kind` makes it a game or a plain project; without one, a project
-/// already on the list keeps its kind and a new one is a game.
+/// Start using a folder that already exists. A `kind` makes it a Roblox or a plain project; without one, a project
+/// already on the list keeps its kind and a new one is what its folder looks like (`looks_roblox`).
 pub fn add(path: &str, kind: Option<&str>) -> Result<Value, String> {
     let dir = PathBuf::from(path.trim());
     if !dir.is_dir() {
@@ -465,12 +538,14 @@ mod tests {
 
     #[test]
     fn projects_saved_before_kinds_are_games_and_plain_is_kept() {
-        assert_eq!(kind_of(&json!({"name": "Lake", "path": "/g/Lake"})), "game");
+        assert_eq!(kind_of(&json!({"name": "Lake", "path": "/no/such/Lake"})), "plain", "no kind and nothing Roblox in it");
         assert_eq!(kind_of(&json!({"kind": "plain"})), "plain");
-        assert_eq!(kind_word(Some("Plain")), "plain");
-        assert_eq!(kind_word(Some("game")), "game");
-        assert_eq!(kind_word(Some("anything")), "game");
-        assert_eq!(kind_word(None), "game");
+        assert_eq!(kind_of(&json!({"kind": "game", "path": "/no/such/Lake"})), "game", "the user's choice wins");
+        assert_eq!(kind_word(Some("Plain")), Some("plain"));
+        assert_eq!(kind_word(Some("game")), Some("game"));
+        assert_eq!(kind_word(Some(" Roblox ")), Some("game"));
+        assert_eq!(kind_word(Some("auto")), None);
+        assert_eq!(kind_word(None), None);
     }
 
     #[test]
@@ -482,9 +557,11 @@ mod tests {
         let made_game = remembered(list.clone(), "Tool", "/p/Tool", Some("game"));
         assert_eq!(made_game[0]["kind"], "game");
         let old = remembered(list.clone(), "Lake", "/g/Lake", None);
-        assert_eq!(old[0]["kind"], "game");
-        let new = remembered(list, "App", "/p/App", Some("plain"));
+        assert_eq!(old[0], json!({"name": "Lake", "path": "/g/Lake"}), "no kind set: the folder decides");
+        let new = remembered(list.clone(), "App", "/p/App", Some("plain"));
         assert_eq!((new[0]["kind"].as_str(), new.len()), (Some("plain"), 3));
+        let fresh = remembered(list, "Other", "/p/Other", None);
+        assert!(fresh[0].get("kind").is_none());
     }
 
     #[test]
@@ -502,6 +579,45 @@ mod tests {
         for dir in ["/", "/Users", "/Users/me", "/Users/me/Documents", "/Users/me/Documents/Fridae Studios/games"] {
             assert!(trash_refusal(Path::new(dir), &protected, &[]).is_some(), "{dir} should stay");
         }
+    }
+
+    #[test]
+    fn roblox_projects_are_seen_in_their_folder() {
+        let root = paths::test_dir("looks-roblox");
+        let make = |name: &str, files: &[&str]| {
+            let d = root.join(name);
+            fs::create_dir_all(&d).unwrap();
+            for f in files {
+                let p = d.join(f);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(p, "").unwrap();
+            }
+            d
+        };
+        for (name, files) in [
+            ("place", &["build/notes.txt", "Lake.rbxl"][..]),
+            ("xml-place", &["Lake.RBXLX"][..]),
+            ("rojo", &["default.project.json"][..]),
+            ("rojo-named", &["lake.project.json"][..]),
+            ("wally", &["wally.toml"][..]),
+            ("rokit", &["rokit.toml"][..]),
+            ("luau", &["src/server/game/Main.server.luau"][..]),
+            ("exported", &["src/.manifest.json"][..]),
+        ] {
+            assert!(looks_roblox(&make(name, files)), "{name}");
+        }
+        for (name, files) in [
+            ("web", &["package.json", "src/index.ts", "README.md"][..]),
+            ("deep", &["src/a/b/c/d/far.luau"][..]),
+            ("deps", &["src/node_modules/x/y.luau"][..]),
+            ("rust", &["Cargo.toml", "src/main.rs", "GAME.md"][..]),
+        ] {
+            assert!(!looks_roblox(&make(name, files)), "{name}");
+        }
+        assert!(!looks_roblox(&root.join("not-there")));
+        assert_eq!(detected_kind(&root.join("rojo")), "game");
+        assert_eq!(detected_kind(&root.join("web")), "plain");
+        assert!(is_game(&root.join("rojo").display().to_string()), "a folder not on the list: as it looks");
     }
 
     #[test]

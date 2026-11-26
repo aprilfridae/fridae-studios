@@ -1,7 +1,9 @@
-Fridae - an AI helper for building Roblox games
-=======================================================
+Fridae - a desktop harness for AI coding agents
+===============================================
 
 Double-click  Fridae.exe  and tell it what you want built or tested.
+Any project works; a project marked as a Roblox game also gets Roblox Studio
+and the Roblox tools.
 
 It needs three things on your computer. An amber dot at the bottom left of
 the window shows while one of them is missing: press it and Setup says

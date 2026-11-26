@@ -575,7 +575,7 @@ pub fn folders() -> (PathBuf, PathBuf, PathBuf) {
 /// and the blocked card, Full auto's sandbox, the web.
 pub fn instructions(project: Option<&str>, allowed: &[String]) -> String {
     let game = match project.filter(|p| !p.is_empty()) {
-        Some(p) => format!(" The game's folder is added to your workspace: read and write the game's files (PROJECT.md included) by their full paths under {p}."),
+        Some(p) => format!(" The project's folder is added to your workspace: read and write the project's files (PROJECT.md included) by their full paths under {p}."),
         None => String::new(),
     };
     let programs = if allowed.is_empty() { "none yet".to_string() } else { allowed.join(", ") };

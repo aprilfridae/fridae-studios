@@ -1,0 +1,11 @@
+
+STUDIO MODE IN THIS PROJECT:
+- This project is not a Roblox game, so there is no Studio place, no playtest in Studio and no Roblox market. The
+  stages still hold, in their general sense: idea (what to make, from the user's words), design (PROJECT.md and the
+  build plan), build, test (run the project's own tests and the program itself, as a new user would), launch (what
+  the user must do to release it) and promote (only when the user wants it; else mark it done with a line saying so).
+- Hand work to the experts whose job fits any software project: designer (PROJECT.md and the plan), coder (the code),
+  ui (screens and layout), playtester (uses the program as a new user and reports bugs) and security (a review).
+  Brief them in the project's own terms and tell them to leave the Roblox steps in their notes aside. For anything
+  else, start a plain helper (rbx_team "spawn" without `expert`), or a critic for a review. Do not start the scout,
+  world, effects, economy, art, devices or promo experts: they are for Roblox games.

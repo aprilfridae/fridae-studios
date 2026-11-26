@@ -49,6 +49,32 @@ More tools, for when they fit:
   instance budgets, `session_recorder` to record what a playtest was like for the player, `sound_probe` to measure a sound.
 """.replace("{routing}", open(os.path.join(KIT, "routing.txt"), encoding="utf-8").read())
 
+# What a chat whose project is not a Roblox one is told (RBXKIT_ROBLOX=0): the general tools only.
+GENERAL_INSTRUCTIONS = """rbxkit: Fridae's tools for any project. rbx_vault searches the user's knowledge vault and notes (search
+it before answering or starting work, and save the user's corrections with action 'note'), rbx_skill lists and loads the
+user's skills, rbx_guide reads a guide, rbx_board keeps the project's board, rbx_team starts helpers that work at the
+same time, rbx_image makes or keeps an image on the user's own Gemini plan (a few considered ones, never batches), and
+rbx_video looks at a video. Tools that produce images return them: look before reporting visual work as done.
+"""
+
+# The tools only a Roblox project gets: Studio, Blender, textures and effects, the place's scripts, Roblox's market and
+# charts, the game's numbers and promos. Every other chat lists the rest (RBXKIT_ROBLOX=0, set by the app).
+ROBLOX_TOOLS = frozenset({"rbx_studio_snippet", "rbx_blender", "rbx_texture", "rbx_check_images", "rbx_icon", "rbx_animation",
+                          "rbx_studio_lock", "rbx_generate_texture", "rbx_vfx_package", "rbx_project", "rbx_economy",
+                          "rbx_research", "rbx_market", "rbx_promo"})
+
+
+def roblox_on():
+    """Whether this chat's project is a Roblox project: RBXKIT_ROBLOX from the app; unset (outside the app), yes."""
+    return os.environ.get("RBXKIT_ROBLOX", "1").strip() != "0"
+
+
+def listed_tools():
+    """The tools this chat gets: all of them for a Roblox project, else the general ones."""
+    tools = TOOLS + _extra_tools()
+    return tools if roblox_on() else [t for t in tools if t[0] not in ROBLOX_TOOLS]
+
+
 PREFACE = """> How to read this guide from an MCP client: tool names such as `execute_luau`, `screen_capture` or
 > `open_cloud_invoke` belong to the Roblox Studio MCP server. Where it says to run `rbx.py <command>`, you can
 > call the matching tool instead: blender -> rbx_blender, tex -> rbx_texture, sheet -> rbx_check_images,
@@ -1523,8 +1549,8 @@ TOOLS = [
      schema({"paths": {"type": "array", "items": S}, "no_preview": {"type": "boolean"}}, ["paths"]), t_check_images),
     ("rbx_icon", "Cut a transparent icon out of a screenshot of the Studio icon booth (see the 'workflow' guide, Icons).",
      schema({"screenshot": S, "name": S, "folder": S, "size": {"type": "integer"}}, ["screenshot", "name"]), t_icon),
-    ("rbx_image", "Make an AI-generated image, or keep one that already exists, saved in the game's project folder at an exact size. "
-     "Good for the game icon, thumbnail key art, UI art and concept art. Action 'generate' makes a new picture from `prompt` "
+    ("rbx_image", "Make an AI-generated image, or keep one that already exists, saved in the project folder at an exact size. "
+     "Good for icons, illustrations, key art (a game's icon and thumbnails too), UI art and concept art. Action 'generate' makes a new picture from `prompt` "
      "(through Google's Antigravity on the user's own Gemini plan; it can take a minute or two). Each picture costs some of "
      "that plan: make a few considered ones, never batches; a chat may start 12 in an hour and a game's whole team 30 "
      "(generated textures count too), and the user can switch this off in Setup. Action 'keep' brings an existing image "
@@ -1624,8 +1650,8 @@ TOOLS = [
              "limit": {"type": "integer", "description": "search: how many to return, 1 to 20 (default 10)"},
              "universe_ids": {"type": "array", "items": {"type": "integer"}, "description": "details: universe ids (not place ids), up to 50"}},
             ["action"]), t_market),
-    ("rbx_board", "The game's board (the user sees its needs cards in the game's Review tab), with columns todo (planned), doing (being worked on now), "
-     "needs (something only the user can do or decide) and done. Only for chats that belong to a game project. Keep it true: "
+    ("rbx_board", "The project's board (the user sees its needs cards in the project's Review tab), with columns todo (planned), doing (being worked on now), "
+     "needs (something only the user can do or decide) and done. Only for chats that belong to a project. Keep it true: "
      "'add' a card in doing when you start a real piece of work, 'move' it to done when it is finished and checked, add one in "
      "needs for each thing you need from the user (one clear action per card), and add planned work in todo. Action 'list' "
      "shows every card with its id. Titles are short and plain, like a task on a sticky note.",
@@ -1634,7 +1660,7 @@ TOOLS = [
              "note": {"type": "string", "description": "add/update: optional detail, one or two sentences"},
              "column": {"type": "string", "enum": ["todo", "doing", "needs", "done"], "description": "add (default doing) / move"},
              "id": {"type": "string", "description": "move/update: the card's id from list or add"}}, ["action"]), t_board),
-    ("rbx_stage", "Studio mode: move the game through its stages (idea, design, build, test, launch, promote), file review items "
+    ("rbx_stage", "Studio mode: move the project through its stages (idea, design, build, test, launch, promote), file review items "
      "with pictures or clips for the user to approve in the app, read their decisions, and keep lessons. Load the `studio` guide "
      "before using it.",
      schema({"action": {"type": "string", "enum": ["status", "stage", "review", "decisions", "lesson"]},
@@ -1703,12 +1729,15 @@ def handle(msg, began=None, placed=None):
         return {"protocolVersion": params.get("protocolVersion", "2024-11-05"),
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "rbxkit", "version": VERSION},
-                "instructions": INSTRUCTIONS}
+                "instructions": INSTRUCTIONS if roblox_on() else GENERAL_INSTRUCTIONS}
     if method == "ping":
         return {}
     if method == "tools/list":
-        return {"tools": [{"name": n, "description": d, "inputSchema": s} for n, d, s, _ in TOOLS + _extra_tools()]}
+        return {"tools": [{"name": n, "description": d, "inputSchema": s} for n, d, s, _ in listed_tools()]}
     if method == "tools/call":
+        if params.get("name") in ROBLOX_TOOLS and not roblox_on():
+            raise KeyError("%s is for Roblox projects. This chat's project is not marked as one (the user can mark it in "
+                           "the project's settings)." % params.get("name"))
         fn = _handler(params.get("name"))
         if not fn:
             raise KeyError("unknown tool: %s" % params.get("name"))

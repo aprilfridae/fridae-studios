@@ -241,7 +241,7 @@ pub fn prompt_for(question: &str, parts: &[Part]) -> String {
 
 fn prompt_with(material: &str, mark: &str) -> String {
     format!(
-        "You are the Librarian of a team of AI experts building a game in the app Fridae. A team member asked \
+        "You are the Librarian of a team of AI experts building a project in the app Fridae. A team member asked \
          the question below on the team's board. You have no tools: answer with the answer's text only.\n\n\
          Between the lines BEGIN {mark} and END {mark} is the question and, for each of its parts, the passages the app \
          found in the team's knowledge base, each under its note's title.\n\n\

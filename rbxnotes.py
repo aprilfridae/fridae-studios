@@ -51,7 +51,7 @@ def folder(scope, project):
     if scope == "all":
         root, base = home_notes(), rbxpaths.HOME_DIR
     elif not project:
-        raise KitError("This chat has no game project, so there are no game notes. Use scope 'all'.")
+        raise KitError("This chat has no project, so there are no notes for one project. Use scope 'all'.")
     else:
         root, base = game_notes(project), project
     if not _where_expected(root, base):
@@ -79,7 +79,7 @@ def scope_arg(a, project, default=True):
             return None
         scope = "game" if project else "all"
     if scope not in ("game", "all"):
-        raise KitError("scope must be 'game' (this game) or 'all' (every game).")
+        raise KitError("scope must be 'game' (this project) or 'all' (every project).")
     return scope
 
 
@@ -681,7 +681,7 @@ def run(action, a):
         if rule:
             add_rule(a.get("text"), scope, project)
             return ("House rule saved (%s). Every agent gets it from the next turn on." %
-                    ("this game" if scope == "game" else "everything"))
+                    ("this project" if scope == "game" else "everything"))
         replace = _flag(a.get("replace"))
         olds = supersedes_arg(a.get("supersedes"))
         import rbxupkeep  # the checks when a note is filed: no model, only the notes' words
@@ -694,7 +694,7 @@ def run(action, a):
                 return rbxupkeep.duplicate_text(dup, scope, want)
         title, path = write_note(a.get("text"), a.get("title"), scope, project, replace=replace, supersedes=olds)
         out = ("Note saved as '%s' (%s). Search finds it: rbx_vault action 'search' with shelf '%s'." %
-               (title, "this game" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
+               (title, "this project" if scope == "game" else "everything", "game" if scope == "game" else "yours"))
         if olds:
             out += " It replaces %s: kept, marked superseded, and ranked below it in search." % ", ".join(
                 "'%s'" % t for t in olds)

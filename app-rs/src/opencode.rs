@@ -1443,8 +1443,8 @@ pub fn servers_config(agent_id: &str, servers: &Value, extra: &[(String, String)
 /// changes, the web.
 pub fn instructions(project: Option<&str>, allowed: &[String], full: bool) -> String {
     let game = match project.filter(|p| !p.is_empty()) {
-        Some(p) => format!("Your working directory is the game's folder, {p}."),
-        None => "Your working directory is a scratch folder the app keeps for this chat; this chat has no game.".to_string(),
+        Some(p) => format!("Your working directory is the project's folder, {p}."),
+        None => "Your working directory is a scratch folder the app keeps for this chat; this chat has no project.".to_string(),
     };
     let programs = if allowed.is_empty() { "none yet".to_string() } else { allowed.join(", ") };
     let mode = if full {

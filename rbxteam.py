@@ -46,7 +46,7 @@ MAX_WAIT = 840
 LEAD_WAIT = 120   # a studio run's Lead waits at most this long at a time, so messages and decisions reach it
 LEAD_BOARD_WAIT = 60  # a swarm's Lead waits on the board at most this long: it sees new posts at its next step anyway
 UNSEEN_SHOWN = 12     # posts appended to a tool result at once
-RUN_ENDED = "This game's studio run was ended."
+RUN_ENDED = "This project's studio run was ended."
 
 
 class TeamError(KitError):

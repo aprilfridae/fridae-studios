@@ -171,7 +171,7 @@ fn lead_to_wake(lead: &Agent) -> bool {
 pub const NO_SLOT: &str = "All agent slots are in use. Wait for one to finish, or close a chat.";
 
 /// Why an expert is not started for the Lead of a run that was ended in Review.
-pub const RUN_ENDED: &str = "This game's studio run was ended.";
+pub const RUN_ENDED: &str = "This project's studio run was ended.";
 /// What a Lead is told when it tries to start an expert that changes the game while Studio cannot be reached.
 pub const NO_STUDIO: &str = "Roblox Studio is not open, or the Fridae plugin is not connected, so an expert that changes the game cannot work yet. Put one card on the board under needs asking the user to open the game in Roblox Studio, do work that needs no Studio, and start this expert again when that card is done.";
 
@@ -289,7 +289,8 @@ fn start(req: &Value) {
     let agent = if let Some(expert_id) = &expert {
         let expert_name = req["expert_name"].as_str().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(expert_id);
         let title = expert_title(expert_name, &name);
-        let writes = req["writes"].as_bool().unwrap_or(false);
+        // only an expert that changes a Roblox game's place needs Studio; in any other project it changes files
+        let writes = req["writes"].as_bool().unwrap_or(false) && project.as_deref().is_some_and(crate::projects::is_game);
         if let Some(why) = needs_studio(writes, studio_open()) {
             return refuse(why);
         }
@@ -742,7 +743,7 @@ mod tests {
         let res: Value = serde_json::from_str(&fs::read_to_string(paths::work("team-results").join("w-ended.json")).unwrap()).unwrap();
         assert_eq!(res["status"], "refused");
         assert_eq!(res["reason"], RUN_ENDED);
-        assert_eq!(RUN_ENDED, "This game's studio run was ended.");
+        assert_eq!(RUN_ENDED, "This project's studio run was ended.");
         agents::remove_agent(&lead.id);
     }
 

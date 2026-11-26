@@ -56,7 +56,7 @@ class WriteTests(NotesTestCase):
             self.assertIn(line, text)
         with self.in_project():
             out = self.vault("note", text="The shop uses the lantern palette.", title="Shop palette")
-        self.assertIn("this game", out)
+        self.assertIn("this project", out)
         self.assertEqual(self.files(os.path.join(self.project, ".fridae", "notes")), ["Shop palette.md"])
         with self.in_project():
             self.vault("note", text="Menus fade, never slide.", scope="all", title="Menu motion")
@@ -71,7 +71,7 @@ class WriteTests(NotesTestCase):
             self.vault("note", text="y" * (rbxnotes.RULE_CAP + 1), rule=True)
         with self.assertRaises(KitError) as cm:
             self.vault("note", text="game only", scope="game")
-        self.assertIn("no game project", str(cm.exception))
+        self.assertIn("has no project", str(cm.exception))
         for n in range(40):
             try:
                 self.vault("note", text="Rule number %d: %s" % (n, "keep it plain " * 4), rule=True)

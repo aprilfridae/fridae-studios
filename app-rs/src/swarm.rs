@@ -1211,10 +1211,12 @@ pub fn member_prompt(agent_id: &str) -> String {
             } else {
                 out += "\n- You only read and report: change no project files.";
             }
-            out += "\n- The board is a live thread: posts for you are shown to you at your next step while you work (no need to read the board for them). rbx_team action 'post' (to: [\"@name\"], [\"@role\"], [\"@all\"] or [\"@lead\"]; text) asks or tells another member directly; 'board' reads the recent posts; 'wait_board' waits for a post that mentions you.\n- Knowledge questions (how we do something, what the user likes, what was learned before): ask @librarian on the board rather than reading whole notes. To keep something worth knowing: post \"@librarian remember: ...\".\n- Roblox Studio is one shared place: before changing it, rbx_team action 'studio_turn' op 'take'; give it back with op 'give' as soon as your Studio part is done. File work needs no turn.\n- When your part is done, post kind 'done' with a one-line summary, then end your turn. When you are waiting on someone, post your question to them and end your turn: you are parked at no cost and woken when a post mentions you.";
+            if crate::projects::is_game(&run.project) {
+                out += "\n- Roblox Studio is one shared place: before changing it, rbx_team action 'studio_turn' op 'take'; give it back with op 'give' as soon as your Studio part is done. File work needs no turn.";
+            }
+            out += "\n- The board is a live thread: posts for you are shown to you at your next step while you work (no need to read the board for them). rbx_team action 'post' (to: [\"@name\"], [\"@role\"], [\"@all\"] or [\"@lead\"]; text) asks or tells another member directly; 'board' reads the recent posts; 'wait_board' waits for a post that mentions you.\n- Knowledge questions (how we do something, what the user likes, what was learned before): ask @librarian on the board rather than reading whole notes. To keep something worth knowing: post \"@librarian remember: ...\".\n- When your part is done, post kind 'done' with a one-line summary, then end your turn. When you are waiting on someone, post your question to them and end your turn: you are parked at no cost and woken when a post mentions you.";
         }
     }
-    let _ = run;
     out
 }
 
