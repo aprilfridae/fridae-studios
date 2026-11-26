@@ -773,7 +773,7 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-jump button:hover { background: var(--hover); color: var(--text); }
 .rv-jump button:active { background: var(--press); }
 .rv-jump button[aria-current="true"] { background: var(--press); color: var(--text); }
-.rv-jump button i { font: 600 12px/1 var(--mono); font-style: normal; color: var(--text); }
+.rv-jump button i { font-size: 12px; font-weight: 600; font-style: normal; font-variant-numeric: tabular-nums; color: var(--text); }
 .rv-secs { display: grid; gap: 12px; }
 .rv-sec { min-width: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); scroll-margin-top: calc(var(--rv-top-h, 104px) + 8px); }
 .rv-sec.settings-search-target-pulse { animation: settings-search-target-pulse 650ms ease-in-out 2; }
@@ -784,9 +784,11 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-sec-head:focus-visible { outline-offset: -2px; }
 .rv-sec-head[aria-expanded="true"] { border-radius: calc(var(--r-m) - 1px) calc(var(--r-m) - 1px) 0 0; }
 .rv-sec-head b { min-width: 0; font-size: 16px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-kind { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; font: 400 12px/16px var(--mono); letter-spacing: 0.01em; color: var(--faint); white-space: nowrap; }
+.rv-kind { flex: none; font-size: 13px; color: var(--faint); white-space: nowrap; }
 .rv-sec-note { flex: none; margin-left: auto; font-size: 13px; color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rv-sec-note.strong { color: var(--text); font-weight: 600; }
+/* an open section says what waits in its own lines: the count is only on a folded one */
+.rv-sec-head[aria-expanded="true"] .rv-sec-note { visibility: hidden; }
 .rv-sec-head svg { flex: none; color: var(--faint); transition: transform 180ms var(--ease); }
 .rv-sec-head[aria-expanded="true"] svg { transform: rotate(90deg); }
 /* a project with nothing going is one quiet line: no surface, lighter words */
@@ -795,19 +797,44 @@ body.review .body, body.promos .body, body.newproj .body, body.all .body { displ
 .rv-sec.quiet .rv-sec-head b { font-size: 14px; font-weight: 500; color: var(--dim); }
 .rv-sec.quiet .rv-sec-head:hover b { color: var(--text); }
 .rv-sec.quiet .rv-sec-note { color: var(--faint); }
-.rv-sec-body { padding: 16px 16px 24px; border-top: 1px solid var(--line); }
-/* Inside a section the scale steps down: the project's name leads, the run's state is one line under it, and the
-   parts are labelled quietly. Lists are rows between hairlines, never cards inside the section's card. */
+.rv-sec-body { padding: 0 16px 16px; }
+/* Inside a section: the run is one line (its state, a short reason, what it cost, Pause, and a button for its
+   settings), the parts are labelled quietly, and lists are rows with one hairline between items. */
+.rv-sec .rv-state { gap: 8px; }
 .rv-sec .rv-state b { font-size: 14px; }
-.rv-sec .rv-h { margin: 24px 0 8px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dim); }
-.rv-sec .rv-list { gap: 0; border-top: 1px solid var(--line); }
+.rv-sec .rv-state .rv-cost { margin-left: auto; padding-right: 4px; }
+.rv-sec .rv-state .icon[aria-expanded="true"] { background: var(--press); color: var(--text); }
+.rv-sec .rv-set { margin: 8px 0 0; padding: 0 0 4px; border-top: 0; }
+.rv-sec .rv-set > summary { display: none; }
+.rv-sec .rv-set .pr-label:first-of-type { margin-top: 8px; }
+.rv-lead { margin: 8px 0 0; font-size: 13px; }
+.rv-lead:empty { display: none; }
+.rv-sec .rv-empty p { min-width: 0; font-size: 13px; }
+.rv-sec .rv-empty b { font-weight: 400; color: var(--dim); }
+.rv-sec .rv-now { margin-top: 4px; }
+.rv-sec .rv-who { min-height: var(--h-s); font-size: 13px; }
+.rv-sec .rv-h { margin: 16px 0 4px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--dim); }
+.rv-sec .rv-h span { font: inherit; font-weight: 400; color: var(--faint); font-variant-numeric: tabular-nums; }
+.rv-sec .rv-none { padding: 0; background: none; }
+.rv-sec .rv-list { gap: 0; }
 .rv-sec .rv-list:empty { display: none; }
-.rv-sec .rv-list > .rv-item { padding: 16px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
-.rv-sec .rv-list > .rv-item:last-child { border-bottom: 0; }
-.rv-sec .rv-list > .rv-item.done { padding: 12px 0; }
-.rv-sec .rv-item.block .meta { color: var(--text); }
+.rv-sec .rv-list > .rv-item { padding: 12px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; }
+.rv-sec .rv-list > .rv-item:first-child { padding-top: 4px; }
+.rv-sec .rv-list > .rv-item:last-child { border-bottom: 0; padding-bottom: 4px; }
+.rv-sec .rv-list > .rv-item.done { padding: 8px 0; }
+.rv-sec .rv-item .meta { margin: 0 0 2px; font: 400 12px/16px inherit; font-family: inherit; letter-spacing: 0; color: var(--faint); }
+.rv-blocks { margin-right: 8px; font-weight: 500; color: var(--text); }
+.rv-sec .rv-item h4 { margin-bottom: 4px; font-size: 15px; }
+.rv-sec .rv-item .plain-words { max-width: 70ch; margin: 0 0 8px; padding: 0; border: 0; border-radius: 0; background: none; }
+.rv-sec .rv-item .plain-words b { display: none; }
+.rv-sec .rv-item .plain-words p { color: var(--dim); }
+.rv-sec .rv-item .more { margin: -4px 0 8px; }
+.rv-sec .rv-item .act { display: flex; flex-wrap: wrap; gap: 8px; }
+.rv-change[hidden] { display: none; }
+.rv-sec .rv-rows { border-top: 0; }
+.rv-sec .rv-lk:last-child { border-bottom: 0; }
 .rv-sec .rv-full .rv-item { padding: 0 8px 4px 60px; border: 0; border-radius: 0; background: none; }
-.rv-sec .rv-past { margin-top: 24px; }
+.rv-sec .rv-past { margin-top: 12px; padding-top: 0; border-top: 0; }
 @media (max-width: 760px) { .rv-sec .rv-full .rv-item { padding-left: 8px; } }
 /* inside a project's section the run is not a card of its own */
 .rv-sec .rv-run { padding: 0; border: 0; border-radius: 0; background: none; }
@@ -1422,7 +1449,7 @@ applyTheme();
       </div>
     </div>
     <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Sidebar width" aria-valuemin="200" aria-valuemax="480" aria-valuenow="232" tabindex="0" title="Drag to resize. Double-click to reset."></div>
-    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total"><b>0</b> tokens today</p><div id="use-rows"></div><p class="u-note">New tokens, as each AI reports them. A guide, not a bill.</p><details class="moreinfo"><summary>More</summary><p>Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
+    <div class="pop" id="use-pop"><div class="pop-head"><h5>Plan limits</h5><button class="linkish" id="use-open">Open Usage</button></div><div id="use-limits"></div><h5>Used today</h5><p class="u-total" id="use-total"><b>0</b> tokens today</p><div id="use-rows"></div><details class="moreinfo"><summary>How this is counted</summary><p>New tokens, as each AI reports them: a guide, not a bill. Tokens read, written and stored in cache are counted after every turn. Re-reads from cache are listed but not counted: they cost a fraction. Plans are limited by their own rules.</p></details></div>
   </aside>
 
   <main class="stage">
@@ -1531,13 +1558,14 @@ applyTheme();
         <div class="rv-empty" data-r="rv-empty" hidden>
           <p data-r="rv-empty-p"></p>
           <span class="rv-cost"></span>
-          <button class="pill" data-r="rv-to-chat">Go to Chat</button>
+          <button class="pill sm" data-r="rv-to-chat">Open chat</button>
         </div>
         <div data-r="rv-live" hidden>
-          <div class="rv-state"><span class="dot" data-r="rv-dot"></span><b data-r="rv-state"></b><span class="rv-why" data-r="rv-why"></span><button class="pill" data-r="rv-toggle" hidden></button></div>
-          <div class="rv-prog"><div class="rv-stages" data-r="rv-stages" hidden></div><span class="rv-cost"></span></div>
+          <div class="rv-state"><span class="dot" data-r="rv-dot"></span><b data-r="rv-state"></b><span class="rv-why" data-r="rv-why"></span><span class="rv-cost"></span><button class="pill sm" data-r="rv-toggle" hidden></button><button class="icon" data-r="rv-more" aria-label="Run settings" title="Run settings" aria-expanded="false"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3.5" cy="8" r="1.25"/><circle cx="8" cy="8" r="1.25"/><circle cx="12.5" cy="8" r="1.25"/></svg></button></div>
+          <div class="rv-stages" data-r="rv-stages" hidden></div>
           <details class="rv-set" data-r="rv-set">
             <summary><svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3"/></svg>Run settings</summary>
+            <p class="rv-lead" data-r="rv-lead"></p>
             <span class="pr-label">Wait for my approval after</span>
             <div class="rv-gates" data-r="rv-gates"></div>
             <span class="pr-label">Experts at once</span>
@@ -1555,8 +1583,7 @@ applyTheme();
         <p class="rv-err" data-r="rv-err"></p>
       </section>
       <div data-r="rv-now-wrap" hidden>
-        <h3 class="rv-h">Right now</h3>
-        <div class="rv-now" data-r="rv-now"></div>
+        <div class="rv-now" data-r="rv-now" role="group" aria-label="At work right now"></div>
       </div>
       <h3 class="rv-h">Needs you <span data-r="rv-needs-n"></span></h3>
       <p class="rv-none" data-r="rv-needs-none">Nothing needs you right now.</p>
@@ -2581,7 +2608,6 @@ function paintSide() {
         c.onkeydown = (ev) => { if (ev.key === "Enter") c.onclick(ev); };
         mark.appendChild(c);
       } else if (st.working) { mark.appendChild(el("span", "dot live")); mark.title = "Agents are working on it"; }
-      else { mark.appendChild(el("span", "dot")); mark.title = "Nothing is working on it"; }
       b.onclick = () => showProject(x.path);
       return b;
     }, (b) => putClass(b, "proj" + cls)));
@@ -5165,7 +5191,7 @@ function runState(r, run) {
   if (run.note === "slots") return r.waiting
     ? ["Waiting for a free slot", "Every agent slot is in use. Closing a chat frees one.", "resume", "Every agent slot is in use: the run's own experts count too. The Lead is woken as soon as one is free; closing a chat you are done with frees one. Resume tries again now."]
     : ["Waiting for a free slot", "Every agent slot is in use. The Lead waits for its experts.", "pause", "Every agent slot is in use: the run's own experts count too. The Lead waits for its experts, then tries again."];
-  if (r.waiting) return ["Waiting for you", "It has done all it can until you answer under Needs you.", "pause"];
+  if (r.waiting) return ["Waiting for you", "Answer under Needs you and it goes on.", "pause"];
   return ["Working", run.stage ? "On the " + stageName(run.stage).toLowerCase() + " stage." : "Getting started.", "pause"];
 }
 /* a section's stages, its Run settings, and Pause or Resume */
@@ -5186,6 +5212,7 @@ function rvBindSet(S) {
   };
   gates.onchange = () => settings({ gates: [...gates.querySelectorAll("input:checked")].map((i) => i.value) });
   max.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; max.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); settings({ max_experts: +b.dataset.n }); };
+$("rv-more").onclick = () => { const d = $("rv-set"); d.open = !d.open; $("rv-more").setAttribute("aria-expanded", d.open ? "true" : "false"); };
 $("rv-toggle").onclick = async () => {
   const b = $("rv-toggle"), action = b.dataset.action, path = S.path;
   b.disabled = true; $("rv-err").textContent = "";
@@ -5210,7 +5237,7 @@ function paintRun(S, r) {
   const run = r && r.run && r.run.on ? r.run : null;
   $("rv-empty").hidden = !!run; $("rv-live").hidden = !run;
   const ended = r && r.run && !r.run.on && r.run.ended;
-  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run for this " + thingOf(S.path) + ".") + "</b> To start one, pick Studio with the mode button in Chat's message box.";
+  $("rv-empty-p").innerHTML = "<b>" + (ended ? "The last studio run was ended " + esc(ago(r.run.ended)) + "." : "No studio run.") + "</b> Start one in Chat, with the mode button.";
   if (!run) return;
   const [state, why, action, whole] = runState(r, run);
   $("rv-state").textContent = state;
@@ -5219,7 +5246,8 @@ function paintRun(S, r) {
   const w = $("rv-why"), wsig = why + "|" + ((r.lead_live && run.lead) || "");
   if (w.dataset.sig !== wsig) {
     w.dataset.sig = wsig; w.textContent = why; w.title = whole || "";
-    if (r.lead_live && run.lead) { const b = el("button", "linkish", "Open the Lead's chat"); b.onclick = () => openChatById(run.lead); w.append(" ", b); }
+    /* the way to the Lead is with the run's settings, behind the button at the end of the line */
+    if (r.lead_live && run.lead) { const b = el("button", "linkish", "Open the Lead's chat"); b.onclick = () => openChatById(run.lead); $("rv-lead").replaceChildren(b); } else $("rv-lead").replaceChildren();
   }
   const t = $("rv-toggle"); t.hidden = !action; t.dataset.action = action; t.textContent = action === "resume" ? "Resume" : "Pause";
   t.classList.toggle("main", action === "resume");
@@ -5234,7 +5262,7 @@ function paintRun(S, r) {
    of To look at that holds this card) is told what was decided instead of the card folding to one line itself. */
 function rvItemCard(it, r, onDone) {
   const path = r.project;
-  const card = el("div", "ask rv-item enter" + (it.blocking ? " block" : ""), '<div class="rv-media"></div><div class="meta"></div><h4></h4><div class="plain-words rv-plain" hidden><b>In plain words</b><p></p></div><p class="rv-sum"></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button></div><div class="rv-change"><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Ask for changes</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const card = el("div", "ask rv-item enter" + (it.blocking ? " block" : ""), '<div class="rv-media"></div><div class="meta"></div><h4></h4><div class="plain-words rv-plain" hidden><b>In plain words</b><p></p></div><p class="rv-sum"></p><button class="more" hidden>Show all</button><div class="act"><button class="pill main">Approve</button><button class="pill rv-ask" aria-expanded="false">Ask for changes</button></div><div class="rv-change" hidden><input class="field" type="text" maxlength="600" placeholder="What should change?" aria-label="What should change"><button class="pill" disabled>Send</button></div><p class="rv-err"></p><div class="rv-said"></div>');
   card.dataset.id = it.id;
   const media = it.media || [], row = card.querySelector(".rv-media");
   if (!media.length) row.remove();
@@ -5245,13 +5273,17 @@ function rvItemCard(it, r, onDone) {
     const b = el("button"), im = new Image(); im.alt = f; im.loading = "lazy"; im.src = src;
     b.setAttribute("aria-label", "Enlarge " + f); b.appendChild(im); b.onclick = () => zoom(src); row.appendChild(b);
   });
-  card.querySelector(".meta").textContent = [expertName(r, it), it.stage ? stageName(it.stage) : "", it.blocking ? "the run waits for this" : "", it.created ? ago(it.created) : ""].filter(Boolean).join("  ·  ");
+  const meta = card.querySelector(".meta");
+  meta.textContent = [expertName(r, it), it.created ? ago(it.created) : ""].filter(Boolean).join(" · ");
+  if (it.blocking) { const m = el("b", "rv-blocks", "Blocks the run"); m.title = "The run waits for your answer to this"; meta.prepend(m); }
   card.querySelector("h4").textContent = it.title || "Untitled";
   const plainBox = card.querySelector(".rv-plain");
   if (it.plain) { plainBox.querySelector("p").textContent = it.plain; plainBox.hidden = false; } else plainBox.remove();
   const sum = card.querySelector(".rv-sum"), more = card.querySelector(".more");
   sum.textContent = it.summary || "";
   if (!it.summary) sum.remove();
+  /* with plain words, those are what is read first: the expert's own text is behind More */
+  else if (it.plain) { sum.hidden = true; more.hidden = false; more.textContent = "More"; more.onclick = () => { sum.hidden = !sum.hidden; more.textContent = sum.hidden ? "More" : "Less"; }; }
   else if (it.summary.length > 320 || it.summary.split("\n").length > 6) { sum.classList.add("clamp"); more.hidden = false; more.onclick = () => { const open = sum.classList.toggle("clamp"); more.textContent = open ? "Show all" : "Show less"; }; }
   const approve = card.querySelector(".act .pill"), box0 = card.querySelector(".rv-change"), input = box0.querySelector("input"), send0 = box0.querySelector(".pill"), err = card.querySelector(".rv-err");
   const decide = async (body, said) => {
@@ -5265,8 +5297,10 @@ function rvItemCard(it, r, onDone) {
   approve.onclick = () => decide({ action: "approve" }, "Approved: " + (it.title || "Untitled"));
   const sendChange = () => { const note = input.value.trim(); if (!note) { err.textContent = "Say what to change."; input.focus(); return; } decide({ action: "change", note }, "Changes asked for: " + note); };
   send0.onclick = sendChange;
+  const ask = card.querySelector(".rv-ask");
+  ask.onclick = () => { box0.hidden = !box0.hidden; ask.setAttribute("aria-expanded", box0.hidden ? "false" : "true"); if (!box0.hidden) input.focus(); };
   input.oninput = () => { send0.disabled = !input.value.trim(); err.textContent = ""; };
-  input.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChange(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); input.value = ""; send0.disabled = true; input.blur(); } };
+  input.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); sendChange(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); input.value = ""; send0.disabled = true; box0.hidden = true; ask.setAttribute("aria-expanded", "false"); ask.focus(); } };
   input.onblur = () => { if (rvDeferred) setTimeout(paintReview, 0); };
   return card;
 }
@@ -5299,7 +5333,7 @@ function rvLookRow(it, r) {
 function needsDone(path, c) { if (path && c && c.title) api("/api/review", { path, action: "needs_done", title: c.title }).catch(() => {}); }
 /* a board card in the needs column: only the user can do it, so it is answered here too */
 function rvNeedCard(c, path) {
-  const card = el("div", "ask rv-item enter", '<div class="meta">A to-do only you can do</div><h4></h4><p></p><div class="act"><button class="pill main">Done</button></div><p class="rv-err"></p><div class="rv-said"></div>');
+  const card = el("div", "ask rv-item enter", '<div class="meta">Only you can do this</div><h4></h4><p></p><div class="act"><button class="pill main">Done</button></div><p class="rv-err"></p><div class="rv-said"></div>');
   card.querySelector("h4").textContent = c.title || "";
   const p = card.querySelector("p"); if (c.note) p.textContent = c.note; else p.remove();
   const done = card.querySelector(".act .pill"), err = card.querySelector(".rv-err");
@@ -5362,10 +5396,10 @@ function paintCost(S) {
   const cost = rvCost(S.path);
   let html = "", title = "";
   if (cost.turns) {
-    const money = cost.usd >= 0.01, top = Math.max(0.0001, ...cost.days);
+    const money = cost.usd >= 0.01;
     const sum = money ? "$" + (cost.usd >= 10 ? Math.round(cost.usd) : cost.usd.toFixed(2)) : fmtTokens(cost.tokens) + " tokens";
-    html = '<span class="spark" aria-hidden="true">' + cost.days.map((d) => '<i style="height:' + Math.max(d ? 3 : 1, Math.round((d / top) * 16)) + 'px"></i>').join("") + "</span><span>" + esc(sum + " · " + cost.turns + (cost.turns === 1 ? " turn" : " turns")) + "</span>";
-    title = (money ? "About $" + cost.usd.toFixed(2) + " so far, at API prices" + (cost.run ? ", $" + cost.run.toFixed(2) + " of it in this run" : "") : fmtTokens(cost.tokens) + " new tokens so far") + ". The bars are the last seven days.";
+    html = "<span>" + esc(sum + " · " + cost.turns + (cost.turns === 1 ? " turn" : " turns")) + "</span>";
+    title = (money ? "About $" + cost.usd.toFixed(2) + " so far, at API prices" + (cost.run ? ", $" + cost.run.toFixed(2) + " of it in this run" : "") : fmtTokens(cost.tokens) + " new tokens so far") + ".";
   }
   S.root.querySelectorAll(".rv-cost").forEach((c) => { if (c.dataset.sig !== html) { c.dataset.sig = html; c.innerHTML = html; c.title = title; } });
 }
@@ -5413,6 +5447,7 @@ function nowRows(path, still) {
   const row = (p, who, what, when) => {
     const b = el(still ? "div" : "button", "rv-who" + (p.busy ? " busy" : ""), '<span class="dot' + (p.busy ? " live" : "") + '"></span><b></b><span></span><em></em>');
     b.querySelector("b").textContent = who; b.querySelector("b + span").textContent = what; b.querySelector("em").textContent = when || "";
+    b.dataset.chat = p.id;
     if (!still) { b.onclick = () => openChatById(p.id); b.title = isHelper(p) ? "Open this expert's chat" : "Open this chat"; }
     return b;
   };
@@ -5430,7 +5465,10 @@ function nowRows(path, still) {
 /* Right now is there only while someone is working on the game */
 function paintNow(S) {
   const $ = S.$;
-  const rows = nowRows(S.path);
+  /* the Lead alone is what the state line already says: the lines are for experts and other chats at work */
+  let rows = nowRows(S.path);
+  const r0 = rvAll[S.path], lead = r0 && r0.run && r0.run.on ? r0.run.lead : "";
+  if (rows.length === 1 && lead && rows[0].dataset.chat === lead) rows = [];
   $("rv-now-wrap").hidden = !rows.length;
   $("rv-now").replaceChildren(...rows);
   paintNight(S);
