@@ -47,6 +47,8 @@ def main():
     import build as ui_build
     ui_build.bundle()
     print("Building the window (Rust) ...")
+    # names kept in the program, so a stack snapshot (`sample Fridae`) from a Mac that hangs can be read
+    os.environ["CARGO_PROFILE_RELEASE_STRIP"] = "false"
     run("cargo", "build", "--release", cwd=os.path.join(KIT, "app-rs"))
     print("Building the tools (Python) ...")
     dist, work = os.path.join(OUT, "dist"), os.path.join(OUT, "build")

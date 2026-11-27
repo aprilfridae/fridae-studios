@@ -164,6 +164,28 @@ fn widen_path() {
     }
 }
 
+/// On a Mac (and Linux), each startup step is printed to Terminal and kept in `~/Library/Logs/Fridae/startup.txt`,
+/// so a copy that never shows its window says which step it is stuck in. Nothing on Windows.
+pub(crate) fn step(what: &str) {
+    #[cfg(not(windows))]
+    {
+        use std::io::Write;
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let ms = START.get_or_init(std::time::Instant::now).elapsed().as_millis();
+        let line = format!("Fridae startup {ms:>6} ms  {what}");
+        let _ = writeln!(std::io::stderr(), "{line}");
+        let dir = paths::home_dir().join("Library").join("Logs").join("Fridae");
+        let _ = fs::create_dir_all(&dir);
+        let file = dir.join("startup.txt");
+        let fresh = what == "started";
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).write(true).append(!fresh).truncate(fresh).open(file) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+    #[cfg(windows)]
+    let _ = what;
+}
+
 fn main() {
     // started by git as its askpass helper for a GitHub push the user pressed (github.rs): answer and end
     if let Some(code) = github::askpass_main() {
@@ -176,6 +198,7 @@ fn main() {
             std::process::exit(swarm::live::hook_main(&args[i + 1..]));
         }
     }
+    step("started");
     #[cfg(target_os = "macos")]
     widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)
@@ -194,22 +217,29 @@ fn main() {
     }
     // what a crash of the app left running (an AI's processes, OpenCode's server and its helper) ends now, before
     // any turn can start (see procs)
+    step("ending what a crash left running");
     procs::reap_orphans();
+    step("settings");
     paths::start_settings(); // the guarded settings: the copy outside the AIs' folders wins (paths::GUARDED)
+    step("OpenCode helpers");
     opencode::reap();
     let testing = env::var("RBXKIT_SELFTEST").ok().filter(|v| !v.is_empty());
+    step("first chat");
     agents::new_agent(None);
     agents::keep_awake();
     thread::spawn(usage::tidy);
     if let Some(message) = testing {
         return self_test(&message);
     }
+    step("reopening chats");
     agents::restore_open();
     // the knowledge index chosen in Setup (Off / Light / Heavy): its service starts in the background, and is ended
     // on quit (`agents::shut_down` -> `rag::shut_down`)
+    step("knowledge index");
     rag::start_on_launch();
 
     // an update that finished downloading last time goes in before the window opens
+    step("updates");
     if paths::packaged() {
         match update::staged_version() {
             Some(staged) if update::newer(&staged, VERSION) && update::state()["auto"] == true => {
@@ -222,7 +252,9 @@ fn main() {
         }
         thread::spawn(update::run_forever);
     }
+    step("page server");
     let url = server::start(paths::random_hex(3));
+    step("window");
     thread::spawn(remote_host::start); // network access for the user's other computers, when they left it on
     thread::spawn(vault_sync::watch); // the shared skill vault: a check once a day, after the first Download
 
@@ -275,7 +307,9 @@ fn main() {
         wry::DragDropEvent::Drop { paths, .. } => promo::dropped(paths),
         _ => false,
     });
+    step("page view");
     let built = builder.build(&window);
+    step("open");
     let _webview = match built {
         Ok(view) => view,
         Err(_) => {

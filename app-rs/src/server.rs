@@ -733,9 +733,13 @@ pub fn start(token: String) -> String {
     thread::spawn(studio_watch::watch);
     thread::spawn(crate::studio_undo::watch);
     thread::spawn(crate::skills::upkeep_watch); // the user's notes checked once a week while no agent works
+    crate::step("skills");
     crate::skills::warm(None); // the skill index made behind now, so the first message after launch has suggestions
+    crate::step("Roblox Studio plugin");
     plugin::start();
+    crate::step("sign-in checks");
     crate::signin::start(); // who is signed in to Claude Code, Cursor and Gemini (Gemini's answer is its model list)
+    crate::step("model lists");
     codex::load_models();
     cursor::load_models();
     opencode::load_models();
