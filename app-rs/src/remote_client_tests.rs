@@ -31,6 +31,8 @@ struct HostState {
     token: Option<String>,
     revoked: bool,
     pair_tries: u32,
+    /// Requests that got as far as their first line: none may arrive over a certificate the client refused.
+    requests: u32,
 }
 
 struct FakeHost {
@@ -62,6 +64,9 @@ fn host_answer(tls: native_tls::TlsStream<TcpStream>, st: &Mutex<HostState>) {
     let mut r = BufReader::new(tls);
     let mut line = String::new();
     r.read_line(&mut line).unwrap();
+    if !line.is_empty() {
+        st.lock().unwrap().requests += 1;
+    }
     let mut parts = line.split_whitespace();
     let (method, target) = (parts.next().unwrap_or("").to_string(), parts.next().unwrap_or("").to_string());
     let mut heads = Vec::new();
@@ -157,6 +162,7 @@ fn saved(id: &str, addr: &str, token: Option<&str>) -> Machine {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn saved_computers_keep_the_token_protected() {
     let b = book("store");
     let secret = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -164,6 +170,7 @@ fn saved_computers_keep_the_token_protected() {
     let raw = fs::read_to_string(&b.path).unwrap();
     assert!(raw.contains("\"m1\"") && raw.contains("10.0.0.5"), "{raw}");
     assert!(!raw.contains(secret), "the token is in the file as plain text");
+    assert!(!raw.contains(&B64.encode(secret)), "the token is in the file as plain base64");
     let again = Book::open(&b.path);
     assert_eq!(again.token_of("m1").as_deref(), Some(secret));
     let shown = again.find("m1").unwrap();
@@ -182,6 +189,7 @@ fn the_page_token_is_left_out_of_the_query() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn pairing_with_a_wrong_code_is_refused_and_a_right_one_saves_the_computer() {
     let b = book("pair");
     let h = fake_host();
@@ -203,16 +211,18 @@ fn pairing_with_a_wrong_code_is_refused_and_a_right_one_saves_the_computer() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn pairing_refuses_a_certificate_other_than_the_one_found() {
     let b = book("pair-fp");
     let h = fake_host();
     let r = pair_with(&b, &me(), &json!({"addr": "127.0.0.1", "port": h.port, "code": CODE, "fp": "ab".repeat(32)}));
     assert_eq!(r["ok"], false);
-    assert_eq!(h.state.lock().unwrap().pair_tries, 0, "the proof was sent to the wrong certificate");
+    assert_eq!(h.state.lock().unwrap().requests, 0, "a request was sent to a certificate other than the one found");
     assert!(b.find(HOST_ID).is_none());
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn forwarding_passes_status_query_and_body_but_not_the_page_token() {
     let (b, _h) = paired("forward");
     let heads = vec![("Range".to_string(), "bytes=0-9".to_string()), ("X-Token".to_string(), "PAGESECRET".to_string())];
@@ -232,6 +242,7 @@ fn forwarding_passes_status_query_and_body_but_not_the_page_token() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn a_changed_certificate_is_refused() {
     let (b, _h) = paired("changed");
     b.set_fp(HOST_ID, &"ab".repeat(32));
@@ -240,6 +251,7 @@ fn a_changed_certificate_is_refused() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn a_401_from_the_host_marks_the_computer_unpaired() {
     let (b, h) = paired("revoked");
     h.state.lock().unwrap().revoked = true;
@@ -252,6 +264,7 @@ fn a_401_from_the_host_marks_the_computer_unpaired() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn a_computer_that_does_not_answer_is_offline() {
     let (b, _h) = paired("offline");
     b.set_port(HOST_ID, closed_port());
@@ -260,6 +273,7 @@ fn a_computer_that_does_not_answer_is_offline() {
 }
 
 #[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
 fn the_background_check_follows_whether_a_computer_answers() {
     let (b, h) = paired("check");
     b.set_port(HOST_ID, closed_port());
@@ -296,4 +310,75 @@ fn finding_lists_who_answers_and_updates_a_saved_address() {
     assert_eq!((f["id"].as_str(), f["addr"].as_str(), f["port"].as_u64(), f["paired"].as_bool()), (Some(HOST_ID), Some("127.0.0.1"), Some(47999), Some(true)));
     assert_eq!(f["fp"], fixture_fp());
     assert_eq!(b.find(HOST_ID).unwrap()["addr"], "127.0.0.1");
+}
+
+/// A TLS host on 127.0.0.1 with the test certificate that reads the start of a request and then misbehaves.
+fn hostile_host(misbehave: fn(&mut native_tls::TlsStream<TcpStream>)) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let identity = native_tls::Identity::from_pkcs12(P12, "fridae-test").unwrap();
+    let acceptor = Arc::new(native_tls::TlsAcceptor::new(identity).unwrap());
+    thread::spawn(move || {
+        for tcp in listener.incoming().flatten() {
+            let acceptor = acceptor.clone();
+            thread::spawn(move || {
+                if let Ok(mut tls) = acceptor.accept(tcp) {
+                    let mut buf = [0u8; 1024];
+                    let _ = tls.read(&mut buf);
+                    misbehave(&mut tls);
+                }
+            });
+        }
+    });
+    port
+}
+
+/// A header line that never ends: the client gives up after a few kilobytes instead of filling its memory.
+fn endless_header(tls: &mut native_tls::TlsStream<TcpStream>) {
+    let _ = tls.write_all(b"HTTP/1.1 200 OK
+X-Endless: ");
+    let block = [b'a'; 16 * 1024];
+    while tls.write_all(&block).is_ok() {}
+}
+
+/// One byte every 300 ms, for ever: each read gets something, so only an overall deadline ends it.
+fn trickle(tls: &mut native_tls::TlsStream<TcpStream>) {
+    for b in b"HTTP/1.1 200 OK
+".iter().chain(std::iter::repeat(&b'a')) {
+        if tls.write_all(&[*b]).and_then(|_| tls.flush()).is_err() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(300));
+    }
+}
+
+#[test]
+fn an_endless_header_is_refused_before_it_fills_memory() {
+    let port = hostile_host(endless_header);
+    let t = std::time::Instant::now();
+    assert_eq!(call_json("127.0.0.1", port, None, "GET", "/remote/hello", None, Duration::from_secs(10)).err(), Some(Fail::Offline));
+    assert!(t.elapsed() < Duration::from_secs(5), "took {:?}", t.elapsed());
+    let r = pair_with(&book("endless"), &me(), &json!({"addr": "127.0.0.1", "port": port, "code": CODE}));
+    assert_eq!(r["ok"], false);
+}
+
+#[test]
+fn a_host_that_trickles_bytes_is_given_up_on_at_the_deadline() {
+    let port = hostile_host(trickle);
+    let t = std::time::Instant::now();
+    assert_eq!(call_json("127.0.0.1", port, None, "GET", "/remote/hello", None, Duration::from_secs(2)).err(), Some(Fail::Offline));
+    assert!(t.elapsed() < Duration::from_secs(4), "took {:?}", t.elapsed());
+}
+
+#[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+fn one_slow_computer_does_not_hold_up_the_check_of_the_others() {
+    let (b, _h) = paired("check-slow");
+    b.add(saved("slow", "127.0.0.1", Some("t0k")));
+    b.set_port("slow", hostile_host(trickle));
+    let t = std::time::Instant::now();
+    check_all_within(&b, Duration::from_secs(2));
+    assert!(t.elapsed() < Duration::from_secs(4), "took {:?}", t.elapsed());
+    assert_eq!(b.find(HOST_ID).unwrap()["online"], true);
+    assert_eq!(b.find("slow").unwrap()["online"], false);
 }

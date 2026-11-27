@@ -30,8 +30,16 @@ use crate::remote_common::{self, DISCOVER_ASK, DISCOVER_PORT, LISTEN_PORT, same}
 
 /// How long to wait for another computer to accept a connection.
 const CONNECT_WAIT: Duration = Duration::from_secs(5);
-/// How long one read may wait: longer than the page's long-poll (`/api/events?wait=20`).
+/// How long one read may wait, and how long a forwarded call may take to start its answer: longer than the page's
+/// long-poll (`/api/events?wait=20`).
 const READ_WAIT: Duration = Duration::from_secs(60);
+/// The whole of a small call (hello, pair, the background check), connecting included. Pairing's host works out the
+/// slow proof inside it.
+const QUICK_WAIT: Duration = Duration::from_secs(15);
+/// The longest status, header or chunk-size line read from another computer, and the most header lines: a host
+/// that never ends a line cannot fill this computer's memory.
+const LINE_LIMIT: u64 = 8 * 1024;
+const MAX_HEADERS: usize = 100;
 /// The largest request body passed on, as the local server allows.
 const BODY_LIMIT: u64 = 64_000_000;
 /// How often every saved computer is asked whether it is there.
@@ -257,24 +265,69 @@ enum Fail {
     Changed,
 }
 
-fn fingerprint(tls: &TlsStream<TcpStream>) -> Option<String> {
+/// The connection under TLS, with an overall deadline: each read and write may wait only until `end` (and never
+/// longer than `READ_WAIT`), so a host that sends one byte at a time cannot hold a call open for ever. `end` is
+/// None while a forwarded answer's body streams (a video takes as long as it takes, but each read still has 60 s).
+struct Timed {
+    tcp: TcpStream,
+    end: Option<Instant>,
+}
+
+impl Timed {
+    fn wait(&self) -> io::Result<Duration> {
+        let Some(end) = self.end else { return Ok(READ_WAIT) };
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() { Err(io::ErrorKind::TimedOut.into()) } else { Ok(left.min(READ_WAIT)) }
+    }
+}
+
+impl Read for Timed {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.tcp.set_read_timeout(Some(self.wait()?))?;
+        self.tcp.read(buf)
+    }
+}
+
+impl Write for Timed {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.tcp.set_write_timeout(Some(self.wait()?))?;
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.tcp.flush()
+    }
+}
+
+/// One line (status, header, chunk size), at most `LINE_LIMIT` bytes, without its line ending.
+fn read_line<R: BufRead>(r: &mut R) -> io::Result<String> {
+    let mut raw = Vec::new();
+    r.take(LINE_LIMIT).read_until(b'\n', &mut raw)?;
+    match raw.last() {
+        Some(b'\n') => Ok(String::from_utf8_lossy(&raw).trim_end().to_string()),
+        None => Err(io::ErrorKind::UnexpectedEof.into()),
+        Some(_) => Err(io::ErrorKind::InvalidData.into()),
+    }
+}
+
+fn fingerprint(tls: &TlsStream<Timed>) -> Option<String> {
     let der = tls.peer_certificate().ok()??.to_der().ok()?;
     Some(remote_common::hex(&Sha256::digest(der)))
 }
 
 /// Open TLS to `addr:port`. With `pin`, the certificate must be that one; without (only while pairing), whatever
 /// it shows is returned for the caller to check. Nothing is written before this returns.
-fn connect(addr: &str, port: u16, pin: Option<&str>) -> Result<(TlsStream<TcpStream>, String), Fail> {
+/// The handshake is inside the deadline `end` too.
+fn connect(addr: &str, port: u16, pin: Option<&str>, end: Instant) -> Result<(TlsStream<Timed>, String), Fail> {
+    let wait = CONNECT_WAIT.min(end.saturating_duration_since(Instant::now())).max(Duration::from_millis(1));
     let tcp = (addr, port)
         .to_socket_addrs()
         .map_err(|_| Fail::Offline)?
-        .find_map(|a| TcpStream::connect_timeout(&a, CONNECT_WAIT).ok())
+        .find_map(|a| TcpStream::connect_timeout(&a, wait).ok())
         .ok_or(Fail::Offline)?;
-    let _ = tcp.set_read_timeout(Some(READ_WAIT));
-    let _ = tcp.set_write_timeout(Some(READ_WAIT));
     // a self-signed certificate on an address no authority knows: the pin below is the check instead
     let connector = TlsConnector::builder().danger_accept_invalid_certs(true).danger_accept_invalid_hostnames(true).build().map_err(|_| Fail::Offline)?;
-    let tls = connector.connect(addr, tcp).map_err(|_| Fail::Offline)?;
+    let tls = connector.connect(addr, Timed { tcp, end: Some(end) }).map_err(|_| Fail::Offline)?;
     let fp = fingerprint(&tls).ok_or(Fail::Offline)?;
     match pin {
         Some(p) if !same(&fp, &p.to_ascii_lowercase()) => Err(Fail::Changed),
@@ -311,11 +364,7 @@ struct Chunked<R> {
 
 impl<R: BufRead> Chunked<R> {
     fn line(&mut self) -> io::Result<String> {
-        let mut s = String::new();
-        if self.inner.read_line(&mut s)? == 0 {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-        Ok(s.trim_end().to_string())
+        read_line(&mut self.inner)
     }
 }
 
@@ -330,7 +379,13 @@ impl<R: BufRead> Read for Chunked<R> {
             self.left = u64::from_str_radix(size, 16).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
             if self.left == 0 {
                 // the trailer, if any, up to its empty line
-                while !self.line()?.is_empty() {}
+                let mut lines = 0;
+                while !self.line()?.is_empty() {
+                    lines += 1;
+                    if lines > MAX_HEADERS {
+                        return Err(io::ErrorKind::InvalidData.into());
+                    }
+                }
                 self.done = true;
                 return Ok(0);
             }
@@ -349,8 +404,11 @@ impl<R: BufRead> Read for Chunked<R> {
 }
 
 /// One request over a fresh pinned connection (`Connection: close`); returns the answer and the fingerprint seen.
-fn request(addr: &str, port: u16, pin: Option<&str>, method: &str, target: &str, headers: &[(String, String)], body: &[u8]) -> Result<(Answer, String), Fail> {
-    let (mut tls, fp) = connect(addr, port, pin)?;
+/// Connecting, sending and the answer's status and headers must all happen within `wait`; with `whole`, reading the
+/// body too, else the body only has `READ_WAIT` for each read.
+#[allow(clippy::too_many_arguments)]
+fn request(addr: &str, port: u16, pin: Option<&str>, method: &str, target: &str, headers: &[(String, String)], body: &[u8], wait: Duration, whole: bool) -> Result<(Answer, String), Fail> {
+    let (mut tls, fp) = connect(addr, port, pin, Instant::now() + wait)?;
     let host = if addr.contains(':') { format!("[{addr}]:{port}") } else { format!("{addr}:{port}") };
     let mut head = format!("{method} {target} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     for (k, v) in headers {
@@ -363,22 +421,23 @@ fn request(addr: &str, port: u16, pin: Option<&str>, method: &str, target: &str,
     tls.write_all(head.as_bytes()).and_then(|_| tls.write_all(body)).and_then(|_| tls.flush()).map_err(|_| Fail::Offline)?;
 
     let mut r = BufReader::new(tls);
-    let mut line = String::new();
-    r.read_line(&mut line).map_err(|_| Fail::Offline)?;
+    let line = read_line(&mut r).map_err(|_| Fail::Offline)?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or(Fail::Offline)?;
     let mut heads = Vec::new();
     loop {
-        let mut h = String::new();
-        if r.read_line(&mut h).map_err(|_| Fail::Offline)? == 0 {
-            return Err(Fail::Offline);
-        }
-        let h = h.trim_end();
+        let h = read_line(&mut r).map_err(|_| Fail::Offline)?;
         if h.is_empty() {
             break;
+        }
+        if heads.len() >= MAX_HEADERS {
+            return Err(Fail::Offline);
         }
         if let Some((k, v)) = h.split_once(':') {
             heads.push((k.trim().to_string(), v.trim().to_string()));
         }
+    }
+    if !whole {
+        r.get_mut().get_mut().end = None;
     }
     let mut answer = Answer { status, headers: heads, body: Box::new(io::empty()), len: Some(0) };
     let chunked = answer.header("Transfer-Encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
@@ -399,11 +458,11 @@ fn request(addr: &str, port: u16, pin: Option<&str>, method: &str, target: &str,
     Ok((answer, fp))
 }
 
-/// A small JSON call (hello, pair): the answer's status and body.
-fn call_json(addr: &str, port: u16, pin: Option<&str>, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value, String), Fail> {
+/// A small JSON call (hello, pair, the check): the answer's status and body, all within `wait`.
+fn call_json(addr: &str, port: u16, pin: Option<&str>, method: &str, path: &str, body: Option<&Value>, wait: Duration) -> Result<(u16, Value, String), Fail> {
     let raw = body.map(|b| b.to_string().into_bytes()).unwrap_or_default();
     let heads = if body.is_some() { vec![("Content-Type".to_string(), "application/json".to_string())] } else { vec![] };
-    let (answer, fp) = request(addr, port, pin, method, path, &heads, &raw)?;
+    let (answer, fp) = request(addr, port, pin, method, path, &heads, &raw, wait, true)?;
     let mut text = Vec::new();
     answer.body.take(1_000_000).read_to_end(&mut text).map_err(|_| Fail::Offline)?;
     Ok((answer.status, serde_json::from_slice(&text).unwrap_or_default(), fp))
@@ -443,16 +502,14 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     if code.is_empty() {
         return failed("Type the pairing code shown on the other computer.");
     }
-    let hello = match call_json(&addr, port, None, "GET", "/remote/hello", None) {
+    // a computer from finding has told us its certificate: hold it to that before sending anything. Only one typed
+    // in by address is met without a pin, and the proof below ties the certificate it shows to the code.
+    let found = body["fp"].as_str().filter(|f| !f.is_empty());
+    let (status, hello, fp) = match call_json(&addr, port, found, "GET", "/remote/hello", None, QUICK_WAIT) {
         Ok(h) => h,
-        Err(_) => return failed(UNREACHABLE),
+        Err(Fail::Changed) => return failed("That computer's identity didn't match the one found. Try finding it again."),
+        Err(Fail::Offline) => return failed(UNREACHABLE),
     };
-    let (status, hello, fp) = hello;
-    if let Some(found) = body["fp"].as_str().filter(|f| !f.is_empty())
-        && !same(&found.to_ascii_lowercase(), &fp)
-    {
-        return failed("That computer's identity didn't match the one found. Try finding it again.");
-    }
     let host_id = hello["id"].as_str().unwrap_or("").to_string();
     if status != 200 || hello["fridae"] != 1 || host_id.is_empty() {
         return failed("That address doesn't answer like Fridae.");
@@ -463,7 +520,7 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     let my_id = me["id"].as_str().unwrap_or("");
     let ask = json!({"device_id": my_id, "device_name": me["name"], "proof": remote_common::proof(&code, &fp, my_id)});
     // pinned to the certificate the proof was made for: a different one now means someone sits in between
-    let answer = match call_json(&addr, port, Some(&fp), "POST", "/remote/pair", Some(&ask)) {
+    let answer = match call_json(&addr, port, Some(&fp), "POST", "/remote/pair", Some(&ask), QUICK_WAIT) {
         Ok((_, v, _)) => v,
         Err(Fail::Changed) => return failed("That computer's identity changed while pairing. Try again."),
         Err(Fail::Offline) => return failed(UNREACHABLE),
@@ -522,7 +579,7 @@ pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(St
     };
     let mut heads: Vec<(String, String)> = headers.iter().filter(|(k, _)| PASSED_ON.iter().any(|p| p.eq_ignore_ascii_case(k))).cloned().collect();
     heads.push(("Authorization".into(), format!("Bearer {token}")));
-    match request(&addr, port, Some(&fp), method, &target, &heads, body) {
+    match request(&addr, port, Some(&fp), method, &target, &heads, body, READ_WAIT, false) {
         Ok((answer, _)) => {
             book.seen(id, true);
             if answer.status == 401 {
@@ -540,11 +597,21 @@ pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(St
 
 /// Ask every saved computer whether it is there (its hello, pinned to its certificate).
 pub fn check_all(book: &Book) {
-    for id in book.ids() {
-        let Some((addr, port, fp, _)) = book.route(&id) else { continue };
-        let there = matches!(call_json(&addr, port, Some(&fp), "GET", "/remote/hello", None), Ok((200, v, _)) if v["id"] == id.as_str());
-        book.seen(&id, there);
-    }
+    check_all_within(book, QUICK_WAIT)
+}
+
+/// Each computer is asked on its own thread, within `wait`, so one slow computer cannot hold up the others or the
+/// next round.
+pub(crate) fn check_all_within(book: &Book, wait: Duration) {
+    thread::scope(|s| {
+        for id in book.ids() {
+            s.spawn(move || {
+                let Some((addr, port, fp, _)) = book.route(&id) else { return };
+                let there = matches!(call_json(&addr, port, Some(&fp), "GET", "/remote/hello", None, wait), Ok((200, v, _)) if v["id"] == id.as_str());
+                book.seen(&id, there);
+            });
+        }
+    });
 }
 
 // ---- finding ----
@@ -560,10 +627,14 @@ pub fn discover_on(book: &Book, me_id: &str, bind: &str, targets: &[SocketAddr],
     let saved: Vec<Value> = book.all();
     let mut found: Vec<Value> = Vec::new();
     let end = Instant::now() + wait;
-    let mut buf = [0u8; 2048];
+    let mut buf = vec![0u8; 64 * 1024];
     while let Some(left) = end.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
         let _ = sock.set_read_timeout(Some(left));
-        let Ok((n, from)) = sock.recv_from(&mut buf) else { break };
+        let (n, from) = match sock.recv_from(&mut buf) {
+            Ok(got) => got,
+            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => break,
+            Err(_) => continue,
+        };
         let Ok(v) = serde_json::from_slice::<Value>(&buf[..n]) else { continue };
         let (id, fp) = (v["id"].as_str().unwrap_or(""), v["fp"].as_str().unwrap_or("").to_ascii_lowercase());
         let port = v["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
