@@ -37,7 +37,7 @@ export function troubleSaid(m: string) {
   const t = troubleOf(m), n = nameOf(m);
   return t === "unpaired" ? n + " needs pairing again. Your message is still here."
     : t === "changed" ? n + "'s identity changed. Pair it again to be sure it is yours. Your message is still here."
-    : n + " can't be reached right now, so nothing was sent. Your message is still here.";
+    : "Couldn't reach " + n + ". Make sure Fridae is open there with Let my other computers connect on, and that both are on the same network. Your message is still here.";
 }
 /* the path of a call to the app's server on that computer */
 export const at = (m: string, path: string) => (m ? "/m/" + encodeURIComponent(m) + path : path);

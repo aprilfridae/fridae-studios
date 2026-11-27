@@ -305,9 +305,12 @@ export function addFile(file: File | null) {
   reader.onerror = () => { C.pending = C.pending.filter((b) => b !== a); poke(); note("Could not read " + a.label + "."); };
   reader.readAsDataURL(file);
 }
+export const CLIPS_HERE_ONLY = "Video clips can only be added to chats on this PC.";
 /* Videos and music go in the message as [clip: <path>] lines: the agent uses them where they are, nothing is copied. */
 export function addClips(paths: string[]) {
   const b = C.box; if (!b || !paths.length) return;
+  /* they are this computer's files: the other computer's AI could not reach them */
+  if (boxMachine()) { note(CLIPS_HERE_ONLY); return; }
   const lines = paths.map((p) => "[clip: " + p + "]").join("\n");
   b.value = b.value.replace(/\s+$/, "") + (b.value.trim() ? "\n" : "") + lines + "\n";
   fit(); b.focus();
@@ -315,6 +318,8 @@ export function addClips(paths: string[]) {
 /* A file the app attached itself: it was dropped together with videos, so the page never saw the drop. */
 export async function attachedHere(e: any) {
   if (!e.ok) { note(e.error || "Could not attach " + (e.label || "that file") + "."); return; }
+  /* the app attached it on this computer: a chat on another computer could not open it */
+  if (boxMachine()) { note("Files dropped with videos can only go to chats on this PC. Use + to add them here."); return; }
   const url = "/att/" + encodeURIComponent(e.name) + "?t=" + TOKEN, ask = e.kind === "image" ? waitingAsk() : null;
   if (ask) {
     const blob = await (await fetch(url)).blob(), r = new FileReader();

@@ -12,6 +12,7 @@ import { C, EFFORTS, EFFORT_NAMES, accountWords, addClips, addFile, closePops, e
 import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
 import { MachineChip } from "../remote/Machines";
+import { boxMachine } from "../remote/remote";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 /* the chosen row of a menu */
@@ -178,7 +179,8 @@ export function Dock() {
             <button class="c-add" id="add" aria-haspopup="menu" aria-expanded={C.pop === "add" ? "true" : "false"} aria-label="Add files" title="Add images, documents or video clips. You can also paste them or drop them on the window." onClick={pop("add")}><svg width="12" height="12" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8" /></svg></button>
             <div class={"menu" + (C.pop === "add" ? " on" : "")} id="add-menu" role="menu">
               <button class="opt" id="attach" role="menuitem" onClick={() => { chose("add"); file.current!.click(); }}><span class="tick" /><span><b>Images or documents</b></span></button>
-              <button class="opt" id="add-clips" role="menuitem" onClick={async () => { chose("add"); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); }}><span class="tick" /><span><b>Video clips</b><small>Used where they are, not copied.</small></span></button>
+              {/* clips are used where they are, on this computer: not for a chat on another one (ui/src/remote) */}
+              <button class="opt" id="add-clips" role="menuitem" disabled={!!boxMachine()} onClick={async () => { chose("add"); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); }}><span class="tick" /><span><b>Video clips</b><small>{boxMachine() ? "Only for chats on this PC." : "Used where they are, not copied."}</small></span></button>
             </div>
           </span>
           {/* which computer it runs on (ui/src/remote) */}

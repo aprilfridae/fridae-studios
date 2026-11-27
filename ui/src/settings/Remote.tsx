@@ -65,7 +65,7 @@ export function Remote() {
       <SettingsRow id="set-remote-on" title="Let my other computers connect" labelFor="remote-on"
         desc="Your other computers on this network, or on Tailscale, can run chats here after you pair them."
         ctl={<Switch id="remote-on" on={on} onChange={(v) => load({ action: v ? "on" : "off" })} />}>
-        {on && !devices.length && <p class="sr-status">Windows may ask whether Fridae can use the network. Press Allow.</p>}
+        {on && <p class="sr-status">If your other computers can't find this one, Windows may be blocking Fridae. In Windows Settings › Network, set this network to Private, and allow Fridae when Windows asks.</p>}
         {h && h.error && <p class="sr-status rm-error">{h.error}</p>}
       </SettingsRow>
       {on && h && h.port !== null && (

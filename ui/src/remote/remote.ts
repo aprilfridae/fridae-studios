@@ -145,4 +145,21 @@ export function choose(m: string) {
   host.newChat(m ? withM(m, "") : cameFrom !== null && !machineOf(cameFrom) ? cameFrom : "");
 }
 
+/* Forget a paired computer (the pair dialog's Paired computers): this computer stops using it, and its chats and
+   projects leave the page at once. They stay on that computer; pairing it again brings them back. */
+export async function forget(m: string) {
+  let r: any = null;
+  try { r = await api("/api/remote/forget", { id: m }); } catch (e) {}
+  if (!r || !r.ok) return false;
+  const was = boxMachine() === m || machineOf(H.curProj) === m;
+  /* its open chats close first, while their ids still name it */
+  const gone = H.agents ? [...H.agents.keys()].filter((id: string) => machineOf(id) === m) : [];
+  if (gone.length) host.remoteEvents(gone.map((agent: string) => ({ kind: "agent_removed", agent, id: Number.MAX_SAFE_INTEGER })));
+  for (const t of [cursor, boots, projs, hist, stat]) delete (t as any)[m];
+  store.set({ machines: store.get().machines.filter((x) => x.id !== m) });
+  if (was) host.newChat("");
+  await Promise.all([host.loadProjects(), host.reloadSaved()]);
+  return true;
+}
+
 export function start() { loadMachines(); setInterval(loadMachines, 20000); }

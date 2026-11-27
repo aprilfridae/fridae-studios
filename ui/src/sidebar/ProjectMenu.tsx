@@ -7,6 +7,7 @@ import { cell, store } from "../store";
 import { host } from "../host";
 import { askDelete } from "./DeleteProject";
 import { renameProject } from "./Rename";
+import { machineOf } from "../remote/route";
 
 type At = Element | { x: number; y: number };
 /* the menu that is open (`on`), or the one last shown: its rows stay as they were while it fades */
@@ -57,7 +58,8 @@ export function ProjectMenu() {
   return (
     <div class={"menu ctx" + (m.on ? " on" : "")} id="proj-menu" ref={ref} role="menu" aria-label={m.name} onKeyDown={keys}>
       {path !== "" && item("Rename", () => renameProject(path))}
-      {path !== "" && item("Open folder", () => { api("/api/project", { action: "open", path, what: "folder" }); const row = projRow(path); if (row) row.focus(); })}
+      {/* a project on another computer would open on that computer's screen, where nobody is looking */}
+      {path !== "" && !machineOf(path) && item("Open folder", () => { api("/api/project", { action: "open", path, what: "folder" }); const row = projRow(path); if (row) row.focus(); })}
       {path !== "" && <hr />}
       {path !== "" && item("Delete project…", () => askDelete(path))}
     </div>

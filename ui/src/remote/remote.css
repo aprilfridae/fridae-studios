@@ -21,6 +21,10 @@
 .pair-t { display: grid; min-width: 0; }
 .pair-t b { font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pair-t small { font: 400 12px/1.4 var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a paired computer's state in words, and Forget asking first */
+.pair-t .pair-st { font-family: inherit; }
+.pair-q { min-width: 0; font-size: 13px; line-height: 1.45; color: var(--text); }
+.pair-acts { display: flex; flex-shrink: 0; gap: 6px; }
 .pair-done { padding-right: 4px; font-size: 12px; color: var(--faint); }
 .pair-none { margin: 0; padding: 12px; border: 1px dashed var(--line); border-radius: var(--r-s); font-size: 13px; line-height: 1.45; color: var(--dim); }
 .pair-hint { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--faint); }

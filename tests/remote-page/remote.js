@@ -41,6 +41,12 @@ const CASTLE = "m1~D:/games/castle";
     ok("r06 this computer's projects unchanged", (await text(box("H:/games/obby-rush") + " .p-name")) === "Obby Rush", await text(box("H:/games/obby-rush")));
     await shot("02-sidebar-labels", { x: 0, y: 40, width: 260, height: 360 });
 
+    // ---- a remote project's menu: no Open folder (it would open on the other computer's screen) ----
+    const menuItems = async (k) => { await pg.click('.proj[data-k="p:' + k + '"]', { button: "right" }); await wait(250); const t = await pg.$$eval("#proj-menu button", (x) => x.map((n) => n.innerText.trim())); await pg.mouse.click(760, 480); await wait(150); return t; };
+    const remoteMenu = await menuItems(CASTLE), localMenu = await menuItems("H:/games/obby-rush");
+    ok("r95 remote project menu has no Open folder", remoteMenu.length > 0 && !remoteMenu.includes("Open folder") && remoteMenu.includes("Rename"), remoteMenu);
+    ok("r96 this computer's project still has Open folder", localMenu.includes("Open folder"), localMenu);
+
     // ---- picking the other computer on an empty page: a new chat there, the AI chip reads its AIs ----
     await pg.evaluate(() => { document.querySelector('.proj[data-k="p:H:/games/obby-rush"] .p-new').click(); }); await wait(400);
     ok("r11 a draft on this computer", await pg.evaluate(() => current === null && draftOn && curProj === "H:/games/obby-rush"));
@@ -67,6 +73,13 @@ const CASTLE = "m1~D:/games/castle";
     ok("r17 + on a remote project", await pg.evaluate((k) => draftOn && curProj === k, CASTLE), await pg.evaluate(() => [draftOn, curProj]));
     ok("r18 chip says Desktop there", (await text("#machine")) === "Desktop");
     await shot("04-remote-draft", { x: 232, y: 560, width: 1048, height: 300 });
+    // ---- video clips are this computer's own files: not for a chat on another computer ----
+    await pg.click("#add"); await wait(200);
+    ok("r92 Video clips can't be picked for a remote chat", await pg.evaluate(() => { const b = document.getElementById("add-clips"); return !!b && b.disabled && b.innerText.includes("Only for chats on this PC"); }), await pg.evaluate(() => { const b = document.getElementById("add-clips"); return b && [b.disabled, b.innerText]; }));
+    await pg.keyboard.press("Escape"); await wait(150);
+    await pg.evaluate(() => fridae.chat.addClips(["C:/Users/me/Videos/a.mp4"])); await wait(200);
+    ok("r93 a dropped clip is not put in a remote chat", !(await pg.inputValue("#box")).includes("[clip:"), await pg.inputValue("#box"));
+    ok("r94 said plainly", (await text(".saytip")) === "Video clips can only be added to chats on this PC.", await text(".saytip"));
     await pg.fill("#box", "Add a drawbridge"); await pg.press("#box", "Enter");
     const sent = await until(async () => (await posts("/m/m1/api/send")).length > 0);
     ok("r19 new chat made there", (await posts("/m/m1/api/new")).length === 1 && (await posts("/api/new")).length === 0, [await posts("/m/m1/api/new"), await posts("/api/new")]);
@@ -108,8 +121,8 @@ const CASTLE = "m1~D:/games/castle";
     await pg.click("#pair-open"); await wait(300);
     ok("r35 pair dialog open", await vis("#pair"));
     ok("r36 its heading", (await text("#pair h2")) === "Pair a computer", await text("#pair h2"));
-    await until(() => pg.evaluate(() => document.querySelectorAll("#pair .pair-row").length >= 2));
-    const found = await pg.$$eval("#pair .pair-row", (x) => x.map((n) => n.innerText.replace(/\s+/g, " ").trim()));
+    await until(() => pg.evaluate(() => document.querySelectorAll("#pair-found .pair-row").length >= 2));
+    const found = await pg.$$eval("#pair-found .pair-row", (x) => x.map((n) => n.innerText.replace(/\s+/g, " ").trim()));
     ok("r37 computers on this network", found.length === 2 && /^Studio laptop/.test(found[0]) && /Pair$/.test(found[0]) && /^Desktop/.test(found[1]) && /Paired$/.test(found[1]), found);
     ok("r38 the two sections", (await text("#pair")).includes("Computers on this network") && (await text("#pair")).includes("Add by address"), await text("#pair"));
     ok("r39 address field", (await pg.getAttribute("#pair-addr", "placeholder")) === "Computer name or address");
@@ -117,7 +130,7 @@ const CASTLE = "m1~D:/games/castle";
     const n0 = (await posts("/api/remote/discover")).length;
     await wait(4200);
     ok("r40 looked again while open (every 3 s)", (await posts("/api/remote/discover")).length > n0, [(await posts("/api/remote/discover")).length, n0]);
-    await pg.click('#pair .pair-row >> nth=0 >> button'); await wait(300);
+    await pg.click('#pair-found .pair-row >> nth=0 >> button'); await wait(300);
     ok("r41 code step", await vis("#pair-code") && (await text("#pair h2")) === "Pair with Studio laptop", await text("#pair h2"));
     await pg.type("#pair-code", "abcdefg");
     ok("r42 dash added as typed", (await pg.inputValue("#pair-code")) === "ABCDE-FG", await pg.inputValue("#pair-code"));
@@ -164,7 +177,7 @@ const CASTLE = "m1~D:/games/castle";
     await pg.click('.proj[data-k="p:' + CASTLE + '"]'); await wait(300); await pg.click('[data-k="c:m1~r1"]'); await wait(300);
     await pg.evaluate(() => fridae.chat.setBox("Are you there?")); await pg.press("#box", "Enter"); await wait(300);
     ok("r62 offline: nothing sent, the words stay", (await pg.inputValue("#box")) === "Are you there?", await pg.inputValue("#box"));
-    ok("r63 offline: one plain line says why", (await text(".saytip")) === "Desktop can't be reached right now, so nothing was sent. Your message is still here.", await text(".saytip"));
+    ok("r63 offline: one plain line says what to check", (await text(".saytip")) === "Couldn't reach Desktop. Make sure Fridae is open there with Let my other computers connect on, and that both are on the same network. Your message is still here.", await text(".saytip"));
     await pg.evaluate(() => fridae.chat.setBox(""));
     await mock("/mock/off", { m: "m1", off: false });
     ok("r60 back online: undimmed", await until(() => pg.evaluate((k) => { const b = document.querySelector('.pbox[data-box="' + k + '"]'); return !!b && !b.classList.contains("off"); }, CASTLE), 35000));
@@ -229,7 +242,7 @@ const CASTLE = "m1~D:/games/castle";
     ok("r75 picking it opens pairing, not the machine", (await text("#pair h2")) === "Pair with Desktop" && await pg.evaluate(() => curProj === "H:/games/obby-rush"), [await text("#pair h2"), await pg.evaluate(() => curProj)]);
     await pg.type("#pair-code", "abcdefghjk"); await pg.click("#pair-go"); await wait(900);
     const rp = await last("/api/remote/pair");
-    ok("r76 paired again with its address", !!rp && rp.addr === "192.168.1.20" && rp.port === 47530 && rp.code === "ABCDEFGHJK" && rp.fp === undefined, rp);
+    ok("r76 paired again: found with its own certificate, so held to it", !!rp && rp.addr === "192.168.1.20" && rp.port === 47530 && rp.code === "ABCDEFGHJK" && rp.fp === "a1".repeat(32), rp);
     ok("r77 and it is back, selected", await until(() => pg.evaluate((k) => { const w = document.querySelector('.pbox[data-box="' + k + '"] .p-where'); return !!w && w.textContent === "Desktop"; }, CASTLE), 9000) && (await text("#machine")) === "Desktop", [await text(box(CASTLE) + " .p-where"), await text("#machine")]);
 
     // ---- its identity changed (502 "identity changed"): it cannot be sent to until it is paired again ----
@@ -247,7 +260,44 @@ const CASTLE = "m1~D:/games/castle";
     ok("r82 picking it opens pairing, with why", (await text("#pair h2")) === "Pair with Desktop" && ((await text("#pair .sub")) || "").startsWith("Desktop's identity changed. Pair it again to be sure it is yours."), await text("#pair .sub"));
     ok("r83 still on this computer", await pg.evaluate(() => curProj === "H:/games/obby-rush"));
     await shot("09-identity-changed", { x: 380, y: 200, width: 520, height: 420 });
+    // finding now hears "Desktop" only with another certificate, from elsewhere: pairing again is a fresh pairing at
+    // its saved address (the other computer must then show it knows the code), never held to the stranger
+    await mock("/mock/found", { found: [{ id: "m1", name: "Desktop", addr: "192.168.1.66", port: 47530, fp: "c3".repeat(32) }] });
+    await wait(4500);
+    await pg.type("#pair-code", "abcdefghjk"); await pg.click("#pair-go"); await wait(900);
+    const fresh = await last("/api/remote/pair");
+    ok("r98 not re-found with its certificate: a fresh pairing at its saved address", !!fresh && fresh.addr === "192.168.1.20" && fresh.fp === undefined, fresh);
+    await pg.focus("#pair-code"); await pg.keyboard.press("Escape"); await wait(200);
+
+    // ---- forgetting a paired computer: its chats and projects leave the page at once ----
+    await pg.evaluate(() => { window.__stay = 1; });
+    await pg.click("#machine"); await wait(200);
+    await pg.click("#pair-open"); await wait(300);
+    const paired = await pg.$$eval("#pair-machines .pair-row", (x) => x.map((n) => n.innerText.replace(/\s+/g, " ").trim()));
+    ok("r99 the pair dialog lists the paired computers", paired.length === 2 && /^Desktop/.test(paired[0]) && /Forget$/.test(paired[0]) && /^Studio laptop/.test(paired[1]), paired);
+    await pg.click('#pair-machines [data-m="m1"] button'); await wait(200);
+    ok("r100 asks first, plainly", ((await text('#pair-machines [data-m="m1"]')) || "").startsWith("Forget Desktop? Its chats stay on Desktop. You can pair it again any time."), await text('#pair-machines [data-m="m1"]'));
+    await shot("12-forget-confirm", { x: 380, y: 100, width: 520, height: 700 });
+    await pg.click('#pair-machines [data-m="m1"] button.main'); await wait(600);
+    const fg = await last("/api/remote/forget");
+    ok("r101 forget posted for it", !!fg && fg.id === "m1", fg);
+    ok("r102 its projects and chats left the page", await until(() => pg.evaluate((k) => !document.querySelector('.pbox[data-box="' + k + '"]') && !document.querySelector('.pbox[data-box="m1~"]') && !document.querySelector('[data-k="c:m1~r1"]') && !(fridae.store.get().saved.chats || []).some((c) => String(c.id).startsWith("m1~")), CASTLE), 4000),
+      await pg.evaluate(() => [...document.querySelectorAll(".pbox")].map((b) => b.dataset.box)));
+    ok("r103 without a reload, and only Studio laptop is left", await pg.evaluate(() => window.__stay === 1) && JSON.stringify(await pg.$$eval("#pair-machines .pair-row", (x) => x.map((n) => n.dataset.m))) === JSON.stringify(["m2"]), await pg.$$eval("#pair-machines .pair-row", (x) => x.map((n) => n.dataset.m)));
+    await pg.keyboard.press("Escape"); await wait(200);
+    await pg.click("#machine"); await wait(200);
+    const rows3 = await pg.$$eval("#machine-menu .opt", (x) => x.map((n) => n.innerText.replace(/\s+/g, " ").trim()));
+    ok("r104 the chip's menu no longer offers it", JSON.stringify(rows3) === JSON.stringify(["This PC", "Studio laptop", "Pair a computer…"]), rows3);
     await pg.keyboard.press("Escape");
+
+    // (last: opening Settings changes the timing of the long waits the restart checks above depend on)
+    // ---- Settings, Other computers: what to check when the other computers can't find this one ----
+    await pg.evaluate(() => fridae.windows.openSetup("remote"));
+    await until(() => vis("#set-remote-on"));
+    await until(async () => ((await text("#set-remote-on")) || "").includes("Windows"), 4000);
+    ok("r97 firewall help under the switch while on", ((await text("#set-remote-on")) || "").includes("If your other computers can't find this one, Windows may be blocking Fridae. In Windows Settings › Network, set this network to Private, and allow Fridae when Windows asks."), await text("#set-remote-on"));
+    await shot("11-settings-firewall", { x: 0, y: 0, width: 1280, height: 600 });
+    await pg.evaluate(() => fridae.windows.closeSetup()); await wait(300);
   } catch (e) { out.CRASH = String(e && e.stack || e); }
   out.errors = errs;
   console.log(JSON.stringify(out, null, 1));

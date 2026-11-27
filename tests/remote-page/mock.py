@@ -55,7 +55,7 @@ S = {}
 POSTS = []
 def reset():
     with COND:
-        S["local"] = local0(); S["machines"] = machines0(); S["remote"] = {"m1": remote0("m1")}
+        S["local"] = local0(); S["machines"] = machines0(); S["remote"] = {"m1": remote0("m1")}; S["found"] = copy.deepcopy(FOUND)
         del POSTS[:]; COND.notify_all()
 reset()
 
@@ -129,6 +129,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/mock/rpush":   # {"m": id, "event": {...}}
             with COND: push(S["remote"][body["m"]]["events"], body["event"]); COND.notify_all()
             return self.send({"ok": True})
+        if p == "/mock/found":   # {"found": [...]}: who finding hears from now on
+            S["found"] = body["found"]; return self.send({"ok": True})
         if p == "/mock/off":     # {"m": id, "off": false | true | "unpaired" | "changed"}
             o = body["off"]
             with COND: S["remote"][body["m"]]["off"] = ("off" if o is True else o or False); COND.notify_all()
@@ -173,10 +175,10 @@ class H(BaseHTTPRequestHandler):
             return self.send({"this": {"id": "me", "name": "Laptop"}, "machines": ms})
         if p == "/api/remote/discover":
             time.sleep(0.8)
-            return self.send({"found": [dict(f, paired=f["id"] in S["machines"] and S["remote"].get(f["id"], {}).get("off") != "unpaired") for f in FOUND]})
+            return self.send({"found": [dict(f, paired=f["id"] in S["machines"] and S["machines"][f["id"]]["fp"] == f["fp"] and S["remote"].get(f["id"], {}).get("off") != "unpaired") for f in S["found"]]})
         if p == "/api/remote/pair":
             code = "".join(c for c in (body.get("code") or "") if c.isalnum()).upper()
-            f = next((x for x in FOUND if x["addr"] == body.get("addr") or x["name"].lower() == (body.get("addr") or "").lower()), None)
+            f = next((x for x in S["found"] if x["addr"] == body.get("addr") or x["name"].lower() == (body.get("addr") or "").lower()), None)
             if not f: return self.send({"ok": False, "error": "Could not reach that computer. Check the name, and that it lets other computers connect."})
             if code != GOOD: return self.send({"ok": False, "error": "That code is not right. Check the code on the other computer and try again."})
             m = {"id": f["id"], "name": f["name"], "addr": f["addr"], "port": f["port"], "fp": f["fp"], "online": True, "last_seen": time.time()}
@@ -185,6 +187,10 @@ class H(BaseHTTPRequestHandler):
                 if S["remote"][f["id"]]["off"] in ("unpaired", "changed"): S["remote"][f["id"]]["off"] = False
                 COND.notify_all()
             return self.send({"ok": True, "machine": m})
+        # ---- this computer letting others connect (Settings, Other computers) ----
+        if p == "/api/remote/host":
+            return self.send({"on": True, "port": 47530, "id": "me", "name": "Laptop", "fp": "c3" * 32, "devices": [], "code": None, "error": None})
+        if p == "/api/notes": return self.send({"all": {"notes": 0, "rules": 0}})
         if p == "/api/remote/forget":
             S["machines"].pop(body.get("id"), None); return self.send({"ok": True})
         # ---- this computer ----
