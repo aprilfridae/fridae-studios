@@ -233,6 +233,9 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/remote/host" {
         // Settings, Other computers: network access, the pairing code and the paired computers (remote_host.rs)
         send_json(crate::remote_host::api_get())
+    } else if path == "/api/remote/machines" {
+        // remote control: the computers this one paired with (`remote_client`)
+        send_json(crate::remote_client::api_machines())
     } else if path == "/api/rag/status" {
         // Setup's knowledge index: the mode, `rag check` (for ?mode=, else the chosen one), the service, the setup step
         send_json(crate::rag::status(query(url, "mode").as_deref()))
@@ -624,6 +627,7 @@ fn post(path: &str, body: Value) -> Reply {
         "/api/rag/setup" => send_json(crate::rag::setup(&body)),
         "/api/rag/test" => send_json(crate::rag::test_query(&body)),
         "/api/rag/rebuild" => send_json(crate::rag::rebuild()),
+        "/api/remote/discover" | "/api/remote/pair" | "/api/remote/forget" => send_json(crate::remote_client::api_post(path, &body)),
         "/api/remove" => {
             if let Some(a) = target {
                 agents::remove_agent(&a.id);
@@ -673,6 +677,11 @@ fn handle(mut req: Request, token: &str) {
     let open_file = path.starts_with("/fonts/") || path == "/logo.png" || path == "/app.js" || path == "/app.css";
     let given = Some(head(&req, "X-Token")).filter(|t| !t.is_empty()).or_else(|| query(&url, "t")).unwrap_or_default();
     let allowed = local && (open_file || same(&given, token));
+    if allowed && path.starts_with("/m/") {
+        // a call for another computer: passed on over its pinned connection, its answer streamed back
+        crate::remote_client::serve(req, &url);
+        return;
+    }
     let media_path = ["/media/promo/", "/media/promo-style/", "/media/review/"].iter().any(|p| path.starts_with(p));
     if allowed && *req.method() == Method::Get && media_path {
         // a <video> or <img> carries the token in the address, like the chat's images
