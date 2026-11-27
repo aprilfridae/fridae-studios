@@ -30,7 +30,7 @@ zip = { version = "9.6.1", default-features = false, features = ["deflate"] }
 # remote control's host side (remote_host.rs): its own certificate, with the private key kept by Windows, and TLS
 [target.'cfg(windows)'.dependencies]
 schannel = "0.1.30"
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Cryptography"] }
 
 [dev-dependencies]
 native-tls = "0.2.18"

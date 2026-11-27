@@ -34,6 +34,11 @@ const MOST_CONNECTIONS: usize = 64;
 const MOST_PER_ADDRESS: usize = 8;
 /// How long a connection has to deliver its whole request: the TLS handshake, the head and the body.
 const READ_LIMIT: Duration = Duration::from_secs(10);
+/// Once a paired device's token has checked, its body may take as long as it needs, as long as it keeps coming: this
+/// long without a byte ends it.
+const BODY_IDLE: Duration = Duration::from_secs(30);
+/// The local server's answer may be a long wait for events (`/api/events?wait=20`): this long without a byte ends it.
+const ANSWER_IDLE: Duration = Duration::from_secs(90);
 /// How long a pairing code works, in seconds.
 const CODE_LIFE: u64 = 300;
 /// Wrong proofs a code takes before it is cancelled.
@@ -511,11 +516,13 @@ fn serve<S: Read + Write>(ctx: &Ctx, slot: &Slot, s: &mut S) {
             let device = (!token.is_empty()).then(|| ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).device_of(token, now())).flatten();
             let Some(device) = device else { return answer(c.s, 401, &json!({"error": "not paired"})) };
             slot.device(&device);
+            // a paired computer's body (a large attachment over Wi-Fi) may take longer than the deadline: from here
+            // it only has to keep coming (`BODY_IDLE`)
+            slot.read();
             if kept_from_devices(&path) {
                 return answer(c.s, 403, &json!({"error": "not allowed from another computer"}));
             }
             let body = c.body(&head, BODY_LIMIT);
-            slot.read();
             // turned off (or this computer removed) while the request was arriving: nothing is passed on
             if !slot.live() {
                 return;
@@ -525,7 +532,7 @@ fn serve<S: Read + Write>(ctx: &Ctx, slot: &Slot, s: &mut S) {
                     // the answer copied back as it comes: status, headers and body unchanged
                     Ok(local) => {
                         // long enough for the page's long wait for events (`/api/events?wait=20`)
-                        let mut local = slot.watch(local, Some(Instant::now() + Duration::from_secs(90)));
+                        let mut local = slot.watch(local, ANSWER_IDLE);
                         let _ = io::copy(&mut local, c.s);
                         let _ = c.s.flush();
                     }
@@ -636,11 +643,11 @@ impl Slot {
         !self.conns.closed.load(Ordering::SeqCst) && !self.cut.load(Ordering::SeqCst)
     }
 
-    /// A socket of this connection, read in short waits so that it stops as soon as the connection is ended, and
-    /// never after `until`.
-    fn watch(&self, s: TcpStream, until: Option<Instant>) -> Watched {
-        let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
-        Watched { s, cut: self.cut.clone(), until }
+    /// A socket of this connection, read in short waits so that it stops as soon as the connection is ended, or
+    /// once `idle` has passed without a byte.
+    fn watch(&self, s: TcpStream, idle: Duration) -> Watched {
+        let _ = s.set_read_timeout(None);
+        Watched { s, cut: self.cut.clone(), idle, last: Instant::now() }
     }
 }
 
@@ -651,11 +658,15 @@ impl Drop for Slot {
 }
 
 /// A socket read in short waits. Windows does not wake a read that is waiting when another thread shuts the socket,
-/// so a connection ended from outside could otherwise hold its thread and its place until data came.
+/// so a connection ended from outside could otherwise hold its thread and its place until data came. The wait is for
+/// the socket to be readable (`readable`), never a receive timeout: Windows leaves a socket whose receive timed out in
+/// an unknown state, and data could be lost.
 struct Watched {
     s: TcpStream,
     cut: Arc<AtomicBool>,
-    until: Option<Instant>,
+    idle: Duration,
+    /// when a byte last came
+    last: Instant,
 }
 
 impl Read for Watched {
@@ -664,15 +675,35 @@ impl Read for Watched {
             if self.cut.load(Ordering::SeqCst) {
                 return Err(io::ErrorKind::ConnectionAborted.into());
             }
-            if self.until.is_some_and(|u| Instant::now() >= u) {
+            if self.last.elapsed() >= self.idle {
                 return Err(io::ErrorKind::TimedOut.into());
             }
-            match self.s.read(buf) {
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
-                done => return done,
+            if readable(&self.s, 200)? {
+                let done = self.s.read(buf);
+                self.last = Instant::now();
+                return done;
             }
         }
     }
+}
+
+/// Whether the socket can be read now (data, its end, or an error to report), waiting up to `ms` for it.
+#[cfg(windows)]
+fn readable(s: &TcpStream, ms: i32) -> io::Result<bool> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{POLLERR, POLLHUP, POLLRDNORM, WSAPOLLFD, WSAPoll};
+    let mut fd = WSAPOLLFD { fd: s.as_raw_socket() as usize, events: POLLRDNORM, revents: 0 };
+    match unsafe { WSAPoll(&mut fd, 1, ms) } {
+        n if n < 0 => Err(io::Error::last_os_error()),
+        0 => Ok(false),
+        _ => Ok(fd.revents & (POLLRDNORM | POLLHUP | POLLERR) != 0),
+    }
+}
+
+/// (Elsewhere the network side is not used: a read simply waits.)
+#[cfg(not(windows))]
+fn readable(_: &TcpStream, _: i32) -> io::Result<bool> {
+    Ok(true)
 }
 
 impl Write for Watched {
@@ -780,7 +811,7 @@ pub fn listen(ctx: Arc<Ctx>, cert: &cert::Cert, ip: &str, ports: std::ops::Range
             thread::spawn(move || {
                 // (its reads end at the deadline for the request, or when the connection is ended from outside)
                 let _ = conn.set_write_timeout(Some(Duration::from_secs(60)));
-                if let Ok(mut tls) = tls_stream::Builder::new().accept(cred, slot.watch(conn, None)) {
+                if let Ok(mut tls) = tls_stream::Builder::new().accept(cred, slot.watch(conn, BODY_IDLE)) {
                     serve(&ctx, &slot, &mut tls);
                     let _ = tls.shutdown();
                 }
@@ -1186,6 +1217,9 @@ mod tests {
                     if req.url().starts_with("/api/events") {
                         thread::sleep(Duration::from_secs(20));
                     }
+                    if req.url() == "/api/big" {
+                        return drop(req.respond(tiny_http::Response::from_data(big())));
+                    }
                     let _ = req.respond(tiny_http::Response::from_string(said.to_string()).with_status_code(207));
                 });
             }
@@ -1243,6 +1277,81 @@ mod tests {
         let mut raw = Vec::new();
         let _ = slow.read_to_end(&mut raw);
         assert!(!String::from_utf8_lossy(&raw).contains("200 OK"), "not served: {}", String::from_utf8_lossy(&raw));
+        l.close();
+    }
+
+    /// What the stand-in answers `/api/big` with: 6 MB that are not all alike.
+    fn big() -> Vec<u8> {
+        (0..6_000_000u32).map(|i| (i.wrapping_mul(7) % 251) as u8).collect()
+    }
+
+    /// Send a request's head, then its body a little at a time (`pieces` of `size` bytes, 250 ms apart), and read the
+    /// answer.
+    #[cfg(windows)]
+    fn trickle(port: u16, head: &str, pieces: usize, size: usize) -> String {
+        let mut s = tls_to(port);
+        let _ = write!(s, "{head}Content-Length: {}\r\n\r\n", pieces * size);
+        for _ in 0..pieces {
+            thread::sleep(Duration::from_millis(250));
+            if s.write_all(&vec![b'x'; size]).is_err() {
+                break;
+            }
+        }
+        let mut raw = Vec::new();
+        let _ = s.read_to_end(&mut raw);
+        String::from_utf8_lossy(&raw).to_string()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_paired_computers_slow_upload_gets_through_but_a_strangers_slow_request_is_cut() {
+        let (l, token, _pairing, _key) = paired_host("remote-upload", Duration::from_secs(2));
+        // 5 seconds of steady sending: past the 2 second deadline for a request to arrive
+        let up = trickle(l.port, &format!("POST /api/attach HTTP/1.1\r\nAuthorization: Bearer {token}\r\n"), 20, 1000);
+        assert!(up.contains(" 207 "), "a paired computer's upload is passed on: {}", &up[..up.len().min(200)]);
+        assert!(up.contains(&format!("\"body\":\"{}\"", "x".repeat(20_000))), "whole");
+        let pair = trickle(l.port, "POST /remote/pair HTTP/1.1\r\n", 20, 100);
+        assert!(!pair.contains("200 OK"), "a request without a token still has to arrive in time");
+        l.close();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_large_answer_comes_back_byte_for_byte_and_no_socket_read_ever_times_out() {
+        let (l, token, _pairing, _key) = paired_host("remote-big", READ_LIMIT);
+        let mut s = tls_to(l.port);
+        write!(s, "GET /api/big HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n").unwrap();
+        let mut raw = Vec::new();
+        s.read_to_end(&mut raw).unwrap();
+        let at = raw.windows(4).position(|w| w == b"\r\n\r\n").expect("a head") + 4;
+        let head = String::from_utf8_lossy(&raw[..at]).to_string();
+        assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+        // the local server sends a large answer in chunks, passed on as they are
+        let (mut body, mut rest) = (Vec::new(), &raw[at..]);
+        if head.contains("Transfer-Encoding: chunked") {
+            loop {
+                let eol = rest.windows(2).position(|w| w == b"\r\n").expect("a chunk size");
+                let size = usize::from_str_radix(std::str::from_utf8(&rest[..eol]).unwrap().trim(), 16).unwrap();
+                if size == 0 {
+                    break;
+                }
+                body.extend_from_slice(&rest[eol + 2..eol + 2 + size]);
+                rest = &rest[eol + 2 + size + 2..];
+            }
+        } else {
+            body = rest.to_vec();
+        }
+        assert!(body == big(), "{} bytes came back", body.len());
+        // the sockets are waited on until they can be read; a receive timeout would leave one in an unknown state
+        let (a, _b) = {
+            let server = TcpListener::bind("127.0.0.1:0").unwrap();
+            let a = TcpStream::connect(server.local_addr().unwrap()).unwrap();
+            (a, server.accept().unwrap().0)
+        };
+        let conns = Conns::new(READ_LIMIT);
+        let slot = conns.admit("127.0.0.1".parse().unwrap(), None).unwrap();
+        let watched = slot.watch(a, BODY_IDLE);
+        assert_eq!(watched.s.read_timeout().unwrap(), None);
         l.close();
     }
 
