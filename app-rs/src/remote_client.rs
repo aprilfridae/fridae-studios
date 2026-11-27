@@ -571,12 +571,22 @@ const PASSED_ON: [&str; 4] = ["Content-Type", "Range", "If-Range", "Accept"];
 /// Types a browser would run script from if shown as a page.
 const SCRIPTABLE: [&str; 8] = ["text/html", "application/xhtml+xml", "image/svg+xml", "text/javascript", "application/javascript", "text/xml", "application/xml", "text/ecmascript"];
 
+/// The only headers of a host's answer that are passed back to the page (with the type as `defused` leaves it); the
+/// length and chunking are the local server's own. Cookies, redirects, `Refresh`, `Clear-Site-Data` and the rest
+/// would act on this computer's own page address, so they never come back.
+const PASSED_BACK: [&str; 6] = ["Content-Type", "Content-Range", "Accept-Ranges", "Cache-Control", "ETag", "Last-Modified"];
+
 /// A host's answer, made harmless to show. The page only ever needs JSON, pictures, video and attachments from
 /// another computer, and an answer is served on this computer's own page address: a host that had been taken over
 /// must not be able to send a page whose script then drives this computer's local API. So anything that could run
 /// script is served as plain text, an answer with no type as bytes, and every answer is sandboxed and never
-/// sniffed into something else.
+/// sniffed into something else. Only the headers in `PASSED_BACK` stay, and a redirect is refused: the browser would
+/// follow it on this computer's own address, with the page's token.
 fn defused(mut answer: Answer) -> Answer {
+    if (300..400).contains(&answer.status) && answer.status != 304 {
+        return Answer::json(502, json!({"error": "refused a redirect"}));
+    }
+    answer.headers.retain(|(k, _)| PASSED_BACK.iter().any(|p| p.eq_ignore_ascii_case(k)));
     let given = answer.header("Content-Type").map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
     let shown = match given.as_deref() {
         None | Some("") => Some("application/octet-stream"),
@@ -587,7 +597,6 @@ fn defused(mut answer: Answer) -> Answer {
         answer.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Type"));
         answer.headers.push(("Content-Type".into(), shown.into()));
     }
-    answer.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Security-Policy") && !k.eq_ignore_ascii_case("X-Content-Type-Options"));
     answer.headers.push(("Content-Security-Policy".into(), "sandbox".into()));
     answer.headers.push(("X-Content-Type-Options".into(), "nosniff".into()));
     answer
@@ -783,9 +792,6 @@ pub fn api_post(path: &str, body: &Value) -> Value {
     }
 }
 
-/// Headers that belong to one connection, not to the answer: the local server sets its own.
-const NOT_PASSED_BACK: [&str; 7] = ["Connection", "Keep-Alive", "Transfer-Encoding", "Content-Length", "Date", "Server", "Trailer"];
-
 /// Any method on `/m/<machine id>/<rest>`: pass it on and stream the answer back. The caller has checked the page
 /// token; `url` is the request's address with its query.
 pub fn serve(req: tiny_http::Request, url: &str) {
@@ -808,7 +814,8 @@ pub(crate) fn serve_with(book: &Book, mut req: tiny_http::Request, url: &str) {
     let headers = answer
         .headers
         .iter()
-        .filter(|(k, _)| !NOT_PASSED_BACK.iter().any(|n| n.eq_ignore_ascii_case(k)))
+        // what `defused` kept, and the two it added (an answer made here has only its type)
+        .filter(|(k, _)| PASSED_BACK.iter().chain(&["Content-Security-Policy", "X-Content-Type-Options"]).any(|n| n.eq_ignore_ascii_case(k)))
         .filter_map(|(k, v)| Header::from_bytes(k.as_bytes(), v.as_bytes()).ok())
         .collect();
     let len = answer.len.and_then(|n| usize::try_from(n).ok());

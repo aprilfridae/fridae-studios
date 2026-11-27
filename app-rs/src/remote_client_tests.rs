@@ -120,6 +120,22 @@ fn host_answer(tls: native_tls::TlsStream<TcpStream>, st: &Mutex<HostState>) {
 <script>alert('host')</script>");
         return;
     }
+    if path == "/api/redirect" {
+        // a host that had been taken over, sending the page back to this computer's own API
+        let head = ["HTTP/1.1 307 Temporary Redirect", "Location: /api/project", "Set-Cookie: s=evil; Path=/", "Content-Length: 0", "", ""];
+        let _ = out.write_all(head.join("\r\n").as_bytes());
+        return;
+    }
+    if path == "/api/headers" {
+        let head = [
+            "HTTP/1.1 206 Partial Content", "Content-Type: application/json", "Content-Length: 2", "Content-Range: bytes 0-1/9",
+            "Accept-Ranges: bytes", "Cache-Control: no-store", "ETag: \"e1\"", "Last-Modified: Wed, 21 Oct 2025 07:28:00 GMT",
+            "Set-Cookie: s=evil; Path=/", "Refresh: 0; url=/api/project", "Clear-Site-Data: \"*\"", "Location: /api/project",
+            "Link: </api/x>; rel=preload", "Access-Control-Allow-Origin: *", "Content-Security-Policy: default-src *", "X-Anything: 1", "", "{}",
+        ];
+        let _ = out.write_all(head.join("\r\n").as_bytes());
+        return;
+    }
     if path == "/api/chunked" {
         let _ = write!(out, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n5;x=1\r\nworld\r\n0\r\n\r\n");
         return;
@@ -411,4 +427,25 @@ fn what_a_host_sends_never_runs_as_this_computers_page() {
     }
     let a = forward(&b, HOST_ID, "GET", "/api/echo", &[], b"");
     assert!(has(&heads(&a), "content-type", "application/json") && has(&heads(&a), "content-security-policy", "sandbox"));
+}
+
+#[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+fn only_harmless_headers_come_back_and_a_redirect_is_refused() {
+    let (b, _h) = paired("headers");
+    let a = forward(&b, HOST_ID, "GET", "/api/headers", &[], b"");
+    let mut names: Vec<String> = a.headers.iter().map(|(k, _)| k.to_ascii_lowercase()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["accept-ranges", "cache-control", "content-range", "content-security-policy", "content-type", "etag", "last-modified", "x-content-type-options"],
+        "{:?}",
+        a.headers
+    );
+    assert!(a.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("content-security-policy") && v == "sandbox"));
+    assert_eq!(read(a), (206, json!({})));
+    // a redirect would send the page, with its token, to this computer's own API
+    let a = forward(&b, HOST_ID, "POST", "/api/redirect", &[], b"{}");
+    assert!(!a.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("location") || k.eq_ignore_ascii_case("set-cookie")), "{:?}", a.headers);
+    assert_eq!(read(a), (502, json!({"error": "refused a redirect"})));
 }
