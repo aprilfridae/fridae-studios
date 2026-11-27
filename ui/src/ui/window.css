@@ -20,3 +20,15 @@ body.framed .drawer { top: 52px; }
 body.mac-frame [data-drag] { -webkit-user-select: none; user-select: none; }
 body.mac-frame .mark { justify-content: flex-end; padding-left: 88px; }
 body.mac-frame .mark span { display: none; }
+/* the Mac's close, minimise and full screen buttons, drawn by the page: 14 px across, 9 px apart, their middle on the
+   top bar's middle line */
+.mac-ctl { position: fixed; z-index: 80; top: 17px; left: 18px; display: flex; gap: 9px; }
+.mac-b { width: 14px; height: 14px; padding: 0; border-radius: 50%; display: grid; place-items: center; color: transparent; box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22); }
+.mac-b.close { background: #ff5f57; }
+.mac-b.min { background: #febc2e; }
+.mac-b.full { background: #28c840; }
+.mac-ctl:hover .mac-b { color: rgba(0, 0, 0, 0.6); }
+.mac-b:active { filter: brightness(0.85); }
+.mac-ctl.off:not(:hover) .mac-b { background: #4a4a4d; box-shadow: none; }
+.mac-b:focus-visible { outline-offset: 2px; }
+body.win-full .mac-ctl { display: none; }
