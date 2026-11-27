@@ -14,7 +14,7 @@ function draw(r: Row, menuAt: string): any {
     case "all": return <AllRow key={r.key} on={r.on} busy={r.busy} />;
     case "review": return <ReviewRow key={r.key} on={r.on} n={r.n} k={r.k} strong={r.strong} />;
     case "proj": return <ProjectRow key={r.key} path={r.path} name={r.name} cls={r.cls} n={r.n} strong={r.strong} working={r.working} menu={menuAt === r.path} ais={r.ais} where={r.where} />;
-    case "chat": return <ChatRow key={r.key} id={r.id} name={r.name} on={r.on} live={r.live} count={r.count} open={r.open} tip={r.tip} ai={r.ai} />;
+    case "chat": return <ChatRow key={r.key} id={r.id} name={r.name} on={r.on} live={r.live} count={r.count} open={r.open} tip={r.tip} ai={r.ai} where={r.where} />;
     case "none": return <NoneRow key={r.key} path={r.path} cls={r.cls} busy={r.busy} ais={r.ais} where={r.where} />;
     /* a project and, the one in front, its chats: a box of its own */
     case "pbox": return <div key={r.key} class={"pbox" + (r.on ? " on" : "") + (r.off ? " off" : "")} data-box={r.path}>{r.rows.map((x) => draw(x, menuAt))}</div>;

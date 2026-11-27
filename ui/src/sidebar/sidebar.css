@@ -77,6 +77,10 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .s-row.on b, .s-row:hover b { color: var(--text); }
 .s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
 .s-row.on .s-n { color: var(--dim); }
+/* in a project on more than one computer, the other computer a chat runs on (model.ts chatsOf) */
+.s-row:has(.s-where) { grid-template-columns: 8px minmax(0, 1fr) auto auto; }
+.s-row .s-where { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 999px; color: var(--faint); background: var(--hover); }
+.s-row.on .s-where, .s-row:hover .s-where { color: var(--dim); }
 /* an expert's row (.sx) */
 .s-row.sx { grid-template-columns: 8px minmax(0, 1fr); min-height: var(--h-l); }
 /* A chat's experts are one list: a window (.s-kids) over its rows (.s-in), which eases open and shut as a whole

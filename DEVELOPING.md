@@ -2782,35 +2782,52 @@ On a Mac the user is asked twice the first time, by macOS itself: to let Fridae 
 when the Mac's firewall is on) and to let it find devices on the local network (macOS 15 and later; the Info.plist's
 `NSLocalNetworkUsageDescription` is the line shown). Settings says where to look if those were refused.
 
-### Moving a chat to another computer
+### One list of chats, and switching the computer a chat runs on
 
-In a started chat the machine chip's menu moves the chat: it carries on on the other computer with everything said
-so far, and is put away where it was, so every window sees one chat, wherever it is opened from. The page drives it
-(`ui/src/remote/move.ts`) with `POST /api/chat-move` on each side (`agents.rs`):
+The user's computers act as one: each window lists every chat of every paired computer, and the machine chip in a
+started chat only changes which computer the chat runs on. Nothing else about the chat changes.
 
-1. `out` on the computer it is on: the chat as it goes (name, AI, model, its events, the hand-over text from
-   `handover_plan`, and what the user sent while it waited). Refused while it works, while it makes something, and
-   for an expert's chat or a Lead with helpers (`cannot_move`): those belong to one computer's run.
-2. `in` on the other: a new chat with a new id, its events replayed (its old `project` events left out), a line
-   "Moved here from Laptop.", and the project picked there. The AI is the same if it is set up there, else the
-   default one, and the line says so. It gets the hand-over with the next message, as when the AI is switched.
-3. `away` on the first: closed and its file moved to `chats/moved` (kept, out of the lists).
+**Pairing once is enough.** Pairing is one-way underneath (the computer that typed the code can reach the other).
+So right after pairing (`/api/remote/pair`) this computer turns its own network access on
+(`remote_host::on_for_pairing`). Then, at every 20-second check, it offers each paired computer that is there a token
+for its own host (`remote_client::offer_back`, `POST /remote/offer` with the paired token). The other computer saves
+it as a computer it paired with, at the address the offer came from (`remote_client::take_offer`). The offer's id comes
+from the token it was sent with, never from its body. A computer is offered once: `Pairing::give` refuses one that is
+a device here already, and an offer that wasn't taken is withdrawn, to be made again at the next check.
+
+**One project per name in the sidebar** (`ui/src/sidebar/model.ts`). Projects with the same name on several
+computers are one row (this computer's copy first). Its chats are listed together in the order they were started
+(`bornAt` of the bare id), each from another computer with a small label of the computer (`.s-where`). The chats with
+no project of every computer are one No project box.
+
+**Switching** (`ui/src/remote/move.ts`, `POST /api/chat-move` in `agents.rs`, `POST /api/project-copy` in
+`project_copy.rs`):
+1. While the chat works it is held (`hold`, `State::moving`). The reply finishes and nothing queued is sent. When the
+   page sees its `done` the switch goes, and what the user typed meanwhile goes with it. The chip shows
+   "Desktop → This PC" and the row says what is happening; picking where it is takes a waiting switch back.
+2. `copy`, run by the window's own app, which asks both computers. The project's files go to the other computer's
+   project of the same name (any case), made in its usual projects folder if it has none. Only files that differ
+   (size or SHA-256) go, in pieces of at most 12 MB a call (`PIECE`), each written beside its place and put in place
+   once whole. The computer it comes from wins: a file that differs is replaced, and nothing is deleted. Folders that
+   are downloaded or built again (`node_modules`, `.venv`, Rust's `target`, ...) stay behind. The git history goes, but
+   never over the other computer's own `.git/config`. Only a project on that computer's list is read or written, and
+   never outside its folder.
+3. `out` gives the chat as it goes (with its id). `in` opens it on the other computer under the same id (a new one
+   only if that id is taken there), with every event but the old project's, its copy of the project, and a hand-over
+   of the chat so far for the AI's next message. The AI is the same if it is set up there, else that computer's
+   default, and only then does one line say so.
+4. `away` closes it where it was and moves its file to `chats/moved` (kept, out of the lists).
 
 Nothing is put away until the other computer has it: a failure leaves the chat where it was (or, if only `away`
-fails, two copies and a note to delete one, never none).
+fails, two copies and a note to delete one, never none). An expert's chat and a Lead with helpers stay put
+(`cannot_move`).
 
-- **While it works:** the chat is held (`hold`, `State::moving`): the reply finishes, nothing queued is sent, and
-  when the page sees its `done` the move goes; what the user typed meanwhile goes with it and is sent there. The
-  chip shows "Desktop → This PC" and the row "Moves here when this reply is over"; picking where it is takes it back.
-- **The project:** the other computer's project of the same name (any case); with none, the chip asks which of its
-  projects, or none.
-- **Seeing it from both computers:** each window lists another computer's chats only if it is paired with it, so to
-  follow a moved chat from either computer, pair them both ways.
-- **What stays behind:** files attached in earlier messages and paths in them are the first computer's; the moved
-  chat shows the messages but the other computer has no copies. A long chat's hand-over is cut to `HANDOVER_CAP`
-  without a summary.
-- **Tests:** `cargo test --manifest-path app-rs/Cargo.toml a_chat_moves a_moved_chat` (the engine side), and
-  r105–r120 in `tests/remote-page/remote.js` (the page; `mock.py` answers `/api/chat-move` as the app does).
+- **What still differs:** the AI's own session can't move (it lives in that AI's files on the first computer), so on
+  the new computer it starts from the hand-over. A long chat's hand-over is cut to `HANDOVER_CAP` without a summary.
+  Files attached to messages stay in the first computer's attachments folder.
+- **Tests:** `cargo test --manifest-path app-rs/Cargo.toml project_copy`, `... a_chat_moves`, `... a_moved_chat`,
+  `... remote_e2e_pairing_once` (over real TLS), and r105–r120 in `tests/remote-page/remote.js` (`mock.py` answers
+  `/api/chat-move` and the `copy` as the app does).
 
 **Tests:** `cargo test --manifest-path app-rs/Cargo.toml remote` (50 tests: the host, the client and both end to
 end over real TLS on 127.0.0.1, run on Windows and on a Mac; Linux runs the parts that need no TLS) and

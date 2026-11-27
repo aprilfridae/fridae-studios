@@ -5,7 +5,7 @@ import type { Chat, Member, State } from "../store";
 import { needsCount, needsStrong } from "../review/model";
 import { ago } from "../util";
 import { SW, bornAt, memberOf, splitExpert, swTip, thingOf } from "./team";
-import { TROUBLE_SHORT, troubleOf } from "../remote/route";
+import { TROUBLE_SHORT, bare, machineOf, troubleOf } from "../remote/route";
 import { XP_IDLE, noteWhen, pageStart, shrink, xpOld, xpOpen, xpTab, xpWhen } from "./fold";
 
 /* the part of the store the sidebar reads */
@@ -65,7 +65,8 @@ export type Row =
   | { t: "review"; key: string; on: boolean; n: number; k: number; strong: boolean }
   /* `where`: the paired computer it is on ("" here), with "offline" while it cannot be reached (`off`) */
   | { t: "proj"; key: string; path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; ais: string; where: string; off: boolean }
-  | { t: "chat"; key: string; id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string }
+  /* `where`: in a project on more than one computer, the other computer a chat runs on ("" on this one) */
+  | { t: "chat"; key: string; id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string; where: string }
   | { t: "none"; key: string; path: string; cls: string; busy: boolean; ais: string; where: string; off: boolean }
   /* a project with its chats (the one in front), in a box of its own */
   | { t: "pbox"; key: string; path: string; on: boolean; off: boolean; rows: Row[] }
@@ -79,9 +80,12 @@ export function rowsOf(s: Slice, now: number): Row[] {
   const byId = new Map(chats.map((p) => [p.id, p]));
   const aiName = (id?: string) => { const a = s.ais.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; };
   const chatAi = (p: Chat) => p.ai || s.defaultAi;
-  const inFront = (key: string) => nav.proj === key && !isPage(view);
+  /* A project of the same name on more than one of the user's computers is one project here, its chats together, each
+     saying which computer it runs on: switching the computer a chat runs on changes nothing else (ui/src/remote/
+     move.ts). `keys`: the project's path on each computer, this computer's first. */
+  const inFront = (keys: string[]) => keys.includes(nav.proj || "\u0000") && !isPage(view);
   /* with one of its chats in front the project's row only brightens: the chat's row carries the mark */
-  const marked = (key: string) => (inFront(key) ? (view === "chat" && !!nav.chat && byId.has(nav.chat) ? " on in" : " on") : "");
+  const marked = (keys: string[]) => (inFront(keys) ? (view === "chat" && !!nav.chat && byId.has(nav.chat) ? " on in" : " on") : "");
   const front = view === "chat" ? nav.chat : null;
 
   /* One expert's row: who and what for, then its state and its AI. */
@@ -104,13 +108,18 @@ export function rowsOf(s: Slice, now: number): Row[] {
       tab: !lead || tab === key ? 0 : -1,
     };
   };
-  /* the chats of the project in front, each with its experts under it */
-  const chatsOf = (key: string) => {
-    for (const p of projectChats(s, key)) {
+  const machine = (id?: string) => s.machines.find((m) => m.id === id);
+  /* the chats of the project in front, each with its experts under it: of each computer's copy of it, in the order
+     they were started (so a chat keeps its place when it runs on another computer) */
+  const chatsOf = (keys: string[]) => {
+    const many = keys.length > 1, mine = keys.flatMap((k) => projectChats(s, k));
+    if (many) mine.sort((a, b) => bornAt(bare(a.id)) - bornAt(bare(b.id)));
+    for (const p of mine) {
       const xs = expertsOf(s, p), open = xs.length > 0 && xpOpen(p.id), at = xs.filter((x) => x.pane && x.pane.busy).length, on = p.id === front;
-      const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id, many = xs.length === 1 ? "expert" : xs.length + " experts";
-      rows.push({ t: "chat", key: "c:" + p.id, id: p.id, name: p.name, on, live: p.busy || at > 0, count: xs.length, open, ai: chatAi(p),
-        tip: [p.name, aiName(chatAi(p)), state, xs.length ? (xs.length === 1 ? "1 expert" : many) + (at ? ", " + at + " working" : "") : ""].filter(Boolean).join(" · ") });
+      const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id, xsMany = xs.length === 1 ? "expert" : xs.length + " experts";
+      const runsOn = machineOf(p.id), where = many && runsOn ? (machine(runsOn) || { name: "" }).name : "";
+      rows.push({ t: "chat", key: "c:" + p.id, id: p.id, name: p.name, on, live: p.busy || at > 0, count: xs.length, open, ai: chatAi(p), where,
+        tip: [p.name, aiName(chatAi(p)), state, xs.length ? (xs.length === 1 ? "1 expert" : xsMany) + (at ? ", " + at + " working" : "") : "", where ? "runs on " + where : ""].filter(Boolean).join(" · ") });
       if (!open && !shrink.has(kids)) continue;
       /* those at work or lately at work, then one line for the rest, which opens to them */
       const recent = xs.filter((x) => xpRecent(x, now, nav.chat)), old = xs.filter((x) => !xpRecent(x, now, nav.chat)), olds = "o:" + p.id, showOld = old.length > 0 && xpOld.has(p.id);
@@ -125,28 +134,39 @@ export function rowsOf(s: Slice, now: number): Row[] {
       rows.push({ t: "box", key: kids, id: p.id, domId: "kids-" + p.id, cls: "s-kids tree", label: "Experts of " + p.name, inert: !open, rows: inside });
     }
     /* an expert that is open while the chat that started it is closed */
-    for (const h of chats) if (h.helper && !byId.has(h.parent) && h.project === key) rows.push(expert({ id: h.id, name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h, when: 0 }, null, ""));
+    for (const h of chats) if (h.helper && !byId.has(h.parent) && keys.includes(h.project)) rows.push(expert({ id: h.id, name: h.name, expert: h.expert, runsOn: h.runsOn, pane: h, when: 0 }, null, ""));
   };
 
   top.push({ t: "all", key: "all", on: view === "all", busy: chats.some((p) => p.busy) });
   top.push({ t: "review", key: "review", on: view === "review", ...totals(s) });
   /* the AIs a project's open chats run on, in the order first used ("claude gemini") */
-  const aisOf = (key: string) => [...new Set(projectChats(s, key).filter((p) => p.started || p.busy).map(chatAi))].join(" ");
-  const boxed = (key: string, head: Row, off: boolean) => {
+  const aisOf = (keys: string[]) => [...new Set(keys.flatMap((k) => projectChats(s, k)).filter((p) => p.started || p.busy).map(chatAi))].join(" ");
+  const boxed = (keys: string[], head: Row, off: boolean) => {
     const inner: Row[] = [head]; rows = inner;
-    if (inFront(key)) chatsOf(key);
+    if (inFront(keys)) chatsOf(keys);
     rows = top;
-    top.push({ t: "pbox", key: "pb:" + key, path: key, on: inFront(key), off, rows: inner });
+    top.push({ t: "pbox", key: "pb:" + keys[0], path: keys[0], on: inFront(keys), off, rows: inner });
   };
-  /* a project or chat on another of the user's computers says which, and "offline" while it cannot be reached */
-  const machine = (id?: string) => s.machines.find((m) => m.id === id);
+  /* a project or chat only on another of the user's computers says which, and "offline" while it cannot be reached */
   const where = (id?: string) => { const m = machine(id), t = id ? troubleOf(id) : ""; return m ? m.name + (t ? " · " + TROUBLE_SHORT[t] : "") : ""; };
   const off = (id?: string) => !!id && !!troubleOf(id);
-  for (const x of projects) boxed(x.path, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...projState(s, x.path), ais: aisOf(x.path), where: where(x.machine), off: off(x.machine) }, off(x.machine));
-  /* the chats of no project: this computer's, then each paired computer's in a box of its own ("<machine>~") */
-  for (const m of [null, ...s.machines]) {
-    const key = m ? m.id + "~" : "", loose = chats.filter((p) => isChat(p) && p.project === key && !p.own && !p.want && (p.started || p.busy));
-    if (loose.length || nav.proj === key) boxed(key, { t: "none", key: m ? "none:" + m.id : "none", path: key, cls: marked(key), busy: loose.some((p) => p.busy), ais: aisOf(key), where: where(m ? m.id : ""), off: off(m ? m.id : "") }, off(m ? m.id : ""));
+  /* each project once, by name: this computer's copy first, then each paired computer's in the list's order */
+  const byName = new Map<string, typeof projects>();
+  for (const x of projects) { const n = (x.name || "").trim().toLowerCase() || x.path, g = byName.get(n); if (g) g.push(x); else byName.set(n, [x]); }
+  for (const g of byName.values()) {
+    const here = g.filter((x) => !x.machine), list = here.concat(g.filter((x) => !!x.machine)), x = list[0], keys = list.map((y) => y.path);
+    const st = keys.map((k) => projState(s, k)), elsewhere = here.length ? [] : list;
+    const state = { n: st.reduce((a, b) => a + b.n, 0), strong: st.some((y) => y.strong), working: st.some((y) => y.working) };
+    /* only on other computers: their names; also here: nothing (it is here) */
+    const whereTo = elsewhere.map((y) => where(y.machine)).filter(Boolean).join(" · "), allOff = elsewhere.length > 0 && elsewhere.every((y) => off(y.machine));
+    boxed(keys, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(keys), ...state, ais: aisOf(keys), where: whereTo, off: allOff }, allOff);
+  }
+  /* the chats of no project, of every computer together ("" here, "<machine>~" on another) */
+  const homes = ["", ...s.machines.map((m) => m.id + "~")].filter((key) => nav.proj === key || chats.some((p) => isChat(p) && p.project === key && !p.own && !p.want && (p.started || p.busy)));
+  if (homes.length) {
+    const loose = chats.filter((p) => isChat(p) && homes.includes(p.project) && !p.own && !p.want && (p.started || p.busy)), m = homes[0] ? homes[0].slice(0, -1) : "";
+    const lone = homes.length === 1 && !!m;
+    boxed(homes, { t: "none", key: homes[0] ? "none:" + m : "none", path: homes[0], cls: marked(homes), busy: loose.some((p) => p.busy), ais: aisOf(homes), where: lone ? where(m) : "", off: lone && off(m) }, lone && off(m));
   }
   top.push({ t: "add", key: "add", on: view === "newproj" });
   return top;

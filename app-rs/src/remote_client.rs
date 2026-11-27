@@ -152,6 +152,14 @@ impl Book {
         self.list.lock().unwrap().iter().find(|m| m.id == id).map(|m| (m.addr.clone(), m.port, m.fp.clone(), m.token.clone()))
     }
 
+    fn name_of(&self, id: &str) -> String {
+        self.list.lock().unwrap().iter().find(|m| m.id == id).map(|m| m.name.clone()).unwrap_or_default()
+    }
+
+    fn online_paired(&self) -> Vec<String> {
+        self.list.lock().unwrap().iter().filter(|m| m.online && m.token.is_some()).map(|m| m.id.clone()).collect()
+    }
+
     fn all(&self) -> Vec<Value> {
         self.list.lock().unwrap().iter().map(Machine::public).collect()
     }
@@ -205,12 +213,13 @@ fn unix_now() -> u64 {
 
 /// The app's saved computers. The first use also starts the check that asks each of them every 20 seconds
 /// whether it is there; the page asks for the list as soon as it opens.
-fn book() -> &'static Book {
+pub(crate) fn book() -> &'static Book {
     static BOOK: OnceLock<Book> = OnceLock::new();
     BOOK.get_or_init(|| {
         thread::spawn(|| {
             loop {
                 check_all(book());
+                offer_all(book());
                 thread::sleep(CHECK_EVERY);
             }
         });
@@ -663,6 +672,57 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     json!({"ok": true, "machine": shown})
 }
 
+// ---- pairing both ways ----
+
+/// A paired computer offers to be reached in turn (`/remote/offer` on this computer's host): it is saved as a
+/// computer this one paired with, with the token it gave, at the address its offer came from.
+pub fn take_offer(book: &Book, o: &crate::remote_host::Offer) -> bool {
+    if protect(o.token.as_bytes(), &key_dir(&book.path)).is_none() {
+        return false;
+    }
+    book.add(Machine {
+        id: o.id.clone(),
+        name: if o.name.is_empty() { "Other computer".into() } else { o.name.clone() },
+        addr: o.addr.clone(),
+        port: o.port,
+        fp: o.fp.clone(),
+        token: Some(o.token.clone()),
+        online: true,
+        last_seen: unix_now(),
+    });
+    true
+}
+
+/// Pairing both ways: pairing once is enough for each computer to see the other's chats. A computer this one paired
+/// with is offered a token for this one's host (`mint`: its port, certificate and the token, or None when that
+/// computer can reach this one already or network access is off here); an offer it didn't take is taken back
+/// (`withdraw`), to be made again at the next check. `me_name`: this computer's name, as it is shown there.
+pub(crate) fn offer_back(book: &Book, id: &str, me_name: &str, mint: impl Fn(&str, &str) -> Option<(u16, String, String)>, withdraw: impl Fn(&str)) -> bool {
+    let Some((addr, port, fp, Some(token))) = book.route(id) else { return false };
+    let Some((my_port, my_fp, give)) = mint(id, &book.name_of(id)) else { return false };
+    let body = json!({"name": me_name, "port": my_port, "fp": my_fp, "token": give}).to_string();
+    let heads = [("Authorization".to_string(), format!("Bearer {token}")), ("Content-Type".to_string(), "application/json".to_string())];
+    let took = match request(&addr, port, Some(&fp), "POST", "/remote/offer", &heads, body.as_bytes(), QUICK_WAIT, true) {
+        Ok((a, _)) => {
+            let mut text = Vec::new();
+            a.status == 200 && a.body.take(64 * 1024).read_to_end(&mut text).is_ok() && serde_json::from_slice::<Value>(&text).is_ok_and(|v| v["ok"] == true)
+        }
+        Err(_) => false,
+    };
+    if !took {
+        withdraw(id);
+    }
+    took
+}
+
+/// Every paired computer that is there is offered this one in turn (`offer_back`), with this app's own host.
+fn offer_all(book: &Book) {
+    let me = remote_common::identity();
+    for id in book.online_paired() {
+        offer_back(book, &id, me["name"].as_str().unwrap_or(""), crate::remote_host::offer_for, crate::remote_host::withdraw);
+    }
+}
+
 // ---- forwarding ----
 
 /// The query without the page token `t`, which never leaves this computer.
@@ -996,7 +1056,18 @@ pub fn api_post(path: &str, body: &Value) -> Value {
             let me = remote_common::identity();
             discover_on(book(), me["id"].as_str().unwrap_or(""), "0.0.0.0:0", &broadcast_targets(), FIND_WAIT)
         }
-        "/api/remote/pair" => pair_with(book(), &remote_common::identity(), body),
+        "/api/remote/pair" => {
+            let me = remote_common::identity();
+            let answer = pair_with(book(), &me, body);
+            // pairing once is enough: the other computer can reach this one too
+            if answer["ok"] == true {
+                crate::remote_host::on_for_pairing();
+                if let Some(id) = answer["machine"]["id"].as_str() {
+                    offer_back(book(), id, me["name"].as_str().unwrap_or(""), crate::remote_host::offer_for, crate::remote_host::withdraw);
+                }
+            }
+            answer
+        }
         "/api/remote/forget" => {
             book().forget(body["id"].as_str().unwrap_or(""));
             json!({"ok": true})

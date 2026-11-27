@@ -155,14 +155,30 @@ impl Pairing {
             return Err(WRONG.into());
         }
         self.code = None;
+        let token = self.add(device_id, device_name, now);
+        let confirm = want.confirm(&token);
+        Ok((token, confirm))
+    }
+
+    /// A device with a new token, replacing its old entry.
+    fn add(&mut self, device_id: &str, device_name: &str, now: u64) -> String {
         let token = rc::random_hex(32);
         // a name as the page shows it: no control characters, at most 80 letters
         let name: String = device_name.chars().filter(|c| !c.is_control()).take(80).collect::<String>().trim().to_string();
         self.devices.retain(|d| d.id != device_id);
         self.devices.push(Device { id: device_id.into(), name: if name.is_empty() { "A computer".into() } else { name }, hash: rc::token_hash(&token), paired_at: now, last_seen: now, saved_seen: now });
         self.save();
-        let confirm = want.confirm(&token);
-        Ok((token, confirm))
+        token
+    }
+
+    /// Pairing both ways: a token for a computer this one paired with, so that it can reach this one too (sent to
+    /// it over the paired connection, which only it can use). None when it is a device here already.
+    pub fn give(&mut self, device_id: &str, device_name: &str, now: u64) -> Option<String> {
+        let id_ok = (1..=64).contains(&device_id.len()) && device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if !id_ok || self.devices.iter().any(|d| d.id == device_id) {
+            return None;
+        }
+        Some(self.add(device_id, device_name, now))
     }
 
     /// The paired device a token belongs to, noting that it was used now.
@@ -481,6 +497,18 @@ pub mod cert {
 
 /// What the listener serves with: this host's pairing, its certificate's fingerprint and identity, and where the
 /// local server is (its port and the page token: `server::local`).
+/// Pairing both ways: a paired computer that lets this one in too sends where and how (`POST /remote/offer`).
+pub struct Offer {
+    /// its id, from the token it sent the offer with (never from what it says)
+    pub id: String,
+    pub name: String,
+    /// the address its offer came from
+    pub addr: String,
+    pub port: u16,
+    pub fp: String,
+    pub token: String,
+}
+
 pub struct Ctx {
     pub pairing: Arc<Mutex<Pairing>>,
     pub fp: String,
@@ -489,6 +517,8 @@ pub struct Ctx {
     pub backend: Box<dyn Fn() -> Option<(u16, String)> + Send + Sync>,
     /// `READ_LIMIT` (shorter in tests)
     pub read_limit: Duration,
+    /// keeps a paired computer's offer to be reached in turn (`remote_client::take_offer`); false: not kept
+    pub offered: Box<dyn Fn(&Offer) -> bool + Send + Sync>,
 }
 
 /// A request's first line and headers.
@@ -664,6 +694,35 @@ fn serve<S: Read + Write>(ctx: &Ctx, slot: &Slot, s: &mut S) {
                 Err(e) => answer(c.s, 200, &json!({"ok": false, "error": e})),
             }
         }
+        ("POST", "/remote/offer") => {
+            let token = head.get("Authorization").strip_prefix("Bearer ").map(str::trim).unwrap_or("");
+            let device = (!token.is_empty()).then(|| ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).device_of(token, now())).flatten();
+            let Some(device) = device else {
+                let _ = c.body(&head, REFUSED_BODY);
+                return answer(c.s, 401, &json!({"error": "not paired"}));
+            };
+            slot.device(&device);
+            let v: Value = c.body(&head, 16 * 1024).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            slot.read();
+            if !slot.live() {
+                return;
+            }
+            let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
+            let hex = |t: &str, most: usize| (1..=most).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_hexdigit());
+            let port = v["port"].as_u64().and_then(|p| u16::try_from(p).ok()).filter(|p| *p > 0);
+            let addr = slot.peer().map(|ip| match ip {
+                IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip.to_string(), |v4| v4.to_string()),
+                IpAddr::V4(_) => ip.to_string(),
+            });
+            let kept = match (port, addr) {
+                (Some(port), Some(addr)) if hex(&text("fp"), 128) && hex(&text("token"), 128) => {
+                    let name: String = text("name").chars().filter(|c| !c.is_control()).take(80).collect::<String>().trim().to_string();
+                    (ctx.offered)(&Offer { id: device, name, addr, port, fp: text("fp").to_ascii_lowercase(), token: text("token") })
+                }
+                _ => false,
+            };
+            answer(c.s, 200, &json!({"ok": kept}));
+        }
         _ => {
             let token = head.get("Authorization").strip_prefix("Bearer ").map(str::trim).unwrap_or("");
             let device = (!token.is_empty()).then(|| ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).device_of(token, now())).flatten();
@@ -790,6 +849,11 @@ impl Slot {
     /// The whole request has arrived: no deadline from now on.
     fn read(&self) {
         self.with(|e| e.until = None);
+    }
+
+    /// The address the connection came from.
+    fn peer(&self) -> Option<IpAddr> {
+        self.conns.list().get(&self.id).map(|e| e.peer)
     }
 
     /// The paired device the request came from (removing it ends this connection).
@@ -1079,7 +1143,7 @@ fn turn_on(st: &mut State) {
         };
         let me = rc::identity();
         let text = |k: &str| me[k].as_str().unwrap_or("").to_string();
-        let ctx = Arc::new(Ctx { pairing: PAIRING.clone(), fp: cert.fp.clone(), id: text("id"), name: text("name"), backend: Box::new(crate::server::local), read_limit: READ_LIMIT });
+        let ctx = Arc::new(Ctx { pairing: PAIRING.clone(), fp: cert.fp.clone(), id: text("id"), name: text("name"), backend: Box::new(crate::server::local), read_limit: READ_LIMIT, offered: Box::new(|o| crate::remote_client::take_offer(crate::remote_client::book(), o)) });
         match listen(ctx, &cert, "0.0.0.0", LISTEN_PORT..=LISTEN_PORT + 9, Some(DISCOVER_PORT)) {
             Ok((l, warning)) => {
                 st.on = Some(l);
@@ -1147,6 +1211,28 @@ pub fn api_post(body: &Value) -> Value {
     state_json(&st)
 }
 
+/// Pairing both ways, for a computer this one paired with: this host's port and certificate, and a new token for
+/// that computer. None while network access is off here, or when that computer can reach this one already.
+pub fn offer_for(device_id: &str, device_name: &str) -> Option<(u16, String, String)> {
+    let st = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let (port, fp) = (st.on.as_ref()?.port, st.fp.clone()?);
+    let token = PAIRING.lock().unwrap_or_else(|e| e.into_inner()).give(device_id, device_name, now())?;
+    Some((port, fp, token))
+}
+
+/// An offer that didn't reach that computer: its token is taken back, so the next check offers again.
+pub fn withdraw(device_id: &str) {
+    PAIRING.lock().unwrap_or_else(|e| e.into_inner()).revoke(device_id);
+}
+
+/// Pairing with another computer lets it reach this one too: network access is turned on here (as Settings' switch
+/// does), which pairing both ways needs.
+pub fn on_for_pairing() {
+    if !setting_on() {
+        api_post(&json!({"action": "on"}));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1183,6 +1269,17 @@ mod tests {
         assert_eq!(list[0]["name"], "Laptop");
         assert_eq!(list[0]["paired_at"], 1010);
         assert!(list[0].get("hash").is_none(), "the page is not handed the hash");
+    }
+
+    #[test]
+    fn a_computer_this_one_paired_with_is_given_a_token_once() {
+        let mut p = Pairing::load(&fresh("remote-give"));
+        let token = p.give("desktop", "Desktop", 1000).expect("not a device here yet");
+        assert_eq!(p.device_of(&token, 1001).as_deref(), Some("desktop"));
+        assert_eq!(p.give("desktop", "Desktop", 1002), None, "it can reach this one already");
+        assert_eq!(p.give("../bad", "x", 1002), None);
+        assert!(p.revoke("desktop"));
+        assert!(p.give("desktop", "Desktop", 1003).is_some(), "taken back: offered again");
     }
 
     #[test]
@@ -1300,7 +1397,7 @@ mod tests {
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
         let code = pairing.lock().unwrap().new_code(1000);
         let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, FP, "laptop1").client, FP, 1001).unwrap().0;
-        let ctx = Ctx { pairing, fp: FP.into(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT };
+        let ctx = Ctx { pairing, fp: FP.into(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT, offered: Box::new(|_| false) };
         let (code, said) = served(&ctx, &format!("POST /api/send HTTP/1.1\r\nAuthorization: Bearer {token}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;x=y\r\n world\r\n0\r\n\r\n"));
         assert_eq!((code, said["body"].clone(), said["token"].clone()), (207, json!("hello world"), json!("page-token")));
         // a body too large is refused before it is read; without a token, before anything else
@@ -1509,7 +1606,7 @@ mod tests {
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
         let code = pairing.lock().unwrap().new_code(now());
         let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &cert.fp, "laptop1").client, &cert.fp, now()).unwrap().0;
-        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit });
+        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit, offered: Box::new(|_| false) });
         let (l, _) = listen(ctx, &cert, "127.0.0.1", 0..=0, None).unwrap();
         (l, token, pairing, key)
     }
@@ -1676,7 +1773,7 @@ mod tests {
         let cert = cert::load_or_make(&dir, &key.0).unwrap();
         let local = stand_in();
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
-        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT });
+        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT, offered: Box::new(|_| false) });
         let (l, warn) = listen(ctx, &cert, "127.0.0.1", 0..=0, Some(0)).expect("listening on 127.0.0.1");
         assert_eq!(warn, None);
         let port = l.port;

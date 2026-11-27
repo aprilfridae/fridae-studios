@@ -207,6 +207,8 @@ struct Host {
     port: u16,
     discover: u16,
     dir: std::path::PathBuf,
+    /// the computers the host's own app keeps, where a paired computer's offer to be reached in turn goes
+    offers: Arc<Book>,
     _key: TestKey,
 }
 
@@ -216,6 +218,8 @@ fn host(name: &str) -> Host {
     let cert = cert::load_or_make(&dir, &key.0).expect("a test certificate");
     let local = host_local(dir.clone());
     let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
+    let offers = Arc::new(Book::open(&dir.join("machines.json")));
+    let kept = offers.clone();
     let ctx = Arc::new(Ctx {
         pairing: pairing.clone(),
         fp: cert.fp.clone(),
@@ -223,12 +227,13 @@ fn host(name: &str) -> Host {
         name: "Desk".into(),
         backend: Box::new(move || Some((local, HOST_PAGE_TOKEN.into()))),
         read_limit: Duration::from_secs(10),
+        offered: Box::new(move |o| remote_client::take_offer(&kept, o)),
     });
     let (l, warn) = remote_host::listen(ctx, &cert, "127.0.0.1", 0..=0, Some(0)).expect("listening on 127.0.0.1");
     assert_eq!(warn, None);
     let (port, discover) = (l.port, l.discover_port.unwrap());
     assert!(port != rc::LISTEN_PORT && discover != rc::DISCOVER_PORT, "test ports only");
-    Host { listener: Some(l), pairing, fp: cert.fp, port, discover, dir, _key: key }
+    Host { listener: Some(l), pairing, fp: cert.fp, port, discover, dir, offers, _key: key }
 }
 
 fn client_book(name: &str) -> Arc<Book> {
@@ -384,6 +389,36 @@ fn remote_e2e_a_paired_computer_is_reached_through_the_real_host() {
     assert_eq!((u.status, u.json()), (404, json!({"error": "unknown computer"})));
 
     drop(h);
+}
+
+#[test]
+fn remote_e2e_pairing_once_lets_each_computer_reach_the_other() {
+    let h = host("both-ways");
+    let book = client_book("both-ways");
+    let me = rc::identity();
+    let my_id = me["id"].as_str().unwrap().to_string();
+    find_and_pair(&h, &book, &me);
+    let (fp, token) = ("ab".repeat(32), "cd".repeat(32));
+    // this computer offers the one it paired with a token for its own host, over the paired connection
+    let took = remote_client::offer_back(&book, HOST_ID, "Laptop", |id, name| {
+        assert_eq!((id, name), (HOST_ID, "Desk"));
+        Some((47_999, fp.clone(), token.clone()))
+    }, |_| panic!("a taken offer is kept"));
+    assert!(took);
+    let there = h.offers.find(&my_id).expect("the host's app keeps this computer, under its own id");
+    assert_eq!((there["name"].as_str(), there["addr"].as_str(), there["port"].as_u64(), there["fp"].as_str(), there["paired"].as_bool()), (Some("Laptop"), Some("127.0.0.1"), Some(47_999), Some(fp.as_str()), Some(true)), "at the address the offer came from: {there}");
+    assert_eq!(h.offers.token_of(&my_id).as_deref(), Some(token.as_str()));
+    // nothing to offer (it can reach this one already, or network access is off here): nothing is sent
+    assert!(!remote_client::offer_back(&book, HOST_ID, "Laptop", |_, _| None, |_| panic!("nothing was made")));
+    // an offer the host can't use is refused, and taken back here
+    let back = Mutex::new(String::new());
+    assert!(!remote_client::offer_back(&book, HOST_ID, "Laptop", |_, _| Some((0, fp.clone(), token.clone())), |id| *back.lock().unwrap() = id.to_string()));
+    assert_eq!(*back.lock().unwrap(), HOST_ID);
+    // only a paired computer may offer: one without a token is refused
+    let body = format!(r#"{{"name":"Mallory","port":1,"fp":"{fp}","token":"{token}"}}"#);
+    let raw = to_host(h.port, &format!("POST /remote/offer HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}", body.len()));
+    assert!(String::from_utf8_lossy(&raw).starts_with("HTTP/1.1 401"), "{}", String::from_utf8_lossy(&raw));
+    assert!(h.offers.find("Mallory").is_none());
 }
 
 #[test]

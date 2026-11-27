@@ -103,15 +103,17 @@ def chat_api(st, p, q, body, prefix):
             if flags and flags[-1]["kind"] == "busy" and flags[-1].get("value"): return {"ok": False, "error": "It is still working. It moves when the reply is over."}
             name = next((e["name"] for e in ev if e["kind"] == "agent_new"), "Chat")
             evs = [{k: v for k, v in e.items() if k not in ("id", "agent")} for e in ev if e["kind"] != "agent_new"]
-            return {"ok": True, "chat": {"name": name, "ai": "claude", "model": None, "events": evs, "handover": "[chat so far]", "queued": []}}
+            return {"ok": True, "chat": {"id": aid, "name": name, "ai": "claude", "model": None, "events": evs, "handover": "[chat so far]", "queued": []}}
         if act == "in":
             chat = body.get("chat") or {}
             with COND:
-                aid = prefix + "m" + str(st["next"]); st["next"] += 1
+                # the same chat keeps its id, unless this computer has a chat by that id
+                taken = {e.get("agent") for e in st["events"] if e["kind"] == "agent_new"} - {e.get("agent") for e in st["events"] if e["kind"] == "agent_removed"}
+                aid = chat.get("id") if chat.get("id") and chat.get("id") not in taken else prefix + "m" + str(st["next"])
+                st["next"] += 1
                 push(st["events"], {"kind": "agent_new", "agent": aid, "name": chat.get("name") or "Chat", "ai": chat.get("ai") or "claude", "restored": True})
                 for e in chat.get("events") or []:
                     if e.get("kind") != "project": push(st["events"], dict(e, agent=aid))
-                push(st["events"], {"kind": "moved", "agent": aid, "text": "Moved here from " + (body.get("from") or "your other computer") + ". It gets the chat so far with your next message."})
                 pr = next((x for x in st["projects"] if x["path"] == body.get("project")), None)
                 if pr: push(st["events"], dict(pr, kind="project", agent=aid))
                 push(st["events"], {"kind": "done", "agent": aid}); COND.notify_all()
@@ -120,6 +122,16 @@ def chat_api(st, p, q, body, prefix):
             with COND: push(st["events"], {"kind": "agent_removed", "agent": aid}); COND.notify_all()
             return {"ok": True}
         return {"ok": False, "error": "Unknown action."}
+    if p == "/api/project-copy" and body.get("action") == "copy":   # project_copy.rs: run by the page's own app
+        side = lambda m: S["local"] if not m else S["remote"][m]
+        src = next((x for x in side(body.get("from"))["projects"] if x["path"] == body.get("path")), None)
+        if not src: return {"ok": False, "error": "That project isn't on that computer's list."}
+        dst = side(body.get("to"))
+        with COND:
+            there = next((x for x in dst["projects"] if x["name"].lower() == src["name"].lower()), None)
+            if not there:
+                there = dict(src, path="H:/games/" + src["name"]); dst["projects"].append(there)
+        return {"ok": True, "path": there["path"], "files": 3, "bytes": 1200}
     if p == "/api/open-chat":
         with COND:
             aid = prefix + "o" + str(st["next"]); st["next"] += 1

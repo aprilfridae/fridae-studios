@@ -573,6 +573,8 @@ fn post(path: &str, body: Value) -> Reply {
             let ok = text_of("confirm").trim().eq_ignore_ascii_case("delete") && agents::delete_chat(&text_of("id"));
             send_json(json!({"ok": ok}))
         }
+        // a project's files copied to another of the user's computers, when a chat moves there (project_copy.rs)
+        "/api/project-copy" => send_json(crate::project_copy::api(&body)),
         "/api/restore-chat" => send_json(json!({"ok": agents::restore_chat(&text_of("id"))})),
         // moving a chat to another of the user's computers, which the page drives (ui/src/remote/move.ts): "hold" (it
         // moves once its reply is over), "out" (the chat as it goes), "in" (on the computer it goes to) and "away"
@@ -582,7 +584,7 @@ fn post(path: &str, body: Value) -> Reply {
             let answer = match text_of("action").as_str() {
                 "hold" => agents::hold_for_move(&id, body["on"].as_bool().unwrap_or(false)).map(|()| json!({})),
                 "out" => agents::move_out(&id).map(|chat| json!({"chat": chat})),
-                "in" => agents::move_in(&body["chat"], body["project"].as_str(), &text_of("from")).map(|agent| json!({"agent": agent})),
+                "in" => agents::move_in(&body["chat"], body["project"].as_str(), crate::remote_common::identity()["name"].as_str().unwrap_or("")).map(|agent| json!({"agent": agent})),
                 "away" => agents::moved_away(&id).map(|()| json!({})),
                 _ => Err("Unknown action.".to_string()),
             };

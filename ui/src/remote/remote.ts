@@ -17,16 +17,12 @@ const projs: Record<string, any[]> = {};             /* machine -> its projects 
 const hist: Record<string, { chats: any[]; deleted: any[] }> = {};
 const stat: Record<string, { at: number; s: any }> = {};   /* machine -> its GET /api/status, for the AI chip */
 const known = (m: string) => store.get().machines.some((x) => x.id === m);
-let myName = "";
-/* this computer's own name, as its other computers know it */
-export const thisName = () => myName;
 
 /* GET /api/remote/machines (every 20 s): a machine is online as its own long-poll last found it, once one runs */
 export async function loadMachines() {
   let r: any = null;
   try { r = await api("/api/remote/machines"); } catch (e) { return; }
   if (!r || !Array.isArray(r.machines)) return;
-  if (r.this && typeof r.this.name === "string") myName = r.this.name;
   const was = store.get().machines;
   const list: Machine[] = r.machines.map((x: any) => {
     const old = was.find((w) => w.id === x.id), ours = !!old && following.has(x.id);

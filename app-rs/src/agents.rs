@@ -5582,28 +5582,39 @@ pub fn move_out(id: &str) -> Result<Value, String> {
     let ai = st.ai.clone().unwrap_or_else(paths::default_ai);
     let (handover, _) = handover_plan(&st.log, ai_label(&ai), HANDOVER_CAP);
     let queued: Vec<&str> = st.queue.iter().map(|(_, t, _)| t.as_str()).collect();
-    Ok(json!({"name": st.name, "ai": ai, "model": st.model, "events": st.log, "handover": handover, "queued": queued}))
+    Ok(json!({"id": agent.id, "name": st.name, "ai": ai, "model": st.model, "events": st.log, "handover": handover, "queued": queued}))
 }
 
-/// What a moved chat's events become on this computer: the other computer's project lines are left out (its folders
-/// are not here: the chat gets this computer's project, if any, after), and one line says where it came from, and
-/// which AI carries it on when that changed.
-fn moved_events(events: &[Value], from: &str, ai_was: &str, ai: &str) -> Vec<Value> {
+/// What a moved chat's events become on this computer: the same, but for the other computer's project lines (its
+/// folders are not here: the chat gets this computer's copy of the project after). Nothing says it moved: the chat
+/// is the same chat, only run elsewhere. Only when its AI isn't set up here does one line say which AI carries it on.
+fn moved_events(events: &[Value], here: &str, ai_was: &str, ai: &str) -> Vec<Value> {
     let mut out: Vec<Value> = events.iter().filter(|e| e["kind"].is_string() && e["kind"] != "project").cloned().collect();
-    let from = from.trim();
-    let text = if from.is_empty() { "Moved here from your other computer.".to_string() } else { format!("Moved here from {from}.") };
-    let text = if ai == ai_was { format!("{text} It gets the chat so far with your next message.") } else { format!("{text} {} isn't set up here, so {} carries it on. It gets the chat so far with your next message.", ai_label(ai_was), ai_label(ai)) };
-    out.push(json!({"kind": "moved", "text": text, "from": from}));
     if ai != ai_was {
+        let here = if here.trim().is_empty() { "this computer".to_string() } else { here.trim().to_string() };
+        out.push(json!({"kind": "moved", "text": format!("{} isn't set up on {here}, so {} carries the chat on.", ai_label(ai_was), ai_label(ai))}));
         out.push(json!({"kind": "ai", "ai": ai}));
     }
     out
 }
 
-/// A chat moved here from another of the user's computers (`move_out` there): a chat of its own here, with every event,
-/// a new conversation handed the chat so far, `project` (a project of this computer's, or none) and what the user sent
-/// meanwhile sent as its first message. Its AI if that is set up here, else this computer's. The new chat's id.
-pub fn move_in(chat: &Value, project: Option<&str>, from: &str) -> Result<String, String> {
+/// The id a moved chat keeps: its own (ids are made from the time and a count, so two computers' never meet), unless
+/// a chat of this computer's already has it.
+fn moved_id(given: &str) -> String {
+    let ok = given.len() <= 40 && given.starts_with('c') && given[1..].split_once('-').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty() && a.bytes().chain(b.bytes()).all(|c| c.is_ascii_digit()));
+    if ok && !chat_file(given).exists() && get(given).is_none() {
+        return given.to_string();
+    }
+    let n = COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    format!("c{}-{n}", (paths::now_secs() * 1000.0) as u64)
+}
+
+/// A chat moved here from another of the user's computers (`move_out` there): the same chat (its id, unless taken
+/// here, and every event), a new conversation handed the chat so far, `project` (this computer's copy of its project,
+/// or none) and what the user sent meanwhile sent as its first message. Its AI if that is set up here, else this
+/// computer's. The chat's id here.
+/// `here`: this computer's name, for that line.
+pub fn move_in(chat: &Value, project: Option<&str>, here: &str) -> Result<String, String> {
     let events = chat["events"].as_array().ok_or("Nothing came from the other computer.")?;
     if !events.iter().any(is_user) {
         return Err("Nothing came from the other computer.".into());
@@ -5615,13 +5626,12 @@ pub fn move_in(chat: &Value, project: Option<&str>, from: &str) -> Result<String
     let ai = if paths::find_ai(&was).is_some() { was.clone() } else { paths::default_ai() };
     let handover = chat["handover"].as_str().unwrap_or("");
     let handover = if ai == was { same_ai_handover(handover) } else { handover.to_string() };
-    let n = COUNT.fetch_add(1, Ordering::SeqCst) + 1;
-    let id = format!("c{}-{n}", (paths::now_secs() * 1000.0) as u64);
+    let id = moved_id(chat["id"].as_str().unwrap_or(""));
     let data = json!({
         "id": id, "name": chat["name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or("Chat"), "session": null, "project": null,
         "ai": ai, "model": if ai == was { chat["model"].clone() } else { Value::Null },
         "handover": if handover.is_empty() { Value::Null } else { json!(handover) },
-        "updated": paths::now_secs(), "events": moved_events(events, from, &was, &ai),
+        "updated": paths::now_secs(), "events": moved_events(events, here, &was, &ai),
     });
     let dir = paths::work("chats");
     let _ = fs::create_dir_all(&dir);
@@ -7420,16 +7430,16 @@ mod tests {
         assert_eq!(out["events"].as_array().unwrap().len(), 4);
         assert_eq!(out["queued"], json!([]));
 
-        // (both ends are this test's computer: the copy is a chat of its own, under a new id)
-        let id = move_in(&out, None, "Laptop").expect("it opens here");
+        assert_eq!(out["id"], old.as_str());
+        // (both ends are this test's computer: while the first is still here, the copy needs an id of its own)
+        let id = move_in(&out, None, "Desktop").expect("it opens here");
         assert_ne!(id, old);
         let b = get(&id).expect("open");
         {
             let st = b.st.lock().unwrap();
             assert!(st.log.iter().all(|e| e["kind"] != "project"), "the other computer's folder is not this one's");
             assert!(st.log.iter().any(|e| e["kind"] == "user" && e["text"] == "Build the castle gates"), "every message came");
-            let moved = st.log.iter().find(|e| e["kind"] == "moved").expect("one line says where it came from");
-            assert!(moved["text"].as_str().unwrap().starts_with("Moved here from Laptop."), "{moved}");
+            assert!(st.log.iter().all(|e| e["kind"] != "moved"), "nothing says it moved: it is the same chat");
             assert!(st.handover.as_deref().unwrap_or("").contains("The gates are up."), "it carries on with the chat so far");
             assert!(st.session.is_none() && st.project.is_none());
         }
@@ -7440,6 +7450,11 @@ mod tests {
         assert!(moved_dir().join(format!("{old}.json")).is_file(), "kept, not deleted");
         assert!(!chat_file(&old).exists());
         assert!(history().iter().all(|c| c["id"] != old.as_str()) && deleted().iter().all(|c| c["id"] != old.as_str()), "and in neither list");
+        // moved on again once its id is free there: the same id, so it keeps its place in the list
+        let out = move_out(&id).unwrap();
+        moved_away(&id).unwrap();
+        assert_eq!(move_in(&out, None, "Desktop").unwrap(), id, "the same chat, under its own id");
+        assert!(get(&id).is_some());
         remove_agent(&id);
     }
 
@@ -7467,14 +7482,17 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_chat_says_where_it_came_from_and_which_ai_carries_it_on() {
+    fn a_moved_chat_says_nothing_unless_another_ai_carries_it_on() {
         let events = vec![json!({"kind": "project", "path": "C:/games/castle"}), json!({"kind": "user", "text": "hi"}), json!({"text": "no kind"})];
-        let same = moved_events(&events, "Desktop", "claude", "claude");
-        assert_eq!(same.len(), 2);
-        assert_eq!(same[1], json!({"kind": "moved", "text": "Moved here from Desktop. It gets the chat so far with your next message.", "from": "Desktop"}));
-        let other = moved_events(&events, " ", "cursor", "claude");
-        assert_eq!(other[1]["text"], "Moved here from your other computer. Cursor isn't set up here, so Claude carries it on. It gets the chat so far with your next message.");
+        assert_eq!(moved_events(&events, "Desktop", "claude", "claude"), vec![json!({"kind": "user", "text": "hi"})]);
+        let other = moved_events(&events, "Desktop", "cursor", "claude");
+        assert_eq!(other[1], json!({"kind": "moved", "text": "Cursor isn't set up on Desktop, so Claude carries the chat on."}));
         assert_eq!(other[2], json!({"kind": "ai", "ai": "claude"}));
+        assert_eq!(moved_events(&events, " ", "cursor", "claude")[1]["text"], "Cursor isn't set up on this computer, so Claude carries the chat on.");
+        assert_eq!(moved_id("c1700000000000-3"), "c1700000000000-3");
+        for bad in ["", "../x", "c12", "cabc-1", "x1-2"] {
+            assert!(moved_id(bad).starts_with('c') && moved_id(bad) != bad, "{bad}");
+        }
     }
 
     #[test]

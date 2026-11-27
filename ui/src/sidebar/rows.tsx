@@ -75,15 +75,15 @@ export const AddRow = memo(function AddRow({ on }: { on: boolean }) {
   );
 });
 
-type ChatProps = { id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string };
-export const ChatRow = memo(function ChatRow({ id, name, on, live, count, open, tip, ai }: ChatProps) {
+type ChatProps = { id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string; where: string };
+export const ChatRow = memo(function ChatRow({ id, name, on, live, count, open, tip, ai, where }: ChatProps) {
   const many = count === 1 ? "expert" : count + " experts";
   return (
     <div class="s-chat">
       {count > 0 && <button class="s-tw" data-k={"t:" + id} aria-controls={"kids-" + id} aria-expanded={open ? "true" : "false"} aria-label={(open ? "Hide the " : "Show the ") + many + " of " + name} title={(open ? "Hide" : "Show") + " the experts this chat started"}
         onClick={() => foldSide("k:" + id, xpOpen(id), () => setXpOpen(id, !xpOpen(id)))}>{CHEVRON}</button>}
       <button class={"s-row" + (on ? " on" : "")} data-k={"c:" + id} title={tip} aria-current={on ? "true" : undefined} onClick={() => host.openChat(id)}>
-        <span class={"s-ai" + (live ? " live" : "")}><AiLogo ai={ai} size={13} /></span><b>{name}</b><span class="s-n">{count ? String(count) : ""}</span>
+        <span class={"s-ai" + (live ? " live" : "")}><AiLogo ai={ai} size={13} /></span><b>{name}</b>{where && <span class="s-where">{where}</span>}<span class="s-n">{count ? String(count) : ""}</span>
       </button>
     </div>
   );

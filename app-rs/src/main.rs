@@ -33,6 +33,7 @@ mod skills;
 mod paths;
 mod plugin;
 mod procs;
+mod project_copy;
 mod projects;
 mod promo;
 mod promo_tab;
