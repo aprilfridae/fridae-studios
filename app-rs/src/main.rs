@@ -81,6 +81,48 @@ enum Ui {
     Maximize,
     Close,
     ResizeTop,
+    /// the Mac: put the window's buttons back where the page's top bar has room for them
+    PlaceButtons,
+}
+
+/* The Mac's close, minimise and zoom buttons, moved into the page's top bar: 18 px from the left and in the middle of
+   its 48 px height. AppKit puts them back at the top on its own now and then (a resize, leaving full screen), so this
+   runs again then. tao's own with_traffic_light_inset does the same only when its view draws, which the page covering
+   it rarely asks for. */
+#[cfg(target_os = "macos")]
+fn place_buttons(window: &tao::window::Window) {
+    use objc2::{msg_send, runtime::AnyObject};
+    use objc2_foundation::NSRect;
+    use tao::platform::macos::WindowExtMacOS;
+    const LEFT: f64 = 18.0;
+    const BAR: f64 = 48.0;
+    unsafe {
+        let Some(win) = (window.ns_window() as *const AnyObject).as_ref() else { return };
+        // NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton
+        let buttons: Vec<*const AnyObject> = (0usize..3).map(|i| msg_send![win, standardWindowButton: i]).collect();
+        let Some(close) = buttons[0].as_ref() else { return };
+        let Some(mini) = buttons[1].as_ref() else { return };
+        let parent: *const AnyObject = msg_send![close, superview];
+        let Some(parent) = parent.as_ref() else { return };
+        let bar: *const AnyObject = msg_send![parent, superview];
+        let Some(bar) = bar.as_ref() else { return };
+        let close_rect: NSRect = msg_send![close, frame];
+        let mini_rect: NSRect = msg_send![mini, frame];
+        let space = mini_rect.origin.x - close_rect.origin.x;
+        // the bar's container grows down so the buttons, at its bottom, sit in the middle of the page's top bar
+        let height = close_rect.size.height + (BAR - close_rect.size.height) / 2.0;
+        let win_rect: NSRect = msg_send![win, frame];
+        let mut rect: NSRect = msg_send![bar, frame];
+        rect.size.height = height;
+        rect.origin.y = win_rect.size.height - height;
+        let _: () = msg_send![bar, setFrame: rect];
+        for (i, b) in buttons.iter().enumerate() {
+            let Some(b) = b.as_ref() else { continue };
+            let mut r: NSRect = msg_send![b, frame];
+            r.origin.x = LEFT + i as f64 * space;
+            let _: () = msg_send![b, setFrameOrigin: r.origin];
+        }
+    }
 }
 
 fn window_icon() -> Option<Icon> {
@@ -251,7 +293,6 @@ fn main() {
             .with_titlebar_transparent(true)
             .with_title_hidden(true)
             .with_fullsize_content_view(true)
-            .with_traffic_light_inset(tao::dpi::LogicalPosition::new(18.0, 17.0))
     };
     let window = builder.build(&event_loop).expect("could not create the window");
     #[cfg(windows)]
@@ -326,6 +367,17 @@ fn main() {
             let _ = proxy.send_event(Ui::Quit);
         });
     }
+    #[cfg(target_os = "macos")]
+    {
+        // once the window is on screen (and once more after AppKit has laid out its bar)
+        let proxy = event_loop.create_proxy();
+        thread::spawn(move || {
+            for ms in [150, 1000] {
+                thread::sleep(Duration::from_millis(ms));
+                let _ = proxy.send_event(Ui::PlaceButtons);
+            }
+        });
+    }
     let mut was_max = false;
     let mut was_full = false;
     event_loop.run(move |event, _, control_flow| {
@@ -338,6 +390,10 @@ fn main() {
             Event::UserEvent(Ui::Drag) => {
                 let _ = window.drag_window();
             }
+            Event::UserEvent(Ui::PlaceButtons) => {
+                #[cfg(target_os = "macos")]
+                place_buttons(&window);
+            }
             Event::UserEvent(Ui::Minimize) => window.set_minimized(true),
             Event::UserEvent(Ui::Maximize) => window.set_maximized(!window.is_maximized()),
             Event::UserEvent(Ui::ResizeTop) => {
@@ -347,6 +403,8 @@ fn main() {
             }
             // the page's maximise button shows restore while the window fills the screen
             Event::WindowEvent { event: WindowEvent::Resized(_), .. } => {
+                #[cfg(target_os = "macos")]
+                place_buttons(&window);
                 let max = window.is_maximized();
                 if max != was_max {
                     was_max = max;

@@ -754,6 +754,8 @@ dependencies = [
  "image",
  "libc",
  "native-tls",
+ "objc2",
+ "objc2-foundation",
  "open",
  "regex",
  "rfd",

@@ -38,3 +38,8 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 # remote control on a Mac: waiting for a socket to be readable (poll) and each network's broadcast address
 # (getifaddrs); its TLS is native-tls (Secure Transport), its certificate made by the system's /usr/bin/openssl
 libc = "0.2.191"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# the window's close, minimise and zoom buttons are moved into the page's top bar: a nudge to tao's view to place them
+objc2 = "0.6.5"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry"] }
