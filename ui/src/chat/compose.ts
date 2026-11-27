@@ -36,7 +36,8 @@ export const C = {
   selfTest: get("selftest") === "1", geminiMode: get("gemini") === "1",
   chosenModel: json("models") as Record<string, string>, chosenEffort: json("efforts") as Record<string, string>,
   pending: [] as Att[],
-  pop: "",               /* the menu of the message box that is open: "add", "model", "mode" or none */
+  pop: "",               /* the menu of the message box that is open: "add", "model", "account", "mode" or none */
+  draftAccount: null as { ai: string; name: string } | null,   /* the account picked on the empty page (AccountChip) */
   startingRun: "",       /* the chat a studio run is being started from, until its first event or an error */
   box: null as HTMLTextAreaElement | null,
 };
@@ -109,9 +110,6 @@ export function modelParts(ai: string, name: string): [string, string] {
   const at = H.caps(ai).grouped_models ? name.indexOf(" · ") : -1;
   return at < 0 ? ["", name] : [name.slice(0, at), name.slice(at + 3)];
 }
-/* More accounts for an AI (status.ai.accounts; Settings, Connections adds and removes them): in a chat, a few words
-   say which account it is on, only while there is more than one. */
-export function accountWords(ai: string, p: any) { return ((((H.status.ai || {}).accounts || {})[ai] || {}).accounts || []).length && p ? " · account " + (p.account || 1) : ""; }
 /* The picker's left side: a chat that has started carries on with the other AI, handed the chat so far. */
 export async function switchAi(id: string, focusModel: () => void) {
   const p = cur();
@@ -219,6 +217,9 @@ async function sendFromDraft() {
   if (C.pending.some((a) => !a.name && !a.failed)) return;
   const id = await H.ensureChat(H.curProj);
   if (!id) return;
+  /* an account picked on the empty page goes to the new chat before its first message (AccountChip) */
+  const acct = C.draftAccount; C.draftAccount = null;
+  if (acct && acct.ai === H.chatAi(H.agents.get(id))) await api("/api/chat-account", { agent: id, account: acct.name }).catch(() => {});
   if (H.current === id && H.agents.get(id)) send();
 }
 /* a message in the chosen ordinary mode (Ask me, Full auto, Overnight) */

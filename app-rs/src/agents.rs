@@ -695,7 +695,8 @@ pub fn account_removed(ai: &str, name: &str) {
 const REMOVE_WAIT: Duration = if cfg!(test) { Duration::from_millis(300) } else { Duration::from_secs(8) };
 
 /// The account a turn runs on, by its place (1: the user's own; 2 and up: the added ones in their order). A chat
-/// that has an account keeps it: there is no switching back mid-chat (only a limit moves it, `roll_over`), unless
+/// that has an account keeps it: there is no switching back mid-chat (only a limit moves it, `roll_over`, or the
+/// user's own pick, which `turn_account` takes before this is asked), unless
 /// its added account is no longer there for it. `here`: where the chat's added account is in the list now, None
 /// when it is gone; `signed_out`: its tool said that nobody is signed in there. A chat from before there were
 /// accounts, which has a conversation, is on the user's own. A new chat starts on the first account that can take
@@ -869,6 +870,10 @@ struct State {
     /// record), read again from this name before every turn; an account removed and added again is another
     /// account, with none of this chat's conversations.
     account_name: Option<String>,
+    /// The account the user picked for this chat by hand (the chat's account button, `pick_account`), not yet in
+    /// use: its folder's name, "" for the user's own. The chat's next turn moves to it (`turn_account`), and from
+    /// then on it is simply the chat's account. Saved with the chat.
+    account_pick: Option<String>,
     /// The added account this chat has been told about (`keychain_warning`): the line is said once to a chat.
     keychain_warned: Option<String>,
     /// The turn ended on the usage limit and may move to the other account: the chat was kept counting as working
@@ -2916,6 +2921,8 @@ impl Agent {
             }
             st.session = None;
             st.ai = Some(kind.to_string());
+            // an account picked by hand was the old AI's
+            st.account_pick = None;
             // the last message's model and effort were the old AI's: the app's own messages (a run's wakes, board
             // news) would ask the new AI for them and land on its default. The window sends the new pick (`set_pick`).
             st.last_ask.model = None;
@@ -2950,12 +2957,42 @@ impl Agent {
         }
     }
 
+    /// The user picks which of the chat's AI's accounts it runs on (the chat's account button): "" the user's own,
+    /// else an added account's folder name, which must be one that is set up (`accounts::ready`: its folder is the
+    /// app's and an account of its own is signed in there). It counts from the chat's next turn (`turn_account`),
+    /// whether or not the chat is working now; until then the chat shows it as picked (`account_pick`). Returns the
+    /// account's place (1: the user's own).
+    pub fn pick_account(&self, choice: &str) -> Result<u8, String> {
+        let kind = self.ai();
+        if !crate::accounts::AIS.contains(&kind.as_str()) {
+            return Err(format!("{} has only the one account here.", ai_label(&kind)));
+        }
+        let place = if choice.is_empty() {
+            1
+        } else {
+            let Some(place) = crate::accounts::position(&kind, choice) else {
+                return Err("That account is not set up any more. Settings, Connections lists the ones you have.".into());
+            };
+            if !crate::accounts::ready(&kind, choice) {
+                return Err(format!("{} account {place} is not signed in. Sign it in under Settings, Connections, then pick it.", ai_label(&kind)));
+            }
+            place
+        };
+        self.st.lock().unwrap().account_pick = Some(choice.to_string());
+        self.put("account_pick", json!({"account": place}));
+        self.save();
+        Ok(place)
+    }
+
     /// Choose this chat's AI. Only possible before its conversation has started.
     pub fn set_ai(&self, kind: &str) -> bool {
         {
             let mut st = self.st.lock().unwrap();
             if !paths::AIS.contains(&kind) || st.session.is_some() || st.running || st.log.iter().any(is_user) {
                 return false;
+            }
+            if st.ai.clone().unwrap_or_else(paths::default_ai) != kind {
+                st.account_pick = None; // an account picked by hand was the other AI's
             }
             st.ai = Some(kind.to_string());
         }
@@ -3014,7 +3051,7 @@ impl Agent {
             if !st.log.iter().any(is_user) {
                 return;
             }
-            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "account": st.account, "account_name": st.account_name, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
+            json!({"id": self.id, "name": st.name, "session": st.session, "project": st.project, "role": st.role, "expert": st.expert, "expert_text": st.expert_text, "parent": st.parent, "team": st.team, "result_written": st.result_written, "ai": st.ai, "model": st.model, "account": st.account, "account_name": st.account_name, "account_pick": st.account_pick, "handover": st.handover, "updated": paths::now_secs(), "events": st.log})
         };
         {
             let _guard = self.save_lock.lock().unwrap();
@@ -4639,7 +4676,7 @@ impl Agent {
         let list = crate::accounts::list(kind);
         let slots = crate::accounts::slots(kind, &list, paths::now_secs());
         let place = |i: usize| u8::try_from(i + 2).unwrap_or(u8::MAX);
-        let (account, name, was) = {
+        let (account, name, was, picked) = {
             let mut st = self.st.lock().unwrap();
             let was = st.account;
             // where the chat's account is now: by its name (a chat saved before names were kept: by its place)
@@ -4649,20 +4686,39 @@ impl Agent {
                 _ => None,
             };
             let signed_out = here.is_some_and(|n| crate::accounts::signed_out_of(kind, &list[n as usize - 2]));
-            let account = account_for(was, here, signed_out, st.session.is_some(), &slots);
-            if was >= 2 && here != Some(account) {
-                // its conversation was another account's: this message starts a new one, with the chat so far
+            // an account the user picked by hand (`pick_account`) is where this turn goes, while it is still set up
+            // and is not one this very message already ran out on (a rollover's message sent again: it goes on)
+            let pick = st.account_pick.take();
+            let picked: Option<u8> = pick.as_deref().filter(|name| !st.tried.iter().any(|t| t == name)).and_then(|name| match name {
+                "" => Some(1),
+                name => list.iter().position(|n| n == name).map(place).filter(|_| crate::accounts::ready(kind, name)),
+            });
+            let account = picked.unwrap_or_else(|| account_for(was, here, signed_out, st.session.is_some(), &slots));
+            // whose the chat's conversation is: its added account (0 when that is gone), the user's own, or nobody's
+            // yet (a chat that has not run; one from before there were accounts, with a conversation, is the user's)
+            let owner: Option<u8> = match was {
+                2.. => Some(here.unwrap_or(0)),
+                1 => Some(1),
+                _ => st.session.is_some().then_some(1),
+            };
+            if owner.is_some_and(|o| o != account) {
+                // its conversation was another account's: this message starts a new one, with the chat so far (a
+                // pick on a message sent again after a rollover keeps the hand-over the rollover made for it)
                 let upto = st.log.iter().rposition(is_user).unwrap_or(st.log.len());
-                if st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text") {
+                let fresh = picked.is_none() || st.session.is_some() || st.handover.is_none();
+                if fresh && st.log[..upto].iter().any(|e| is_user(e) || e["kind"] == "text") {
                     hand_over(&mut st, upto, ai_label(kind), true);
                 }
                 st.session = None;
             }
             st.account = account;
             st.account_name = (account >= 2).then(|| list.get(account as usize - 2).cloned()).flatten();
-            (account, st.account_name.clone(), was)
+            (account, st.account_name.clone(), was, pick.is_some())
         };
-        if account != was && (!list.is_empty() || account >= 2 || was >= 2) {
+        if picked {
+            // (always, so the window lets go of the pick it showed, whatever came of it)
+            self.put("account", json!({"account": account, "picked": was >= 1 && account != was}));
+        } else if account != was && (!list.is_empty() || account >= 2 || was >= 2) {
             self.put("account", json!({"account": account}));
         }
         (account, name)
@@ -5486,7 +5542,9 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         st.model = d["model"].as_str().map(str::to_string);
         st.handover = d["handover"].as_str().map(str::to_string);
         st.account_name = d["account_name"].as_str().map(str::to_string);
-        st.account = d["account"].as_u64().filter(|a| *a <= 2).unwrap_or(0) as u8;
+        // (any place an added account can have: a chat on account 3 or later stays on it after a restart)
+        st.account = d["account"].as_u64().filter(|a| *a <= crate::accounts::MOST as u64 + 1).unwrap_or(0) as u8;
+        st.account_pick = d["account_pick"].as_str().map(str::to_string);
         st.log = events.into_iter().filter(|e| e["kind"].is_string()).collect();
         (st.swap_told, st.told) = told_from_log(&st.log);
     }
@@ -7508,6 +7566,142 @@ mod tests {
         let before = guarded_print(&g);
         g.insert(crate::accounts::SETTING.into(), json!({"claude": "claude-2-abcdef"}));
         assert_eq!(guarded_print(&g), before);
+    }
+
+    #[test]
+    fn a_chat_runs_on_the_account_picked_for_it_from_its_next_message_and_still_rolls_over() {
+        crate::accounts::stand_in_many(&[("pa", true), ("pb", false)]);
+        let a = chat_on_first("c-pick");
+        // only an account that is set up can be picked: not one nobody is signed in to, not one that is not there
+        assert!(a.pick_account("claude-2-pb").unwrap_err().contains("not signed in"));
+        assert!(a.pick_account("claude-2-zz").is_err());
+        assert!(a.st.lock().unwrap().account_pick.is_none());
+        assert_eq!(a.pick_account("claude-2-pa"), Ok(2));
+        let last = a.st.lock().unwrap().log.last().cloned().unwrap();
+        assert_eq!((last["kind"].as_str(), last["account"].as_u64()), (Some("account_pick"), Some(2)), "the chat shows the pick as waiting");
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.session.as_deref()), (1, Some("s1")), "nothing moves before the next message");
+        }
+        let went = |a: &Arc<Agent>| a.st.lock().unwrap().went_for_test.clone();
+        let at = a.st.lock().unwrap().log.len();
+        a.send("Now add a lock", &Ask::default());
+        {
+            let st = a.st.lock().unwrap();
+            assert_eq!((st.account, st.account_name.as_deref(), st.account_pick.as_deref()), (2, Some("claude-2-pa"), None));
+            let moved = st.log[at..].iter().find(|e| e["kind"] == "account").cloned().unwrap();
+            assert_eq!((moved["account"].as_u64(), moved["picked"].as_bool()), (Some(2), Some(true)), "the chat says where it went");
+        }
+        // a new conversation on the picked account, handed the chat so far
+        let first = went(&a)[0].clone();
+        assert!(first.starts_with("[This chat carries on here in a new conversation") && first.contains("User: Make a door") && first.ends_with("Now add a lock"), "{first}");
+        // the pick stays for the chat (its new conversation has begun, and taken the hand-over)
+        {
+            let mut st = a.st.lock().unwrap();
+            st.session = Some("s2".into());
+            st.handover = None;
+        }
+        a.send("And paint it red", &Ask::default());
+        assert_eq!(went(&a)[1], "And paint it red");
+        assert_eq!(a.st.lock().unwrap().account, 2);
+        // and at its limit the chat still moves on by itself: to the next account that can take it
+        let at = a.st.lock().unwrap().log.len();
+        a.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        assert_eq!(kinds_after(&a, at), ["account", "rollover"]);
+        let line = a.st.lock().unwrap().log.last().unwrap()["text"].as_str().unwrap_or_default().to_string();
+        assert!(line.starts_with("Claude account 2 ran out of usage") && line.ends_with("Carrying on with your own account."), "{line}");
+        assert_eq!(a.st.lock().unwrap().account, 1);
+    }
+
+    #[test]
+    fn a_picked_account_goes_back_to_the_users_own_and_never_to_one_the_message_ran_out_on() {
+        crate::accounts::stand_in(true, true);
+        // from an added account back to the user's own: a new conversation there, with the chat so far
+        let a = chat_on_first("c-pick-own");
+        {
+            let mut st = a.st.lock().unwrap();
+            st.account = 2;
+            st.account_name = Some("claude-2-standin".into());
+        }
+        assert_eq!(a.pick_account(""), Ok(1));
+        a.put("user", json!({"text": "Now add a lock"}));
+        assert_eq!(a.turn_account("claude"), (1, None));
+        {
+            let st = a.st.lock().unwrap();
+            assert!(st.session.is_none() && st.handover.as_deref().is_some_and(|h| h.contains("User: Make a door")));
+        }
+        // picking the account a chat is already on changes nothing about its conversation
+        let b = chat_on_first("c-pick-same");
+        assert_eq!(b.pick_account(""), Ok(1));
+        assert_eq!(b.turn_account("claude"), (1, None));
+        let st = b.st.lock().unwrap();
+        assert_eq!((st.session.as_deref(), st.handover.is_none()), (Some("s1"), true));
+        let shown = st.log.iter().rev().find(|e| e["kind"] == "account").cloned().unwrap();
+        assert_eq!(shown["picked"], false, "no line about moving: it did not move");
+        drop(st);
+        // a pick made while the turn ran is for the user's own, which this very message then ran out on: the
+        // rollover's message goes on the account it moved to, not back
+        let c = chat_on_first("c-pick-tried");
+        c.send("Now add a lock", &Ask::default());
+        assert_eq!(c.pick_account(""), Ok(1));
+        c.after_turn("claude", limit_end(None), "", Some((false, 1)), false);
+        let again = c.st.lock().unwrap().resent_for_test[0].clone();
+        c.resend(&again);
+        let st = c.st.lock().unwrap();
+        assert_eq!((st.account, st.account_pick.as_deref()), (2, None));
+        assert!(st.went_for_test[1].ends_with("Now add a lock"));
+    }
+
+    #[test]
+    fn an_account_pick_belongs_to_the_chats_ai_and_only_where_it_has_accounts() {
+        crate::accounts::stand_in(true, true);
+        let a = Agent::detached_for_test("c-pick-ai", None);
+        a.st.lock().unwrap().ai = Some("claude".into());
+        assert_eq!(a.pick_account("claude-2-standin"), Ok(2));
+        // another AI for a chat that has not run: the pick was the other AI's
+        assert!(a.set_ai("gemini"));
+        assert!(a.st.lock().unwrap().account_pick.is_none());
+        assert!(a.pick_account("claude-2-standin").is_err(), "Claude's account is not one of Gemini's");
+        assert_eq!(a.pick_account("gemini-2-standin"), Ok(2));
+        assert_eq!(a.turn_account("gemini"), (2, Some("gemini-2-standin".into())), "a chat that has not run starts on the pick");
+        // an AI with one account has nothing to pick
+        let c = Agent::detached_for_test("c-pick-cursor", None);
+        c.st.lock().unwrap().ai = Some("cursor".into());
+        assert!(c.pick_account("").is_err());
+        // a started chat that changes AI forgets its pick too
+        let b = chat_on_first("c-pick-switch");
+        b.st.lock().unwrap().ai = Some("claude".into());
+        assert_eq!(b.pick_account("claude-2-standin"), Ok(2));
+        assert_eq!(b.switch_ai("gemini"), Ok(true));
+        assert!(b.st.lock().unwrap().account_pick.is_none());
+        // a picked account removed before the next message: the chat goes on as it would have
+        let d = chat_on_first("c-pick-gone");
+        d.st.lock().unwrap().ai = Some("claude".into());
+        assert_eq!(d.pick_account("claude-2-standin"), Ok(2));
+        crate::accounts::stand_in(false, false);
+        assert_eq!(d.turn_account("claude"), (1, None));
+        assert!(d.st.lock().unwrap().account_pick.is_none());
+    }
+
+    #[test]
+    fn a_chat_keeps_its_account_and_its_pick_after_a_restart() {
+        let a = new_background_chat("Chat: account restart", None).unwrap();
+        a.put("user", json!({"text": "Make a door"}));
+        {
+            let mut st = a.st.lock().unwrap();
+            st.account = 3;
+            st.account_name = Some("claude-2-third".into());
+            st.account_pick = Some(String::new());
+        }
+        a.save();
+        let id = a.id.clone();
+        remove_agent(&id);
+        let b = open_chat(&id).unwrap();
+        {
+            let st = b.st.lock().unwrap();
+            assert_eq!((st.account, st.account_name.as_deref(), st.account_pick.as_deref()), (3, Some("claude-2-third"), Some("")), "account 3 is not forgotten");
+        }
+        remove_agent(&id);
     }
 
     /// A chat as the rollover tests begin: one exchange in a conversation on the user's own account.

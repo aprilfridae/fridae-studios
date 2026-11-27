@@ -41,7 +41,10 @@
 //!   from the page's Setup;
 //! - an account that hit its usage limit is "used up" until its reset time (`mark_used`), in the app's memory;
 //! - a new chat starts on the first account that is not used up, the user's own first (`pick`); a running chat stays
-//!   where it is until its account runs out, then moves to the other one once (`other`), never back and forth.
+//!   where it is until its account runs out, then moves to the other one once (`other`), never back and forth;
+//! - the user can pick a chat's account by hand (the chat's account button, `Agent::pick_account`): the chat's next
+//!   message goes on that one, and it stays there for the chat, still moving on by itself at the limit as above
+//!   (the user's choice, 2026-11-27).
 
 use std::{
     collections::HashMap,
@@ -1406,9 +1409,15 @@ pub fn used_until(ai: &str, account: u8, now: f64) -> Option<f64> {
 pub fn slots(ai: &str, added: &[String], now: f64) -> Vec<bool> {
     let mut out = vec![used_until_of(ai, None, now).is_none()];
     for name in added {
-        out.push(usable_of(ai, name) && signed_in_of(ai, name) && used_until_of(ai, Some(name), now).is_none());
+        out.push(ready(ai, name) && used_until_of(ai, Some(name), now).is_none());
     }
     out
+}
+
+/// Whether an added account is set up to take a chat at all, used up or not: its folder is one the app uses and an
+/// account of its own is signed in there. What the chat's account picker offers, and what a pick is checked against.
+pub fn ready(ai: &str, name: &str) -> bool {
+    usable_of(ai, name) && signed_in_of(ai, name)
 }
 
 /// The account a new chat or a new expert starts on: the first that can take a chat, the user's own first whenever
@@ -1535,7 +1544,8 @@ pub fn in_words(until: f64, now: f64) -> String {
 }
 
 /// For the page, by AI: whether more accounts are offered; when the user's own is back if it is used up (`used`);
-/// each added account in its order (`accounts`: its place `n`, the `id` of its sign-in, `broken` when its folder
+/// each added account in its order (`accounts`: its place `n`, the `id` of its sign-in, `ready` when it can take a
+/// chat as far as its folder and sign-in go (`ready`: what a chat's account picker offers), `broken` when its folder
 /// is not one the app will use (swapped for a link, a keychain in it that is not its own, or its own keychain
 /// could not be opened), `changed` when that is because its keychain was changed from outside the app
 /// (`keychain_changed`), `used` as above); and the
@@ -1547,7 +1557,10 @@ pub fn state() -> Value {
         let accounts: Vec<Value> = list(ai)
             .iter()
             .enumerate()
-            .map(|(i, name)| json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": !usable_of(ai, name), "changed": keychain_changed(ai, name), "used": used_until_of(ai, Some(name), now)}))
+            .map(|(i, name)| {
+                let usable = usable_of(ai, name);
+                json!({"n": place(i), "name": name, "id": id_of(ai, name), "broken": !usable, "ready": usable && signed_in_of(ai, name), "changed": keychain_changed(ai, name), "used": used_until_of(ai, Some(name), now)})
+            })
             .collect();
         let left: Vec<String> = left(ai).iter().map(|d| d.display().to_string()).collect();
         out.insert(ai.to_string(), json!({"offered": offered(ai), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
@@ -1774,6 +1787,20 @@ mod tests {
         assert_eq!(next(&[false, false, false], 1, &[]), None, "all used up");
         assert_eq!(next(&[true], 1, &[]), None, "no added account");
         assert_eq!(next(&[false, true], 2, &[]), None, "the same account is no other one");
+    }
+
+    #[test]
+    fn the_page_is_told_which_added_accounts_a_chat_can_be_put_on() {
+        // set up: its folder is the app's and an account of its own is signed in there (used up or not)
+        stand_in_many(&[("ra", true), ("rb", false)]);
+        mark_used_of("claude", Some("claude-2-ra"), paths::now_secs() + 600.0);
+        assert!(ready("claude", "claude-2-ra"), "used up is still set up: it can be picked by hand");
+        assert!(!ready("claude", "claude-2-rb"), "nobody signed in there");
+        let s = state();
+        let ready_of = |i: usize| s["claude"]["accounts"][i]["ready"].as_bool();
+        assert_eq!((ready_of(0), ready_of(1)), (Some(true), Some(false)));
+        assert!(s["claude"]["accounts"][0]["used"].as_f64().is_some());
+        stand_in(false, false);
     }
 
     #[test]

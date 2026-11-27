@@ -168,7 +168,7 @@ function Turn({ row }: { row: Row }) {
   };
   return (
     <div class={"turn" + en(row)}>
-      <div class="label">{row.label}</div>
+      <div class="label">{row.label}{row.acct && <span class="acct">{" · " + row.acct}</span>}</div>
       {row.parts.map((pt: Part) => <PartView key={pt.id} pt={pt} row={row} v={pt.v} />)}
       {u && <button class={"undo-turn" + (u.said ? " said" : "")} title="Undoes the changes agents made in Studio since this turn began, and puts scripts back as they were. It stops if your own edit is the newest step." onClick={undo}>{u.text}</button>}
     </div>
