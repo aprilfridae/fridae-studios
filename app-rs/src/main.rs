@@ -242,6 +242,17 @@ fn main() {
         use tao::platform::windows::WindowBuilderExtWindows;
         builder.with_decorations(false).with_undecorated_shadow(true)
     };
+    // On the Mac the page runs up under a see-through title bar, so the window is one piece: the close, minimise and
+    // zoom buttons sit inside the sidebar's head, in the middle of its 48 px height, and the page moves the window.
+    #[cfg(target_os = "macos")]
+    let builder = {
+        use tao::platform::macos::WindowBuilderExtMacOS;
+        builder
+            .with_titlebar_transparent(true)
+            .with_title_hidden(true)
+            .with_fullsize_content_view(true)
+            .with_traffic_light_inset(tao::dpi::LogicalPosition::new(18.0, 17.0))
+    };
     let window = builder.build(&event_loop).expect("could not create the window");
     #[cfg(windows)]
     {
@@ -251,11 +262,12 @@ fn main() {
     let data = if paths::packaged() { PATHS.home.join("webview") } else { paths::work("webview") };
     let mut context = WebContext::new(Some(data));
     let builder = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url);
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let builder = {
         let proxy = event_loop.create_proxy();
+        let frame = if cfg!(windows) { "window.__fridaeFrame = true;" } else { "window.__fridaeFrame = 'mac';" };
         builder
-            .with_initialization_script("window.__fridaeFrame = true;")
+            .with_initialization_script(frame)
             .with_ipc_handler(move |req: wry::http::Request<String>| {
                 let ui = match req.body().as_str() {
                     "win:drag" => Ui::Drag,
@@ -315,6 +327,7 @@ fn main() {
         });
     }
     let mut was_max = false;
+    let mut was_full = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -338,6 +351,12 @@ fn main() {
                 if max != was_max {
                     was_max = max;
                     let _ = _webview.evaluate_script(&format!("window.fridaeMax && window.fridaeMax({max})"));
+                }
+                // full screen on the Mac hides the window's buttons, so the sidebar's head stops leaving room for them
+                let full = window.fullscreen().is_some();
+                if full != was_full {
+                    was_full = full;
+                    let _ = _webview.evaluate_script(&format!("window.fridaeFull && window.fridaeFull({full})"));
                 }
             }
             _ => {}

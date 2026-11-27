@@ -15,3 +15,8 @@ body.framed .top { padding-right: 154px; }
 body.framed [data-drag] { -webkit-user-select: none; user-select: none; }
 /* the project panel and windows over the page keep clear of the controls */
 body.framed .drawer { top: 52px; }
+/* The Mac: one window with no title bar of its own. The close, minimise and zoom buttons sit at the left of the
+   sidebar's head, so the mark starts after them; the top bar and the mark move the window. */
+body.mac-frame [data-drag] { -webkit-user-select: none; user-select: none; }
+body.mac-frame .mark { padding-left: 88px; }
+body.mac-frame.win-full .mark { padding-left: 16px; }
