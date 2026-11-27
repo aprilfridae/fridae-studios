@@ -7,11 +7,12 @@ import { noticeOf, pressOpenCode, pressSignIn } from "../ai";
 import { H } from "./host";
 import { poke, useTick } from "./chatStore";
 import { keep } from "./keep";
-import { C, EFFORTS, EFFORT_NAMES, accountWords, addClips, addFile, closePops, effortOf, fit, modeRows, modelOf, modelParts, modelsFor, ownLevel, pickEffort, pickModel, pickOpenCodeModel,
+import { C, EFFORTS, EFFORT_NAMES, addClips, addFile, closePops, effortOf, fit, modeRows, modelOf, modelParts, modelsFor, ownLevel, pickEffort, pickModel, pickOpenCodeModel,
   removeAtt, send, setGeminiMode, setRunMode, setSelfTest, setText, switchAi, tellPick, text, togglePop } from "./compose";
 import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
 import { MachineChip } from "../remote/Machines";
+import { AccountChip } from "./AccountChip";
 import { boxMachine } from "../remote/remote";
 import { HERE } from "../remote/route";
 
@@ -189,10 +190,12 @@ export function Dock() {
           <span class="pick">
             <button class="chip" id="model" aria-haspopup="dialog" aria-expanded={C.pop === "model" ? "true" : "false"} onClick={pop("model")}
               title={[H.aiName(ai), cur ? cur[1] : "", own ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
-              <AiLogo ai={ai} size={13} /><span id="model-name">{H.aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "") + accountWords(ai, p)}</span>{DOWN}</button>
+              <AiLogo ai={ai} size={13} /><span id="model-name">{H.aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "")}</span>{DOWN}</button>
             {/* the picker behind the button is only painted once it has been opened */}
             <div class={"menu picker" + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
           </span>
+          {/* which of the AI's accounts it runs on, while it has more than one (AccountChip) */}
+          <AccountChip p={p} ai={ai} />
           <span class="pick">
             <button class="chip" id="mode" aria-haspopup="menu" aria-expanded={C.pop === "mode" ? "true" : "false"} onClick={pop("mode")}
               title={mode.name + ": " + mode.line + (C.runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works."}>

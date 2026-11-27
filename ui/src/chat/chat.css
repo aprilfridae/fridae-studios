@@ -19,3 +19,13 @@
 .pk-ai-t { min-width: 0; }
 #model .ai-logo { margin-left: -2px; }
 #model #model-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* The account chip and its menu (AccountChip: the message box's chip and menu styles, as the machine chip's), and the
+   account a reply ran on, beside its model */
+.chip.ac .ac-icon { color: var(--dim); }
+.chip.ac:hover .ac-icon, .chip.ac[aria-expanded="true"] .ac-icon { color: var(--text); }
+.chip.ac[aria-expanded="true"] .ac-icon { transform: none; }
+#account-menu { width: 280px; }
+#account-menu .opt b, #account-menu .opt small { overflow: hidden; text-overflow: ellipsis; }
+#account-menu .ac-note { margin: 8px 8px 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.35; color: var(--dim); }
+.turn .label .acct { color: var(--faint); }

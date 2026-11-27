@@ -359,6 +359,15 @@ fn post(path: &str, body: Value) -> Reply {
             }
             None => send_json(json!({"ok": false, "error": "That chat is gone."})),
         },
+        // which of its AI's accounts a chat runs on, picked by hand ("" the user's own, else an added account's folder
+        // name): from the chat's next message on
+        "/api/chat-account" => match &target {
+            Some(agent) => match agent.pick_account(&text_of("account")) {
+                Ok(n) => send_json(json!({"ok": true, "account": n})),
+                Err(e) => send_json(json!({"ok": false, "error": e})),
+            },
+            None => send_json(json!({"ok": false, "error": "That chat is gone."})),
+        },
         "/api/ai" => {
             // with a chat named: that chat's AI (a started chat carries on with the other AI, handed the chat so far);
             // without: the one new chats start on

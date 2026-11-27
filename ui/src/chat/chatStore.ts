@@ -12,6 +12,7 @@ import { H } from "./host";
 import { cap } from "./md";
 import { C, modelsFor } from "./compose";
 import { replyOver } from "../remote/move";
+import { accountWord } from "./AccountChip";
 
 export type Part = { id: number; k: string; v: number; born: number; [more: string]: any };
 export type Row = { id: number; k: string; v: number; born: number; on?: () => void; h?: number; [more: string]: any };
@@ -70,7 +71,8 @@ export function frontTl(): Timeline | null { const p = H.agents.get(H.current); 
 
 /* ---------- a turn and what goes into it ---------- */
 function newTurn(p: any) {
-  p.turn = put(tlOf(p), mk("turn", { p, label: p.model || H.aiName(H.chatAi(p)), parts: [] as Part[], steps: null, undo: null }));
+  /* which account the reply runs on, named only for a chat whose AI has more than one (the app says "account" then) */
+  p.turn = put(tlOf(p), mk("turn", { p, label: p.model || H.aiName(H.chatAi(p)), acct: p.account ? accountWord(p.account) : "", parts: [] as Part[], steps: null, undo: null }));
   return p.turn as Row;
 }
 const turnOf = (p: any): Row => p.turn || newTurn(p);
@@ -213,10 +215,16 @@ export function event(p: any, e: any): string | void {
   } else if (e.kind === "renamed") {
     p.name = e.name;
   } else if (e.kind === "account") {
-    /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
-    p.account = e.account;
+    /* which of its AI's accounts this chat runs on (the account chip, and each reply's label, while the AI has more
+       than one). A pick by hand is in use from here (or came to nothing): the chip no longer shows it as waiting */
+    p.account = e.account; p.accountPick = 0;
+    if (e.picked) { put(tl, mk("tag", { cls: "tag ai-tag", text: "On " + (e.account >= 2 ? H.aiName(H.chatAi(p)) + " account " + e.account : "your own " + H.aiName(H.chatAi(p)) + " account") + " from here, as you picked." })); p.turn = null; }
+  } else if (e.kind === "account_pick") {
+    /* an account picked in the chip, for the chat's next message */
+    p.accountPick = e.account;
   } else if (e.kind === "moved") {
-    /* it came here from another of the user's computers (ui/src/remote/move.ts): the app's one line about it */
+    /* switched to another of the user's computers (ui/src/remote/move.ts) and its AI isn't set up there: the line
+       that says which AI carries it on */
     put(tl, mk("tag", { cls: "tag ai-tag", text: e.text || "" })); p.turn = null;
   } else if (e.kind === "rollover") {
     /* one of the AI's two accounts ran out of usage and the chat carries on with the other: the app's one line about

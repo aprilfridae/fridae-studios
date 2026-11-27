@@ -1474,6 +1474,22 @@ account is not used up. The folder is read once per turn: not usable at that ver
 link, a keychain in it that is not its own, or, for Gemini, its own keychain not opening), the turn runs on the
 user's own in a new conversation handed the chat so far, and the chat says so.
 
+**Picking the account by hand** (2026-11-27; the user's choices: the pick is for the whole chat, and the chat still
+moves on by itself at the limit). The message box has an account chip beside the AI chip (`ui/src/chat/AccountChip.tsx`)
+while the chat's AI has an added account that is set up, or the chat is on one. Its menu lists the user's own account
+and each added one that is `ready` in `accounts::state()` (`accounts::ready`: its folder is the app's and an account
+of its own is signed in there; used up or not, with when it is back); one that is not signed in is only named under
+the menu. A pick goes to `POST /api/chat-account` (`Agent::pick_account`: "" the user's own, else the folder's name,
+checked again there) and waits in `State.account_pick` (saved with the chat; an `account_pick` event shows it in
+the chip) until the chat's next turn, where `turn_account` takes it before `account_for` is asked: a new
+conversation on that account, handed the chat so far, and an `account` event with `picked` (one line in the chat).
+A pick of an account that has since gone, or that the very message being sent again after a rollover already ran
+out on, comes to nothing and the chat goes on as it would have. A switch of AI forgets the pick. On the empty page
+the pick waits in `C.draftAccount` and goes to the new chat before its first message (`sendFromDraft`). Each reply's
+label names its account ("Claude · account 2") in a chat whose AI has more than one. Not offered for a chat on
+another computer (the accounts listed are this computer's). A chat on account 3 or later now keeps it after a restart
+(the saved place was read as at most 2).
+
 **What counts as the limit.** `usage_limit` (a studio run pauses on it) is as it was, plus Claude Code's newer
 lines. `account_limit` is narrower and is what marks an account and moves a chat: "You've hit your ... limit",
 "You've reached your ... limit", "usage limit reached", "You're out of extra usage"; not a passing "rate limit"
