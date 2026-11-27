@@ -109,8 +109,9 @@ fn place_buttons(window: &tao::window::Window) {
         let close_rect: NSRect = msg_send![close, frame];
         let mini_rect: NSRect = msg_send![mini, frame];
         let space = mini_rect.origin.x - close_rect.origin.x;
-        // the bar's container grows down so the buttons, at its bottom, sit in the middle of the page's top bar
-        let height = close_rect.size.height + (BAR - close_rect.size.height) / 2.0;
+        // the buttons keep their distance from the bottom of the bar's container: it is made as tall as puts their
+        // middle in the middle of the page's top bar
+        let height = BAR / 2.0 + close_rect.origin.y + close_rect.size.height / 2.0;
         let win_rect: NSRect = msg_send![win, frame];
         let mut rect: NSRect = msg_send![bar, frame];
         rect.size.height = height;
