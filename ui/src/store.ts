@@ -5,8 +5,9 @@ import { useEffect, useReducer, useRef } from "preact/hooks";
 
 /* `machine`: the paired computer it is on (ui/src/remote); its `path` is then "<machine>~<its path there>" */
 export type Project = { path: string; name: string; type?: string; kind?: string; bible?: boolean; kind_set?: boolean; machine?: string };
-/* a computer this one is paired with (GET /api/remote/machines); `online` as the last call to it went */
-export type Machine = { id: string; name: string; addr: string; port: number; fp: string; online: boolean; last_seen?: number };
+/* a computer this one is paired with (GET /api/remote/machines); `online` as the last call to it went;
+   `paired` false: the client found it no longer knows this computer; `trouble`: see remote/route.ts troubleOf */
+export type Machine = { id: string; name: string; addr: string; port: number; fp: string; online: boolean; last_seen?: number; paired?: boolean; trouble?: string };
 /* GET /api/projects as a whole: where new projects go and whether git is there, beside the list */
 export type ProjReply = { projects: Project[]; default_parent?: string; default_parent_plain?: string; git?: boolean };
 export type ReviewItem = { id: string; title?: string; summary?: string; plain?: string; status: string; blocking?: boolean; created?: number; media?: string[] };

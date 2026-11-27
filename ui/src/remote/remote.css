@@ -10,6 +10,7 @@
 .chip.mc.fixed:hover .mc-icon { color: var(--dim); }
 #machine-menu { width: 240px; }
 #machine-menu .mc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+#machine-menu .mc-t { display: grid; min-width: 0; }
 #machine-menu .mc-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #machine-menu hr { margin: 4px; border: 0; border-top: 1px solid var(--line); }
 

@@ -11,6 +11,8 @@ const CASTLE = "m1~D:/games/castle";
   const ctx = await b.newContext({ viewport: { width: 1280, height: 860 }, colorScheme: "dark", reducedMotion: "reduce" });
   const pg = await ctx.newPage();
   pg.on("pageerror", (e) => errs.push("pageerror: " + e.message + " " + (e.stack || "").split("\n").slice(1, 3).join(" | ")));
+  const outside = [];   /* any request that leaves 127.0.0.1 (a remote event must never send the page anywhere else) */
+  pg.on("request", (r) => { if (!/^(http:\/\/127\.0\.0\.1:|data:|blob:|about:)/.test(r.url())) outside.push(r.url()); });
   pg.on("console", (m) => { if (m.type() === "error" && !/404|502|Failed to load resource/.test(m.text())) errs.push("console: " + m.text()); });
   const wait = (ms) => pg.waitForTimeout(ms);
   const posts = async (path) => (await pg.evaluate(() => fetch("/mock/posts").then((r) => r.json()))).filter((p) => p[0] === path);
@@ -168,8 +170,66 @@ const CASTLE = "m1~D:/games/castle";
     ok("r60 back online: undimmed", await until(() => pg.evaluate((k) => { const b = document.querySelector('.pbox[data-box="' + k + '"]'); return !!b && !b.classList.contains("off"); }, CASTLE), 35000));
     await mock("/mock/rpush", { m: "m1", event: { kind: "text", agent: "r1", text: "Back again." } });
     await pg.click('.proj[data-k="p:' + CASTLE + '"]'); await wait(300); await pg.click('[data-k="c:m1~r1"]');
-    ok("r61 its events flow again", await until(() => pg.evaluate(() => current === "m1~r1" && document.querySelector("#chat-main").innerText.includes("Back again.")), 6000));
+    ok("r61 its events flow again", await until(() => pg.evaluate(() => current === "m1~r1" && document.querySelector("#chat-main").innerText.includes("Back again.")), 6000), await pg.evaluate(() => [current, document.querySelector("#chat-main").innerText.slice(-300)]));
 
+
+    // ---- a hostile event: pictures that point anywhere but that computer are dropped ----
+    await mock("/mock/rpush", { m: "m1", event: { kind: "images", agent: "r1", urls: ["https://evil.example/x.png", "//evil.example/y.png", "/\\evil.example/z.png", "javascript:alert(1)", "/img/ok.png"] } });
+    await mock("/mock/rpush", { m: "m1", event: { kind: "user", agent: "r1", text: "Look", images: ["https://evil.example/a.png", "/img/b.png"] } });
+    await until(() => pg.evaluate(() => document.querySelectorAll('#chat-main img[src^="/m/m1/img/"]').length >= 2));
+    const srcs = await pg.$$eval("#chat-main .shots img, #chat-main .pics img", (x) => x.map((n) => n.getAttribute("src")));
+    ok("r64 only that computer's own pictures, through /m/m1", JSON.stringify(srcs) === JSON.stringify(["/m/m1/img/ok.png?t=x", "/m/m1/img/b.png?t=x"]), srcs);
+    await wait(500);
+    ok("r65 nothing went to another host", outside.length === 0, outside);
+
+    // ---- the other computer's app restarts: its event ids start again from 1 ----
+    await mock("/mock/off", { m: "m1", off: true });
+    await until(() => pg.evaluate((k) => document.querySelector('.pbox[data-box="' + k + '"]').classList.contains("off"), CASTLE), 9000);
+    await mock("/mock/restart", { m: "m1" });
+    await mock("/mock/off", { m: "m1", off: false });
+    ok("r66 back after the restart", await until(() => pg.evaluate((k) => !document.querySelector('.pbox[data-box="' + k + '"]').classList.contains("off"), CASTLE), 35000));
+    await wait(800);
+    await mock("/mock/rpush", { m: "m1", event: { kind: "text", agent: "r1", text: "After the restart." } });
+    ok("r67 its new events show without a reload", await until(() => pg.evaluate(() => current === "m1~r1" && document.querySelector("#chat-main").innerText.includes("After the restart.")), 8000));
+    ok("r68 what it put back is not shown twice", await pg.evaluate(() => document.querySelector("#chat-main").innerText.split("Build the gates").length - 1) === 1, await pg.evaluate(() => document.querySelector("#chat-main").innerText.split("Build the gates").length - 1));
+
+    // ---- not paired any more (401): said plainly, and pairing again is one press away ----
+    await mock("/mock/off", { m: "m1", off: "unpaired" });
+    ok("r69 label: needs pairing again", await until(() => pg.evaluate((k) => { const w = document.querySelector('.pbox[data-box="' + k + '"] .p-where'); return !!w && w.textContent === "Desktop · needs pairing again"; }, CASTLE), 9000), await text(box(CASTLE) + " .p-where"));
+    ok("r70 its boxes dimmed", await pg.evaluate((k) => document.querySelector('.pbox[data-box="' + k + '"]').classList.contains("off"), CASTLE));
+    await pg.evaluate(() => fridae.chat.setBox("Still there?")); await pg.press("#box", "Enter"); await wait(300);
+    ok("r71 send: the words stay", (await pg.inputValue("#box")) === "Still there?");
+    ok("r72 send: says it needs pairing again", (await text(".saytip")) === "Desktop needs pairing again. Your message is still here. Pair again", await text(".saytip"));
+    await pg.click(".saytip button"); await wait(300);
+    ok("r73 that button opens pairing for it", (await text("#pair h2")) === "Pair with Desktop", await text("#pair h2"));
+    await pg.keyboard.press("Escape"); await wait(200); await pg.evaluate(() => fridae.chat.setBox(""));
+    await pg.evaluate(() => { document.querySelector('.proj[data-k="p:H:/games/obby-rush"] .p-new').click(); }); await wait(300);
+    await pg.click("#machine"); await wait(200);
+    ok("r74 menu row says so", (await text('#machine-menu [data-m="m1"]')) === "Desktop Needs pairing again", await text('#machine-menu [data-m="m1"]'));
+    await shot("10-menu-unpaired", { x: 0, y: 40, width: 940, height: 820 });
+    await pg.click('#machine-menu [data-m="m1"]'); await wait(300);
+    ok("r75 picking it opens pairing, not the machine", (await text("#pair h2")) === "Pair with Desktop" && await pg.evaluate(() => curProj === "H:/games/obby-rush"), [await text("#pair h2"), await pg.evaluate(() => curProj)]);
+    await pg.type("#pair-code", "abcdefghjk"); await pg.click("#pair-go"); await wait(900);
+    const rp = await last("/api/remote/pair");
+    ok("r76 paired again with its address", !!rp && rp.addr === "192.168.1.20" && rp.port === 47530 && rp.code === "ABCDEFGHJK" && rp.fp === undefined, rp);
+    ok("r77 and it is back, selected", await until(() => pg.evaluate((k) => { const w = document.querySelector('.pbox[data-box="' + k + '"] .p-where'); return !!w && w.textContent === "Desktop"; }, CASTLE), 9000) && (await text("#machine")) === "Desktop", [await text(box(CASTLE) + " .p-where"), await text("#machine")]);
+
+    // ---- its identity changed (502 "identity changed"): it cannot be sent to until it is paired again ----
+    await mock("/mock/off", { m: "m1", off: "changed" });
+    ok("r78 label: identity changed", await until(() => pg.evaluate((k) => { const w = document.querySelector('.pbox[data-box="' + k + '"] .p-where'); return !!w && w.textContent === "Desktop · identity changed"; }, CASTLE), 9000), await text(box(CASTLE) + " .p-where"));
+    const newBefore = (await posts("/m/m1/api/new")).length;
+    await pg.fill("#box", "Hello"); await pg.press("#box", "Enter"); await wait(400);
+    ok("r79 send refused, said plainly", (await text(".saytip")) === "Desktop's identity changed. Pair it again to be sure it is yours. Your message is still here. Pair again" && (await pg.inputValue("#box")) === "Hello", await text(".saytip"));
+    ok("r80 nothing made there", (await posts("/m/m1/api/new")).length === newBefore);
+    await pg.fill("#box", "");
+    await pg.evaluate(() => { document.querySelector('.proj[data-k="p:H:/games/obby-rush"] .p-new').click(); }); await wait(300);
+    await pg.click("#machine"); await wait(200);
+    ok("r81 menu row says so", (await text('#machine-menu [data-m="m1"]')) === "Desktop Identity changed", await text('#machine-menu [data-m="m1"]'));
+    await pg.click('#machine-menu [data-m="m1"]'); await wait(300);
+    ok("r82 picking it opens pairing, with why", (await text("#pair h2")) === "Pair with Desktop" && ((await text("#pair .sub")) || "").startsWith("Desktop's identity changed. Pair it again to be sure it is yours."), await text("#pair .sub"));
+    ok("r83 still on this computer", await pg.evaluate(() => curProj === "H:/games/obby-rush"));
+    await shot("09-identity-changed", { x: 380, y: 200, width: 520, height: 420 });
+    await pg.keyboard.press("Escape");
   } catch (e) { out.CRASH = String(e && e.stack || e); }
   out.errors = errs;
   console.log(JSON.stringify(out, null, 1));

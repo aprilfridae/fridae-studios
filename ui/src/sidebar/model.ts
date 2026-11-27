@@ -5,6 +5,7 @@ import type { Chat, Member, State } from "../store";
 import { needsCount, needsStrong } from "../review/model";
 import { ago } from "../util";
 import { SW, bornAt, memberOf, splitExpert, swTip, thingOf } from "./team";
+import { TROUBLE_SHORT, troubleOf } from "../remote/route";
 import { XP_IDLE, noteWhen, pageStart, shrink, xpOld, xpOpen, xpTab, xpWhen } from "./fold";
 
 /* the part of the store the sidebar reads */
@@ -139,8 +140,8 @@ export function rowsOf(s: Slice, now: number): Row[] {
   };
   /* a project or chat on another of the user's computers says which, and "offline" while it cannot be reached */
   const machine = (id?: string) => s.machines.find((m) => m.id === id);
-  const where = (id?: string) => { const m = machine(id); return m ? m.name + (m.online ? "" : " · offline") : ""; };
-  const off = (id?: string) => { const m = machine(id); return !!m && !m.online; };
+  const where = (id?: string) => { const m = machine(id), t = id ? troubleOf(id) : ""; return m ? m.name + (t ? " · " + TROUBLE_SHORT[t] : "") : ""; };
+  const off = (id?: string) => !!id && !!troubleOf(id);
   for (const x of projects) boxed(x.path, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...projState(s, x.path), ais: aisOf(x.path), where: where(x.machine), off: off(x.machine) }, off(x.machine));
   /* the chats of no project: this computer's, then each paired computer's in a box of its own ("<machine>~") */
   for (const m of [null, ...s.machines]) {

@@ -6,6 +6,7 @@ import { api } from "../api";
 import { host } from "../host";
 import { H } from "../chat/host";
 import { poke } from "../chat/chatStore";
+import { C } from "../chat/compose";
 import { store, type Machine } from "../store";
 import { at, eventFrom, machineOf, markOnline, withM } from "./route";
 
@@ -14,7 +15,6 @@ const following = new Set<string>();                 /* the machines a long-poll
 const projs: Record<string, any[]> = {};             /* machine -> its projects as last read: still shown, dimmed, while it is offline */
 const hist: Record<string, { chats: any[]; deleted: any[] }> = {};
 const stat: Record<string, { at: number; s: any }> = {};   /* machine -> its GET /api/status, for the AI chip */
-const sleep = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
 const known = (m: string) => store.get().machines.some((x) => x.id === m);
 
 /* GET /api/remote/machines (every 20 s): a machine is online as its own long-poll last found it, once one runs */
@@ -23,36 +23,64 @@ export async function loadMachines() {
   try { r = await api("/api/remote/machines"); } catch (e) { return; }
   if (!r || !Array.isArray(r.machines)) return;
   const was = store.get().machines;
-  const list: Machine[] = r.machines.map((x: any) => { const old = was.find((w) => w.id === x.id); return { ...x, online: old && following.has(x.id) ? old.online : !!x.online }; });
+  const list: Machine[] = r.machines.map((x: any) => {
+    const old = was.find((w) => w.id === x.id), ours = !!old && following.has(x.id);
+    /* the client says when a machine no longer knows this computer; a changed identity is only known from a call */
+    return { ...x, online: ours ? old!.online : !!x.online, trouble: x.paired === false ? "unpaired" : ours ? old!.trouble || "" : "" };
+  });
   if (JSON.stringify(list) !== JSON.stringify(was)) store.set({ machines: list });
   for (const x of list) if (!following.has(x.id)) follow(x.id);
 }
 
 /* One long-poll per machine. Its first batch is the chats it has open (history to the page); what follows is new.
-   While it cannot be reached it is marked offline and asked again after 2 s, then 4, 8... up to 30 s; when it answers
-   again its projects and saved chats are read again. */
+   While it cannot be reached (or needs pairing again) it is asked again after 2 s, then 4, 8... up to 30 s.
+   When it answers again it may have been restarted, and a restarted app numbers its events from 1 again, under the
+   page's cursor: so it is caught up first (resync), and the same when a reply ever holds an id at or under the
+   cursor. */
 async function follow(m: string) {
   following.add(m);
-  let wait = 2000, down = true;
+  /* behind: "away" after a failed call, "restart" when a reply showed the app numbering its events again */
+  let wait = 2000, down = true, behind = "";
+  const failed = async () => { markOnline(m, false); down = true; if (m in cursor && !behind) behind = "away"; await nap(m, wait); wait = Math.min(wait * 2, 30000); };
   while (known(m)) {
+    if (behind) {
+      if (await resync(m, behind === "restart")) { behind = ""; down = false; wait = 2000; } else if (known(m)) await failed();
+      continue;
+    }
     let r: any = null;
     try { r = await api(at(m, "/api/events?after=" + (cursor[m] || 0))); } catch (e) {}
     if (!known(m)) break;
-    if (r && Array.isArray(r.events)) {
-      const first = !(m in cursor), list: any[] = [];
-      let after = cursor[m] || 0;
-      for (const e of r.events) { if (typeof e.id === "number" && e.id > after) after = e.id; const x = eventFrom(m, e, !first); if (x) list.push(x); }
-      cursor[m] = after; wait = 2000;
-      markOnline(m, true);
-      if (list.length) host.remoteEvents(list);
-      if (down) { down = false; host.loadProjects(); host.reloadSaved(); }
-    } else {
-      markOnline(m, false); down = true;
-      await sleep(wait); wait = Math.min(wait * 2, 30000);
-    }
+    if (!r || !Array.isArray(r.events)) { await failed(); continue; }
+    const first = !(m in cursor), list: any[] = [];
+    if (!first && r.events.some((e: any) => typeof e.id === "number" && e.id <= cursor[m])) { behind = "restart"; continue; }
+    let after = cursor[m] || 0;
+    for (const e of r.events) { if (typeof e.id === "number" && e.id > after) after = e.id; const x = eventFrom(m, e, !first); if (x) list.push(x); }
+    cursor[m] = after; wait = 2000;
+    if (list.length) host.remoteEvents(list);
+    if (down) { down = false; host.loadProjects(); host.reloadSaved(); }
   }
   following.delete(m);
 }
+/* Catch up with a machine after it was away, and read its projects and saved chats again. When its newest event id
+   is under the cursor (or a reply already showed ids at or under it) its app was started again: that id becomes the
+   cursor, so what it put back on starting is not shown twice. Otherwise the cursor stays, and the next poll brings what happened while it was away (a machine that
+   was only unreachable for a while loses nothing). */
+async function resync(m: string, restarted: boolean) {
+  let r: any = null;
+  try { r = await api(at(m, "/api/events?after=0&wait=0")); } catch (e) {}
+  if (!r || !Array.isArray(r.events)) return false;
+  const newest = r.events.reduce((n: number, e: any) => (typeof e.id === "number" && e.id > n ? e.id : n), 0);
+  if (restarted || newest < (cursor[m] || 0)) cursor[m] = newest;
+  host.loadProjects(); host.reloadSaved();
+  return true;
+}
+/* a wait between tries that pairing again cuts short */
+const wakers: Record<string, () => void> = {};
+function nap(m: string, ms: number) {
+  return new Promise<void>((ok) => { const done = () => { clearTimeout(t); delete wakers[m]; ok(); }, t = setTimeout(done, ms); wakers[m] = done; });
+}
+/* paired again: it is asked at once */
+export function repaired(m: string) { markOnline(m, true, ""); const w = wakers[m]; if (w) w(); }
 
 /* this computer's GET /api/projects with each paired machine's added after it (an offline one's as last read) */
 export async function withProjects(reply: any) {
@@ -107,6 +135,9 @@ export function choose(m: string) {
   const now = boxMachine();
   if (m === now) return;
   if (!now && H.curProj !== null) cameFrom = H.curProj;
+  /* files added for one computer were sent to it: they do not go with a message to another, and nor does an AI
+     picked for that one (the other may not offer it) */
+  C.pending = []; H.setDraftAi(null);
   host.newChat(m ? withM(m, "") : cameFrom !== null && !machineOf(cameFrom) ? cameFrom : "");
 }
 

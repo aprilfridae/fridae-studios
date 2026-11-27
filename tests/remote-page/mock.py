@@ -107,6 +107,11 @@ class H(BaseHTTPRequestHandler):
         try: self.wfile.write(b)
         except Exception: pass
     def do_GET(self): self.route(None)
+    def refuse(self, st):
+        """What this computer's client answers for a computer it cannot use (the contract's three answers)."""
+        if st["off"] == "unpaired": return self.send({"error": "not paired"}, 401)
+        if st["off"] == "changed": return self.send({"error": "identity changed"}, 502)
+        return self.send({"error": "offline"}, 502)
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); raw = self.rfile.read(n) if n else b""
         try: body = json.loads(raw or b"{}")
@@ -124,19 +129,28 @@ class H(BaseHTTPRequestHandler):
         if p == "/mock/rpush":   # {"m": id, "event": {...}}
             with COND: push(S["remote"][body["m"]]["events"], body["event"]); COND.notify_all()
             return self.send({"ok": True})
-        if p == "/mock/off":     # {"m": id, "off": bool}
-            with COND: S["remote"][body["m"]]["off"] = bool(body["off"]); COND.notify_all()
+        if p == "/mock/off":     # {"m": id, "off": false | true | "unpaired" | "changed"}
+            o = body["off"]
+            with COND: S["remote"][body["m"]]["off"] = ("off" if o is True else o or False); COND.notify_all()
+            return self.send({"ok": True})
+        if p == "/mock/restart":  # {"m": id}: its app started again: its event ids begin at 1, its chats put back
+            with COND:
+                st = S["remote"][body["m"]]
+                st["events"] = [dict(e, id=i + 1) for i, e in enumerate(remote0(body["m"])["events"][:3])]; COND.notify_all()
             return self.send({"ok": True})
         # ---- another computer, through this one's client ----
         if p.startswith("/m/"):
             parts = p.split("/", 3); mid = parts[2]; rest = "/" + (parts[3] if len(parts) > 3 else "")
             if mid not in S["machines"]: return self.send({"error": "unknown computer"}, 404)
             st = S["remote"].setdefault(mid, remote0(mid))
-            if st["off"]: return self.send({"error": "offline"}, 502)
+            if st["off"]: return self.refuse(st)
             if body is not None: POSTS.append(["/m/" + mid + rest, body])
             if rest == "/api/events":
-                ev = wait_events(st["events"], int(q.get("after", ["0"])[0]), lambda: not st["off"])
-                if st["off"]: return self.send({"error": "offline"}, 502)
+                after = int(q.get("after", ["0"])[0])
+                if q.get("wait", ["1"])[0] == "0":
+                    with COND: return self.send({"events": [e for e in st["events"] if e["id"] > after]})
+                ev = wait_events(st["events"], after, lambda: not st["off"])
+                if st["off"]: return self.refuse(st)
                 return self.send({"events": ev})
             if rest == "/api/status": return self.send(RSTATUS)
             if rest.startswith("/img/"): return self.send(PNG, ctype="image/png")
@@ -149,18 +163,21 @@ class H(BaseHTTPRequestHandler):
         if body is not None: POSTS.append([p, body])
         # ---- the client's page API (Task B) ----
         if p == "/api/remote/machines":
-            ms = [dict(m, online=not S["remote"].get(m["id"], {}).get("off")) for m in S["machines"].values()]
+            ms = [dict(m, online=not S["remote"].get(m["id"], {}).get("off"), paired=S["remote"].get(m["id"], {}).get("off") != "unpaired") for m in S["machines"].values()]
             return self.send({"this": {"id": "me", "name": "Laptop"}, "machines": ms})
         if p == "/api/remote/discover":
             time.sleep(0.8)
-            return self.send({"found": [dict(f, paired=f["id"] in S["machines"]) for f in FOUND]})
+            return self.send({"found": [dict(f, paired=f["id"] in S["machines"] and S["remote"].get(f["id"], {}).get("off") != "unpaired") for f in FOUND]})
         if p == "/api/remote/pair":
             code = "".join(c for c in (body.get("code") or "") if c.isalnum()).upper()
             f = next((x for x in FOUND if x["addr"] == body.get("addr") or x["name"].lower() == (body.get("addr") or "").lower()), None)
             if not f: return self.send({"ok": False, "error": "Could not reach that computer. Check the name, and that it lets other computers connect."})
             if code != GOOD: return self.send({"ok": False, "error": "That code is not right. Check the code on the other computer and try again."})
             m = {"id": f["id"], "name": f["name"], "addr": f["addr"], "port": f["port"], "fp": f["fp"], "online": True, "last_seen": time.time()}
-            with COND: S["machines"][f["id"]] = m; S["remote"].setdefault(f["id"], remote0(f["id"]))
+            with COND:
+                S["machines"][f["id"]] = m; S["remote"].setdefault(f["id"], remote0(f["id"]))
+                if S["remote"][f["id"]]["off"] in ("unpaired", "changed"): S["remote"][f["id"]]["off"] = False
+                COND.notify_all()
             return self.send({"ok": True, "machine": m})
         if p == "/api/remote/forget":
             S["machines"].pop(body.get("id"), None); return self.send({"ok": True})

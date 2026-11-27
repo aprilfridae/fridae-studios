@@ -3,7 +3,9 @@
 import { api, TOKEN } from "../api";
 import { H } from "./host";
 import { poke } from "./chatStore";
-import { at, nameOf, online } from "../remote/route";
+import { at, troubleOf, troubleSaid } from "../remote/route";
+import { openPair } from "../remote/Pair";
+import { store } from "../store";
 import { boxMachine } from "../remote/remote";
 
 export const MODELS: [string, string, string][] = [
@@ -182,11 +184,17 @@ export function kickoffChat(p: any, kind: string) {
 export function sendApp(p: any, said: string) {
   api("/api/send", { agent: p.id, text: said, app: true, studio: !!p.studio, selftest: C.selfTest, gemini: C.geminiMode, autopilot: C.autoPilot, overnight: C.overNight || !!p.studio, full: C.fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
 }
-/* a computer that cannot be reached gets nothing: the words stay in the box, and one line says why */
+/* a computer that cannot be reached, or needs pairing again, gets nothing: the words stay in the box, and one line
+   says why (with the way to pair it again when that is what it needs) */
 function offline() {
-  const m = boxMachine();
-  if (online(m)) return false;
-  note(nameOf(m) + " can't be reached right now, so nothing was sent. Your message is still here.");
+  const m = boxMachine(), t = troubleOf(m);
+  if (!t) return false;
+  const x = store.get().machines.find((y) => y.id === m);
+  if (x && (t === "unpaired" || t === "changed")) {
+    const b = document.createElement("button"); b.className = "linkish"; b.textContent = "Pair again";
+    b.onclick = () => { if (b.parentElement) b.parentElement.classList.remove("on"); openPair(x); };
+    H.say(troubleSaid(m) + " ", b);
+  } else note(troubleSaid(m));
   return true;
 }
 export function send() {

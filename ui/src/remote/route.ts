@@ -25,16 +25,41 @@ export const homeOf = (id: string) => withM(machineOf(id), "");
 export const isHome = (key: string | null | undefined) => !!key && key.endsWith(SEP) && !!machineOf(key) && key.length === machineOf(key).length + 1;
 export const nameOf = (m: string) => (m ? (machine(m) || { name: "Another computer" }).name : "This PC");
 export const online = (m: string) => !m || !!(machine(m) || { online: false }).online;
+/* What is wrong with a machine, as the page says it: "" when it can be used; "offline"; "unpaired" (it no longer knows
+   this computer: 401); "changed" (it answered with another certificate than at pairing, so it may not be the same
+   computer). The two last need pairing again; nothing is sent to it until then. */
+export const troubleOf = (m: string): string => { const x = m ? machine(m) : null; return !x ? "" : x.trouble || (x.online ? "" : "offline"); };
+/* that, in a few words after the machine's name (the sidebar) and on its own line (the chip's menu) */
+export const TROUBLE_SHORT: Record<string, string> = { offline: "offline", unpaired: "needs pairing again", changed: "identity changed" };
+export const TROUBLE_LINE: Record<string, string> = { offline: "Offline", unpaired: "Needs pairing again", changed: "Identity changed" };
+/* and when a message cannot go: the words stay in the box */
+export function troubleSaid(m: string) {
+  const t = troubleOf(m), n = nameOf(m);
+  return t === "unpaired" ? n + " needs pairing again. Your message is still here."
+    : t === "changed" ? n + "'s identity changed. Pair it again to be sure it is yours. Your message is still here."
+    : n + " can't be reached right now, so nothing was sent. Your message is still here.";
+}
 /* the path of a call to the app's server on that computer */
 export const at = (m: string, path: string) => (m ? "/m/" + encodeURIComponent(m) + path : path);
 
-/* The computer the last call to it reached, or did not: offline when this computer's app could not connect (502) or
-   the computer no longer knows this one (401). Only a change is written to the store. */
-export function markOnline(m: string, on: boolean) {
+/* A machine's state as the last call to it found it. `trouble` undefined keeps what was known (a machine that needs
+   pairing again still does while it is also offline). Only a change is written to the store. */
+export function markOnline(m: string, on: boolean, trouble?: "" | "unpaired" | "changed") {
   const ms = store.get().machines, i = ms.findIndex((x) => x.id === m);
-  if (i < 0 || ms[i].online === on) return;
-  const next = ms.slice(); next[i] = { ...ms[i], online: on };
+  if (i < 0) return;
+  const t = trouble === undefined ? ms[i].trouble || "" : trouble;
+  if (ms[i].online === on && (ms[i].trouble || "") === t) return;
+  const next = ms.slice(); next[i] = { ...ms[i], online: on, trouble: t };
   store.set({ machines: next });
+}
+/* what this computer's app answered for a call to /m/<machine>/ (the contract): 401 "not paired", 502 "identity
+   changed", 502 "offline", 404 "unknown computer"; anything else came from the machine itself */
+export function markReply(m: string, status: number, body: any) {
+  const err = body && typeof body === "object" ? body.error : "";
+  if (status === 401) markOnline(m, false, "unpaired");
+  else if (status === 502 && err === "identity changed") markOnline(m, false, "changed");
+  else if (status === 502 || (status === 404 && err === "unknown computer")) markOnline(m, false);
+  else markOnline(m, true, "");
 }
 
 /* the fields of a call's body, and of its query, that may name a chat or a project */
@@ -90,8 +115,13 @@ export function eventFrom(m: string, e: any, live: boolean): any {
   if (x.kind === "project" && typeof x.path === "string") { x.path = pre(x.path); x.machine = m; }
   if (typeof x.project === "string" && x.project) x.project = pre(x.project);
   if (x.run && x.run.lead) x.run = { ...x.run, lead: pre(x.run.lead) };
-  const url = (u: any) => (typeof u === "string" && u.startsWith("/") ? at(m, u) : u);
-  if (Array.isArray(x.urls)) x.urls = x.urls.map(url);
-  if (Array.isArray(x.images)) x.images = x.images.map(url);
+  /* A picture is shown with the page's token after it, so only a path on that computer's own server is kept: one "/"
+     not followed by "/" (a browser reads "//" as another host), and only plain path characters after it (no
+     backslash, no space). Anything else (https://..., //host, /\host, javascript:...) is dropped, never shown. */
+  const own = (u: any) => typeof u === "string" && /^\/(?!\/)[\w\-./%~+=&?#@!$'()*,;:]*$/.test(u);
+  const urls = (list: any[]) => list.filter(own).map((u: string) => at(m, u));
+  if (Array.isArray(x.urls)) x.urls = urls(x.urls);
+  if (Array.isArray(x.images)) x.images = urls(x.images);
+  if (x.item && typeof x.item.by_chat === "string" && x.item.by_chat) x.item = { ...x.item, by_chat: pre(x.item.by_chat) };
   return x;
 }

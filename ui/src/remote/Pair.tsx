@@ -2,21 +2,29 @@
    dialog is open), or one added by its name or address (a Tailscale name works); then the code that computer shows in
    its Settings. Paired, the dialog closes and the message box runs on it. */
 import { useEffect, useRef } from "preact/hooks";
-import { cell } from "../store";
+import { cell, store, type Machine } from "../store";
 import { host } from "../host";
 import { post } from "../util";
-import { choose, loadMachines } from "./remote";
+import { choose, loadMachines, repaired } from "./remote";
 
 type Found = { id: string; name: string; addr: string; port?: number; fp?: string; paired?: boolean };
-type Pairing = { open: boolean; to: Found | null; found: Found[]; looked: boolean; code: string; error: string; busy: boolean };
-const closed: Pairing = { open: false, to: null, found: [], looked: false, code: "", error: "", busy: false };
+/* `why`: a machine paired before that needs pairing again, in a few words before the code is asked for */
+type Pairing = { open: boolean; to: Found | null; found: Found[]; looked: boolean; code: string; error: string; busy: boolean; why: string };
+const closed: Pairing = { open: false, to: null, found: [], looked: false, code: "", error: "", busy: false, why: "" };
 const pair = cell<Pairing>(closed);
 const put = (patch: Partial<Pairing>) => pair.set({ ...pair.get(), ...patch });
 
 /* "abcdefg" -> "ABCDE-FG": capitals, no spaces, the dash after the fifth letter */
 export const showCode = (typed: string) => { const c = typed.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10); return c.length > 5 ? c.slice(0, 5) + "-" + c.slice(5) : c; };
 
-export function openPair() { pair.set({ ...closed, open: true }); host.closePops(); look(); }
+/* Pair a computer…, or (`again`) a paired machine that needs pairing again: straight to its code. Its saved
+   fingerprint is not sent, since the client reads the one it has now; the code's proof covers it. */
+export function openPair(again?: Machine) {
+  const why = !again ? "" : again.trouble === "changed" ? again.name + "'s identity changed. Pair it again to be sure it is yours. "
+    : again.trouble === "unpaired" ? again.name + " no longer knows this computer. " : "";
+  pair.set({ ...closed, open: true, why, to: again ? { id: again.id, name: again.name, addr: again.addr, port: again.port } : null });
+  host.closePops(); look();
+}
 function close() { pair.set(closed); }
 
 /* each look takes about a second and a half (the app waits for answers); the next starts 3 s after it ends */
@@ -46,9 +54,12 @@ async function send() {
   if (!pair.get().open) return;
   if (!r || !r.ok) { put({ busy: false, error: (r && r.error) || "Could not pair. Try again." }); return; }
   close();
+  if (r.machine && r.machine.id) repaired(r.machine.id);
   await loadMachines();
   if (r.machine && r.machine.id) choose(r.machine.id);
 }
+
+const needsPairing = (id: string) => { const x = store.get().machines.find((m) => m.id === id); return !!x && (x.trouble === "unpaired" || x.trouble === "changed"); };
 
 export function Pair() {
   const s = pair.use(), addr = useRef<HTMLInputElement>(null), code = useRef<HTMLInputElement>(null);
@@ -72,7 +83,7 @@ export function Pair() {
             {s.found.map((f) => (
               <div class="pair-row">
                 <span class="pair-t"><b>{f.name}</b><small>{f.addr}</small></span>
-                {f.paired ? <span class="pair-done">Paired</span> : <button class="pill sm" onClick={() => put({ to: f, code: "", error: "" })}>Pair</button>}
+                {f.paired && !needsPairing(f.id) ? <span class="pair-done">Paired</span> : <button class="pill sm" onClick={() => put({ to: f, code: "", error: "" })}>{f.paired || needsPairing(f.id) ? "Pair again" : "Pair"}</button>}
               </div>
             ))}
             {!s.found.length && <p class="pair-none">{s.looked ? "None found yet. A computer shows here once it lets others connect." : "Looking…"}</p>}
@@ -87,13 +98,13 @@ export function Pair() {
           <div class="act"><button class="pill" onClick={close}>Cancel</button></div>
         </> : <>
           <h2 id="pair-h">{"Pair with " + s.to.name}</h2>
-          <p class="sub">{"Type the code " + s.to.name + " shows in its Settings. It works once, for five minutes."}</p>
+          <p class="sub">{s.why + "Type the code " + s.to.name + " shows in its Settings. It works once, for five minutes."}</p>
           <input class="field pair-code" id="pair-code" type="text" ref={code} value={s.code} placeholder="ABCDE-FGHJK" aria-label="Pairing code" autocomplete="off" spellcheck={false} maxLength={11}
             onInput={(ev) => { const v = showCode(ev.currentTarget.value); ev.currentTarget.value = v; put({ code: v, error: "" }); }}
             onKeyDown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); send(); } }} />
           <p class="pair-err" id="pair-err" role="alert">{s.error}</p>
           <div class="act">
-            <button class="pill" id="pair-back" onClick={() => put({ to: null, code: "", error: "", busy: false })}>Back</button>
+            <button class="pill" id="pair-back" onClick={() => put({ to: null, code: "", error: "", busy: false, why: "" })}>Back</button>
             <button class="pill main" id="pair-go" disabled={s.busy || s.code.replace(/-/g, "").length !== 10} onClick={send}>{s.busy ? "Pairing…" : "Pair"}</button>
           </div>
         </>}
