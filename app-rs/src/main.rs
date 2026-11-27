@@ -40,6 +40,8 @@ mod rag;
 mod remote_client;
 mod remote_common;
 mod remote_host;
+#[cfg(all(test, windows))]
+mod remote_e2e_tests;
 mod research;
 mod server;
 mod share;

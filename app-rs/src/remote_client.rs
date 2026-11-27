@@ -788,7 +788,12 @@ const NOT_PASSED_BACK: [&str; 7] = ["Connection", "Keep-Alive", "Transfer-Encodi
 
 /// Any method on `/m/<machine id>/<rest>`: pass it on and stream the answer back. The caller has checked the page
 /// token; `url` is the request's address with its query.
-pub fn serve(mut req: tiny_http::Request, url: &str) {
+pub fn serve(req: tiny_http::Request, url: &str) {
+    serve_with(book(), req, url)
+}
+
+/// `serve` with the saved computers given (the end-to-end test passes its own).
+pub(crate) fn serve_with(book: &Book, mut req: tiny_http::Request, url: &str) {
     use tiny_http::{Header, Response, StatusCode};
     let answer = match split_m(url) {
         None => Answer::json(404, json!({"error": "unknown computer"})),
@@ -797,7 +802,7 @@ pub fn serve(mut req: tiny_http::Request, url: &str) {
             let mut body = Vec::new();
             let _ = req.as_reader().take(BODY_LIMIT).read_to_end(&mut body);
             let method = req.method().as_str().to_string();
-            forward(book(), &id, &method, &target, &headers, &body)
+            forward(book, &id, &method, &target, &headers, &body)
         }
     };
     let headers = answer
