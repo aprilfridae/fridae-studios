@@ -31,7 +31,7 @@ const KEY_NAME: &str = "Fridae remote control";
 const BODY_LIMIT: usize = 64_000_000;
 /// Connections served at once, and from any one address.
 const MOST_CONNECTIONS: usize = 64;
-const MOST_PER_ADDRESS: usize = 8;
+const MOST_PER_ADDRESS: usize = 16;
 /// How long a connection has to deliver its whole request: the TLS handshake, the head and the body.
 const READ_LIMIT: Duration = Duration::from_secs(10);
 /// Once a paired device's token has checked, its body may take as long as it needs, as long as it keeps coming: this
@@ -245,10 +245,17 @@ pub mod cert {
         Ok(Handle(h))
     }
 
-    fn open_key(prov: &Handle, name: &str) -> Option<Handle> {
+    /// The key of that name: None only when Windows says there is no such key; any other failure is an error, so a
+    /// key that could not be opened for a moment is never taken for a missing one (and replaced).
+    fn open_key(prov: &Handle, name: &str) -> io::Result<Option<Handle>> {
+        use windows_sys::Win32::Foundation::{NTE_BAD_KEYSET, NTE_NO_KEY};
         let mut h = 0;
         let name = wide(name);
-        (unsafe { wc::NCryptOpenKey(prov.0, &mut h, name.as_ptr(), 0, wc::NCRYPT_SILENT_FLAG) } == 0).then_some(Handle(h))
+        match unsafe { wc::NCryptOpenKey(prov.0, &mut h, name.as_ptr(), 0, wc::NCRYPT_SILENT_FLAG) } {
+            0 => Ok(Some(Handle(h))),
+            NTE_BAD_KEYSET | NTE_NO_KEY => Ok(None),
+            status => Err(io::Error::other(format!("opening the key failed ({status:#x})"))),
+        }
     }
 
     /// A new RSA 2048 key under `name` (replacing one of that name). Its export policy is none: it can be used, never
@@ -296,28 +303,42 @@ pub mod cert {
         Ok(Cert { fp: rc::hex(&Sha256::digest(der)), ctx })
     }
 
-    /// The kept certificate, or a new one (and a new key) when it or its key is missing or they do not match.
+    /// The kept certificate. A new key is made only when Windows has no key of that name (the first time, or after a
+    /// reinstall), and a new certificate only when there is no certificate file. Anything else that goes wrong while
+    /// loading them is an error and nothing is replaced: a new key would make every paired computer see "identity
+    /// changed".
     pub fn load_or_make(dir: &Path, key_name: &str) -> Result<Cert, String> {
         let file = dir.join("host-cert.der");
-        let make = || -> io::Result<Cert> {
-            let prov = provider()?;
-            if let (Ok(der), Some(_)) = (fs::read(&file), open_key(&prov, key_name)) {
-                if let Ok(cert) = with_key(&der, key_name) {
-                    return Ok(cert);
-                }
-            }
-            let der = self_signed(&make_key(&prov, key_name)?)?;
-            fs::write(&file, &der)?;
-            with_key(&der, key_name)
+        let couldnt = |e: io::Error| format!("Fridae couldn't read its certificate for other computers, so it stayed off. Turn this off and on again to try again ({e}).");
+        let prov = provider().map_err(couldnt)?;
+        let Some(key) = open_key(&prov, key_name).map_err(couldnt)? else {
+            let make = || -> io::Result<Cert> {
+                let der = self_signed(&make_key(&prov, key_name)?)?;
+                fs::write(&file, &der)?;
+                with_key(&der, key_name)
+            };
+            return make().map_err(|e| format!("Fridae could not make its certificate for other computers ({e})."));
         };
-        make().map_err(|e| format!("Fridae could not make its certificate for other computers ({e})."))
+        match fs::read(&file) {
+            Ok(der) => with_key(&der, key_name).map_err(couldnt),
+            // the key is there but its certificate file is gone: a new certificate for the same key
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let make = || -> io::Result<Cert> {
+                    let der = self_signed(&key)?;
+                    fs::write(&file, &der)?;
+                    with_key(&der, key_name)
+                };
+                make().map_err(|e| format!("Fridae could not make its certificate for other computers ({e})."))
+            }
+            Err(e) => Err(couldnt(e)),
+        }
     }
 
     /// Delete the key (the tests' own keys).
     #[cfg(test)]
     pub fn forget_key(key_name: &str) -> io::Result<()> {
         let prov = provider()?;
-        let mut key = open_key(&prov, key_name).ok_or_else(|| io::Error::other("no such key"))?;
+        let mut key = open_key(&prov, key_name)?.ok_or_else(|| io::Error::other("no such key"))?;
         check(unsafe { wc::NCryptDeleteKey(key.0, 0) }, "deleting the key")?;
         key.0 = 0; // deleting frees the handle
         Ok(())
@@ -1133,6 +1154,16 @@ mod tests {
     }
 
     #[test]
+    fn a_client_at_its_busiest_fits_from_one_address() {
+        // the client opens a new connection for every call, and the last one may still be closing
+        let conns = Conns::new(READ_LIMIT);
+        let a: IpAddr = "10.0.0.2".parse().unwrap();
+        let held: Vec<Slot> = (0..16).filter_map(|_| conns.admit(a, None)).collect();
+        assert_eq!(held.len(), 16);
+        assert!(conns.admit(a, None).is_none(), "but there is still a limit");
+    }
+
+    #[test]
     fn the_page_is_told_where_network_access_stands() {
         let off = api_get();
         assert_eq!((off["on"].clone(), off["port"].clone(), off["code"].clone()), (json!(false), Value::Null, Value::Null));
@@ -1177,6 +1208,26 @@ mod tests {
         // the key gone (as after a Windows reinstall): a new certificate, not a broken one
         let new = cert::load_or_make(&dir, &key.0).expect("made again");
         assert_ne!(new.fp, first.fp);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_certificate_that_cannot_be_read_for_a_moment_never_gets_a_new_key() {
+        let (dir, key) = (fresh("remote-cert-transient"), test_key());
+        let first = cert::load_or_make(&dir, &key.0).expect("a certificate is made");
+        let file = dir.join("host-cert.der");
+        let der = fs::read(&file).unwrap();
+        // the file unreadable for a moment (spoilt, then locked away): it stays off and says why, the key is kept
+        fs::write(&file, b"not a certificate").unwrap();
+        let e = cert::load_or_make(&dir, &key.0).err().expect("a spoilt certificate is not replaced");
+        assert!(e.contains("couldn't read"), "{e}");
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        assert!(cert::load_or_make(&dir, &key.0).is_err(), "an unreadable certificate is not replaced");
+        fs::remove_dir(&file).unwrap();
+        fs::write(&file, &der).unwrap();
+        let again = cert::load_or_make(&dir, &key.0).expect("loads once it can be read");
+        assert_eq!(again.fp, first.fp, "the same key and certificate: every paired computer still knows this one");
     }
 
     /// One request over its own TLS connection: the status and the body as JSON, and the certificate's fingerprint.
