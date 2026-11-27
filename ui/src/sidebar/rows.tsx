@@ -7,6 +7,7 @@ import { setXpOpen, xpOld, xpOpen } from "./fold";
 import { openMenu } from "./ProjectMenu";
 import type { ExpertRow, MoreRow } from "./model";
 import { AiLogo, AI_NAME } from "../ui/AiLogo";
+import { bare } from "../remote/route";
 
 const CHEVRON = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3" /></svg>;
 const things = (n: number, one: string, many: string) => n + (n === 1 ? one : many);
@@ -39,12 +40,14 @@ const NewChat = ({ path, name }: { path: string; name: string }) => (
     <svg aria-hidden="true" width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8" /></svg>
   </span>
 );
-type ProjProps = { path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; menu: boolean; ais: string };
-export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong, working, menu, ais }: ProjProps) {
+/* the computer a project or chat of another of the user's computers is on, after its name */
+const Where = ({ where }: { where: string }) => where ? <small class="p-where">{where}</small> : null;
+type ProjProps = { path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; menu: boolean; ais: string; where: string };
+export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong, working, menu, ais, where }: ProjProps) {
   const review = (ev: Event) => { ev.stopPropagation(); host.openInReview(path); };
   return (
-    <button class={"proj" + cls} title={path} data-k={"p:" + path} onClick={() => host.showProject(path)}>
-      <span class="p-name"><b>{name}</b><Logos ais={ais} /></span>
+    <button class={"proj" + cls} title={where ? bare(path) + " on " + where : path} data-k={"p:" + path} onClick={() => host.showProject(path)}>
+      <span class="p-name"><b>{name}</b><Where where={where} /><Logos ais={ais} /></span>
       <span class="state" key={!n && working ? "busy" : "idle"} title={!n && working ? "Agents are working on it" : undefined}>
         <NewChat path={path} name={name} />
         {/* the project's menu (Rename, Open folder, Delete): this button, a right-click, or Shift+F10 on the row */}
@@ -59,8 +62,9 @@ export const ProjectRow = memo(function ProjectRow({ path, name, cls, n, strong,
   );
 });
 
-export const NoneRow = memo(function NoneRow({ cls, busy, ais }: { cls: string; busy: boolean; ais: string }) {
-  return <button class={"proj none" + cls} title="Chats that belong to no project" data-k="none" onClick={() => host.showProject("")}><span class="p-name"><b>No project</b><Logos ais={ais} /></span><span class="state"><NewChat path="" name="No project" /><span class={"dot" + (busy ? " live" : "")}></span></span></button>;
+/* `path`: "" for this computer's chats of no project, "<machine>~" for another computer's */
+export const NoneRow = memo(function NoneRow({ path, cls, busy, ais, where }: { path: string; cls: string; busy: boolean; ais: string; where: string }) {
+  return <button class={"proj none" + cls} title={where ? "Chats on " + where.split(" · ")[0] + " that belong to no project" : "Chats that belong to no project"} data-k={path ? "none:" + path.slice(0, -1) : "none"} onClick={() => host.showProject(path)}><span class="p-name"><b>No project</b><Where where={where} /><Logos ais={ais} /></span><span class="state"><NewChat path={path} name="No project" /><span class={"dot" + (busy ? " live" : "")}></span></span></button>;
 });
 
 export const AddRow = memo(function AddRow({ on }: { on: boolean }) {

@@ -6,6 +6,7 @@ import { ago } from "../util";
 import { H } from "./host";
 import { poke, useTick } from "./chatStore";
 import { closePops } from "./compose";
+import { isHome } from "../remote/route";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 const CLOSE = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6" /></svg>;
@@ -15,11 +16,12 @@ export function TopBar() {
   useTick();
   const view = H.view, curProj = H.curProj, page = H.isPage(view), game = H.isGameProj(curProj), nav = useRef<HTMLElement>(null);
   const pr = (H.projects.projects || []).find((x: any) => x.path === curProj);
-  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : view === "review" ? "Review" : curProj ? (pr ? pr.name : H.prName(curProj)) : "No project";
+  /* another computer's chats with no project ("<machine>~") are that computer's No project */
+  const name = view === "newproj" ? "New project" : view === "all" ? "Overview" : view === "review" ? "Review" : curProj && !isHome(curProj) ? (pr ? pr.name : H.prName(curProj)) : "No project";
   /* the chosen tab's background slides from the last one to it */
   useEffect(() => { requestAnimationFrame(() => H.slideMark(nav.current)); }, [view, curProj, game, page]);
   return <>
-    <button class="pname" id="b-proj" title={curProj && !page ? "The project's folder, notes and git history" : ""} disabled={!curProj || page} onClick={() => H.openProject()}>{name}</button>
+    <button class="pname" id="b-proj" title={curProj && !page ? "The project's folder, notes and git history" : ""} disabled={!curProj || isHome(curProj) || page} onClick={() => H.openProject()}>{name}</button>
     <span class="grow" />
     <nav class="nav" id="tabs" ref={nav} hidden={page}>
       <button class={"tab" + (view === "chat" ? " on" : "")} id="v-chat" onClick={() => H.setView("chat")}>Chat</button>

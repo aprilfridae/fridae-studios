@@ -142,3 +142,11 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 @keyframes ai-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .s-ai.live { animation: none; } }
 .s-chat .s-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
+/* A project or chat on another of the user's computers: the computer's name, small, after the project's name; while
+   it cannot be reached its boxes go quiet and the name says "offline" (ui/src/remote) */
+/* the label gives way before the project's name does (the name keeps up to 70% of the row, then it too ends in …) */
+.proj .p-name:has(.p-where) b { flex-shrink: 0; max-width: 70%; }
+.proj .p-where { flex: 0 100 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--faint); }
+.proj.on .p-where, .proj:hover .p-where { color: var(--dim); }
+.pbox.off > * { opacity: 0.5; transition: opacity var(--t-fast) ease; }
+.pbox.off:hover > * { opacity: 0.8; }

@@ -3,6 +3,8 @@
 import { api, TOKEN } from "../api";
 import { H } from "./host";
 import { poke } from "./chatStore";
+import { at, nameOf, online } from "../remote/route";
+import { boxMachine } from "../remote/remote";
 
 export const MODELS: [string, string, string][] = [
   ["fable", "Fable", "Most capable; best for big or tricky builds"],
@@ -180,8 +182,16 @@ export function kickoffChat(p: any, kind: string) {
 export function sendApp(p: any, said: string) {
   api("/api/send", { agent: p.id, text: said, app: true, studio: !!p.studio, selftest: C.selfTest, gemini: C.geminiMode, autopilot: C.autoPilot, overnight: C.overNight || !!p.studio, full: C.fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
 }
+/* a computer that cannot be reached gets nothing: the words stay in the box, and one line says why */
+function offline() {
+  const m = boxMachine();
+  if (online(m)) return false;
+  note(nameOf(m) + " can't be reached right now, so nothing was sent. Your message is still here.");
+  return true;
+}
 export function send() {
   const p = cur();
+  if (offline()) return;
   if (!p) { sendFromDraft(); return; }
   if (H.isHelper(p)) return;   /* an expert's chat is read only */
   const said = text().trim();
@@ -277,7 +287,8 @@ export function addFile(file: File | null) {
   reader.onload = async () => {
     if (image) { a.preview = reader.result as string; poke(); }
     try {
-      const r = await api("/api/attach", { data: reader.result, filename: file.name || "" });
+      /* the file goes to the computer the message will go to (ui/src/remote) */
+      const r = await api(at(boxMachine(), "/api/attach"), { data: reader.result, filename: file.name || "" });
       if (r.ok) { a.name = r.name; a.image = r.kind === "image"; } else a.failed = true;
     } catch (e) { a.failed = true; }
     if (a.failed) { C.pending = C.pending.filter((b) => b !== a); note("Could not attach " + a.label + "."); }

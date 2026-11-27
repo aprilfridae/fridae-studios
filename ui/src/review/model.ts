@@ -14,8 +14,9 @@ export type Thing = { key: string; id: string; path: string; item?: ReviewItem; 
 const needCards = (r?: ReviewReply) => ((r && r.needs) || []).filter((c) => (c.note || "") !== LEAD_CARD && (c.note || "") !== LEAD_PAUSED_CARD);
 const shown = (done: Done, id: string) => !done[id] || !done[id].gone;
 export const isClip = (file: string) => /\.(mp4|mov)$/i.test(file);
+/* a project on another of the user's computers has its pictures there too (`via`: ui/src/remote/route.ts) */
 export const mediaUrl = (r: ReviewReply, id: string, file: string) =>
-  "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(id) + "/" + encodeURIComponent(file) + "?t=" + TOKEN;
+  (r.via || "") + "/media/review/" + encodeURIComponent(r.key) + "/" + encodeURIComponent(id) + "/" + encodeURIComponent(file) + "?t=" + TOKEN;
 
 /* how many things need the user on a project: what its run waits for, and its to-dos. The number on its tab. */
 export function needsCount(r: ReviewReply | undefined, done: Done) {

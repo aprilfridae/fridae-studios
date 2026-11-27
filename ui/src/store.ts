@@ -3,13 +3,16 @@
    when what it reads has changed. */
 import { useEffect, useReducer, useRef } from "preact/hooks";
 
-export type Project = { path: string; name: string; type?: string; kind?: string; bible?: boolean; kind_set?: boolean };
+/* `machine`: the paired computer it is on (ui/src/remote); its `path` is then "<machine>~<its path there>" */
+export type Project = { path: string; name: string; type?: string; kind?: string; bible?: boolean; kind_set?: boolean; machine?: string };
+/* a computer this one is paired with (GET /api/remote/machines); `online` as the last call to it went */
+export type Machine = { id: string; name: string; addr: string; port: number; fp: string; online: boolean; last_seen?: number };
 /* GET /api/projects as a whole: where new projects go and whether git is there, beside the list */
 export type ProjReply = { projects: Project[]; default_parent?: string; default_parent_plain?: string; git?: boolean };
 export type ReviewItem = { id: string; title?: string; summary?: string; plain?: string; status: string; blocking?: boolean; created?: number; media?: string[] };
 export type NeedCard = { id: string; title?: string; note?: string };
 /* a project's GET /api/review reply, as far as Review uses it */
-export type ReviewReply = { project: string; key: string; items?: ReviewItem[]; needs?: NeedCard[] };
+export type ReviewReply = { project: string; key: string; items?: ReviewItem[]; needs?: NeedCard[]; via?: string };
 /* something answered on the page: it stays as one line (`said`) until `gone` */
 export type Answered = { at: number; gone?: boolean; said?: string };
 export type Light = { list: string[]; at: number; from: HTMLElement | null };
@@ -44,6 +47,7 @@ export type State = {
   steps: Record<string, Steps>;              /* chat id -> the steps it has taken (Overview's graph) */
   teams: Record<string, Team>;               /* a Lead's chat id -> its team's run and members (GET /api/swarm) */
   notConnected: string[] | null;             /* what the chat in front needs that is not connected (the dot at the bottom left); null until known */
+  machines: Machine[];                       /* the computers this one is paired with (ui/src/remote) */
 };
 /* `view`: "chat", "promos", or a page of no one project ("all" is Overview, "review", "newproj"). `proj`: the project
    in front ("" for the chats of no project, null on a page). `chat`: the chat in front. */
@@ -75,7 +79,7 @@ export type EngineRow = { text: string; short: string; button: string; error: st
 let state: State = { projects: [], projReply: { projects: [] }, review: {}, reviewDone: {}, reviewOrder: [], reviewTab: "", reviewJump: null, light: null,
   status: {}, polls: 0, ais: [], curProj: "", settings: { open: false, page: "general", n: 0 }, usageOpen: false, usage: null, gh: null, ghNote: "", ghBusy: false,
   engine: null, saved: { chats: [], deleted: [] }, setupOut: "", scale: 100, sideW: 232, theme: { id: "fridae", mode: "dark" },
-  nav: { view: "chat", proj: null, chat: null }, chats: [], steps: {}, teams: {}, notConnected: null };
+  nav: { view: "chat", proj: null, chat: null }, chats: [], steps: {}, teams: {}, notConnected: null, machines: [] };
 const subs = new Set<() => void>();
 
 export const store = {

@@ -8,7 +8,7 @@ import { SW, bornAt, memberOf, splitExpert, swTip, thingOf } from "./team";
 import { XP_IDLE, noteWhen, pageStart, shrink, xpOld, xpOpen, xpTab, xpWhen } from "./fold";
 
 /* the part of the store the sidebar reads */
-export type Slice = Pick<State, "nav" | "chats" | "projects" | "review" | "reviewDone" | "saved" | "teams" | "ais"> & { defaultAi: string };
+export type Slice = Pick<State, "nav" | "chats" | "projects" | "review" | "reviewDone" | "saved" | "teams" | "ais" | "machines"> & { defaultAi: string };
 
 /* the page in front is a project's tab, or one of the pages of no one project: Overview, Review and New project */
 export const isPage = (v: string) => v === "newproj" || v === "all" || v === "review";
@@ -62,11 +62,12 @@ export type BoxRow = { t: "box"; key: string; id: string; domId: string; cls: st
 export type Row =
   | { t: "all"; key: string; on: boolean; busy: boolean }
   | { t: "review"; key: string; on: boolean; n: number; k: number; strong: boolean }
-  | { t: "proj"; key: string; path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; ais: string }
+  /* `where`: the paired computer it is on ("" here), with "offline" while it cannot be reached (`off`) */
+  | { t: "proj"; key: string; path: string; name: string; cls: string; n: number; strong: boolean; working: boolean; ais: string; where: string; off: boolean }
   | { t: "chat"; key: string; id: string; name: string; on: boolean; live: boolean; count: number; open: boolean; tip: string; ai: string }
-  | { t: "none"; key: string; cls: string; busy: boolean; ais: string }
+  | { t: "none"; key: string; path: string; cls: string; busy: boolean; ais: string; where: string; off: boolean }
   /* a project with its chats (the one in front), in a box of its own */
-  | { t: "pbox"; key: string; path: string; on: boolean; rows: Row[] }
+  | { t: "pbox"; key: string; path: string; on: boolean; off: boolean; rows: Row[] }
   | { t: "add"; key: string; on: boolean }
   | ExpertRow | MoreRow | BoxRow;
 
@@ -130,15 +131,22 @@ export function rowsOf(s: Slice, now: number): Row[] {
   top.push({ t: "review", key: "review", on: view === "review", ...totals(s) });
   /* the AIs a project's open chats run on, in the order first used ("claude gemini") */
   const aisOf = (key: string) => [...new Set(projectChats(s, key).filter((p) => p.started || p.busy).map(chatAi))].join(" ");
-  const boxed = (key: string, head: Row) => {
+  const boxed = (key: string, head: Row, off: boolean) => {
     const inner: Row[] = [head]; rows = inner;
     if (inFront(key)) chatsOf(key);
     rows = top;
-    top.push({ t: "pbox", key: "pb:" + key, path: key, on: inFront(key), rows: inner });
+    top.push({ t: "pbox", key: "pb:" + key, path: key, on: inFront(key), off, rows: inner });
   };
-  for (const x of projects) boxed(x.path, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...projState(s, x.path), ais: aisOf(x.path) });
-  const loose = chats.filter((p) => isChat(p) && !p.own && !p.want && (p.started || p.busy));
-  if (loose.length || nav.proj === "") boxed("", { t: "none", key: "none", cls: marked(""), busy: loose.some((p) => p.busy), ais: aisOf("") });
+  /* a project or chat on another of the user's computers says which, and "offline" while it cannot be reached */
+  const machine = (id?: string) => s.machines.find((m) => m.id === id);
+  const where = (id?: string) => { const m = machine(id); return m ? m.name + (m.online ? "" : " · offline") : ""; };
+  const off = (id?: string) => { const m = machine(id); return !!m && !m.online; };
+  for (const x of projects) boxed(x.path, { t: "proj", key: "p:" + x.path, path: x.path, name: x.name, cls: marked(x.path), ...projState(s, x.path), ais: aisOf(x.path), where: where(x.machine), off: off(x.machine) }, off(x.machine));
+  /* the chats of no project: this computer's, then each paired computer's in a box of its own ("<machine>~") */
+  for (const m of [null, ...s.machines]) {
+    const key = m ? m.id + "~" : "", loose = chats.filter((p) => isChat(p) && p.project === key && !p.own && !p.want && (p.started || p.busy));
+    if (loose.length || nav.proj === key) boxed(key, { t: "none", key: m ? "none:" + m.id : "none", path: key, cls: marked(key), busy: loose.some((p) => p.busy), ais: aisOf(key), where: where(m ? m.id : ""), off: off(m ? m.id : "") }, off(m ? m.id : ""));
+  }
   top.push({ t: "add", key: "add", on: view === "newproj" });
   return top;
 }

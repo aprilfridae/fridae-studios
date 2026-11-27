@@ -5,11 +5,15 @@ import { KIND_NOTE } from "../project/NewProject";
 import { api } from "../api";
 import { H } from "./host";
 import { effortOf, focusBox, kickoffChat, modelOf } from "./compose";
+import { machineOf, nameOf } from "../remote/route";
 
 export function StartCard({ p }: { p: any }) {
   const st = p.start;
   if (!st) return null;
   const projects = H.projects, pr = p.project;
+  /* On another of the user's computers (ui/src/remote) a folder is picked or made on that computer's own screen, so
+     the card offers only its projects, or just chatting. */
+  const m = machineOf(p.draft ? p.key : p.id), mine = projects.projects.filter((x: any) => (x.machine || "") === m);
   const go = (step: string, msg?: string) => { st.step = step; st.msg = msg || ""; st.paint(); };
   async function realize() { if (!p.draft) return p; const id = await H.ensureChat(p.key); return id ? H.agents.get(id) : null; }
   async function use(body: any) {
@@ -36,9 +40,10 @@ export function StartCard({ p }: { p: any }) {
   let body;
   if (st.step === "folder") {
     body = <>
-      <h4>Start a folder for this project?</h4><p>A folder keeps the project's notes, files and history in one place.</p>
-      <div class="act"><button class="pill main" onClick={acts.new}>New folder</button><button class="pill" onClick={acts.pick}>Existing folder</button><button class="pill" onClick={acts.skip}>Skip, just chat</button></div>
-      {projects.projects.length > 0 && <><p class="sub">Or carry on with a project:</p><div class="act">{projects.projects.slice(0, 6).map((x: any) => <button class="pill" onClick={() => (p.draft ? H.showProject(x.path, "chat") : use({ action: "use", path: x.path }))}>{x.name}</button>)}</div></>}
+      {m ? <><h4>{"A chat on " + nameOf(m)}</h4><p>{"A new project folder is started on " + nameOf(m) + " itself. Here you can just chat, or carry on with one of its projects."}</p></>
+        : <><h4>Start a folder for this project?</h4><p>A folder keeps the project's notes, files and history in one place.</p></>}
+      <div class="act">{!m && <><button class="pill main" onClick={acts.new}>New folder</button><button class="pill" onClick={acts.pick}>Existing folder</button></>}<button class="pill" onClick={acts.skip}>Skip, just chat</button></div>
+      {mine.length > 0 && <><p class="sub">Or carry on with a project:</p><div class="act">{mine.slice(0, 6).map((x: any) => <button class="pill" onClick={() => (p.draft ? H.showProject(x.path, "chat") : use({ action: "use", path: x.path }))}>{x.name}</button>)}</div></>}
     </>;
   } else if (st.step === "new") {
     body = <>

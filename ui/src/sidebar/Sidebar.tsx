@@ -1,6 +1,6 @@
 /* The sidebar: the Fridae mark, the list (List.tsx), the foot (Foot.tsx), and its right edge, which is a handle
-   (Grip.tsx). The project's menu and the dialog that asks before a project goes are drawn over the page (SideOver),
-   outside the part of it that goes inert under a window. */
+   (Grip.tsx). The project's menu, the dialog that asks before a project goes and the pairing dialog (ui/src/remote)
+   are drawn over the page (SideOver), outside the part of it that goes inert under a window. */
 import { useEffect } from "preact/hooks";
 import { useStore } from "../store";
 import { DeleteProject } from "./DeleteProject";
@@ -10,6 +10,7 @@ import { List } from "./List";
 import { ProjectMenu } from "./ProjectMenu";
 import { RenameBox } from "./Rename";
 import "./sidebar.css";
+import { Pair } from "../remote/Pair";
 
 export function Sidebar() {
   const busy = useStore((s) => s.chats.some((p) => p.busy));
@@ -27,5 +28,5 @@ export function Sidebar() {
   );
 }
 export function SideOver() {
-  return <><ProjectMenu /><DeleteProject /></>;
+  return <><ProjectMenu /><DeleteProject /><Pair /></>;
 }
