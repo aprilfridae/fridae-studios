@@ -10,6 +10,10 @@ on:
         description: "Attach the .dmg to this release (for example v2.8.0); leave empty to only build"
         required: false
         default: ""
+      try_open:
+        description: "Also start the built app for 40 s and record where it is (for a Mac that will not open it)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -39,6 +43,32 @@ jobs:
         with:
           name: Fridae-macOS
           path: build-out/Fridae-macOS.dmg
+
+      - name: Start the app and record where it is
+        if: ${{ inputs.try_open }}
+        run: |
+          app=build-out/Fridae.app/Contents/MacOS/Fridae
+          RUST_BACKTRACE=1 "$app" > open-out.txt 2>&1 &
+          pid=$!
+          sleep 25
+          echo "--- still running: $(ps -p $pid -o pid=,stat=,etime= || echo no)"
+          ps -ax -o pid,ppid,stat,etime,command | grep -i fridae | grep -v grep || true
+          sample $pid 5 -file sample.txt >/dev/null 2>&1 || true
+          sleep 10
+          screencapture -x screen.png || true
+          kill $pid 2>/dev/null || true
+          echo "--- what it printed"; cat open-out.txt
+          echo "--- where its main thread is"; sed -n '1,200p' sample.txt 2>/dev/null | grep -v '^ *$' | head -200
+          ls -la ~/Documents/"Fridae Studios" 2>/dev/null | head || true
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.try_open }}
+        with:
+          name: open-check
+          path: |
+            open-out.txt
+            sample.txt
+            screen.png
 
       - name: Attach to the release
         if: ${{ inputs.release_tag != '' }}
