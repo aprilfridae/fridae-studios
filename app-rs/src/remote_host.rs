@@ -9,14 +9,14 @@
 use std::{
     fs,
     io::{self, Read, Write},
-    net::{TcpListener, TcpStream, UdpSocket},
+    net::{IpAddr, Shutdown, TcpListener, TcpStream, UdpSocket},
     path::{Path, PathBuf},
     sync::{
         Arc, LazyLock, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
@@ -29,8 +29,11 @@ const SETTING: &str = "remote_listen";
 const KEY_NAME: &str = "Fridae remote control";
 /// The largest request body passed on, as the local server reads.
 const BODY_LIMIT: usize = 64_000_000;
-/// Connections served at once.
+/// Connections served at once, and from any one address.
 const MOST_CONNECTIONS: usize = 64;
+const MOST_PER_ADDRESS: usize = 8;
+/// How long a connection has to deliver its whole request: the TLS handshake, the head and the body.
+const READ_LIMIT: Duration = Duration::from_secs(10);
 /// How long a pairing code works, in seconds.
 const CODE_LIFE: u64 = 300;
 /// Wrong proofs a code takes before it is cancelled.
@@ -326,6 +329,8 @@ pub struct Ctx {
     pub id: String,
     pub name: String,
     pub backend: Box<dyn Fn() -> Option<(u16, String)> + Send + Sync>,
+    /// `READ_LIMIT` (shorter in tests)
+    pub read_limit: Duration,
 }
 
 /// A request's first line and headers.
@@ -396,7 +401,9 @@ impl<S: Read + Write> Conn<'_, S> {
                 return Some(Head { method, target, headers });
             }
             let (k, v) = line.split_once(':')?;
-            if headers.len() >= 100 || k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_!#$%&'*+.^`|~".contains(&b)) {
+            // a value is passed on to the local server, so it carries no line break or other control character
+            let value_ok = !v.bytes().any(|b| (b < b' ' && b != b'\t') || b == 0x7f);
+            if headers.len() >= 100 || k.is_empty() || !value_ok || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_!#$%&'*+.^`|~".contains(&b)) {
                 return None;
             }
             headers.push((k.to_string(), v.trim().to_string()));
@@ -410,7 +417,8 @@ impl<S: Read + Write> Conn<'_, S> {
             loop {
                 let size = self.line().ok_or(400u16)?;
                 let size = usize::from_str_radix(size.split(';').next().unwrap_or("").trim(), 16).map_err(|_| 400u16)?;
-                if out.len() + size > limit {
+                // (a size near the largest number would wrap an unchecked sum back under the limit)
+                if out.len().checked_add(size).is_none_or(|total| total > limit) {
                     return Err(413);
                 }
                 if size == 0 {
@@ -456,8 +464,6 @@ const NOT_PASSED: &[&str] = &["host", "x-token", "authorization", "connection", 
 fn forward(ctx: &Ctx, head: &Head, body: &[u8]) -> io::Result<TcpStream> {
     let (port, token) = (ctx.backend)().ok_or_else(|| io::Error::other("the local server is not up"))?;
     let mut local = TcpStream::connect(("127.0.0.1", port))?;
-    // long enough for the page's long wait for events (`/api/events?wait=20`)
-    local.set_read_timeout(Some(Duration::from_secs(90)))?;
     let mut ask = format!("{} {} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Token: {token}\r\nConnection: close\r\nContent-Length: {}\r\n", head.method, head.target, body.len());
     for (k, v) in head.headers.iter().filter(|(k, _)| !NOT_PASSED.contains(&k.to_ascii_lowercase().as_str())) {
         ask.push_str(&format!("{k}: {v}\r\n"));
@@ -477,17 +483,22 @@ fn kept_from_devices(path: &str) -> bool {
 
 /// One request on a connection (which is then closed): the hello and pairing need no token; everything else needs a
 /// paired device's token and is passed to the local server.
-fn serve<S: Read + Write>(ctx: &Ctx, s: &mut S) {
+fn serve<S: Read + Write>(ctx: &Ctx, slot: &Slot, s: &mut S) {
     let mut c = Conn { s, buf: Vec::new() };
     let Some(head) = c.head() else { return answer(c.s, 400, &json!({"error": "bad request"})) };
     let path = head.target.split('?').next().unwrap_or("").to_string();
     match (head.method.as_str(), path.as_str()) {
         ("GET", "/remote/hello") => {
+            slot.read();
             let pairing = ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).live_code(now()).is_some();
             answer(c.s, 200, &json!({"fridae": 1, "id": ctx.id, "name": ctx.name, "version": crate::paths::VERSION, "pairing": pairing}));
         }
         ("POST", "/remote/pair") => {
             let v: Value = c.body(&head, 16 * 1024).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            slot.read();
+            if !slot.live() {
+                return;
+            }
             let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
             let paired = ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).pair(&text("device_id"), &text("device_name"), &text("proof"), &ctx.fp, now());
             match paired {
@@ -498,16 +509,23 @@ fn serve<S: Read + Write>(ctx: &Ctx, s: &mut S) {
         _ => {
             let token = head.get("Authorization").strip_prefix("Bearer ").map(str::trim).unwrap_or("");
             let device = (!token.is_empty()).then(|| ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).device_of(token, now())).flatten();
-            if device.is_none() {
-                return answer(c.s, 401, &json!({"error": "not paired"}));
-            }
+            let Some(device) = device else { return answer(c.s, 401, &json!({"error": "not paired"})) };
+            slot.device(&device);
             if kept_from_devices(&path) {
                 return answer(c.s, 403, &json!({"error": "not allowed from another computer"}));
             }
-            match c.body(&head, BODY_LIMIT) {
+            let body = c.body(&head, BODY_LIMIT);
+            slot.read();
+            // turned off (or this computer removed) while the request was arriving: nothing is passed on
+            if !slot.live() {
+                return;
+            }
+            match body {
                 Ok(body) => match forward(ctx, &head, &body) {
                     // the answer copied back as it comes: status, headers and body unchanged
-                    Ok(mut local) => {
+                    Ok(local) => {
+                        // long enough for the page's long wait for events (`/api/events?wait=20`)
+                        let mut local = slot.watch(local, Some(Instant::now() + Duration::from_secs(90)));
                         let _ = io::copy(&mut local, c.s);
                         let _ = c.s.flush();
                     }
@@ -516,6 +534,154 @@ fn serve<S: Read + Write>(ctx: &Ctx, s: &mut S) {
                 Err(code) => answer(c.s, code, &json!({"error": "bad request"})),
             }
         }
+    }
+}
+
+// ------------------------------------------------------------------------------------------------- connections
+
+/// One connection being served.
+struct Entry {
+    peer: IpAddr,
+    /// its socket, shut to end it from outside (the other side sees it close at once)
+    stream: Option<TcpStream>,
+    /// until when its request may take to arrive (None once it has)
+    until: Option<Instant>,
+    device: Option<String>,
+    /// ended from outside: its reads stop (`Watched`) and nothing more is done for it
+    cut: Arc<AtomicBool>,
+}
+
+impl Entry {
+    fn shut(&mut self) {
+        self.cut.store(true, Ordering::SeqCst);
+        if let Some(s) = &self.stream {
+            let _ = s.shutdown(Shutdown::Both);
+        }
+    }
+}
+
+/// The connections being served, so that one machine cannot take every place, a request too slow to arrive is cut
+/// off, and turning network access off (or removing a computer) ends what is open at once.
+pub struct Conns {
+    list: Mutex<std::collections::HashMap<u64, Entry>>,
+    next: AtomicU64,
+    closed: AtomicBool,
+    read_limit: Duration,
+}
+
+impl Conns {
+    pub fn new(read_limit: Duration) -> Arc<Conns> {
+        Arc::new(Conns { list: Mutex::new(Default::default()), next: AtomicU64::new(0), closed: AtomicBool::new(false), read_limit })
+    }
+
+    fn list(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<u64, Entry>> {
+        self.list.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// A place for a new connection from `peer`, or None when there is no room for it: a few at once is all a
+    /// person's computers need, so more is turned away rather than run the host out of threads.
+    fn admit(self: &Arc<Self>, peer: IpAddr, stream: Option<TcpStream>) -> Option<Slot> {
+        let mut list = self.list();
+        if self.closed.load(Ordering::SeqCst) || list.len() >= MOST_CONNECTIONS || list.values().filter(|e| e.peer == peer).count() >= MOST_PER_ADDRESS {
+            return None;
+        }
+        let (id, cut) = (self.next.fetch_add(1, Ordering::SeqCst), Arc::new(AtomicBool::new(false)));
+        list.insert(id, Entry { peer, stream, until: Some(Instant::now() + self.read_limit), device: None, cut: cut.clone() });
+        Some(Slot { conns: self.clone(), id, cut })
+    }
+
+    /// Cut off the connections whose request has not arrived in time.
+    fn expire(&self, now: Instant) {
+        self.list().values_mut().filter(|e| e.until.is_some_and(|u| u <= now)).for_each(Entry::shut);
+    }
+
+    /// Network access is off: end every connection, and admit none.
+    fn shut_all(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.list().values_mut().for_each(Entry::shut);
+    }
+
+    /// A computer was removed: end what it has open.
+    fn shut_device(&self, device: &str) {
+        self.list().values_mut().filter(|e| e.device.as_deref() == Some(device)).for_each(Entry::shut);
+    }
+}
+
+/// One connection's place, given back when it is dropped (also when its thread panics).
+pub struct Slot {
+    conns: Arc<Conns>,
+    id: u64,
+    cut: Arc<AtomicBool>,
+}
+
+impl Slot {
+    fn with(&self, f: impl FnOnce(&mut Entry)) {
+        if let Some(e) = self.conns.list().get_mut(&self.id) {
+            f(e);
+        }
+    }
+
+    /// The whole request has arrived: no deadline from now on.
+    fn read(&self) {
+        self.with(|e| e.until = None);
+    }
+
+    /// The paired device the request came from (removing it ends this connection).
+    fn device(&self, id: &str) {
+        self.with(|e| e.device = Some(id.to_string()));
+    }
+
+    /// Network access is still on, and nothing has ended this connection.
+    fn live(&self) -> bool {
+        !self.conns.closed.load(Ordering::SeqCst) && !self.cut.load(Ordering::SeqCst)
+    }
+
+    /// A socket of this connection, read in short waits so that it stops as soon as the connection is ended, and
+    /// never after `until`.
+    fn watch(&self, s: TcpStream, until: Option<Instant>) -> Watched {
+        let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+        Watched { s, cut: self.cut.clone(), until }
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.conns.list().remove(&self.id);
+    }
+}
+
+/// A socket read in short waits. Windows does not wake a read that is waiting when another thread shuts the socket,
+/// so a connection ended from outside could otherwise hold its thread and its place until data came.
+struct Watched {
+    s: TcpStream,
+    cut: Arc<AtomicBool>,
+    until: Option<Instant>,
+}
+
+impl Read for Watched {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.cut.load(Ordering::SeqCst) {
+                return Err(io::ErrorKind::ConnectionAborted.into());
+            }
+            if self.until.is_some_and(|u| Instant::now() >= u) {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            match self.s.read(buf) {
+                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+                done => return done,
+            }
+        }
+    }
+}
+
+impl Write for Watched {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.s.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.s.flush()
     }
 }
 
@@ -528,14 +694,17 @@ pub struct Listener {
     #[cfg_attr(not(test), allow(dead_code))]
     pub discover_port: Option<u16>,
     stop: Arc<AtomicBool>,
+    conns: Arc<Conns>,
     wake: (String, u16),
     threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl Listener {
-    /// Stop listening and answering: when this returns, neither port is open.
+    /// Stop listening and answering: when this returns, neither port is open and every connection is shut, a long
+    /// wait for events included.
     pub fn close(self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.conns.shut_all();
         // a connection of our own wakes the accept that waits
         if let Ok(addr) = format!("{}:{}", self.wake.0, self.wake.1).parse() {
             let _ = TcpStream::connect_timeout(&addr, Duration::from_secs(1));
@@ -588,33 +757,39 @@ pub fn listen(ctx: Arc<Ctx>, cert: &cert::Cert, ip: &str, ports: std::ops::Range
             Err(_) => warning = Some("Your other computers cannot find this one by themselves (another program has the port for that). Pair them by its address instead.".to_string()),
         }
     }
-    let busy = Arc::new(AtomicUsize::new(0));
-    let stopped = stop.clone();
+    let conns = Conns::new(ctx.read_limit);
+    // requests too slow to arrive are cut off, a few times a second
+    let (watched, stopped) = (conns.clone(), stop.clone());
+    threads.push(thread::spawn(move || {
+        while !stopped.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(200));
+            watched.expire(Instant::now());
+        }
+    }));
+    let (stopped, admitted) = (stop.clone(), conns.clone());
     threads.push(thread::spawn(move || {
         for conn in tcp.incoming() {
             if stopped.load(Ordering::SeqCst) {
                 break;
             }
             let Ok(conn) = conn else { continue };
-            // a few at once is all a person's computers need; more is turned away rather than run out of threads
-            if busy.fetch_add(1, Ordering::SeqCst) >= MOST_CONNECTIONS {
-                busy.fetch_sub(1, Ordering::SeqCst);
-                continue;
-            }
-            let (ctx, cred, busy) = (ctx.clone(), cred.clone(), busy.clone());
+            let (Ok(peer), Ok(handle)) = (conn.peer_addr(), conn.try_clone()) else { continue };
+            // no room: the connection is closed as it is dropped
+            let Some(slot) = admitted.admit(peer.ip(), Some(handle)) else { continue };
+            let (ctx, cred) = (ctx.clone(), cred.clone());
             thread::spawn(move || {
-                let _ = conn.set_read_timeout(Some(Duration::from_secs(30)));
+                // (its reads end at the deadline for the request, or when the connection is ended from outside)
                 let _ = conn.set_write_timeout(Some(Duration::from_secs(60)));
-                if let Ok(mut tls) = tls_stream::Builder::new().accept(cred, conn) {
-                    serve(&ctx, &mut tls);
+                if let Ok(mut tls) = tls_stream::Builder::new().accept(cred, slot.watch(conn, None)) {
+                    serve(&ctx, &slot, &mut tls);
                     let _ = tls.shutdown();
                 }
-                busy.fetch_sub(1, Ordering::SeqCst);
+                drop(slot);
             });
         }
     }));
     let wake_ip = if ip == "0.0.0.0" { "127.0.0.1" } else { ip };
-    Ok((Listener { port, discover_port, stop, wake: (wake_ip.to_string(), port), threads }, warning))
+    Ok((Listener { port, discover_port, stop, conns, wake: (wake_ip.to_string(), port), threads }, warning))
 }
 
 /// Answer each "who is there" with this host's line, until stopped (checked twice a second).
@@ -665,7 +840,7 @@ fn turn_on(st: &mut State) {
         };
         let me = rc::identity();
         let text = |k: &str| me[k].as_str().unwrap_or("").to_string();
-        let ctx = Arc::new(Ctx { pairing: PAIRING.clone(), fp: cert.fp.clone(), id: text("id"), name: text("name"), backend: Box::new(crate::server::local) });
+        let ctx = Arc::new(Ctx { pairing: PAIRING.clone(), fp: cert.fp.clone(), id: text("id"), name: text("name"), backend: Box::new(crate::server::local), read_limit: READ_LIMIT });
         match listen(ctx, &cert, "0.0.0.0", LISTEN_PORT..=LISTEN_PORT + 9, Some(DISCOVER_PORT)) {
             Ok((l, warning)) => {
                 st.on = Some(l);
@@ -721,7 +896,12 @@ pub fn api_post(body: &Value) -> Value {
         }
         "cancel-code" => PAIRING.lock().unwrap_or_else(|e| e.into_inner()).cancel_code(),
         "revoke" => {
-            PAIRING.lock().unwrap_or_else(|e| e.into_inner()).revoke(body["device"].as_str().unwrap_or(""));
+            let device = body["device"].as_str().unwrap_or("");
+            PAIRING.lock().unwrap_or_else(|e| e.into_inner()).revoke(device);
+            // what that computer has open now ends too
+            if let Some(l) = &st.on {
+                l.conns.shut_device(device);
+            }
         }
         _ => {}
     }
@@ -784,6 +964,13 @@ mod tests {
         }
         assert_eq!(p.pair("laptop", "Laptop", &"0".repeat(64), FP, 1001).unwrap_err(), TOO_MANY);
         assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop"), FP, 1002).unwrap_err(), NO_CODE);
+        // the count is the code's: a new device id for each try does not start it again
+        let code = p.new_code(2000);
+        for i in 0..4 {
+            assert_eq!(p.pair(&format!("dev{i}"), "Laptop", &"0".repeat(64), FP, 2001).unwrap_err(), WRONG);
+        }
+        assert_eq!(p.pair("dev9", "Laptop", &"0".repeat(64), FP, 2001).unwrap_err(), TOO_MANY);
+        assert_eq!(p.pair("dev10", "Laptop", &rc::proof(&code, FP, "dev10"), FP, 2002).unwrap_err(), NO_CODE);
     }
 
     #[test]
@@ -843,12 +1030,20 @@ mod tests {
         }
     }
 
-    fn served(ctx: &Ctx, raw: &str) -> (u16, Value) {
-        let mut pipe = Pipe { input: std::io::Cursor::new(raw.as_bytes().to_vec()), output: Vec::new() };
-        serve(ctx, &mut pipe);
+    /// One request served over a pipe: the status, the body as JSON, and how much of what was sent was read.
+    fn served_bytes(ctx: &Ctx, raw: &[u8]) -> (u16, Value, u64) {
+        let conns = Conns::new(READ_LIMIT);
+        let slot = conns.admit("127.0.0.1".parse().unwrap(), None).unwrap();
+        let mut pipe = Pipe { input: std::io::Cursor::new(raw.to_vec()), output: Vec::new() };
+        serve(ctx, &slot, &mut pipe);
         let out = String::from_utf8_lossy(&pipe.output).to_string();
         let status = out.split(' ').nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
-        (status, out.split_once("\r\n\r\n").and_then(|(_, b)| serde_json::from_str(b).ok()).unwrap_or(Value::Null))
+        (status, out.split_once("\r\n\r\n").and_then(|(_, b)| serde_json::from_str(b).ok()).unwrap_or(Value::Null), pipe.input.position())
+    }
+
+    fn served(ctx: &Ctx, raw: &str) -> (u16, Value) {
+        let (status, body, _) = served_bytes(ctx, raw.as_bytes());
+        (status, body)
     }
 
     #[test]
@@ -858,7 +1053,7 @@ mod tests {
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
         let code = pairing.lock().unwrap().new_code(1000);
         let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, FP, "laptop1"), FP, 1001).unwrap();
-        let ctx = Ctx { pairing, fp: FP.into(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))) };
+        let ctx = Ctx { pairing, fp: FP.into(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT };
         let (code, said) = served(&ctx, &format!("POST /api/send HTTP/1.1\r\nAuthorization: Bearer {token}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;x=y\r\n world\r\n0\r\n\r\n"));
         assert_eq!((code, said["body"].clone(), said["token"].clone()), (207, json!("hello world"), json!("page-token")));
         // a body too large is refused before it is read; without a token, before anything else
@@ -867,9 +1062,43 @@ mod tests {
         assert_eq!(served(&ctx, "GET  /api/history HTTP/1.1\r\n\r\n").0, 400);
         assert_eq!(served(&ctx, "GET http://elsewhere/ HTTP/1.1\r\n\r\n").0, 400);
         assert_eq!(served(&ctx, &format!("GET /api/history HTTP/1.1\r\nAuthorization: Bearer {token}\r\nBad Header: x\r\n\r\n")).0, 400);
+        // a value with a line break in it would be a second header on the way to the local server
+        assert_eq!(served(&ctx, &format!("GET /api/history HTTP/1.1\r\nAuthorization: Bearer {token}\r\nX-A: a\nX-Token: b\r\n\r\n")).0, 400);
+        // a chunk size near the largest number is refused at once, not added up past the limit and then read
+        // (without a token on the pairing route, and with one on any other)
+        let huge = |path: &str, auth: &str| [format!("POST {path} HTTP/1.1\r\n{auth}Transfer-Encoding: chunked\r\n\r\n1\r\nA\r\nffffffffffffffff\r\n").into_bytes(), vec![b'A'; 200_000]].concat();
+        let (status, body, read) = served_bytes(&ctx, &huge("/remote/pair", ""));
+        assert_eq!((status, body["error"].clone()), (200, json!(BAD_ASK)));
+        assert!(read <= 16 * 1024, "only what had arrived with the head was read ({read} bytes)");
+        let (status, _, read) = served_bytes(&ctx, &huge("/api/send", &format!("Authorization: Bearer {token}\r\n")));
+        assert_eq!(status, 413);
+        assert!(read <= 16 * 1024, "only what had arrived with the head was read ({read} bytes)");
         // the local server not up: said plainly
         let down = Ctx { backend: Box::new(|| None), ..ctx };
         assert_eq!(served(&down, &format!("GET /api/history HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n")).0, 502);
+    }
+
+    #[test]
+    fn one_machine_cannot_take_every_place_and_a_place_is_given_back_even_after_a_panic() {
+        let conns = Conns::new(READ_LIMIT);
+        let (a, b): (IpAddr, IpAddr) = ("10.0.0.2".parse().unwrap(), "10.0.0.3".parse().unwrap());
+        let held: Vec<Slot> = (0..MOST_PER_ADDRESS).map(|_| conns.admit(a, None).expect("room")).collect();
+        assert!(conns.admit(a, None).is_none(), "no more from the same machine");
+        assert!(conns.admit(b, None).is_some(), "another machine still gets in");
+        // a connection's thread that panics gives its place back
+        for slot in held {
+            assert!(thread::spawn(move || {
+                let _slot = slot;
+                panic!("a request went wrong");
+            })
+            .join()
+            .is_err());
+        }
+        let again: Vec<Slot> = (0..MOST_PER_ADDRESS).map(|_| conns.admit(a, None).expect("room again")).collect();
+        assert_eq!(again.len(), MOST_PER_ADDRESS);
+        // and there is a ceiling over all machines together
+        let many: Vec<Slot> = (0..=255u8).filter_map(|i| conns.admit(IpAddr::from([10, 1, 0, i]), None)).collect();
+        assert_eq!(many.len() + again.len(), MOST_CONNECTIONS);
     }
 
     #[test]
@@ -884,9 +1113,20 @@ mod tests {
 
     // ---- the certificate and the listener, on 127.0.0.1 only
 
+    /// A test's own key, deleted from Windows' key store when the test ends, passed or failed.
     #[cfg(windows)]
-    fn test_key() -> String {
-        format!("Fridae remote control test {}", rc::random_hex(4))
+    struct TestKey(String);
+
+    #[cfg(windows)]
+    impl Drop for TestKey {
+        fn drop(&mut self) {
+            let _ = cert::forget_key(&self.0);
+        }
+    }
+
+    #[cfg(windows)]
+    fn test_key() -> TestKey {
+        TestKey(format!("Fridae remote control test {}", rc::random_hex(4)))
     }
 
     #[cfg(windows)]
@@ -894,29 +1134,25 @@ mod tests {
     fn the_certificate_is_made_once_and_kept() {
         use sha2::Digest;
         let (dir, key) = (fresh("remote-cert"), test_key());
-        let first = cert::load_or_make(&dir, &key).expect("a certificate is made");
+        let first = cert::load_or_make(&dir, &key.0).expect("a certificate is made");
         assert_eq!(first.fp.len(), 64);
-        let again = cert::load_or_make(&dir, &key).expect("and loaded again");
+        let again = cert::load_or_make(&dir, &key.0).expect("and loaded again");
         assert_eq!(again.fp, first.fp, "the same certificate after a restart");
         assert_eq!(rc::hex(&sha2::Sha256::digest(again.ctx.to_der())), first.fp, "the fingerprint is the SHA-256 of its DER bytes");
         assert!(dir.join("host-cert.der").is_file());
         // only the certificate is on disk: no private key in the folder
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
-        cert::forget_key(&key).unwrap();
+        cert::forget_key(&key.0).unwrap();
         // the key gone (as after a Windows reinstall): a new certificate, not a broken one
-        let new = cert::load_or_make(&dir, &key).expect("made again");
+        let new = cert::load_or_make(&dir, &key.0).expect("made again");
         assert_ne!(new.fp, first.fp);
-        cert::forget_key(&key).unwrap();
     }
 
     /// One request over its own TLS connection: the status and the body as JSON, and the certificate's fingerprint.
     #[cfg(windows)]
     fn ask(port: u16, method: &str, path: &str, token: Option<&str>, body: &str) -> (u16, Value, String) {
         use sha2::Digest;
-        use std::io::{Read, Write};
-        let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).danger_accept_invalid_hostnames(true).build().unwrap();
-        let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
-        let mut s = tls.connect("fridae", tcp).expect("TLS");
+        let mut s = tls_to(port);
         let fp = rc::hex(&sha2::Sha256::digest(s.peer_certificate().unwrap().unwrap().to_der().unwrap()));
         let auth = token.map(|t| format!("Authorization: Bearer {t}\r\n")).unwrap_or_default();
         write!(s, "{method} {path} HTTP/1.1\r\nHost: desktop:47530\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
@@ -928,32 +1164,137 @@ mod tests {
         (status, serde_json::from_str(body).unwrap_or(Value::Null), fp)
     }
 
-    /// The local server, standing in: it answers as the page's server would, saying what it was handed.
+    #[cfg(windows)]
+    fn tls_to(port: u16) -> native_tls::TlsStream<TcpStream> {
+        let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).danger_accept_invalid_hostnames(true).build().unwrap();
+        tls.connect("fridae", TcpStream::connect(("127.0.0.1", port)).unwrap()).expect("TLS")
+    }
+
+    /// The local server, standing in: it answers as the page's server would, saying what it was handed. The page's
+    /// long wait for events (`/api/events`) waits 20 seconds here.
     fn stand_in() -> u16 {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let port = server.server_addr().to_ip().unwrap().port();
-        std::thread::spawn(move || {
+        thread::spawn(move || {
             for mut req in server.incoming_requests() {
-                let head = |n: &'static str| req.headers().iter().find(|h| h.field.equiv(n)).map(|h| h.value.as_str().to_string());
-                let mut said = json!({"url": req.url(), "method": req.method().as_str(), "token": head("X-Token"), "host": head("Host"), "auth": head("Authorization")});
-                let mut body = String::new();
-                let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
-                said["body"] = json!(body);
-                let _ = req.respond(tiny_http::Response::from_string(said.to_string()).with_status_code(207));
+                thread::spawn(move || {
+                    let head = |n: &'static str| req.headers().iter().find(|h| h.field.equiv(n)).map(|h| h.value.as_str().to_string());
+                    let mut said = json!({"url": req.url(), "method": req.method().as_str(), "token": head("X-Token"), "host": head("Host"), "auth": head("Authorization")});
+                    let mut body = String::new();
+                    let _ = req.as_reader().read_to_string(&mut body);
+                    said["body"] = json!(body);
+                    if req.url().starts_with("/api/events") {
+                        thread::sleep(Duration::from_secs(20));
+                    }
+                    let _ = req.respond(tiny_http::Response::from_string(said.to_string()).with_status_code(207));
+                });
             }
         });
         port
     }
 
+    /// A host listening on 127.0.0.1 with a test key, and a device ("laptop1") paired with it: its token.
+    #[cfg(windows)]
+    fn paired_host(name: &str, read_limit: Duration) -> (Listener, String, Arc<Mutex<Pairing>>, TestKey) {
+        let (dir, key) = (fresh(name), test_key());
+        let cert = cert::load_or_make(&dir, &key.0).unwrap();
+        let local = stand_in();
+        let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
+        let code = pairing.lock().unwrap().new_code(now());
+        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &cert.fp, "laptop1"), &cert.fp, now()).unwrap();
+        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit });
+        let (l, _) = listen(ctx, &cert, "127.0.0.1", 0..=0, None).unwrap();
+        (l, token, pairing, key)
+    }
+
+    /// A connection the host has closed: reading ends at once (no answer), it does not wait.
+    #[cfg(windows)]
+    fn closed(s: &mut TcpStream) -> bool {
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut b = [0u8; 64];
+        !matches!(s.read(&mut b), Ok(n) if n > 0) && !matches!(s.read(&mut b), Err(e) if e.kind() == io::ErrorKind::TimedOut || e.kind() == io::ErrorKind::WouldBlock)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn slow_requests_are_cut_off_and_one_machine_cannot_crowd_out_the_rest() {
+        // (a deadline that a TLS handshake meets even while the other tests keep the processor busy)
+        let (l, _token, _pairing, _key) = paired_host("remote-slow", Duration::from_secs(3));
+        let port = l.port;
+        // a machine opens as many connections as it may and sends nothing
+        let mut idle: Vec<TcpStream> = (0..MOST_PER_ADDRESS).map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap()).collect();
+        thread::sleep(Duration::from_millis(300));
+        let mut one_more = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let shut_at = Instant::now();
+        assert!(closed(&mut one_more), "a connection over the machine's share is closed");
+        assert!(shut_at.elapsed() < Duration::from_millis(900), "at once, not at the deadline");
+        // the idle ones are cut at the deadline, so they never hold their places for long
+        for s in &mut idle {
+            assert!(closed(s));
+        }
+        // (each place is given back when its thread sees the cut, within a fifth of a second)
+        thread::sleep(Duration::from_millis(500));
+        assert_eq!(ask(port, "GET", "/remote/hello", None, "").0, 200, "and the next one is served");
+        // a request trickled in more slowly than the deadline allows is cut off before it is served
+        let mut slow = tls_to(port);
+        slow.write_all(b"GET /remote/hel").unwrap();
+        thread::sleep(Duration::from_millis(3500));
+        let _ = slow.write_all(b"lo HTTP/1.1\r\n\r\n");
+        let mut raw = Vec::new();
+        let _ = slow.read_to_end(&mut raw);
+        assert!(!String::from_utf8_lossy(&raw).contains("200 OK"), "not served: {}", String::from_utf8_lossy(&raw));
+        l.close();
+    }
+
+    /// A paired device's long wait for events, on its own thread: how long it took to end, and its status.
+    #[cfg(windows)]
+    fn long_wait(port: u16, token: &str) -> thread::JoinHandle<(Duration, u16)> {
+        let token = token.to_string();
+        thread::spawn(move || {
+            let at = Instant::now();
+            let (status, _, _) = ask(port, "GET", "/api/events?wait=20", Some(&token), "");
+            (at.elapsed(), status)
+        })
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn turning_off_or_removing_a_computer_ends_what_it_has_open() {
+        let (l, token, pairing, _key) = paired_host("remote-off", READ_LIMIT);
+        let port = l.port;
+        // removing the computer ends its long wait at once
+        let wait = long_wait(port, &token);
+        thread::sleep(Duration::from_millis(700));
+        pairing.lock().unwrap().revoke("laptop1");
+        l.conns.shut_device("laptop1");
+        let (took, status) = wait.join().unwrap();
+        assert!(took < Duration::from_secs(3) && status != 207, "ended after {took:?} with {status}");
+
+        let code = pairing.lock().unwrap().new_code(now());
+        // (the proof is made with the host's fingerprint, as a device reads it from the connection)
+        let (_, _, fp) = ask(port, "GET", "/remote/hello", None, "");
+        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &fp, "laptop1"), &fp, now()).unwrap();
+        let wait = long_wait(port, &token);
+        // a connection opened while on, whose request comes after off
+        let mut late = tls_to(port);
+        thread::sleep(Duration::from_millis(700));
+        l.close();
+        let (took, status) = wait.join().unwrap();
+        assert!(took < Duration::from_secs(3) && status != 207, "turning off ended the long wait after {took:?} with {status}");
+        let _ = write!(late, "GET /api/history HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n");
+        let mut raw = Vec::new();
+        let _ = late.read_to_end(&mut raw);
+        assert!(!String::from_utf8_lossy(&raw).contains("207"), "a request after off is not passed on");
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_paired_computer_is_served_as_the_page_would_be_and_nothing_else_is() {
-        use std::sync::{Arc, Mutex};
         let (dir, key) = (fresh("remote-listen"), test_key());
-        let cert = cert::load_or_make(&dir, &key).unwrap();
+        let cert = cert::load_or_make(&dir, &key.0).unwrap();
         let local = stand_in();
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
-        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))) });
+        let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT });
         let (l, warn) = listen(ctx, &cert, "127.0.0.1", 0..=0, Some(0)).expect("listening on 127.0.0.1");
         assert_eq!(warn, None);
         let port = l.port;
@@ -1007,6 +1348,6 @@ mod tests {
 
         l.close();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "turned off, nothing listens");
-        cert::forget_key(&key).unwrap();
+        drop(key);
     }
 }
