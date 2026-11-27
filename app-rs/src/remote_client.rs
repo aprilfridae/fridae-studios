@@ -31,9 +31,14 @@ use crate::remote_common::{self, DISCOVER_ASK, DISCOVER_PORT, LISTEN_PORT, same}
 
 /// How long to wait for another computer to accept a connection.
 const CONNECT_WAIT: Duration = Duration::from_secs(5);
-/// How long one read may wait, and how long a forwarded call may take to start its answer: longer than the page's
-/// long-poll (`/api/events?wait=20`).
+/// How long one read of a forwarded answer's body may wait.
 const READ_WAIT: Duration = Duration::from_secs(60);
+/// How long a forwarded call may take to start its answer: a long git, GitHub or rebuild step on the other computer
+/// takes minutes. The host waits as long for its own server (`remote_host::ANSWER_IDLE`).
+const CALL_WAIT: Duration = Duration::from_secs(600);
+/// The page's long wait for events (`/api/events?wait=20`) is answered within about 20 s: a little longer than that,
+/// and the other computer has gone away (the page then marks it offline and tries again).
+const EVENTS_WAIT: Duration = Duration::from_secs(90);
 /// The whole of a small call (hello, pair, the background check), connecting included. Pairing's host works out the
 /// slow proof inside it.
 const QUICK_WAIT: Duration = Duration::from_secs(15);
@@ -266,11 +271,13 @@ enum Fail {
     Offline,
     /// It answered with a certificate other than the one pinned.
     Changed,
+    /// It took the call but did not start its answer in time.
+    Slow,
 }
 
-/// The connection under TLS, with an overall deadline: each read and write may wait only until `end` (and never
-/// longer than `READ_WAIT`), so a host that sends one byte at a time cannot hold a call open for ever. `end` is
-/// None while a forwarded answer's body streams (a video takes as long as it takes, but each read still has 60 s).
+/// The connection under TLS, with an overall deadline: each read and write may wait only until `end`, so a host
+/// that sends one byte at a time cannot hold a call open for ever. `end` is None while a forwarded answer's body
+/// streams (a video takes as long as it takes, but each read still has `READ_WAIT`).
 struct Timed {
     tcp: TcpStream,
     end: Option<Instant>,
@@ -280,7 +287,7 @@ impl Timed {
     fn wait(&self) -> io::Result<Duration> {
         let Some(end) = self.end else { return Ok(READ_WAIT) };
         let left = end.saturating_duration_since(Instant::now());
-        if left.is_zero() { Err(io::ErrorKind::TimedOut.into()) } else { Ok(left.min(READ_WAIT)) }
+        if left.is_zero() { Err(io::ErrorKind::TimedOut.into()) } else { Ok(left) }
     }
 }
 
@@ -424,6 +431,12 @@ fn request(addr: &str, port: u16, pin: Option<&str>, method: &str, target: &str,
     tls.write_all(head.as_bytes()).and_then(|_| tls.write_all(body)).and_then(|_| tls.flush()).map_err(|_| Fail::Offline)?;
 
     let mut r = BufReader::new(tls);
+    // nothing at all by the deadline: the other computer took the call and is still at it
+    match r.fill_buf() {
+        Ok(b) if !b.is_empty() => {}
+        Err(e) if matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => return Err(Fail::Slow),
+        _ => return Err(Fail::Offline),
+    }
     let line = read_line(&mut r).map_err(|_| Fail::Offline)?;
     let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or(Fail::Offline)?;
     let mut heads = Vec::new();
@@ -511,7 +524,7 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     let (status, hello, fp) = match call_json(&addr, port, found, "GET", "/remote/hello", None, QUICK_WAIT) {
         Ok(h) => h,
         Err(Fail::Changed) => return failed("That computer's identity didn't match the one found. Try finding it again."),
-        Err(Fail::Offline) => return failed(UNREACHABLE),
+        Err(_) => return failed(UNREACHABLE),
     };
     let host_id = hello["id"].as_str().unwrap_or("").to_string();
     if status != 200 || hello["fridae"] != 1 || host_id.is_empty() {
@@ -527,7 +540,7 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     let answer = match call_json(&addr, port, Some(&fp), "POST", "/remote/pair", Some(&ask), QUICK_WAIT) {
         Ok((_, v, _)) => v,
         Err(Fail::Changed) => return failed("That computer's identity changed while pairing. Try again."),
-        Err(Fail::Offline) => return failed(UNREACHABLE),
+        Err(_) => return failed(UNREACHABLE),
     };
     let token = answer["token"].as_str().unwrap_or("");
     if answer["ok"] != true || token.is_empty() {
@@ -612,6 +625,18 @@ fn defused(mut answer: Answer) -> Answer {
 
 /// Pass one call to a saved computer: `target` is its path and the page's query (the page token is taken out here).
 pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(String, String)], body: &[u8]) -> Answer {
+    forward_within(book, id, method, target, headers, body, wait_for(target))
+}
+
+/// How long a call may take to start its answer: the long wait for events a little longer than it asks for, anything
+/// else minutes.
+pub(crate) fn wait_for(target: &str) -> Duration {
+    if target.split('?').next() == Some("/api/events") { EVENTS_WAIT } else { CALL_WAIT }
+}
+
+/// `forward` with the time the answer has to start in.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn forward_within(book: &Book, id: &str, method: &str, target: &str, headers: &[(String, String)], body: &[u8], wait: Duration) -> Answer {
     let Some((addr, port, fp, token)) = book.route(id) else { return Answer::json(404, json!({"error": "unknown computer"})) };
     let Some(token) = token else { return Answer::json(401, json!({"error": "not paired"})) };
     let target = match target.split_once('?') {
@@ -621,7 +646,7 @@ pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(St
     };
     let mut heads: Vec<(String, String)> = headers.iter().filter(|(k, _)| PASSED_ON.iter().any(|p| p.eq_ignore_ascii_case(k))).cloned().collect();
     heads.push(("Authorization".into(), format!("Bearer {token}")));
-    match request(&addr, port, Some(&fp), method, &target, &heads, body, READ_WAIT, false) {
+    match request(&addr, port, Some(&fp), method, &target, &heads, body, wait, false) {
         Ok((answer, _)) => {
             book.seen(id, true);
             if answer.status == 401 {
@@ -629,6 +654,11 @@ pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(St
                 book.unpaired(id);
             }
             defused(answer)
+        }
+        // it is there, only slow: said so, and not marked offline
+        Err(Fail::Slow) => {
+            book.seen(id, true);
+            Answer::json(504, json!({"error": "took too long"}))
         }
         Err(why) => {
             book.seen(id, false);

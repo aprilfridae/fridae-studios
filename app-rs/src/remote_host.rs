@@ -37,8 +37,9 @@ const READ_LIMIT: Duration = Duration::from_secs(10);
 /// Once a paired device's token has checked, its body may take as long as it needs, as long as it keeps coming: this
 /// long without a byte ends it.
 const BODY_IDLE: Duration = Duration::from_secs(30);
-/// The local server's answer may be a long wait for events (`/api/events?wait=20`): this long without a byte ends it.
-const ANSWER_IDLE: Duration = Duration::from_secs(90);
+/// The local server's answer may be a long wait for events (`/api/events?wait=20`), or a long git, GitHub or rebuild
+/// step: this long without a byte ends it (as long as the client waits, `remote_client::CALL_WAIT`).
+const ANSWER_IDLE: Duration = Duration::from_secs(600);
 /// How long a pairing code works, in seconds.
 const CODE_LIFE: u64 = 300;
 /// Wrong proofs a code takes before it is cancelled.

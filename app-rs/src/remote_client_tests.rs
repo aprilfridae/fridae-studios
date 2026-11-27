@@ -87,6 +87,10 @@ fn host_answer(tls: native_tls::TlsStream<TcpStream>, st: &Mutex<HostState>) {
     let mut body = vec![0; head("content-length").parse().unwrap_or(0)];
     r.read_exact(&mut body).unwrap();
     let (path, query) = target.split_once('?').map(|(p, q)| (p.to_string(), q.to_string())).unwrap_or((target.clone(), String::new()));
+    // a host that takes its time over a call (a long git or GitHub step)
+    if let Some(ms) = query.split('&').find_map(|kv| kv.strip_prefix("sleep=")).and_then(|v| v.parse().ok()) {
+        thread::sleep(Duration::from_millis(ms));
+    }
     let out = r.get_mut();
     let send = |out: &mut native_tls::TlsStream<TcpStream>, status: u16, v: Value| {
         let b = v.to_string();
@@ -501,4 +505,23 @@ fn only_harmless_headers_come_back_and_a_redirect_is_refused() {
     let a = forward(&b, HOST_ID, "POST", "/api/redirect", &[], b"{}");
     assert!(!a.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("location") || k.eq_ignore_ascii_case("set-cookie")), "{:?}", a.headers);
     assert_eq!(read(a), (502, json!({"error": "refused a redirect"})));
+}
+
+#[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+fn a_slow_answer_took_too_long_and_the_computer_is_not_offline() {
+    let (b, _h) = paired("slow");
+    let (status, v) = read(forward_within(&b, HOST_ID, "GET", "/api/echo?sleep=3000", &[], b"", Duration::from_secs(1)));
+    assert_eq!((status, v), (504, json!({"error": "took too long"})));
+    assert_eq!(b.find(HOST_ID).unwrap()["online"], true, "it answered the connection: it is there, only slow");
+    let (status, v) = read(forward_within(&b, HOST_ID, "POST", "/api/echo?sleep=1500", &[], b"{}", Duration::from_secs(5)));
+    assert_eq!((status, v["method"].as_str()), (200, Some("POST")), "within its wait a slow answer gets through");
+}
+
+#[test]
+fn a_call_may_take_minutes_and_a_wait_for_events_a_little_longer_than_it_asked() {
+    assert!(wait_for("/api/git") >= Duration::from_secs(600), "long git, GitHub or rebuild steps are not cut at a minute");
+    assert!(wait_for("/api/project?x=1") >= Duration::from_secs(600));
+    let events = wait_for("/api/events?after=3");
+    assert!(events > Duration::from_secs(20) && events <= Duration::from_secs(120), "{events:?}: a computer that went away is noticed soon");
 }
