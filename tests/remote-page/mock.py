@@ -92,6 +92,34 @@ def chat_api(st, p, q, body, prefix):
     if p == "/api/review":
         path = q.get("path", [""])[0] if body is None else body.get("path")
         return {"ok": True, "project": path, "key": "k", "run": {"on": False}, "items": [], "needs": []}
+    if p == "/api/chat-move":   # moving a chat between computers (agents.rs hold_for_move / move_out / move_in / moved_away)
+        act, aid = body.get("action"), body.get("agent")
+        if act == "hold":
+            st.setdefault("held", {})[aid] = bool(body.get("on")); return {"ok": True}
+        if act == "out":
+            with COND: ev = [dict(e) for e in st["events"] if e.get("agent") == aid]
+            if not any(e["kind"] == "user" for e in ev): return {"ok": False, "error": "Nothing has been said in this chat yet."}
+            flags = [e for e in ev if e["kind"] in ("busy", "done")]
+            if flags and flags[-1]["kind"] == "busy" and flags[-1].get("value"): return {"ok": False, "error": "It is still working. It moves when the reply is over."}
+            name = next((e["name"] for e in ev if e["kind"] == "agent_new"), "Chat")
+            evs = [{k: v for k, v in e.items() if k not in ("id", "agent")} for e in ev if e["kind"] != "agent_new"]
+            return {"ok": True, "chat": {"name": name, "ai": "claude", "model": None, "events": evs, "handover": "[chat so far]", "queued": []}}
+        if act == "in":
+            chat = body.get("chat") or {}
+            with COND:
+                aid = prefix + "m" + str(st["next"]); st["next"] += 1
+                push(st["events"], {"kind": "agent_new", "agent": aid, "name": chat.get("name") or "Chat", "ai": chat.get("ai") or "claude", "restored": True})
+                for e in chat.get("events") or []:
+                    if e.get("kind") != "project": push(st["events"], dict(e, agent=aid))
+                push(st["events"], {"kind": "moved", "agent": aid, "text": "Moved here from " + (body.get("from") or "your other computer") + ". It gets the chat so far with your next message."})
+                pr = next((x for x in st["projects"] if x["path"] == body.get("project")), None)
+                if pr: push(st["events"], dict(pr, kind="project", agent=aid))
+                push(st["events"], {"kind": "done", "agent": aid}); COND.notify_all()
+            return {"ok": True, "agent": aid}
+        if act == "away":
+            with COND: push(st["events"], {"kind": "agent_removed", "agent": aid}); COND.notify_all()
+            return {"ok": True}
+        return {"ok": False, "error": "Unknown action."}
     if p == "/api/open-chat":
         with COND:
             aid = prefix + "o" + str(st["next"]); st["next"] += 1

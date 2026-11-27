@@ -4,11 +4,18 @@
 .chip.mc:hover .mc-icon, .chip.mc[aria-expanded="true"] .mc-icon { color: var(--text); }
 /* only the arrow turns while the menu is open, never the screen */
 .chip.mc[aria-expanded="true"] .mc-icon { transform: none; }
-/* after the first message the chat stays where it is: the chip only names the computer */
+/* an expert's chat stays with the chat that started it: the chip only names the computer */
 .chip.mc.fixed { padding-right: 12px; cursor: default; }
 .chip.mc.fixed:hover { color: var(--dim); background: none; }
 .chip.mc.fixed:hover .mc-icon { color: var(--dim); }
-#machine-menu { width: 240px; }
+#machine-menu { width: 260px; }
+/* a started chat's menu says what a pick does, and asks for a project when the other computer has none of that name */
+#machine-menu .mc-q { margin: 0; padding: 6px 8px 8px; font-size: 12px; line-height: 1.45; color: var(--dim); text-wrap: pretty; }
+/* waiting to move when the reply is over: both computers, the arrow between them, the way there in the text colour */
+.chip.mc.moving { color: var(--text); }
+.chip.mc .mc-to { flex: none; color: var(--dim); }
+.chip.mc.moving .mc-to { animation: mc-nudge 1.6s var(--ease) infinite; }
+@keyframes mc-nudge { 0%, 100% { transform: translateX(0); opacity: 0.6; } 50% { transform: translateX(2px); opacity: 1; } }
 #machine-menu .mc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 #machine-menu .mc-t { display: grid; min-width: 0; }
 #machine-menu .mc-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

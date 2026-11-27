@@ -574,6 +574,26 @@ fn post(path: &str, body: Value) -> Reply {
             send_json(json!({"ok": ok}))
         }
         "/api/restore-chat" => send_json(json!({"ok": agents::restore_chat(&text_of("id"))})),
+        // moving a chat to another of the user's computers, which the page drives (ui/src/remote/move.ts): "hold" (it
+        // moves once its reply is over), "out" (the chat as it goes), "in" (on the computer it goes to) and "away"
+        // (it is there now: it closes here)
+        "/api/chat-move" => {
+            let id = text_of("agent");
+            let answer = match text_of("action").as_str() {
+                "hold" => agents::hold_for_move(&id, body["on"].as_bool().unwrap_or(false)).map(|()| json!({})),
+                "out" => agents::move_out(&id).map(|chat| json!({"chat": chat})),
+                "in" => agents::move_in(&body["chat"], body["project"].as_str(), &text_of("from")).map(|agent| json!({"agent": agent})),
+                "away" => agents::moved_away(&id).map(|()| json!({})),
+                _ => Err("Unknown action.".to_string()),
+            };
+            send_json(match answer {
+                Ok(mut v) => {
+                    v["ok"] = json!(true);
+                    v
+                }
+                Err(e) => json!({"ok": false, "error": e}),
+            })
+        }
         "/api/attach" => match attach::save_attachment(&text_of("data"), body["filename"].as_str()) {
             Some(mut got) => {
                 got["ok"] = json!(true);

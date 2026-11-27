@@ -298,6 +298,52 @@ const CASTLE = "m1~D:/games/castle";
     ok("r97 firewall help under the switch while on", ((await text("#set-remote-on")) || "").includes("If your other computers can't find this one, Windows may be blocking Fridae. In Windows Settings › Network, set this network to Private, and allow Fridae when Windows asks."), await text("#set-remote-on"));
     await shot("11-settings-firewall", { x: 0, y: 0, width: 1280, height: 600 });
     await pg.evaluate(() => fridae.windows.closeSetup()); await wait(300);
+
+    // ---- moving a started chat to another computer (move.ts, agents.rs move_out / move_in / moved_away) ----
+    // (from a fresh start: the checks above forgot Desktop)
+    await pg.request.post("http://127.0.0.1:" + PORT + "/mock/reset", { data: {} });
+    await pg.goto(U);
+    await until(() => pg.evaluate(() => typeof current !== "undefined" && current === "a1"), 6000);
+    await until(() => vis("#machine"), 6000);
+    const opts = () => pg.$$eval("#machine-menu .opt", (x) => x.map((n) => n.innerText.trim()).join("|"));
+    ok("r105 in a started chat the chip is a menu", (await pg.getAttribute("#machine", "aria-haspopup")) === "menu");
+    await pg.click("#machine"); await wait(300);
+    ok("r106 the menu says what a pick does", ((await text("#machine-menu .mc-q")) || "").startsWith("Move this chat to another computer. Everything said so far goes with it."), await text("#machine-menu"));
+    await shot("13-move-menu", { x: 232, y: 520, width: 1048, height: 340 });
+    await pg.click('#machine-menu [data-m="m1"]'); await wait(400);
+    ok("r107 Desktop has no Obby Rush: it asks which of its projects", ((await text("#machine-menu .mc-q")) || "").includes("Desktop has no project called “Obby Rush”"), await text("#machine-menu"));
+    ok("r108 its projects, No project and Cancel", (await opts()) === "Castle|No project|Cancel", await opts());
+    ok("r109 nothing moved before the answer", (await posts("/api/chat-move")).length === 0, await posts("/api/chat-move"));
+    await shot("14-move-ask", { x: 232, y: 480, width: 1048, height: 380 });
+    await pg.click('#machine-menu [data-proj="' + CASTLE + '"]');
+    const moved = await until(() => pg.evaluate(() => current && current.startsWith("m1~rm") ? current : ""), 8000);
+    ok("r110 the chat in front is now Desktop's", !!moved, await pg.evaluate(() => current));
+    const mlp = await posts("/api/chat-move"), mrp = await posts("/m/m1/api/chat-move");
+    ok("r111 out and away here, in there, with the chosen project", JSON.stringify(mlp.map((p) => p[1].action)) === '["out","away"]' && mrp.length === 1 && mrp[0][1].action === "in" && mrp[0][1].project === "D:/games/castle" && mrp[0][1].from === "Laptop", [mlp, mrp]);
+    await wait(800);
+    const said = (await text("#chat-main")) || "";
+    ok("r112 every message came, with one line saying where from", said.includes("Build the lava stage") && said.includes("Moved here from Laptop."), said.slice(0, 400));
+    ok("r113 the old chat is gone from this computer", !(await pg.evaluate(() => agents.has("a1"))));
+    ok("r114 the chip names Desktop", (await text("#machine")) === "Desktop", await text("#machine"));
+    await shot("15-moved", { x: 232, y: 0, width: 1048, height: 860 });
+    // back here while it works: it waits for the reply
+    await mock("/mock/rpush", { m: "m1", event: { kind: "busy", agent: moved.slice(3), value: true } });
+    await until(() => pg.evaluate((id) => agents.get(id).busy, moved));
+    await pg.click("#machine"); await wait(200);
+    await pg.click('#machine-menu [data-m=""]'); await wait(500);
+    ok("r115 no project of that name here: asks first", ((await text("#machine-menu .mc-q")) || "").includes("has no project called"), await text("#machine-menu"));
+    await pg.click("#mc-no-project"); await wait(500);
+    const held = (await posts("/m/m1/api/chat-move")).slice(1).map((p) => [p[1].action, p[1].on]);
+    ok("r116 a working chat is held, not moved", JSON.stringify(held) === '[["hold",true]]', held);
+    ok("r117 the chip names both", /^Desktop ?This (PC|Mac)$/.test((await text("#machine")) || ""), await text("#machine"));
+    await pg.click("#machine"); await wait(200);
+    ok("r118 the row says when", ((await text('#machine-menu [data-m=""]')) || "").includes("Moves here when this reply is over"), await text('#machine-menu [data-m=""]'));
+    await shot("16-move-waiting", { x: 232, y: 480, width: 1048, height: 380 });
+    await pg.click("#machine");
+    await mock("/mock/rpush", { m: "m1", event: { kind: "done", agent: moved.slice(3) } });
+    const back = await until(() => pg.evaluate(() => current && /^am/.test(current) ? current : ""), 10000);
+    ok("r119 it moved when the reply was over", !!back, [await pg.evaluate(() => current), (await posts("/m/m1/api/chat-move")).map((p) => p[1].action)]);
+    ok("r120 back on this computer, and the chip says so", /^This (PC|Mac)$/.test((await text("#machine")) || ""), await text("#machine"));
   } catch (e) { out.CRASH = String(e && e.stack || e); }
   out.errors = errs;
   console.log(JSON.stringify(out, null, 1));

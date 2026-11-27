@@ -934,6 +934,9 @@ struct State {
     jobs_lost: Option<String>,
     /// Studio carry-on turns in a row without a tool call (see `no_progress`).
     idle_turns: u32,
+    /// The chat moves to another of the user's computers after this reply (`hold_for_move`): when the turn ends, what
+    /// the user sent meanwhile waits to go with it, and nothing carries on here.
+    moving: bool,
     /// Whether this turn made a progress call (see `progress_call`), and how many Studio carry-ons in a row made none.
     turn_progress: bool,
     stuck_turns: u32,
@@ -3002,7 +3005,7 @@ impl Agent {
             paths::now_secs() - st.saved_at > 3.0
         };
         // saved as the chat goes, so nothing is lost if the window is closed or the app is killed
-        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting" | "helper_steps" | "run_undone" | "rollover" | "plain") || (kind == "tool" && stale) {
+        if matches!(kind, "user" | "text" | "images" | "error" | "done" | "renamed" | "texdone" | "night" | "night_undone" | "studio_waiting" | "helper_steps" | "run_undone" | "rollover" | "moved" | "plain") || (kind == "tool" && stale) {
             self.save();
         }
     }
@@ -3070,7 +3073,9 @@ impl Agent {
                 st.queue.insert(at, (qid, text.to_string(), ask.clone()));
                 (true, Vec::new())
             } else {
-                // messages kept while the run was paused go first, in the same turn
+                // messages kept while the run was paused (or for a move to another computer that the window gave up
+                // on) go first, in the same turn
+                st.moving = false;
                 (false, std::mem::take(&mut st.queue))
             }
         };
@@ -4741,6 +4746,10 @@ impl Agent {
         self.st.lock().unwrap().jobs_lost = None;
         research::finished(self);
         self.put("done", json!({}));
+        if self.st.lock().unwrap().moving {
+            // it moves to another computer now: what waits goes with it
+            return;
+        }
         let held = std::mem::take(&mut self.st.lock().unwrap().queue);
         if let Some(p) = self.project() {
             let (column, note) = if held.is_empty() { ("todo", Some("Stopped before it finished.")) } else { ("doing", None) };
@@ -5033,7 +5042,9 @@ impl Agent {
                 said = "STATUS: WAITING".to_string();
             }
         }
-        if paused && !held.is_empty() {
+        // moving to another computer after this reply: what waits goes with it (`move_out`), and nothing carries on
+        let moving = self.st.lock().unwrap().moving;
+        if (paused || moving) && !held.is_empty() {
             self.st.lock().unwrap().queue = std::mem::take(&mut held);
             self.show_queue();
         }
@@ -5110,7 +5121,7 @@ impl Agent {
         }
         if !held.is_empty() {
             self.send_held(held);
-        } else if let Some((ask, say)) = carry_on {
+        } else if let Some((ask, say)) = carry_on.filter(|_| !moving) {
             let me = self.clone();
             let say = say.to_string();
             thread::spawn(move || {
@@ -5511,6 +5522,140 @@ pub fn open_chat(chat_id: &str) -> Option<Arc<Agent>> {
         BUS.put("agent_removed", json!({"agent": other.id}));
     }
     Some(agent)
+}
+
+// ------------------------------------------------------------------------------- moving a chat to another computer
+
+/// Where a chat that moved to another of the user's computers is kept: out of the lists, never erased.
+fn moved_dir() -> std::path::PathBuf {
+    paths::work("chats").join("moved")
+}
+
+/// Why a chat cannot move to another computer, if it cannot: an expert's chat stays with the chat that started it,
+/// and a chat with experts of its own (a Lead) keeps them here.
+fn cannot_move(agent: &Agent) -> Option<&'static str> {
+    if is_helper(&agent.st.lock().unwrap()) {
+        return Some("An expert's chat stays on the computer of the chat that started it.");
+    }
+    if !helpers_of(&agent.id).is_empty() || agent.st.lock().unwrap().team.is_some() {
+        return Some("This chat has experts working for it, so it stays on this computer.");
+    }
+    None
+}
+
+/// The page is moving this chat to another computer once its reply is over (`on`), or no longer is. Until then a turn
+/// that ends keeps what the user sent meanwhile for the move, and starts nothing more here.
+pub fn hold_for_move(id: &str, on: bool) -> Result<(), String> {
+    let agent = get(&paths::base_name(id)).ok_or("That chat is gone.")?;
+    if on && let Some(why) = cannot_move(&agent) {
+        return Err(why.into());
+    }
+    agent.st.lock().unwrap().moving = on;
+    if !on {
+        // what waited for the move goes now, as after any turn
+        let held = {
+            let mut st = agent.st.lock().unwrap();
+            if working(&st) { Vec::new() } else { std::mem::take(&mut st.queue) }
+        };
+        if !held.is_empty() {
+            agent.send_held(held);
+        }
+    }
+    Ok(())
+}
+
+/// The chat as it goes to another computer (`move_in` there): its name, AI and model, every event (so it reads the
+/// same there), the hand-over for the conversation it starts there (the chat so far as text, as for a switch of AI)
+/// and what the user sent while it worked. Refused while it works: the page moves it once the reply is over.
+pub fn move_out(id: &str) -> Result<Value, String> {
+    let agent = get(&paths::base_name(id)).ok_or("That chat is gone.")?;
+    if let Some(why) = cannot_move(&agent) {
+        return Err(why.into());
+    }
+    let st = agent.st.lock().unwrap();
+    if working(&st) || st.making {
+        return Err("It is still working. It moves when the reply is over.".into());
+    }
+    if !st.log.iter().any(is_user) {
+        return Err("Nothing has been said in this chat yet.".into());
+    }
+    let ai = st.ai.clone().unwrap_or_else(paths::default_ai);
+    let (handover, _) = handover_plan(&st.log, ai_label(&ai), HANDOVER_CAP);
+    let queued: Vec<&str> = st.queue.iter().map(|(_, t, _)| t.as_str()).collect();
+    Ok(json!({"name": st.name, "ai": ai, "model": st.model, "events": st.log, "handover": handover, "queued": queued}))
+}
+
+/// What a moved chat's events become on this computer: the other computer's project lines are left out (its folders
+/// are not here: the chat gets this computer's project, if any, after), and one line says where it came from, and
+/// which AI carries it on when that changed.
+fn moved_events(events: &[Value], from: &str, ai_was: &str, ai: &str) -> Vec<Value> {
+    let mut out: Vec<Value> = events.iter().filter(|e| e["kind"].is_string() && e["kind"] != "project").cloned().collect();
+    let from = from.trim();
+    let text = if from.is_empty() { "Moved here from your other computer.".to_string() } else { format!("Moved here from {from}.") };
+    let text = if ai == ai_was { format!("{text} It gets the chat so far with your next message.") } else { format!("{text} {} isn't set up here, so {} carries it on. It gets the chat so far with your next message.", ai_label(ai_was), ai_label(ai)) };
+    out.push(json!({"kind": "moved", "text": text, "from": from}));
+    if ai != ai_was {
+        out.push(json!({"kind": "ai", "ai": ai}));
+    }
+    out
+}
+
+/// A chat moved here from another of the user's computers (`move_out` there): a chat of its own here, with every event,
+/// a new conversation handed the chat so far, `project` (a project of this computer's, or none) and what the user sent
+/// meanwhile sent as its first message. Its AI if that is set up here, else this computer's. The new chat's id.
+pub fn move_in(chat: &Value, project: Option<&str>, from: &str) -> Result<String, String> {
+    let events = chat["events"].as_array().ok_or("Nothing came from the other computer.")?;
+    if !events.iter().any(is_user) {
+        return Err("Nothing came from the other computer.".into());
+    }
+    if slots_taken(&AGENTS.lock().unwrap()) >= MAX_AGENTS {
+        return Err("This computer has as many chats open as it can. Close one there, then try again.".into());
+    }
+    let was = chat["ai"].as_str().filter(|a| paths::AIS.contains(a)).unwrap_or("claude").to_string();
+    let ai = if paths::find_ai(&was).is_some() { was.clone() } else { paths::default_ai() };
+    let handover = chat["handover"].as_str().unwrap_or("");
+    let handover = if ai == was { same_ai_handover(handover) } else { handover.to_string() };
+    let n = COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+    let id = format!("c{}-{n}", (paths::now_secs() * 1000.0) as u64);
+    let data = json!({
+        "id": id, "name": chat["name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or("Chat"), "session": null, "project": null,
+        "ai": ai, "model": if ai == was { chat["model"].clone() } else { Value::Null },
+        "handover": if handover.is_empty() { Value::Null } else { json!(handover) },
+        "updated": paths::now_secs(), "events": moved_events(events, from, &was, &ai),
+    });
+    let dir = paths::work("chats");
+    let _ = fs::create_dir_all(&dir);
+    fs::write(chat_file(&id), data.to_string()).map_err(|_| "Fridae couldn't save the chat on this computer.".to_string())?;
+    let Some(agent) = open_chat(&id) else {
+        let _ = fs::remove_file(chat_file(&id));
+        return Err("This computer has as many chats open as it can. Close one there, then try again.".into());
+    };
+    if let Some(p) = project.filter(|p| !p.is_empty()) {
+        agent.set_project(p);
+    }
+    agent.save();
+    let queued: Vec<&str> = chat["queued"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|t| !t.trim().is_empty()).collect();
+    if !queued.is_empty() {
+        agent.ask(&queued.join("\n\n"), &Ask::default());
+    }
+    Ok(id)
+}
+
+/// The chat is now on another computer (`move_in` there): it closes here and its file goes out of the lists
+/// (`moved_dir`), kept, not deleted. Only once it is over: a chat at work stays.
+pub fn moved_away(id: &str) -> Result<(), String> {
+    let id = paths::base_name(id);
+    if let Some(agent) = get(&id) {
+        if agent.busy() {
+            return Err("It is still working.".into());
+        }
+        agent.st.lock().unwrap().moving = false;
+        remove_agent(&id);
+    }
+    let _ = fs::create_dir_all(moved_dir());
+    fs::rename(chat_file(&id), moved_dir().join(format!("{id}.json"))).map_err(|_| "That chat is gone.".to_string())?;
+    remember_open();
+    Ok(())
 }
 
 /// Delete a saved chat. Nothing is erased: its file moves to the deleted folder, from where it can be put back.
@@ -7258,6 +7403,78 @@ mod tests {
         assert_eq!(back.st.lock().unwrap().expert_text.as_deref(), Some("Build the HUD é."));
         assert_eq!(back.expert().as_deref(), Some("ui"));
         remove_agent(&id);
+    }
+
+    #[test]
+    fn a_chat_moves_to_another_computer_whole_and_is_put_away_here() {
+        let a = new_background_chat("Moving: castle gates", None).unwrap();
+        a.put("project", json!({"path": "/elsewhere/castle", "name": "Castle"}));
+        a.put("user", json!({"text": "Build the castle gates"}));
+        a.put("text", json!({"text": "The gates are up."}));
+        a.put("done", json!({}));
+        let old = a.id.clone();
+        // the window sends the chat as it is, with the hand-over for the conversation it starts there
+        let out = move_out(&old).expect("a finished chat moves");
+        assert_eq!(out["name"], "Moving: castle gates");
+        assert!(out["handover"].as_str().unwrap().contains("Build the castle gates"), "{}", out["handover"]);
+        assert_eq!(out["events"].as_array().unwrap().len(), 4);
+        assert_eq!(out["queued"], json!([]));
+
+        // (both ends are this test's computer: the copy is a chat of its own, under a new id)
+        let id = move_in(&out, None, "Laptop").expect("it opens here");
+        assert_ne!(id, old);
+        let b = get(&id).expect("open");
+        {
+            let st = b.st.lock().unwrap();
+            assert!(st.log.iter().all(|e| e["kind"] != "project"), "the other computer's folder is not this one's");
+            assert!(st.log.iter().any(|e| e["kind"] == "user" && e["text"] == "Build the castle gates"), "every message came");
+            let moved = st.log.iter().find(|e| e["kind"] == "moved").expect("one line says where it came from");
+            assert!(moved["text"].as_str().unwrap().starts_with("Moved here from Laptop."), "{moved}");
+            assert!(st.handover.as_deref().unwrap_or("").contains("The gates are up."), "it carries on with the chat so far");
+            assert!(st.session.is_none() && st.project.is_none());
+        }
+        assert_eq!(b.name(), "Moving: castle gates");
+
+        moved_away(&old).expect("put away");
+        assert!(get(&old).is_none(), "closed where it was");
+        assert!(moved_dir().join(format!("{old}.json")).is_file(), "kept, not deleted");
+        assert!(!chat_file(&old).exists());
+        assert!(history().iter().all(|c| c["id"] != old.as_str()) && deleted().iter().all(|c| c["id"] != old.as_str()), "and in neither list");
+        remove_agent(&id);
+    }
+
+    #[test]
+    fn a_chat_moves_only_once_its_reply_is_over_and_never_an_experts() {
+        let a = new_background_chat("Moving: busy", None).unwrap();
+        assert!(move_out(&a.id).unwrap_err().contains("Nothing has been said"));
+        a.put("user", json!({"text": "hello"}));
+        a.st.lock().unwrap().running = true;
+        assert!(move_out(&a.id).unwrap_err().contains("still working"));
+        hold_for_move(&a.id, true).unwrap();
+        assert!(a.st.lock().unwrap().moving);
+        hold_for_move(&a.id, false).unwrap();
+        assert!(!a.st.lock().unwrap().moving);
+        a.st.lock().unwrap().running = false;
+        assert!(moved_away("no-such-chat").is_err());
+
+        let x = Expert { id: "coder".into(), name: "Coder".into(), text: "Write code.".into() };
+        let e = spawn_expert("w-move", "worker", "Coder: move", None, None, Some(&a.id), x).unwrap();
+        e.put("user", json!({"text": "Write it"}));
+        assert!(hold_for_move(&e.id, true).unwrap_err().contains("expert"));
+        assert!(move_out(&e.id).unwrap_err().contains("expert"));
+        assert!(move_out(&a.id).unwrap_err().contains("experts working for it"), "a Lead keeps its experts here");
+        remove_agent(&a.id);
+    }
+
+    #[test]
+    fn a_moved_chat_says_where_it_came_from_and_which_ai_carries_it_on() {
+        let events = vec![json!({"kind": "project", "path": "C:/games/castle"}), json!({"kind": "user", "text": "hi"}), json!({"text": "no kind"})];
+        let same = moved_events(&events, "Desktop", "claude", "claude");
+        assert_eq!(same.len(), 2);
+        assert_eq!(same[1], json!({"kind": "moved", "text": "Moved here from Desktop. It gets the chat so far with your next message.", "from": "Desktop"}));
+        let other = moved_events(&events, " ", "cursor", "claude");
+        assert_eq!(other[1]["text"], "Moved here from your other computer. Cursor isn't set up here, so Claude carries it on. It gets the chat so far with your next message.");
+        assert_eq!(other[2], json!({"kind": "ai", "ai": "claude"}));
     }
 
     #[test]

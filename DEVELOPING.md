@@ -2782,6 +2782,36 @@ On a Mac the user is asked twice the first time, by macOS itself: to let Fridae 
 when the Mac's firewall is on) and to let it find devices on the local network (macOS 15 and later; the Info.plist's
 `NSLocalNetworkUsageDescription` is the line shown). Settings says where to look if those were refused.
 
+### Moving a chat to another computer
+
+In a started chat the machine chip's menu moves the chat: it carries on on the other computer with everything said
+so far, and is put away where it was, so every window sees one chat, wherever it is opened from. The page drives it
+(`ui/src/remote/move.ts`) with `POST /api/chat-move` on each side (`agents.rs`):
+
+1. `out` on the computer it is on: the chat as it goes (name, AI, model, its events, the hand-over text from
+   `handover_plan`, and what the user sent while it waited). Refused while it works, while it makes something, and
+   for an expert's chat or a Lead with helpers (`cannot_move`): those belong to one computer's run.
+2. `in` on the other: a new chat with a new id, its events replayed (its old `project` events left out), a line
+   "Moved here from Laptop.", and the project picked there. The AI is the same if it is set up there, else the
+   default one, and the line says so. It gets the hand-over with the next message, as when the AI is switched.
+3. `away` on the first: closed and its file moved to `chats/moved` (kept, out of the lists).
+
+Nothing is put away until the other computer has it: a failure leaves the chat where it was (or, if only `away`
+fails, two copies and a note to delete one, never none).
+
+- **While it works:** the chat is held (`hold`, `State::moving`): the reply finishes, nothing queued is sent, and
+  when the page sees its `done` the move goes; what the user typed meanwhile goes with it and is sent there. The
+  chip shows "Desktop → This PC" and the row "Moves here when this reply is over"; picking where it is takes it back.
+- **The project:** the other computer's project of the same name (any case); with none, the chip asks which of its
+  projects, or none.
+- **Seeing it from both computers:** each window lists another computer's chats only if it is paired with it, so to
+  follow a moved chat from either computer, pair them both ways.
+- **What stays behind:** files attached in earlier messages and paths in them are the first computer's; the moved
+  chat shows the messages but the other computer has no copies. A long chat's hand-over is cut to `HANDOVER_CAP`
+  without a summary.
+- **Tests:** `cargo test --manifest-path app-rs/Cargo.toml a_chat_moves a_moved_chat` (the engine side), and
+  r105–r120 in `tests/remote-page/remote.js` (the page; `mock.py` answers `/api/chat-move` as the app does).
+
 **Tests:** `cargo test --manifest-path app-rs/Cargo.toml remote` (50 tests: the host, the client and both end to
 end over real TLS on 127.0.0.1, run on Windows and on a Mac; Linux runs the parts that need no TLS) and
 `sh tests/remote-page/run.sh` for the page (Windows paths: it needs Playwright and the stand-in `mock.py`). No test

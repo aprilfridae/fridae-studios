@@ -11,6 +11,7 @@ import { useEffect, useReducer } from "preact/hooks";
 import { H } from "./host";
 import { cap } from "./md";
 import { C, modelsFor } from "./compose";
+import { replyOver } from "../remote/move";
 
 export type Part = { id: number; k: string; v: number; born: number; [more: string]: any };
 export type Row = { id: number; k: string; v: number; born: number; on?: () => void; h?: number; [more: string]: any };
@@ -214,6 +215,9 @@ export function event(p: any, e: any): string | void {
   } else if (e.kind === "account") {
     /* which of its AI's accounts this chat runs on (shown beside the model while the AI has a second account) */
     p.account = e.account;
+  } else if (e.kind === "moved") {
+    /* it came here from another of the user's computers (ui/src/remote/move.ts): the app's one line about it */
+    put(tl, mk("tag", { cls: "tag ai-tag", text: e.text || "" })); p.turn = null;
   } else if (e.kind === "rollover") {
     /* one of the AI's two accounts ran out of usage and the chat carries on with the other: the app's one line about
        it. The same message goes again there, so what follows is a turn of its own */
@@ -297,6 +301,7 @@ export function event(p: any, e: any): string | void {
     p.busy = !!e.value; p.now = "Starting"; if (p.busy) { p.last = "Done"; p.since = Date.now(); }
     if (p.busy) { p.replay = false; p.handedBack = false; pastApprovals(p); }   /* it has gone on: what it asked before is history */
   } else if (e.kind === "done") {
+    if (live) replyOver(p.id);   /* a move to another computer that waited for this reply goes now */
     const t = p.turn as Row | null, st = H.status;
     if (t && !H.isHelper(p) && live && st.plugin && st.plugin.connected && H.isGameProj(p.project) && t.parts.some((x: Part) => x.k === "steps" && x.list.length)) {
       /* one turn can be undone in Studio: the newest; an offer nobody took goes when the next one comes */
