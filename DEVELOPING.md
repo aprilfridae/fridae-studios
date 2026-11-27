@@ -130,9 +130,13 @@ Where things live:
   The old page keeps what must run before anything is drawn: the themes and `applyTheme` in the page's head, text
   size and the sidebar's width.
 - `ui/app.js`, `ui/app.css` - the bundle `index.html` loads (`server.rs` serves both). Built files, but committed:
-  the Mac build has no esbuild yet and ships them as they are.
+  the Mac build bundles nothing and ships them as they are.
 - `ui/vendor/preact/` - Preact (its built modules are in `dist/` folders, which `.gitignore` lets through here
   only), and `tools/esbuild.exe` - the bundler. No Node, no npm, nothing downloaded.
+
+On a Mac there is no `tools/esbuild.exe`, but the promo renderer's packages hold esbuild for macOS (the same 0.28.1,
+which makes byte-for-byte the same bundle): put it first on PATH and `ui/build.py` uses it, nothing downloaded:
+`PATH="$PWD/engine/renderer/node_modules/@esbuild/darwin-arm64/bin:$PATH" .venv/bin/python ui/build.py`.
 
 To change a screen: edit its files under `ui/src`, run `python ui/build.py` (or `python ui/build.py --watch` while
 working), reload the window, and commit `ui/app.js` and `ui/app.css` with the change. `build_app.py` bundles again
@@ -2737,6 +2741,51 @@ is needed, the waiting one is staged from its clash copy.
 `cargo test --manifest-path app-rs/Cargo.toml` (add `vault_sync::`, `vault_git::`, `share::` or `vault_inbox::` for one
 part). No test contacts github.com or installs anything: GitHub is a local stand-in. On a Windows computer without
 the symlink privilege, five tests in `tests.test_vaultsync` (links) and one (a file made unreadable with `chmod`) fail.
+
+## Remote control: other computers
+
+Settings, Other computers, "Let my other computers connect" lets the user's other computers run chats on this one;
+the machine chip left of the AI chip picks which computer a new chat runs on. The plan and the reasons are in
+`docs/superpowers/plans/2026-11-26-remote-control.md`; the page's side is under Front end (`ui/src/remote/`).
+
+- `app-rs/src/remote_common.rs`: this computer's identity, the pairing proof (PBKDF2), `dir()` (remote control's own
+  folder in the private app-data folder, never under the work folder) and `write_private` (its files, whole, and on a
+  Mac readable only by the user).
+- `remote_host.rs` (the computer others connect to): a TLS listener on 47530 (or the next free port up to 47539), the
+  "who is there" answer on UDP 47529, one-time pairing codes, the paired devices (`devices.json`, only each token's
+  hash). A paired computer's request is handed to `server.rs` as the page's own request.
+- `remote_client.rs` (the computer that connects): the saved computers (`machines.json`), finding them by broadcast,
+  pairing, and passing the page's `/m/<machine>/...` calls on over a connection pinned to the certificate seen at
+  pairing.
+
+It was built for Windows first ("Windows is the target" in the plan), with the Windows pieces behind `cfg(windows)`.
+macOS now has its own for each; Linux still answers "Only on Windows and Mac for now." (`remote_common::NOT_HERE`).
+
+| | Windows | Mac |
+|---|---|---|
+| The host's key | CNG key store, never exportable | `host-key.pem` (RSA, PKCS#8), mode 0600, beside `host-cert.der` |
+| Its certificate | `CertCreateSelfSignCertificate` | `/usr/bin/openssl req -x509` (the system's own LibreSSL), in a private folder of its own |
+| The host's TLS | Schannel | Secure Transport through native-tls (`Identity::from_pkcs8`, which reads the key into a keychain of its own that is gone once read in: the user's keychains are never touched) |
+| The client's TLS | native-tls (Schannel) | native-tls (Secure Transport) |
+| Tokens in `machines.json` | DPAPI for the user | sealed with `token-key` (32 random bytes, 0600, beside it): HMAC-SHA256 as a counter-mode stream and an HMAC-SHA256 tag (`remote_client::sealed`) |
+| Each network's broadcast address | `GetAdaptersAddresses` | `getifaddrs` |
+| Waiting for a socket | `WSAPoll` | `poll` |
+
+Why files and not the Mac keychain: the app is signed ad hoc (no Apple Developer ID), so every update is a new
+program to macOS and a keychain item would make it ask for access again. ECDSA keys are not used: Secure
+Transport's `from_pkcs8` reads only RSA. The private folder is made 0700.
+
+A refused request (401, 403) has its small body read before the answer: a connection closed with bytes unread is
+reset, and on a Mac the reset can arrive before the answer (the end-to-end test caught it).
+
+On a Mac the user is asked twice the first time, by macOS itself: to let Fridae accept incoming connections (only
+when the Mac's firewall is on) and to let it find devices on the local network (macOS 15 and later; the Info.plist's
+`NSLocalNetworkUsageDescription` is the line shown). Settings says where to look if those were refused.
+
+**Tests:** `cargo test --manifest-path app-rs/Cargo.toml remote` (50 tests: the host, the client and both end to
+end over real TLS on 127.0.0.1, run on Windows and on a Mac; Linux runs the parts that need no TLS) and
+`sh tests/remote-page/run.sh` for the page (Windows paths: it needs Playwright and the stand-in `mock.py`). No test
+broadcasts, listens beyond 127.0.0.1 or touches the user's own remote folder.
 
 ## Folders
 

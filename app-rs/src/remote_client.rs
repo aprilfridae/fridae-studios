@@ -9,8 +9,10 @@
 //! `native_tls` stream instead of using ureq: the check has to sit between the handshake and the request, and the
 //! answer is passed back to the page as a stream (a video is never read whole).
 //!
-//! The token each host gave us is kept in `machines.json` encrypted with Windows DPAPI for the current user, so the
-//! file alone is no use on another account or computer.
+//! The token each host gave us is kept in `machines.json` encrypted, so the file alone is no use to anyone: on
+//! Windows with DPAPI for the current user; on a Mac with a key of this computer's own (`token-key`, beside it,
+//! readable only by this user), because a keychain item would make macOS ask for it again after every update of an
+//! app signed as Fridae is (ad hoc, not with an Apple Developer ID).
 
 use std::{
     fs,
@@ -55,6 +57,7 @@ const FIND_WAIT: Duration = Duration::from_millis(1500);
 /// How long a saved computer found at a new address has to show its certificate there before it is believed.
 const PROVE_WAIT: Duration = Duration::from_secs(2);
 /// Mixed into DPAPI's encryption so another program's DPAPI call cannot decrypt the tokens by accident.
+#[cfg(windows)]
 const DPAPI_SALT: &[u8] = b"fridae-remote-client-v1";
 
 const UNREACHABLE: &str = "Couldn't reach that computer. Make sure Fridae is open there with Let my other computers connect on, that both are on the same network, and that the address is right.";
@@ -100,7 +103,7 @@ impl Book {
                 addr: text(v, "addr"),
                 port: v["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(LISTEN_PORT),
                 fp: text(v, "fp"),
-                token: v["token"].as_str().and_then(|b| B64.decode(b).ok()).and_then(|b| unprotect(&b)).and_then(|b| String::from_utf8(b).ok()),
+                token: v["token"].as_str().and_then(|b| B64.decode(b).ok()).and_then(|b| unprotect(&b, &key_dir(path))).and_then(|b| String::from_utf8(b).ok()),
                 online: false,
                 last_seen: v["last_seen"].as_u64().unwrap_or(0),
             })
@@ -112,15 +115,11 @@ impl Book {
         let out: Vec<Value> = list
             .iter()
             .map(|m| {
-                let token = m.token.as_ref().and_then(|t| protect(t.as_bytes())).map(|b| B64.encode(b));
+                let token = m.token.as_ref().and_then(|t| protect(t.as_bytes(), &key_dir(&self.path))).map(|b| B64.encode(b));
                 json!({"id": m.id, "name": m.name, "addr": m.addr, "port": m.port, "fp": m.fp, "token": token, "last_seen": m.last_seen})
             })
             .collect();
-        // written beside and renamed over, so a crash mid-write never leaves half a file
-        let tmp = self.path.with_extension("json.tmp");
-        if fs::write(&tmp, serde_json::to_string_pretty(&json!({"machines": out})).unwrap_or_default()).is_ok() {
-            let _ = fs::rename(&tmp, &self.path);
-        }
+        let _ = remote_common::write_private(&self.path, serde_json::to_string_pretty(&json!({"machines": out})).unwrap_or_default().as_bytes());
     }
 
     /// Change the saved computers and write them out.
@@ -248,18 +247,114 @@ fn dpapi(data: &[u8], encrypt: bool) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// Elsewhere there is nothing to keep a token safe with, so none is kept (pairing says "Only on Windows for now.").
-#[cfg(not(windows))]
-fn dpapi(_data: &[u8], _encrypt: bool) -> Option<Vec<u8>> {
-    None
-}
-
-fn protect(plain: &[u8]) -> Option<Vec<u8>> {
+#[cfg(windows)]
+fn protect(plain: &[u8], _dir: &Path) -> Option<Vec<u8>> {
     dpapi(plain, true)
 }
 
-fn unprotect(blob: &[u8]) -> Option<Vec<u8>> {
+#[cfg(windows)]
+fn unprotect(blob: &[u8], _dir: &Path) -> Option<Vec<u8>> {
     dpapi(blob, false)
+}
+
+/// The folder the saved computers' file is in: on a Mac their key is kept there too.
+fn key_dir(book: &Path) -> PathBuf {
+    book.parent().map(Path::to_path_buf).unwrap_or_default()
+}
+
+// ---- a Mac's own key for the tokens ----
+
+/// On a Mac a token is sealed with a key of this computer's own: 32 random bytes in `token-key` (made on the first
+/// pairing, readable only by this user). Sealing is HMAC-SHA256 used as a stream cipher (counter mode) with an
+/// HMAC-SHA256 tag over the nonce and the sealed bytes (encrypt-then-MAC), each with its own key drawn from the kept
+/// one. A sealed token is `nonce (16) | sealed bytes | tag (32)`; one whose tag does not check is treated as no token.
+#[cfg(target_os = "macos")]
+mod sealed {
+    use std::{fs, io, path::Path};
+
+    use crate::remote_common::{self as rc, hmac_sha256};
+
+    const KEY_FILE: &str = "token-key";
+    const NONCE: usize = 16;
+    const TAG: usize = 32;
+
+    /// The kept key, made when there is none and `make` is set. A key file of the wrong size is never replaced: the
+    /// tokens sealed with it would be lost.
+    fn key(dir: &Path, make: bool) -> Option<[u8; 32]> {
+        let file = dir.join(KEY_FILE);
+        match fs::read(&file) {
+            Ok(b) => b.try_into().ok(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound && make => {
+                let mut k = [0u8; 32];
+                rc::random(&mut k);
+                rc::write_private(&file, &k).ok()?;
+                Some(k)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn keys(key: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
+        (hmac_sha256(key, b"fridae-remote-token-v1|seal"), hmac_sha256(key, b"fridae-remote-token-v1|check"))
+    }
+
+    fn stream(seal_key: &[u8; 32], nonce: &[u8], data: &mut [u8]) {
+        for (n, block) in data.chunks_mut(32).enumerate() {
+            let mut msg = nonce.to_vec();
+            msg.extend_from_slice(&(n as u64).to_be_bytes());
+            for (b, k) in block.iter_mut().zip(hmac_sha256(seal_key, &msg)) {
+                *b ^= k;
+            }
+        }
+    }
+
+    pub fn seal(plain: &[u8], dir: &Path) -> Option<Vec<u8>> {
+        let (seal_key, check_key) = keys(&key(dir, true)?);
+        let mut out = vec![0u8; NONCE];
+        rc::random(&mut out);
+        let mut body = plain.to_vec();
+        stream(&seal_key, &out, &mut body);
+        out.extend_from_slice(&body);
+        let tag = hmac_sha256(&check_key, &out);
+        out.extend_from_slice(&tag);
+        Some(out)
+    }
+
+    pub fn open(blob: &[u8], dir: &Path) -> Option<Vec<u8>> {
+        if blob.len() < NONCE + TAG {
+            return None;
+        }
+        let (seal_key, check_key) = keys(&key(dir, false)?);
+        let (head, tag) = blob.split_at(blob.len() - TAG);
+        // compared in time that does not depend on where they differ
+        if hmac_sha256(&check_key, head).iter().zip(tag).fold(0u8, |d, (a, b)| d | (a ^ b)) != 0 {
+            return None;
+        }
+        let mut body = head[NONCE..].to_vec();
+        stream(&seal_key, &head[..NONCE], &mut body);
+        Some(body)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn protect(plain: &[u8], dir: &Path) -> Option<Vec<u8>> {
+    sealed::seal(plain, dir)
+}
+
+#[cfg(target_os = "macos")]
+fn unprotect(blob: &[u8], dir: &Path) -> Option<Vec<u8>> {
+    sealed::open(blob, dir)
+}
+
+/// Elsewhere there is nothing to keep a token safe with, so none is kept (pairing says `remote_common::NOT_HERE`).
+#[cfg(not(any(windows, target_os = "macos")))]
+fn protect(_plain: &[u8], _dir: &Path) -> Option<Vec<u8>> {
+    None
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn unprotect(_blob: &[u8], _dir: &Path) -> Option<Vec<u8>> {
+    None
 }
 
 // ---- the pinned connection and a small HTTP/1.1 client ----
@@ -506,8 +601,8 @@ fn failed(why: &str) -> Value {
 /// POST /api/remote/pair `{addr, port?, code, fp?}`: connect, check the certificate against the one found (if
 /// any), say hello, send the proof, check the host's confirmation, and save the computer with the token it gives.
 pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
-    if !cfg!(windows) {
-        return failed("Only on Windows for now.");
+    if !remote_common::SUPPORTED {
+        return failed(remote_common::NOT_HERE);
     }
     let code = remote_common::normal_code(body["code"].as_str().unwrap_or(""));
     let port = body["port"].as_u64().and_then(|p| u16::try_from(p).ok()).filter(|p| *p > 0);
@@ -550,7 +645,7 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     if !same(answer["confirm"].as_str().unwrap_or(""), &proof.confirm(token)) {
         return failed("That computer couldn't show it knows the code, so it wasn't paired. Make sure it's your own computer, then make a new code there and try again.");
     }
-    if protect(token.as_bytes()).is_none() {
+    if protect(token.as_bytes(), &key_dir(&book.path)).is_none() {
         return failed("Couldn't save that computer safely on this one.");
     }
     let m = Machine {
@@ -847,7 +942,38 @@ fn directed_broadcasts() -> Vec<[u8; 4]> {
     }
 }
 
-#[cfg(not(windows))]
+/// (A Mac's and Linux's list of networks: `getifaddrs`.)
+#[cfg(unix)]
+fn directed_broadcasts() -> Vec<[u8; 4]> {
+    let mut out = Vec::new();
+    let mut first: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs fills a linked list that is only read until freeifaddrs; each address is read as the
+    // sockaddr_in its family says it is.
+    unsafe {
+        if libc::getifaddrs(&mut first) != 0 {
+            return out;
+        }
+        let mut a = first;
+        while !a.is_null() {
+            let ad = &*a;
+            let flags = ad.ifa_flags as libc::c_int;
+            let up = flags & libc::IFF_UP != 0 && flags & libc::IFF_LOOPBACK == 0;
+            if up && !ad.ifa_addr.is_null() && !ad.ifa_netmask.is_null() && i32::from((*ad.ifa_addr).sa_family) == libc::AF_INET {
+                let ip = u32::from_be((*ad.ifa_addr.cast::<libc::sockaddr_in>()).sin_addr.s_addr);
+                let mask = u32::from_be((*ad.ifa_netmask.cast::<libc::sockaddr_in>()).sin_addr.s_addr);
+                let len = mask.leading_ones();
+                if (1..31).contains(&len) {
+                    out.push((ip | !mask).to_be_bytes());
+                }
+            }
+            a = ad.ifa_next;
+        }
+        libc::freeifaddrs(first);
+    }
+    out
+}
+
+#[cfg(not(any(windows, unix)))]
 fn directed_broadcasts() -> Vec<[u8; 4]> {
     vec![]
 }
@@ -864,8 +990,8 @@ pub fn api_machines() -> Value {
 pub fn api_post(path: &str, body: &Value) -> Value {
     match path {
         "/api/remote/discover" => {
-            if !cfg!(windows) {
-                return json!({"found": [], "error": "Only on Windows for now."});
+            if !remote_common::SUPPORTED {
+                return json!({"found": [], "error": remote_common::NOT_HERE});
             }
             let me = remote_common::identity();
             discover_on(book(), me["id"].as_str().unwrap_or(""), "0.0.0.0:0", &broadcast_targets(), FIND_WAIT)

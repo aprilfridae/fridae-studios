@@ -13,6 +13,7 @@ import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
 import { MachineChip } from "../remote/Machines";
 import { boxMachine } from "../remote/remote";
+import { HERE } from "../remote/route";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 /* the chosen row of a menu */
@@ -180,7 +181,7 @@ export function Dock() {
             <div class={"menu" + (C.pop === "add" ? " on" : "")} id="add-menu" role="menu">
               <button class="opt" id="attach" role="menuitem" onClick={() => { chose("add"); file.current!.click(); }}><span class="tick" /><span><b>Images or documents</b></span></button>
               {/* clips are used where they are, on this computer: not for a chat on another one (ui/src/remote) */}
-              <button class="opt" id="add-clips" role="menuitem" disabled={!!boxMachine()} onClick={async () => { chose("add"); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); }}><span class="tick" /><span><b>Video clips</b><small>{boxMachine() ? "Only for chats on this PC." : "Used where they are, not copied."}</small></span></button>
+              <button class="opt" id="add-clips" role="menuitem" disabled={!!boxMachine()} onClick={async () => { chose("add"); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); }}><span class="tick" /><span><b>Video clips</b><small>{boxMachine() ? "Only for chats on this " + HERE + "." : "Used where they are, not copied."}</small></span></button>
             </div>
           </span>
           {/* which computer it runs on (ui/src/remote) */}

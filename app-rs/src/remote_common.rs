@@ -8,7 +8,10 @@
 //! knew the code as well. The key is slow to make (PBKDF2, 200 000 rounds) so a recorded proof cannot be tried
 //! against every code in the five minutes a code lasts.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -24,12 +27,37 @@ pub const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 pub const CODE_LEN: usize = 10;
 pub const PROOF_ROUNDS: u32 = 200_000;
 
+/// What the page is told where remote control cannot run (Linux, for now).
+pub const NOT_HERE: &str = "Only on Windows and Mac for now.";
+
+/// Whether this system can let other computers connect and pair with them: Windows (its key store, DPAPI and
+/// Schannel) and macOS (the Mac's own TLS, a key file only this user can read: see `remote_host::cert`).
+pub const SUPPORTED: bool = cfg!(any(windows, target_os = "macos"));
+
 /// The folder for remote control's own files (identity, paired devices, saved computers): outside the work
-/// folder, the projects and the kit, so no AI is handed it.
+/// folder, the projects and the kit, so no AI is handed it. On a Mac or Linux only this user may open it.
 pub fn dir() -> PathBuf {
     let d = crate::paths::private_dir().join("remote");
     let _ = fs::create_dir_all(&d);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&d, fs::Permissions::from_mode(0o700));
+    }
     d
+}
+
+/// Write a file of remote control's whole, readable only by this user on a Mac or Linux (Windows keeps the folder
+/// private to the user already): written beside and renamed over, so a crash mid-write never leaves half a file.
+pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let tmp = path.with_extension(format!("{}.tmp", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
+    let _ = fs::remove_file(&tmp);
+    let mut open = fs::OpenOptions::new();
+    open.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    io::Write::write_all(&mut open.open(&tmp)?, bytes)?;
+    fs::rename(&tmp, path)
 }
 
 /// Fill `buf` from the system's secure random source.
@@ -224,6 +252,23 @@ mod tests {
         assert_ne!(p.client, hex(&key));
         assert_ne!(c, p.confirm("tok2"));
         assert_ne!(c, proof("ABCDEFGHJM", "aa11", "c1").confirm("tok"));
+    }
+
+    #[test]
+    fn private_files_are_written_whole_and_only_this_user_may_read_them() {
+        let d = crate::paths::test_dir("remote-private");
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let f = d.join("machines.json");
+        fs::write(&f, "old").unwrap();
+        write_private(&f, b"new").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        assert_eq!(fs::read_dir(&d).unwrap().count(), 1, "no temporary file is left behind");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&f).unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 
     #[test]

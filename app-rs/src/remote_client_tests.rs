@@ -200,7 +200,7 @@ fn saved(id: &str, addr: &str, token: Option<&str>) -> Machine {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn saved_computers_keep_the_token_protected() {
     let b = book("store");
     let secret = "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90";
@@ -217,6 +217,28 @@ fn saved_computers_keep_the_token_protected() {
 }
 
 #[test]
+#[cfg(target_os = "macos")]
+fn on_a_mac_a_token_opens_only_with_its_own_key_and_unchanged() {
+    use std::os::unix::fs::PermissionsExt;
+    let b = book("sealed");
+    let dir = key_dir(&b.path);
+    let sealed = protect(b"the token", &dir).unwrap();
+    assert_eq!(fs::metadata(dir.join("token-key")).unwrap().permissions().mode() & 0o777, 0o600, "only this user may read the key");
+    assert_eq!(unprotect(&sealed, &dir).as_deref(), Some(&b"the token"[..]));
+    assert_ne!(protect(b"the token", &dir).unwrap(), sealed, "a new nonce each time");
+    for i in [0, 20, sealed.len() - 1] {
+        let mut changed = sealed.clone();
+        changed[i] ^= 1;
+        assert_eq!(unprotect(&changed, &dir), None, "a sealed token changed at byte {i} is no token");
+    }
+    assert_eq!(unprotect(&sealed[..40], &dir), None);
+    let other = book("sealed-other");
+    assert_eq!(unprotect(&sealed, &key_dir(&other.path)), None, "nothing opens without the key file");
+    protect(b"x", &key_dir(&other.path)).unwrap();
+    assert_eq!(unprotect(&sealed, &key_dir(&other.path)), None, "another key opens nothing");
+}
+
+#[test]
 fn the_page_token_is_left_out_of_the_query() {
     assert_eq!(without_token("a=1&t=SECRET&b=2"), "a=1&b=2");
     assert_eq!(without_token("t=SECRET"), "");
@@ -227,7 +249,7 @@ fn the_page_token_is_left_out_of_the_query() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn pairing_with_a_wrong_code_is_refused_and_a_right_one_saves_the_computer() {
     let b = book("pair");
     let h = fake_host();
@@ -249,7 +271,7 @@ fn pairing_with_a_wrong_code_is_refused_and_a_right_one_saves_the_computer() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn pairing_refuses_a_certificate_other_than_the_one_found() {
     let b = book("pair-fp");
     let h = fake_host();
@@ -260,7 +282,7 @@ fn pairing_refuses_a_certificate_other_than_the_one_found() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn forwarding_passes_status_query_and_body_but_not_the_page_token() {
     let (b, _h) = paired("forward");
     let heads = vec![("Range".to_string(), "bytes=0-9".to_string()), ("X-Token".to_string(), "PAGESECRET".to_string())];
@@ -280,7 +302,7 @@ fn forwarding_passes_status_query_and_body_but_not_the_page_token() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn a_changed_certificate_is_refused() {
     let (b, _h) = paired("changed");
     b.set_fp(HOST_ID, &"ab".repeat(32));
@@ -289,7 +311,7 @@ fn a_changed_certificate_is_refused() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn a_401_from_the_host_marks_the_computer_unpaired() {
     let (b, h) = paired("revoked");
     h.state.lock().unwrap().revoked = true;
@@ -302,7 +324,7 @@ fn a_401_from_the_host_marks_the_computer_unpaired() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn a_computer_that_does_not_answer_is_offline() {
     let (b, _h) = paired("offline");
     b.set_port(HOST_ID, closed_port());
@@ -311,7 +333,7 @@ fn a_computer_that_does_not_answer_is_offline() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn the_background_check_follows_whether_a_computer_answers() {
     let (b, h) = paired("check");
     b.set_port(HOST_ID, closed_port());
@@ -384,7 +406,7 @@ fn a_forged_finding_reply_never_moves_a_saved_computer_or_hides_it() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn a_computer_that_says_yes_without_knowing_the_code_is_never_saved() {
     let b = book("impostor");
     let h = fake_host();
@@ -455,7 +477,7 @@ fn a_host_that_trickles_bytes_is_given_up_on_at_the_deadline() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn one_slow_computer_does_not_hold_up_the_check_of_the_others() {
     let (b, _h) = paired("check-slow");
     b.add(saved("slow", "127.0.0.1", Some("t0k")));
@@ -468,7 +490,7 @@ fn one_slow_computer_does_not_hold_up_the_check_of_the_others() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn what_a_host_sends_never_runs_as_this_computers_page() {
     let (b, _h) = paired("defused");
     let heads = |a: &Answer| a.headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect::<Vec<_>>();
@@ -487,7 +509,7 @@ fn what_a_host_sends_never_runs_as_this_computers_page() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn only_harmless_headers_come_back_and_a_redirect_is_refused() {
     let (b, _h) = paired("headers");
     let a = forward(&b, HOST_ID, "GET", "/api/headers", &[], b"");
@@ -508,7 +530,7 @@ fn only_harmless_headers_come_back_and_a_redirect_is_refused() {
 }
 
 #[test]
-#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+#[cfg(any(windows, target_os = "macos"))] // pairing keeps the token safe: DPAPI on Windows, a key of its own on a Mac
 fn a_slow_answer_took_too_long_and_the_computer_is_not_offline() {
     let (b, _h) = paired("slow");
     let (status, v) = read(forward_within(&b, HOST_ID, "GET", "/api/echo?sleep=3000", &[], b"", Duration::from_secs(1)));

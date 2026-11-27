@@ -77,6 +77,7 @@ def main():
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>Fridae finds and connects to your other computers on this network, for remote control (Settings, Other computers).</string>
 </dict></plist>
 """.format(n=APP_NAME, v=VERSION))
     run("codesign", "--force", "--deep", "--sign", "-", app)

@@ -34,3 +34,7 @@ zip = { version = "9.6.1", default-features = false, features = ["deflate"] }
 schannel = "0.1.30"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
+[target.'cfg(unix)'.dependencies]
+# remote control on a Mac: waiting for a socket to be readable (poll) and each network's broadcast address
+# (getifaddrs); its TLS is native-tls (Secure Transport), its certificate made by the system's /usr/bin/openssl
+libc = "0.2.191"

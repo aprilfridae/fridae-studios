@@ -23,7 +23,9 @@ export const withM = (m: string, v: string) => (m ? m + SEP + v : v);
 /* where a chat with no project belongs: "" here, "<machine>~" on another computer */
 export const homeOf = (id: string) => withM(machineOf(id), "");
 export const isHome = (key: string | null | undefined) => !!key && key.endsWith(SEP) && !!machineOf(key) && key.length === machineOf(key).length + 1;
-export const nameOf = (m: string) => (m ? (machine(m) || { name: "Another computer" }).name : "This PC");
+/* what this computer is called on the page: "Mac" in the Mac app, "PC" on Windows */
+export const HERE = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent) ? "Mac" : "PC";
+export const nameOf = (m: string) => (m ? (machine(m) || { name: "Another computer" }).name : "This " + HERE);
 export const online = (m: string) => !m || !!(machine(m) || { online: false }).online;
 /* What is wrong with a machine, as the page says it: "" when it can be used; "offline"; "unpaired" (it no longer knows
    this computer: 401); "changed" (it answered with another certificate than at pairing, so it may not be the same

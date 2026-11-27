@@ -4,7 +4,7 @@
 import { useStore, type Machine } from "../store";
 import { C, closePops, togglePop } from "../chat/compose";
 import { boxMachine, choose } from "./remote";
-import { TROUBLE_LINE, nameOf, troubleOf } from "./route";
+import { HERE, TROUBLE_LINE, nameOf, troubleOf } from "./route";
 import { openPair } from "./Pair";
 import "./remote.css";
 
@@ -37,7 +37,7 @@ export function MachineChip({ p }: { p: any }) {
       <button class="chip mc" id="machine" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} title={"Runs on " + name + ". Press to run this chat on another of your computers."}
         onClick={(ev) => { ev.stopPropagation(); togglePop("machine"); }}>{MONITOR}<span>{name}</span>{DOWN}</button>
       <div class={"menu" + (open ? " on" : "")} id="machine-menu" role="menu" aria-label="Which computer it runs on">
-        {row("", "This PC")}
+        {row("", "This " + HERE)}
         {machines.map((x) => row(x.id, x.name, x))}
         <hr />
         <button class="opt" id="pair-open" role="menuitem" onClick={() => { closePops(); openPair(); }}><span class="tick" /><span><b>Pair a computer…</b></span></button>

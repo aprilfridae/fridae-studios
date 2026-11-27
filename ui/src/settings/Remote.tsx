@@ -16,6 +16,10 @@ type Device = { id: string; name: string; paired_at: number; last_seen: number }
 type Host = { on: boolean; port: number | null; name: string; devices: Device[]; code: { text: string; expires: number } | null; error: string | null };
 
 const host = cell<Host | null>(null);
+/* what to check when the other computers can't find this one: the system's own words for its firewall */
+const FIREWALL = /Mac/.test(navigator.userAgent)
+  ? "If your other computers can't find this one, your Mac may be blocking Fridae. Allow Fridae when your Mac asks about incoming connections or devices on your local network. To check later: System Settings › Network › Firewall, and Privacy & Security › Local Network."
+  : "If your other computers can't find this one, Windows may be blocking Fridae. In Windows Settings › Network, set this network to Private, and allow Fridae when Windows asks.";
 async function load(body?: unknown) {
   try { host.set(await api("/api/remote/host", body)); } catch (e) {}
 }
@@ -65,7 +69,7 @@ export function Remote() {
       <SettingsRow id="set-remote-on" title="Let my other computers connect" labelFor="remote-on"
         desc="Your other computers on this network, or on Tailscale, can run chats here after you pair them."
         ctl={<Switch id="remote-on" on={on} onChange={(v) => load({ action: v ? "on" : "off" })} />}>
-        {on && <p class="sr-status">If your other computers can't find this one, Windows may be blocking Fridae. In Windows Settings › Network, set this network to Private, and allow Fridae when Windows asks.</p>}
+        {on && <p class="sr-status">{FIREWALL}</p>}
         {h && h.error && <p class="sr-status rm-error">{h.error}</p>}
       </SettingsRow>
       {on && h && h.port !== null && (
