@@ -512,6 +512,37 @@ fn is_guide(h: &Hit) -> bool {
     h.shelf == "guides"
 }
 
+/// A guide passage is pointed to only when it shares this many of the part's key words (`key_words`), or at least
+/// `GUIDE_SHARE` of them. A search can return a guide on one stray word: measured on the knowledge exam's saved
+/// passages (night 2, Light), every guide question matched 4 words or more and every unanswerable question that got
+/// a guide pointer matched 2 or fewer, with a share of 0.40 at most.
+const GUIDE_WORDS: usize = 3;
+const GUIDE_SHARE: f64 = 0.5;
+
+/// Does this guide passage match the part well enough to point to (its topic, heading and text)?
+fn strong_guide(question: &str, h: &Hit) -> bool {
+    let asked = key_words(question);
+    if asked.is_empty() {
+        return true;
+    }
+    let seen = key_words(&format!("{} {} {}", h.title, h.heading, cut(&h.text, PASSAGE_MAX)));
+    let shared = asked.iter().filter(|w| seen.contains(*w)).count();
+    shared >= GUIDE_WORDS || shared as f64 / asked.len() as f64 >= GUIDE_SHARE
+}
+
+/// The parts with their weak guide passages left out (`strong_guide`): the writer's "not in the knowledge base" then
+/// stands, instead of a pointer to a guide about something else.
+fn without_weak_guides(parts: Vec<Part>) -> Vec<Part> {
+    parts
+        .into_iter()
+        .map(|mut p| {
+            let q = p.question.clone();
+            p.hits.retain(|h| !is_guide(h) || strong_guide(&q, h));
+            p
+        })
+        .collect()
+}
+
 /// The pointer for one guide a part matched (`title` is its rbx_guide topic).
 pub fn guide_pointer(title: &str, matched: &str) -> String {
     format!("Recommended guide: {title} — matched on \"{matched}\". Call rbx_guide with topic `{title}` to load the full instructions.")
@@ -611,7 +642,7 @@ pub fn answer(question: &str, search: Search, write: Model, check: Model) -> Str
         return "Ask a question after @librarian.".into();
     }
     let parts = match search(&asked) {
-        Ok(p) if !p.is_empty() => p,
+        Ok(p) if !p.is_empty() => without_weak_guides(p),
         Ok(_) => return NO_SEARCH.into(),
         Err(why) => {
             eprintln!("librarian: search failed: {}", why.chars().take(300).collect::<String>());
@@ -877,6 +908,27 @@ mod tests {
         // a plain-text writer: the passages, with the pointers
         let said = checked_answer(&mixed, "Prompts go off while dragging.", &|_| None);
         assert!(said.starts_with(UNCHECKED) && said.contains(&pointer) && !said.contains("Prompts go off"), "{said}");
+    }
+
+    #[test]
+    fn a_guide_that_shares_little_with_the_question_is_no_pointer() {
+        let guide = |title: &str, heading: &str, text: &str| Hit { shelf: "guides".into(), title: title.into(), heading: heading.into(), text: text.into() };
+        let visuals = guide("unslop", "8. Visuals", "Avoid template looks: default fonts, stock gradients and centred everything read as generated.");
+        // the writer declines and the only guide found matched one heading by chance: not in the knowledge base
+        let asked = "what's a good recipe for chocolate chip cookies";
+        let parts = vec![Part { question: asked.into(), hits: vec![visuals.clone(), hit("HUD Notes", DRAGS)] }];
+        let said = answer(asked, &|_| Ok(parts.clone()), &|_| Some("{\"part\": 1, \"not_found\": true}".into()), &|_| None);
+        assert!(said.contains(NOT_FOUND) && !said.contains("Recommended guide"), "{said}");
+        // only weak guides found: no writer is asked, and nothing was found
+        let only = vec![Part { question: asked.into(), hits: vec![visuals.clone()] }];
+        let said = answer(asked, &|_| Ok(only.clone()), &|_| panic!("no writer when nothing is left"), &|_| None);
+        assert!(said.contains(NOT_FOUND) && !said.contains("Recommended guide"), "{said}");
+        // three of the question's words in the guide are enough, though the question has more
+        let asked = "walk me through verifying the signature on a Roblox webhook in an Express server";
+        let hooks = guide("roblox-open-cloud/webhooks", "Node.js (Express)", "Check the roblox-signature header with your secret before trusting a webhook body.");
+        let parts = vec![Part { question: asked.into(), hits: vec![hooks, hit("HUD Notes", DRAGS)] }];
+        let said = answer(asked, &|_| Ok(parts.clone()), &|_| Some("{\"part\": 1, \"not_found\": true}".into()), &|_| None);
+        assert!(said.contains(&guide_pointer("roblox-open-cloud/webhooks", "Node.js (Express)")), "{said}");
     }
 
     #[test]
