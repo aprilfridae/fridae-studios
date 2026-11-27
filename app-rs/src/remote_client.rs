@@ -3,7 +3,8 @@
 //!
 //! Every connection to another computer is TLS with that computer's own self-signed certificate. There is no
 //! authority to vouch for it, so the certificate's fingerprint is learnt once, at pairing (where the pairing proof
-//! ties it to the code the user typed, see `remote_common::proof`), and every later connection must show the same
+//! and the host's confirmation tie it to the code the user typed, see `remote_common::proof`), and every later
+//! connection must show the same
 //! certificate before a single byte is sent. That is why this module speaks HTTP/1.1 itself over a plain
 //! `native_tls` stream instead of using ureq: the check has to sit between the handshake and the request, and the
 //! answer is passed back to the page as a stream (a video is never read whole).
@@ -46,10 +47,12 @@ const BODY_LIMIT: u64 = 64_000_000;
 const CHECK_EVERY: Duration = Duration::from_secs(20);
 /// How long finding waits for answers.
 const FIND_WAIT: Duration = Duration::from_millis(1500);
+/// How long a saved computer found at a new address has to show its certificate there before it is believed.
+const PROVE_WAIT: Duration = Duration::from_secs(2);
 /// Mixed into DPAPI's encryption so another program's DPAPI call cannot decrypt the tokens by accident.
 const DPAPI_SALT: &[u8] = b"fridae-remote-client-v1";
 
-const UNREACHABLE: &str = "Couldn't reach that computer. Check that it's on, Fridae is open there with network access turned on, and the address is right.";
+const UNREACHABLE: &str = "Couldn't reach that computer. Make sure Fridae is open there with Let my other computers connect on, that both are on the same network, and that the address is right.";
 
 /// A computer this one paired with. `token` is None once the host has said we are no longer paired.
 pub struct Machine {
@@ -488,7 +491,7 @@ fn failed(why: &str) -> Value {
 }
 
 /// POST /api/remote/pair `{addr, port?, code, fp?}`: connect, check the certificate against the one found (if
-/// any), say hello, send the proof, and save the computer with the token it gives.
+/// any), say hello, send the proof, check the host's confirmation, and save the computer with the token it gives.
 pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     if !cfg!(windows) {
         return failed("Only on Windows for now.");
@@ -518,7 +521,8 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
         return failed("That computer isn't showing a pairing code. Make a new code in its Settings.");
     }
     let my_id = me["id"].as_str().unwrap_or("");
-    let ask = json!({"device_id": my_id, "device_name": me["name"], "proof": remote_common::proof(&code, &fp, my_id)});
+    let proof = remote_common::proof(&code, &fp, my_id);
+    let ask = json!({"device_id": my_id, "device_name": me["name"], "proof": proof.client});
     // pinned to the certificate the proof was made for: a different one now means someone sits in between
     let answer = match call_json(&addr, port, Some(&fp), "POST", "/remote/pair", Some(&ask), QUICK_WAIT) {
         Ok((_, v, _)) => v,
@@ -528,6 +532,10 @@ pub fn pair_with(book: &Book, me: &Value, body: &Value) -> Value {
     let token = answer["token"].as_str().unwrap_or("");
     if answer["ok"] != true || token.is_empty() {
         return failed(answer["error"].as_str().unwrap_or("That computer didn't accept the pairing. Try a new code."));
+    }
+    // the host shows it knows the code too: a computer that only says yes is never saved
+    if !same(answer["confirm"].as_str().unwrap_or(""), &proof.confirm(token)) {
+        return failed("That computer couldn't show it knows the code, so it wasn't paired. Make sure it's your own computer, then make a new code there and try again.");
     }
     if protect(token.as_bytes()).is_none() {
         return failed("Couldn't save that computer safely on this one.");
@@ -650,16 +658,27 @@ pub(crate) fn check_all_within(book: &Book, wait: Duration) {
 
 // ---- finding ----
 
-/// Send "who is there" from `bind` to each of `targets`, collect answers for `wait`, and list them. A saved
-/// computer that answers from a new address with the same certificate has its address updated.
+/// One answer to "who is there".
+struct Reply {
+    id: String,
+    name: String,
+    addr: String,
+    port: u16,
+    fp: String,
+}
+
+/// Send "who is there" from `bind` to each of `targets`, collect answers for `wait`, and list them, one row for each
+/// computer and certificate. Anyone on the network can answer with any id and fingerprint, so a saved computer is
+/// listed (as paired) only with its own certificate, and only at its saved address or at a new address that shows
+/// that certificate when asked (its hello, pinned); only then is its saved address moved there. An answer with a
+/// saved computer's id and another certificate is at most a row of its own, never paired.
 pub fn discover_on(book: &Book, me_id: &str, bind: &str, targets: &[SocketAddr], wait: Duration) -> Value {
     let Ok(sock) = UdpSocket::bind(bind) else { return json!({"found": []}) };
     let _ = sock.set_broadcast(true);
     for t in targets {
         let _ = sock.send_to(DISCOVER_ASK, t);
     }
-    let saved: Vec<Value> = book.all();
-    let mut found: Vec<Value> = Vec::new();
+    let mut replies: Vec<Reply> = Vec::new();
     let end = Instant::now() + wait;
     let mut buf = vec![0u8; 64 * 1024];
     while let Some(left) = end.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
@@ -672,24 +691,62 @@ pub fn discover_on(book: &Book, me_id: &str, bind: &str, targets: &[SocketAddr],
         let Ok(v) = serde_json::from_slice::<Value>(&buf[..n]) else { continue };
         let (id, fp) = (v["id"].as_str().unwrap_or(""), v["fp"].as_str().unwrap_or("").to_ascii_lowercase());
         let port = v["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
-        if v["fridae"] != 1 || id.is_empty() || id == me_id || port == 0 || fp.is_empty() || found.iter().any(|f| f["id"] == id) {
+        let addr = from.ip().to_string();
+        if v["fridae"] != 1 || id.is_empty() || id == me_id || port == 0 || fp.is_empty() || replies.len() >= 256 {
             continue;
         }
-        let addr = from.ip().to_string();
-        let mine = saved.iter().find(|m| m["id"] == id);
-        if mine.is_some_and(|m| m["fp"] == fp.as_str() && (m["addr"] != addr.as_str() || m["port"] != port)) {
-            // the same certificate is the same computer; another one claiming its id is not believed
+        if replies.iter().any(|r| r.id == id && r.fp == fp && r.addr == addr && r.port == port) {
+            continue;
+        }
+        let name = v["name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or("Other computer").chars().take(80).collect();
+        replies.push(Reply { id: id.into(), name, addr, port, fp });
+    }
+
+    let saved: Vec<Value> = book.all();
+    let mut found: Vec<Value> = Vec::new();
+    let mut done: Vec<(String, String)> = Vec::new();
+    for r in &replies {
+        if done.iter().any(|(id, fp)| *id == r.id && *fp == r.fp) {
+            continue;
+        }
+        done.push((r.id.clone(), r.fp.clone()));
+        let row = |c: &Reply, paired: bool| json!({"id": c.id, "name": c.name, "addr": c.addr, "port": c.port, "fp": c.fp, "paired": paired});
+        let Some(mine) = saved.iter().find(|m| m["id"] == r.id.as_str()) else {
+            found.push(row(r, false));
+            continue;
+        };
+        if mine["fp"] != r.fp.as_str() {
+            found.push(row(r, false));
+            continue;
+        }
+        // the saved computer's own certificate: where it was, or where it shows that certificate now
+        let all: Vec<&Reply> = replies.iter().filter(|c| c.id == r.id && c.fp == r.fp).collect();
+        let chosen = all.iter().find(|c| mine["addr"] == c.addr.as_str() && mine["port"] == c.port).copied().or_else(|| shows_certificate(&all));
+        let Some(c) = chosen else { continue };
+        if mine["addr"] != c.addr.as_str() || mine["port"] != c.port {
             book.change(|list| {
-                if let Some(m) = list.iter_mut().find(|m| m.id == id) {
-                    m.addr = addr.clone();
-                    m.port = port;
+                if let Some(m) = list.iter_mut().find(|m| m.id == c.id && m.fp == c.fp) {
+                    m.addr = c.addr.clone();
+                    m.port = c.port;
                 }
             });
         }
-        found.push(json!({"id": id, "name": v["name"].as_str().unwrap_or("Other computer"), "addr": addr, "port": port, "fp": fp,
-                          "paired": mine.is_some_and(|m| m["paired"] == true)}));
+        found.push(row(c, mine["paired"] == true));
     }
     json!({"found": found})
+}
+
+/// The first of these answers (all with one id and certificate) whose address really has that certificate: each is
+/// asked for its hello, pinned, at once, within `PROVE_WAIT`.
+fn shows_certificate<'a>(all: &[&'a Reply]) -> Option<&'a Reply> {
+    let proven: Vec<bool> = thread::scope(|s| {
+        let asks: Vec<_> = all
+            .iter()
+            .map(|c| s.spawn(move || matches!(call_json(&c.addr, c.port, Some(&c.fp), "GET", "/remote/hello", None, PROVE_WAIT), Ok((200, v, _)) if v["id"] == c.id.as_str())))
+            .collect();
+        asks.into_iter().map(|a| a.join().unwrap_or(false)).collect()
+    });
+    all.iter().zip(proven).find(|(_, ok)| *ok).map(|(c, _)| *c)
 }
 
 /// Where "who is there" goes on the real network: everyone on every network this computer is on.

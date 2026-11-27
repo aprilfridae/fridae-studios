@@ -3,8 +3,10 @@
 //! A computer that lets others connect ("the host") shows a pairing code. The computer that connects ("the
 //! client") never sends the code itself: it sends a proof made from the code, the host's certificate fingerprint as
 //! the client saw it, and the client's own id. The host makes the same proof with its own fingerprint; they match
-//! only when both know the code and nobody sat in between with a different certificate. The proof is slow to make
-//! (PBKDF2, 200 000 rounds) so a recorded proof cannot be tried against every code in the five minutes a code lasts.
+//! only when both know the code and nobody sat in between with a different certificate. The host then answers with
+//! its own confirmation, made from the same key and the token it gives, so the client saves only a computer that
+//! knew the code as well. The key is slow to make (PBKDF2, 200 000 rounds) so a recorded proof cannot be tried
+//! against every code in the five minutes a code lasts.
 
 use std::{fs, path::PathBuf};
 
@@ -104,11 +106,27 @@ pub fn pbkdf2_sha256(password: &[u8], salt: &[u8], rounds: u32) -> [u8; 32] {
     out
 }
 
-/// The pairing proof (lowercase hex): PBKDF2-HMAC-SHA256 of the normalised code, salted with
-/// `fridae-pair-v1|<certificate fingerprint>|<client id>`.
-pub fn proof(code: &str, fingerprint: &str, client_id: &str) -> String {
+/// Both halves of pairing, from one slow key: `client` is what the client sends to show it knows the code, and
+/// `confirm(token)` what the host sends back with the token to show it knows the code too.
+pub struct Proof {
+    pub client: String,
+    key: [u8; 32],
+}
+
+impl Proof {
+    /// The host's half (lowercase hex), for the token it gives: HMAC of `host|<token>` with the key.
+    pub fn confirm(&self, token: &str) -> String {
+        hex(&hmac_sha256(&self.key, format!("host|{token}").as_bytes()))
+    }
+}
+
+/// The pairing proof. The key is PBKDF2-HMAC-SHA256 of the normalised code, salted with
+/// `fridae-pair-v1|<certificate fingerprint>|<client id>`; the client's half is the HMAC of `client` with it
+/// (lowercase hex). Each side works out the key once.
+pub fn proof(code: &str, fingerprint: &str, client_id: &str) -> Proof {
     let salt = format!("fridae-pair-v1|{}|{}", fingerprint.to_ascii_lowercase(), client_id);
-    hex(&pbkdf2_sha256(normal_code(code).as_bytes(), salt.as_bytes(), PROOF_ROUNDS))
+    let key = pbkdf2_sha256(normal_code(code).as_bytes(), salt.as_bytes(), PROOF_ROUNDS);
+    Proof { client: hex(&hmac_sha256(&key, b"client")), key }
 }
 
 /// Compare two strings in time that does not depend on where they differ.
@@ -186,12 +204,26 @@ mod tests {
 
     #[test]
     fn proof_depends_on_code_fingerprint_and_client() {
-        let p = proof("ABCDE-FGHJK", "AA11", "c1");
-        assert_eq!(p, proof("abcdefghjk", "aa11", "c1"));
+        let p = proof("ABCDE-FGHJK", "AA11", "c1").client;
+        assert_eq!(p, proof("abcdefghjk", "aa11", "c1").client);
         assert_eq!(p.len(), 64);
-        assert_ne!(p, proof("ABCDEFGHJM", "aa11", "c1"));
-        assert_ne!(p, proof("ABCDEFGHJK", "aa12", "c1"));
-        assert_ne!(p, proof("ABCDEFGHJK", "aa11", "c2"));
+        assert_ne!(p, proof("ABCDEFGHJM", "aa11", "c1").client);
+        assert_ne!(p, proof("ABCDEFGHJK", "aa12", "c1").client);
+        assert_ne!(p, proof("ABCDEFGHJK", "aa11", "c2").client);
+    }
+
+    #[test]
+    fn one_slow_key_makes_the_clients_proof_and_the_hosts_confirmation() {
+        let p = proof("ABCDE-FGHJK", "AA11", "c1");
+        let key = pbkdf2_sha256(b"ABCDEFGHJK", b"fridae-pair-v1|aa11|c1", PROOF_ROUNDS);
+        assert_eq!(p.client, hex(&hmac_sha256(&key, b"client")));
+        let c = p.confirm("tok");
+        assert_eq!(c, hex(&hmac_sha256(&key, b"host|tok")));
+        // neither gives away the other, nor the key; the confirmation is for this token and this code only
+        assert_ne!(c, p.client);
+        assert_ne!(p.client, hex(&key));
+        assert_ne!(c, p.confirm("tok2"));
+        assert_ne!(c, proof("ABCDEFGHJM", "aa11", "c1").confirm("tok"));
     }
 
     #[test]

@@ -30,6 +30,8 @@ fn fixture_fp() -> String {
 struct HostState {
     token: Option<String>,
     revoked: bool,
+    /// Poses as the computer: says yes to any pairing without knowing the code.
+    impostor: bool,
     pair_tries: u32,
     /// Requests that got as far as their first line: none may arrive over a certificate the client refused.
     requests: u32,
@@ -97,11 +99,16 @@ fn host_answer(tls: native_tls::TlsStream<TcpStream>, st: &Mutex<HostState>) {
     if path == "/remote/pair" {
         s.pair_tries += 1;
         let v: Value = serde_json::from_slice(&body).unwrap_or_default();
-        let want = proof(CODE, &fixture_fp(), v["device_id"].as_str().unwrap_or(""));
-        if same(&want, v["proof"].as_str().unwrap_or("")) {
+        if s.impostor {
             let token = random_hex(32);
             s.token = Some(token.clone());
-            return send(out, 200, json!({"ok": true, "token": token, "host_id": HOST_ID}));
+            return send(out, 200, json!({"ok": true, "token": token, "host_id": HOST_ID, "confirm": proof("ZZZZZ-ZZZZZ", &fixture_fp(), "x").confirm(&token)}));
+        }
+        let want = proof(CODE, &fixture_fp(), v["device_id"].as_str().unwrap_or(""));
+        if same(&want.client, v["proof"].as_str().unwrap_or("")) {
+            let token = random_hex(32);
+            s.token = Some(token.clone());
+            return send(out, 200, json!({"ok": true, "token": token, "host_id": HOST_ID, "confirm": want.confirm(&token)}));
         }
         return send(out, 200, json!({"ok": false, "error": "That code isn't right."}));
     }
@@ -311,32 +318,78 @@ fn the_background_check_follows_whether_a_computer_answers() {
     assert_eq!(b.find(HOST_ID).unwrap()["online"], true);
 }
 
+/// A "who is there" answerer on 127.0.0.1 that replies once, after `delay_ms`, as `id` on `port` with `fp`.
+fn answerer(id: &'static str, port: u16, fp: String, delay_ms: u64) -> std::net::SocketAddr {
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let at = sock.local_addr().unwrap();
+    thread::spawn(move || {
+        let mut buf = [0u8; 64];
+        if let Ok((n, from)) = sock.recv_from(&mut buf)
+            && &buf[..n] == DISCOVER_ASK
+        {
+            thread::sleep(Duration::from_millis(delay_ms));
+            let reply = json!({"fridae": 1, "id": id, "name": "Desk", "port": port, "fp": fp});
+            let _ = sock.send_to(reply.to_string().as_bytes(), from);
+        }
+    });
+    at
+}
+
 #[test]
 fn finding_lists_who_answers_and_updates_a_saved_address() {
     let b = book("discover");
     b.add(saved(HOST_ID, "10.9.9.9", Some("t0k")));
-    let answer = |id: &'static str| {
-        let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let at = sock.local_addr().unwrap();
-        thread::spawn(move || {
-            let mut buf = [0u8; 64];
-            if let Ok((n, from)) = sock.recv_from(&mut buf)
-                && &buf[..n] == DISCOVER_ASK
-            {
-                let reply = json!({"fridae": 1, "id": id, "name": "Desk", "port": 47999, "fp": fixture_fp()});
-                let _ = sock.send_to(reply.to_string().as_bytes(), from);
-            }
-        });
-        at
-    };
-    let targets = [answer(HOST_ID), answer(ME)];
+    let h = fake_host();
+    let targets = [answerer(HOST_ID, h.port, fixture_fp(), 0), answerer(ME, 47999, fixture_fp(), 0)];
     let found = discover_on(&b, ME, "127.0.0.1:0", &targets, Duration::from_millis(500));
     let list = found["found"].as_array().unwrap();
     assert_eq!(list.len(), 1, "{found}");
     let f = &list[0];
-    assert_eq!((f["id"].as_str(), f["addr"].as_str(), f["port"].as_u64(), f["paired"].as_bool()), (Some(HOST_ID), Some("127.0.0.1"), Some(47999), Some(true)));
+    assert_eq!((f["id"].as_str(), f["addr"].as_str(), f["port"].as_u64(), f["paired"].as_bool()), (Some(HOST_ID), Some("127.0.0.1"), Some(u64::from(h.port)), Some(true)));
     assert_eq!(f["fp"], fixture_fp());
-    assert_eq!(b.find(HOST_ID).unwrap()["addr"], "127.0.0.1");
+    // it showed the pinned certificate at the new address, so the saved address follows it
+    let m = b.find(HOST_ID).unwrap();
+    assert_eq!((m["addr"].as_str(), m["port"].as_u64()), (Some("127.0.0.1"), Some(u64::from(h.port))));
+}
+
+#[test]
+fn a_forged_finding_reply_never_moves_a_saved_computer_or_hides_it() {
+    let b = book("discover-forged");
+    let h = fake_host();
+    b.add(saved(HOST_ID, "127.0.0.1", Some("t0k")));
+    b.set_port(HOST_ID, h.port);
+    let other = "cd".repeat(32);
+    // first (faster) a reply with the saved computer's id and another certificate, then one with its own
+    // certificate from an address that cannot show it, then the real one
+    let targets = [answerer(HOST_ID, 47998, other.clone(), 0), answerer(HOST_ID, closed_port(), fixture_fp(), 50), answerer(HOST_ID, h.port, fixture_fp(), 150)];
+    let found = discover_on(&b, ME, "127.0.0.1:0", &targets, Duration::from_millis(600));
+    let list = found["found"].as_array().unwrap();
+    let real = list.iter().find(|f| f["fp"] == fixture_fp()).expect("the real computer is still listed");
+    assert_eq!((real["port"].as_u64(), real["paired"].as_bool()), (Some(u64::from(h.port)), Some(true)), "{found}");
+    let forged: Vec<&Value> = list.iter().filter(|f| f["fp"] == other.as_str()).collect();
+    assert!(forged.iter().all(|f| f["paired"] == false), "another certificate is never shown as the paired computer: {found}");
+    assert_eq!(list.iter().filter(|f| f["paired"] == true).count(), 1, "{found}");
+    let m = b.find(HOST_ID).unwrap();
+    assert_eq!((m["addr"].as_str(), m["port"].as_u64(), m["fp"].as_str()), (Some("127.0.0.1"), Some(u64::from(h.port)), Some(fixture_fp().as_str())), "the saved computer was moved");
+
+    // the same certificate claimed from a new address that cannot show it: not believed
+    let b = book("discover-forged-2");
+    b.add(saved(HOST_ID, "10.9.9.9", Some("t0k")));
+    let found = discover_on(&b, ME, "127.0.0.1:0", &[answerer(HOST_ID, closed_port(), fixture_fp(), 0)], Duration::from_millis(400));
+    assert_eq!(b.find(HOST_ID).unwrap()["addr"], "10.9.9.9", "{found}");
+}
+
+#[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+fn a_computer_that_says_yes_without_knowing_the_code_is_never_saved() {
+    let b = book("impostor");
+    let h = fake_host();
+    h.state.lock().unwrap().impostor = true;
+    let r = pair_with(&b, &me(), &json!({"addr": "127.0.0.1", "port": h.port, "code": CODE}));
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["error"].as_str().unwrap_or("").contains("couldn't show"), "{r}");
+    assert!(b.find(HOST_ID).is_none(), "an impostor was saved");
+    assert!(Book::open(&b.path).find(HOST_ID).is_none());
 }
 
 /// A TLS host on 127.0.0.1 with the test certificate that reads the start of a request and then misbehaves.

@@ -132,9 +132,10 @@ impl Pairing {
     }
 
     /// Pair a device with the live code: its proof must be the one made from the code, this host's fingerprint and
-    /// its id. A right proof uses the code up and gives the device its token; the fifth wrong one cancels the code.
-    /// Pairing a device again replaces its old entry, and so its old token.
-    pub fn pair(&mut self, device_id: &str, device_name: &str, proof: &str, fp: &str, now: u64) -> Result<String, String> {
+    /// its id. A right proof uses the code up and gives the device its token, with this host's confirmation that it
+    /// knows the code too (`Proof::confirm`); the fifth wrong one cancels the code. Pairing a device again replaces
+    /// its old entry, and so its old token.
+    pub fn pair(&mut self, device_id: &str, device_name: &str, proof: &str, fp: &str, now: u64) -> Result<(String, String), String> {
         let id_ok = (1..=64).contains(&device_id.len()) && device_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
         if !id_ok || proof.len() != 64 {
             return Err(BAD_ASK.into());
@@ -144,7 +145,8 @@ impl Pairing {
             self.code = None;
             return Err(RAN_OUT.into());
         }
-        if !rc::same(&rc::proof(&code.text, fp, device_id), &proof.to_ascii_lowercase()) {
+        let want = rc::proof(&code.text, fp, device_id);
+        if !rc::same(&want.client, &proof.to_ascii_lowercase()) {
             code.wrong += 1;
             if code.wrong >= MOST_WRONG {
                 self.code = None;
@@ -159,7 +161,8 @@ impl Pairing {
         self.devices.retain(|d| d.id != device_id);
         self.devices.push(Device { id: device_id.into(), name: if name.is_empty() { "A computer".into() } else { name }, hash: rc::token_hash(&token), paired_at: now, last_seen: now, saved_seen: now });
         self.save();
-        Ok(token)
+        let confirm = want.confirm(&token);
+        Ok((token, confirm))
     }
 
     /// The paired device a token belongs to, noting that it was used now.
@@ -528,7 +531,7 @@ fn serve<S: Read + Write>(ctx: &Ctx, slot: &Slot, s: &mut S) {
             let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
             let paired = ctx.pairing.lock().unwrap_or_else(|e| e.into_inner()).pair(&text("device_id"), &text("device_name"), &text("proof"), &ctx.fp, now());
             match paired {
-                Ok(token) => answer(c.s, 200, &json!({"ok": true, "token": token, "host_id": ctx.id})),
+                Ok((token, confirm)) => answer(c.s, 200, &json!({"ok": true, "token": token, "host_id": ctx.id, "confirm": confirm})),
                 Err(e) => answer(c.s, 200, &json!({"ok": false, "error": e})),
             }
         }
@@ -979,8 +982,8 @@ mod tests {
         let mut p = Pairing::load(&dir);
         let code = p.new_code(1000);
         assert_eq!(code.len(), rc::CODE_LEN);
-        let proof = rc::proof(&code, FP, "laptop");
-        let token = p.pair("laptop", "Laptop", &proof, FP, 1010).expect("the right proof pairs");
+        let proof = rc::proof(&code, FP, "laptop").client;
+        let token = p.pair("laptop", "Laptop", &proof, FP, 1010).expect("the right proof pairs").0;
         assert_eq!(token.len(), 64);
         assert!(token.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         assert_eq!(p.pair("laptop", "Laptop", &proof, FP, 1011).unwrap_err(), NO_CODE, "a code works once");
@@ -999,10 +1002,18 @@ mod tests {
     }
 
     #[test]
+    fn pairing_gives_the_device_the_hosts_confirmation_for_its_token() {
+        let mut p = Pairing::load(&fresh("remote-pair-confirm"));
+        let code = p.new_code(1000);
+        let (token, confirm) = p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop").client, FP, 1001).unwrap();
+        assert_eq!(confirm, rc::proof(&code, FP, "laptop").confirm(&token), "made from the code: only a host that knows it can say it");
+    }
+
+    #[test]
     fn a_code_runs_out_after_five_minutes() {
         let mut p = Pairing::load(&fresh("remote-pair-expiry"));
         let code = p.new_code(1000);
-        let proof = rc::proof(&code, FP, "laptop");
+        let proof = rc::proof(&code, FP, "laptop").client;
         assert_eq!(p.pair("laptop", "Laptop", &proof, FP, 1000 + CODE_LIFE).unwrap_err(), RAN_OUT);
         assert_eq!(p.pair("laptop", "Laptop", &proof, FP, 1000 + CODE_LIFE).unwrap_err(), NO_CODE);
     }
@@ -1015,23 +1026,23 @@ mod tests {
             assert_eq!(p.pair("laptop", "Laptop", &"0".repeat(64), FP, 1001).unwrap_err(), WRONG);
         }
         assert_eq!(p.pair("laptop", "Laptop", &"0".repeat(64), FP, 1001).unwrap_err(), TOO_MANY);
-        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop"), FP, 1002).unwrap_err(), NO_CODE);
+        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop").client, FP, 1002).unwrap_err(), NO_CODE);
         // the count is the code's: a new device id for each try does not start it again
         let code = p.new_code(2000);
         for i in 0..4 {
             assert_eq!(p.pair(&format!("dev{i}"), "Laptop", &"0".repeat(64), FP, 2001).unwrap_err(), WRONG);
         }
         assert_eq!(p.pair("dev9", "Laptop", &"0".repeat(64), FP, 2001).unwrap_err(), TOO_MANY);
-        assert_eq!(p.pair("dev10", "Laptop", &rc::proof(&code, FP, "dev10"), FP, 2002).unwrap_err(), NO_CODE);
+        assert_eq!(p.pair("dev10", "Laptop", &rc::proof(&code, FP, "dev10").client, FP, 2002).unwrap_err(), NO_CODE);
     }
 
     #[test]
     fn a_proof_made_with_another_fingerprint_or_device_is_wrong() {
         let mut p = Pairing::load(&fresh("remote-pair-mitm"));
         let code = p.new_code(1000);
-        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, "ff00", "laptop"), FP, 1001).unwrap_err(), WRONG);
-        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, FP, "other"), FP, 1001).unwrap_err(), WRONG);
-        assert!(p.pair("", "Laptop", &rc::proof(&code, FP, ""), FP, 1001).is_err(), "a device has an id");
+        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, "ff00", "laptop").client, FP, 1001).unwrap_err(), WRONG);
+        assert_eq!(p.pair("laptop", "Laptop", &rc::proof(&code, FP, "other").client, FP, 1001).unwrap_err(), WRONG);
+        assert!(p.pair("", "Laptop", &rc::proof(&code, FP, "").client, FP, 1001).is_err(), "a device has an id");
     }
 
     #[test]
@@ -1039,9 +1050,9 @@ mod tests {
         let dir = fresh("remote-pair-revoke");
         let mut p = Pairing::load(&dir);
         let code = p.new_code(1000);
-        let old = p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop"), FP, 1001).unwrap();
+        let old = p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop").client, FP, 1001).unwrap().0;
         let code = p.new_code(1100);
-        let new = p.pair("laptop", "Laptop 2", &rc::proof(&code, FP, "laptop"), FP, 1101).unwrap();
+        let new = p.pair("laptop", "Laptop 2", &rc::proof(&code, FP, "laptop").client, FP, 1101).unwrap().0;
         assert_eq!(p.devices_json().as_array().unwrap().len(), 1, "the same device once");
         assert_eq!(p.device_of(&old, 1102), None, "its old token is gone");
         assert_eq!(p.device_of(&new, 1102).as_deref(), Some("laptop"));
@@ -1055,7 +1066,7 @@ mod tests {
     fn last_used_is_noted() {
         let mut p = Pairing::load(&fresh("remote-pair-seen"));
         let code = p.new_code(1000);
-        let token = p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop"), FP, 1001).unwrap();
+        let token = p.pair("laptop", "Laptop", &rc::proof(&code, FP, "laptop").client, FP, 1001).unwrap().0;
         p.device_of(&token, 5000);
         assert_eq!(p.devices_json()[0]["last_seen"], 5000);
     }
@@ -1104,7 +1115,7 @@ mod tests {
         let local = stand_in();
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
         let code = pairing.lock().unwrap().new_code(1000);
-        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, FP, "laptop1"), FP, 1001).unwrap();
+        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, FP, "laptop1").client, FP, 1001).unwrap().0;
         let ctx = Ctx { pairing, fp: FP.into(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit: READ_LIMIT };
         let (code, said) = served(&ctx, &format!("POST /api/send HTTP/1.1\r\nAuthorization: Bearer {token}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;x=y\r\n world\r\n0\r\n\r\n"));
         assert_eq!((code, said["body"].clone(), said["token"].clone()), (207, json!("hello world"), json!("page-token")));
@@ -1286,7 +1297,7 @@ mod tests {
         let local = stand_in();
         let pairing = Arc::new(Mutex::new(Pairing::load(&dir)));
         let code = pairing.lock().unwrap().new_code(now());
-        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &cert.fp, "laptop1"), &cert.fp, now()).unwrap();
+        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &cert.fp, "laptop1").client, &cert.fp, now()).unwrap().0;
         let ctx = Arc::new(Ctx { pairing: pairing.clone(), fp: cert.fp.clone(), id: "host1".into(), name: "Desktop".into(), backend: Box::new(move || Some((local, "page-token".into()))), read_limit });
         let (l, _) = listen(ctx, &cert, "127.0.0.1", 0..=0, None).unwrap();
         (l, token, pairing, key)
@@ -1433,7 +1444,7 @@ mod tests {
         let code = pairing.lock().unwrap().new_code(now());
         // (the proof is made with the host's fingerprint, as a device reads it from the connection)
         let (_, _, fp) = ask(port, "GET", "/remote/hello", None, "");
-        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &fp, "laptop1"), &fp, now()).unwrap();
+        let token = pairing.lock().unwrap().pair("laptop1", "Laptop", &rc::proof(&code, &fp, "laptop1").client, &fp, now()).unwrap().0;
         let wait = long_wait(port, &token);
         // a connection opened while on, whose request comes after off
         let mut late = tls_to(port);
@@ -1468,12 +1479,13 @@ mod tests {
         let text = pairing.lock().unwrap().new_code(now());
         assert_eq!(ask(port, "GET", "/remote/hello", None, "").1["pairing"], true);
         let pair = |proof: &str| ask(port, "POST", "/remote/pair", None, &json!({"device_id": "laptop1", "device_name": "Laptop", "proof": proof}).to_string()).1;
-        let wrong = pair(&rc::proof("AAAAAAAAAA", &fp, "laptop1"));
+        let wrong = pair(&rc::proof("AAAAAAAAAA", &fp, "laptop1").client);
         assert_eq!((wrong["ok"].clone(), wrong["error"].clone()), (json!(false), json!(WRONG)));
-        let right = pair(&rc::proof(&text, &fp, "laptop1"));
+        let right = pair(&rc::proof(&text, &fp, "laptop1").client);
         assert_eq!((right["ok"].clone(), right["host_id"].clone()), (json!(true), json!("host1")));
         let token = right["token"].as_str().unwrap().to_string();
-        assert_eq!(pair(&rc::proof(&text, &fp, "laptop1"))["error"], NO_CODE, "a used code is refused");
+        assert_eq!(right["confirm"].as_str(), Some(rc::proof(&text, &fp, "laptop1").confirm(&token).as_str()), "the host shows it knows the code too");
+        assert_eq!(pair(&rc::proof(&text, &fp, "laptop1").client)["error"], NO_CODE, "a used code is refused");
 
         // served as the page's own request: its token added, the device's taken away, the body passed on
         let (code, said, _) = ask(port, "POST", "/api/send?x=1", Some(&token), r#"{"text":"hi"}"#);
