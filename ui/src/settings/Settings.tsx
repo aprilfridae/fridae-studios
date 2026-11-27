@@ -14,6 +14,7 @@ import { showPage, whenPageChanges } from "./state";
 import { skillsWaiting } from "./skills-data";
 import { General } from "./General";
 import { Appearance } from "./Appearance";
+import { Remote } from "./Remote";
 import { Connections } from "./Connections";
 import { Experts } from "./Experts";
 import { Permissions } from "./Permissions";
@@ -168,6 +169,7 @@ export function Settings() {
         <div class="su-body" data-settings-page-scroll="" ref={body}>
           {sec("general", "General", General)}
           {sec("appearance", "Appearance", Appearance)}
+          {sec("remote", "Other computers", Remote)}
           {sec("connections", "Connections", Connections)}
           {sec("experts", "Experts", Experts)}
           {sec("permissions", "Permissions", Permissions)}

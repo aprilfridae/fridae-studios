@@ -6,6 +6,7 @@ export const NAV: { title: string; pages: Page[] }[] = [
   { title: "App", pages: [
     { id: "general", name: "General", icon: svg(<><path d="M2 4.5h6.5M11.5 4.5H14M2 11.5h2.5M7.5 11.5H14" /><circle cx="10" cy="4.5" r="1.5" /><circle cx="6" cy="11.5" r="1.5" /></>) },
     { id: "appearance", name: "Appearance", icon: svg(<><circle cx="8" cy="8" r="5.5" /><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor" stroke="none" /></>) },
+    { id: "remote", name: "Other computers", icon: svg(<><rect x="1.5" y="3" width="8.5" height="6" rx="1" /><path d="M4 12h3.5M5.75 9v3" /><rect x="11.5" y="5.5" width="3" height="7" rx="0.8" /></>) },
   ] },
   { title: "AIs", pages: [
     { id: "connections", name: "Connections", icon: svg(<><circle cx="4" cy="8" r="2" /><circle cx="12" cy="8" r="2" /><path d="M6 8h4" /></>) },

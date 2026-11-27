@@ -255,3 +255,10 @@
   .st-nav.searching .st-rail-search { display: none; }
   .st-page { padding: 24px 20px 48px; }
 }
+/* Other computers: the pairing code, large, with what is left of its five minutes */
+.rm-pair { margin-top: 12px; }
+.rm-code { font: 500 28px/1.2 var(--mono); letter-spacing: 0.12em; color: var(--text); user-select: all; }
+.rm-pair .sub { margin: 4px 0 0; }
+.rm-left { font-variant-numeric: tabular-nums; }
+.rm-pair .act { margin: 8px 0 0; }
+.sr-status.rm-error { color: var(--warn); }

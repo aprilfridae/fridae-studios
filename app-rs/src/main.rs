@@ -38,6 +38,7 @@ mod promo;
 mod promo_tab;
 mod rag;
 mod remote_common;
+mod remote_host;
 mod research;
 mod server;
 mod share;
@@ -219,6 +220,7 @@ fn main() {
         thread::spawn(update::run_forever);
     }
     let url = server::start(paths::random_hex(3));
+    thread::spawn(remote_host::start); // network access for the user's other computers, when they left it on
     thread::spawn(vault_sync::watch); // the shared skill vault: a check once a day, after the first Download
 
     let event_loop = EventLoopBuilder::<Ui>::with_user_event().build();

@@ -760,9 +760,10 @@ pub fn update_config<R>(change: impl FnOnce(&mut Map<String, Value>) -> R) -> R 
 ///   which account pays for a turn
 /// - `opencode_model`, `opencode_model_signed_in`: the model every OpenCode chat and expert runs on when none is
 ///   named (`opencode::default_model`; one billed per use costs money, a free one undoes the user's plan)
+/// - `remote_listen`: other computers the user paired may run chats here over the network (`remote_host`)
 /// (`blender`, the program run as Blender, is set from a terminal with `rbx doctor`, so it is not one of them: a path
 /// inside a folder an AI is given is never used instead, `blender_ok`.)
-pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::swarm::STRONG_LEAD_KEY, "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING, "share_skills"];
+pub const GUARDED: &[&str] = &["allowed_commands", "use_env_keys", "gemini_use_api", "gemini_key", "gemini_images", "projects", "plugin_token", "expert_ai", "lead_picks_ai", "expert_summaries", crate::swarm::STRONG_LEAD_KEY, "rag_mode", crate::swarm::CEILING_KEY, crate::opencode::PICK_KEY, crate::opencode::PICK_SIGNED_KEY, crate::accounts::SETTING, "share_skills", "remote_listen"];
 
 /// A guarded setting's name as people read it (Setup's words).
 pub fn setting_name(key: &str) -> &'static str {
@@ -782,6 +783,7 @@ pub fn setting_name(key: &str) -> &'static str {
         "swarm_ceiling" => "Most experts working at once",
         "second_accounts" => "Second accounts",
         "share_skills" => "Share my skills",
+        "remote_listen" => "Let my other computers connect",
         // both are one setting to the user: the model picked for OpenCode (the second is a note the app keeps on it)
         "opencode_model" | "opencode_model_signed_in" => "OpenCode's model",
         _ => "a setting",
@@ -972,7 +974,7 @@ fn checked(key: &str, v: &Value) -> (Option<Value>, Vec<String>) {
                 .collect();
             Some(Value::Array(list))
         }
-        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "expert_summaries" | "strong_lead" | "opencode_model_signed_in" => v.as_bool().map(Value::from),
+        "use_env_keys" | "gemini_use_api" | "gemini_images" | "lead_picks_ai" | "expert_summaries" | "strong_lead" | "opencode_model_signed_in" | "remote_listen" => v.as_bool().map(Value::from),
         "gemini_key" | "plugin_token" => v.as_str().map(Value::from),
         // a model id as a tool could take it; whether OpenCode lists it is decided where it is used
         "opencode_model" => v.as_str().filter(|m| crate::expert_ai::model_id_ok(m)).map(Value::from),
@@ -3215,6 +3217,23 @@ mod tests {
         // and where the tools run agy to make an image is no agent's to write (agy starts what a folder's list names)
         assert!(app_protected().iter().any(|(p, dir)| *dir && p.ends_with("antigravity")));
         assert!(app_protected().iter().any(|(p, dir)| *dir && *p == PATHS.work.join(".agents")), "nor a list of tool servers in the work folder itself");
+    }
+
+    #[test]
+    fn letting_other_computers_connect_is_a_guarded_setting_an_agent_cannot_turn_on() {
+        assert!(GUARDED.contains(&"remote_listen"));
+        assert_eq!(setting_name("remote_listen"), "Let my other computers connect");
+        assert_eq!(checked("remote_listen", &serde_json::json!(true)).0, Some(serde_json::json!(true)));
+        assert!(checked("remote_listen", &serde_json::json!("yes")).0.is_none(), "only on or off");
+        // off (never set); an agent's file tool turns it on in the settings file
+        let st = home_store("remote-switch");
+        put(&st, serde_json::json!({"chat_ai": "claude"}));
+        let mut g = start_in(&st);
+        let mut cfg = file_of(&st);
+        cfg.insert("remote_listen".into(), serde_json::json!(true));
+        write_config(&st.config, &cfg);
+        assert_eq!(check_in(&mut g, &st), ["remote_listen"]);
+        assert_eq!(file_of(&st).get("remote_listen"), None, "put back to off");
     }
 
     #[test]

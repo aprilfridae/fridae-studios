@@ -230,6 +230,9 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/skills" {
         // Setup › Skills: the library's index and the decisions waiting (`skills::api_get`)
         send_json(crate::skills::api_get())
+    } else if path == "/api/remote/host" {
+        // Settings, Other computers: network access, the pairing code and the paired computers (remote_host.rs)
+        send_json(crate::remote_host::api_get())
     } else if path == "/api/rag/status" {
         // Setup's knowledge index: the mode, `rag check` (for ?mode=, else the chosen one), the service, the setup step
         send_json(crate::rag::status(query(url, "mode").as_deref()))
@@ -614,6 +617,8 @@ fn post(path: &str, body: Value) -> Reply {
             }
             send_json(json!({"ok": true, "strong_lead": paths::strong_lead_on()}))
         }
+        // Settings, Other computers: the user's presses only (network access is a guarded setting)
+        "/api/remote/host" => send_json(crate::remote_host::api_post(&body)),
         // Setup's knowledge index (`rag`): the mode (a guarded setting), a setup step, a test query, a rebuild
         "/api/rag/mode" => send_json(crate::rag::choose(&body)),
         "/api/rag/setup" => send_json(crate::rag::setup(&body)),
@@ -695,10 +700,19 @@ fn handle(mut req: Request, token: &str) {
     let _ = req.respond(resp);
 }
 
+/// The local server's port and this run's page token, for remote control's listener, which hands a paired computer's
+/// requests to this server as the page's own (`remote_host`).
+static LOCAL: std::sync::OnceLock<(u16, String)> = std::sync::OnceLock::new();
+
+pub fn local() -> Option<(u16, String)> {
+    LOCAL.get().cloned()
+}
+
 /// Start serving; returns the address of the page for the window to open.
 pub fn start(token: String) -> String {
     let server = Arc::new(Server::http("127.0.0.1:0").expect("could not open a local port"));
     let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
+    let _ = LOCAL.set((port, token.clone()));
     let url = format!("http://127.0.0.1:{port}/?t={token}");
     thread::spawn(textures::watch);
     thread::spawn(team::watch);
