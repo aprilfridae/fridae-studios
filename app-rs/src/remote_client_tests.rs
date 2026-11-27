@@ -109,6 +109,17 @@ fn host_answer(tls: native_tls::TlsStream<TcpStream>, st: &Mutex<HostState>) {
     if !paired {
         return send(out, 401, json!({"error": "not paired"}));
     }
+    if let Some(kind) = path.strip_prefix("/api/typed/") {
+        // a page or a drawing that could carry script, as a compromised host might send
+        let ctype = match kind { "html" => "text/html; charset=utf-8", "svg" => "image/svg+xml", "none" => "", _ => "image/png" };
+        let ctype = if ctype.is_empty() { String::new() } else { format!("Content-Type: {ctype}
+") };
+        let _ = write!(out, "HTTP/1.1 200 OK
+{ctype}Content-Length: 31
+
+<script>alert('host')</script>");
+        return;
+    }
     if path == "/api/chunked" {
         let _ = write!(out, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n5;x=1\r\nworld\r\n0\r\n\r\n");
         return;
@@ -381,4 +392,23 @@ fn one_slow_computer_does_not_hold_up_the_check_of_the_others() {
     assert!(t.elapsed() < Duration::from_secs(4), "took {:?}", t.elapsed());
     assert_eq!(b.find(HOST_ID).unwrap()["online"], true);
     assert_eq!(b.find("slow").unwrap()["online"], false);
+}
+
+#[test]
+#[cfg(windows)] // pairing keeps the token with DPAPI, which is Windows only
+fn what_a_host_sends_never_runs_as_this_computers_page() {
+    let (b, _h) = paired("defused");
+    let heads = |a: &Answer| a.headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.clone())).collect::<Vec<_>>();
+    let has = |h: &[(String, String)], k: &str, v: &str| h.iter().any(|(a, b)| a == k && b == v);
+    for (kind, want) in [("html", "text/plain; charset=utf-8"), ("svg", "text/plain; charset=utf-8"), ("none", "application/octet-stream"), ("png", "image/png")] {
+        let a = forward(&b, HOST_ID, "GET", &format!("/api/typed/{kind}"), &[], b"");
+        let h = heads(&a);
+        assert_eq!(h.iter().filter(|(k, _)| k == "content-type").count(), 1, "{kind}: {h:?}");
+        assert!(has(&h, "content-type", want), "{kind}: {h:?}");
+        assert!(has(&h, "content-security-policy", "sandbox") && has(&h, "x-content-type-options", "nosniff"), "{kind}: {h:?}");
+        let (status, body) = read(a);
+        assert_eq!((status, body), (200, json!("<script>alert('host')</script>")));
+    }
+    let a = forward(&b, HOST_ID, "GET", "/api/echo", &[], b"");
+    assert!(has(&heads(&a), "content-type", "application/json") && has(&heads(&a), "content-security-policy", "sandbox"));
 }

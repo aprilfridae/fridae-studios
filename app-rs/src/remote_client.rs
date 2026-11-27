@@ -568,6 +568,31 @@ pub fn split_m(url: &str) -> Option<(String, String)> {
 /// The page's headers that mean something to the host; nothing else (the page token above all) is passed on.
 const PASSED_ON: [&str; 4] = ["Content-Type", "Range", "If-Range", "Accept"];
 
+/// Types a browser would run script from if shown as a page.
+const SCRIPTABLE: [&str; 8] = ["text/html", "application/xhtml+xml", "image/svg+xml", "text/javascript", "application/javascript", "text/xml", "application/xml", "text/ecmascript"];
+
+/// A host's answer, made harmless to show. The page only ever needs JSON, pictures, video and attachments from
+/// another computer, and an answer is served on this computer's own page address: a host that had been taken over
+/// must not be able to send a page whose script then drives this computer's local API. So anything that could run
+/// script is served as plain text, an answer with no type as bytes, and every answer is sandboxed and never
+/// sniffed into something else.
+fn defused(mut answer: Answer) -> Answer {
+    let given = answer.header("Content-Type").map(|v| v.split(';').next().unwrap_or("").trim().to_ascii_lowercase());
+    let shown = match given.as_deref() {
+        None | Some("") => Some("application/octet-stream"),
+        Some(t) if SCRIPTABLE.contains(&t) || t.ends_with("+xml") || t.contains("script") => Some("text/plain; charset=utf-8"),
+        Some(_) => None,
+    };
+    if let Some(shown) = shown {
+        answer.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Type"));
+        answer.headers.push(("Content-Type".into(), shown.into()));
+    }
+    answer.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Security-Policy") && !k.eq_ignore_ascii_case("X-Content-Type-Options"));
+    answer.headers.push(("Content-Security-Policy".into(), "sandbox".into()));
+    answer.headers.push(("X-Content-Type-Options".into(), "nosniff".into()));
+    answer
+}
+
 /// Pass one call to a saved computer: `target` is its path and the page's query (the page token is taken out here).
 pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(String, String)], body: &[u8]) -> Answer {
     let Some((addr, port, fp, token)) = book.route(id) else { return Answer::json(404, json!({"error": "unknown computer"})) };
@@ -586,7 +611,7 @@ pub fn forward(book: &Book, id: &str, method: &str, target: &str, headers: &[(St
                 // the host revoked this computer (or forgot it): pairing again is the only way back
                 book.unpaired(id);
             }
-            answer
+            defused(answer)
         }
         Err(why) => {
             book.seen(id, false);
