@@ -11,6 +11,7 @@ import { store, type Machine } from "../store";
 import { at, eventFrom, machineOf, markOnline, withM } from "./route";
 
 const cursor: Record<string, number> = {};          /* machine -> the id of the last event read from it */
+const boots: Record<string, string> = {};            /* machine -> the run of its app those ids belong to (its replies' `boot`) */
 const following = new Set<string>();                 /* the machines a long-poll runs for */
 const projs: Record<string, any[]> = {};             /* machine -> its projects as last read: still shown, dimmed, while it is offline */
 const hist: Record<string, { chats: any[]; deleted: any[] }> = {};
@@ -34,12 +35,12 @@ export async function loadMachines() {
 
 /* One long-poll per machine. Its first batch is the chats it has open (history to the page); what follows is new.
    While it cannot be reached (or needs pairing again) it is asked again after 2 s, then 4, 8... up to 30 s.
-   When it answers again it may have been restarted, and a restarted app numbers its events from 1 again, under the
-   page's cursor: so it is caught up first (resync), and the same when a reply ever holds an id at or under the
-   cursor. */
+   When it answers again it is caught up first (resync). Each run of its app has its own `boot`, and numbers its events
+   from 1 again: a reply with another boot than the one the cursor belongs to means it was started again, and the
+   cursor starts over from there (resync). */
 async function follow(m: string) {
   following.add(m);
-  /* behind: "away" after a failed call, "restart" when a reply showed the app numbering its events again */
+  /* behind: "away" after a failed call, "restart" when a reply came from another run of its app */
   let wait = 2000, down = true, behind = "";
   const failed = async () => { markOnline(m, false); down = true; if (m in cursor && !behind) behind = "away"; await nap(m, wait); wait = Math.min(wait * 2, 30000); };
   while (known(m)) {
@@ -51,8 +52,9 @@ async function follow(m: string) {
     try { r = await api(at(m, "/api/events?after=" + (cursor[m] || 0))); } catch (e) {}
     if (!known(m)) break;
     if (!r || !Array.isArray(r.events)) { await failed(); continue; }
-    const first = !(m in cursor), list: any[] = [];
-    if (!first && r.events.some((e: any) => typeof e.id === "number" && e.id <= cursor[m])) { behind = "restart"; continue; }
+    const first = !(m in cursor), list: any[] = [], boot = typeof r.boot === "string" ? r.boot : "";
+    if (!first && boot !== (boots[m] || "")) { behind = "restart"; continue; }
+    boots[m] = boot;
     let after = cursor[m] || 0;
     for (const e of r.events) { if (typeof e.id === "number" && e.id > after) after = e.id; const x = eventFrom(m, e, !first); if (x) list.push(x); }
     cursor[m] = after; wait = 2000;
@@ -61,16 +63,18 @@ async function follow(m: string) {
   }
   following.delete(m);
 }
-/* Catch up with a machine after it was away, and read its projects and saved chats again. When its newest event id
-   is under the cursor (or a reply already showed ids at or under it) its app was started again: that id becomes the
-   cursor, so what it put back on starting is not shown twice. Otherwise the cursor stays, and the next poll brings what happened while it was away (a machine that
-   was only unreachable for a while loses nothing). */
+/* Catch up with a machine after it was away, and read its projects and saved chats again. When its app was started
+   again (another boot; or, from an app that sends none, a newest id under the cursor) its newest id becomes the cursor:
+   what it put back on starting is in the saved chats just read, and is not shown again. Otherwise the cursor stays,
+   and the next poll brings what happened while it was away (a machine that was only unreachable loses nothing). */
 async function resync(m: string, restarted: boolean) {
   let r: any = null;
   try { r = await api(at(m, "/api/events?after=0&wait=0")); } catch (e) {}
   if (!r || !Array.isArray(r.events)) return false;
   const newest = r.events.reduce((n: number, e: any) => (typeof e.id === "number" && e.id > n ? e.id : n), 0);
-  if (restarted || newest < (cursor[m] || 0)) cursor[m] = newest;
+  const boot = typeof r.boot === "string" ? r.boot : "";
+  if (restarted || boot !== (boots[m] || "") || newest < (cursor[m] || 0)) cursor[m] = newest;
+  boots[m] = boot;
   host.loadProjects(); host.reloadSaved();
   return true;
 }

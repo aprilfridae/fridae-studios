@@ -31,7 +31,7 @@ def local0():
             "history": {"chats": [], "deleted": []}, "next": 1}
 
 def remote0(mid):
-    if mid != "m1": return {"projects": [], "events": [], "history": {"chats": [], "deleted": []}, "off": False, "next": 1}
+    if mid != "m1": return {"projects": [], "events": [], "history": {"chats": [], "deleted": []}, "off": False, "next": 1, "boot": "boot0"}
     return {"projects": [{"path": CASTLE, "name": "Castle", "type": "game", "bible": True}],
             "events": [{"id": 1, "kind": "agent_new", "agent": "r1", "name": "Castle gates", "ai": "claude"},
                        {"id": 2, "kind": "project", "agent": "r1", "path": CASTLE, "name": "Castle", "type": "game", "bible": True},
@@ -41,7 +41,7 @@ def remote0(mid):
                        {"id": 6, "kind": "agent_new", "agent": "r2", "name": "Desk question", "ai": "claude"},
                        {"id": 7, "kind": "user", "agent": "r2", "text": "What is on this computer?"}],
             "history": {"chats": [{"id": "s9", "name": "Old castle chat", "project": CASTLE, "ai": "claude", "updated": NOW - 9000, "messages": 4}], "deleted": []},
-            "off": False, "next": 1}
+            "off": False, "next": 1, "boot": "boot0"}
 
 FP1, FP2 = "a1" * 32, "b2" * 32
 def machines0():
@@ -133,11 +133,17 @@ class H(BaseHTTPRequestHandler):
             o = body["off"]
             with COND: S["remote"][body["m"]]["off"] = ("off" if o is True else o or False); COND.notify_all()
             return self.send({"ok": True})
-        if p == "/mock/restart":  # {"m": id}: its app started again: its event ids begin at 1, its chats put back
+        # {"m": id, "fill": 0 | "equal" | n}: its app started again (a new boot): its event ids begin at 1, its chats
+        # put back; with fill, what it did on starting numbers up to its old newest id ("equal") or n past it
+        if p == "/mock/restart":
             with COND:
-                st = S["remote"][body["m"]]
-                st["events"] = [dict(e, id=i + 1) for i, e in enumerate(remote0(body["m"])["events"][:3])]; COND.notify_all()
-            return self.send({"ok": True})
+                st = S["remote"][body["m"]]; old = st["events"][-1]["id"] if st["events"] else 0
+                ev = [dict(e, id=i + 1) for i, e in enumerate(remote0(body["m"])["events"][:3])]
+                fill = body.get("fill") or 0
+                upto = old if fill == "equal" else (old + fill if fill else 0)
+                while len(ev) < upto: ev.append({"id": len(ev) + 1, "kind": "text", "agent": "r1", "text": "Put back " + str(len(ev) + 1) + "."})
+                st["events"] = ev; st["boot"] = "boot" + str(time.time()); COND.notify_all()
+            return self.send({"ok": True, "old": old, "newest": len(ev)})
         # ---- another computer, through this one's client ----
         if p.startswith("/m/"):
             parts = p.split("/", 3); mid = parts[2]; rest = "/" + (parts[3] if len(parts) > 3 else "")
@@ -148,10 +154,10 @@ class H(BaseHTTPRequestHandler):
             if rest == "/api/events":
                 after = int(q.get("after", ["0"])[0])
                 if q.get("wait", ["1"])[0] == "0":
-                    with COND: return self.send({"events": [e for e in st["events"] if e["id"] > after]})
+                    with COND: return self.send({"events": [e for e in st["events"] if e["id"] > after], "boot": st["boot"]})
                 ev = wait_events(st["events"], after, lambda: not st["off"])
                 if st["off"]: return self.refuse(st)
-                return self.send({"events": ev})
+                return self.send({"events": ev, "boot": st["boot"]})
             if rest == "/api/status": return self.send(RSTATUS)
             if rest.startswith("/img/"): return self.send(PNG, ctype="image/png")
             r = chat_api(st, rest, q, body, "r")

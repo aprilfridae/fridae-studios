@@ -17,7 +17,7 @@ const CASTLE = "m1~D:/games/castle";
   const wait = (ms) => pg.waitForTimeout(ms);
   const posts = async (path) => (await pg.evaluate(() => fetch("/mock/posts").then((r) => r.json()))).filter((p) => p[0] === path);
   const last = async (path) => { const x = (await posts(path)).pop(); return x && x[1]; };
-  const mock = (path, body) => pg.evaluate(([path, body]) => fetch(path, { method: "POST", body: JSON.stringify(body) }), [path, body]);
+  const mock = (path, body) => pg.evaluate(([path, body]) => fetch(path, { method: "POST", body: JSON.stringify(body) }).then((r) => r.json()), [path, body]);
   const text = (sel) => pg.evaluate((sel) => { const n = document.querySelector(sel); return n ? n.innerText.replace(/\s+/g, " ").trim() : null; }, sel);
   const vis = (sel) => pg.evaluate((sel) => { const n = document.querySelector(sel); return !!n && !!n.getClientRects().length && getComputedStyle(n).visibility !== "hidden"; }, sel);
   const box = (key) => '.pbox[data-box="' + key + '"]';
@@ -192,6 +192,24 @@ const CASTLE = "m1~D:/games/castle";
     await mock("/mock/rpush", { m: "m1", event: { kind: "text", agent: "r1", text: "After the restart." } });
     ok("r67 its new events show without a reload", await until(() => pg.evaluate(() => current === "m1~r1" && document.querySelector("#chat-main").innerText.includes("After the restart.")), 8000));
     ok("r68 what it put back is not shown twice", await pg.evaluate(() => document.querySelector("#chat-main").innerText.split("Build the gates").length - 1) === 1, await pg.evaluate(() => document.querySelector("#chat-main").innerText.split("Build the gates").length - 1));
+
+    // ---- restarted again, and by the time the page is back its new ids have reached (or passed) the old cursor: only
+    //      the boot tells; nothing it put back is shown as new, and what follows shows once each ----
+    const shown = (t) => pg.evaluate((t) => document.querySelector("#chat-main").innerText.split(t).length - 1, t);
+    for (const [fill, n, tag] of [["equal", 84, "equal"], [3, 88, "past"]]) {
+      await mock("/mock/off", { m: "m1", off: true });
+      await until(() => pg.evaluate((k) => document.querySelector('.pbox[data-box="' + k + '"]').classList.contains("off"), CASTLE), 9000);
+      const rs = await mock("/mock/restart", { m: "m1", fill });
+      await mock("/mock/off", { m: "m1", off: false });
+      ok("r" + n + " restart (" + tag + ": new ids " + rs.newest + ", old " + rs.old + "): back", await until(() => pg.evaluate((k) => !document.querySelector('.pbox[data-box="' + k + '"]').classList.contains("off"), CASTLE), 35000));
+      await wait(800);
+      await mock("/mock/rpush", { m: "m1", event: { kind: "text", agent: "r1", text: "First after " + tag + "." } });
+      await mock("/mock/rpush", { m: "m1", event: { kind: "text", agent: "r1", text: "Second after " + tag + "." } });
+      ok("r" + (n + 1) + " " + tag + ": new events show without a reload", await until(() => pg.evaluate((tag) => current === "m1~r1" && document.querySelector("#chat-main").innerText.includes("Second after " + tag + "."), tag), 8000), await pg.evaluate(() => document.querySelector("#chat-main").innerText.slice(-300)));
+      await wait(600);
+      ok("r" + (n + 2) + " " + tag + ": each shown once, none lost", (await shown("First after " + tag + ".")) === 1 && (await shown("Second after " + tag + ".")) === 1, [await shown("First after " + tag + "."), await shown("Second after " + tag + ".")]);
+      ok("r" + (n + 3) + " " + tag + ": what it did on starting is not replayed", (await shown("Put back")) === 0 && (await shown("Build the gates")) === 1, [await shown("Put back"), await shown("Build the gates")]);
+    }
 
     // ---- not paired any more (401): said plainly, and pairing again is one press away ----
     await mock("/mock/off", { m: "m1", off: "unpaired" });

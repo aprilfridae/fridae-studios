@@ -194,7 +194,10 @@ fn get(path: &str, url: &str) -> Reply {
     } else if path == "/api/events" {
         let after = query(url, "after").and_then(|v| v.parse().ok()).unwrap_or(0);
         let wait = query(url, "wait").and_then(|v| v.parse().ok()).unwrap_or(20.0);
-        send_json(json!({"events": BUS.after(after, wait)}))
+        // `boot`: made once per run of the app, so a page that follows this computer from another one can tell
+        // it was started again (its events are then numbered from 1 again)
+        static BOOT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| crate::remote_common::random_hex(8));
+        send_json(json!({"events": BUS.after(after, wait), "boot": *BOOT}))
     } else if path == "/api/history" {
         send_json(json!({"chats": agents::history(), "deleted": agents::deleted()}))
     } else if path == "/api/research" {
