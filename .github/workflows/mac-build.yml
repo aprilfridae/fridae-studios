@@ -1,0 +1,47 @@
+# The macOS download: built on GitHub's own Mac (Apple Silicon), because the Windows PC this project is made on
+# cannot build a Mac app. Started by hand (Actions > Build for macOS > Run workflow). With a release tag it also
+# attaches Fridae-macOS.dmg to that release; without one the .dmg is only kept as the run's download.
+name: Build for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the .dmg to this release (for example v2.8.0); leave empty to only build"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Python libraries the app packs (install.py's list) and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller numpy pillow opencv-python "fastembed==0.9.*" "qdrant-client==1.20.*"
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build the app and the .dmg
+        run: python build_mac.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fridae-macOS
+          path: build-out/Fridae-macOS.dmg
+
+      - name: Attach to the release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" build-out/Fridae-macOS.dmg --clobber --repo "${{ github.repository }}"

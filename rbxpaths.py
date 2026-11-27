@@ -5,7 +5,7 @@ WORK  everything the tools produce; always user-writable
 """
 import json, os, sys
 
-VERSION = "2.7.3"
+VERSION = "2.8.0"
 UPDATE_REPO = "aprilfridae/fridae-studios"  # where published releases live
 
 FROZEN = bool(getattr(sys, "frozen", False))
