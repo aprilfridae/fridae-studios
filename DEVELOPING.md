@@ -118,6 +118,12 @@ Where things live:
     Settings' three widths), `team.ts` (a team's words) and `sidebar.css`.
   - `overview/`: `Overview.tsx` (the top line, the "?" key, the canvas), `graph.ts` (the graph: what to show, the
     layout, the drawing, the pointer) and `overview.css`.
+  - `remote/`: the user's other computers. `route.ts` (a chat there is `<machine>~<id>`, a project `<machine>~<path>`,
+    its chats of no project `<machine>~`; `api()` sends a call naming one to `/m/<machine>/...` with the bare id and
+    puts the prefix back on the answer and on that computer's events), `remote.ts` (the paired computers, one
+    long-poll each with backoff while offline, their projects and saved chats added to this computer's, their status
+    for the AI chip), `Machines.tsx` (the chip left of the AI chip), `Pair.tsx` (the pairing dialog) and `remote.css`.
+    Checked by `tests/remote-page/run.sh`.
   The sidebar is drawn again often while agents work, so its rows are keyed and each is a `memo` of plain values: a
   step touches the one row it changes. The graph asks for a frame only while Overview is in front, the window can be
   seen and something moves or pulses (`fridae.overview.stats()` counts them); with less motion asked for, none.

@@ -27,6 +27,9 @@ import { NewProject, newProject } from "./project/NewProject";
 import { ProjectPanel, project } from "./project/Project";
 import { WindowBar, setUpFrame } from "./ui/WindowBar";
 import "./ui/window.css";
+import { api } from "./api";
+import * as remoteRoute from "./remote/route";
+import { boxStatus, start as startRemote, withHistory, withProjects } from "./remote/remote";
 
 const screens: Record<string, ComponentType<any>> = { review: Review, lightbox: Lightbox, settings: Settings, usage: UsageWindow, sidebar: Sidebar, "side-over": SideOver, overview: Overview,
   chat: ChatMain, "chat-top": TopBar, promos: Promos, newproj: NewProject, project: ProjectPanel, "win-bar": WindowBar };
@@ -46,6 +49,9 @@ w.fridae = {
   skills: { open: skOpen, count: skCount },
   chat,
   promos: { ...promos, onEngine }, project, newProject,
+  /* the old page's api() comes here, so a call about another computer's chat or project goes there (remote/route.ts) */
+  api,
+  remote: { start: startRemote, withProjects, withHistory, boxStatus, machineOf: remoteRoute.machineOf, bare: remoteRoute.bare, homeOf: remoteRoute.homeOf, isHome: remoteRoute.isHome, at: remoteRoute.at },
 };
 setUpFrame();
 /* the old page ran first: whatever it kept for the new screens is handed over now */

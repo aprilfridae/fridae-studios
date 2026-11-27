@@ -25,6 +25,7 @@ export type Host = {
   setScale(v: number): void; setTheme(next: { id: string; mode: string }): void;
   themes(): { THEMES: any; ORDER: string[]; colors(id: string, appearance: string): any };
   swarmCeiling(n: number): void;                  /* Most experts at once was changed */
+  remoteEvents(list: any[]): void;                /* events from another computer, already in the page's names (ui/src/remote) */
 };
 const missing = new Proxy({}, { get: () => () => undefined }) as Host;
 export let host: Host = missing;

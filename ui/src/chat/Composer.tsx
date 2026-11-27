@@ -11,6 +11,7 @@ import { C, EFFORTS, EFFORT_NAMES, accountWords, addClips, addFile, closePops, e
   removeAtt, send, setGeminiMode, setRunMode, setSelfTest, setText, switchAi, tellPick, text, togglePop } from "./compose";
 import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
+import { MachineChip } from "../remote/Machines";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 /* the chosen row of a menu */
@@ -180,6 +181,8 @@ export function Dock() {
               <button class="opt" id="add-clips" role="menuitem" onClick={async () => { chose("add"); const r = await api("/api/pick-files", { kind: "clips" }); addClips(r.paths || []); }}><span class="tick" /><span><b>Video clips</b><small>Used where they are, not copied.</small></span></button>
             </div>
           </span>
+          {/* which computer it runs on (ui/src/remote) */}
+          <MachineChip p={p} />
           <span class="pick">
             <button class="chip" id="model" aria-haspopup="dialog" aria-expanded={C.pop === "model" ? "true" : "false"} onClick={pop("model")}
               title={[H.aiName(ai), cur ? cur[1] : "", own ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>

@@ -913,6 +913,9 @@ try { const saved0 = JSON.parse(localStorage.getItem("place") || "null"); if (sa
 
 
 async function api(path, body) {
+  /* once app.js is here, its api() makes the call: a call about a chat or project on another of the user's computers
+     goes to that computer (ui/src/remote) */
+  if (window.fridae) return fridae.api(path, body);
   const r = await fetch(path, { method: body === undefined ? "GET" : "POST", headers: { "X-Token": TOKEN, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return r.json();
 }
@@ -958,8 +961,14 @@ function pane(id) {
 }
 /* an expert or helper another chat started: a chat of its own, read only, listed under that chat in the sidebar */
 const isHelper = (p) => !!(p && (p.parent || p.team));
-/* where a chat belongs: its game's folder, or "" for no game; an expert belongs where the chat that started it does */
-const projKey = (p) => { const of = p && p.parent && agents.get(p.parent); return (of && of.project && of.project.path) || (p && p.project && p.project.path) || ""; };
+/* Another of the user's computers (ui/src/remote): its chats are "<machine>~<id>" and its projects "<machine>~<path>";
+   its chats with no project belong to "<machine>~", which is no project at all, on that computer. */
+const homeOf = (id) => (window.fridae && id ? fridae.remote.homeOf(id) : "");
+const isHome = (key) => !!(window.fridae && key && fridae.remote.isHome(key));
+const machineOf = (key) => (window.fridae && key ? fridae.remote.machineOf(key) : "");
+/* where a chat belongs: its game's folder, or "" for no game ("<machine>~" on another computer); an expert belongs
+   where the chat that started it does */
+const projKey = (p) => { const of = p && p.parent && agents.get(p.parent); return (of && of.project && of.project.path) || (p && p.project && p.project.path) || homeOf(p && p.id); };
 /* the user's own chats (not helpers, not the researcher) */
 const isChat = (p) => !!p && !isHelper(p) && p.role !== "research";
 /* the chats listed for a project: started ones, plus the one in front */
@@ -969,7 +978,7 @@ function projectChats(key) {
 function select(id) {
   const p = agents.get(id); if (!p) return;
   current = id; draftOn = false;
-  const key = p.project || isHelper(p) ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : "");
+  const key = p.project || isHelper(p) ? projKey(p) : (wantProj[id] !== undefined ? wantProj[id] : homeOf(id));
   if (curProj !== key) curProj = key;
   /* coming back to the project opens the chat that was in front, not an expert of it */
   if (!isHelper(p)) lastChat[key] = id;
@@ -1018,18 +1027,20 @@ let ensuring = false;
 async function ensureChat(key, fresh) {
   if (ensuring) return null; ensuring = true;
   try {
-    let p = fresh ? null : [...agents.values()].find((x) => isChat(x) && !x.started && !x.busy && !x.project && !x.seed);
+    /* the chat is made on the computer the project (or its No project) is on: "<machine>~..." is another computer's */
+    const m = machineOf(key), there = isHome(key) ? "" : key;
+    let p = fresh ? null : [...agents.values()].find((x) => isChat(x) && !x.started && !x.busy && !x.project && !x.seed && machineOf(x.id) === m);
     let id = p && p.id;
     if (!id) {
-      const r = await api("/api/new", { ai: defaultAi() });
+      const r = await api(m ? fridae.remote.at(m, "/api/new") : "/api/new", { ai: defaultAi() });
       if (!r.ok) { note("All eight agents are busy. Close a chat you are done with, then try again."); return; }
       id = r.agent;
     }
-    if (key) wantProj[id] = key;
+    if (there) wantProj[id] = key;
     const wantAi = draftAi || defaultAi(); draftAi = null;
     if (chatAi(pane(id)) !== wantAi) { await api("/api/ai", { agent: id, choice: wantAi }); pane(id).ai = wantAi; }
     if (draftSeed[key]) { pane(id).seed = draftSeed[key]; delete draftSeed[key]; }
-    if (key) {
+    if (there) {
       const r = await api("/api/project", { agent: id, action: "use", path: key });
       if (r && r.ok && r.project) { const q = pane(id); q.project = r.project; if (q.start) { q.start.step = startStep(r.project); q.start.paint(); } }
     }
@@ -1114,7 +1125,7 @@ async function projectRenamed(path, name) {
   reviewToStore();
 }
 async function projectDeleted(path) {
-  try { projects = await api("/api/projects"); } catch (e) {}
+  try { projects = await readProjects(); } catch (e) {}
   delete rvAll[path];
   if (curProj === path || homeProj === path) { homeProj = null; showAll(); }
   else { sideToStore(); paintView(); }
@@ -1144,8 +1155,8 @@ function leadsRun(p) {
 fridaeWait.unshift((f) => {
   f.chat.init({
     agents, rvAll, SW, STAGE_NAMES,
-    get current() { return current; }, get curProj() { return curProj; }, get view() { return view; }, get status() { return status; },
-    get projects() { return projects; }, get saved() { return saved; }, get AIS() { return AIS; }, get bootMark() { return bootMark; }, get draftOn() { return draftOn; },
+    get current() { return current; }, get curProj() { return curProj; }, get view() { return view; }, get status() { return boxStatus(); },
+    get projects() { return projects; }, get saved() { return saved; }, get AIS() { return boxAis(); }, get bootMark() { return bootMark; }, get draftOn() { return draftOn; },
     setDraftAi: (id) => { draftAi = id; }, tied: (p) => { delete wantProj[p.id]; },
     select, showDraft, showProject, ensureChat, setView, openProject, openInReview, openChatById, openSaved, loadHistory, loadReview, loadProjects, refresh,
     paintProject, paintNeeds, helloNeeds, say, slideMark, isHelper, isPage, isGameProj, projectChats, thingOf, prName, aiName, chatAi, caps, modeKept, leadsRun, runState,
@@ -1165,8 +1176,10 @@ function ago(ts) {
 }
 let histTimer = null;
 let saved = { chats: [], deleted: [] };
+/* this computer's saved chats, and those of the computers it is paired with (ui/src/remote) */
+async function readSaved() { const r = await api("/api/history"); return window.fridae ? fridae.remote.withHistory(r) : r; }
 function loadHistory() { clearTimeout(histTimer); histTimer = setTimeout(async () => {
-  try { saved = await api("/api/history"); } catch (e) { return; }
+  try { saved = await readSaved(); } catch (e) { return; }
   sideToStore();   /* the experts listed under a chat include the saved ones */
   chatPoke();
   savedToStore();
@@ -1179,8 +1192,10 @@ function splitExpert(name, expert) {
 }
 /* ---------- the projects there are (a new chat's setup card is ui/src/chat/StartCard.tsx) ---------- */
 let projects = { projects: [], default_parent: "", git: false };
+/* this computer's projects, then those of the computers it is paired with (ui/src/remote) */
+async function readProjects() { const r = await api("/api/projects"); return window.fridae ? fridae.remote.withProjects(r) : r; }
 async function loadProjects() {
-  try { projects = await api("/api/projects"); } catch (e) {}
+  try { projects = await readProjects(); } catch (e) {}
   for (const p of agents.values()) if (p.start && p.start.step === "folder") p.start.paint();
   sideToStore(); paintView();
 }
@@ -1207,7 +1222,7 @@ function panelClosed() {
   if (back && back !== document.body && document.contains(back) && back.getClientRects().length) back.focus({ preventScroll: true });
 }
 /* the project in front, as the app's list has it */
-const frontProj = () => (curProj && (projects.projects || []).find((x) => x.path === curProj)) || (curProj ? { path: curProj, name: prName(curProj) } : null);
+const frontProj = () => isHome(curProj) ? null : (curProj && (projects.projects || []).find((x) => x.path === curProj)) || (curProj ? { path: curProj, name: prName(curProj) } : null);
 /* sentence case for words that arrive in lower case, like a stage name */
 function cap(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
 /* "H:/games/obby-rush" -> "obby-rush" */
@@ -1873,6 +1888,7 @@ fridaeWait.unshift((f) => {
     },
     setTheme: (next) => { setTheme(next); f.store.set({ theme: Object.assign({}, themeChoice) }); },
     themes: () => ({ THEMES, ORDER: THEME_ORDER, colors: themeColors }),
+    remoteEvents,
     swarmCeiling: (n) => { status.swarm_ceiling = n; for (const s of swarm.values()) s.ceiling = n; paintBoard(); statusToStore(); },
   });
   f.store.set({ theme: Object.assign({}, themeChoice) });
@@ -1893,11 +1909,15 @@ document.addEventListener("keydown", (e) => {
 
 /* functions, not consts: they are needed while the page is still loading */
 function aiName(id) { const a = AIS.find((x) => x[0] === id); return a ? a[1] : id === "chatgpt" ? "ChatGPT" : "Claude"; }
+/* The app's status and AIs as the message box needs them: those of the computer the chat in front (or the empty page)
+   runs on, which is this one unless another was picked (ui/src/remote) */
+function boxStatus() { return (window.fridae && fridae.remote.boxStatus()) || status; }
+function boxAis() { const o = (boxStatus().ai || {}).offered; return Array.isArray(o) ? ALL_AIS.filter((a) => o.includes(a[0])) : AIS; }
 /* the AI new chats start on (Settings, General) */
-function defaultAi() { const d = (status.ai || {}).default; return AIS.some((a) => a[0] === d) ? d : "claude"; }
+function defaultAi() { const d = (boxStatus().ai || {}).default; return boxAis().some((a) => a[0] === d) ? d : "claude"; }
 function chatAi(p) { return (p && p.ai) || (!p && draftAi) || defaultAi(); }
 /* what an AI can do, from the app's table (status.ai.caps, caps.rs): the page asks it instead of naming AIs */
-function caps(ai) { return (((status || {}).ai || {}).caps || {})[ai] || {}; }
+function caps(ai) { return (((boxStatus() || {}).ai || {}).caps || {})[ai] || {}; }
 /* whether this AI keeps to a run mode by its own rules: one it cannot keep to is not offered (Ask me instead) */
 function modeKept(ai, id) { const m = caps(ai).modes; if (!m) return true; return id === "ask" ? m.ask !== false : id === "studio" ? m.studio !== false : m.full !== false; }
 /* Programs agents may run. Claude chats run without anyone watching, so a command the user has not allowed is
@@ -1931,7 +1951,7 @@ function paintSettingsNote() {
   document.body.appendChild(card);
 }
 /* Saved chats (Settings, Chats deletes one and puts one back: ui/src/settings/Chats.tsx) */
-async function reloadSaved() { try { saved = await api("/api/history"); } catch (e) {} savedToStore(); loadHistory(); }
+async function reloadSaved() { try { saved = await readSaved(); } catch (e) {} savedToStore(); loadHistory(); }
 async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   statusToStore(true);
@@ -1981,9 +2001,16 @@ async function poll() {
       const first = after === 0;
       for (const e of r.events) { after = e.id; onEvent(e); overviewNote(e); }
       if (r.events.length > 40) fridae.chat.calm();   /* a chat put back from its log is simply there: nothing fades in */
-      if (first) { bootMark = after; boot(); fridae.chat.toLatest(); swarmPrime(); }
+      if (first) { bootMark = after; boot(); fridae.chat.toLatest(); swarmPrime(); fridae.remote.start(); }
     } catch (e) { await new Promise((ok) => setTimeout(ok, 800)); }
   }
+}
+/* Events from another of the user's computers, already in the page's names (ui/src/remote polls each one): they go
+   where this computer's go. */
+function remoteEvents(list) {
+  for (const e of list) { onEvent(e); overviewNote(e); }
+  if (list.length > 40) fridae.chat.calm();
+  sideToStore();
 }
 /* (the events build the chats, which are ui/src/chat: they are read once app.js is here) */
 refresh(); loadProjects().then(async () => { await loadReview(); fridaeDo(() => poll()); }); fridaeDo((f) => f.promos.load()); loadHistory(); if (!ONCE) setInterval(() => refresh(), 4000);

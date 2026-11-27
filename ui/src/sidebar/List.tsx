@@ -13,11 +13,11 @@ function draw(r: Row, menuAt: string): any {
   switch (r.t) {
     case "all": return <AllRow key={r.key} on={r.on} busy={r.busy} />;
     case "review": return <ReviewRow key={r.key} on={r.on} n={r.n} k={r.k} strong={r.strong} />;
-    case "proj": return <ProjectRow key={r.key} path={r.path} name={r.name} cls={r.cls} n={r.n} strong={r.strong} working={r.working} menu={menuAt === r.path} ais={r.ais} />;
+    case "proj": return <ProjectRow key={r.key} path={r.path} name={r.name} cls={r.cls} n={r.n} strong={r.strong} working={r.working} menu={menuAt === r.path} ais={r.ais} where={r.where} />;
     case "chat": return <ChatRow key={r.key} id={r.id} name={r.name} on={r.on} live={r.live} count={r.count} open={r.open} tip={r.tip} ai={r.ai} />;
-    case "none": return <NoneRow key={r.key} cls={r.cls} busy={r.busy} ais={r.ais} />;
+    case "none": return <NoneRow key={r.key} path={r.path} cls={r.cls} busy={r.busy} ais={r.ais} where={r.where} />;
     /* a project and, the one in front, its chats: a box of its own */
-    case "pbox": return <div key={r.key} class={"pbox" + (r.on ? " on" : "")} data-box={r.path}>{r.rows.map((x) => draw(x, menuAt))}</div>;
+    case "pbox": return <div key={r.key} class={"pbox" + (r.on ? " on" : "") + (r.off ? " off" : "")} data-box={r.path}>{r.rows.map((x) => draw(x, menuAt))}</div>;
     case "add": return <AddRow key={r.key} on={r.on} />;
     case "expert": return <ExpertRowView key={r.key} id={r.id} of={r.of} cls={r.cls} dot={r.dot} who={r.who} job={r.job} small={r.small} turnTip={r.turnTip} tip={r.tip} on={r.on} tab={r.tab} />;
     case "more": return <MoreRowView key={r.key} id={r.id} text={r.text} open={r.open} tip={r.tip} />;
@@ -28,7 +28,7 @@ function draw(r: Row, menuAt: string): any {
 
 export function List() {
   const nav = useStore((s) => s.nav), chats = useStore((s) => s.chats), projects = useStore((s) => s.projects), review = useStore((s) => s.review), reviewDone = useStore((s) => s.reviewDone);
-  const saved = useStore((s) => s.saved), teams = useStore((s) => s.teams), ais = useStore((s) => s.ais), defaultAi = useStore((s) => { const d = ((s.status || {}).ai || {}).default; return s.ais.some((a) => a[0] === d) ? d : "claude"; });
+  const saved = useStore((s) => s.saved), teams = useStore((s) => s.teams), ais = useStore((s) => s.ais), machines = useStore((s) => s.machines), defaultAi = useStore((s) => { const d = ((s.status || {}).ai || {}).default; return s.ais.some((a) => a[0] === d) ? d : "claude"; });
   const m = menu.use(), [, tick] = useReducer((n: number) => n + 1, 0), list = useRef<HTMLElement>(null), front = useRef<string | null>(null), addWas = useRef<number | null>(null);
   redraw.use();
   /* an expert leaves the list half an hour after its last work, with nothing else happening: looked at twice a minute */
@@ -44,7 +44,7 @@ export function List() {
   if (grow.size && list.current) { endEase(); const add = !sideCalm() && list.current.querySelector(".proj.add"); if (add) addWas.current = add.getBoundingClientRect().top; }
   /* the row the keyboard is on, noted before anything moves (an expert's row may change lists) */
   const at = document.activeElement as HTMLElement | null, had = list.current && at && list.current.contains(at) ? at.dataset.k || "" : "";
-  const rows = rowsOf({ nav, chats, projects, review, reviewDone, saved, teams, ais, defaultAi }, Date.now());
+  const rows = rowsOf({ nav, chats, projects, review, reviewDone, saved, teams, ais, machines, defaultAi }, Date.now());
   useLayoutEffect(() => {
     const el = list.current; if (!el) return;
     const now = document.activeElement as HTMLElement | null;

@@ -1,0 +1,31 @@
+/* The machine chip and its menu (the message box's chip and menu styles, in ui/index.html), and the pairing dialog
+   (the sidebar's .dlg). Nothing new in colour: the dots are the page's own .dot. */
+.chip.mc .mc-icon { color: var(--dim); }
+.chip.mc:hover .mc-icon, .chip.mc[aria-expanded="true"] .mc-icon { color: var(--text); }
+/* only the arrow turns while the menu is open, never the screen */
+.chip.mc[aria-expanded="true"] .mc-icon { transform: none; }
+/* after the first message the chat stays where it is: the chip only names the computer */
+.chip.mc.fixed { padding-right: 12px; cursor: default; }
+.chip.mc.fixed:hover { color: var(--dim); background: none; }
+.chip.mc.fixed:hover .mc-icon { color: var(--dim); }
+#machine-menu { width: 240px; }
+#machine-menu .mc-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+#machine-menu .mc-t { display: grid; min-width: 0; }
+#machine-menu .mc-row b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#machine-menu hr { margin: 4px; border: 0; border-top: 1px solid var(--line); }
+
+.dlg.pair { width: min(460px, 100%); }
+.pair-h3 { margin: 20px 0 8px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text); }
+.pair-list { display: grid; gap: 4px; }
+.pair-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 6px 8px 6px 12px; border: 1px solid var(--line); border-radius: var(--r-s); }
+.pair-t { display: grid; min-width: 0; }
+.pair-t b { font-size: 14px; line-height: 20px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-t small { font: 400 12px/1.4 var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-done { padding-right: 4px; font-size: 12px; color: var(--faint); }
+.pair-none { margin: 0; padding: 12px; border: 1px dashed var(--line); border-radius: var(--r-s); font-size: 13px; line-height: 1.45; color: var(--dim); }
+.pair-hint { margin: 6px 0 0; font-size: 12px; line-height: 1.45; color: var(--faint); }
+.dlg.pair .keyrow { display: flex; gap: 8px; }
+.dlg .pair-code { display: block; width: 100%; margin: 16px 0 0; height: 40px; font: 500 18px/1 var(--mono); letter-spacing: 0.12em; text-align: center; }
+/* an error the way Settings says one: the words in the text colour, a thin red edge beside them */
+.pair-err { margin: 12px 0 0; padding-left: 8px; border-left: 2px solid var(--bad); font-size: 13px; line-height: 1.45; color: var(--text); }
+.pair-err:empty { display: none; }

@@ -26,7 +26,7 @@ export const chat = {
   closePops: () => closePops(), closeConv: () => head.closeConv(), closeRun: () => head.closeRun(),
   /* Escape: the menus close, and one of the message box's that had the keyboard hands it back to its button */
   escape() {
-    const m = C.pop && document.getElementById({ add: "add-menu", model: "settings-panel", mode: "mode-menu" }[C.pop as "add"]);
+    const m = C.pop && document.getElementById({ add: "add-menu", model: "settings-panel", mode: "mode-menu", machine: "machine-menu" }[C.pop as "add"]);
     const had = m && m.contains(document.activeElement) ? C.pop : "";
     closePops(); head.closeConv();
     if (had) document.getElementById(had)!.focus();

@@ -3,6 +3,10 @@
 import { api, TOKEN } from "../api";
 import { H } from "./host";
 import { poke } from "./chatStore";
+import { at, troubleOf, troubleSaid } from "../remote/route";
+import { openPair } from "../remote/Pair";
+import { store } from "../store";
+import { boxMachine } from "../remote/remote";
 
 export const MODELS: [string, string, string][] = [
   ["fable", "Fable", "Most capable; best for big or tricky builds"],
@@ -180,8 +184,22 @@ export function kickoffChat(p: any, kind: string) {
 export function sendApp(p: any, said: string) {
   api("/api/send", { agent: p.id, text: said, app: true, studio: !!p.studio, selftest: C.selfTest, gemini: C.geminiMode, autopilot: C.autoPilot, overnight: C.overNight || !!p.studio, full: C.fullAuto || !!p.studio, model: modelOf(p) || null, effort: effortOf(p), attachments: [] });
 }
+/* a computer that cannot be reached, or needs pairing again, gets nothing: the words stay in the box, and one line
+   says why (with the way to pair it again when that is what it needs) */
+function offline() {
+  const m = boxMachine(), t = troubleOf(m);
+  if (!t) return false;
+  const x = store.get().machines.find((y) => y.id === m);
+  if (x && (t === "unpaired" || t === "changed")) {
+    const b = document.createElement("button"); b.className = "linkish"; b.textContent = "Pair again";
+    b.onclick = () => { if (b.parentElement) b.parentElement.classList.remove("on"); openPair(x); };
+    H.say(troubleSaid(m) + " ", b);
+  } else note(troubleSaid(m));
+  return true;
+}
 export function send() {
   const p = cur();
+  if (offline()) return;
   if (!p) { sendFromDraft(); return; }
   if (H.isHelper(p)) return;   /* an expert's chat is read only */
   const said = text().trim();
@@ -277,7 +295,8 @@ export function addFile(file: File | null) {
   reader.onload = async () => {
     if (image) { a.preview = reader.result as string; poke(); }
     try {
-      const r = await api("/api/attach", { data: reader.result, filename: file.name || "" });
+      /* the file goes to the computer the message will go to (ui/src/remote) */
+      const r = await api(at(boxMachine(), "/api/attach"), { data: reader.result, filename: file.name || "" });
       if (r.ok) { a.name = r.name; a.image = r.kind === "image"; } else a.failed = true;
     } catch (e) { a.failed = true; }
     if (a.failed) { C.pending = C.pending.filter((b) => b !== a); note("Could not attach " + a.label + "."); }
