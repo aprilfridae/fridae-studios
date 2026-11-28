@@ -185,6 +185,12 @@ Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
   `ModelPickerContent.tsx`, `ModelPickerSidebar.tsx`, `ModelListRow.tsx`, `ComposerModelEffort.tsx`) and
   `apps/web/src/components/ui/` (`menu.tsx`, `popover.tsx`, `combobox.tsx`). In `ui/index.html` and
   `ui/src/chat/Composer.tsx`.
+- **App toolbox** (`app-rs/src/app_mcp/`, the toolbox rows and approval card in `ui/src/chat/`): a port of T3 Code's
+  app-control MCP server at commit 9ceb8bfb: its streamable-HTTP admission (`McpHttpServer.ts`), per-chat credentials
+  (`McpSessionRegistry.ts`), access rules (`McpToolAccess.ts`, `threadAccess.ts`, `delegatedTaskModes.ts`), deferred
+  tools (`McpToolExposure.ts`), stdio bridge (`AcpMcpStdioBridge.ts`), tool names and descriptions (the toolkits),
+  agent instructions (`orchestrationInstructions.ts`) and tool-row labels (`t3McpToolPresentation.ts`), with "thread"
+  read as "chat". The Allow/Don't card is Fridae's own, its waiting modelled on T3 Code's `request_secret`.
 
 Not taken: T3 Code's name, wordmark, logos, icons, artwork and its own branded theme, which its `TRADEMARK.md` keeps
 out of the MIT licence. Fridae is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows
