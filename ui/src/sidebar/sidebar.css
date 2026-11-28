@@ -7,23 +7,24 @@
 .side-grip.drag::after { opacity: 0.6; transition-delay: 0s; }
 .side-grip:focus-visible::after { background: var(--focus); opacity: 1; transition-delay: 0s; }
 body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
-.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
+.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--side-line); background: var(--side-bg); color: var(--side-ink); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
 .side-list { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 4px 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
 /* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
 .side-list::-webkit-scrollbar { display: none; }
 .proj { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 0 10px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
-.proj:hover { background: var(--hover); }
-.proj.on { background: var(--press); }
-.proj b { font-weight: 500; font-size: 14px; color: color-mix(in srgb, var(--text) 88%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.proj.on b, .proj:hover b { color: var(--text); }
+/* the sidebar's own row colours (T3 Code's sidebarRowHover and sidebarRowActive) */
+.proj:hover { background: var(--side-hover); }
+.proj.on { background: var(--side-on); }
+.proj b { font-weight: 500; font-size: 14px; color: color-mix(in srgb, var(--side-ink) 88%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj.on b, .proj:hover b { color: var(--side-ink); }
 .proj.none b, .proj.add b { font-weight: 400; }
 /* empty, the slot takes no room, so a long name runs on to the arrow */
 .proj .state { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 0; }
 /* the icon at the head of a row: 16px, quiet until the row is pointed at or in front */
-.p-ico { display: grid; place-items: center; width: 16px; height: 16px; color: var(--dim); transition: color var(--t-fast) ease; }
-.proj:hover .p-ico, .proj.on .p-ico { color: var(--text); }
+.p-ico { display: grid; place-items: center; width: 16px; height: 16px; color: var(--side-dim); transition: color var(--t-fast) ease; }
+.proj:hover .p-ico, .proj.on .p-ico { color: var(--side-ink); }
 /* what waits for the user: a small amber dot and the number, as T3 Code marks a folder that needs you */
 .proj .need { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 4px; border-radius: 4px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--dim); }
 .proj .need::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
@@ -78,8 +79,8 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .s-chat > .s-tw { position: absolute; z-index: 1; left: 8px; top: 8px; }
 .s-chat > .s-row { display: flex; align-items: center; gap: 8px; height: 36px; min-height: 0; padding: 0 10px 0 36px; }
 .s-chat > .s-row b { flex: 1; min-width: 0; font-size: 14px; color: color-mix(in srgb, var(--text) 72%, transparent); transition: color var(--t-fast) ease; }
-.s-chat > .s-row:hover b { color: var(--text); }
-.s-chat > .s-row.on b { color: var(--text); font-weight: 500; }
+.s-chat > .s-row:hover b { color: var(--side-ink); }
+.s-chat > .s-row.on b { color: var(--side-ink); font-weight: 500; }
 .s-row .s-now { flex: none; font-size: 12px; font-weight: 500; color: var(--text); }
 /* the arrow is 21px wide, so its point is on the half px that the 1px guide line under it is centred on */
 .s-tw { width: 21px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
@@ -87,11 +88,11 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .s-tw svg { transition: transform 160ms var(--ease); }
 .s-tw[aria-expanded="true"] svg { transform: rotate(90deg); }
 .s-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: var(--h-m); padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
-.s-row:hover { background: var(--hover); }
-.s-row.on { background: var(--press); }
+.s-row:hover { background: var(--side-hover); }
+.s-row.on { background: var(--side-on); }
 .s-row:focus-visible, .s-tw:focus-visible, .side-list .proj:focus-visible { outline-offset: -2px; }
-.s-row b { font-weight: 400; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.s-row.on b, .s-row:hover b { color: var(--text); }
+.s-row b { font-weight: 400; font-size: 13px; color: var(--side-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-row.on b, .s-row:hover b { color: var(--side-ink); }
 .s-row .s-n { font: 400 12px/1 var(--mono); color: var(--faint); }
 .s-row.on .s-n { color: var(--dim); }
 /* in a project on more than one computer, the other computer a chat runs on (model.ts chatsOf) */

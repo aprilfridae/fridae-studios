@@ -151,7 +151,13 @@ const PartView = keep(function PartView({ pt, row }: { pt: Part; row: Row; v: nu
     case "shots": return <div class={"shots" + en(pt)}>{pt.urls.map((u: string) => <button class="shot" onClick={(ev) => zoom((ev.currentTarget.firstChild as HTMLImageElement).src)}><img src={u + "?t=" + TOKEN} alt="Result image" /></button>)}</div>;
     case "blocked": return <Blocked pt={pt} row={row} p={p} />;
     case "refused": return <Refused pt={pt} row={row} p={p} />;
-    case "err": return <div class={"err" + en(pt)}>{pt.text}{pt.signIn && <SignIn ai={pt.signIn} />}</div>;
+    /* a turn that was stopped or cut short is a quiet line across the chat with the word in its middle, as T3 Code
+       marks it (TimelineSystemDivider); anything else that went wrong stays a box of its own, in the error tint */
+    case "err": {
+      const t = String(pt.text || "").trim(), stop = /^(stopped|interrupted|cancell?ed|aborted)\.?$/i.test(t);
+      if (stop && !pt.signIn) return <div class={"sys-line" + en(pt)} role="note"><span>{t.replace(/\.$/, "").replace(/^./, (c) => c.toUpperCase())}</span></div>;
+      return <div class={"err" + en(pt)}>{pt.text}{pt.signIn && <SignIn ai={pt.signIn} />}</div>;
+    }
     case "line": return <div class={"promo-line" + en(pt)}><span>{pt.text}</span><button class="linkish" onClick={pt.press}>{pt.go}</button></div>;
   }
   return null;

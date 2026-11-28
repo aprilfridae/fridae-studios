@@ -35,6 +35,25 @@ function Wire({ id, mode }: { id: string; mode: string }) {
   const html = mode === "system" ? wire(t.colors(id, "light"), "left") + wire(t.colors(id, "dark"), "right") : wire(t.colors(id, mode));
   return <span class="th-wire" aria-hidden="true" dangerouslySetInnerHTML={{ __html: html }}></span>;
 }
+/* A theme's swatch, after T3 Code's theme circles (ThemePreviewCircles.tsx and packages/shared/src/themePreview.ts;
+   MIT, see THIRD_PARTY.md): the theme's background, a little lighter or darker, with two soft blurred glows on it, one
+   in its accent colour and one in its send button's, at opposite corners. */
+const SPEC: Record<string, { target: string; accent: [number, number]; action: [number, number]; mid: number }> = {
+  light: { target: "#ffffff", accent: [72, 22], action: [18, 82], mid: 72 },
+  dark: { target: "#09090b", accent: [28, 78], action: [82, 18], mid: 62 },
+};
+function swatchStyle(c: any, mode: string) {
+  const s = SPEC[mode];
+  return {
+    backgroundColor: `color-mix(in oklab, ${c.canvas} 80%, ${s.target})`,
+    backgroundImage: `radial-gradient(circle at ${s.accent[0]}% ${s.accent[1]}%, ${c.accent} 0%, color-mix(in oklab, ${c.accent} ${s.mid}%, transparent) 28%, transparent 58%), radial-gradient(circle at ${s.action[0]}% ${s.action[1]}%, color-mix(in oklab, ${c.messageAction} 45%, transparent) 0%, transparent 55%)`,
+  };
+}
+const SUN = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2" /><path d="M6 1v1.2M6 9.8V11M1 6h1.2M9.8 6H11M2.5 2.5l.8.8M8.7 8.7l.8.8M2.5 9.5l.8-.8M8.7 3.3l.8-.8" /></svg>;
+const MOON = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 7.4A4 4 0 0 1 4.6 2.2a4 4 0 1 0 5.2 5.2Z" /></svg>;
+function Swatch({ c, mode }: { c: any; mode: string }) {
+  return <span class={"th-sw " + (mode === "light" ? "sw-l" : "sw-d")} aria-hidden="true"><i style={swatchStyle(c, mode)} /></span>;
+}
 const MODES = [["system", "System", "Follow the computer's light or dark setting"], ["light", "Light", "Use light mode"], ["dark", "Dark", "Use dark mode"]];
 
 export function Appearance() {
@@ -55,8 +74,15 @@ export function Appearance() {
         <div class="th-grid" id="th-grid">
           {t && t.ORDER.map((id) => {
             const on = theme.id === id, name = t.THEMES[id].name;
-            return <button class="th-card" type="button" data-theme={id} aria-pressed={on ? "true" : "false"} aria-label={"Use the " + name + " theme" + (on ? ", in use now" : "")} onClick={() => host.setTheme({ id, mode: theme.mode })}>
-              <Wire id={id} mode="system" /><span class="th-name"><span>{name}</span>{id === "fridae" && <small>Fridae's own</small>}</span></button>;
+            /* the card picks the theme and keeps the mode; a circle picks the theme in that mode only */
+            return <div class={"th-card" + (on ? " on" : "")} data-theme={id} onClick={() => host.setTheme({ id, mode: theme.mode })}>
+              <span class="th-sws">{["light", "dark"].map((mode) => {
+                const picked = on && (theme.mode === mode || theme.mode === "system");
+                return <button class="th-swb" type="button" aria-pressed={picked ? "true" : "false"} aria-label={"Use " + name + " in " + mode + " mode" + (picked ? ", in use now" : "")} title={"Use " + name + " in " + mode + " mode only"}
+                  onClick={(ev) => { ev.stopPropagation(); host.setTheme({ id, mode }); }}>
+                  <Swatch c={t.colors(id, mode)} mode={mode} />{picked && <span class="th-badge">{mode === "light" ? SUN : MOON}</span>}</button>;
+              })}</span>
+              <span class="th-name"><button type="button" aria-pressed={on ? "true" : "false"} aria-label={"Use the " + name + " theme" + (on ? ", in use now" : "")} onClick={(ev) => { ev.stopPropagation(); host.setTheme({ id, mode: theme.mode }); }}>{name}</button>{id === "fridae" && <small>Fridae's own</small>}</span></div>;
           })}
         </div>
       </section>

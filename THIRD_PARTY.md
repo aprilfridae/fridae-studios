@@ -158,9 +158,17 @@ Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
   ranking, and the switch, button and field shapes. From `apps/web/src/components/settings/` (`SettingsSidebarNav.tsx`,
   `settingsLayout.tsx`, `SettingsGroup.tsx`, `settingsSearch.ts`, `ThemeSettings.tsx`, `ThemeWireframe.tsx`),
   `apps/web/src/components/AppRouteModal.tsx` and `apps/web/src/components/ui/`.
-- **Themes**: the Graphite, Moss, Tide, Clay and Lilac palettes (light and dark) and the way a palette's colours
-  become the page's variables. From `packages/shared/src/themePalettes.ts` and `apps/web/src/index.css`. The palettes
-  are renamed here; Fridae's own theme is not from T3 Code.
+- **Themes**: the Graphite, Moss, Tide, Clay and Lilac palettes (light and dark), each with every colour role T3 Code
+  gives it (the sidebar and its rows, the user's messages, code, control fills, error and warning tints), and the way
+  a palette's colours become the page's variables. From `packages/shared/src/themePalettes.ts`,
+  `apps/web/src/themePalette.ts` and `apps/web/src/index.css`. The palettes are renamed here; Fridae's own theme is
+  not from T3 Code, and T3 Code's branded "T3 Chat" theme is not taken.
+- **Theme swatches**: the round light and dark swatch of each theme in Settings, Appearance (the theme's background
+  with blurred glows of its accent and send colours), the ring and the sun or moon on the one in use. From
+  `apps/web/src/components/settings/ThemePreviewCircles.tsx`, `ThemeSettings.tsx` and
+  `packages/shared/src/themePreview.ts`.
+- **Stopped turns**: a stopped or cut-short turn as a hairline across the chat with the word in its middle. From
+  `apps/web/src/components/chat/TimelineSystemDivider.tsx`.
 - **Glass**: the blurred, see-through surfaces of menus, pop-ups, the message box and the project panel. From the
   `surface-glass`, `dropdown-glass`, `dialog-glass` and `dialog-backdrop` utilities in `apps/web/src/index.css`.
 - **Usage**: the Usage window and the limit bars (how much is left, the even-pace line and the pace mark, when a limit

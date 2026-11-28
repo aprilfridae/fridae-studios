@@ -135,18 +135,26 @@
 .th-wire { position: relative; display: block; width: 100%; height: 140px; overflow: hidden; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
 .th-wire i { position: absolute; display: block; }
 .th-wire > i { inset: 0; }
-.th-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 256px), 1fr)); gap: 8px; width: 100%; }
-/* a theme's card: its picture, then its name. The ring that marks the one in use is drawn over the picture (::after),
-   so the picture cannot cover the ring's top half as it did when the ring was the card's own inset shadow */
-.th-card { position: relative; display: block; padding: 0; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); background: color-mix(in srgb, var(--card) 60%, transparent); text-align: left; outline: none; transition: background-color var(--t-mid) ease, border-color var(--t-mid) ease, transform var(--t-fast) var(--ease); }
-.th-card::after { content: ""; position: absolute; inset: -1px; z-index: 1; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; transition: opacity var(--t-mid) ease; }
-.th-card:hover { background: color-mix(in srgb, var(--text) 3%, var(--card)); border-color: color-mix(in srgb, var(--line-strong) 80%, transparent); }
-.th-card:active { transform: scale(0.99); }
-.th-card:focus-visible::after { box-shadow: inset 0 0 0 2px var(--focus); opacity: 1; }
-.th-card[aria-pressed="true"] { background: color-mix(in srgb, var(--text) 5%, var(--card)); }
-.th-card[aria-pressed="true"]::after { opacity: 1; }
-.th-card .th-wire { height: 112px; border: 0; border-radius: 11px 11px 0 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.th-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 176px), 1fr)); gap: 8px; width: 100%; }
+/* a theme: its light and dark swatches, round, side by side, and its name under them (T3 Code's theme cards) */
+.th-card { position: relative; display: block; padding: 0; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); background: color-mix(in srgb, var(--card) 60%, transparent); cursor: pointer; text-align: left; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease; }
+.th-card:hover { background: color-mix(in srgb, var(--ctl-hover) 40%, var(--card)); }
+.th-card.on { background: color-mix(in srgb, var(--ctl-hover) 70%, var(--card)); box-shadow: inset 0 0 0 1px var(--focus); }
+.th-sws { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 64px; padding: 12px 12px 0; }
+.th-swb { position: relative; display: grid; place-items: center; width: 68px; height: 68px; padding: 6px; border-radius: 50%; transition: transform 200ms var(--ease); }
+.th-swb:hover:not([aria-pressed="true"]) { transform: scale(1.05); }
+.th-swb:active { transform: scale(0.97); }
+.th-swb:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 60%, transparent); outline-offset: -5px; }
+.th-swb[aria-pressed="true"]::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; animation: th-ring 200ms var(--ease); }
+@keyframes th-ring { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+.th-sw { position: relative; display: block; width: 56px; height: 56px; overflow: hidden; border-radius: 50%; border: 2px solid var(--bg); }
+.th-sw.sw-d { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 1px 2px rgb(0 0 0 / 0.18); }
+.th-sw.sw-l { box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.10), 0 1px 2px rgb(0 0 0 / 0.08); }
+.th-sw i { position: absolute; inset: 0; border-radius: 50%; filter: blur(3px); transform: scale(1.1); }
+.th-badge { position: absolute; right: 2px; bottom: 2px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent); background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 .th-name { display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
+.th-name button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; font: inherit; color: inherit; text-align: left; }
+.th-name button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .th-name small { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--dim); }
 .modal .scale-row { margin: 0; flex-wrap: nowrap; }
 .ab-ver { font-weight: 400; color: var(--dim); }
