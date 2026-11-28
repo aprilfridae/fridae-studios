@@ -188,6 +188,10 @@ fn main() {
         if let Some(i) = args.iter().position(|a| a == "--board-hook") {
             std::process::exit(swarm::live::hook_main(&args[i + 1..]));
         }
+        // run by an AI as its stdio tool server: Fridae's toolbox over stdio (app_mcp/bridge.rs). Before any startup work
+        if args.iter().any(|a| a == "--mcp-bridge") {
+            std::process::exit(app_mcp::bridge::main());
+        }
     }
     #[cfg(target_os = "macos")]
     widen_path();
