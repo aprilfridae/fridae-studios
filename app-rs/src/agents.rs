@@ -5265,6 +5265,66 @@ pub fn pretty_model(model_id: &str) -> String {
     if out.is_empty() { "Claude".into() } else { out }
 }
 
+/// What the app's toolbox (`app_mcp`) reads of a chat, and the one thing it sets.
+impl Agent {
+    /// The switches and model of the chat's last message: its modes are read from it live on every toolbox call.
+    pub fn last_ask(&self) -> Ask {
+        self.st.lock().unwrap().last_ask.clone()
+    }
+
+    /// An expert, helper or researcher the app started for another chat.
+    pub fn is_subagent(&self) -> bool {
+        is_helper(&self.st.lock().unwrap())
+    }
+
+    /// The chat was closed (`remove_agent`).
+    pub fn is_closed(&self) -> bool {
+        self.st.lock().unwrap().closed
+    }
+
+    /// A turn is being sent or running, or a texture is being made.
+    pub fn is_working(&self) -> bool {
+        let st = self.st.lock().unwrap();
+        working(&st) || st.making
+    }
+
+    /// The chat keeps working on its own: overnight, or a studio run's Lead.
+    pub fn studio_lead_loop(&self) -> bool {
+        let st = self.st.lock().unwrap();
+        st.overnight_until > paths::now_secs() || st.last_ask.studio
+    }
+
+    /// The chat's log as it is now.
+    pub fn log_snapshot(&self) -> Vec<Value> {
+        self.st.lock().unwrap().log.clone()
+    }
+
+    /// The messages waiting for the turn to end: (queue id, text), in send order.
+    pub fn queue_items(&self) -> Vec<(String, String)> {
+        self.st.lock().unwrap().queue.iter().map(|(qid, text, _)| (qid.clone(), text.clone())).collect()
+    }
+
+    /// The mode of a chat the toolbox just started and has not given a message: an idle launched chat keeps it.
+    pub fn set_mode_for_launch(&self, full: bool) {
+        self.st.lock().unwrap().last_ask.full = full;
+    }
+
+    /// The chat that started this helper (`parent`).
+    pub fn parent_id(&self) -> Option<String> {
+        self.parent()
+    }
+
+    #[cfg(test)]
+    pub fn set_last_ask_for_test(&self, ask: Ask) {
+        self.st.lock().unwrap().last_ask = ask;
+    }
+
+    #[cfg(test)]
+    pub fn set_ai_for_test(&self, ai: &str) {
+        self.st.lock().unwrap().ai = Some(ai.to_string());
+    }
+}
+
 /// Start another chat the user can give its own task to.
 pub fn new_agent(ai: Option<&str>) -> Option<Arc<Agent>> {
     let agent = {

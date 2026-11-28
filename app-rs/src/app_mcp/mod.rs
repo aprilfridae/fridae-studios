@@ -5,6 +5,7 @@
 // Pieces the tools and the per-AI wiring use are built here first; until those tasks join, some are unused.
 #![allow(dead_code)]
 
+pub mod access;
 pub mod bridge;
 pub mod exposure;
 pub mod instructions;
@@ -270,6 +271,28 @@ pub fn wire_for(chat: &str, ai: &str, subagent: bool) -> Option<Wire> {
     let url = endpoint()?;
     let cred = keys::global().prepare(chat, ai, subagent);
     Some(Wire { url, raw: cred.raw, deferred: ai == "gemini" })
+}
+
+/// Tests: a new open chat on `ai`. The open chats of all tests share `agents::MAX_AGENTS` slots, so this waits (up
+/// to a minute) for one to be free rather than fail.
+#[cfg(test)]
+pub(crate) fn test_chat(ai: &str) -> std::sync::Arc<crate::agents::Agent> {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        if let Some(a) = crate::agents::new_agent(Some(ai)) {
+            return a;
+        }
+        assert!(std::time::Instant::now() < until, "no free chat slot for a minute");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Tests: close a chat a test made (its run marked over first) and revoke its key.
+#[cfg(test)]
+pub(crate) fn drop_chat(a: &crate::agents::Agent) {
+    a.set_running_for_test(false);
+    keys::global().revoke_chat(&a.id);
+    crate::agents::remove_agent(&a.id);
 }
 
 /// Tools that exist only in tests (called through `call_tool`, listed only where a test asks).
