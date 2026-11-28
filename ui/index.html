@@ -899,13 +899,6 @@ body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headf
 .fp { display: inline-flex; align-items: baseline; gap: 8px; height: 28px; line-height: 28px; padding: 0; margin: 0; border: 0; border-radius: 0;
   background: none; font-size: 13px; font-weight: 400; white-space: nowrap; color: var(--dim); text-underline-offset: 3px; transition: color var(--t-fast) ease; }
 .fp:hover { color: var(--text); background: none; }
-/* in Review, where a name picks what the page shows, the chosen one is underlined, the line drawn in from its left (and the
-   one left behind drawn back out) */
-#review .fp { position: relative; }
-#review .fp::after { content: ""; position: absolute; left: 0; right: 0; bottom: 4px; height: 1px; background: currentColor; pointer-events: none;
-  transform: scaleX(0); transform-origin: left center; transition: transform 260ms var(--ease); }
-#review .fp[aria-selected="true"]::after { transform: scaleX(1); }
-@media (prefers-reduced-motion: reduce) { #review .fp::after { transition: none; } }
 .fp.live, .fp[aria-selected="true"] { color: var(--text); }
 .fp[aria-selected="true"] { font-weight: 500; }
 .main > .scroll { grid-row: 2 / 4; grid-column: 1; padding-bottom: calc(var(--dock-h, 112px) + 12px); scroll-padding-bottom: calc(var(--dock-h, 112px) + 12px); }
