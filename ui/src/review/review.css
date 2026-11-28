@@ -5,12 +5,22 @@
    14px for what is read or pressed, 12px for a tab's count, and no more. */
 .rv-page { max-width: 960px; margin: 0 auto; container-type: inline-size; }
 #review * { font-family: inherit; font-size: 14px; letter-spacing: 0; }
-.rv-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 16px; }
+/* the bar the projects pull down in (chat/PullBar.tsx): at the top of the scrolling page, its whole width, and kept there,
+   just under the top bar, as the page scrolls under it (a sticky top is measured inside the page's padding, hence -24px).
+   Inside, the same look as Overview's bar (overview.css): a line saying how much waits, then a row per project */
+.rv-fold { position: sticky; top: -24px; z-index: 3; margin: -24px -24px 24px; }
+.rvbar { padding: 10px 0; }
+/* one row of projects, scrolling sideways when they do not fit (no bar shown for it) */
+.rv-tabs { display: flex; gap: 4px; margin: 0; padding: 0 24px; list-style: none; overflow-x: auto; scrollbar-width: none; }
+.rv-tabs::-webkit-scrollbar { display: none; }
 .rv-tabs[hidden] { display: none; }
-.rv-tabs button { display: inline-flex; align-items: center; gap: 8px; height: var(--h-m); padding: 0 12px; border-radius: var(--r-s); color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
-.rv-tabs button:hover { color: var(--text); background: var(--hover); }
-.rv-tabs button[aria-selected="true"] { color: var(--text); background: var(--press); font-weight: 600; }
-#review .rv-tabs button i { font-size: 12px; font-style: normal; font-weight: 400; font-variant-numeric: tabular-nums; color: var(--dim); }
+.rv-tabs li { flex: none; }
+#review .rv-row { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 10px; margin: 0; border: 0; border-radius: var(--r-s);
+  background: none; font-size: 13px; font-weight: 400; white-space: nowrap; color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
+#review .rv-row:hover { color: var(--text); background: var(--hover); }
+#review .rv-row[aria-selected="true"] { color: var(--text); font-weight: 500; background: color-mix(in oklab, var(--main) 14%, transparent); }
+.rv-row .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); opacity: 0.5; }
+.rv-row .dot.on { background: var(--main); opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklab, var(--main) 22%, transparent); }
 /* the chosen project's things sit in one box, a hairline between them */
 #rv-items { display: grid; grid-template-columns: minmax(0, 1fr); outline: 0; border: 1px solid var(--line); border-radius: var(--r-m); background: var(--card); }
 #rv-items[hidden], .rv-col[hidden] { display: none; }

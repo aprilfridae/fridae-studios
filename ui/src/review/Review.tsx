@@ -1,10 +1,11 @@
 /* Review: what waits for the user, and nothing else. A tab per project that has something (in the order set when
-   the page opened); in one box, the chosen project's things. A tab goes when its project has nothing left; with no
+   the page opened), in a bar that pulls down from the top as a chat's does; in one box, the chosen project's things. A tab goes when its project has nothing left; with no
    tabs the page says so in three words. */
 import { useEffect, useRef, useState } from "preact/hooks";
 import { store, useStore } from "../store";
 import { forget, needsCount, things, type Thing } from "./model";
 import { Tabs } from "./Tabs";
+import { PullBar } from "../chat/PullBar";
 import { ItemsBox } from "./ItemsBox";
 
 /* told to the old page when something is answered, so its counts follow */
@@ -45,10 +46,13 @@ export function Review({ onAnswered }: { onAnswered: Answer }) {
   const pick = (path: string) => { store.set({ reviewTab: path }); const box = page.current && page.current.parentElement; if (box) box.scrollTop = 0; };
   const at = tabs.findIndex((t) => t.path === on);
   return (
+    <>
+    {/* the projects with something waiting, behind the same pull-down tab as a chat's and Overview's */}
+    <PullBar keep="rvout" what="the projects" bar="rvbar" cls="rv-fold"><Tabs tabs={tabs} on={on} pick={pick} /></PullBar>
     <div class="rv-page" ref={page}>
-      <Tabs tabs={tabs} on={on} pick={pick} />
       <ItemsBox things={tab ? tab.things : []} labelledBy={at < 0 ? undefined : "rv-tab-" + at} flash={flash} onAnswered={onAnswered} />
       <p class="rv-nothing" id="rv-nothing" hidden={tabs.length > 0}>Nothing needs you</p>
     </div>
+    </>
   );
 }

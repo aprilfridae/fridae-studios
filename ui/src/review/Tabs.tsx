@@ -1,12 +1,13 @@
-/* A tab per project with something waiting, and how many things need the user there. The arrow keys, Home and End
-   go from project to project. */
+/* The projects with something waiting, side by side in one row that scrolls sideways: a dot and the name, the one in
+   front tinted. Pressing one shows that project's things. The arrow keys, Home and End go from project to project. */
 import { useEffect, useRef } from "preact/hooks";
 
-type Tab = { path: string; name: string; n: number };
+type Tab = { path: string; name: string; n: number; things: unknown[] };
+const plural = (n: number, one: string, many: string) => n + (n === 1 ? one : many);
 
 export function Tabs({ tabs, on, pick }: { tabs: Tab[]; on: string; pick: (path: string) => void }) {
-  const bar = useRef<HTMLDivElement>(null), held = useRef(false);
-  /* the keyboard stays in the tabs: on the chosen one after an arrow key, or after the tab it was on has gone */
+  const bar = useRef<HTMLUListElement>(null), held = useRef(false);
+  /* the keyboard stays in the list: on the chosen one after an arrow key, or after the one it was on has gone */
   useEffect(() => {
     const el = bar.current;
     if (!held.current || !el || el.contains(document.activeElement)) return;
@@ -17,19 +18,23 @@ export function Tabs({ tabs, on, pick }: { tabs: Tab[]; on: string; pick: (path:
     const buttons = [...bar.current!.querySelectorAll("button")], i = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (i < 0 || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(ev.key)) return;
     ev.preventDefault();
-    const to = ev.key === "Home" ? 0 : ev.key === "End" ? tabs.length - 1 : (i + (ev.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+    const fwd = ev.key === "ArrowRight";
+    const to = ev.key === "Home" ? 0 : ev.key === "End" ? tabs.length - 1 : (i + (fwd ? 1 : tabs.length - 1)) % tabs.length;
     pick(tabs[to].path);
     buttons[to].focus();
   };
   return (
-    <div class="rv-tabs" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden={!tabs.length} ref={bar}
+    <ul class="rv-tabs" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden={!tabs.length} ref={bar}
       onKeyDown={onKey} onFocusIn={() => { held.current = true; }} onFocusOut={() => { held.current = false; }}>
       {tabs.map((t, i) => (
-        <button key={t.path} id={"rv-tab-" + i} data-path={t.path} role="tab" aria-selected={t.path === on ? "true" : "false"} aria-controls="rv-items" tabIndex={t.path === on ? 0 : -1}
-          aria-label={t.n ? t.name + ", " + t.n + (t.n === 1 ? " thing needs you" : " things need you") : undefined} onClick={() => pick(t.path)}>
-          <span>{t.name}</span>{t.n ? <i>{t.n}</i> : null}
-        </button>
+        <li key={t.path} role="presentation">
+          <button class="rv-row" id={"rv-tab-" + i} data-path={t.path} role="tab" aria-selected={t.path === on ? "true" : "false"} aria-controls="rv-items" tabIndex={t.path === on ? 0 : -1}
+            title={plural(t.things.length, " thing to look over in ", " things to look over in ") + t.name} onClick={() => pick(t.path)}
+            ref={(el) => { if (el && t.path === on) el.scrollIntoView({ block: "nearest", inline: "nearest" }); }}>
+            <span class={"dot" + (t.path === on ? " on" : "")} />{t.name}
+          </button>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }

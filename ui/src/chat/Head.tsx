@@ -7,7 +7,7 @@ import { H } from "./host";
 import { poke, useTick } from "./chatStore";
 import { closePops } from "./compose";
 import { isHome } from "../remote/route";
-import { TabShape } from "./tab";
+import { PullBar } from "./PullBar";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 const CLOSE = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6" /></svg>;
@@ -157,15 +157,8 @@ export function ChatHead() {
     if (save && p && name && name !== p.name) { p.name = name; poke(); await api("/api/rename", { agent: p.id, name }); }
   };
   const [text, review, path] = metaOf(p);
-  /* the bar is tucked away behind a small tab at the top of the chat, and slides out when the tab is pressed; while
-     it moves (and while tucked) it is clipped, and once out its menus may hang below it again */
-  const [out, setOut] = useState(() => { try { return localStorage.getItem("headout") === "1"; } catch (e) { return false; } });
-  const [moving, setMoving] = useState(false);
-  const fold = () => { const v = !out; setOut(v); setMoving(true); setTimeout(() => setMoving(false), 320); if (!v) { close(); closePops(); } try { localStorage.setItem("headout", v ? "1" : "0"); } catch (e) {} };
   return (
-    <div class={"headfold" + (out ? " out" : "") + (moving || !out ? " clip" : "")}>
-    <div class="hf-in" inert={!out}>
-    <div class="chathead">
+    <PullBar keep="headout" what="the chat's bar" bar="chathead" onTuck={() => { close(); closePops(); }}>
       <span class="conv">
         <button class="title" id="chat-title" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} title="This project's chats" hidden={renaming}
           onClick={(ev) => { ev.stopPropagation(); if (!open) { setEver(true); H.loadHistory(); } setOpen(!open); }}><span id="chat-name">{p ? p.name : "New chat"}</span>{DOWN}</button>
@@ -175,10 +168,7 @@ export function ChatHead() {
       </span>
       <span class="meta" id="chat-meta">{p && H.leadsRun(p) && path ? <RunPlay path={path} /> : !text ? null : review ? <button class="linkish" title="Open Review" onClick={() => H.openInReview(path)}>{text}</button> : text}</span>
       <RunBar />
-    </div>
-    </div>
-    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}><TabShape w={112} h={16} />{DOWN}</button>
-    </div>
+    </PullBar>
   );
 }
 

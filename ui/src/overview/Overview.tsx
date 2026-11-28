@@ -1,5 +1,5 @@
-/* Overview: the live graph of every project, its chats and its experts, over the whole page. One quiet line, in a tab
-   hanging from the top bar (as a chat's does), says how much is going, with the way to stop it all beside it. */
+/* Overview: the live graph of every project, its chats and its experts, over the whole page. Behind a tab at its top
+   (the same pull-down bar as a chat's) is how much is going, each project in a few words, and the way to stop it all. */
 import { useEffect, useRef } from "preact/hooks";
 import { api } from "../api";
 import { store, useStore, type State } from "../store";
@@ -8,7 +8,9 @@ import { skillsWaiting } from "../settings/skills-data";
 import { projState } from "../sidebar/model";
 import { openSetup } from "../windows";
 import { attach, tick, watch } from "./graph";
-import { HangTab } from "../chat/tab";
+import { PullBar } from "../chat/PullBar";
+import { H } from "../chat/host";
+import { host } from "../host";
 import "./overview.css";
 
 const plural = (n: number, one: string, many: string) => n + (n === 1 ? one : many);
@@ -21,15 +23,44 @@ function totals(s: State) {
   const working = s.chats.filter((p) => p.busy).length, wait = st.reduce((n, x) => n + x.n, 0);
   return [!list.length ? "No projects yet" : going ? plural(going, " project at work", " projects at work") : "Nothing going", working ? plural(working, " agent working", " agents working") : "", wait ? plural(wait, " thing waits for you", " things wait for you") : ""].filter(Boolean).join(" · ");
 }
-function TopLine() {
+/* each project in a few words, those with something going first: whether a chat of it is working, what waits for the
+   user, and its studio run's state */
+function projects(s: State) {
+  if (s.nav.view !== "all") return [];
+  return s.projects.map((x) => {
+    const st = projState(s, x.path), r: any = s.review[x.path] || {}, run = r.run;
+    const busy = s.chats.filter((p) => p.busy && p.project === x.path).length;
+    const going = runActive(run), rs = going && H.runState ? H.runState(r, run) : null;
+    return { path: x.path, name: x.name, busy, n: st.n, run: rs ? rs[0] : "", why: rs ? rs[1] : "", live: !!(busy || st.n || going) };
+  }).sort((a, b) => +b.live - +a.live);
+}
+/* the bar behind the Overview's tab: how much is going, then each project, and the way to stop it all */
+function OvBar() {
   const text = useStore(totals), working = useStore((s) => s.nav.view === "all" && s.chats.some((p) => p.busy)), n = skillsWaiting.use(), last = useRef("");
+  /* read as one string, so the bar is painted again only when what it says changes */
+  const list: ReturnType<typeof projects> = JSON.parse(useStore((st) => JSON.stringify(projects(st))));
   if (text) last.current = text;
   const stop = () => { for (const p of store.get().chats) if (p.busy) api("/api/stop", { agent: p.id }); };
   return (
-    <div class="ap-head">
-      <HangTab h={30}><p class="sub"><span id="ap-totals">{text || last.current}</span><span id="ap-sk" hidden={!n}> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills" onClick={() => openSetup("skills")}>{plural(n, " decision waits", " decisions wait")}</button></span></p></HangTab><span class="grow" />
-      <button class="pill sm" id="ap-stop-all" hidden={!working} onClick={stop}>Stop everything</button>
-    </div>
+    <PullBar keep="ovout" what="what is going" bar="ovbar" cls="ov-fold">
+      <div class="ob-head">
+        <p class="sub"><span id="ap-totals">{text || last.current}</span><span id="ap-sk" hidden={!n}> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills" onClick={() => openSetup("skills")}>{plural(n, " decision waits", " decisions wait")}</button></span></p>
+        <button class="pill sm" id="ap-stop-all" hidden={!working} onClick={stop}>Stop everything</button>
+      </div>
+      {list.length > 0 && <ul class="ob-list">
+        {list.map((x) => (
+          <li class={x.live ? "live" : ""}>
+            <button class="ob-name" title={"Open " + x.name} onClick={() => host.showProject(x.path)}><span class={"dot" + (x.busy ? " on" : "")} />{x.name}</button>
+            <span class="ob-st">
+              {x.busy > 0 && <span>{plural(x.busy, " agent working", " agents working")}</span>}
+              {x.run && <span title={x.why}>Studio run: {x.run.toLowerCase()}</span>}
+              {x.n > 0 && <button class="linkish" title="Open it in Review" onClick={() => host.openInReview(x.path)}>{plural(x.n, " thing waits for you", " things wait for you")}</button>}
+              {!x.live && <span class="quiet">Nothing going</span>}
+            </span>
+          </li>
+        ))}
+      </ul>}
+    </PullBar>
   );
 }
 /* what the graph shows, behind one small "?" in its corner. It closes like a menu: on Escape (the keyboard goes back
@@ -69,7 +100,7 @@ function Graph() {
 export function Overview() {
   return (
     <div class="ov">
-      <div class="o-graph"><Graph /><Key /><TopLine /></div>
+      <div class="o-graph"><Graph /><Key /><OvBar /></div>
     </div>
   );
 }

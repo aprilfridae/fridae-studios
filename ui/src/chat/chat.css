@@ -25,17 +25,25 @@
 .composer.tl-morph::before { transition: clip-path 240ms var(--ease); }
 .composer::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid var(--cm-line); pointer-events: none; transition: border-color 160ms ease; }
 .composer::after { clip-path: var(--cm-gap, none); }
-.composer.tl-morph::after { transition: border-color 160ms ease, clip-path 240ms var(--ease); }
 .to-latest.tl-tab { bottom: 100%; left: auto; right: 24px; width: 148px; height: 16px; padding: 1px 0 0; font-size: 11px; line-height: 1; justify-content: center; gap: 6px; border: 0; border-radius: 0;
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none; isolation: isolate; z-index: 1;
-  transform: scaleY(0.05); transform-origin: 50% 100%;
-  transition: transform 220ms var(--ease), opacity 120ms ease 60ms, visibility 0s 240ms, color var(--t-fast) ease; }
-.to-latest.tl-tab.on { transform: none; transition: transform 240ms var(--ease), opacity 120ms ease, color var(--t-fast) ease; }
+  opacity: 1; transform: none; transition: visibility 0s 260ms, color var(--t-fast) ease; }
+.to-latest.tl-tab.on { transform: none; transition: color var(--t-fast) ease; }
+/* it fades up out of the box's line: the box's line under it opens at once (--cm-gap, Timeline.tsx) but a flat piece of
+   line (.b) stands in for it and fades out as the tab's outline (.s) rises from flat and fades in, in step with the glass
+   growing (--cm-clip); its words fade in. Going, the same backwards, and the line closes again once it is flat */
+.tl-tab .tab-shape .s { transform-box: view-box; transform-origin: 50% calc(100% - 0.5px); transform: scaleY(0.02); opacity: 0;
+  transition: transform 240ms var(--ease), opacity 200ms ease, stroke 160ms ease; }
+.tl-tab.on .tab-shape .s { transform: none; opacity: 1; }
+.tl-tab .tab-shape .b { fill: none; stroke: var(--cm-line); stroke-width: 1; opacity: 1; transition: opacity 200ms ease, stroke 160ms ease; }
+.tl-tab.on .tab-shape .b { opacity: 0; }
+.tl-tab > svg:not(.tab-shape), .tl-tab .tl-t { opacity: 0; transition: opacity 120ms ease; }
+.tl-tab.on > svg:not(.tab-shape), .tl-tab.on .tl-t { opacity: 1; transition: opacity 160ms ease 80ms; }
 .tl-tab .tab-shape { z-index: -1; }
 .tl-tab .tab-shape .f { fill: none; }
-.tl-tab .tab-shape .s { stroke: var(--cm-line); transition: stroke 160ms ease; }
+.tl-tab .tab-shape .s { stroke: var(--cm-line); }
 .tl-tab > svg:not(.tab-shape), .tl-tab .tl-t { position: relative; }
-@media (prefers-reduced-motion: reduce) { .to-latest.tl-tab, .to-latest.tl-tab.on { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .to-latest.tl-tab, .to-latest.tl-tab.on, .tl-tab .tab-shape .s, .tl-tab .tab-shape .b, .tl-tab > svg, .tl-tab .tl-t { transition: none; } }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest.tl-tab { background: none; } }
 /* the AI's logo on the model chip, so it is known at a glance (the picker's rail is in ui/index.html) */
 #model .ai-logo { margin-left: -2px; }

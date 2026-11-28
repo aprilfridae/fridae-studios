@@ -190,7 +190,7 @@ function boxAndTab(w: number, h: number, r: number, k: number) {
   return "path('" + box + tabPaths(TL_W, TL_H, true, { dx: n(w - 1 - TL_IN - TL_W), dy: 1, k }).fill + "')";
 }
 export function ToLatest({ tab }: { tab?: boolean }) {
-  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on);
+  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on), sinking = useRef(false);
   useEffect(() => { away.subs.add(again); return () => { away.subs.delete(again); }; }, []);
   /* the box's glass shape: kept to the box's size, and morphing (for as long as the tab grows or sinks) when it shows */
   useLayoutEffect(() => {
@@ -198,12 +198,16 @@ export function ToLatest({ tab }: { tab?: boolean }) {
     if (!box) return;
     const put = () => {
       const r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 0;
-      const w = box.offsetWidth, h = box.offsetHeight, x1 = n(w - 1 - TL_IN), x0 = away.on ? n(x1 - TL_W) : x1;
+      const w = box.offsetWidth, h = box.offsetHeight, x1 = n(w - 1 - TL_IN), x0 = away.on || sinking.current ? n(x1 - TL_W) : x1;
       box.style.setProperty("--cm-clip", boxAndTab(w, h, r, away.on ? 1 : 0.001));
-      /* the box's outline (.composer::after) opens where the tab stands: the whole box, less the top row there */
+      /* the box's outline (.composer::after) opens where the tab stands (the whole box, less the top row there), at once as
+         it comes and only once it has sunk flat as it goes */
       box.style.setProperty("--cm-gap", `path(evenodd, 'M0 0H${w}V${h}H0ZM${x0} -1H${x1}V1.5H${x0}Z')`);
     };
-    if (was.current !== away.on) { was.current = away.on; box.classList.add("tl-morph"); setTimeout(() => box.classList.remove("tl-morph"), 300); }
+    if (was.current !== away.on) {
+      was.current = away.on; sinking.current = !away.on; box.classList.add("tl-morph");
+      setTimeout(() => { box.classList.remove("tl-morph"); if (sinking.current) { sinking.current = false; put(); } }, 260);
+    }
     put();
     const ro = new ResizeObserver(put); ro.observe(box);
     return () => ro.disconnect();

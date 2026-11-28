@@ -11,17 +11,20 @@
 .o-key summary::-webkit-details-marker { display: none; }
 .o-key summary:hover, .o-key[open] summary { color: var(--text); background: var(--raised); }
 .o-key p { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(460px, calc(100vw - 280px)); max-width: min(460px, calc(100cqw - 32px)); margin: 0; padding: 8px 12px; border-radius: var(--r-m); background: var(--raised); border: 1px solid var(--line-strong); font-size: 12px; line-height: 1.6; color: var(--dim); }
-/* the summary hangs in a tab from the top bar, whose line (lighter, as over a chat) runs along the graph's top edge and
-   round the tab; Stop everything sits beside it */
-.stage:has(#allproj .ov) > .top { border-bottom-color: transparent; }
-.ov { --fold-bg: var(--bg); --fold-line: color-mix(in oklab, var(--text) 22%, var(--bg)); }
-.o-graph::before { content: ""; position: absolute; z-index: 1; left: 0; right: 0; top: 0; height: 1px; background: var(--fold-line); pointer-events: none; }
-.ap-head { position: absolute; z-index: 2; left: 24px; right: 24px; top: 0; display: flex; align-items: flex-start; gap: 12px; pointer-events: none; }
-.ap-head .grow { flex: 1; }
-.ap-head #ap-stop-all { margin-top: 12px; }
-.hang-tab { position: relative; display: flex; align-items: center; padding: 0 26px 1px; max-width: 100%; pointer-events: auto; }
-.hang-tab .tab-shape .f { fill: var(--fold-bg); }
-.hang-tab > :not(.tab-shape) { position: relative; }
-.ap-head .sub { margin: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ap-head button { pointer-events: auto; }
+/* the pull-down bar at the top (chat/PullBar.tsx; its look is in ui/index.html): over the graph, just under the top bar
+   (the graph runs up under both) */
+.ov-fold { position: absolute; top: 48px; left: 0; right: 0; }
+.ovbar { display: grid; gap: 8px; padding: 12px 24px 14px; max-height: min(60vh, 420px); overflow-y: auto; }
+.ob-head { display: flex; align-items: center; gap: 12px; min-height: var(--h-s); }
+.ob-head .sub { margin: 0; flex: 1; font-size: 13px; }
+.ob-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ob-list li { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: center; gap: 12px; min-height: 30px; }
+.ob-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); font-size: 13px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ob-name:hover { background: var(--hover); }
+.ob-name .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); opacity: 0.5; }
+.ob-name .dot.on { background: var(--main); opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklab, var(--main) 22%, transparent); }
+.ob-st { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dim); min-width: 0; }
+.ob-st .linkish { font-size: inherit; color: var(--text); }
+.ob-st .quiet { color: var(--faint); }
+.ob-list li:not(.live) .ob-name { color: var(--dim); font-weight: 400; }
 #ap-sk-go { font-size: inherit; }
