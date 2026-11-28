@@ -15,10 +15,12 @@
 /* as a tab on the message box (Timeline.tsx ToLatest), only while the reader is scrolled up: it grows up out of the
    box's top edge, and the box's outline opens where it stands, so the two are one shape. Its fill is the box's glass
    cut to the tab's outline, and its outline the box's line. The box's outline is drawn over it (::after) rather than as
-   its border, so that it can open (a fixed opening: an animated length is not scaled with the window's zoom) */
+   its border, so that it can open (a fixed opening: an animated length is not scaled with the window's zoom, and a mask's length is scaled twice, hence --mask-zoom) */
 .composer { border-color: transparent; }
+/* the box's glass also covers its (now see-through) outline row, which is where the tab joins it */
+.composer::before { inset: -1px; }
 .composer::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid var(--cm-line); pointer-events: none; transition: border-color 160ms ease; }
-.composer:has(> .to-latest.on)::after { -webkit-mask: linear-gradient(to right, #000 calc(50% - 74px), transparent calc(50% - 74px) calc(50% + 74px), #000 calc(50% + 74px)) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; mask: linear-gradient(to right, #000 calc(50% - 74px), transparent calc(50% - 74px) calc(50% + 74px), #000 calc(50% + 74px)) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; }
+.composer:has(> .to-latest.on)::after { -webkit-mask: linear-gradient(to right, #000 calc(50% - calc(74px / var(--mask-zoom, 1))), transparent calc(50% - calc(74px / var(--mask-zoom, 1))) calc(50% + calc(74px / var(--mask-zoom, 1))), #000 calc(50% + calc(74px / var(--mask-zoom, 1)))) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; mask: linear-gradient(to right, #000 calc(50% - calc(74px / var(--mask-zoom, 1))), transparent calc(50% - calc(74px / var(--mask-zoom, 1))) calc(50% + calc(74px / var(--mask-zoom, 1))), #000 calc(50% + calc(74px / var(--mask-zoom, 1)))) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; }
 .to-latest.tl-tab { bottom: 100%; width: 148px; height: 26px; padding: 2px 0 0; justify-content: center; gap: 6px; border: 0; border-radius: 0;
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none; isolation: isolate; z-index: 1;
   transform: translate(-50%, 0) scaleY(0.05); transform-origin: 50% 100%;

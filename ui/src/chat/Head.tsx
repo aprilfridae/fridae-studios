@@ -177,7 +177,7 @@ export function ChatHead() {
       <RunBar />
     </div>
     </div>
-    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}><TabShape w={112} h={22} />{DOWN}</button>
+    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}><TabShape w={112} h={16} />{DOWN}</button>
     </div>
   );
 }

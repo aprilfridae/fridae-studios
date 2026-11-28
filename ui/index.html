@@ -856,7 +856,7 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .headfold.clip .hf-in { overflow: hidden; }
 .hf-in > .chathead { background: var(--fold-bg); border-bottom-color: transparent; transform: translateY(-100%); transition: transform 280ms var(--ease); }
 .headfold.out .hf-in > .chathead { transform: none; }
-.hf-tab { position: absolute; z-index: 2; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 112px; height: 22px; padding: 0 0 2px;
+.hf-tab { position: absolute; z-index: 2; top: calc(100% - 1px); left: 24px; width: 112px; height: 16px; padding: 0 0 1px;
   display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--dim); transition: color var(--t-fast) ease; }
 .hf-tab:hover { color: var(--text); background: none; }
 .hf-tab:focus-visible { outline-offset: 2px; border-radius: 6px; }
@@ -2104,8 +2104,12 @@ let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
 function setScale(v) {
   scale = Math.max(70, Math.min(200, Math.round(v / 5) * 5));
-  if (window.__fridaeZoom && window.ipc && window.ipc.postMessage) { document.documentElement.style.zoom = ""; window.ipc.postMessage("win:zoom|" + scale / 100); }
+  const web = !!(window.__fridaeZoom && window.ipc && window.ipc.postMessage);
+  if (web) { document.documentElement.style.zoom = ""; window.ipc.postMessage("win:zoom|" + scale / 100); }
   else document.documentElement.style.zoom = scale / 100;
+  /* the web view's zoom scales a mask's lengths a second time (measured: the opening under Jump to latest came out
+     130% too wide at 130%), so a mask divides its lengths by this */
+  document.documentElement.style.setProperty("--mask-zoom", web ? String(scale / 100) : "1");
   try { localStorage.setItem("scale", String(scale)); } catch (e) {}
   fridaeDo((f) => f.store.set({ scale }));
 }
