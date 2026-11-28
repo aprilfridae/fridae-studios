@@ -260,6 +260,9 @@ mod tests {
         assert_eq!(desc("chat_list"), "List chats newest first, in one project or with `allProjects`. Page with `cursor`.");
         assert_eq!(desc("chat_wait"), "Wait for a chat's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.");
         assert_eq!(desc("project_list"), "List projects. Pages can shift.");
+        // a deliberate departure from T3's "Follow it with chat_read or chat_wait": waiting is for when it is needed
+        assert_eq!(desc("chat_launch"), "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Then answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its result.");
+        assert!(defs().iter().all(|d| !d.description.contains("Follow it with")));
         assert_eq!(desc("project_update"), "Update one project's settings. Omitted fields are unchanged.");
         assert_eq!(desc("project_delete"), "Delete one project. Nonempty needs `force: true`. Folder on disk stays.");
         let caps = defs().into_iter().next().unwrap();

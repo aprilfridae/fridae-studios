@@ -359,6 +359,21 @@ mod tests {
     use crate::app_mcp::{SHOW_TEST_TOOLS, drop_chat, test_chat};
     use serde_json::json;
 
+    #[test]
+    fn deferred_list_has_the_common_tools_and_stays_small() {
+        // Antigravity freezes and cuts long tool lists: the deferred list holds the tools a chat most often needs
+        // (with their full schemas, so no search first), well under ~10 KB
+        let listed: Vec<Value> = crate::app_mcp::listable().iter().filter(|d| crate::app_mcp::exposure::listed(crate::app_mcp::exposure::Mode::DeferredProxy, d.name)).map(listing).collect();
+        let names: Vec<&str> = listed.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for n in ["fridae_capabilities", "tool_search", "tool_call", "chat_launch", "chat_send", "chat_list", "project_list"] {
+            assert!(names.contains(&n), "{n} not in {names:?}");
+        }
+        assert_eq!(names.len(), 7, "{names:?}");
+        assert!(listed.iter().all(|t| t["inputSchema"]["type"] == "object"));
+        let size = serde_json::to_string(&json!({"tools": listed})).unwrap().len();
+        assert!(size < 8_000, "{size} bytes");
+    }
+
     const ACCEPT: &str = "application/json, text/event-stream";
 
     fn key_of(a: &crate::agents::Agent) -> String {

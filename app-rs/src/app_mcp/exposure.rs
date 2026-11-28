@@ -15,8 +15,10 @@ pub const MAX_RESULTS: usize = 10;
 // Antigravity caps inline MCP tool results around 10 KB; stay comfortably under it so JSON schemas never truncate.
 pub const MAX_PROXY_SCHEMA_BYTES: usize = 8_000;
 
-/// What a deferred-proxy client lists before it searches.
-const PROXY_DIRECT_TOOLS: [&str; 3] = ["fridae_capabilities", TOOL_SEARCH, TOOL_CALL];
+/// What a deferred-proxy client lists before it searches: the deferred tools, and the few a chat most often needs,
+/// with their full schemas, so starting or messaging a chat takes no search first (Fridae's own choice, for speed:
+/// T3 lists only the first three; the whole list stays well under Antigravity's ~10 KB, `http` tests).
+const PROXY_DIRECT_TOOLS: [&str; 7] = ["fridae_capabilities", TOOL_SEARCH, TOOL_CALL, "chat_launch", "chat_send", "chat_list", "project_list"];
 
 /// How a client takes the tools: all of them, or (Antigravity) only a few plus tool_search/tool_call.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -242,12 +244,12 @@ mod tests {
 
     #[test]
     fn listing_by_mode() {
-        for t in ["chat_read", "project_list", "theme_set", "settings_update"] {
+        for t in ["chat_read", "chat_wait", "theme_set", "settings_update"] {
             assert!(listed(Mode::Full, t), "{t}");
             assert!(!listed(Mode::DeferredProxy, t), "{t}");
         }
         assert!(!listed(Mode::Full, TOOL_SEARCH) && !listed(Mode::Full, TOOL_CALL));
-        for t in ["fridae_capabilities", TOOL_SEARCH, TOOL_CALL] {
+        for t in ["fridae_capabilities", TOOL_SEARCH, TOOL_CALL, "chat_launch", "chat_send", "chat_list", "project_list"] {
             assert!(listed(Mode::DeferredProxy, t), "{t}");
         }
         assert!(listed(Mode::Full, "fridae_capabilities"));
@@ -317,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn http_lists_three_tools_with_the_header() {
+    fn http_lists_the_direct_tools_with_the_header() {
         let a = test_chat("gemini");
         let key = keys::global().prepare(&a.id, &a.ai(), false).raw;
         let heads = |sid: Option<&str>| {
@@ -337,8 +339,8 @@ mod tests {
         let r = handle_parts("POST", &heads(Some(&sid)), br#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
         let body: Value = serde_json::from_slice(&r.body).unwrap();
         let names: Vec<String> = body["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap().to_string()).collect();
-        // (fridae_capabilities is Task 2's: listed here once the branches join)
-        let want: Vec<String> = crate::app_mcp::registry().iter().map(|d| d.name).filter(|n| ["fridae_capabilities", TOOL_SEARCH, TOOL_CALL].contains(n)).map(str::to_string).collect();
+        let want: Vec<String> = crate::app_mcp::registry().iter().map(|d| d.name).filter(|n| PROXY_DIRECT_TOOLS.contains(n)).map(str::to_string).collect();
+        assert_eq!(want.len(), 7);
         assert_eq!(names, want);
         assert!(names.contains(&TOOL_SEARCH.to_string()) && names.contains(&TOOL_CALL.to_string()));
         drop_chat(&a);

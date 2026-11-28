@@ -61,7 +61,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "chat_launch",
             title: "Start a chat",
-            description: "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Follow it with `chat_read` or `chat_wait`. Mention it with its `link`.",
+            description: "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Then answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its result.",
             schema: schema_launch,
             hints: write,
             access: starts_threads,
@@ -756,7 +756,12 @@ fn launch(call: &Call, args: &Map<String, Value>) -> Outcome {
         }
         None => None,
     };
-    Ok(json!({"chatId": chat.id, "link": link_of(&chat), "projectId": project.as_deref().map(project_id), "modelSelection": selection_of(&chat),
+    // the project's name and link with the chat's: enough to answer the user without another call
+    let project_item = project.as_deref().map(|p| {
+        let (id, name) = (project_id(p), crate::projects::describe(p)["name"].as_str().unwrap_or("").to_string());
+        json!({"projectId": id, "name": name, "link": crate::app_mcp::project_link(&id, &name)})
+    });
+    Ok(json!({"chatId": chat.id, "link": link_of(&chat), "projectId": project.as_deref().map(project_id), "project": project_item, "modelSelection": selection_of(&chat),
               "runId": run, "status": if message.is_some() { "running" } else { "idle" }}))
 }
 
@@ -1119,6 +1124,9 @@ mod tests {
         let id = got["chatId"].as_str().unwrap().to_string();
         assert_eq!(got["link"], chat_link(&id, "Build the shop"));
         assert_eq!(got["projectId"], pid.as_str());
+        // the project's name and link too: the AI can answer the user with both links at once
+        let name = crate::projects::describe(&dir)["name"].as_str().unwrap().to_string();
+        assert_eq!(got["project"], json!({"projectId": pid, "name": name, "link": crate::app_mcp::project_link(&pid, &name)}));
         let ev: Vec<Value> = BUS.after(n, 0.0).into_iter().filter(|e| e["agent"] == id.as_str()).collect();
         assert!(ev.iter().any(|e| e["kind"] == "agent_new"));
         assert!(ev.iter().any(|e| e["kind"] == "renamed" && e["name"] == "Build the shop"));
