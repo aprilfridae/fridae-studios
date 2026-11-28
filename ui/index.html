@@ -2104,12 +2104,8 @@ let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
 function setScale(v) {
   scale = Math.max(70, Math.min(200, Math.round(v / 5) * 5));
-  const web = !!(window.__fridaeZoom && window.ipc && window.ipc.postMessage);
-  if (web) { document.documentElement.style.zoom = ""; window.ipc.postMessage("win:zoom|" + scale / 100); }
+  if (window.__fridaeZoom && window.ipc && window.ipc.postMessage) { document.documentElement.style.zoom = ""; window.ipc.postMessage("win:zoom|" + scale / 100); }
   else document.documentElement.style.zoom = scale / 100;
-  /* the web view's zoom scales a mask's lengths a second time (measured: the opening under Jump to latest came out
-     130% too wide at 130%), so a mask divides its lengths by this */
-  document.documentElement.style.setProperty("--mask-zoom", web ? String(scale / 100) : "1");
   try { localStorage.setItem("scale", String(scale)); } catch (e) {}
   fridaeDo((f) => f.store.set({ scale }));
 }

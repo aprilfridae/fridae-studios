@@ -13,28 +13,30 @@
 .to-latest:hover { color: var(--text); }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest { background: var(--raised); } }
 /* as a tab on the message box (Timeline.tsx ToLatest), only while the reader is scrolled up: it grows up out of the
-   box's top edge, and the box's outline opens where it stands, so the two are one shape. Its fill is the box's glass
-   cut to the tab's outline, and its outline the box's line. The box's outline is drawn over it (::after) rather than as
-   its border, so that it can open (a fixed opening: an animated length is not scaled with the window's zoom, and a mask's length is scaled twice, hence --mask-zoom) */
+   box's top edge, and the box's outline opens where it stands, so the two are one shape. Its fill is the box's own glass
+   (below), and its outline the box's line. The box's outline is drawn over it (::after) rather than as
+   its border, so that it can open: it is cut (--cm-gap, set with the glass's shape) rather than masked, as the window's zoom
+   scales a mask's lengths unevenly */
 .composer { border-color: transparent; }
-/* the box's glass also covers its (now see-through) outline row, which is where the tab joins it */
-.composer::before { inset: -1px; }
+/* the box's glass covers its (see-through) outline row too, and reaches up over Jump to latest's tab: it is cut to the
+   box and the tab as one shape (Timeline.tsx boxAndTab, kept as --cm-clip), so one blur runs behind both. While the
+   tab grows or sinks (.tl-morph) the shape morphs with it */
+.composer::before { inset: -17px -1px -1px; border-radius: 0; clip-path: var(--cm-clip, inset(16px 0 0 0 round var(--r-l))); }
+.composer.tl-morph::before { transition: clip-path 240ms var(--ease); }
 .composer::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid var(--cm-line); pointer-events: none; transition: border-color 160ms ease; }
-.composer:has(> .to-latest.on)::after { -webkit-mask: linear-gradient(to right, #000 calc(50% - calc(74px / var(--mask-zoom, 1))), transparent calc(50% - calc(74px / var(--mask-zoom, 1))) calc(50% + calc(74px / var(--mask-zoom, 1))), #000 calc(50% + calc(74px / var(--mask-zoom, 1)))) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; mask: linear-gradient(to right, #000 calc(50% - calc(74px / var(--mask-zoom, 1))), transparent calc(50% - calc(74px / var(--mask-zoom, 1))) calc(50% + calc(74px / var(--mask-zoom, 1))), #000 calc(50% + calc(74px / var(--mask-zoom, 1)))) top / 100% 1px no-repeat, linear-gradient(#000, #000) bottom / 100% calc(100% - 1px) no-repeat; }
-.to-latest.tl-tab { bottom: 100%; width: 148px; height: 26px; padding: 2px 0 0; justify-content: center; gap: 6px; border: 0; border-radius: 0;
+.composer::after { clip-path: var(--cm-gap, none); }
+.composer.tl-morph::after { transition: border-color 160ms ease, clip-path 240ms var(--ease); }
+.to-latest.tl-tab { bottom: 100%; left: auto; right: 24px; width: 148px; height: 16px; padding: 1px 0 0; font-size: 11px; line-height: 1; justify-content: center; gap: 6px; border: 0; border-radius: 0;
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none; isolation: isolate; z-index: 1;
-  transform: translate(-50%, 0) scaleY(0.05); transform-origin: 50% 100%;
+  transform: scaleY(0.05); transform-origin: 50% 100%;
   transition: transform 220ms var(--ease), opacity 120ms ease 60ms, visibility 0s 240ms, color var(--t-fast) ease; }
-.to-latest.tl-tab.on { transform: translate(-50%, 0); transition: transform 240ms var(--ease), opacity 120ms ease, color var(--t-fast) ease; }
-.tl-tab .tl-glass { position: absolute; inset: 0; z-index: -1; pointer-events: none;
-  background: color-mix(in srgb, var(--panel) var(--glass-opacity), transparent);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); }
+.to-latest.tl-tab.on { transform: none; transition: transform 240ms var(--ease), opacity 120ms ease, color var(--t-fast) ease; }
 .tl-tab .tab-shape { z-index: -1; }
 .tl-tab .tab-shape .f { fill: none; }
 .tl-tab .tab-shape .s { stroke: var(--cm-line); transition: stroke 160ms ease; }
 .tl-tab > svg:not(.tab-shape), .tl-tab .tl-t { position: relative; }
 @media (prefers-reduced-motion: reduce) { .to-latest.tl-tab, .to-latest.tl-tab.on { transition: none; } }
-@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .tl-tab .tl-glass { background: var(--panel); } .to-latest.tl-tab { background: none; } }
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest.tl-tab { background: none; } }
 /* the AI's logo on the model chip, so it is known at a glance (the picker's rail is in ui/index.html) */
 #model .ai-logo { margin-left: -2px; }
 #model #model-name { overflow: hidden; text-overflow: ellipsis; }

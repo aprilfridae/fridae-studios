@@ -174,15 +174,43 @@ export function Timeline() {
 }
 
 /* the way back to the end of a chat the reader has scrolled up in */
-/* `tab`: a tab standing on the message box's top edge (tab.tsx), in the box's own glass, the box's line running round
-   it; without the box (an expert's chat, read only) it floats over the dock as a pill */
-const TL_W = 148, TL_H = 26, TL_CLIP = "path('" + tabPaths(TL_W, TL_H, true).fill + "')";
+/* `tab`: a tab standing on the message box's top edge (tab.tsx), the box's line running round it; without the box (an
+   expert's chat, read only) it floats over the dock as a pill. The tab has no glass of its own: the box's glass
+   (.composer::before) reaches up over it, cut to the box and the tab as one shape (boxAndTab), so the blur behind them
+   is one and the same. The shape is kept on the box as --cm-clip, follows the box's size, and morphs as the tab grows */
+/* the tab's size, and how far in from the box's right edge it stands (as the chat bar's tab is from the left) */
+const TL_W = 148, TL_H = 16, TL_IN = 24;
+const n = (v: number) => +v.toFixed(2);
+/* the glass's shape: the box (w by h, corners r) and the tab on it, k grown (0 to 1), as one outline. The glass starts
+   TL_H above the box's outer edge, so the box starts at TL_H and the tab (standing on the box's inner edge, 1px lower)
+   at 1, its foot overlapping the box's top row. Each part runs the same way round, so where they overlap they add up */
+function boxAndTab(w: number, h: number, r: number, k: number) {
+  const B = TL_H, E = B + h;
+  const box = `M0 ${n(B + r)}V${n(E - r)}A${r} ${r} 0 0 0 ${n(r)} ${E}H${n(w - r)}A${r} ${r} 0 0 0 ${w} ${n(E - r)}V${n(B + r)}A${r} ${r} 0 0 0 ${n(w - r)} ${B}H${n(r)}A${r} ${r} 0 0 0 0 ${n(B + r)}Z`;
+  return "path('" + box + tabPaths(TL_W, TL_H, true, { dx: n(w - 1 - TL_IN - TL_W), dy: 1, k }).fill + "')";
+}
 export function ToLatest({ tab }: { tab?: boolean }) {
-  const again = useAgain();
+  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on);
   useEffect(() => { away.subs.add(again); return () => { away.subs.delete(again); }; }, []);
+  /* the box's glass shape: kept to the box's size, and morphing (for as long as the tab grows or sinks) when it shows */
+  useLayoutEffect(() => {
+    const box = tab && me.current && (me.current.parentElement as HTMLElement | null);
+    if (!box) return;
+    const put = () => {
+      const r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 0;
+      const w = box.offsetWidth, h = box.offsetHeight, x1 = n(w - 1 - TL_IN), x0 = away.on ? n(x1 - TL_W) : x1;
+      box.style.setProperty("--cm-clip", boxAndTab(w, h, r, away.on ? 1 : 0.001));
+      /* the box's outline (.composer::after) opens where the tab stands: the whole box, less the top row there */
+      box.style.setProperty("--cm-gap", `path(evenodd, 'M0 0H${w}V${h}H0ZM${x0} -1H${x1}V1.5H${x0}Z')`);
+    };
+    if (was.current !== away.on) { was.current = away.on; box.classList.add("tl-morph"); setTimeout(() => box.classList.remove("tl-morph"), 300); }
+    put();
+    const ro = new ResizeObserver(put); ro.observe(box);
+    return () => ro.disconnect();
+  });
   return (
-    <button class={"to-latest" + (tab ? " tl-tab" : "") + (away.on ? " on" : "")} tabIndex={away.on ? 0 : -1} aria-hidden={away.on ? undefined : "true"} title="Go to the newest message" onClick={() => away.go()}>
-      {tab && <span class="tl-glass" style={{ clipPath: TL_CLIP }} />}{tab && <TabShape w={TL_W} h={TL_H} up />}
+    <button ref={me} class={"to-latest" + (tab ? " tl-tab" : "") + (away.on ? " on" : "")} tabIndex={away.on ? 0 : -1} aria-hidden={away.on ? undefined : "true"} title="Go to the newest message" onClick={() => away.go()}>
+      {tab && <TabShape w={TL_W} h={TL_H} up />}
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1.5v7M1.5 5.5 5 9l3.5-3.5" /></svg><span class="tl-t">Jump to latest</span>
     </button>
   );
