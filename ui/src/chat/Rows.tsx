@@ -53,7 +53,7 @@ function Steps({ pt, row }: { pt: Part; row: Row }) {
 function AppChip({ l, from }: { l: Link; from: string }) {
   if (!known(l.kind, l.id, from)) return <span class="app-link plain">{l.title}</span>;
   const data = l.kind === "chat" ? { "data-chat": l.id } : { "data-project": l.id };
-  return <a class="chip app-link" href="#" {...data} onClick={(ev) => { ev.preventDefault(); openLink(l.kind, l.id, from); }}>{l.title}</a>;
+  return <a class="chip app-link" href={"fridae://" + l.kind + "/" + l.id} {...data} onClick={(ev) => { ev.preventDefault(); openLink(l.kind, l.id, from); }}>{l.title}</a>;
 }
 /* One call to the app toolbox: Fridae's mark, what it is doing or did (T3 Code's tool row words, made by the app),
    and the chats and projects it named. One that failed or was declined says so in the error words' colour. */

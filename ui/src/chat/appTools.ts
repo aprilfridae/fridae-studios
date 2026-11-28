@@ -83,3 +83,11 @@ export function foldAppTools(parts: Part[], make: (k: string, more: Record<strin
 }
 /* "Renamed 2 projects" */
 export const counted = (g: Part) => g.verb + " " + g.items.length + " " + g.many;
+
+/* A chip's href is its own fridae:// link, never the page's address (which carries the window's token): copying it
+   gives the title, or that link. The window never follows it: a press of any button is the page's own. */
+if (typeof document !== "undefined") {
+  const stop = (ev: Event) => { const t = ev.target as Element | null; if (t && t.closest && t.closest("a.app-link")) ev.preventDefault(); };
+  document.addEventListener("auxclick", stop, true);
+  document.addEventListener("click", stop, true);
+}

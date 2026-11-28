@@ -8,7 +8,7 @@ const LINK = /\[((?:\\.|[^\]\\])*)\]\((fridae:[^)\s]*)\)/g;
 function links(s: string) {
   return s.replace(LINK, (_all, title: string, url: string) => {
     const t = title.replace(/\\([[\]\\])/g, "$1"), m = /^fridae:\/\/(chat|project)\/([\w.~-]{1,120})$/.exec(url);
-    return m ? '<a class="chip app-link" data-' + m[1] + '="' + m[2] + '" href="#">' + t + "</a>" : t;
+    return m ? '<a class="chip app-link" data-' + m[1] + '="' + m[2] + '" href="fridae://' + m[1] + '/' + m[2] + '">' + t + "</a>" : t;
   });
 }
 export function inline(s: string) {

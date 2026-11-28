@@ -5,7 +5,7 @@
 const { chromium } = require("H:/node/node_modules/playwright");
 const OUT = process.env.OUT || "", PORT = process.env.PORT || "8799", errs = [], out = {};
 const ok = (name, cond, extra) => { out[name] = cond ? "PASS" : "FAIL " + JSON.stringify(extra === undefined ? null : extra); };
-const U = "http://127.0.0.1:" + PORT + "/?t=x";
+const TOK = "tok-secret-4c1f", U = "http://127.0.0.1:" + PORT + "/?t=" + TOK;
 const A = "H:/games/obby-rush", PID = "p0123456789ab";
 
 (async () => {
@@ -200,6 +200,17 @@ const A = "H:/games/obby-rush", PID = "p0123456789ab";
     await ev({ kind: "theme_set", themeId: "neon", appearance: "sideways" });
     await wait(500);
     ok("theme_set_ignores_unknown", await pg.evaluate(() => document.documentElement.dataset.theme === "moss" && document.documentElement.dataset.appearance === "light"), await pg.evaluate(() => [document.documentElement.dataset.theme, document.documentElement.dataset.appearance]));
+    // ---- no link on the page carries the page's address or its token (copying a chip gave them away) ----
+    const hrefs = await pg.evaluate(() => [...document.querySelectorAll("a[href]")].map((a) => a.getAttribute("href") + " " + a.href));
+    ok("no_href_carries_the_token", hrefs.every((h) => !h.includes("?t=") && !h.includes("tok-secret-4c1f")), hrefs.filter((h) => h.includes("?t=") || h.includes("tok-secret-4c1f")));
+    await pg.evaluate(() => { select("a1"); setView("chat"); }); await wait(300);
+    const chipHrefs = await pg.evaluate(() => [...document.querySelectorAll("#chat-main a.app-link")].map((a) => a.getAttribute("href")));
+    ok("chip_hrefs_are_fridae_links", chipHrefs.length >= 3 && chipHrefs.every((h) => /^fridae:\/\/(chat|project)\/[\w.~-]+$/.test(h)), chipHrefs);
+    const copied = await pg.evaluate(() => { const a = document.querySelector('#chat-main .prose a.app-link[data-chat="a2"]'); const r = document.createRange(); r.selectNodeContents(a.closest(".prose")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); const t = s.toString(); s.removeAllRanges(); return t; });
+    ok("copied_text_has_titles_not_the_token", copied.includes("Lava stage notes") && !copied.includes("tok-secret-4c1f") && !copied.includes("?t="), copied);
+    const before2 = await pg.evaluate(() => location.href);
+    await pg.click('#chat-main .prose a.app-link[data-project="' + PID + '"]', { button: "middle" }); await wait(300);
+    ok("middle_click_follows_nothing", (await pg.evaluate(() => location.href)) === before2 && pg.context().pages().length === 1, await pg.evaluate(() => location.href));
     ok("nothing_left_127_0_0_1", outside.length === 0, outside);
   } catch (e) { out.CRASH = String(e && e.stack || e); }
   ok("no_console_errors", errs.length === 0, errs);
