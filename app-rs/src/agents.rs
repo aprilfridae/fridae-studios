@@ -5434,6 +5434,11 @@ impl Agent {
     }
 
     #[cfg(test)]
+    pub fn set_parent_for_test(&self, parent: Option<&str>) {
+        self.st.lock().unwrap().parent = parent.map(str::to_string);
+    }
+
+    #[cfg(test)]
     pub fn set_last_ask_for_test(&self, ask: Ask) {
         self.st.lock().unwrap().last_ask = ask;
     }

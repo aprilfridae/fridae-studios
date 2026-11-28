@@ -61,16 +61,37 @@ pub struct Caller {
     pub limits: Limits,
 }
 
-/// A chat's modes, from its last message's switches.
+/// A chat's modes as it runs: from its last message's switches; a helper (an expert, a worker, the researcher) always
+/// runs in Full auto (`agents::helper_ask`), so as a chat a call changes it counts as Full auto whatever it last ran.
 pub fn limits_of(agent: &agents::Agent) -> Limits {
     let ask = agent.last_ask();
-    Limits { runtime: if ask.full || ask.studio { Runtime::FullAccess } else { Runtime::ApprovalRequired }, interaction: Interaction::Default }
+    let full = ask.full || ask.studio || agent.is_subagent();
+    Limits { runtime: if full { Runtime::FullAccess } else { Runtime::ApprovalRequired }, interaction: Interaction::Default }
+}
+
+/// A chat's modes as a caller. A helper acts under the chat that started it (T3: a subagent acts with its parent
+/// thread's credential and mode, threadAccess.ts): its rank is that chat's, followed up to the chat the user talks to;
+/// a helper whose starting chat is gone ranks approval-required. So an Ask-me chat gains nothing through an expert.
+pub fn caller_limits(agent: &agents::Agent) -> Limits {
+    const ASK: Limits = Limits { runtime: Runtime::ApprovalRequired, interaction: Interaction::Default };
+    let mut at: Option<Arc<agents::Agent>> = None;
+    for _ in 0..16 {
+        let a: &agents::Agent = at.as_deref().unwrap_or(agent);
+        if !a.is_subagent() {
+            return limits_of(a);
+        }
+        match a.parent_id().and_then(|p| agents::get(&p)) {
+            Some(parent) => at = Some(parent),
+            None => return ASK,
+        }
+    }
+    ASK
 }
 
 /// The calling chat, for a call that only reads.
 pub fn read_caller(scope: &keys::Scope) -> Result<Caller, Failure> {
     let agent = agents::get(&scope.chat).ok_or_else(|| fail("thread_not_found", "The calling chat was not found."))?;
-    let limits = limits_of(&agent);
+    let limits = caller_limits(&agent);
     Ok(Caller { agent, scope: scope.clone(), limits })
 }
 
@@ -346,6 +367,83 @@ mod tests {
         assert!(card::answer(&me.id, &id, false));
         assert_eq!(h.join().unwrap().unwrap_err().code, "declined");
         drop_chat(&me);
+    }
+
+    /// A helper (an expert) `lead` started: it runs in Full auto, as every helper does.
+    fn helper_of(lead: &agents::Agent) -> Arc<agents::Agent> {
+        let h = test_chat("claude");
+        h.set_parent_for_test(Some(&lead.id));
+        h.set_last_ask_for_test(full());
+        h
+    }
+
+    #[test]
+    fn a_helper_ranks_no_higher_than_the_chat_that_started_it() {
+        let lead = test_chat("claude"); // Ask me
+        let helper = helper_of(&lead);
+        let caller = read_caller(&scope_of(&helper, "claude")).unwrap();
+        assert_eq!(caller.limits.runtime, Runtime::ApprovalRequired, "capped at its Ask-me lead");
+        assert_eq!(resolve_runtime(caller.limits.runtime, Some("full-access")).unwrap_err().code, "runtime_mode_escalation_denied");
+        let other = test_chat("claude");
+        other.set_last_ask_for_test(full());
+        assert_eq!(target_within(&caller, &other).unwrap_err().code, "runtime_mode_escalation_denied", "cannot act on a Full-auto chat");
+        // a helper of a helper of the Ask-me lead: the same cap, up the chain
+        let deeper = helper_of(&helper);
+        assert_eq!(read_caller(&scope_of(&deeper, "claude")).unwrap().limits.runtime, Runtime::ApprovalRequired);
+        // a helper whose lead is gone falls to approval-required
+        let orphan = test_chat("claude");
+        orphan.set_parent_for_test(Some("c-gone-lead"));
+        orphan.set_last_ask_for_test(full());
+        assert_eq!(read_caller(&scope_of(&orphan, "claude")).unwrap().limits.runtime, Runtime::ApprovalRequired);
+        // a helper of a Full-auto lead keeps Full auto
+        lead.set_last_ask_for_test(full());
+        assert_eq!(read_caller(&scope_of(&helper, "claude")).unwrap().limits.runtime, Runtime::FullAccess);
+        for a in [&lead, &helper, &other, &deeper, &orphan] {
+            drop_chat(a);
+        }
+    }
+
+    #[test]
+    fn a_helper_of_an_ask_me_chat_cannot_launch_a_full_auto_chat() {
+        use crate::app_mcp::tools::testing;
+        let _turn = testing::serial();
+        let lead = test_chat("claude");
+        let helper = helper_of(&lead);
+        helper.set_running_for_test(true);
+        let r = testing::call(&helper, "chat_launch", serde_json::json!({"title": "Wide open", "runtimeMode": "full-access"}));
+        assert_eq!(testing::err(&r).0, "runtime_mode_escalation_denied");
+        helper.set_running_for_test(false);
+        drop_chat(&helper);
+        drop_chat(&lead);
+    }
+
+    #[test]
+    fn a_helper_as_a_target_counts_as_full_auto() {
+        let lead = test_chat("claude"); // Ask me
+        let helper = test_chat("claude");
+        helper.set_parent_for_test(Some(&lead.id)); // not yet run: helpers always run in Full auto
+        let caller = read_caller(&scope_of(&lead, "claude")).unwrap();
+        assert_eq!(target_within(&caller, &helper).unwrap_err().code, "runtime_mode_escalation_denied");
+        assert_eq!(limits_of(&helper).runtime, Runtime::FullAccess);
+        drop_chat(&helper);
+        drop_chat(&lead);
+    }
+
+    #[test]
+    fn a_helper_of_an_ask_me_chat_gets_a_card() {
+        let lead = test_chat("claude");
+        let helper = helper_of(&lead);
+        helper.set_running_for_test(true);
+        let h = gating(&helper, false);
+        let id = card::tests::wait_event(&helper, "appcard", None)["card"].as_str().unwrap().to_string();
+        assert!(card::answer(&helper.id, &id, false));
+        assert_eq!(h.join().unwrap().unwrap_err().code, "declined");
+        // under a Full-auto lead it just happens
+        lead.set_last_ask_for_test(full());
+        assert_eq!(gating(&helper, false).join().unwrap(), Ok(()));
+        helper.set_running_for_test(false);
+        drop_chat(&helper);
+        drop_chat(&lead);
     }
 
     #[test]
