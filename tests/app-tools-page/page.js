@@ -211,6 +211,19 @@ const A = "H:/games/obby-rush", PID = "p0123456789ab";
     const before2 = await pg.evaluate(() => location.href);
     await pg.click('#chat-main .prose a.app-link[data-project="' + PID + '"]', { button: "middle" }); await wait(300);
     ok("middle_click_follows_nothing", (await pg.evaluate(() => location.href)) === before2 && pg.context().pages().length === 1, await pg.evaluate(() => location.href));
+    // ---- a copy of a message with a picture: the picture's address (it loads with the token) is cleaned ----
+    await ev({ kind: "user", agent: "a1", text: "Show me" });
+    await ev({ kind: "text", agent: "a1", text: "Here it is." });
+    await ev({ kind: "images", agent: "a1", urls: ["/img/lava.png"] });
+    await ev({ kind: "done", agent: "a1" });
+    await until(() => pg.evaluate(() => !!document.querySelector("#chat-main .shots img")));
+    const clip = await pg.evaluate(() => {
+      const t = [...document.querySelectorAll("#chat-main .turn")].pop(), src = t.querySelector(".shots img").getAttribute("src");
+      const r = document.createRange(); r.selectNodeContents(t); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      const dt = new DataTransfer(); document.dispatchEvent(new ClipboardEvent("copy", { clipboardData: dt, bubbles: true, cancelable: true }));
+      const out = { src, html: dt.getData("text/html"), text: dt.getData("text/plain"), sel: s.toString() }; s.removeAllRanges(); return out;
+    });
+    ok("copy_with_a_picture_has_no_token", clip.src.includes("tok-secret-4c1f") && clip.html.includes("/img/lava.png") && !clip.html.includes("tok-secret-4c1f") && !clip.html.includes("?t=") && clip.text === clip.sel && clip.text.includes("Here it is."), clip);
     ok("nothing_left_127_0_0_1", outside.length === 0, outside);
   } catch (e) { out.CRASH = String(e && e.stack || e); }
   ok("no_console_errors", errs.length === 0, errs);

@@ -17,6 +17,7 @@ import { Overview } from "./overview/Overview";
 import { stats } from "./overview/graph";
 import * as windows from "./windows";
 import { loadUsage, loadUsageSoon } from "./usage/usage";
+import { installCopyClean } from "./copyClean";
 import "./review/review.css";
 import "./settings/settings.css";
 import "./usage/usage.css";
@@ -54,6 +55,7 @@ w.fridae = {
   remote: { start: startRemote, withProjects, withHistory, boxStatus, machineOf: remoteRoute.machineOf, bare: remoteRoute.bare, homeOf: remoteRoute.homeOf, isHome: remoteRoute.isHome, at: remoteRoute.at },
 };
 setUpFrame();
+installCopyClean();   /* what is copied from the window never carries its token (copyClean.ts) */
 /* the old page ran first: whatever it kept for the new screens is handed over now */
 if (typeof w.fridaeReady === "function") w.fridaeReady();
 loadUsage(); setInterval(loadUsage, 60000);
