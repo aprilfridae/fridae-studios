@@ -48,16 +48,11 @@ function OvBar() {
         <button class="pill sm" id="ap-stop-all" hidden={!working} onClick={stop}>Stop everything</button>
       </div>
       {list.length > 0 && <ul class="fold-pills" aria-label="Every project">
-        {list.map((x) => {
-          const say = [x.busy ? plural(x.busy, " agent", " agents") : "", x.run ? "run " + x.run.toLowerCase() : "", x.n ? x.n + " waiting" : ""].filter(Boolean).join(" · ");
-          return (
-            <li key={x.path}>
-              <button class={"fp" + (x.live ? " live" : "")} title={"Open " + x.name + (x.why ? ". " + x.why : "")} onClick={() => host.showProject(x.path)}>
-                {x.name}{say && <small>{say}</small>}
-              </button>
-            </li>
-          );
-        })}
+        {list.map((x) => (
+          <li key={x.path}>
+            <button class={"fp" + (x.live ? " live" : "")} title={"Open " + x.name + (x.why ? ". " + x.why : "")} onClick={() => host.showProject(x.path)}>{x.name}</button>
+          </li>
+        ))}
       </ul>}
     </PullBar>
   );
