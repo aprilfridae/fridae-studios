@@ -7,6 +7,9 @@ It sets the version, builds the program (build_app.py), zips it, and creates a G
 in rbxpaths.UPDATE_REPO with the zip attached. Needs Rust, PyInstaller and the
 GitHub CLI (`gh`) signed in to the account that owns the repository.
 Everything in a release is public.
+The Mac and Linux files (Fridae-macOS.dmg, Fridae-linux-<arch>.AppImage and .tar.gz) are attached by the
+"Build for macOS" and "Build for Linux" workflows. Fridae.zip must stay the release's only .zip: older Windows
+copies install the first .zip they find (update.rs, pick_asset).
 """
 import os, re, subprocess, sys, zipfile
 
