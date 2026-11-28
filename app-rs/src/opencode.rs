@@ -3307,6 +3307,120 @@ mod replay;
 mod tests {
     use super::*;
 
+    /// Probe (by hand, `--ignored`): the installed OpenCode takes the toolbox as `run` hands it (`servers_config` over
+    /// `PUT /api/experimental/mcp/<name>`), connects to it with the key in its header, and writes the key to no file.
+    /// A server of its own on 127.0.0.1 with every folder (home, config, data, state, cache, temp) in a scratch folder
+    /// and a made-up key: never the user's OpenCode, its settings or its running server; no sign-in, no model turn.
+    #[test]
+    #[ignore]
+    fn probe_opencode_takes_the_toolbox() {
+        let exe = paths::find_opencode().expect("OpenCode installed");
+        // the real toolbox endpoint (`app_mcp::http`) with a real chat's key
+        let chat = crate::app_mcp::test_chat("opencode");
+        let raw = crate::app_mcp::keys::global().prepare(&chat.id, "opencode", false).raw;
+        let srv = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let mport = srv.server_addr().to_ip().unwrap().port();
+        let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+        let noted = seen.clone();
+        let key = raw.clone();
+        std::thread::spawn(move || {
+            for mut req in srv.incoming_requests() {
+                let mut body = Vec::new();
+                let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+                let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+                let keyed = headers.iter().any(|(n, v)| n.eq_ignore_ascii_case("authorization") && *v == format!("Bearer {key}"));
+                let reply = crate::app_mcp::http::handle_parts(req.method().as_str(), &headers, &body);
+                let method = serde_json::from_slice::<Value>(&body).ok().and_then(|v| v["method"].as_str().map(str::to_string)).unwrap_or_default();
+                let tools = serde_json::from_slice::<Value>(&reply.body).ok().and_then(|v| v["result"]["tools"].as_array().map(Vec::len));
+                noted.lock().unwrap().push(format!("{} {method} keyed={keyed} -> {} tools={tools:?}", req.method(), reply.status));
+                let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
+                for (n, v) in reply.headers {
+                    resp = resp.with_header(tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()).unwrap());
+                }
+                let _ = req.respond(resp);
+            }
+        });
+        let root = PathBuf::from(env::var("TMP").unwrap_or_else(|_| env::temp_dir().display().to_string())).join("probes").join(format!("opencode-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let dirs = ["home", "config", "data", "state", "cache", "tmp", "ocdir", "ws"];
+        for d in dirs {
+            fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let pw = "probe-password-0123456789";
+        let mut cmd = Command::new(&exe);
+        cmd.args(["serve", "--hostname", "127.0.0.1", "--port", "0"]).current_dir(root.join("ws"));
+        for (k, _) in env::vars_os() {
+            if k.to_string_lossy().starts_with("OPENCODE_") {
+                cmd.env_remove(&k);
+            }
+        }
+        for k in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"] {
+            cmd.env_remove(k);
+        }
+        cmd.env("HOME", root.join("home")).env("USERPROFILE", root.join("home")).env("XDG_CONFIG_HOME", root.join("config")).env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_STATE_HOME", root.join("state")).env("XDG_CACHE_HOME", root.join("cache")).env("TEMP", root.join("tmp")).env("TMP", root.join("tmp"))
+            .env("OPENCODE_CONFIG_DIR", root.join("ocdir")).env("OPENCODE_DISABLE_PROJECT_CONFIG", "1").env("OPENCODE_DISABLE_CLAUDE_CODE", "1")
+            .env("OPENCODE_DISABLE_AUTOUPDATE", "1").env("OPENCODE_DISABLE_MODELS_FETCH", "1").env("OPENCODE_PASSWORD", pw)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        let mut child = cmd.spawn().unwrap();
+        let out = child.stdout.take().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if let Some(p) = listening_port(&line) {
+                    let _ = tx.send(p);
+                }
+            }
+        });
+        let finish = |child: &mut Child| {
+            paths::end_trees(&[child.id()]);
+            let _ = child.kill();
+            let _ = child.wait();
+        };
+        let Ok(port) = rx.recv_timeout(Duration::from_secs(60)) else {
+            finish(&mut child);
+            panic!("the server did not start");
+        };
+        let conn = Conn { port, auth: format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("opencode:{pw}"))) };
+        let w = crate::app_mcp::Wire { url: format!("http://127.0.0.1:{mport}/mcp"), raw: raw.clone(), deferred: false };
+        let mine = servers_config(&chat.id, &json!({}), &[], Some(&w));
+        let ws = root.join("ws");
+        let mut answers = Vec::new();
+        for (name, cfg) in &mine {
+            answers.push((name.clone(), call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(name), at(&ws)), Some(&json!({"config": cfg})))));
+        }
+        let until = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < until && !seen.lock().unwrap().iter().any(|s| s.contains("tools/list")) {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let status = call(&conn, "GET", &format!("/api/experimental/mcp{}", at(&ws)), None);
+        finish(&mut child);
+        std::thread::sleep(Duration::from_millis(500));
+        let mut on_disk = Vec::new();
+        fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+            for e in fs::read_dir(d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() { walk(&p, out) } else { out.push(p) }
+            }
+        }
+        let mut files = Vec::new();
+        walk(&root, &mut files);
+        for f in &files {
+            if fs::read(f).map(|b| b.windows(raw.len()).any(|w| w == raw.as_bytes())).unwrap_or(false) {
+                on_disk.push(f.display().to_string());
+            }
+        }
+        eprintln!("PUT answers: {:?}", answers.iter().map(|(n, a)| (n, a.as_ref().map(|(s, _)| *s))).collect::<Vec<_>>());
+        eprintln!("status: {:?}", status.as_ref().map(|(s, v)| (s, v.to_string().replace(&raw, "[key]"))));
+        eprintln!("the toolbox saw: {:?}", seen.lock().unwrap());
+        eprintln!("files holding the key: {on_disk:?} (of {} files)", files.len());
+        let _ = fs::remove_dir_all(&root);
+        assert!(answers.iter().all(|(_, a)| matches!(a, Ok((s, _)) if *s < 300)), "OpenCode refused the toolbox's config");
+        crate::app_mcp::keys::global().revoke_chat(&chat.id);
+        assert!(seen.lock().unwrap().iter().any(|s| s.contains("tools/list keyed=true -> 200 tools=Some(")), "OpenCode never listed the toolbox's tools with the key");
+        assert!(on_disk.is_empty(), "the key was written to {on_disk:?}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn commands_run_in_sh_where_a_planted_script_never_runs() {

@@ -208,6 +208,9 @@ pub fn turn_args(workspace: &Path, servers: &Value, conversation: Option<&str>, 
     args
 }
 
+/// How long a call to Fridae's toolbox may take (an Allow/Don't card waits up to 10 minutes), as on the kept path.
+const TOOLBOX_TIMEOUT_SECONDS: u64 = 3900;
+
 /// Antigravity's rule that lets it read any file (the app's secrets are denied: `turn_args`).
 const READ_ANY: &str = "read_file(*)";
 
@@ -265,8 +268,28 @@ pub(crate) fn write_servers(workspace: &Path, servers: &Value) {
     if !cfg["mcpServers"].is_object() {
         cfg["mcpServers"] = json!({});
     }
-    // Fridae's toolbox never goes in a project's list: its key would be in a file in the project
-    for (name, server) in servers.as_object().unwrap_or(&Map::new()).iter().filter(|(n, _)| n.as_str() != crate::app_mcp::SERVER_NAME) {
+    // Fridae's toolbox goes in as the bridge's command alone (`app_mcp::bridge_entry`): its endpoint and key are in
+    // agy's environment, which a stdio server inherits (agy 1.5.18's own docs: "The server inherits the agent's
+    // environment"; and its lint: "MCP configs don't expand environment variables"). Never a key in a project's file.
+    // A turn without the toolbox takes the app's entry out, so no bridge is started without its settings.
+    let own = crate::app_mcp::SERVER_NAME;
+    match servers.get(own) {
+        Some(s) => {
+            let mut entry = json!({"timeoutSeconds": TOOLBOX_TIMEOUT_SECONDS});
+            for k in ["command", "args"] {
+                if let Some(v) = s.get(k) {
+                    entry[k] = v.clone();
+                }
+            }
+            cfg["mcpServers"][own] = entry;
+        }
+        None => {
+            if let Some(list) = cfg["mcpServers"].as_object_mut() {
+                list.remove(own);
+            }
+        }
+    }
+    for (name, server) in servers.as_object().unwrap_or(&Map::new()).iter().filter(|(n, _)| n.as_str() != own) {
         let mut server = server.clone();
         if let Some(o) = server.as_object_mut() {
             o.remove("type"); // Antigravity tells a local server by its `command`
@@ -297,7 +320,8 @@ pub fn unwrite_servers(workspace: &Path, servers: &Value) -> Option<Vec<u8>> {
     let mut cfg = serde_json::from_slice::<Value>(&was).ok()?;
     let list = cfg["mcpServers"].as_object_mut()?;
     let before = list.len();
-    list.retain(|name, _| servers.get(name).is_none());
+    // and the toolbox's bridge a process per message left (`write_servers`): the kept process is handed its own
+    list.retain(|name, _| servers.get(name).is_none() && name != crate::app_mcp::SERVER_NAME);
     if list.len() == before {
         return None;
     }
@@ -815,15 +839,28 @@ mod tests {
     }
 
     #[test]
-    fn gemini_project_list_never_gets_fridae() {
+    fn gemini_project_list_gets_the_keyless_bridge() {
         let ws = std::env::temp_dir().join(format!("fridae-agy-list-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&ws);
-        std::fs::create_dir_all(&ws).unwrap();
-        write_servers(&ws, &json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}, "fridae": {"command": "fridae", "args": ["--mcp-bridge"], "env": {"FRIDAE_MCP_AUTHORIZATION": "Bearer k"}}}));
+        std::fs::create_dir_all(ws.join(".agents")).unwrap();
+        std::fs::write(ws.join(".agents").join("mcp_config.json"), r#"{"mcpServers": {"mine": {"command": "node", "args": ["m.js"]}}}"#).unwrap();
+        let fridae = json!({"command": "fridae", "args": ["--mcp-bridge"], "env": {"FRIDAE_MCP_ENDPOINT": "http://127.0.0.1:9/mcp", "FRIDAE_MCP_AUTHORIZATION": "Bearer k"}, "headers": {"Authorization": "Bearer k"}, "url": "http://127.0.0.1:9/mcp"});
+        write_servers(&ws, &json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}, "fridae": fridae}));
         let text = std::fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap();
         let cfg: Value = serde_json::from_str(&text).unwrap();
-        assert!(cfg["mcpServers"]["rbxkit"].is_object());
-        assert!(cfg["mcpServers"].get("fridae").is_none() && !text.contains("Bearer k"), "{text}");
+        assert!(cfg["mcpServers"]["rbxkit"].is_object() && cfg["mcpServers"]["mine"].is_object());
+        // the entry runs the bridge; its endpoint and key come from agy's own environment, which the bridge inherits
+        assert_eq!(cfg["mcpServers"]["fridae"], json!({"command": "fridae", "args": ["--mcp-bridge"], "timeoutSeconds": 3900}), "{text}");
+        assert!(!text.contains("Bearer k") && !text.contains("127.0.0.1:9"), "{text}");
+        // a turn without the toolbox takes the app's entry out again; the user's stay
+        write_servers(&ws, &json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}}));
+        let cfg: Value = serde_json::from_str(&std::fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap()).unwrap();
+        assert!(cfg["mcpServers"].get("fridae").is_none() && cfg["mcpServers"]["mine"].is_object());
+        // a kept process is handed the toolbox over its protocol: the entry a process per message left goes for its turn
+        write_servers(&ws, &json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}, "fridae": {}}));
+        assert!(unwrite_servers(&ws, &json!({"rbxkit": {}})).is_some());
+        let cfg: Value = serde_json::from_str(&std::fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap()).unwrap();
+        assert!(cfg["mcpServers"].get("fridae").is_none() && cfg["mcpServers"].get("rbxkit").is_none() && cfg["mcpServers"]["mine"].is_object());
         let _ = std::fs::remove_dir_all(&ws);
     }
 }

@@ -35,7 +35,9 @@ const MISSING_ENV: &str = "fridae --mcp-bridge needs FRIDAE_MCP_ENDPOINT and FRI
 
 /// The bridge's settings from its environment.
 pub fn config_from(env: impl Fn(&str) -> Option<String>) -> Result<BridgeConfig, String> {
-    match (env("FRIDAE_MCP_ENDPOINT"), env("FRIDAE_MCP_AUTHORIZATION")) {
+    // an empty value, or a placeholder left as it was (an AI that does not fill `${env:X}` in its tool list), is missing
+    let set = |k: &str| env(k).filter(|v| !v.trim().is_empty() && !v.contains("${"));
+    match (set("FRIDAE_MCP_ENDPOINT"), set("FRIDAE_MCP_AUTHORIZATION")) {
         (Some(endpoint), Some(authorization)) => {
             let exposure = env("FRIDAE_MCP_TOOL_EXPOSURE").map(|e| e.trim().to_string()).filter(|e| e.eq_ignore_ascii_case("deferred-proxy"));
             Ok(BridgeConfig { endpoint, authorization, exposure })
@@ -510,7 +512,10 @@ mod tests {
 
     #[test]
     fn missing_env_exits_2() {
-        for env in [vec![], vec![("FRIDAE_MCP_ENDPOINT", "http://127.0.0.1:9/mcp")], vec![("FRIDAE_MCP_AUTHORIZATION", KEY)]] {
+        // an empty value, or a placeholder the AI did not fill (Cursor's `${env:X}`, a plain `${X}`), is missing too
+        let unfilled = [("FRIDAE_MCP_ENDPOINT", "${env:FRIDAE_MCP_ENDPOINT}"), ("FRIDAE_MCP_AUTHORIZATION", "${FRIDAE_MCP_AUTHORIZATION}")];
+        let empty = [("FRIDAE_MCP_ENDPOINT", "http://127.0.0.1:9/mcp"), ("FRIDAE_MCP_AUTHORIZATION", " ")];
+        for env in [vec![], vec![("FRIDAE_MCP_ENDPOINT", "http://127.0.0.1:9/mcp")], vec![("FRIDAE_MCP_AUTHORIZATION", KEY)], unfilled.to_vec(), empty.to_vec()] {
             let lookup = |k: &str| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
             let config = config_from(lookup);
             assert!(config.is_err());

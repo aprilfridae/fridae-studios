@@ -257,6 +257,23 @@ impl Wire {
     pub fn authorization(&self) -> String {
         format!("Bearer {}", self.raw)
     }
+
+    /// What `Fridae --mcp-bridge` reads from its environment (`bridge::config_from`): set on the AI's own process, never
+    /// written to a file, for an AI that starts the bridge from a tool list on disk (`bridge_entry`).
+    pub fn bridge_env(&self) -> Vec<(&'static str, String)> {
+        let mut env = vec![("FRIDAE_MCP_ENDPOINT", self.url.clone()), ("FRIDAE_MCP_AUTHORIZATION", self.authorization())];
+        if self.deferred {
+            env.push(("FRIDAE_MCP_TOOL_EXPOSURE", "deferred-proxy".to_string()));
+        }
+        env
+    }
+}
+
+/// Fridae's toolbox as an entry of a tool list on disk: this program run as the stdio bridge, with no endpoint and no
+/// key (the AI's process has them in its environment: `Wire::bridge_env`).
+pub fn bridge_entry() -> Value {
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    json!({"command": exe, "args": ["--mcp-bridge"]})
 }
 
 impl std::fmt::Debug for Wire {

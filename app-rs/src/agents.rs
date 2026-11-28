@@ -1456,7 +1456,9 @@ thread_local! {
 /// A launch as a test sees it: the kept process's key, the environment of the process per message, and that of the
 /// kept process (None: the AI does not tell it).
 #[cfg(test)]
-type LaunchForTest = (String, Vec<(String, Option<String>)>, Option<Vec<(String, Option<String>)>>);
+/// (the kept process's key, the per-message process's environment, the kept process's environment, the per-message
+/// process's arguments, and the message it is given)
+type LaunchForTest = (String, Vec<(String, Option<String>)>, Option<Vec<(String, Option<String>)>>, Vec<String>, String);
 
 /// A Cursor or OpenCode chat whose saved conversation is gone: forget it, and hand over the chat so far (without the
 /// message being sent now, the last thing the user said) so the next turn starts a new conversation that knows it.
@@ -2177,11 +2179,17 @@ impl Kept for GeminiLaunch {
             env.remove("FRIDAE_TOOL_PICTURES");
         }
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", false), self.jobs.as_deref());
+        // Fridae's toolbox: the bridge, keyless, in the workspace's list (`antigravity::write_servers`); its endpoint
+        // and key in agy's environment, which the bridge inherits
+        if s.toolbox.is_some() {
+            servers[crate::app_mcp::SERVER_NAME] = crate::app_mcp::bridge_entry();
+        }
         let mut cmd = Command::new(&self.exe);
         cmd.args(&self.first).args(antigravity::turn_args(&s.cwd, &servers, session, s.model.as_deref(), s.effort.as_deref(), s.rules.full));
         cmd.current_dir(&s.cwd);
         self.homes(&mut cmd);
-        (cmd, antigravity::message_line(text))
+        let text = toolbox_on_process(&mut cmd, s.toolbox.as_ref(), session, text);
+        (cmd, antigravity::message_line(&text))
     }
 
     fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
@@ -2371,10 +2379,23 @@ impl CursorLaunch {
         .to_string()
     }
 
-    /// Fridae's toolbox for the kept process, as Gemini's (`GeminiLaunch::toolbox`). A process per message gets none
-    /// (Cursor reads those servers from a settings file).
+    /// Fridae's toolbox. The kept process is handed it over its protocol, as Gemini's (`GeminiLaunch::toolbox`). A
+    /// process per message reads its servers from the workspace's `.cursor/mcp.json`: the bridge goes there with its
+    /// endpoint and key named by placeholders (`${env:X}`, which Cursor fills from its own environment; it gives a
+    /// server only HOME, PATH and what the entry lists), and the process gets the two in its environment
+    /// (`toolbox_on_process`). Being among the servers also puts its tools on Cursor's allow list, which decides on
+    /// both paths (`cursor::prepare`).
     fn toolbox(&mut self, wire: Option<&crate::app_mcp::Wire>) {
         set_acp_toolbox(&mut self.spec, wire);
+        let own = crate::app_mcp::SERVER_NAME;
+        if let Some(list) = self.servers.as_object_mut() {
+            list.remove(own);
+        }
+        if wire.is_some() {
+            let mut entry = crate::app_mcp::bridge_entry();
+            entry["env"] = json!({"FRIDAE_MCP_ENDPOINT": "${env:FRIDAE_MCP_ENDPOINT}", "FRIDAE_MCP_AUTHORIZATION": "${env:FRIDAE_MCP_AUTHORIZATION}"});
+            self.servers[own] = entry;
+        }
     }
 
     /// Whether a conversation is one a kept process made (`<settings folder>/acp-sessions/<id>`).
@@ -2400,8 +2421,9 @@ impl Kept for CursorLaunch {
     }
 
     fn per_turn(&self, session: Option<&str>, text: &str) -> (Command, String) {
-        let cmd = cursor::command_with(&self.exe, &self.first, &self.workspace, &self.servers, session, self.model.as_deref(), self.full, self.project.as_deref(), &self.kit);
-        (cmd, text.to_string())
+        let mut cmd = cursor::command_with(&self.exe, &self.first, &self.workspace, &self.servers, session, self.model.as_deref(), self.full, self.project.as_deref(), &self.kit);
+        let text = toolbox_on_process(&mut cmd, self.spec.toolbox.as_ref(), session, text);
+        (cmd, text)
     }
 
     fn turn(&self, a: &Arc<Agent>, live: &Arc<Live>, tp: &Arc<TurnProc>, text: &str, last: &Mutex<(std::time::Instant, bool, bool)>, first: bool) -> TurnEnd {
@@ -2491,6 +2513,17 @@ fn set_acp_toolbox(spec: &mut crate::acp::Spec, wire: Option<&crate::app_mcp::Wi
         spec.rules.servers.push(own);
     }
     spec.toolbox = wire.cloned();
+}
+
+/// Fridae's toolbox on a process per message that starts the bridge from a tool list on disk (Gemini, Cursor): the
+/// endpoint and key in the process's environment (`Wire::bridge_env`), and a new conversation's first message with the
+/// toolbox's instructions in front, as a kept process's (`acp::first_prompt`). The message as it then goes in.
+fn toolbox_on_process(cmd: &mut Command, wire: Option<&crate::app_mcp::Wire>, session: Option<&str>, text: &str) -> String {
+    let Some(w) = wire else { return text.to_string() };
+    for (k, v) in w.bridge_env() {
+        cmd.env(k, v);
+    }
+    if session.is_some() { text.to_string() } else { crate::app_mcp::instructions::prompt_prefix_for(text, w.deferred) }
 }
 
 /// What a kept ACP process's launch key holds of its toolbox: whether it has one, and where. Never the key: a key that
@@ -3973,9 +4006,10 @@ impl Agent {
         #[cfg(test)]
         if LAUNCHES_FOR_TEST.with(|l| l.borrow().is_some()) {
             let envs = |cmd: &Command| -> Vec<(String, Option<String>)> { cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect() };
-            let (cmd, _) = launch.per_turn(None, text);
+            let (cmd, message) = launch.per_turn(None, text);
             let kept = launch.kept_command_for_test().map(|c| envs(&c));
-            LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().as_mut().unwrap().push((launch.key(), envs(&cmd), kept)));
+            let args = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+            LAUNCHES_FOR_TEST.with(|l| l.borrow_mut().as_mut().unwrap().push((launch.key(), envs(&cmd), kept, args, message)));
             self.put("done", json!({}));
             return;
         }
@@ -9874,8 +9908,81 @@ FRIDAE_MCP_AUTHORIZATION=Bearer {raw}")}));
         let raw = crate::app_mcp::keys::global().prepare(&a.id, "gemini", false).raw;
         assert!(l[0].0.contains("http://127.0.0.1:4567/mcp"), "the toolbox is part of the kept process's launch");
         assert!(!l[0].0.contains(&raw), "never its key");
-        assert!(l[0].1.iter().chain(l[0].2.iter().flatten()).all(|(_, v)| v.as_deref() != Some(raw.as_str()) && !v.as_deref().unwrap_or("").contains(&raw)), "nor in any process's environment");
+        assert!(l[0].2.iter().flatten().all(|(_, v)| !v.as_deref().unwrap_or("").contains(&raw)), "nor in the kept process's environment");
         crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    #[test]
+    fn gemini_per_message_gets_the_toolbox_with_no_key_on_disk() {
+        let a = chat_on_first("c-toolbox-gemini-per-message");
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "Rename my project"));
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "gemini", false).raw;
+        // the key is in agy's environment only, which the bridge it starts inherits
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_ENDPOINT").flatten().as_deref(), Some("http://127.0.0.1:4567/mcp"));
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_AUTHORIZATION").flatten(), Some(format!("Bearer {raw}")));
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_TOOL_EXPOSURE").flatten().as_deref(), Some("deferred-proxy"));
+        assert!(!l[0].3.iter().any(|a| a.contains(&raw)), "never an argument");
+        // the workspace's list has the keyless bridge, its tools allowed as the app's own
+        let ws = paths::work("gemini").join(&a.id);
+        let text = fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap();
+        let cfg: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(cfg["mcpServers"]["fridae"]["args"], json!(["--mcp-bridge"]), "{text}");
+        assert!(cfg["mcpServers"]["fridae"].get("env").is_none());
+        assert!(l[0].3.iter().any(|a| a.contains("mcp(fridae/*)")), "{:?}", l[0].3);
+        // no file the turn wrote holds the key
+        for f in walk_files(&ws) {
+            assert!(!fs::read_to_string(&f).unwrap_or_default().contains(&raw), "{}", f.display());
+        }
+        // a new conversation's first message carries the instructions, with the deferred tools
+        assert!(l[0].4.contains("fridae_toolbox_instructions") && l[0].4.contains("tool_search"), "{}", l[0].4);
+        // without the local server up: no toolbox, and the app's entry is gone from the list
+        let l = launches(&a, "Again");
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_AUTHORIZATION"), None);
+        assert!(!l[0].4.contains("fridae_toolbox_instructions"));
+        let cfg: Value = serde_json::from_str(&fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap()).unwrap();
+        assert!(cfg["mcpServers"].get("fridae").is_none());
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    #[test]
+    fn cursor_per_message_gets_the_toolbox_with_no_key_on_disk() {
+        let a = chat_on_first("c-toolbox-cursor-per-message");
+        a.st.lock().unwrap().ai = Some("cursor".into());
+        let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "Rename my project"));
+        assert_eq!(l.len(), 1);
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "cursor", false).raw;
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_ENDPOINT").flatten().as_deref(), Some("http://127.0.0.1:4567/mcp"));
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_AUTHORIZATION").flatten(), Some(format!("Bearer {raw}")));
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_TOOL_EXPOSURE"), None, "Cursor takes every tool");
+        assert!(!l[0].3.iter().any(|a| a.contains(&raw)), "never an argument");
+        assert!(l[0].2.iter().flatten().all(|(_, v)| !v.as_deref().unwrap_or("").contains(&raw)), "nor in the kept process's environment");
+        // Cursor gives a server only HOME, PATH and what its entry lists: the entry names the two by placeholder
+        let ws = cursor::workspace(&a.id);
+        let text = fs::read_to_string(ws.join(".cursor").join("mcp.json")).unwrap();
+        let cfg: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(cfg["mcpServers"]["fridae"]["args"], json!(["--mcp-bridge"]), "{text}");
+        assert_eq!(cfg["mcpServers"]["fridae"]["env"]["FRIDAE_MCP_AUTHORIZATION"], json!("${env:FRIDAE_MCP_AUTHORIZATION}"));
+        assert_eq!(cfg["mcpServers"]["fridae"]["env"]["FRIDAE_MCP_ENDPOINT"], json!("${env:FRIDAE_MCP_ENDPOINT}"));
+        for f in walk_files(&ws).into_iter().chain(walk_files(&cursor::config_dir())) {
+            assert!(!fs::read_to_string(&f).unwrap_or_default().contains(&raw), "{}", f.display());
+        }
+        // its tools are on Cursor's allow list, on both paths (one settings file)
+        let rules: Value = serde_json::from_str(&fs::read_to_string(cursor::config_dir().join("cli-config.json")).unwrap()).unwrap();
+        assert!(rules["permissions"]["allow"].as_array().unwrap().contains(&json!("Mcp(fridae:*)")), "{rules}");
+        assert!(l[0].4.contains("fridae_toolbox_instructions") && !l[0].4.contains("tool_search"), "{}", l[0].4);
+        // the kept process is handed the toolbox once, over its protocol
+        assert!(l[0].0.contains("http://127.0.0.1:4567/mcp") && !l[0].0.contains(&raw));
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() { out.extend(walk_files(&p)) } else { out.push(p) }
+        }
+        out
     }
 
     /// A stand-in on 127.0.0.1 for the toolbox probes: notes the Authorization of every request to /mcp, answers
