@@ -15,14 +15,15 @@ const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="cur
 export function PullBar({ keep, what, bar, cls, onTuck, children }: { keep: string; what: string; bar: string; cls?: string; onTuck?(): void; children: any }) {
   const [out, setOut] = useState(() => { try { return localStorage.getItem(keep) === "1"; } catch (e) { return false; } });
   const [moving, setMoving] = useState(false);
-  const me = useRef<HTMLDivElement>(null), glass = useRef<HTMLDivElement>(null);
-  /* the glass is cut to the top bar, the bar and the tab as one shape, drawn again as the bar slides; the page under it
-     is told how tall the bar is (--fold-h), so what it shows first starts below it */
+  const me = useRef<HTMLDivElement>(null), glass = useRef<HTMLDivElement>(null), edge = useRef<SVGPathElement>(null);
+  /* the glass is cut to the top bar, the bar and the tab as one shape, drawn again as the bar slides (over the page,
+     which stays still under it) */
   useLayoutEffect(() => {
     const el = me.current!, g = glass.current!;
     const draw = () => {
       const box = el.getBoundingClientRect(), w = box.width, h = box.height;
-      if (el.parentElement) el.parentElement.style.setProperty("--fold-h", h.toFixed(2) + "px");
+      /* the line under the bar and round the tab, drawn as one line so its pieces meet exactly */
+      if (edge.current) edge.current.setAttribute("d", `M0 0.5H${TAB_X}L` + tabPaths(TAB_W, TAB_H, false, { dx: TAB_X }).line.slice(1) + `H${w.toFixed(2)}`);
       g.style.clipPath = `path('M0 0H${w}V${(TOP + h).toFixed(2)}H0Z${tabPaths(TAB_W, TAB_H, false, { dx: TAB_X, dy: TOP + h - 1 }).fill}')`;
     };
     draw();
@@ -37,6 +38,7 @@ export function PullBar({ keep, what, bar, cls, onTuck, children }: { keep: stri
   return (
     <div ref={me} class={"headfold" + (cls ? " " + cls : "") + (out ? " out" : "") + (moving || !out ? " clip" : "")}>
       <div class="hf-glass" ref={glass} />
+      <svg class="hf-edge" aria-hidden="true"><path ref={edge} /></svg>
       <div class="hf-in" inert={!out}><div class={bar}>{children}</div></div>
       <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={(out ? "Tuck away " : "Show ") + what} title={(out ? "Tuck away " : "Show ") + what} onClick={fold}><TabShape w={TAB_W} h={TAB_H} />{DOWN}</button>
     </div>

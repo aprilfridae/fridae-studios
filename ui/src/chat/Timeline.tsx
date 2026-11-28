@@ -190,7 +190,7 @@ function boxAndTab(w: number, h: number, r: number, k: number) {
   return "path('" + box + tabPaths(TL_W, TL_H, true, { dx: n(w - 1 - TL_IN - TL_W), dy: 1, k }).fill + "')";
 }
 export function ToLatest({ tab }: { tab?: boolean }) {
-  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on), sinking = useRef(false);
+  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on), sinking = useRef(false), edge = useRef<SVGPathElement>(null);
   useEffect(() => { away.subs.add(again); return () => { away.subs.delete(again); }; }, []);
   /* the box's glass shape: kept to the box's size, and morphing (for as long as the tab grows or sinks) when it shows */
   useLayoutEffect(() => {
@@ -198,11 +198,14 @@ export function ToLatest({ tab }: { tab?: boolean }) {
     if (!box) return;
     const put = () => {
       const r = parseFloat(getComputedStyle(box).borderTopLeftRadius) || 0;
-      const w = box.offsetWidth, h = box.offsetHeight, x1 = n(w - 1 - TL_IN), x0 = away.on || sinking.current ? n(x1 - TL_W) : x1;
+      const w = box.offsetWidth, h = box.offsetHeight, x1 = n(w - 1 - TL_IN), x0 = n(x1 - TL_W);
       box.style.setProperty("--cm-clip", boxAndTab(w, h, r, away.on ? 1 : 0.001));
-      /* the box's outline (.composer::after) opens where the tab stands (the whole box, less the top row there), at once as
-         it comes and only once it has sunk flat as it goes */
-      box.style.setProperty("--cm-gap", `path(evenodd, 'M0 0H${w}V${h}H0ZM${x0} -1H${x1}V1.5H${x0}Z')`);
+      /* the box's outline is one drawn line (not a border, which the screen rounds to whole pixels differently from the
+         tab's drawn outline, so the two never quite met): round the box, open where the tab stands at once as it comes,
+         and closed again only once it has sunk flat as it goes */
+      const q = 0.5, R = n(Math.max(0, r - q)), open = away.on || sinking.current;
+      if (edge.current) edge.current.setAttribute("d", `M${open ? x0 : x1} ${q}H${n(q + R)}A${R} ${R} 0 0 0 ${q} ${n(q + R)}V${n(h - q - R)}A${R} ${R} 0 0 0 ${n(q + R)} ${n(h - q)}`
+        + `H${n(w - q - R)}A${R} ${R} 0 0 0 ${n(w - q)} ${n(h - q - R)}V${n(q + R)}A${R} ${R} 0 0 0 ${n(w - q - R)} ${q}H${x1}${open ? "" : "Z"}`);
     };
     if (was.current !== away.on) {
       was.current = away.on; sinking.current = !away.on; box.classList.add("tl-morph");
@@ -213,9 +216,12 @@ export function ToLatest({ tab }: { tab?: boolean }) {
     return () => ro.disconnect();
   });
   return (
+    <>
+    {tab && <svg class="cm-edge" aria-hidden="true"><path ref={edge} /></svg>}
     <button ref={me} class={"to-latest" + (tab ? " tl-tab" : "") + (away.on ? " on" : "")} tabIndex={away.on ? 0 : -1} aria-hidden={away.on ? undefined : "true"} title="Go to the newest message" onClick={() => away.go()}>
       {tab && <TabShape w={TL_W} h={TL_H} up />}
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1.5v7M1.5 5.5 5 9l3.5-3.5" /></svg><span class="tl-t">Jump to latest</span>
     </button>
+    </>
   );
 }

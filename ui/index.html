@@ -240,7 +240,7 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 /* the run's pause and play button (Head.tsx RunPlay): a 28px ghost control; the icon is two pieces of the text colour,
    each cut to shape (clip-path), which reshape between the two bars of pause and the two halves of play */
 .run-play { position: relative; display: grid; place-items: center; width: var(--h-s); height: var(--h-s); border-radius: var(--r-s); color: var(--text); transition: background-color 140ms ease, transform 140ms var(--ease); }
-.run-play:hover { background: var(--ctl-hover); }
+.run-play:hover { background: var(--press); }
 .run-play:active { transform: scale(0.92); }
 .run-play.err { color: var(--bad-ink); }
 .rp-ico { position: relative; display: block; width: 14px; height: 14px; }
@@ -859,7 +859,8 @@ body.review .stage > .top::before, body.all .stage > .top::before,
 body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headfold) > .top::before { display: none; }
 .main:has(> .headfold) { margin-top: -48px; }
 .main > .headfold { margin-top: 48px; }
-.main:has(> .headfold) > .scroll { grid-row: 1 / 4; padding-top: calc(48px + var(--fold-h, 0px) + 24px); scroll-padding-top: calc(48px + var(--fold-h, 0px) + 24px); }
+/* the chat stays still as the bar slides out over it */
+.main:has(> .headfold) > .scroll { grid-row: 1 / 4; padding-top: 72px; scroll-padding-top: 72px; }
 #review, #promos, #newproj, #allproj { margin-top: -48px; }
 #review, #promos, #newproj { padding-top: 72px; }
 .headfold { --fold-bg: transparent; --fold-line: color-mix(in oklab, var(--text) 22%, var(--bg));
@@ -870,11 +871,10 @@ body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headf
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .hf-glass, .stage > .top::before { background: var(--bg); } }
 /* the line stays over the sliding bar (whose transform would otherwise paint it over the line until it stops) */
-/* in two pieces, either side of the tab (24px in, 148px wide), whose own outline carries the line round it: the tab's mouth
-   stays open, so the bar and the tab are one shape */
-.headfold::before, .headfold::after { content: ""; position: absolute; z-index: 1; bottom: 0; height: 1px; background: var(--fold-line); pointer-events: none; }
-.headfold::before { left: 0; width: 24px; }
-.headfold::after { left: 172px; right: 0; }
+/* the line under the bar and round its tab, one drawn line (PullBar.tsx), over the bar as it slides */
+.hf-edge { position: absolute; z-index: 1; left: 0; top: calc(100% - 1px); width: 100%; height: 16px; overflow: visible; pointer-events: none; }
+.hf-edge path { fill: none; stroke: var(--fold-line); stroke-width: 1; }
+.hf-tab .tab-shape .s { display: none; }
 .headfold.out { grid-template-rows: 1fr; }
 .hf-in { min-height: 0; }
 .headfold.clip .hf-in { overflow: hidden; }

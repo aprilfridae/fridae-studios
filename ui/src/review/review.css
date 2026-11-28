@@ -18,7 +18,7 @@
 #review .rv-row { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px 0 10px; margin: 0; border: 0; border-radius: var(--r-s);
   background: none; font-size: 13px; font-weight: 400; white-space: nowrap; color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
 #review .rv-row:hover { color: var(--text); background: var(--hover); }
-#review .rv-row[aria-selected="true"] { color: var(--text); font-weight: 500; background: color-mix(in oklab, var(--main) 14%, transparent); }
+#review .rv-row[aria-selected="true"] { color: var(--text); font-weight: 500; background: var(--press); }
 .rv-row .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); opacity: 0.5; }
 .rv-row .dot.on { background: var(--main); opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklab, var(--main) 22%, transparent); }
 /* the chosen project's things sit in one box, a hairline between them */

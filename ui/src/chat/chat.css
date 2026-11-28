@@ -14,9 +14,8 @@
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest { background: var(--raised); } }
 /* as a tab on the message box (Timeline.tsx ToLatest), only while the reader is scrolled up: it grows up out of the
    box's top edge, and the box's outline opens where it stands, so the two are one shape. Its fill is the box's own glass
-   (below), and its outline the box's line. The box's outline is drawn over it (::after) rather than as
-   its border, so that it can open: it is cut (--cm-gap, set with the glass's shape) rather than masked, as the window's zoom
-   scales a mask's lengths unevenly */
+   (below), and its outline the box's line. The box's outline is a drawn line (.cm-edge) rather than its border, so that
+   it can open there and meets the tab's outline exactly */
 .composer { border-color: transparent; }
 /* the box's glass covers its (see-through) outline row too, and reaches up over Jump to latest's tab: it is cut to the
    box and the tab as one shape (Timeline.tsx boxAndTab, kept as --cm-clip), so one blur runs behind both. While the
@@ -24,12 +23,15 @@
 .composer::before { inset: -17px -1px -1px; border-radius: 0; clip-path: var(--cm-clip, inset(16px 0 0 0 round var(--r-l))); }
 .composer.tl-morph::before { transition: clip-path 240ms var(--ease); }
 .composer::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; border: 1px solid var(--cm-line); pointer-events: none; transition: border-color 160ms ease; }
-.composer::after { clip-path: var(--cm-gap, none); }
+/* with Jump to latest's tab, the outline is drawn instead (.cm-edge, Timeline.tsx), as one line with the tab's */
+.composer:has(> .cm-edge)::after { display: none; }
+.cm-edge { position: absolute; top: -1px; left: -1px; width: calc(100% + 2px); height: calc(100% + 2px); overflow: visible; pointer-events: none; }
+.cm-edge path { fill: none; stroke: var(--cm-line); stroke-width: 1; transition: stroke 160ms ease; }
 .to-latest.tl-tab { bottom: 100%; left: auto; right: 24px; width: 148px; height: 16px; padding: 1px 0 0; font-size: 11px; line-height: 1; justify-content: center; gap: 6px; border: 0; border-radius: 0;
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none; isolation: isolate; z-index: 1;
   opacity: 1; transform: none; transition: visibility 0s 260ms, color var(--t-fast) ease; }
 .to-latest.tl-tab.on { transform: none; transition: color var(--t-fast) ease; }
-/* it fades up out of the box's line: the box's line under it opens at once (--cm-gap, Timeline.tsx) but a flat piece of
+/* it fades up out of the box's line: the box's line under it opens at once (.cm-edge, Timeline.tsx) but a flat piece of
    line (.b) stands in for it and fades out as the tab's outline (.s) rises from flat and fades in, in step with the glass
    growing (--cm-clip); its words fade in. Going, the same backwards, and the line closes again once it is flat */
 .tl-tab .tab-shape .s { transform-box: view-box; transform-origin: 50% calc(100% - 0.5px); transform: scaleY(0.02); opacity: 0;
