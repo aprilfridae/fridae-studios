@@ -42,7 +42,7 @@ mod rag;
 mod remote_client;
 mod remote_common;
 mod remote_host;
-#[cfg(all(test, any(windows, target_os = "macos")))]
+#[cfg(all(test, any(windows, unix)))]
 mod remote_e2e_tests;
 mod research;
 mod server;
@@ -103,18 +103,15 @@ fn window_icon() -> Option<Icon> {
 
 fn find_browser() -> Option<std::path::PathBuf> {
     let local = env::var("LOCALAPPDATA").unwrap_or_default();
-    [
+    let windows = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".to_string(),
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe".to_string(),
         r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string(),
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".to_string(),
         format!(r"{local}\Google\Chrome\Application\chrome.exe"),
-    ]
-    .into_iter()
-    .map(std::path::PathBuf::from)
-    .find(|p| p.exists())
-    .or_else(|| paths::which("msedge"))
-    .or_else(|| paths::which("chrome"))
+    ];
+    let fixed: &[String] = if cfg!(windows) { &windows } else { &[] };
+    fixed.iter().map(std::path::PathBuf::from).find(|p| p.exists()).or_else(|| paths::BROWSERS.iter().find_map(|name| paths::which(name)))
 }
 
 /// Match the title bar to the page (Windows 11).
@@ -165,13 +162,12 @@ fn self_test(message: &str) {
     agents::shut_down();
 }
 
-/// Apps opened from Finder get a bare PATH; add the places Claude Code, Homebrew and Blender's wrapper live.
-#[cfg(target_os = "macos")]
+/// Apps opened from Finder, the Dock or a Linux desktop launcher get a bare PATH; add the places Claude Code, Cursor,
+/// OpenCode, Homebrew, npm and snaps put their programs (`paths::gui_path`).
+#[cfg(unix)]
 fn widen_path() {
-    let home = paths::home_dir();
-    let mut dirs = vec![home.join(".local").join("bin"), "/opt/homebrew/bin".into(), "/usr/local/bin".into()];
-    dirs.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
-    if let Ok(p) = env::join_paths(dirs) {
+    let now: Vec<std::path::PathBuf> = env::split_paths(&env::var_os("PATH").unwrap_or_default()).collect();
+    if let Ok(p) = env::join_paths(paths::gui_path(&paths::home_dir(), cfg!(target_os = "macos"), &now)) {
         // SAFETY: called first thing in main, before any other thread starts
         unsafe { env::set_var("PATH", p) };
     }
@@ -189,7 +185,7 @@ fn main() {
             std::process::exit(swarm::live::hook_main(&args[i + 1..]));
         }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     widen_path();
     // installing an update: this copy is the new version, run from the download folder (see splash.rs)
     let args: Vec<String> = env::args().collect();
@@ -275,11 +271,18 @@ fn main() {
     let data = if paths::packaged() { PATHS.home.join("webview") } else { paths::work("webview") };
     let mut context = WebContext::new(Some(data));
     let builder = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_url(&url);
-    #[cfg(any(windows, target_os = "macos"))]
+    // every system: the page's messages to the window (its bar's buttons, the text-size zoom). Linux keeps the system's
+    // own title bar (GTK draws it), so no __fridaeFrame there and the page draws no bar of its own.
     let builder = {
         let proxy = event_loop.create_proxy();
         // __fridaeZoom: this window zooms the page for the text-size setting (ui/index.html, setScale)
-        let frame = if cfg!(windows) { "window.__fridaeFrame = true; window.__fridaeZoom = true;" } else { "window.__fridaeFrame = 'mac'; window.__fridaeZoom = true;" };
+        let frame = if cfg!(windows) {
+            "window.__fridaeFrame = true; window.__fridaeZoom = true;"
+        } else if cfg!(target_os = "macos") {
+            "window.__fridaeFrame = 'mac'; window.__fridaeZoom = true;"
+        } else {
+            "window.__fridaeZoom = true;"
+        };
         builder
             .with_initialization_script(frame)
             .with_ipc_handler(move |req: wry::http::Request<String>| {
@@ -306,11 +309,23 @@ fn main() {
         wry::DragDropEvent::Drop { paths, .. } => promo::dropped(paths),
         _ => false,
     });
+    // Linux: inside the window's GTK box, which works on Wayland as well as X11 (wry's `build` is X11 only there)
+    #[cfg(target_os = "linux")]
+    let built = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        match window.default_vbox() {
+            Some(vbox) => builder.build_gtk(vbox),
+            None => builder.build(&window),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
     let built = builder.build(&window);
     let _webview = match built {
         Ok(view) => view,
         Err(_) => {
-            // no WebView2 on this computer: show the page in Edge or Chrome instead, or in the default browser
+            // no web view on this computer (WebView2 on Windows, WebKitGTK on Linux): show the page in Edge, Chrome or
+            // Chromium instead, or in the default browser
             window.set_visible(false);
             match find_browser() {
                 Some(browser) => {

@@ -244,12 +244,7 @@ pub fn reveal_target(path: &str, which: &str) -> Result<PathBuf, String> {
 pub fn reveal(path: &str, which: &str) -> Value {
     match reveal_target(path, which) {
         Ok(p) => {
-            let (cmd, args) = crate::promo::reveal_cmd(&p.display().to_string());
-            let mut c = std::process::Command::new(cmd);
-            c.args(args);
-            paths::quiet(&mut c);
-            use paths::Start;
-            if c.start().is_ok() { json!({"ok": true}) } else { fail("Fridae could not open the folder.") }
+            if crate::promo::reveal_path(&p.display().to_string()) { json!({"ok": true}) } else { fail("Fridae could not open the folder.") }
         }
         Err(e) => fail(e),
     }

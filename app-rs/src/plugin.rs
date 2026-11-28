@@ -56,15 +56,39 @@ fn token() -> String {
     paths::setting("plugin_token").as_str().unwrap_or("").to_string()
 }
 
-fn plugin_file() -> PathBuf {
-    if cfg!(target_os = "macos") {
-        return paths::home_dir().join("Documents").join("Roblox").join("Plugins").join(FILE_NAME);
-    }
-    PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("Roblox").join("Plugins").join(FILE_NAME)
+/// Studio's local plugins folder's copy of the plugin, or None where there is no Studio to load it (Linux without
+/// Vinegar). Never a path relative to the current folder.
+fn plugin_file() -> Option<PathBuf> {
+    let os = if cfg!(target_os = "macos") { "macos" } else if cfg!(windows) { "windows" } else { "linux" };
+    let user = std::env::var("USER").unwrap_or_default();
+    plugin_file_for(os, &paths::home_dir(), std::env::var_os("LOCALAPPDATA").map(PathBuf::from), &user)
+}
+
+/// `plugin_file` for a system: Windows `%LOCALAPPDATA%\Roblox\Plugins`, a Mac `~/Documents/Roblox/Plugins`. Linux has
+/// no Studio of its own; when Vinegar (the Flatpak that runs Studio under Wine) has made its Studio prefix, the plugin
+/// goes into that prefix's Windows folder, since the plugin only talks to 127.0.0.1, which works from Wine.
+fn plugin_file_for(os: &str, home: &std::path::Path, local: Option<PathBuf>, user: &str) -> Option<PathBuf> {
+    let folder = match os {
+        "macos" => home.join("Documents").join("Roblox").join("Plugins"),
+        "windows" => local.filter(|l| !l.as_os_str().is_empty())?.join("Roblox").join("Plugins"),
+        _ => {
+            let drive = home.join(".var/app/org.vinegarhq.Vinegar/data/vinegar/prefixes/studio/drive_c");
+            if user.is_empty() || !drive.is_dir() {
+                return None;
+            }
+            drive.join("users").join(user).join("AppData").join("Local").join("Roblox").join("Plugins")
+        }
+    };
+    Some(folder.join(FILE_NAME))
+}
+
+/// Whether Roblox Studio can be used on this computer: Windows and macOS, or Linux with Vinegar's Studio.
+pub fn studio_here() -> bool {
+    paths::STUDIO_HERE || plugin_file().is_some()
 }
 
 fn installed_version() -> Option<String> {
-    let text = fs::read_to_string(plugin_file()).ok()?;
+    let text = fs::read_to_string(plugin_file()?).ok()?;
     let rest = text.split("local VERSION = \"").nth(1)?;
     Some(rest.split('"').next()?.to_string())
 }
@@ -96,6 +120,8 @@ pub fn status() -> Value {
         "listening": listening, "connected": live, "running_version": if live { running } else { String::new() },
         "place": if live { place } else { Value::Null }, "selection": if live { selection } else { Value::Null }, "recent_errors": errors,
         "studio_running": !live && installed.is_some() && studio_running(),
+        // Linux: no Studio, so the window says so instead of offering the plugin
+        "studio_here": studio_here(), "studio_note": if studio_here() { "" } else { paths::NO_STUDIO_HERE },
     })
 }
 
@@ -125,7 +151,7 @@ pub fn install() -> Result<String, String> {
     let model = format!(
         "<roblox version=\"4\">\n<Item class=\"Script\" referent=\"RBX0\">\n<Properties>\n<string name=\"Name\">FridaeStudios</string>\n<ProtectedString name=\"Source\"><![CDATA[{source}]]></ProtectedString>\n</Properties>\n</Item>\n</roblox>\n"
     );
-    let path = plugin_file();
+    let Some(path) = plugin_file() else { return Err(paths::NO_STUDIO_HERE.into()) };
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("Could not create Studio's plugins folder: {e}"))?;
     }
@@ -134,7 +160,7 @@ pub fn install() -> Result<String, String> {
 }
 
 pub fn remove() -> bool {
-    fs::remove_file(plugin_file()).is_ok()
+    plugin_file().is_some_and(|f| fs::remove_file(f).is_ok())
 }
 
 /// A note for the agent about Studio right now: the selection, and errors since `after`.
@@ -335,4 +361,23 @@ pub fn start() {
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_plugin_goes_to_each_systems_studio_and_never_to_the_current_folder() {
+        let home = paths::test_dir("plugin-file");
+        let mac = plugin_file_for("macos", &home, None, "a").unwrap();
+        assert_eq!(mac, home.join("Documents").join("Roblox").join("Plugins").join(FILE_NAME));
+        assert_eq!(plugin_file_for("windows", &home, None, "a"), None, "no LOCALAPPDATA: no relative path");
+        assert_eq!(plugin_file_for("windows", &home, Some(PathBuf::from("C:/L")), "a"), Some(PathBuf::from("C:/L").join("Roblox").join("Plugins").join(FILE_NAME)));
+        assert_eq!(plugin_file_for("linux", &home, None, "a"), None, "Linux without Vinegar: no Studio");
+        let drive = home.join(".var/app/org.vinegarhq.Vinegar/data/vinegar/prefixes/studio/drive_c");
+        fs::create_dir_all(&drive).unwrap();
+        assert_eq!(plugin_file_for("linux", &home, None, "a"), Some(drive.join("users").join("a").join("AppData").join("Local").join("Roblox").join("Plugins").join(FILE_NAME)));
+        assert_eq!(plugin_file_for("linux", &home, None, ""), None);
+    }
 }

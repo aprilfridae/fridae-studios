@@ -291,19 +291,47 @@ pub fn delete(path: &str, trash: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+/// The programs that move a folder to the Trash, in the order they are tried, as (program, arguments): a Mac's
+/// `/usr/bin/trash` (macOS 14 and later), else Finder through `osascript` (older macOS); Linux's `gio trash` (GLib,
+/// there wherever GTK is), else KDE's `kioclient5`/`kioclient`. The folder is always an argument of its own, never
+/// part of a script's text.
+#[cfg_attr(windows, allow(dead_code))]
+fn trash_commands(dir: &Path, mac: bool) -> Vec<(&'static str, Vec<std::ffi::OsString>)> {
+    let d = dir.as_os_str().to_os_string();
+    if mac {
+        let finder = ["-e", "on run argv", "-e", "tell application \"Finder\" to delete (POSIX file (item 1 of argv) as alias)", "-e", "end run"];
+        let mut osa: Vec<std::ffi::OsString> = finder.iter().map(|a| a.into()).collect();
+        osa.push(d.clone());
+        vec![("/usr/bin/trash", vec!["--".into(), d]), ("/usr/bin/osascript", osa)]
+    } else {
+        vec![
+            ("gio", vec!["trash".into(), "--".into(), d.clone()]),
+            ("kioclient5", vec!["move".into(), d.clone(), "trash:/".into()]),
+            ("kioclient", vec!["move".into(), d, "trash:/".into()]),
+        ]
+    }
+}
+
+#[cfg(unix)]
 fn to_trash(dir: &Path) -> Result<(), String> {
-    let tool = Path::new("/usr/bin/trash");
-    if !tool.exists() {
-        return Err("This Mac has no trash command. Remove the project from Fridae, then drag its folder to the Trash in Finder.".into());
+    let mac = cfg!(target_os = "macos");
+    let mut last = String::new();
+    for (program, args) in trash_commands(dir, mac) {
+        let found = if program.starts_with('/') { Some(PathBuf::from(program)).filter(|p| p.is_file()) } else { paths::which(program) };
+        let Some(found) = found else { continue };
+        let mut cmd = Command::new(found);
+        cmd.args(&args).stdin(Stdio::null());
+        match cmd.run_output() {
+            Ok(o) if o.status.success() && !dir.exists() => return Ok(()),
+            Ok(o) => last = String::from_utf8_lossy(&o.stderr).trim().to_string(),
+            Err(e) => last = e.to_string(),
+        }
     }
-    let mut cmd = Command::new(tool);
-    cmd.arg("--").arg(dir).stdin(Stdio::null());
-    match cmd.run_output() {
-        Ok(o) if o.status.success() && !dir.exists() => Ok(()),
-        Ok(o) => Err(format!("The folder could not go to the Trash: {}", String::from_utf8_lossy(&o.stderr).trim())),
-        Err(e) => Err(format!("The folder could not go to the Trash: {e}")),
+    if last.is_empty() {
+        let how = if mac { "drag its folder to the Trash in Finder" } else { "move its folder to the Trash in your file manager" };
+        return Err(format!("Fridae found no way to move folders to the Trash on this computer. Remove the project from Fridae, then {how}."));
     }
+    Err(format!("The folder could not go to the Trash: {last}"))
 }
 
 #[cfg(windows)]
@@ -320,7 +348,7 @@ fn to_trash(dir: &Path) -> Result<(), String> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(not(any(unix, windows)))]
 fn to_trash(_dir: &Path) -> Result<(), String> {
     Err("Fridae cannot move folders to the Trash here. Remove the project from Fridae, then delete its folder yourself.".into())
 }
@@ -373,7 +401,7 @@ pub fn add(path: &str, kind: Option<&str>) -> Result<Value, String> {
 
 /// Ask the user for a folder with the system's own dialog.
 pub fn pick_folder() -> Option<String> {
-    rfd::FileDialog::new().set_title("Choose the project's folder").pick_folder().map(|p| p.display().to_string())
+    crate::paths::dialog::Dialog::new().title("Choose the project's folder").pick_folder().map(|p| p.display().to_string())
 }
 
 pub fn open(path: &str, what: &str) -> bool {
@@ -698,5 +726,20 @@ mod tests {
         let d = describe("C:/No/Such/Shop/");
         assert_eq!(d["id"], json!(crate::app_mcp::project_id("c:\\no\\such\\shop")));
         assert_eq!(d["id"].as_str().map(str::len), Some(13));
+    }
+
+    #[test]
+    fn a_folder_goes_to_each_systems_trash_as_an_argument_of_its_own() {
+        let dir = Path::new("/home/a/Games/My \"Shop\"");
+        let linux = trash_commands(dir, false);
+        let programs: Vec<&str> = linux.iter().map(|(p, _)| *p).collect();
+        assert_eq!(programs, ["gio", "kioclient5", "kioclient"]);
+        assert_eq!(linux[0].1, ["trash", "--", dir.to_str().unwrap()].map(std::ffi::OsString::from));
+        assert_eq!(linux[1].1, ["move", dir.to_str().unwrap(), "trash:/"].map(std::ffi::OsString::from));
+        let mac = trash_commands(dir, true);
+        assert_eq!(mac[0], ("/usr/bin/trash", ["--", dir.to_str().unwrap()].map(std::ffi::OsString::from).to_vec()));
+        assert_eq!(mac[1].0, "/usr/bin/osascript", "older macOS: Finder");
+        assert_eq!(mac[1].1.last().unwrap(), dir.as_os_str(), "the folder is the script's argument");
+        assert!(mac[1].1.iter().all(|a| a == dir.as_os_str() || !a.to_string_lossy().contains("Shop")), "never in the script's text");
     }
 }

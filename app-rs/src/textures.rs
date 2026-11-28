@@ -59,17 +59,87 @@ pub fn skip_for(agent_id: &str) {
 
 // ---------------------------------------------------------------- clipboard
 pub fn set_clipboard_text(text: &str) -> bool {
+    #[cfg(target_os = "linux")]
+    if wayland::set_text(text) {
+        return true;
+    }
     arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())).is_ok()
 }
 
-/// The image on the clipboard, if there is one (a copied picture, or a copied image file).
-fn clipboard_image() -> Option<DynamicImage> {
-    let mut clip = arboard::Clipboard::new().ok()?;
-    if let Ok(img) = clip.get_image() {
-        let buf = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())?;
-        return Some(DynamicImage::ImageRgba8(buf));
+/// A Linux desktop on Wayland: arboard reads only the X11 clipboard (through XWayland), so an image copied in a native
+/// Wayland browser is not seen there. `wl-paste`/`wl-copy` (the wl-clipboard package) reach the Wayland clipboard
+/// itself; without them arboard is used as before. (arboard's own `wayland-data-control` feature would do this in the
+/// process, but needs the wl-clipboard-rs crate, which this build does not carry.)
+#[cfg(target_os = "linux")]
+mod wayland {
+    use crate::paths::Start;
+    use std::process::{Command, Stdio};
+
+    fn tool(name: &str) -> Option<std::path::PathBuf> {
+        std::env::var_os("WAYLAND_DISPLAY").filter(|v| !v.is_empty())?;
+        crate::paths::which(name)
     }
-    let files = clip.get().file_list().ok()?;
+
+    pub fn set_text(text: &str) -> bool {
+        let Some(copy) = tool("wl-copy") else { return false };
+        let Ok(mut child) = Command::new(copy).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).start() else { return false };
+        let wrote = child.stdin.take().is_some_and(|mut i| std::io::Write::write_all(&mut i, text.as_bytes()).is_ok());
+        wrote && child.wait().is_ok_and(|s| s.success())
+    }
+
+    /// The clipboard's image as file bytes, or the copied files' paths (`text/uri-list`).
+    pub fn image() -> Option<super::Clip> {
+        let paste = tool("wl-paste")?;
+        let types = Command::new(&paste).arg("--list-types").stdin(Stdio::null()).stderr(Stdio::null()).run_output().ok()?;
+        let mime = super::best_image_type(&String::from_utf8_lossy(&types.stdout))?;
+        let out = Command::new(&paste).args(["--no-newline", "--type", mime]).stdin(Stdio::null()).stderr(Stdio::null()).run_output().ok()?;
+        if !out.status.success() || out.stdout.is_empty() {
+            return None;
+        }
+        Some(if mime == "text/uri-list" { super::Clip::Files(super::uri_list(&String::from_utf8_lossy(&out.stdout))) } else { super::Clip::Bytes(out.stdout) })
+    }
+}
+
+/// What a clipboard reader handed over: an image's file bytes, or copied files.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+enum Clip {
+    Bytes(Vec<u8>),
+    Files(Vec<PathBuf>),
+}
+
+/// The clipboard type to read an image from, of those `wl-paste --list-types` lists: a PNG first, then other image
+/// types, then a list of copied files.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+fn best_image_type(listed: &str) -> Option<&'static str> {
+    const WANTED: [&str; 6] = ["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif", "text/uri-list"];
+    WANTED.into_iter().find(|w| listed.lines().any(|l| l.trim() == *w))
+}
+
+/// The local files of a `text/uri-list` (`file:///home/a/My%20Image.png`, one per line; comments and other schemes
+/// left out).
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+fn uri_list(text: &str) -> Vec<PathBuf> {
+    text.lines().filter_map(|l| l.trim().strip_prefix("file://")).filter_map(percent_decode).map(PathBuf::from).collect()
+}
+
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+fn percent_decode(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            out.push(u8::from_str_radix(s.get(i + 1..i + 3)?, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn image_file(files: &[PathBuf]) -> Option<DynamicImage> {
     files
         .iter()
         .filter(|p| {
@@ -77,6 +147,23 @@ fn clipboard_image() -> Option<DynamicImage> {
             [".png", ".jpg", ".jpeg", ".webp", ".bmp"].iter().any(|e| n.ends_with(e))
         })
         .find_map(|p| image::open(p).ok())
+}
+
+/// The image on the clipboard, if there is one (a copied picture, or a copied image file).
+fn clipboard_image() -> Option<DynamicImage> {
+    #[cfg(target_os = "linux")]
+    match wayland::image() {
+        Some(Clip::Bytes(b)) => return image::load_from_memory(&b).ok(),
+        Some(Clip::Files(f)) => return image_file(&f),
+        None => {}
+    }
+    let mut clip = arboard::Clipboard::new().ok()?;
+    if let Ok(img) = clip.get_image() {
+        let buf = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())?;
+        return Some(DynamicImage::ImageRgba8(buf));
+    }
+    let files = clip.get().file_list().ok()?;
+    image_file(&files)
 }
 
 /// A fingerprint, to tell a newly copied image from the one that was already there.
@@ -204,4 +291,19 @@ pub fn paste_into_gemini() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wayland_clipboard_image_is_read_as_a_png_first_then_as_copied_files() {
+        assert_eq!(best_image_type("text/html\nimage/jpeg\nimage/png\n"), Some("image/png"));
+        assert_eq!(best_image_type("text/uri-list\nimage/webp"), Some("image/webp"));
+        assert_eq!(best_image_type("text/uri-list\n"), Some("text/uri-list"));
+        assert_eq!(best_image_type("text/plain\nUTF8_STRING"), None);
+        assert_eq!(uri_list("# copied\nfile:///home/a/My%20Image.png\r\nhttps://x/y.png\nfile:///tmp/%C3%A9.jpg"), [PathBuf::from("/home/a/My Image.png"), PathBuf::from("/tmp/é.jpg")]);
+        assert_eq!(percent_decode("bad%2"), None);
+    }
 }

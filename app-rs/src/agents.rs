@@ -5432,7 +5432,10 @@ fn spawn_named(team_id: Option<&str>, role: Option<&str>, name: &str, project: O
     Some(agent)
 }
 
-/// While any chat is in overnight mode, keep Windows from going to sleep (the screen may still turn off).
+/// While any chat is in overnight mode, keep the computer from going to sleep (the screen may still turn off): Windows
+/// asks with SetThreadExecutionState; a Mac and Linux hold a helper that blocks sleep (`paths::awake_command`:
+/// `caffeinate` on a Mac, `systemd-inhibit` on Linux) while it is needed, ended when no chat is overnight. The helper
+/// also ends by itself when the app does, so a crash never leaves the computer awake.
 pub fn keep_awake() {
     #[cfg(windows)]
     {
@@ -5455,6 +5458,33 @@ pub fn keep_awake() {
             }
         });
     }
+    #[cfg(unix)]
+    thread::spawn(|| {
+        let mut held: Option<std::process::Child> = None;
+        let mut failures = 0; // a helper that ends by itself again and again (no logind, say) is not restarted for ever
+        loop {
+            let now = agents().iter().any(|a| a.overnight());
+            let running = held.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
+            if now && !running && failures < 3 {
+                if held.take().is_some() {
+                    failures += 1;
+                }
+                held = paths::awake_command(std::process::id(), cfg!(target_os = "macos"), |p| std::path::Path::new(p).is_file()).and_then(|(program, args)| {
+                    let mut c = std::process::Command::new(program);
+                    c.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+                    paths::own_group(&mut c);
+                    c.start().ok()
+                });
+            } else if !now {
+                if let Some(mut c) = held.take() {
+                    paths::end_group_soon(c.id());
+                    let _ = c.wait();
+                }
+                failures = 0;
+            }
+            thread::sleep(Duration::from_secs(20));
+        }
+    });
 }
 
 /// Note which chats are open, so they come back when the app is started again.
@@ -6120,7 +6150,8 @@ pub fn run_setup() {
     let at = lines.len().saturating_sub(1);
     lines.insert(at, row(paths::find_agent(), "Claude Code", "not found: install it and sign in"));
     let at = lines.len().saturating_sub(1);
-    lines.insert(at, row(paths::studio_mcp(), "Studio MCP", "off: turn it on in Studio's Assistant settings"));
+    let studio_missing = if paths::STUDIO_HERE { "off: turn it on in Studio's Assistant settings" } else { "not available on Linux (Roblox makes no Linux version)" };
+    lines.insert(at, row(paths::studio_mcp(), "Studio MCP", studio_missing));
     BUS.put("setup", json!({"text": lines.join("\n")}));
 }
 

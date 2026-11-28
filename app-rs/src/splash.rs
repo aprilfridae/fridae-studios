@@ -1,7 +1,7 @@
 //! Installing a downloaded update, with a small splash window instead of console windows.
 //!
 //! The old app starts the NEW program from the download folder as
-//!   `Fridae.exe --apply-update <old pid> <install folder> <version> [relaunch]`
+//!   `Fridae.exe --apply-update <old pid> <install folder> <version> [relaunch]` (`Fridae` in the Linux folder)
 //! and exits. The new program waits for the old one to close, copies its own folder over the install folder
 //! while a progress bar fills, opens the installed app and quits. Nothing here runs a console program, so no
 //! console window can appear. It uses nothing from `paths`, which would point at the download folder here.
@@ -23,9 +23,10 @@ use tao::{
 };
 use wry::{WebContext, WebViewBuilder};
 
-const EXE_NAME: &str = "Fridae.exe";
-/// The program's name before the rename (`paths::OLD_EXE_NAME`): an install folder may still hold only this one.
-const OLD_EXE_NAME: &str = "Fridae Studios.exe";
+/// The program's name (`Fridae.exe`, or `Fridae` in the Linux folder), and its name before the rename
+/// (`paths::OLD_EXE_NAME`): an install folder may still hold only that one. Constants only: nothing in `paths` that
+/// would point at the download folder.
+use crate::paths::{EXE_NAME, OLD_EXE_NAME};
 
 /// Whether `folder` holds the app's program, under its new or its old name.
 fn has_program(folder: &Path) -> bool {
@@ -219,7 +220,20 @@ pub fn run(args: &[String]) {
         round_corners(window.hwnd() as isize);
     }
     let mut context = WebContext::new(Some(env::temp_dir().join("fridae-update-webview")));
-    let view = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_html(page(&version)).build(&window).ok();
+    let builder = WebViewBuilder::new_with_web_context(&mut context).with_background_color((12, 12, 13, 255)).with_html(page(&version));
+    // Linux: inside the window's GTK box (Wayland and X11), as in main.rs
+    #[cfg(target_os = "linux")]
+    let view = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        match window.default_vbox() {
+            Some(vbox) => builder.build_gtk(vbox),
+            None => builder.build(&window),
+        }
+    }
+    .ok();
+    #[cfg(not(target_os = "linux"))]
+    let view = builder.build(&window).ok();
     thread::spawn(worker);
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;

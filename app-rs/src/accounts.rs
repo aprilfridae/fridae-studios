@@ -258,12 +258,22 @@ pub fn stand_in_here(given: &StandIn) {
 /// file in its config folder, measured, and the user's setup is linked in by junctions and file links: `link_into`).
 /// Gemini: everywhere too (on Windows an added account keeps its sign-in in a token file in its own folder,
 /// `AGY_CLI_FORCE_FILE_TOKEN_STORAGE`, never in the Credential Manager entry that holds the user's own: `home`).
+/// Not on Linux yet: there Antigravity most likely keeps its sign-in in the desktop's Secret Service (one per login,
+/// not per home folder), so an added account could read or replace the user's own Gemini sign-in. Off until that is
+/// measured (`not_offered_why` says so in the window).
 pub fn offered(ai: &str) -> bool {
     match ai {
         "claude" => true,
-        "gemini" => true,
+        "gemini" => GEMINI_ADDED_HERE,
         _ => false,
     }
+}
+
+const GEMINI_ADDED_HERE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// What the window says where another account is not offered for an AI that otherwise has them.
+pub fn not_offered_why(ai: &str) -> Option<&'static str> {
+    (ai == "gemini" && !GEMINI_ADDED_HERE).then_some("A second Gemini account isn't available on Linux yet: it could share the sign-in of your own.")
 }
 
 /// Random bytes for a new folder's name. Unix: `/dev/urandom`. Windows (which has no such file): the standard
@@ -1563,7 +1573,7 @@ pub fn state() -> Value {
             })
             .collect();
         let left: Vec<String> = left(ai).iter().map(|d| d.display().to_string()).collect();
-        out.insert(ai.to_string(), json!({"offered": offered(ai), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
+        out.insert(ai.to_string(), json!({"offered": offered(ai), "why_not": not_offered_why(ai), "used": used_until_of(ai, None, now), "accounts": accounts, "left": left, "most": MOST}));
     }
     Value::Object(out)
 }
@@ -1746,7 +1756,9 @@ mod tests {
     #[test]
     fn offered_per_ai() {
         assert!(offered("claude"));
-        assert!(offered("gemini"), "Gemini's added accounts are offered on Windows too (a token file of their own)");
+        assert_eq!(offered("gemini"), cfg!(any(windows, target_os = "macos")), "Gemini's added accounts are offered on Windows too (a token file of their own), not on Linux yet");
+        assert_eq!(not_offered_why("gemini").is_some(), !offered("gemini"), "where it is not offered the window says why");
+        assert_eq!(not_offered_why("claude"), None);
         assert!(!offered("cursor") && !offered("opencode") && !offered(""));
         assert_eq!(state()["claude"]["offered"], true);
         assert_eq!(state()["gemini"]["offered"], true);

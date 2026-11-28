@@ -85,11 +85,16 @@ fn qdrant_exe() -> PathBuf {
 }
 
 /// Setup's mode switch (`POST /api/rag/mode`): checked, then written as every guarded setting is (`update_config`).
+/// Whether Heavy (Ollama + Qdrant, set up by rbxrag/setup.py) can run here: macOS only. Windows and Linux are refused
+/// with "Heavy is Mac only for now." (setup.py fetches only the Mac builds of both, and the Linux checksums are not
+/// pinned yet).
+pub const HEAVY_HERE: bool = cfg!(target_os = "macos");
+
 pub fn set_mode(mode: &str) -> Result<(), String> {
     if !MODES.contains(&mode) {
         return Err("Pick Off, Light or Heavy.".into());
     }
-    if mode == "heavy" && cfg!(windows) {
+    if mode == "heavy" && !HEAVY_HERE {
         return Err("Heavy is Mac only for now.".into());
     }
     paths::update_config(|cfg| {
@@ -630,7 +635,7 @@ fn two_free_ports() -> Result<(u16, u16), String> {
 
 /// What to start for `mode`, when its setup is complete (None when it is not: nothing starts, Setup shows the steps).
 fn launch_for(mode: &str) -> Result<Option<Launch>, String> {
-    if mode == "heavy" && cfg!(windows) {
+    if mode == "heavy" && !HEAVY_HERE {
         return Err("Heavy is Mac only for now.".into());
     }
     let check = check_fresh(mode);
@@ -922,7 +927,7 @@ pub fn status(asked: Option<&str>) -> Value {
         json!({"running": s.running.is_some(), "mode": s.running.as_ref().map(|r| r.mode.clone()), "starting": s.starting, "ready": s.running.as_ref().is_some_and(|r| r.ready),
                "error": s.error, "restarting": s.restart.is_some(), "gave_up": s.failures >= GIVE_UP_AFTER})
     };
-    json!({"mode": mode, "check": check, "service": service, "setup": setup_state(), "windows": cfg!(windows), "process": process})
+    json!({"mode": mode, "check": check, "service": service, "setup": setup_state(), "windows": cfg!(windows), "heavy_supported": HEAVY_HERE, "process": process})
 }
 
 /// `POST /api/rag/mode {"mode"}`: written as the guarded setting, then the service for it started (on a thread of its
@@ -1154,7 +1159,7 @@ pub fn setup(body: &Value) -> Value {
     if mode == "off" {
         return json!({"ok": false, "error": "Pick Light or Heavy first."});
     }
-    if mode == "heavy" && cfg!(windows) {
+    if mode == "heavy" && !HEAVY_HERE {
         return json!({"ok": false, "error": "Heavy is Mac only for now."});
     }
     user_acted();
