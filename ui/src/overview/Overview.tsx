@@ -53,7 +53,7 @@ function OvBar() {
           return (
             <li key={x.path}>
               <button class={"fp" + (x.live ? " live" : "")} title={"Open " + x.name + (x.why ? ". " + x.why : "")} onClick={() => host.showProject(x.path)}>
-                <span class={"dot" + (x.busy ? " on" : "")} />{x.name}{say && <small>{say}</small>}
+                {x.name}{say && <small>{say}</small>}
               </button>
             </li>
           );

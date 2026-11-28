@@ -1,5 +1,5 @@
-/* The projects with something waiting, side by side in one row that scrolls sideways: a dot and the name, the one in
-   front tinted. Pressing one shows that project's things. The arrow keys, Home and End go from project to project. */
+/* The projects with something waiting, side by side in one row that scrolls sideways: each its name, the one in
+   front in the selected colour. Pressing one shows that project's things. The arrow keys, Home and End go from project to project. */
 import { useEffect, useRef } from "preact/hooks";
 
 type Tab = { path: string; name: string; n: number; things: unknown[] };
@@ -31,7 +31,7 @@ export function Tabs({ tabs, on, pick }: { tabs: Tab[]; on: string; pick: (path:
           <button class="fp" id={"rv-tab-" + i} data-path={t.path} role="tab" aria-selected={t.path === on ? "true" : "false"} aria-controls="rv-items" tabIndex={t.path === on ? 0 : -1}
             title={plural(t.things.length, " thing to look over in ", " things to look over in ") + t.name} onClick={() => pick(t.path)}
             ref={(el) => { if (el && t.path === on) el.scrollIntoView({ block: "nearest", inline: "nearest" }); }}>
-            <span class={"dot" + (t.path === on ? " on" : "")} />{t.name}
+            {t.name}
           </button>
         </li>
       ))}
