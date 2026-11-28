@@ -15,7 +15,7 @@ import { C, modelsFor } from "./compose";
 const ocName = (name: string) => { const [g, r] = name.split(" · "); return r && (r.startsWith(g) || g === "Other") ? r : name; };
 import { replyOver } from "../remote/move";
 import { accountWord } from "./AccountChip";
-import { foldAppTools, isAppTool } from "./appTools";
+import { foldAppTools } from "./appTools";
 
 export type Part = { id: number; k: string; v: number; born: number; [more: string]: any };
 export type Row = { id: number; k: string; v: number; born: number; on?: () => void; h?: number; [more: string]: any };
@@ -196,7 +196,8 @@ export function event(p: any, e: any): string | void {
     p.ai = e.ai;
     if (e.from) { put(tl, mk("tag", { cls: "tag ai-tag", text: "Switched from " + H.aiName(e.from) + " to " + H.aiName(e.ai) + ". It gets the chat so far with your next message." })); p.turn = null; }
   } else if (e.kind === "project") {
-    p.project = e; H.tied(p);
+    /* the event's own `id` is its number on the event list: the project's id comes as projectId */
+    p.project = e; p.projectId = e.projectId || ""; H.tied(p);
     if (p.start) { p.start.step = H.startStep(e) === "ready" ? "ready" : (p.start.step === "folder" || p.start.step === "new" ? "kind" : p.start.step); p.start.paint(); }
   } else if (e.kind === "model") {
     p.model = e.name;
@@ -278,8 +279,6 @@ export function event(p: any, e: any): string | void {
     if (was && was.row && was.row.parts.includes(was)) { Object.assign(was, more); partChanged(was.row, was); }
     else { const pt = add(p, part("apptool", { call: e.call, ...more })); pt.row = p.turn; p.appCalls[e.call] = pt; }
     if (e.status === "running") p.now = e.label || p.now;
-  } else if (e.kind === "tool" && isAppTool(e.label)) {
-    /* the AI's own step line for a call to the app toolbox: the call's row says it */
   } else if (e.kind === "tool") {
     const s = steps(p), t = p.turn as Row;
     s.list.push({ t: e.label, born: performance.now() }); s.live = true; s.v++; touch(t);

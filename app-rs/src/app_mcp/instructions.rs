@@ -39,13 +39,9 @@ pub fn system_text() -> String {
 "))
 }
 
-/// A prompt with the instructions in front, for AIs whose instructions ride on the prompt (ACP). A prompt that starts
-/// with `/` is a slash command, which must stay at the start: it is left alone.
-pub fn prompt_prefix(prompt: &str) -> String {
-    prompt_prefix_for(prompt, false)
-}
-
-/// `prompt_prefix`, with the deferred-tools section when the AI takes the deferred tools (Gemini).
+/// A prompt with the instructions in front, for AIs whose instructions ride on the prompt (ACP), with the
+/// deferred-tools section when the AI takes the deferred tools (Gemini). A prompt that starts with `/` is a slash
+/// command, which must stay at the start: it is left alone.
 pub fn prompt_prefix_for(prompt: &str, deferred: bool) -> String {
     if prompt.trim_start().starts_with('/') {
         return prompt.to_string();
@@ -93,13 +89,13 @@ mod tests {
         assert!(d[2].starts_with("Deferred Fridae tools: only `fridae_capabilities`, `tool_search`, and `tool_call`"));
         assert!(!system_text().contains("Deferred Fridae tools"));
         assert!(prompt_prefix_for("hi", true).contains("Deferred Fridae tools"));
-        assert!(!prompt_prefix("hi").contains("Deferred Fridae tools"));
+        assert!(!prompt_prefix_for("hi", false).contains("Deferred Fridae tools"));
     }
 
     #[test]
     fn slash_commands_are_left_alone() {
-        assert_eq!(prompt_prefix("  /compact now"), "  /compact now");
-        let p = prompt_prefix("rename it");
+        assert_eq!(prompt_prefix_for("  /compact now", false), "  /compact now");
+        let p = prompt_prefix_for("rename it", false);
         assert!(p.starts_with("<fridae_toolbox_instructions>\n## Fridae toolbox\n\n"), "{p}");
         assert!(p.ends_with("</fridae_toolbox_instructions>\n\n<user_request>\nrename it\n</user_request>"), "{p}");
     }

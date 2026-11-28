@@ -12,16 +12,8 @@ import { H } from "./host";
 import type { Part } from "./chatStore";
 import { machineOf, SEP } from "../remote/route";
 
-/* The names an AI's own step line gives a call to the toolbox, in each AI's form: `mcp__fridae__<tool>`,
-   `mcp__fridae-direct__<tool>`, `fridae.<tool>`, `fridae__<tool>`, `fridae-direct.<tool>`, OpenCode's
-   `fr<8 hex>-fridae_<tool>`. The app writes an unknown tool's name with spaces for underscores, so that form counts
-   too. Such a step is left out of the steps: the call's own row says it. */
-const FORMS = [/^mcp__fridae(?:-direct)?__[a-z_]+$/i, /^fridae(?:-direct)?(?:\.|__)[a-z_]+$/i, /^fr[0-9a-f]{8}-fridae_[a-z_]+$/i];
-export function isAppTool(label: unknown): boolean {
-  if (typeof label !== "string" || label.length > 120) return false;
-  const name = label.trim().replace(/ /g, "_");
-  return FORMS.some((re) => re.test(name));
-}
+/* An AI's own step line for a call to the toolbox never reaches the page: the app counts it and sends no step
+   (agents.rs `toolbox_step`), so the call's own row is its only line. */
 
 /* what became of a card, in the words of its one line */
 export const OUTCOME: Record<string, string> = { allowed: "allowed", declined: "declined", cancelled: "closed", timed_out: "timed out" };
@@ -38,7 +30,11 @@ function inPage(kind: string, id: string, from: string): string {
 }
 function projectOf(id: string, from: string) {
   const m = machineOf(from), list: any[] = (H.projects && H.projects.projects) || [];
-  return list.find((x) => x && x.id === id && (x.machine || "") === m) || null;
+  const listed = list.find((x) => x && x.id === id && (x.machine || "") === m);
+  if (listed) return listed;
+  /* the chat's own project, by the id its "project" event carried (one on this computer) */
+  const own = !m && H.agents.get(from);
+  return own && own.projectId === id && own.project && own.project.path ? { id, path: own.project.path } : null;
 }
 /* the link leads somewhere the page knows: an open chat, a saved one, a project in the list */
 export function known(kind: string, id: string, from: string): boolean {

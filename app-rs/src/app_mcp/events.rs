@@ -22,11 +22,6 @@ pub fn settings_changed(keys: &[&str]) {
     BUS.put("settings_changed", json!({"keys": keys}));
 }
 
-/// Accounts changed: the page asks for the status again.
-pub fn accounts_changed() {
-    BUS.put("accounts_changed", json!({}));
-}
-
 /// The window switches to this theme and/or appearance and keeps it (both live in the page's own storage).
 pub fn theme_set(theme_id: Option<&str>, appearance: Option<&str>) {
     let mut ev = Map::new();
@@ -69,14 +64,12 @@ mod tests {
         let n = BUS.after(0, 0.0).len();
         projects_changed();
         settings_changed(&["chat_ai", "auto_update"]);
-        accounts_changed();
         theme_set(Some("moss"), None);
         theme_set(None, Some("dark"));
         let got = kinds_since(n);
         let find = |k: &str| got.iter().filter(|e| e["kind"] == k).cloned().collect::<Vec<_>>();
         assert_eq!(find("projects_changed").len(), 1);
         assert_eq!(find("settings_changed")[0]["keys"], json!(["chat_ai", "auto_update"]));
-        assert_eq!(find("accounts_changed").len(), 1);
         let themes = find("theme_set");
         assert_eq!(themes[0]["themeId"], "moss");
         assert!(themes[0].get("appearance").is_none());

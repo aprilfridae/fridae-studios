@@ -37,15 +37,13 @@ const A = "H:/games/obby-rush", PID = "p0123456789ab";
     await pg.evaluate(() => { select("a1"); setView("chat"); });
     await until(() => pg.evaluate(() => current === "a1"));
 
-    // ---- a toolbox call shows as its own row: the AI's own step line for it is left out ----
+    // ---- a toolbox call shows as its own row: the app sends no step line for it (agents.rs toolbox_step), so the
+    // page draws every step it is sent ----
     await ev({ kind: "busy", agent: "a1", value: true });
-    await ev({ kind: "tool", agent: "a1", label: "mcp__fridae__project_update" });
-    await ev({ kind: "tool", agent: "a1", label: "mcp  fridae  project update" });
-    await ev({ kind: "tool", agent: "a1", label: "fr1a2b3c4d-fridae chat list" });
     await ev({ kind: "tool", agent: "a1", label: "Reading files" });
     await until(() => pg.evaluate(() => document.querySelector("#chat-main").innerText.includes("Reading files")));
     const stepTexts = await texts("#chat-main .step");
-    ok("fridae_tool_steps_hidden", stepTexts.length === 1 && stepTexts[0] === "Reading files", stepTexts);
+    ok("steps_drawn_as_sent", stepTexts.length === 1 && stepTexts[0] === "Reading files", stepTexts);
 
     // ---- the card ----
     const CARD = { kind: "appcard", agent: "a1", card: "k1", title: "Rename project", text: "Rename \u201cObby Rush\u201d to \u201cLava Run\u201d. Its folder keeps its own name.", allow: "Rename it" };
@@ -159,6 +157,19 @@ const A = "H:/games/obby-rush", PID = "p0123456789ab";
     await pg.evaluate(() => { select("a3"); setView("chat"); });
     const replayed = await until(() => text("#chat-main .appcard-done"));
     ok("replayed_pending_card_reads_closed", replayed === "Remove project \u00b7 closed" && !(await pg.evaluate(() => !!document.querySelector("#chat-main .ask.appcard"))), replayed);
+    await pg.evaluate(() => { select("a1"); setView("chat"); });
+
+    // ---- a chat's own project is known by the id its "project" event carries (projectId: the event's id is its number) ----
+    const B = "H:/games/castle", PB = "pfedcba987654";
+    await ev({ kind: "agent_new", agent: "a4", name: "Castle chat", ai: "claude" });
+    await ev({ kind: "project", agent: "a4", path: B, name: "Castle", type: "game", bible: false, projectId: PB });
+    await ev({ kind: "text", agent: "a4", text: "Renamed [Castle](fridae://project/" + PB + ")." });
+    await ev({ kind: "done", agent: "a4" });
+    await until(() => pg.evaluate(() => agents.has("a4")));
+    await pg.evaluate(() => { select("a4"); setView("chat"); });
+    await until(() => pg.evaluate(() => !!document.querySelector("#chat-main .prose .app-link")));
+    const own = await pg.evaluate(() => { const n = document.querySelector("#chat-main .prose .app-link"); return n ? [n.tagName, n.dataset.project || ""] : null; });
+    ok("own_project_chip_uses_projectId", !!own && own[0] === "A" && own[1] === PB && await pg.evaluate((pb) => agents.get("a4").projectId === pb, PB), own);
     await pg.evaluate(() => { select("a1"); setView("chat"); });
 
     // ---- the page refreshes itself ----

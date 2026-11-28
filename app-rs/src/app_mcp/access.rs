@@ -311,7 +311,7 @@ mod tests {
             let scope = scope_of(&me, "claude");
             let caller = writing_caller(&scope)?;
             let flag = AtomicBool::new(false);
-            let call = Call::new(&scope, "call-1", &flag, Mode::Full);
+            let call = Call::new(&scope, &flag, Mode::Full);
             environment_gate(&call, &caller, gate_card(), always)
         })
     }

@@ -165,8 +165,9 @@ pub fn describe(path: &str) -> Value {
     // `kind_set`: the user chose it (else the folder decided)
     json!({"name": name, "path": path, "kind": kind, "type": kind, "roblox": kind == "game", "kind_set": set.is_some(),
            "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some(),
-           // the id the AIs' toolbox names it by (`fridae://project/<id>` links)
-           "id": crate::app_mcp::project_id(path)})
+           // the id the AIs' toolbox names it by (`fridae://project/<id>` links); as `projectId` too, because an event
+           // (a chat's "project" event is this) has its own number put over `id`
+           "id": crate::app_mcp::project_id(path), "projectId": crate::app_mcp::project_id(path)})
 }
 
 /// Known projects, most recently used first.
@@ -726,6 +727,16 @@ mod tests {
         let d = describe("C:/No/Such/Shop/");
         assert_eq!(d["id"], json!(crate::app_mcp::project_id("c:\\no\\such\\shop")));
         assert_eq!(d["id"].as_str().map(str::len), Some(13));
+    }
+
+    #[test]
+    fn a_project_event_keeps_the_project_id() {
+        // the event bus numbers every event under "id", so the project's id travels as "projectId" too
+        let path = "C:/No/Such/Castle";
+        let n = crate::agents::BUS.after(0, 0.0).len();
+        crate::agents::BUS.put("project", describe(path));
+        let ev = crate::agents::BUS.after(n, 0.0).into_iter().find(|e| e["kind"] == "project" && e["path"] == path).unwrap();
+        assert_eq!(ev["projectId"], json!(crate::app_mcp::project_id(path)));
     }
 
     #[test]

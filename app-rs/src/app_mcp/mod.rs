@@ -2,9 +2,6 @@
 //! chat's AI operate the app itself (chats, projects, settings, the theme). A port of T3 Code's app-control MCP
 //! server (commit 9ceb8bfb, MIT, Copyright (c) 2026 T3 Tools Inc.): see THIRD_PARTY.md.
 
-// Pieces the tools and the per-AI wiring use are built here first; until those tasks join, some are unused.
-#![allow(dead_code)]
-
 pub mod access;
 pub mod bridge;
 pub mod card;
@@ -147,7 +144,6 @@ pub struct ToolDef {
 /// One call of a tool, as its handler sees it.
 pub struct Call<'a> {
     pub scope: &'a keys::Scope,
-    pub call_id: &'a str,
     /// Set when the client cancels the call (notifications/cancelled) or its session ends.
     pub cancelled: &'a AtomicBool,
     pub exposure: exposure::Mode,
@@ -155,8 +151,8 @@ pub struct Call<'a> {
 }
 
 impl<'a> Call<'a> {
-    pub fn new(scope: &'a keys::Scope, call_id: &'a str, cancelled: &'a AtomicBool, exposure: exposure::Mode) -> Call<'a> {
-        Call { scope, call_id, cancelled, exposure, links: Mutex::new(Vec::new()) }
+    pub fn new(scope: &'a keys::Scope, cancelled: &'a AtomicBool, exposure: exposure::Mode) -> Call<'a> {
+        Call { scope, cancelled, exposure, links: Mutex::new(Vec::new()) }
     }
 
     /// Chips for this call's tool row: `{"kind": "chat"|"project", "id", "title"}` each (added to any given before).
@@ -179,6 +175,7 @@ pub struct Failure {
 pub type Outcome = Result<Value, Failure>;
 
 pub fn fail(code: &'static str, message: impl Into<String>) -> Failure {
+    debug_assert!(CODES.contains(&code), "undeclared failure code {code}");
     Failure { code, message: message.into() }
 }
 
@@ -428,7 +425,7 @@ fn run_tool(def: &ToolDef, scope: &keys::Scope, args: &Map<String, Value>, cance
         }
     };
     row("running", format!("{} {}", labels.running, labels.detail), vec![]);
-    let call = Call::new(scope, &call_id, cancelled, exposure);
+    let call = Call::new(scope, cancelled, exposure);
     let allowed = match (def.access)(args) {
         Access::Reads | Access::ReadsAsCaller => access::read_caller(scope).map(|_| ()),
         Access::WritesThreads | Access::StartsThreads | Access::WritesEnvironment => access::writing_caller(scope).map(|_| ()),
