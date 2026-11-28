@@ -171,9 +171,10 @@ export function Dock() {
   const chose = (btn: string) => { closePops(); byId(btn)!.focus(); };
   return (
     <div class="dock" ref={dock}>
-      <ToLatest />
+      {helper && <ToLatest />}
       <ExpertBar h={p} />
       <div class="composer" hidden={helper}>
+        {!helper && <ToLatest tab />}
         <div class={"atts" + (C.pending.length ? " has" : "")} id="atts">
           {C.pending.map((a) => (
             <div class={"att" + (a.image ? "" : " doc") + (a.name ? "" : " wait")} title={a.label}>

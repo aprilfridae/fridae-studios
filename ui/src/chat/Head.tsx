@@ -7,6 +7,7 @@ import { H } from "./host";
 import { poke, useTick } from "./chatStore";
 import { closePops } from "./compose";
 import { isHome } from "../remote/route";
+import { TabShape } from "./tab";
 
 const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
 const CLOSE = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1.5 1.5l6 6M7.5 1.5l-6 6" /></svg>;
@@ -176,7 +177,7 @@ export function ChatHead() {
       <RunBar />
     </div>
     </div>
-    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}>{DOWN}</button>
+    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}><TabShape w={112} h={22} />{DOWN}</button>
     </div>
   );
 }

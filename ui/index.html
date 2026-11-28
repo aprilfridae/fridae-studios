@@ -373,9 +373,9 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 
 /* the message box: the words on top; under them, what to add, which AI and model, how it works, and Send */
 .dock { padding: 8px 24px 16px; }
-.composer { position: relative; max-width: 800px; margin: 0 auto; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line-strong); transition: border-color 160ms ease; }
-.composer:focus-within { border-color: color-mix(in srgb, var(--text) 40%, transparent); }
-.composer.drop { border-color: var(--focus); }
+.composer { --cm-line: var(--line-strong); position: relative; max-width: 800px; margin: 0 auto; border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--cm-line); transition: border-color 160ms ease; }
+.composer:focus-within { --cm-line: color-mix(in srgb, var(--text) 40%, transparent); }
+.composer.drop { --cm-line: var(--focus); }
 /* the message box wraps every line, so it never scrolls sideways (the Mac's web view drew a sideways bar under it) */
 textarea#box { display: block; width: 100%; resize: none; overflow-x: hidden; overflow-wrap: anywhere; border: 0; outline: 0; background: none; line-height: 1.5; padding: 12px 16px 4px; max-height: 200px; min-height: 40px; }
 textarea::placeholder, input::placeholder { color: var(--placeholder); opacity: 1; }
@@ -844,22 +844,27 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
    room at its end for the box (--dock-h, kept by the page), which floats over it */
 .main > .headfold { grid-row: 1; grid-column: 1; }
 /* the chat's bar folds away (Head.tsx ChatHead): its row closes to nothing and the bar rides up out of it, leaving a
-   small tab hanging from the top edge; pressing the tab slides the bar back down, and the tab rides on its edge */
-.headfold { --fold-bg: color-mix(in oklab, var(--main) 18%, var(--raised)); --fold-line: var(--line);
+   tab hanging from the top bar; pressing the tab slides the bar back down. The bar and the tab are the top bar's own
+   colour, and one lighter line runs under them and round the tab (it stands in for the top bar's own line) */
+.stage:has(.headfold) > .top { border-bottom-color: transparent; }
+.headfold { --fold-bg: var(--bg); --fold-line: color-mix(in oklab, var(--text) 22%, var(--bg));
   position: relative; z-index: 3; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms var(--ease); }
+.headfold::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--fold-line); }
 .headfold.out { grid-template-rows: 1fr; }
 .hf-in { min-height: 0; }
 .headfold.clip .hf-in { overflow: hidden; }
-.hf-in > .chathead { background: var(--fold-bg); border-bottom-color: var(--fold-line); transform: translateY(-100%); opacity: 0; transition: transform 280ms var(--ease), opacity 200ms ease; }
+.hf-in > .chathead { background: var(--fold-bg); border-bottom-color: transparent; transform: translateY(-100%); opacity: 0; transition: transform 280ms var(--ease), opacity 200ms ease; }
 .headfold.out .hf-in > .chathead { transform: none; opacity: 1; }
-.hf-tab { position: absolute; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 96px; height: 18px; display: grid; place-items: center;
-  border: 1px solid var(--fold-line); border-top: 0; border-radius: 0 0 12px 12px;
-  background: var(--fold-bg); color: color-mix(in oklab, var(--main) 45%, var(--text));
-  transition: color var(--t-fast) ease, height 160ms var(--ease), background-color var(--t-fast) ease; }
-.hf-tab:hover { color: var(--text); height: 22px; }
-.hf-tab svg { transition: transform 280ms var(--ease); }
-.headfold.out .hf-tab svg { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .headfold, .hf-in > .chathead, .hf-tab, .hf-tab svg { transition: none; } }
+.hf-tab { position: absolute; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 112px; height: 22px; padding: 0 0 2px;
+  display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--dim); transition: color var(--t-fast) ease; }
+.hf-tab:hover { color: var(--text); background: none; }
+.hf-tab:focus-visible { outline-offset: 2px; border-radius: 6px; }
+.tab-shape { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.hf-tab .tab-shape .f { fill: var(--fold-bg); }
+.tab-shape .s { fill: none; stroke: var(--fold-line, var(--line-strong)); stroke-width: 1; }
+.hf-tab > svg:not(.tab-shape) { position: relative; transition: transform 280ms var(--ease); }
+.headfold.out .hf-tab > svg:not(.tab-shape) { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .headfold, .hf-in > .chathead, .hf-tab, .hf-tab > svg { transition: none; } }
 .main > .scroll { grid-row: 2 / 4; grid-column: 1; padding-bottom: calc(var(--dock-h, 112px) + 12px); scroll-padding-bottom: calc(var(--dock-h, 112px) + 12px); }
 .main > .dock { grid-row: 3; grid-column: 1; z-index: 2; align-self: end; pointer-events: none; }
 .main > .dock > * { pointer-events: auto; }

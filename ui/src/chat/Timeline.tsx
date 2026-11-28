@@ -10,6 +10,7 @@ import { useAgain } from "../store";
 import { frontTl, useTick, type Row, type Timeline as Tl } from "./chatStore";
 import { RowBody } from "./Rows";
 import { keep } from "./keep";
+import { TabShape, tabPaths } from "./tab";
 
 const ALL = 40, OVER = 700;
 
@@ -173,12 +174,16 @@ export function Timeline() {
 }
 
 /* the way back to the end of a chat the reader has scrolled up in */
-export function ToLatest() {
+/* `tab`: a tab standing on the message box's top edge (tab.tsx), in the box's own glass, the box's line running round
+   it; without the box (an expert's chat, read only) it floats over the dock as a pill */
+const TL_W = 148, TL_H = 26, TL_CLIP = "path('" + tabPaths(TL_W, TL_H, true).fill + "')";
+export function ToLatest({ tab }: { tab?: boolean }) {
   const again = useAgain();
   useEffect(() => { away.subs.add(again); return () => { away.subs.delete(again); }; }, []);
   return (
-    <button class={"to-latest" + (away.on ? " on" : "")} tabIndex={away.on ? 0 : -1} aria-hidden={away.on ? undefined : "true"} title="Go to the newest message" onClick={() => away.go()}>
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1.5v7M1.5 5.5 5 9l3.5-3.5" /></svg>Jump to latest
+    <button class={"to-latest" + (tab ? " tl-tab" : "") + (away.on ? " on" : "")} tabIndex={away.on ? 0 : -1} aria-hidden={away.on ? undefined : "true"} title="Go to the newest message" onClick={() => away.go()}>
+      {tab && <span class="tl-glass" style={{ clipPath: TL_CLIP }} />}{tab && <TabShape w={TL_W} h={TL_H} up />}
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 1.5v7M1.5 5.5 5 9l3.5-3.5" /></svg><span class="tl-t">Jump to latest</span>
     </button>
   );
 }
