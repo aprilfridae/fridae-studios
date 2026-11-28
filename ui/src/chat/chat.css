@@ -33,14 +33,14 @@
 .to-latest.tl-tab.on { transform: none; transition: color var(--t-fast) ease; }
 /* it fades up out of the box's line: the box's line under it opens at once (.cm-edge, Timeline.tsx) but a flat piece of
    line (.b) stands in for it and fades out as the tab's outline (.s) rises from flat and fades in, in step with the glass
-   growing (--cm-clip); its words fade in. Going, the same backwards, and the line closes again once it is flat */
+   growing (--cm-clip); its words fade in with it, at the same pace. Going, the same backwards, and the line closes again once it is flat */
 .tl-tab .tab-shape .s { transform-box: view-box; transform-origin: 50% calc(100% - 0.5px); transform: scaleY(0.02); opacity: 0;
   transition: transform 240ms var(--ease), opacity 200ms ease, stroke 160ms ease; }
 .tl-tab.on .tab-shape .s { transform: none; opacity: 1; }
 .tl-tab .tab-shape .b { fill: none; stroke: var(--cm-line); stroke-width: 1; opacity: 1; transition: opacity 200ms ease, stroke 160ms ease; }
 .tl-tab.on .tab-shape .b { opacity: 0; }
-.tl-tab > svg:not(.tab-shape), .tl-tab .tl-t { opacity: 0; transition: opacity 120ms ease; }
-.tl-tab.on > svg:not(.tab-shape), .tl-tab.on .tl-t { opacity: 1; transition: opacity 160ms ease 80ms; }
+.tl-tab > svg:not(.tab-shape), .tl-tab .tl-t { opacity: 0; transition: opacity 200ms ease; }
+.tl-tab.on > svg:not(.tab-shape), .tl-tab.on .tl-t { opacity: 1; }
 .tl-tab .tab-shape { z-index: -1; }
 .tl-tab .tab-shape .f { fill: none; }
 .tl-tab .tab-shape .s { stroke: var(--cm-line); }
