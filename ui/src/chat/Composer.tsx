@@ -12,7 +12,7 @@ import { C, EFFORTS, EFFORT_NAMES, addClips, addFile, closePops, effortOf, fit, 
 import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
 import { MachineChip } from "../remote/Machines";
-import { AccountChip } from "./AccountChip";
+import { AccountSection, accountChoice } from "./AccountChip";
 import { boxMachine } from "../remote/remote";
 import { HERE } from "../remote/route";
 
@@ -110,9 +110,13 @@ function PickerBody({ p }: { p: any }) {
       </div>
     </div>
     {/* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */}
-    <div class="pk-effort" id="effort-wrap" hidden={own}>
-      <div class="pk-eh"><span>Effort</span><em>{effortWord(effort)}</em></div>
-      <div class="pk-er-list" id="effort" role="radiogroup" aria-label="Effort">{!own && EFFORTS.map(([id, name]) => <button class="pk-er" role="radio" aria-checked={id === effort ? "true" : "false"} title={EFFORT_TIPS[id]} onClick={() => { pickEffort(ai, id); tellPick(); }}><span>{name}</span>{TICK}</button>)}</div>
+    {/* the right column: the effort, then which account (AccountChip.tsx), while there is a choice of either */}
+    <div class="pk-effort" id="effort-wrap" hidden={own && !accountChoice(p, ai)}>
+      {!own && <>
+        <div class="pk-eh"><span>Effort</span><em>{effortWord(effort)}</em></div>
+        <div class="pk-er-list" id="effort" role="radiogroup" aria-label="Effort">{EFFORTS.map(([id, name]) => <button class="pk-er" role="radio" aria-checked={id === effort ? "true" : "false"} title={EFFORT_TIPS[id]} onClick={() => { pickEffort(ai, id); tellPick(); }}><span>{name}</span>{TICK}</button>)}</div>
+      </>}
+      <AccountSection p={p} ai={ai} />
     </div>
   </>;
 }
@@ -132,6 +136,20 @@ export function Dock() {
     document.addEventListener("click", out);
     return () => { ro.disconnect(); document.removeEventListener("click", out); };
   }, []);
+  /* a menu that opens from a chip far along the row (the model's, after the computer's) would run past the message box's
+     right edge, off the window: it is moved left just enough to end there, and again if the window is resized */
+  useLayoutEffect(() => {
+    const place = () => {
+      const m = dock.current && dock.current.querySelector<HTMLElement>(".menu.on"), from = m && (m.offsetParent as HTMLElement | null);
+      if (!m || !from) return;
+      m.style.left = "";
+      const cm = dock.current!.querySelector<HTMLElement>(".composer"), right = from.getBoundingClientRect().left + m.offsetLeft + m.offsetWidth;
+      const edge = Math.min(cm ? cm.getBoundingClientRect().right : innerWidth, innerWidth - 8);
+      if (right > edge) m.style.left = Math.round(m.offsetLeft - (right - edge)) + "px";
+    };
+    place(); addEventListener("resize", place);
+    return () => removeEventListener("resize", place);
+  }, [C.pop]);
   /* the picker opens on the chosen model */
   useEffect(() => { if (C.pop === "model") { const on = byId("model-menu")!.querySelector('.mlist [aria-selected="true"]'); if (on) on.scrollIntoView({ block: "nearest" }); } }, [C.pop]);
   if (C.pop === "model") pickerOpened = true;
@@ -202,10 +220,8 @@ export function Dock() {
               title={[H.aiName(ai), cur ? cur[1] : "", own ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
               <AiLogo ai={ai} size={16} /><span id="model-name">{cur ? modelParts(ai, cur[1])[1] : H.aiName(ai)}</span>{!own && <span class="m-eff">{effortWord(effort)}</span>}{DOWN}</button>
             {/* the picker behind the button is only painted once it has been opened */}
-            <div class={"menu picker" + (own ? " own" : "") + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
+            <div class={"menu picker" + (own && !accountChoice(p, ai) ? " own" : "") + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
           </span>
-          {/* which of the AI's accounts it runs on, while it has more than one (AccountChip) */}
-          <AccountChip p={p} ai={ai} />
           <span class="pick">
             <button class="chip" id="mode" aria-haspopup="menu" aria-expanded={C.pop === "mode" ? "true" : "false"} onClick={pop("mode")}
               title={mode.name + ": " + mode.line + (C.runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes in Full auto." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works."}>

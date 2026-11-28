@@ -503,6 +503,7 @@ textarea::placeholder, input::placeholder { color: var(--placeholder); opacity: 
 .pk-er:hover, .pk-er:focus-visible { background: color-mix(in srgb, var(--text) 9%, transparent); outline: 0; }
 .pk-er:active { background: var(--press); }
 .pk-er > span { flex: 1; min-width: 0; }
+.pk-er > .tick { flex: none; }
 .pk-er .tick { visibility: hidden; color: var(--text); }
 .pk-er .tick svg { width: 12px; height: 12px; display: block; }
 .pk-er[aria-checked="true"] .tick { visibility: visible; }
@@ -905,7 +906,7 @@ body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headf
 .main > .dock { grid-row: 3; grid-column: 1; z-index: 2; align-self: end; pointer-events: none; }
 .main > .dock > * { pointer-events: auto; }
 @media (max-width: 980px) {
-  .app { grid-template-columns: 200px minmax(0, 1fr); }
+  .app { grid-template-columns: min(var(--side-w, 232px), 40vw) minmax(0, 1fr); }
   .nav .tab { padding: 0 8px; }
 }
 @media (max-width: 760px) {

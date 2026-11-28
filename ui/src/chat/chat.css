@@ -53,11 +53,15 @@
 #model .ai-logo { margin-left: -2px; }
 #model #model-name { overflow: hidden; text-overflow: ellipsis; }
 
-/* The account chip and its menu (AccountChip: the message box's chip and menu styles, as the machine chip's), and the
-   account a reply ran on, beside its model */
-.chip.ac .ac-icon { width: 16px; height: 16px; color: var(--dim); }
-.chip.ac:hover .ac-icon, .chip.ac[aria-expanded="true"] .ac-icon { color: var(--text); }
-#account-menu { width: 280px; }
-#account-menu .opt b, #account-menu .opt small { overflow: hidden; text-overflow: ellipsis; }
-#account-menu .ac-note { margin: 8px 8px 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.35; color: var(--dim); }
+/* the account part of the model picker (AccountChip.tsx AccountSection), under the effort; and the account a reply ran
+   on, beside its model */
+.pk-effort { overflow-y: auto; scrollbar-width: none; }
+.pk-effort::-webkit-scrollbar { display: none; }
+.pk-effort > .pk-er-list { flex: none; }
+.pk-acct { display: flex; flex-direction: column; flex: none; }
+.pk-acct .pk-er { height: auto; min-height: 32px; padding: 4px 8px; }
+.pk-acct .pk-er > span { display: flex; flex-direction: column; overflow: hidden; }
+.pk-acct .pk-er b { font-weight: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-acct .pk-er small { font-size: 12px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-acct .ac-note { margin: 0 12px 10px; font-size: 12px; line-height: 1.35; color: var(--dim); }
 .turn .label .acct { color: var(--faint); }

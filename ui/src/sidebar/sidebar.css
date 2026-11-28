@@ -7,7 +7,7 @@
 .side-grip.drag::after { opacity: 0.6; transition-delay: 0s; }
 .side-grip:focus-visible::after { background: var(--focus); opacity: 1; transition-delay: 0s; }
 body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; }
-.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--side-line); background: var(--side-bg); color: var(--side-ink); }
+.side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--side-bg); color: var(--side-ink); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
 .side-list { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 4px 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
@@ -133,10 +133,10 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .s-turn { display: none; }
 .s-row.sx.st-turn { grid-template-columns: 8px minmax(0, 1fr) auto; }
 .s-row.sx.st-turn .s-turn { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 12px; color: var(--text); background: var(--press); border: 1px solid var(--line-strong); }
-@media (max-width: 980px) {
-  .side-grip { display: none; }
-}
+/* only a small window sets the sidebar's width itself and hides the handle (the text size zooms the page, so a large
+   text size makes the page narrower than the window) */
 @media (max-width: 760px) {
+  .side-grip { display: none; }
   .mark span { display: none; }
 }
 /* Each project with, while it is in front, its chats under it: no box, a little room between projects (T3 Code's

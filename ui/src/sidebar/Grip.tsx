@@ -11,12 +11,16 @@ export function Grip() {
   const down = (ev: PointerEvent) => {
     const grip = ref.current!;
     if (ev.button !== 0) return;
-    ev.preventDefault(); grip.focus({ preventScroll: true });
-    const x0 = ev.clientX, w0 = sideW(), z = cssZoom();
+    /* not focused by the pointer: WebKit would show the keyboard's focus mark down the edge after a drag */
+    ev.preventDefault();
+    /* from the width it is drawn at, and no wider than the window lets it be drawn (index.html's `.app`), so a drag
+       back moves it at once */
+    const z = cssZoom(), cap = innerWidth * (innerWidth <= 980 ? 0.4 : 0.5) / z;
+    const x0 = ev.clientX, w0 = Math.min(sideW(), cap);
     let moved = false;
     grip.classList.add("drag"); document.body.classList.add("side-drag");
     try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
-    const move = (e: PointerEvent) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; setSideW(w0 + (e.clientX - x0) / z); };
+    const move = (e: PointerEvent) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; setSideW(Math.min(cap, w0 + (e.clientX - x0) / z)); };
     const end = () => {
       grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", end); grip.removeEventListener("pointercancel", end);
       grip.classList.remove("drag"); document.body.classList.remove("side-drag"); setSideW(sideW(), true);
