@@ -82,6 +82,15 @@ fn plugin_file_for(os: &str, home: &std::path::Path, local: Option<PathBuf>, use
     Some(folder.join(FILE_NAME))
 }
 
+/// Why there is no plugins folder to install into, in the words for each system.
+fn no_plugin_folder(os: &str) -> &'static str {
+    match os {
+        "windows" => "Roblox Studio's plugins folder could not be found: LOCALAPPDATA is not set for this app.",
+        "macos" => "Roblox Studio's plugins folder could not be found.",
+        _ => paths::NO_STUDIO_HERE,
+    }
+}
+
 /// Whether Roblox Studio can be used on this computer: Windows and macOS, or Linux with Vinegar's Studio.
 pub fn studio_here() -> bool {
     paths::STUDIO_HERE || plugin_file().is_some()
@@ -151,7 +160,7 @@ pub fn install() -> Result<String, String> {
     let model = format!(
         "<roblox version=\"4\">\n<Item class=\"Script\" referent=\"RBX0\">\n<Properties>\n<string name=\"Name\">FridaeStudios</string>\n<ProtectedString name=\"Source\"><![CDATA[{source}]]></ProtectedString>\n</Properties>\n</Item>\n</roblox>\n"
     );
-    let Some(path) = plugin_file() else { return Err(paths::NO_STUDIO_HERE.into()) };
+    let Some(path) = plugin_file() else { return Err(no_plugin_folder(std::env::consts::OS).into()) };
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("Could not create Studio's plugins folder: {e}"))?;
     }
@@ -366,6 +375,14 @@ pub fn start() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_plugins_folder_is_named_for_the_system() {
+        assert_eq!(no_plugin_folder("linux"), paths::NO_STUDIO_HERE);
+        let w = no_plugin_folder("windows");
+        assert!(!w.contains("Linux") && w.contains("LOCALAPPDATA"), "{w}");
+        assert!(!no_plugin_folder("macos").contains("Linux"));
+    }
 
     #[test]
     fn the_plugin_goes_to_each_systems_studio_and_never_to_the_current_folder() {
