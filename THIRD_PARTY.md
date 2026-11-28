@@ -166,6 +166,17 @@ Rewritten from its React and Tailwind source as plain HTML, CSS and JavaScript:
 - **Usage**: the Usage window and the limit bars (how much is left, the even-pace line and the pace mark, when a limit
   starts again). From `apps/web/src/components/usage/` (`UsagePage.tsx`, `UsageLimits.tsx`) and
   `packages/shared/src/usageLimits.ts` and `usageLimitsCopy.ts`.
+- **Sidebar**: the project rows (a folder icon, the name, a dot and count for what waits, a pen for a new chat on
+  hover, the arrow at the end that turns as the project folds) and the chat rows under them (lined up with the
+  project's name, newest first). From `apps/web/src/components/Sidebar.tsx` and `Sidebar.logic.ts`
+  (`ui/src/sidebar/`).
+- **Message box controls**: the 28px ghost controls under the words, the round send button, the menus' rows (tick
+  at the end, a faint fill on the chosen one) and the model picker (the AIs as logos in a narrow rail with a bar by
+  the chosen one, a search over the models, a row per model, effort in a column of its own). From
+  `apps/web/src/components/chat/` (`ComposerControl.tsx`, `ComposerPrimaryActions.tsx`, `ProviderModelPicker.tsx`,
+  `ModelPickerContent.tsx`, `ModelPickerSidebar.tsx`, `ModelListRow.tsx`, `ComposerModelEffort.tsx`) and
+  `apps/web/src/components/ui/` (`menu.tsx`, `popover.tsx`, `combobox.tsx`). In `ui/index.html` and
+  `ui/src/chat/Composer.tsx`.
 
 Not taken: T3 Code's name, wordmark, logos, icons, artwork and its own branded theme, which its `TRADEMARK.md` keeps
 out of the MIT licence. Fridae is not affiliated with or endorsed by T3 Tools Inc. The icons in these windows

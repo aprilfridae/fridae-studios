@@ -1,12 +1,10 @@
 /* The machine chip and its menu (the message box's chip and menu styles, in ui/index.html), and the pairing dialog
    (the sidebar's .dlg). Nothing new in colour: the dots are the page's own .dot. */
-.chip.mc .mc-icon { color: var(--dim); }
+.chip.mc .mc-icon { width: 16px; height: 16px; color: var(--dim); }
 .chip.mc:hover .mc-icon, .chip.mc[aria-expanded="true"] .mc-icon { color: var(--text); }
-/* only the arrow turns while the menu is open, never the screen */
-.chip.mc[aria-expanded="true"] .mc-icon { transform: none; }
 /* an expert's chat stays with the chat that started it: the chip only names the computer */
-.chip.mc.fixed { padding-right: 12px; cursor: default; }
-.chip.mc.fixed:hover { color: var(--dim); background: none; }
+.chip.mc.fixed { cursor: default; }
+.chip.mc.fixed:hover { color: color-mix(in srgb, var(--text) 80%, transparent); background: none; }
 .chip.mc.fixed:hover .mc-icon { color: var(--dim); }
 #machine-menu { width: 260px; }
 /* a started chat's menu says what a pick does, and asks for a project when the other computer has none of that name */

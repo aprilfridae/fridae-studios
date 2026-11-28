@@ -12,19 +12,14 @@
 .to-latest.on { opacity: 1; visibility: visible; transform: translate(-50%, -4px); transition: opacity 140ms ease, transform 160ms var(--ease), color var(--t-fast) ease; }
 .to-latest:hover { color: var(--text); }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .to-latest { background: var(--raised); } }
-/* each AI's logo beside its name in the picker and on the model chip, so it is known at a glance */
-.pk-ai { display: flex; align-items: flex-start; gap: 8px; }
-.pk-ai .ai-logo { margin-top: 3px; opacity: 0.75; }
-.pk-ai:hover .ai-logo, .pk-ai[aria-checked="true"] .ai-logo { opacity: 1; }
-.pk-ai-t { min-width: 0; }
+/* the AI's logo on the model chip, so it is known at a glance (the picker's rail is in ui/index.html) */
 #model .ai-logo { margin-left: -2px; }
 #model #model-name { overflow: hidden; text-overflow: ellipsis; }
 
 /* The account chip and its menu (AccountChip: the message box's chip and menu styles, as the machine chip's), and the
    account a reply ran on, beside its model */
-.chip.ac .ac-icon { color: var(--dim); }
+.chip.ac .ac-icon { width: 16px; height: 16px; color: var(--dim); }
 .chip.ac:hover .ac-icon, .chip.ac[aria-expanded="true"] .ac-icon { color: var(--text); }
-.chip.ac[aria-expanded="true"] .ac-icon { transform: none; }
 #account-menu { width: 280px; }
 #account-menu .opt b, #account-menu .opt small { overflow: hidden; text-overflow: ellipsis; }
 #account-menu .ac-note { margin: 8px 8px 4px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.35; color: var(--dim); }

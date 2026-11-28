@@ -10,18 +10,28 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .side { position: relative; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--panel); }
 .mark { display: flex; align-items: center; gap: 8px; height: 48px; font-weight: 600; font-size: 14px; white-space: nowrap; padding: 0 16px; }
 .mark img { width: 20px; height: 20px; display: block; }
-.side-list { flex: 1; overflow-y: auto; min-height: 0; padding: 4px 8px 12px; display: grid; gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
+.side-list { flex: 1; overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 4px 8px 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; align-content: start; scroll-padding-bottom: 48px; scrollbar-width: none; }
 /* the sidebar is one list that scrolls as a whole (nothing inside it scrolls by itself), and it draws no scrollbar */
 .side-list::-webkit-scrollbar { display: none; }
-.proj { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 36px; padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
+.proj { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 32px; padding: 0 10px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
 .proj:hover { background: var(--hover); }
 .proj.on { background: var(--press); }
-.proj b { font-weight: 500; font-size: 14px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj b { font-weight: 500; font-size: 14px; color: color-mix(in srgb, var(--text) 88%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .proj.on b, .proj:hover b { color: var(--text); }
 .proj.none b, .proj.add b { font-weight: 400; }
-.proj .state { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 16px; }
-.proj .count { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; display: grid; place-items: center; font: 600 12px/1 var(--mono); background: var(--text); color: var(--ink); }
-.proj .count:hover { background: var(--main-hover); }
+/* empty, the slot takes no room, so a long name runs on to the arrow */
+.proj .state { display: inline-flex; align-items: center; justify-content: flex-end; min-width: 0; }
+/* the icon at the head of a row: 16px, quiet until the row is pointed at or in front */
+.p-ico { display: grid; place-items: center; width: 16px; height: 16px; color: var(--dim); transition: color var(--t-fast) ease; }
+.proj:hover .p-ico, .proj.on .p-ico { color: var(--text); }
+/* what waits for the user: a small amber dot and the number, as T3 Code marks a folder that needs you */
+.proj .need { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0 4px; border-radius: 4px; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--dim); }
+.proj .need::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.proj .need:hover { color: var(--text); background: var(--press); }
+/* the arrow at a project's end: down while its chats show, turned while folded */
+.p-fold { display: grid; place-items: center; width: 12px; color: var(--faint); }
+.p-fold svg { transition: transform var(--t-mid) var(--ease); }
+.proj:not(.on) .p-fold svg { transform: rotate(-90deg); }
 /* a project's own menu: a button that shows with the pointer or the keyboard on its row (a right-click opens it too) */
 .proj .state { gap: 4px; }
 .proj .p-more { display: none; width: 20px; height: 20px; border-radius: 4px; place-items: center; color: var(--dim); }
@@ -50,9 +60,8 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .dlg-opt b { display: block; font-size: 14px; line-height: 20px; font-weight: 500; }
 .dlg-opt small { display: block; font-size: 13px; line-height: 1.45; color: var(--dim); }
 .dlg .act { display: flex; justify-content: flex-end; gap: 8px; margin: 16px 0 0; }
-.proj.add { grid-template-columns: 12px minmax(0, 1fr); color: var(--dim); }
-.proj.all { grid-template-columns: 12px minmax(0, 1fr) auto; color: var(--dim); }
-.proj.rev .count:hover { background: var(--text); }
+.proj.add { grid-template-columns: 16px minmax(0, 1fr); color: var(--dim); }
+.proj.all { grid-template-columns: 16px minmax(0, 1fr) auto; color: var(--dim); }
 .proj.add:hover { color: var(--text); }
 /* New project stays in reach under a long list of chats */
 .proj.add { position: sticky; bottom: 0; background: var(--panel); box-shadow: 0 12px 0 var(--panel); }
@@ -63,14 +72,21 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
    brightens. */
 .proj.in { background: transparent; }
 .proj.in:hover { background: var(--hover); }
-.s-chat { display: grid; grid-template-columns: 21px minmax(0, 1fr); align-items: center; padding-left: 4px; }
+/* a chat: a 36px row the width of the list, its name lined up with its project's (past the icon), as T3 Code's
+   thread rows; the arrow to its experts sits in the room before the name */
+.s-chat { position: relative; }
+.s-chat > .s-tw { position: absolute; z-index: 1; left: 8px; top: 8px; }
+.s-chat > .s-row { display: flex; align-items: center; gap: 8px; height: 36px; min-height: 0; padding: 0 10px 0 36px; }
+.s-chat > .s-row b { flex: 1; min-width: 0; font-size: 14px; color: color-mix(in srgb, var(--text) 72%, transparent); transition: color var(--t-fast) ease; }
+.s-chat > .s-row:hover b { color: var(--text); }
+.s-chat > .s-row.on b { color: var(--text); font-weight: 500; }
+.s-row .s-now { flex: none; font-size: 12px; font-weight: 500; color: var(--text); }
 /* the arrow is 21px wide, so its point is on the half px that the 1px guide line under it is centred on */
 .s-tw { width: 21px; height: 20px; display: grid; place-items: center; border-radius: 4px; color: var(--faint); transition: background-color 140ms ease, color 140ms ease; }
 .s-tw:hover { background: var(--hover); color: var(--text); }
 .s-tw svg { transition: transform 160ms var(--ease); }
 .s-tw[aria-expanded="true"] svg { transform: rotate(90deg); }
 .s-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: var(--h-m); padding: 4px 8px; border-radius: var(--r-s); text-align: left; transition: background-color 140ms ease; }
-.s-chat .s-row { grid-column: 2; }
 .s-row:hover { background: var(--hover); }
 .s-row.on { background: var(--press); }
 .s-row:focus-visible, .s-tw:focus-visible, .side-list .proj:focus-visible { outline-offset: -2px; }
@@ -88,8 +104,8 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
    (easeList). Its earlier experts are a list inside it, behind one line. Each row is a button in a plain block
    (.s-x) that draws its piece of the guide line as its own background, 1px wide at the same place under the arrow's
    point, the 2px between rows included: the pieces are one straight line, and each moves with its row. */
-.s-x { padding: 0 0 2px 32px; background: linear-gradient(var(--line-strong), var(--line-strong)) 14px 0 / 1px 100% no-repeat; }
-.s-x.lone { padding: 0 0 0 24px; background: none; }
+.s-x { padding: 0 0 2px 28px; background: linear-gradient(var(--line-strong), var(--line-strong)) 18px 0 / 1px 100% no-repeat; }
+.s-x.lone { padding: 0 0 0 28px; background: none; }
 .s-kids.tree { margin-bottom: -2px; }
 /* the 2px under its last row are the list's own gap to what follows */
 .s-kids.easing { overflow: hidden; }
@@ -122,31 +138,30 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 @media (max-width: 760px) {
   .mark span { display: none; }
 }
-/* Each project is a box of its own (its chats inside it while it is in front), the way Settings and Review group
-   theirs: a quiet edge, a rounded corner, the panel a step raised. */
-.pbox { display: grid; gap: 2px; padding: 2px; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); border-radius: var(--r-m); background: color-mix(in srgb, var(--card) 40%, transparent); transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease; }
-.pbox + .pbox { margin-top: 4px; }
-.pbox.on { border-color: var(--line-strong); background: var(--card); padding-bottom: 6px; }
+/* Each project with, while it is in front, its chats under it: no box, a little room between projects (T3 Code's
+   project folders) */
+/* one column the list's width: a long name is cut short, never pushes the list sideways */
+.pbox { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: 2px; }
+.pbox + .pbox { margin-top: 8px; }
+.side-list .pbox > .proj { grid-template-columns: 16px minmax(0, 1fr) auto 12px; }
+.side-list .pbox > .proj > .p-fold { margin-left: -4px; }
 .side-list > .proj.all + .pbox, .side-list > .proj.rev + .pbox { margin-top: 8px; }
 .side-list > .pbox + .proj.add { margin-top: 6px; }
-.pbox > .proj { border-radius: calc(var(--r-m) - 3px); }
+.pbox > .proj { border-radius: var(--r-s); }
 /* the project's name and, after it, the logos of the AIs its chats run on */
 .proj .p-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .proj .p-name b { min-width: 0; }
-.p-ais { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--dim); opacity: 0.85; }
-.proj:hover .p-ais, .proj.on .p-ais { opacity: 1; }
 /* New chat: with the pointer on the row, or always on the project in front */
 .proj .p-new { display: none; width: 20px; height: 20px; border-radius: 4px; place-items: center; color: var(--dim); }
-.proj:hover .p-new, .proj:focus-visible .p-new, .pbox.on .proj .p-new { display: grid; }
+.proj:hover .p-new, .proj:focus-visible .p-new { display: grid; }
 .proj .p-new:hover { background: var(--press); color: var(--text); }
 /* a chat's AI, where its dot was: dimmed while it rests, a soft pulse while it works */
 .ai-logo { display: block; flex: none; }
-.s-ai { display: grid; place-items: center; width: 14px; height: 14px; color: var(--dim); opacity: 0.7; transition: opacity var(--t-fast) ease; }
+.s-ai { flex: none; display: grid; place-items: center; width: 14px; height: 14px; color: var(--dim); opacity: 0.6; transition: opacity var(--t-fast) ease; }
 .s-row:hover .s-ai, .s-row.on .s-ai { opacity: 1; }
 .s-ai.live { opacity: 1; animation: ai-live 1.4s ease-in-out infinite; }
 @keyframes ai-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .s-ai.live { animation: none; } }
-.s-chat .s-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
 /* A project or chat on another of the user's computers: the computer's name, small, after the project's name; while
    it cannot be reached its boxes go quiet and the name says "offline" (ui/src/remote) */
 /* the label gives way before the project's name does (the name keeps up to 70% of the row, then it too ends in …) */

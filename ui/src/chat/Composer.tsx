@@ -16,10 +16,12 @@ import { AccountChip } from "./AccountChip";
 import { boxMachine } from "../remote/remote";
 import { HERE } from "../remote/route";
 
-const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
+const DOWN = <svg class="down" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>;
 /* the chosen row of a menu */
 const TICK = <span class="tick"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5l2.5 2.5 4.5-5.5" /></svg></span>;
 const byId = (id: string) => document.getElementById(id);
+/* the effort's one word (High), as its row in the picker names it */
+const effortWord = (id: string) => (EFFORTS.find((e) => e[0] === id) || ["", ""])[1];
 const EFFORT_TIPS: Record<string, string> = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" };
 
 /* typing "/" offers the commands */
@@ -70,40 +72,47 @@ function PickerBody({ p }: { p: any }) {
   const ai = H.chatAi(p), list = modelsFor(ai), chosen = modelOf(p), effort = effortOf(p), have = (H.status.ai || {}).installed || {};
   const [find, setFind] = useState({ ai: "", q: "" });
   const q = find.ai === ai ? find.q : "";
-  /* a long list (Cursor offers hundreds) scrolls in a box of its own, with a filter, so effort stays in view */
-  const words = list.length > 12 ? q.toLowerCase().split(/\s+/).filter(Boolean) : [];
+  /* the search at the top narrows the list (Cursor offers hundreds); the list scrolls in a box of its own */
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   const shown = list.filter(([id, name]) => words.every((w) => (id + " " + name).toLowerCase().includes(w)));
   const own = ownLevel(ai, chosen);
   let group = "";
+  /* Laid out after T3 Code's model picker (MIT; see THIRD_PARTY.md): the AIs as logos in a narrow rail on the left
+     with a bar beside the chosen one, a search over the models, one row per model with its logo and a tick after the
+     chosen name, and effort as a column of its own on the right. */
   return <>
     <div class="pk-ais" id="ai-pick" role="radiogroup" aria-label="Which AI this chat uses">
       {H.AIS.map(([id, name]: [string, string]) => (
-        <button class="pk-ai" role="radio" aria-checked={id === ai ? "true" : "false"} onClick={() => switchAi(id, () => byId("model")!.focus())}
-          title={id === ai ? "This chat uses " + name + "." : (p && p.started ? "Carry on this chat with " + name + ". It is handed the chat so far." : "Use " + name + " for this chat.") + (have[id] === false ? " " + name + " is not set up on this computer yet: Settings, Connections says how." : "")}>
-          <AiLogo ai={id} size={14} /><span class="pk-ai-t"><b>{name}</b>{have[id] === false && <small>Not installed</small>}</span>
+        <button class={"pk-ai" + (have[id] === false ? " missing" : "")} role="radio" aria-checked={id === ai ? "true" : "false"} aria-label={name + (have[id] === false ? ", not installed" : "")} onClick={() => switchAi(id, () => byId("model")!.focus())}
+          title={(id === ai ? "This chat uses " + name + "." : (p && p.started ? "Carry on this chat with " + name + ". It is handed the chat so far." : "Use " + name + " for this chat.")) + (have[id] === false ? " " + name + " is not set up on this computer yet: Settings, Connections says how." : "")}>
+          <AiLogo ai={id} size={20} />
         </button>
       ))}
     </div>
     <div class="pk-models">
       <Notice ai={ai} />
       <div id="model-menu" role="listbox" aria-label="Model">
-        {!list.length && <p class="sub" style="margin: 8px;">Its model list has not arrived yet.</p>}
-        {list.length > 12 && <input class="mfind" type="search" placeholder="Find a model" aria-label="Find a model" value={q} onInput={(e) => setFind({ ai, q: e.currentTarget.value })} />}
+        <label class="mfind">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5 14 14" /></svg>
+          <input type="search" placeholder={"Search " + H.aiName(ai) + " models"} aria-label="Search models" value={q} onInput={(e) => setFind({ ai, q: e.currentTarget.value })} />
+        </label>
         <div class="mlist">
-          {list.length > 0 && !shown.length && <p class="sub" style="margin: 8px;">No model matches.</p>}
+          {!list.length && <p class="m-empty">Its model list has not arrived yet.</p>}
+          {list.length > 0 && !shown.length && <p class="m-empty">No model matches.</p>}
           {/* a heading per provider, the model under it */}
           {shown.map(([id, name, note]) => {
             const [g, rest] = modelParts(ai, name), head = g && g !== group ? ((group = g), <p class="mgroup">{g}</p>) : null;
-            return <>{head}<button class="opt" role="option" aria-selected={id === chosen ? "true" : "false"}
+            return <>{head}<button class="pk-m" role="option" aria-selected={id === chosen ? "true" : "false"} title={note && note !== id ? rest + " · " + note : rest}
               onClick={() => { if (ai === "opencode") { pickOpenCodeModel(id).then(() => tellPick(p)); return; } pickModel(ai, id); tellPick(p); }}>
-              {TICK}<span><b>{rest}</b>{note && note !== id && <small>{note}</small>}</span></button></>;
+              <AiLogo ai={ai} size={16} /><span class="pk-m-t"><b>{rest}</b>{TICK}{note && note !== id && <small>{note}</small>}</span></button></>;
           })}
         </div>
       </div>
-      {/* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */}
-      <div class="pk-effort" id="effort-wrap" hidden={own}><h5>Effort</h5>
-        <div class="seg" id="effort">{!own && EFFORTS.map(([id, name]) => <button class={id === effort ? "on" : ""} aria-pressed={id === effort ? "true" : "false"} title={EFFORT_TIPS[id]} onClick={() => { pickEffort(ai, id); tellPick(); }}>{name}</button>)}</div>
-      </div>
+    </div>
+    {/* a Cursor model carries its effort in its id (Codex 5.3 High...), and OpenCode's models their own: nothing to set apart */}
+    <div class="pk-effort" id="effort-wrap" hidden={own}>
+      <div class="pk-eh"><span>Effort</span><em>{effortWord(effort)}</em></div>
+      <div class="pk-er-list" id="effort" role="radiogroup" aria-label="Effort">{!own && EFFORTS.map(([id, name]) => <button class="pk-er" role="radio" aria-checked={id === effort ? "true" : "false"} title={EFFORT_TIPS[id]} onClick={() => { pickEffort(ai, id); tellPick(); }}><span>{name}</span>{TICK}</button>)}</div>
     </div>
   </>;
 }
@@ -178,7 +187,7 @@ export function Dock() {
           onInput={() => { slash.on = true; slash.sel = 0; fit(); }} onBlur={() => { if (slash.on) { slash.on = false; poke(); } }} onKeyDown={onKey} />
         <div class="c-bar">
           <span class="pick">
-            <button class="c-add" id="add" aria-haspopup="menu" aria-expanded={C.pop === "add" ? "true" : "false"} aria-label="Add files" title="Add images, documents or video clips. You can also paste them or drop them on the window." onClick={pop("add")}><svg width="12" height="12" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M5.5 1.5v8M1.5 5.5h8" /></svg></button>
+            <button class="c-add" id="add" aria-haspopup="menu" aria-expanded={C.pop === "add" ? "true" : "false"} aria-label="Add files" title="Add images, documents or video clips. You can also paste them or drop them on the window." onClick={pop("add")}><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg></button>
             <div class={"menu" + (C.pop === "add" ? " on" : "")} id="add-menu" role="menu">
               <button class="opt" id="attach" role="menuitem" onClick={() => { chose("add"); file.current!.click(); }}><span class="tick" /><span><b>Images or documents</b></span></button>
               {/* clips are used where they are, on this computer: not for a chat on another one (ui/src/remote) */}
@@ -190,9 +199,9 @@ export function Dock() {
           <span class="pick">
             <button class="chip" id="model" aria-haspopup="dialog" aria-expanded={C.pop === "model" ? "true" : "false"} onClick={pop("model")}
               title={[H.aiName(ai), cur ? cur[1] : "", own ? "" : EFFORT_NAMES[effort]].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
-              <AiLogo ai={ai} size={13} /><span id="model-name">{H.aiName(ai) + (cur ? " · " + modelParts(ai, cur[1])[1] : "")}</span>{DOWN}</button>
+              <AiLogo ai={ai} size={16} /><span id="model-name">{cur ? modelParts(ai, cur[1])[1] : H.aiName(ai)}</span>{!own && <span class="m-eff">{effortWord(effort)}</span>}{DOWN}</button>
             {/* the picker behind the button is only painted once it has been opened */}
-            <div class={"menu picker" + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
+            <div class={"menu picker" + (own ? " own" : "") + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
           </span>
           {/* which of the AI's accounts it runs on, while it has more than one (AccountChip) */}
           <AccountChip p={p} ai={ai} />

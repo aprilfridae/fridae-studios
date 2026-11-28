@@ -109,11 +109,12 @@ export function rowsOf(s: Slice, now: number): Row[] {
     };
   };
   const machine = (id?: string) => s.machines.find((m) => m.id === id);
-  /* the chats of the project in front, each with its experts under it: of each computer's copy of it, in the order
-     they were started (so a chat keeps its place when it runs on another computer) */
+  /* the chats of the project in front, each with its experts under it: of each computer's copy of it, newest first,
+     so a new chat sits at the top as in T3 Code's sidebar (by when it was started, so a chat keeps its place while it
+     works or when it runs on another computer) */
   const chatsOf = (keys: string[]) => {
-    const many = keys.length > 1, mine = keys.flatMap((k) => projectChats(s, k));
-    if (many) mine.sort((a, b) => bornAt(bare(a.id)) - bornAt(bare(b.id)));
+    const mine = keys.flatMap((k) => projectChats(s, k)), many = keys.length > 1;
+    mine.sort((a, b) => bornAt(bare(b.id)) - bornAt(bare(a.id)));
     for (const p of mine) {
       const xs = expertsOf(s, p), open = xs.length > 0 && xpOpen(p.id), at = xs.filter((x) => x.pane && x.pane.busy).length, on = p.id === front;
       const state = p.busy ? p.now || "Working" : p.last, kids = "k:" + p.id, xsMany = xs.length === 1 ? "expert" : xs.length + " experts";

@@ -12,7 +12,7 @@ import { C, closePops, togglePop } from "./compose";
 import { boxMachine } from "../remote/remote";
 
 const PERSON = <svg class="ac-icon" width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6.5" cy="4.5" r="2.25" /><path d="M2.25 11.25c.6-2.1 2.3-3.25 4.25-3.25s3.65 1.15 4.25 3.25" /></svg>;
-const DOWN = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5l2.5 2.5L7 3.5" /></svg>;
+const DOWN = <svg class="down" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" /></svg>;
 const TICK = <span class="tick"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5l2.5 2.5 4.5-5.5" /></svg></span>;
 
 export type Acct = { name: string; n: number; who: string; used: number | null };

@@ -353,20 +353,28 @@ body.working .mark img, body.working .sigil { animation: logo-turn 10s linear in
 textarea#box { display: block; width: 100%; resize: none; overflow-x: hidden; overflow-wrap: anywhere; border: 0; outline: 0; background: none; line-height: 1.5; padding: 12px 16px 4px; max-height: 200px; min-height: 40px; }
 textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .c-bar { display: flex; align-items: center; gap: 4px; padding: 4px 8px 8px; min-width: 0; }
-.c-add { flex: none; width: var(--h-s); height: var(--h-s); display: grid; place-items: center; color: var(--dim); border-radius: 50%; border: 1px solid var(--line); transition: background-color 140ms ease, color 140ms ease; }
-.c-add:hover, .c-add[aria-expanded="true"] { color: var(--text); background: var(--hover); }
-.chip { display: inline-flex; align-items: center; gap: 8px; height: var(--h-s); max-width: 240px; padding: 0 8px 0 12px; border-radius: 999px; font-size: 13px; color: var(--dim); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease; }
+/* the controls under the words: after T3 Code's composer controls (MIT; see THIRD_PARTY.md). Each is a 28px ghost
+   button with rounded corners: the label at 80% of the text colour, the icon muted, a soft fill on hover and while its
+   menu is open. */
+.c-add { flex: none; width: var(--h-s); height: var(--h-s); display: grid; place-items: center; color: var(--dim); border-radius: var(--r-s); transition: background-color 140ms ease, color 140ms ease, transform 140ms var(--ease); }
+.c-add:hover, .c-add[aria-expanded="true"] { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: var(--h-s); max-width: 260px; padding: 0 8px; border-radius: var(--r-s); font-size: 14px; font-weight: 500; color: color-mix(in srgb, var(--text) 80%, transparent); white-space: nowrap; transition: background-color 140ms ease, color 140ms ease, transform 140ms var(--ease); }
 .chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.chip:hover, .chip[aria-expanded="true"] { color: var(--text); background: var(--hover); }
-.chip svg { flex: none; color: var(--faint); transition: transform 160ms var(--ease); }
-.chip[aria-expanded="true"] svg { transform: rotate(180deg); }
+.chip:hover, .chip[aria-expanded="true"] { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.chip svg { flex: none; color: var(--dim); }
+.chip svg.down { width: 14px; height: 14px; margin: 0 -2px 0 -2px; color: var(--faint); }
+.chip:active:not([aria-haspopup]), .c-add:active:not([aria-haspopup]) { transform: scale(0.97); }
 .chip .extra { font: 500 12px/1 var(--mono); color: var(--text); }
+.chip .m-eff { flex: none; font-size: 12px; font-weight: 400; color: var(--dim); }
 #now { flex: 1; min-width: 0; padding: 0 8px; text-align: right; font-size: 13px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #now .now, #now .sel { color: var(--dim); }
-.send { flex: none; width: var(--h-m); height: var(--h-m); border-radius: 50%; display: grid; place-items: center; background: var(--main); color: var(--main-ink); transition: transform 140ms var(--ease), background-color 160ms ease; }
-.send:active { transform: scale(0.94); }
-.send[disabled] { background: var(--press); color: var(--faint); }
-.send.stop { background: var(--press); color: var(--text); }
+/* Send: T3 Code's round button, a touch bigger under the pointer, sunk while pressed, a quiet grey while there is
+   nothing to send */
+.send { flex: none; width: var(--h-m); height: var(--h-m); border-radius: 50%; display: grid; place-items: center; background: var(--main); color: var(--main-ink); box-shadow: 0 1px 2px 0 color-mix(in srgb, var(--main) 24%, transparent); transition: transform 150ms var(--ease), background-color 160ms ease, box-shadow 150ms ease, filter 150ms ease; }
+.send:hover:not([disabled]) { transform: scale(1.05); filter: brightness(1.08); }
+.send:active:not([disabled]) { transform: scale(0.97); box-shadow: none; }
+.send[disabled] { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--dim); box-shadow: none; }
+.send.stop { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); box-shadow: none; }
 .send .i-stop, .send.stop .i-send { display: none; }
 .send.stop .i-stop { display: block; }
 .atts { display: none; flex-wrap: wrap; gap: 8px; padding: 12px 12px 0; }
@@ -383,47 +391,94 @@ textarea::placeholder, input::placeholder { color: var(--faint); opacity: 1; }
 .aigap { max-width: 800px; margin: 8px auto 0; padding: 0 16px; font-size: 13px; color: var(--dim); }
 .pick { position: relative; display: inline-flex; min-width: 0; }
 /* a menu opens upwards from its button (downwards for the chat's name) */
-.menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; width: 320px; max-height: min(480px, 72vh); overflow-y: auto; padding: 8px; border-radius: var(--r-l);
-  background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
-  opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
+/* a menu opens upwards from its button (downwards for the chat's name). After T3 Code's pop-ups (MIT; see
+   THIRD_PARTY.md): 8px corners, 4px inside, a long soft shadow, and it grows in from 98% where its button is. */
+.menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20; width: 320px; max-height: min(480px, 72vh); overflow-y: auto; padding: 4px; border-radius: var(--r-s);
+  background: var(--raised); border: 1px solid var(--line-strong); box-shadow: 0 18px 44px -18px rgb(0 0 0 / 0.8);
+  opacity: 0; transform: scale(0.98); transform-origin: bottom left; pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
+:root[data-appearance="light"] .menu { box-shadow: 0 16px 40px -18px rgb(0 0 0 / 0.55); }
 .menu.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 140ms ease, transform 160ms var(--ease); }
-.menu.down { top: calc(100% + 8px); bottom: auto; width: 340px; transform: translateY(-4px); }
+.menu.down { top: calc(100% + 8px); bottom: auto; width: 340px; transform-origin: top left; }
 .menu.down.on { transform: none; }
-.menu h5 { margin: 8px 8px 4px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
-.menu h5.rule { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
-.menu .seg { margin: 2px 4px 4px; display: flex; }
-.menu .seg button { flex: 1; padding: 0 4px; font-size: 12px; }
-.menu .switch { display: flex; width: 100%; padding: 8px; border-radius: var(--r-s); }
-.menu .switch:hover { background: var(--hover); }
+.menu h5 { margin: 0; padding: 6px 8px 4px; font: 500 12px/1.4 var(--sans, inherit); color: var(--dim); }
+.menu h5.rule { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+.menu .seg { margin: 2px 4px 4px; display: flex; padding: 2px; gap: 0; border: 0; border-radius: var(--r-s); background: color-mix(in srgb, var(--line-strong) 40%, transparent); }
+.menu .seg button { flex: 1; height: 24px; padding: 0 4px; font-size: 12px; border-radius: 6px; }
+.menu .seg button.on { background: color-mix(in srgb, var(--text) 14%, transparent); }
+.menu .switch { display: flex; align-items: center; width: 100%; min-height: var(--h-s); padding: 4px 8px; border-radius: 4px; color: var(--text); }
+.menu .switch:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.menu .switch > span:last-child { flex: 1; min-width: 0; order: -1; }
+.menu .switch .track { width: 30px; height: 18px; border: 0; background: var(--line-strong); }
+.menu .switch .knob { top: 2px; left: 2px; width: 14px; height: 14px; background: var(--dim); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.18); }
+.menu .switch[aria-checked="true"] .track { background: var(--accent); }
+.menu .switch[aria-checked="true"] .knob { transform: translateX(12px); background: var(--bg); }
 .menu .switch:focus-visible, .opt:focus-visible { outline-offset: -2px; }
 .menu .switch small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
 .menu .sub { margin: 4px 8px 8px; }
-.opt { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 8px; align-items: baseline; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); transition: background-color var(--t-fast) ease; }
-.opt:hover { background: var(--hover); }
-.opt:disabled b { opacity: 0.5; }
-.opt b { font-weight: 500; font-size: 14px; color: var(--text); }
+/* a row of a menu: the words first, the tick at the end (T3 Code's menu rows); a chosen choice keeps a faint fill */
+.opt { display: grid; grid-template-columns: minmax(0, 1fr) 14px; gap: 8px; align-items: center; width: 100%; min-height: var(--h-s); text-align: left; padding: 4px 8px; border-radius: 4px; transition: background-color var(--t-fast) ease; }
+.opt:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.opt[role="radio"][aria-checked="true"], .opt[role="menuitemradio"][aria-checked="true"] { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.opt[role="radio"][aria-checked="true"]:hover, .opt[role="menuitemradio"][aria-checked="true"]:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.opt:disabled { opacity: 0.64; }
+.opt:disabled b { opacity: 1; }
+.opt b { font-weight: 400; font-size: 14px; color: var(--text); }
 .opt small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
-.opt .tick { visibility: hidden; color: var(--text); }
+.opt .tick { order: 2; display: grid; place-items: center; visibility: hidden; color: var(--text); }
+.opt .tick svg { width: 12px; height: 12px; }
 .opt[aria-selected="true"] .tick, .opt[aria-checked="true"] .tick { visibility: visible; }
 #add-menu { width: 240px; }
 #mode-menu { width: 320px; }
-/* the one picker: the AIs down the left, the chosen AI's models on the right, effort under them */
-.picker { width: min(500px, calc(100vw - min(var(--side-w, 232px), 50vw) - 64px)); padding: 0; display: grid; grid-template-columns: 148px minmax(0, 1fr); overflow: hidden; }
-.pk-ais { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--line); overflow-y: auto; }
-.pk-ai { display: block; width: 100%; text-align: left; padding: 8px; border-radius: var(--r-s); color: var(--dim); transition: background-color 140ms ease, color 140ms ease; }
-.pk-ai:hover { background: var(--hover); color: var(--text); }
-.pk-ai:focus-visible { outline-offset: -2px; }
-.pk-ai b { display: block; font-weight: 500; font-size: 14px; }
-.pk-ai small { display: block; font-size: 12px; color: var(--dim); line-height: 1.35; }
-.pk-ai[aria-checked="true"] { background: var(--press); color: var(--text); }
-.pk-models { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 8px; }
-.pk-models .notice { margin: 0 0 8px; }
-#model-menu { display: flex; flex-direction: column; min-height: 0; }
-#model-menu .mlist { max-height: 232px; overflow-y: auto; overscroll-behavior: contain; }
-#model-menu .mgroup { margin: 8px 8px 2px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
-#model-menu .mfind { display: block; width: calc(100% - 8px); height: var(--h-s); margin: 0 4px 8px; padding: 0 8px; font-size: 13px; background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r-s); outline: none; }
-#model-menu .mfind:focus { border-color: var(--focus); }
-.pk-effort { margin-top: 8px; border-top: 1px solid var(--line); }
+/* the one picker, after T3 Code's model picker (MIT; see THIRD_PARTY.md): the AIs as logos in a narrow rail, the
+   chosen AI's models with a search over them, and effort in a column on the right. One height, so a short or long
+   list never resizes it. */
+.picker { width: min(556px, calc(100vw - min(var(--side-w, 232px), 50vw) - 64px)); height: min(346px, 72vh); padding: 0; display: grid; grid-template-columns: 44px minmax(0, 1fr) 176px; overflow: hidden; }
+.picker.own { width: min(380px, calc(100vw - min(var(--side-w, 232px), 50vw) - 64px)); grid-template-columns: 44px minmax(0, 1fr); }
+.pk-ais { display: flex; flex-direction: column; gap: 4px; padding: 4px; overflow-y: auto; scrollbar-width: none; background: color-mix(in srgb, var(--text) 2%, transparent); }
+.pk-ais::-webkit-scrollbar { display: none; }
+.pk-ai { position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 1; padding: 0; border-radius: 6px; transition: background-color 140ms ease; }
+.pk-ai:hover, .pk-ai:focus-visible { background: color-mix(in srgb, var(--text) 10%, transparent); outline: 0; }
+.pk-ai .ai-logo { opacity: 0.7; transition: opacity 140ms ease, transform 160ms var(--ease); }
+.pk-ai:hover .ai-logo, .pk-ai[aria-checked="true"] .ai-logo { opacity: 1; }
+.pk-ai:active .ai-logo { transform: scale(0.92); }
+.pk-ai.missing .ai-logo { opacity: 0.35; }
+.pk-ai::after { content: ""; position: absolute; right: -4px; top: 50%; width: 3px; height: 20px; margin-top: -10px; border-radius: 999px; background: var(--accent); transform: scaleY(0); transition: transform 200ms var(--ease); }
+.pk-ai[aria-checked="true"]::after { transform: none; }
+.pk-models { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, transparent); }
+.pk-models .notice { margin: 8px 8px 0; }
+.pk-models .notice:empty { display: none; }
+#model-menu { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#model-menu .mfind { position: relative; display: block; flex: none; margin: 10px 12px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); cursor: text; transition: border-color 140ms ease; }
+#model-menu .mfind:focus-within { border-color: var(--focus); }
+#model-menu .mfind svg { position: absolute; left: 0; top: 5px; color: var(--faint); pointer-events: none; }
+#model-menu .mfind input { display: block; width: 100%; height: 26px; padding: 0 0 0 22px; font-size: 14px; background: transparent; border: 0; outline: 0; }
+#model-menu .mfind input::-webkit-search-cancel-button { display: none; }
+#model-menu .mlist { flex: 1; min-height: 0; padding: 6px 4px 6px 8px; overflow-y: auto; overscroll-behavior: contain; }
+#model-menu .mgroup { margin: 0; padding: 6px 8px 4px; font-size: 12px; font-weight: 500; color: var(--dim); }
+#model-menu .m-empty { margin: 0; padding: 8px; font-size: 13px; color: var(--dim); }
+.pk-m { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--h-s); padding: 4px 8px; border-radius: 4px; text-align: left; transition: background-color var(--t-fast) ease; }
+.pk-m:hover, .pk-m:focus-visible { background: color-mix(in srgb, var(--text) 9%, transparent); outline: 0; }
+.pk-m:active { background: var(--press); }
+.pk-m .ai-logo { flex: none; }
+.pk-m-t { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.pk-m-t b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 400; color: var(--text); }
+.pk-m-t small { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: color-mix(in srgb, var(--dim) 70%, transparent); }
+.pk-m .tick { display: none; flex: none; color: var(--text); }
+.pk-m .tick svg { width: 12px; height: 12px; display: block; }
+.pk-m[aria-selected="true"] .tick { display: block; }
+/* effort: a heading with the chosen level beside it, then one row a level, the tick on the chosen one */
+.pk-effort { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, transparent); }
+.pk-effort[hidden] { display: none; }
+.pk-eh { display: flex; align-items: center; gap: 8px; flex: none; height: 33px; margin: 10px 12px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--dim); }
+.pk-eh em { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: normal; font-size: 12px; }
+.pk-er-list { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; padding: 10px 8px 6px; overflow-y: auto; }
+.pk-er { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; flex: none; padding: 0 8px; border-radius: 4px; font-size: 14px; color: var(--text); text-align: left; transition: background-color var(--t-fast) ease; }
+.pk-er:hover, .pk-er:focus-visible { background: color-mix(in srgb, var(--text) 9%, transparent); outline: 0; }
+.pk-er:active { background: var(--press); }
+.pk-er > span { flex: 1; min-width: 0; }
+.pk-er .tick { visibility: hidden; color: var(--text); }
+.pk-er .tick svg { width: 12px; height: 12px; display: block; }
+.pk-er[aria-checked="true"] .tick { visibility: visible; }
 .slash { position: absolute; left: 8px; bottom: calc(100% + 8px); z-index: 5; min-width: 320px; padding: 4px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); display: none; }
 .slash.on { display: block; }
 .slash button { display: grid; grid-template-columns: 84px 1fr; gap: 12px; width: 100%; text-align: left; padding: 8px 12px; border-radius: var(--r-s); font-size: 13px; transition: background-color var(--t-fast) ease; }
@@ -772,7 +827,11 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
   .app { grid-template-columns: 168px minmax(0, 1fr); }
   /* Settings and Usage fill the window */
   .modal { width: 100%; height: 100%; border-radius: 0; border: 0; }
-  .picker { grid-template-columns: 112px minmax(0, 1fr); }
+  .picker, .picker.own { grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; height: min(420px, 72vh); }
+  .pk-ais { grid-row: 1 / 3; }
+  .pk-effort { grid-column: 2; border-left: 0; border-top: 1px solid var(--line); }
+  .pk-er-list { flex-direction: row; flex-wrap: wrap; padding: 6px 8px 8px; }
+  .pk-er { width: auto; flex: 1 1 auto; }
 }
 /* less motion: nothing slides, fades or pulses; things are simply there */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; transition-delay: 0s !important; } }
