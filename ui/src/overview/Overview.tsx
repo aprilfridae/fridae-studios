@@ -1,5 +1,5 @@
-/* Overview: the live graph of every project, its chats and its experts, over the whole page. One quiet line over its
-   top edge says how much is going, with the way to stop it all. */
+/* Overview: the live graph of every project, its chats and its experts, over the whole page. One quiet line, in a tab
+   hanging from the top bar (as a chat's does), says how much is going, with the way to stop it all beside it. */
 import { useEffect, useRef } from "preact/hooks";
 import { api } from "../api";
 import { store, useStore, type State } from "../store";
@@ -8,6 +8,7 @@ import { skillsWaiting } from "../settings/skills-data";
 import { projState } from "../sidebar/model";
 import { openSetup } from "../windows";
 import { attach, tick, watch } from "./graph";
+import { HangTab } from "../chat/tab";
 import "./overview.css";
 
 const plural = (n: number, one: string, many: string) => n + (n === 1 ? one : many);
@@ -26,7 +27,7 @@ function TopLine() {
   const stop = () => { for (const p of store.get().chats) if (p.busy) api("/api/stop", { agent: p.id }); };
   return (
     <div class="ap-head">
-      <p class="sub grow"><span id="ap-totals">{text || last.current}</span><span id="ap-sk" hidden={!n}> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills" onClick={() => openSetup("skills")}>{plural(n, " decision waits", " decisions wait")}</button></span></p>
+      <HangTab h={30}><p class="sub"><span id="ap-totals">{text || last.current}</span><span id="ap-sk" hidden={!n}> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills" onClick={() => openSetup("skills")}>{plural(n, " decision waits", " decisions wait")}</button></span></p></HangTab><span class="grow" />
       <button class="pill sm" id="ap-stop-all" hidden={!working} onClick={stop}>Stop everything</button>
     </div>
   );
