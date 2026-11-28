@@ -84,15 +84,17 @@ pub fn ask(agent: &Arc<agents::Agent>, ai: &str, spec: CardSpec, cancelled: &Ato
     let card = crate::remote_common::random_hex(16);
     pending(|p| p.insert(card.clone(), (agent.id.clone(), None)));
     agent.put("appcard", json!({"card": card, "title": spec.title, "text": spec.text, "allow": spec.allow}));
-    let (started, wait) = (Instant::now(), wait_for(ai));
+    let (started, wait, turn) = (Instant::now(), wait_for(ai), turn_of(agent));
     let answer = loop {
+        // the run ended or restarted (another turn began, perhaps within one poll): the card was for that run, so it
+        // closes, and this is looked at before the answer, so a press on a stale card never counts
+        if cancelled.load(Ordering::SeqCst) || !agent.is_working() || agent.is_closed() || turn_of(agent) != turn {
+            break Answer::Cancelled;
+        }
         match pending(|p| p.get(&card).and_then(|(_, a)| *a)) {
             Some(true) => break Answer::Allowed,
             Some(false) => break Answer::Declined,
             None => {}
-        }
-        if cancelled.load(Ordering::SeqCst) || !agent.is_working() || agent.is_closed() {
-            break Answer::Cancelled;
         }
         if started.elapsed() >= wait {
             break Answer::TimedOut;
@@ -123,6 +125,29 @@ pub fn failure_of(a: &Answer) -> Option<Failure> {
         Answer::Cancelled => Some(fail("cancelled", "The card closed with the run. Ask again with a new clientRequestId only if it is still needed.")),
         Answer::TimedOut => Some(fail("timed_out", "No answer in time. Don't ask in chat; ask again with a new clientRequestId only if it is still needed.")),
     }
+}
+
+/// Which turn of the chat is under way (when it began). A card belongs to the turn that raised it.
+fn turn_of(agent: &agents::Agent) -> f64 {
+    #[cfg(test)]
+    if let Some(t) = TURN_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&agent.id)) {
+        return *t;
+    }
+    agent.turn_started()
+}
+
+/// Tests: a chat's turn as if another had begun (None: its own again). Tests start no AI, so no turn begins.
+#[cfg(test)]
+static TURN_FOR_TEST: Mutex<Option<HashMap<String, f64>>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn set_turn_for_test(agent_id: &str, turn: Option<f64>) {
+    let mut g = TURN_FOR_TEST.lock().unwrap_or_else(|e| e.into_inner());
+    let m = g.get_or_insert_with(HashMap::new);
+    match turn {
+        Some(t) => m.insert(agent_id.to_string(), t),
+        None => m.remove(agent_id),
+    };
 }
 
 #[cfg(test)]
@@ -217,6 +242,36 @@ pub(crate) mod tests {
         assert_eq!(h.join().unwrap(), Answer::Cancelled);
         assert_eq!(wait_event(&a, "appcard_done", Some(&id))["outcome"], "cancelled");
         assert!(!pending_for_test(&id));
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn a_new_turn_between_polls_cancels() {
+        // the run ended and the next one began within one poll: the chat still reads as working, but it is
+        // another turn, so the card closes and a press on it does nothing
+        let a = test_chat("claude");
+        a.set_running_for_test(true);
+        let (h, _) = asking(&a, "claude");
+        let id = wait_event(&a, "appcard", None)["card"].as_str().unwrap().to_string();
+        set_turn_for_test(&a.id, Some(a.turn_started() + 5.0));
+        assert_eq!(h.join().unwrap(), Answer::Cancelled);
+        assert_eq!(wait_event(&a, "appcard_done", Some(&id))["outcome"], "cancelled");
+        assert!(!answer(&a.id, &id, true), "a stale card cannot be allowed");
+        set_turn_for_test(&a.id, None);
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn a_run_end_wins_over_an_answer_in_the_same_poll() {
+        let a = test_chat("claude");
+        a.set_running_for_test(true);
+        let (h, _) = asking(&a, "claude");
+        let id = wait_event(&a, "appcard", None)["card"].as_str().unwrap().to_string();
+        // both before the next poll: the turn changed, then the press arrived
+        set_turn_for_test(&a.id, Some(a.turn_started() + 5.0));
+        let _ = answer(&a.id, &id, true);
+        assert_eq!(h.join().unwrap(), Answer::Cancelled);
+        set_turn_for_test(&a.id, None);
         drop_chat(&a);
     }
 
