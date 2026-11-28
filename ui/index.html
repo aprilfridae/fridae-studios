@@ -849,13 +849,14 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .stage:has(.headfold) > .top { border-bottom-color: transparent; }
 .headfold { --fold-bg: var(--bg); --fold-line: color-mix(in oklab, var(--text) 22%, var(--bg));
   position: relative; z-index: 3; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms var(--ease); }
-.headfold::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--fold-line); }
+/* the line stays over the sliding bar (whose transform would otherwise paint it over the line until it stops) */
+.headfold::before { content: ""; position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: 1px; background: var(--fold-line); pointer-events: none; }
 .headfold.out { grid-template-rows: 1fr; }
 .hf-in { min-height: 0; }
 .headfold.clip .hf-in { overflow: hidden; }
-.hf-in > .chathead { background: var(--fold-bg); border-bottom-color: transparent; transform: translateY(-100%); opacity: 0; transition: transform 280ms var(--ease), opacity 200ms ease; }
-.headfold.out .hf-in > .chathead { transform: none; opacity: 1; }
-.hf-tab { position: absolute; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 112px; height: 22px; padding: 0 0 2px;
+.hf-in > .chathead { background: var(--fold-bg); border-bottom-color: transparent; transform: translateY(-100%); transition: transform 280ms var(--ease); }
+.headfold.out .hf-in > .chathead { transform: none; }
+.hf-tab { position: absolute; z-index: 2; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 112px; height: 22px; padding: 0 0 2px;
   display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--dim); transition: color var(--t-fast) ease; }
 .hf-tab:hover { color: var(--text); background: none; }
 .hf-tab:focus-visible { outline-offset: 2px; border-radius: 6px; }
