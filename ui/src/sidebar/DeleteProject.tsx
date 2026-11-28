@@ -6,7 +6,8 @@ import { cell, store } from "../store";
 import { host } from "../host";
 import { projRow } from "./ProjectMenu";
 
-const BIN = /Mac/.test(navigator.userAgent) ? "Trash" : "Recycle Bin";
+/* the Mac's and Linux desktops' Trash; Windows' Recycle Bin */
+const BIN = /Mac|Linux|X11/.test(navigator.userAgent) ? "Trash" : "Recycle Bin";
 /* the project being asked about (`on`), or the one last asked about */
 const asking = cell<{ path: string; name: string; on: boolean; n: number }>({ path: "", name: "", on: false, n: 0 });
 export function askDelete(path: string) {

@@ -81,6 +81,7 @@ function Ais() {
           <DotRow ai={id} dot={have[id] ? "ok" : ""} name={name + " · " + via}><small>{have[id] ? "Found on this computer." + signedIn : "Not found. " + how}</small><Notice ai={id} /></DotRow>,
           id === "opencode" && have[id] ? <OpenCodeRow busy={busy} /> : null,
           have[id] && accountOf(id).offered ? <AccountRows ai={id} busy={busy} /> : null,
+          have[id] && !accountOf(id).offered && accountOf(id).why_not ? <ListRow cls="oc-row" name="More accounts" line={accountOf(id).why_not}><div class="act"></div></ListRow> : null,
         ];
       })}
     </div>
@@ -131,6 +132,12 @@ const Need = ({ ok, name, what }: { ok: boolean; name: string; what: string }) =
 function Studio() {
   const status = useStore((s) => s.status), polls = useStore((s) => s.polls), note = plugNote.use(), pl = status.plugin || {};
   const known = status.studio !== undefined, said = (text: string) => plugNote.set({ text, at: store.get().polls });
+  /* Linux: Roblox makes no Studio for it, so say that once instead of offering what cannot work */
+  if (pl.studio_here === false) return (
+    <Group id="set-studio" find="plugin roblox" title="Roblox Studio">
+      <div class="sg-list" id="needs"><Need ok={false} name="Roblox Studio" what={pl.studio_note || "Roblox Studio isn't available on this system."} /></div>
+    </Group>
+  );
   return (
     <Group id="set-studio" find="plugin roblox" title="Roblox Studio">
       <div class="sg-list" id="needs">
