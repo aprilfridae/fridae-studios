@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use super::{Failure, fail, keys};
+use super::{Call, Failure, card, fail, keys};
 use crate::agents;
 
 /// A chat's runtime mode on T3's scale.
@@ -131,6 +131,19 @@ pub fn resolve_interaction(parent: Interaction, requested: Option<&str>) -> Resu
     Ok(resolved)
 }
 
+/// A change to projects, settings or the look (T3's writesEnvironment, with Fridae's card where T3 refuses): in Full
+/// auto it just happens; below it, and always when `always` (deletes, guarded settings, adding an existing folder,
+/// anything that publishes or spends), the user is asked with a card in the calling chat and the call waits.
+pub fn environment_gate(call: &Call, caller: &Caller, card: card::CardSpec, always: bool) -> Result<(), Failure> {
+    if !always && caller.limits.runtime == Runtime::FullAccess {
+        return Ok(());
+    }
+    match card::failure_of(&card::ask(&caller.agent, &caller.scope.ai, card, call.cancelled)) {
+        Some(f) => Err(f),
+        None => Ok(()),
+    }
+}
+
 /// The open chat a call names: the caller itself when no id is given and the tool defaults to this chat (T3 does
 /// for update, organize, configure and queue), else `target_required`.
 pub fn resolve_chat(caller: &Caller, given: Option<&str>, default_this: bool) -> Result<Arc<agents::Agent>, Failure> {
@@ -168,7 +181,9 @@ pub fn chat_not_found(given: &str) -> Failure {
 mod tests {
     use super::*;
     use crate::agents::Ask;
-    use crate::app_mcp::{test_chat, drop_chat};
+    use crate::app_mcp::exposure::Mode;
+    use crate::app_mcp::{drop_chat, test_chat};
+    use std::sync::atomic::AtomicBool;
 
     fn scope_of(agent: &agents::Agent, ai: &str) -> keys::Scope {
         keys::Scope { chat: agent.id.clone(), ai: ai.to_string(), subagent: false, namespace: "ns".into() }
@@ -282,6 +297,66 @@ mod tests {
             assert_eq!(e.code, "thread_not_found");
             assert_eq!(e.message, format!("`{given}` is a chat link, not a chat id. Pass `{}` instead.", me.id));
         }
+        drop_chat(&me);
+    }
+
+    fn gate_card() -> card::CardSpec {
+        card::CardSpec { title: "Change a setting".into(), text: "Turn on \"Install updates by itself\".".into(), allow: "Turn it on".into() }
+    }
+
+    /// `environment_gate` on another thread, as a tool's handler runs it.
+    fn gating(me: &Arc<agents::Agent>, always: bool) -> std::thread::JoinHandle<Result<(), Failure>> {
+        let me = me.clone();
+        std::thread::spawn(move || {
+            let scope = scope_of(&me, "claude");
+            let caller = writing_caller(&scope)?;
+            let flag = AtomicBool::new(false);
+            let call = Call::new(&scope, "call-1", &flag, Mode::Full);
+            environment_gate(&call, &caller, gate_card(), always)
+        })
+    }
+
+    #[test]
+    fn environment_gate_full_auto_needs_no_card() {
+        let me = test_chat("claude");
+        me.set_last_ask_for_test(full());
+        me.set_running_for_test(true);
+        assert_eq!(gating(&me, false).join().unwrap(), Ok(()));
+        assert!(!me.log_snapshot().iter().any(|e| e["kind"] == "appcard"));
+        drop_chat(&me);
+    }
+
+    #[test]
+    fn environment_gate_below_full_auto_asks() {
+        let me = test_chat("claude");
+        me.set_running_for_test(true);
+        let h = gating(&me, false);
+        let id = card::tests::wait_event(&me, "appcard", None)["card"].as_str().unwrap().to_string();
+        assert!(card::answer(&me.id, &id, true));
+        assert_eq!(h.join().unwrap(), Ok(()));
+        let h = gating(&me, false);
+        let first = id;
+        let id = loop {
+            let e = card::tests::wait_event(&me, "appcard", None);
+            if e["card"] != first.as_str() {
+                break e["card"].as_str().unwrap().to_string();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(card::answer(&me.id, &id, false));
+        assert_eq!(h.join().unwrap().unwrap_err().code, "declined");
+        drop_chat(&me);
+    }
+
+    #[test]
+    fn always_asks_even_in_full_auto() {
+        let me = test_chat("claude");
+        me.set_last_ask_for_test(full());
+        me.set_running_for_test(true);
+        let h = gating(&me, true);
+        let id = card::tests::wait_event(&me, "appcard", None)["card"].as_str().unwrap().to_string();
+        assert!(card::answer(&me.id, &id, true));
+        assert_eq!(h.join().unwrap(), Ok(()));
         drop_chat(&me);
     }
 

@@ -7,6 +7,7 @@
 
 pub mod access;
 pub mod bridge;
+pub mod card;
 pub mod exposure;
 pub mod instructions;
 pub mod keys;
