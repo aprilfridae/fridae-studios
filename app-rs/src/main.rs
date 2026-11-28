@@ -9,6 +9,7 @@
 
 mod acp;
 mod agents;
+mod app_mcp;
 mod antigravity;
 mod attach;
 mod board;
