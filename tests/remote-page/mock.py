@@ -15,8 +15,8 @@ PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001
 STATUS = {"ok": True, "version": "1.2.3", "studio": True, "blender": True, "swarm_ceiling": 4, "commands": ["git"], "max_agents": 8,
           "plugin": {"connected": False}, "update": {"status": "", "auto": True},
           "ai": {"offered": ["claude", "gemini", "opencode"], "installed": {"claude": True, "gemini": True, "opencode": True}, "default": "claude",
-                 "models": {"gemini": [["gemini-4-carbon", "Gemini 4 Carbon"]], "opencode": [["oc/big", "OpenCode Zen · big-pickle"]]},
-                 "default_models": {"gemini": "gemini-4-carbon", "opencode": "oc/big"},
+                 "models": {"gemini": [["gemini-4-carbon-low", "Gemini 4 Carbon (Low)"], ["gemini-4-carbon-medium", "Gemini 4 Carbon (Medium)"], ["gemini-4-carbon-high", "Gemini 4 Carbon (High)"], ["gemini-4-neon-high", "Gemini 4 Neon (High)"], ["gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)"], ["gemini-pro-orchestrator", "Gemini Pro Orchestrator"]], "opencode": [["oc/big", "OpenCode Zen · big-pickle"]]},
+                 "default_models": {"gemini": "gemini-4-carbon-medium", "opencode": "oc/big"},
                  "sign_in": {"claude": {"offered": True, "state": "in"}}}}
 # the other computer offers fewer AIs and starts new chats on OpenCode: the message box's AI chip must read its status
 RSTATUS = {"ok": True, "version": "1.2.3", "studio": False, "blender": False, "max_agents": 8, "plugin": {"connected": False}, "update": {},

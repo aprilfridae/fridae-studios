@@ -101,8 +101,51 @@ export async function moveOpenCodePick() {
 /* the app is told the chat in front's model and effort when either is picked or its AI is switched, so the app's own
    messages to it (a run's wakes, board news) and its waiting messages use them at once (/api/chat-model) */
 export function tellPick(p?: any) { p = p || cur(); if (!p || !p.started) return; api("/api/chat-model", { agent: p.id, model: modelOf(p) || null, effort: effortOf(p) }).catch(() => {}); }
-/* no effort to set: the AI's models carry their own, or this model names its level (Gemini's "gemini-4-neon-high") */
-export function ownLevel(ai: string, model: string) { return H.caps(ai).effort === false || (ai === "gemini" && /-(low|medium|high|xhigh|max)$/.test(model || "")); }
+/* A model whose id ends in its own level (Antigravity's "gemini-4-neon-high", "Gemini 4 Neon (High)") is one of a
+   family: the picker lists the family once, as "4 Neon", and its levels go under Effort, as Claude's do. Picking a
+   level picks that model. A model without a level is a row of its own. */
+const LEVEL = /-(low|medium|high|xhigh|max)$/;
+const LEVEL_WORDS = /\s*(?:\((?:low|medium|high|x-?high|extra[- ]high|max)\)|\b(?:low|medium|high|x-?high|max))$/i;
+export const levelOf = (model: string) => { const m = LEVEL.exec(model || ""); return m ? m[1] : ""; };
+/* a row of the picker: a model, or a family (`levels`: each level it has, to the model that is it) */
+export type ModelRow = { id: string; name: string; note: string; levels: Record<string, string> | null };
+export function modelRows(ai: string): ModelRow[] {
+  const out: ModelRow[] = [], fam: Record<string, ModelRow> = {};
+  for (const [id, name, note] of modelsFor(ai)) {
+    const lv = levelOf(id);
+    if (!lv) { out.push({ id, name, note, levels: null }); continue; }
+    const base = id.slice(0, -lv.length - 1);
+    if (!fam[base]) out.push(fam[base] = { id: base, name: name.replace(LEVEL_WORDS, ""), note: base, levels: {} });
+    fam[base].levels![lv] = id;
+  }
+  /* a model listed bare beside its own family is that family */
+  return out.filter((r) => r.levels || !fam[r.id]);
+}
+/* the row `model` is on */
+export function rowOf(ai: string, model: string): ModelRow | undefined {
+  return modelRows(ai).find((r) => (r.levels ? Object.values(r.levels).includes(model) : r.id === model));
+}
+/* picks a model, and with `level` the effort it names (so the button and the next model keep it) */
+export function chooseModel(ai: string, id: string, level?: string): Promise<void> | void {
+  if (level) pickEffort(ai, level);
+  if (ai === "opencode") return pickOpenCodeModel(id);
+  pickModel(ai, id);
+}
+/* a family's row picks its model at the effort in use, else the nearest level it has (the higher on a tie) */
+export function pickRow(ai: string, r: ModelRow, effort: string): Promise<void> | void {
+  if (!r.levels) return chooseModel(ai, r.id);
+  const order = EFFORTS.map((e) => e[0]), want = Math.max(0, order.indexOf(effort));
+  const has = order.filter((l) => r.levels![l]).sort((a, b) => Math.abs(order.indexOf(a) - want) - Math.abs(order.indexOf(b) - want) || order.indexOf(b) - order.indexOf(a));
+  return chooseModel(ai, r.levels[has[0]], has[0]);
+}
+/* the Effort column for this model: the family's own levels, else every effort where the AI takes one, else none (an
+   AI whose models carry their own, as Cursor's do) */
+export function effortChoice(ai: string, model: string, effort: string): { levels: [string, string][]; on: string; pick(id: string): Promise<void> | void } | null {
+  const r = rowOf(ai, model);
+  if (r && r.levels) return { levels: EFFORTS.filter(([id]) => r.levels![id]), on: levelOf(model), pick: (id) => chooseModel(ai, r.levels![id], id) };
+  if (H.caps(ai).effort === false) return null;
+  return { levels: EFFORTS, on: effort, pick: (id) => pickEffort(ai, id) };
+}
 /* OpenCode's models come from several providers ("OpenCode Go · glm-5.3"): [the provider, the model], or ["", name] */
 export function modelParts(ai: string, name: string): [string, string] {
   const at = H.caps(ai).grouped_models ? name.indexOf(" · ") : -1;
