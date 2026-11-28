@@ -1,4 +1,4 @@
-/* What the message box knows and does: the AI's model and effort, how it works (Ask me, Full auto, Overnight,
+/* What the message box knows and does: the AI's model and effort, how it works (Full auto or
    Studio and the two extras), the files waiting to go with the next message, and sending. */
 import { api, TOKEN } from "../api";
 import { H } from "./host";
@@ -16,13 +16,10 @@ export const MODELS: [string, string, string][] = [
 ];
 export const EFFORTS: [string, string][] = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra"], ["max", "Max"]];
 export const EFFORT_NAMES: Record<string, string> = { low: "low effort", medium: "medium effort", high: "high effort", xhigh: "extra-high effort", max: "max effort" };
-// one choice instead of overlapping switches: ask (waits for you, asks before shell commands), full (never asks,
-// keeps going until done), night (full auto for up to 24 hours, past "done" and "needs you")
+// one choice instead of overlapping switches: full (never asks, keeps going until done) or studio (a Lead and experts)
 /* [id, name, the one line its row in the menu says, the whole of it (the row's tooltip)] */
 export const RUN_MODES: [string, string, string, string][] = [
-  ["ask", "Ask me", "Does what you ask, then waits for you.", "Does what you ask, then waits for you. Asks before running programs you haven't allowed."],
   ["full", "Full auto", "Never asks, and keeps going until done.", "Never asks permission: every tool and command just runs, and it keeps going until the job is done. It still won't spend money, publish or delete your work unless you ask."],
-  ["night", "Overnight", "Full auto for up to 24 hours without you.", "Full auto for up to 24 hours without you: questions wait for you in Review, it picks its own next job, and the computer stays awake. For a Roblox game, leave Studio open. Pressing stop ends it."],
   ["studio", "Studio", "A Lead and its experts build the project, stage by stage.", "A Lead takes this project through its stages and hands each part to an expert. Finished work and decisions wait for you in Review."],
 ];
 export type Att = { image: boolean; label: string; preview: string; name: string | null; failed: boolean };
@@ -31,7 +28,7 @@ const keep = (k: string, v: string) => { try { localStorage.setItem(k, v); } cat
 const json = (k: string) => { try { return JSON.parse(localStorage.getItem(k) || "{}"); } catch (e) { return {}; } };
 
 export const C = {
-  runMode: get("runmode") || (get("overnight") === "1" ? "night" : get("fullauto") === "1" || get("autopilot") === "1" ? "full" : "ask"),
+  runMode: get("runmode") || "full",
   autoPilot: false, overNight: false, fullAuto: false,
   selfTest: get("selftest") === "1", geminiMode: get("gemini") === "1",
   chosenModel: json("models") as Record<string, string>, chosenEffort: json("efforts") as Record<string, string>,
@@ -41,9 +38,10 @@ export const C = {
   startingRun: "",       /* the chat a studio run is being started from, until its first event or an error */
   box: null as HTMLTextAreaElement | null,
 };
-if (!RUN_MODES.some((m) => m[0] === C.runMode)) C.runMode = "ask";
-/* Studio sends its own way (see studioSend); other messages sent while it is chosen go in full auto */
-export function applyMode() { C.fullAuto = C.runMode !== "ask"; C.overNight = C.runMode === "night"; C.autoPilot = false; }
+/* only Full auto and Studio are left: a saved Ask me or Overnight is Full auto now */
+if (!RUN_MODES.some((m) => m[0] === C.runMode)) C.runMode = "full";
+/* Studio sends its own way (see studioSend); other messages go in full auto */
+export function applyMode() { C.fullAuto = true; C.overNight = false; C.autoPilot = false; }
 applyMode();
 export function setRunMode(id: string) { C.runMode = id; applyMode(); keep("runmode", id); }
 export function setSelfTest(v: boolean) { C.selfTest = v; keep("selftest", v ? "1" : "0"); poke(); }
@@ -147,16 +145,16 @@ export function studioLine(p: any) {
 /* the mode button and its menu: the four ways it works, one line each */
 export function modeRows() {
   const p = cur(), ai = H.chatAi(p);
-  // a mode this chat's AI cannot keep to is never left selected (a saved choice, or the chat's AI switched): Ask me
-  if (ai && C.runMode !== "ask" && !H.modeKept(ai, C.runMode)) { C.runMode = "ask"; applyMode(); }
+  // a Studio this chat's AI cannot keep to is never left selected (a saved choice, or the chat's AI switched): Full auto
+  if (ai && C.runMode === "studio" && !H.modeKept(ai, "studio")) { C.runMode = "full"; applyMode(); }
   const why = studioWhy(), lead = H.leadsRun(p), noGame = !gameInFront();
-  /* with no project folder a message goes as Ask me whatever is chosen, so that is what the button says */
-  const shown = lead ? "studio" : C.runMode === "studio" && noGame ? "ask" : C.runMode;
+  /* with no project folder a message goes in Full auto whatever is chosen, so that is what the button says */
+  const shown = lead ? "studio" : C.runMode === "studio" && noGame ? "full" : C.runMode;
   const rows = RUN_MODES.map(([id, name, line, whole]) => {
     let title = lead && id !== "studio" ? "This chat leads the studio run, so what you send here goes in Studio mode." : whole, off = "";
     /* a mode that cannot be used says why on its own row */
     if (id === "studio" && why) { off = why; title = "Studio: " + why; }
-    if (!H.modeKept(ai, id)) { off = "Not offered: " + H.aiName(ai) + " cannot keep to it here."; title = H.aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages go as Ask me."; }
+    if (!H.modeKept(ai, id)) { off = "Not offered: " + H.aiName(ai) + " cannot keep to it here."; title = H.aiName(ai) + " cannot keep to this mode by its own rules here, so it is not offered. Messages here ask before running programs instead."; }
     return { id, name, line: off || (id === "studio" && studioLine(p)) || line, title, off: !!off, on: id === shown };
   });
   return { rows, lead, noGame };
@@ -222,7 +220,7 @@ async function sendFromDraft() {
   if (acct && acct.ai === H.chatAi(H.agents.get(id))) await api("/api/chat-account", { agent: id, account: acct.name }).catch(() => {});
   if (H.current === id && H.agents.get(id)) send();
 }
-/* a message in the chosen ordinary mode (Ask me, Full auto, Overnight) */
+/* a message in the chosen ordinary mode (Full auto) */
 function plainSend(p: any, said: string, names: (string | null)[]) {
   /* a chat started from a researched idea carries the idea's details with its first message */
   const full = p.seed ? said + "\n\n" + p.seed : said; p.seed = null;
@@ -242,12 +240,8 @@ async function studioSend(p: any, said: string, ready: Att[], chosen: boolean) {
     if (link) noteReview(why, link); else note(why);
   };
   const pr = p.project;
-  /* no project folder: this message goes as Ask me, and the app says so in the chat */
-  if (!pr) {
-    const full = p.seed ? said + "\n\n" + p.seed : said; p.seed = null;
-    api("/api/send", { agent: p.id, text: full, studio: true, selftest: C.selfTest, gemini: C.geminiMode, autopilot: false, overnight: false, full: false, model: modelOf(p) || null, effort: effortOf(p), attachments: names });
-    return;
-  }
+  /* no project folder: this message goes in Full auto */
+  if (!pr) { plainSend(p, said, names); return; }
   let r; try { r = await api("/api/review?path=" + encodeURIComponent(pr.path)); } catch (e) { r = null; }
   if (!r || !r.ok) return back((r && r.error) || "Could not reach the app.");
   H.rvAll[pr.path] = r;

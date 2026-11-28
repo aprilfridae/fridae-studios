@@ -207,7 +207,7 @@ export function Dock() {
           <AccountChip p={p} ai={ai} />
           <span class="pick">
             <button class="chip" id="mode" aria-haspopup="menu" aria-expanded={C.pop === "mode" ? "true" : "false"} onClick={pop("mode")}
-              title={mode.name + ": " + mode.line + (C.runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes as Ask me." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works."}>
+              title={mode.name + ": " + mode.line + (C.runMode === "studio" && noGame && !lead ? " Studio is chosen, but it needs a project folder, so a message here goes in Full auto." : "") + (extras.length ? " Also on: " + extras.join(", ") + "." : "") + " Press to change how it works."}>
               <span id="mode-name">{mode.name}</span>{extras.length > 0 && <span class="extra">{"+" + extras.length}</span>}{DOWN}</button>
             <div class={"menu" + (C.pop === "mode" ? " on" : "")} id="mode-menu" role="menu" aria-label="How it works">
               <div id="run-mode" role="radiogroup" aria-label="How it works">

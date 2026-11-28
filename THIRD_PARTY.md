@@ -202,3 +202,9 @@ are drawn for Fridae.
   `ui/src` into `ui/app.js` and `ui/app.css` when the app is built (`ui/build.py`); it is not part of the built app.
 
 Both were checked against the npm registry's sha512 when they were added (2026-11-26).
+
+## JetBrains Mono
+
+`ui/fonts/JetBrainsMono-Variable.woff2` is JetBrains Mono (https://github.com/JetBrains/JetBrainsMono), the app's
+monospace font, under the SIL Open Font License 1.1 (`licenses/JetBrainsMono-OFL.txt`). It is the Latin variable
+cut (weights 100 to 800) published by Fontsource as `@fontsource-variable/jetbrains-mono` 5.1.1, unchanged.

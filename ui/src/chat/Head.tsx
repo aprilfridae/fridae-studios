@@ -156,7 +156,14 @@ export function ChatHead() {
     if (save && p && name && name !== p.name) { p.name = name; poke(); await api("/api/rename", { agent: p.id, name }); }
   };
   const [text, review, path] = metaOf(p);
+  /* the bar is tucked away behind a small tab at the top of the chat, and slides out when the tab is pressed; while
+     it moves (and while tucked) it is clipped, and once out its menus may hang below it again */
+  const [out, setOut] = useState(() => { try { return localStorage.getItem("headout") === "1"; } catch (e) { return false; } });
+  const [moving, setMoving] = useState(false);
+  const fold = () => { const v = !out; setOut(v); setMoving(true); setTimeout(() => setMoving(false), 320); if (!v) { close(); closePops(); } try { localStorage.setItem("headout", v ? "1" : "0"); } catch (e) {} };
   return (
+    <div class={"headfold" + (out ? " out" : "") + (moving || !out ? " clip" : "")}>
+    <div class="hf-in" inert={!out}>
     <div class="chathead">
       <span class="conv">
         <button class="title" id="chat-title" aria-haspopup="menu" aria-expanded={open ? "true" : "false"} title="This project's chats" hidden={renaming}
@@ -167,6 +174,9 @@ export function ChatHead() {
       </span>
       <span class="meta" id="chat-meta">{p && H.leadsRun(p) && path ? <RunPlay path={path} /> : !text ? null : review ? <button class="linkish" title="Open Review" onClick={() => H.openInReview(path)}>{text}</button> : text}</span>
       <RunBar />
+    </div>
+    </div>
+    <button class="hf-tab" aria-expanded={out ? "true" : "false"} aria-label={out ? "Tuck the chat's bar away" : "Show the chat's bar"} title={out ? "Tuck the bar away" : (p ? p.name + ": " : "") + "show the chat's bar"} onClick={fold}>{DOWN}</button>
     </div>
   );
 }
