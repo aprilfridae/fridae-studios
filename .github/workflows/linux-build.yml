@@ -1,0 +1,80 @@
+# The Linux download: built on GitHub's Ubuntu 22.04 (glibc 2.35, so it runs on Ubuntu 22.04 and later, Debian 12,
+# Fedora 36 and later), because the Windows PC this project is made on cannot build for Linux. Started by hand
+# (Actions > Build for Linux > Run workflow). With a release tag it also attaches Fridae-linux-x86_64.AppImage and
+# Fridae-linux-x86_64.tar.gz to that release; without one they are only kept as the run's download.
+# Never a .zip: the Windows app updates itself from the first .zip in a release.
+name: Build for Linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the AppImage and .tar.gz to this release (for example v2.8.0); leave empty to only build"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build packages (WebKitGTK, GTK, libsoup, OpenSSL) and what the AppImage tools and the smoke test need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libssl-dev pkg-config build-essential file libfuse2 xvfb patchelf desktop-file-utils librsvg2-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Python libraries the app packs (install.py's list, OpenCV without Qt) and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller numpy pillow opencv-python-headless "fastembed==0.9.*" "qdrant-client==1.20.*"
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: AppImage tools (linuxdeploy, its GTK plugin, appimagetool)
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          cd "$RUNNER_TEMP/tools"
+          curl -fsSLo linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSLo linuxdeploy-plugin-gtk.sh https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          curl -fsSLo appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x linuxdeploy linuxdeploy-plugin-gtk.sh appimagetool
+          echo "LINUXDEPLOY=$RUNNER_TEMP/tools/linuxdeploy" >> "$GITHUB_ENV"
+          echo "LINUXDEPLOY_GTK=$RUNNER_TEMP/tools/linuxdeploy-plugin-gtk.sh" >> "$GITHUB_ENV"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/tools/appimagetool" >> "$GITHUB_ENV"
+
+      - name: Build the AppImage and the .tar.gz
+        run: python build_linux.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Fridae-linux-x86_64
+          path: |
+            build-out/Fridae-linux-x86_64.AppImage
+            build-out/Fridae-linux-x86_64.tar.gz
+
+      - name: Start the AppImage for a while and check that its window's page came up
+        run: |
+          export FRIDAE_URL_FILE="$RUNNER_TEMP/fridae-url.txt" FRIDAE_QUIT_AFTER=20 APPIMAGE_EXTRACT_AND_RUN=1
+          xvfb-run -a timeout 60 build-out/Fridae-linux-x86_64.AppImage > open-out.txt 2>&1 || true
+          echo "--- what it printed"; cat open-out.txt
+          test -s "$FRIDAE_URL_FILE" && echo "page: $(cat "$FRIDAE_URL_FILE")"
+
+      - name: The app's tests on Linux (the cfg(unix) and Linux paths, run here for the first time)
+        working-directory: app-rs
+        run: cargo test
+
+      - name: Attach to the release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.release_tag }}" build-out/Fridae-linux-x86_64.AppImage build-out/Fridae-linux-x86_64.tar.gz --clobber --repo "${{ github.repository }}"
