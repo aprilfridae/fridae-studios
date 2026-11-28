@@ -311,7 +311,13 @@ static REPLAYS: Mutex<Option<std::collections::HashMap<ReplayKey, (std::time::In
 static REPLAY_DONE: std::sync::Condvar = std::sync::Condvar::new();
 
 fn is_idempotent(name: &str) -> bool {
-    IDEMPOTENT.contains(&name) || (cfg!(test) && name == "test_count")
+    IDEMPOTENT.contains(&name) || (cfg!(test) && name.starts_with("test_count"))
+}
+
+/// Tests: a first call of `key` marked as running since `at`.
+#[cfg(test)]
+fn mark_running_for_test(key: &ReplayKey, at: std::time::Instant) {
+    REPLAYS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(key.clone(), (at, None));
 }
 
 /// The answer to replay, or None when this call is the first (it is then marked as running, and a second call with
@@ -320,7 +326,9 @@ fn replay_begin(key: &ReplayKey) -> Option<Value> {
     let mut guard = REPLAYS.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         let map = guard.get_or_insert_with(Default::default);
-        map.retain(|_, (at, v)| v.is_none() || at.elapsed() < REPLAY_FOR);
+        // answers are kept an hour; a first call still "running" after an hour is gone (a lost thread), so a retry
+        // is not held behind it for ever
+        map.retain(|_, (at, _)| at.elapsed() < REPLAY_FOR);
         match map.get(key) {
             Some((_, Some(v))) => return Some(v.clone()),
             Some((_, None)) => guard = REPLAY_DONE.wait_timeout(guard, std::time::Duration::from_secs(1)).unwrap_or_else(|e| e.into_inner()).0,
@@ -377,14 +385,29 @@ pub fn call_tool(scope: &keys::Scope, name: &str, args: Value, cancelled: &Atomi
     if let Some(v) = replay.as_ref().and_then(replay_begin) {
         return Ok(v);
     }
-    let (result, crashed) = run_tool(&def, scope, &args, cancelled, exposure);
-    if let Some(key) = &replay {
-        replay_end(key, (!crashed).then(|| result.clone()));
+    // the replay entry is released however this call ends (a guard), and nothing in the call (labels, access, the
+    // tool rows, the handler) can unwind out of it: a panic anywhere is an internal error
+    let mut guard = ReplayGuard(replay);
+    let (result, keep) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_tool(&def, scope, &args, cancelled, exposure))).unwrap_or_else(|_| (crash_result(), false));
+    if let Some(key) = guard.0.take() {
+        replay_end(&key, keep.then(|| result.clone()));
     }
     Ok(result)
 }
 
-/// The call itself, with its tool row; (the MCP result, whether the handler panicked).
+/// Releases a first call's replay entry if the call ends without keeping an answer.
+struct ReplayGuard(Option<ReplayKey>);
+
+impl Drop for ReplayGuard {
+    fn drop(&mut self) {
+        if let Some(key) = self.0.take() {
+            replay_end(&key, None);
+        }
+    }
+}
+
+/// The call itself, with its tool row; (the MCP result, whether a replay may give it again: not after a crash, nor
+/// after the caller check refused, since a retry from a live turn must run).
 fn run_tool(def: &ToolDef, scope: &keys::Scope, args: &Map<String, Value>, cancelled: &AtomicBool, exposure: exposure::Mode) -> (Value, bool) {
     let call_id = crate::remote_common::random_hex(8);
     let (labels, summary) = (def.labels)(args);
@@ -405,6 +428,7 @@ fn run_tool(def: &ToolDef, scope: &keys::Scope, args: &Map<String, Value>, cance
         Access::Reads | Access::ReadsAsCaller => access::read_caller(scope).map(|_| ()),
         Access::WritesThreads | Access::StartsThreads | Access::WritesEnvironment => access::writing_caller(scope).map(|_| ()),
     };
+    let refused = allowed.is_err();
     let outcome = match allowed {
         Err(f) => Some(Err(f)),
         Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (def.handler)(&call, args))).ok(),
@@ -413,16 +437,16 @@ fn run_tool(def: &ToolDef, scope: &keys::Scope, args: &Map<String, Value>, cance
     match outcome {
         Some(Ok(v)) => {
             row("done", format!("{} {}", labels.done, labels.detail), links);
-            (ok_result(&v), false)
+            (ok_result(&v), true)
         }
         Some(Err(f)) => {
             let (status, word) = if f.code == "declined" { ("declined", "Declined") } else { ("failed", "Failed") };
             row(status, format!("{word} to {} {}", lower_first(labels.action), labels.detail), links);
-            (fail_result(&f), false)
+            (fail_result(&f), !refused)
         }
         None => {
             row("failed", format!("Failed to {} {}", lower_first(labels.action), labels.detail), links);
-            (crash_result(), true)
+            (crash_result(), false)
         }
     }
 }
@@ -489,6 +513,9 @@ fn test_defs() -> Vec<ToolDef> {
         let code = CODES.iter().find(|c| args.get("code").and_then(Value::as_str) == Some(**c)).copied().unwrap_or("invalid_request");
         Err(fail(code, "Test failure."))
     }
+    fn bad_labels(_: &Map<String, Value>) -> (Labels, Summary) {
+        panic!("test labels panic on purpose")
+    }
     fn panicking(_: &Call, _: &Map<String, Value>) -> Outcome {
         panic!("test tool panics on purpose")
     }
@@ -524,6 +551,7 @@ fn test_defs() -> Vec<ToolDef> {
         ToolDef { name: "test_count", schema: schema_count, hints: Hints::WRITE, access: starts, handler: counting, ..base },
         ToolDef { name: "test_write", schema: schema_none, hints: Hints::WRITE, access: writes, handler: writing, ..base },
         ToolDef { name: "test_wait", schema: schema_none, always_load: true, handler: waiting, ..base },
+        ToolDef { name: "test_count_badlabels", schema: schema_count, labels: bad_labels, handler: counting, ..base },
     ]
 }
 
@@ -716,6 +744,52 @@ mod tests {
         let other = run(&scope_for(&a, "ns-7"), "test_count", json!({"clientRequestId": "same", "tag": a.id})).unwrap();
         assert_ne!(other, first, "another key's namespace runs it again");
         assert!(IDEMPOTENT.contains(&"chat_launch") && IDEMPOTENT.contains(&"chat_send") && IDEMPOTENT.contains(&"chat_interrupt") && IDEMPOTENT.contains(&"chat_update"));
+        drop_chat(&a);
+    }
+
+    /// `call_tool` on another thread, given at most 5 s (a replay stuck "running" would block for ever).
+    fn run_within_5s(scope: &keys::Scope, name: &'static str, args: Value) -> Result<Value, (i64, String)> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let scope = scope.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(run(&scope, name, args));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("the call never returned")
+    }
+
+    #[test]
+    fn a_panic_outside_the_handler_releases_the_replay() {
+        let a = test_chat("claude");
+        let scope = scope_for(&a, "ns-9");
+        let args = json!({"clientRequestId": "boom", "tag": a.id});
+        assert_eq!(run_within_5s(&scope, "test_count_badlabels", args.clone()), Ok(crash_result()), "a panic in the labels is an internal error");
+        assert_eq!(run_within_5s(&scope, "test_count_badlabels", args), Ok(crash_result()), "the retry runs again instead of waiting for ever");
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn stale_running_replays_are_pruned() {
+        let key: ReplayKey = ("ns-10".into(), "test_count".into(), "stale".into());
+        mark_running_for_test(&key, std::time::Instant::now().checked_sub(REPLAY_FOR + std::time::Duration::from_secs(1)).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let k = key.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(replay_begin(&k));
+        });
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)).expect("blocked on a stale entry"), None, "runs as the first call");
+        replay_end(&key, None);
+    }
+
+    #[test]
+    fn access_refusals_are_not_replayed() {
+        let a = test_chat("claude");
+        let scope = scope_for(&a, "ns-11");
+        let args = json!({"clientRequestId": "later", "tag": a.id});
+        let refused = run(&scope, "test_count", args.clone()).unwrap();
+        assert!(refused["content"][0]["text"].as_str().unwrap().contains("parent_not_active"));
+        a.set_running_for_test(true);
+        let ran = run(&scope, "test_count", args).unwrap();
+        assert_eq!(ran["isError"], false, "a retry from a live turn runs: {ran}");
         drop_chat(&a);
     }
 
