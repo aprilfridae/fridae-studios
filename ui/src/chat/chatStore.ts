@@ -11,6 +11,8 @@ import { useEffect, useReducer } from "preact/hooks";
 import { H } from "./host";
 import { cap } from "./md";
 import { C, modelsFor } from "./compose";
+/* a Go model's name says who makes it ("GLM · GLM 5.3"): the model's own name says it already */
+const ocName = (name: string) => { const [g, r] = name.split(" · "); return r && (r.startsWith(g) || g === "Other") ? r : name; };
 import { replyOver } from "../remote/move";
 import { accountWord } from "./AccountChip";
 
@@ -248,8 +250,8 @@ export function event(p: any, e: any): string | void {
       return "auto";
     }
     put(tl, mk("you", { text: e.text, images: e.images && e.images.length ? e.images : null, files: e.files && e.files.length ? e.files : null }));
-    /* an OpenCode model by its name ("OpenCode Zen · big-pickle"), as the picker and the app's own lines show it */
-    const ran = e.model && H.chatAi(p) === "opencode" ? ((modelsFor("opencode").find((m) => m[0] === e.model) || [])[1] || e.model) : e.model;
+    /* an OpenCode model by its name, as the picker shows it ("GLM 5.3 Flash", "OpenCode Zen · big-pickle") */
+    const ran = e.model && H.chatAi(p) === "opencode" ? ocName((modelsFor("opencode").find((m) => m[0] === e.model) || [])[1] || e.model) : e.model;
     const tags = [ran, e.selftest ? "self-test on" : "", e.gemini ? "gemini textures" : "", e.full && !e.studio ? "full auto" : "", e.studio ? "Studio" : e.overnight ? "overnight, 24 hours" : e.autopilot && !e.full ? "autopilot" : ""].filter(Boolean).join("  ·  ");
     if (tags) put(tl, mk("tag", { text: cap(tags) }));
     if (e.fallback) put(tl, mk("tag", { text: e.fallback }));

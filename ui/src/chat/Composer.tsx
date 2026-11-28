@@ -7,7 +7,7 @@ import { noticeOf, pressOpenCode, pressSignIn } from "../ai";
 import { H } from "./host";
 import { poke, useTick } from "./chatStore";
 import { keep } from "./keep";
-import { C, EFFORTS, EFFORT_NAMES, addClips, addFile, closePops, effortChoice, effortOf, fit, modeRows, modelOf, modelParts, modelRows, pickRow, rowOf,
+import { C, EFFORT_NAMES, addClips, addFile, closePops, effortChoice, effortOf, fit, wayName, modeRows, modelOf, modelParts, modelRows, pickRow, rowOf,
   removeAtt, send, setGeminiMode, setRunMode, setSelfTest, setText, switchAi, tellPick, text, togglePop } from "./compose";
 import { FileTile } from "./Rows";
 import { ToLatest, relayout } from "./Timeline";
@@ -21,8 +21,14 @@ const DOWN = <svg class="down" width="14" height="14" viewBox="0 0 16 16" fill="
 const TICK = <span class="tick"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5.5l2.5 2.5 4.5-5.5" /></svg></span>;
 const byId = (id: string) => document.getElementById(id);
 /* the effort's one word (High), as its row in the picker names it */
-const effortWord = (id: string) => (EFFORTS.find((e) => e[0] === id) || ["", ""])[1];
+const effortWord = (id: string) => wayName(id);
 const EFFORT_TIPS: Record<string, string> = { low: "Quick answers, least thinking", medium: "Some thinking", high: "Thinks things through (the usual choice)", xhigh: "Extra-high: more thinking for hard problems", max: "Thinks as long as it needs; slowest and uses the most" };
+/* a way of a model (compose.ts splitWay): its effort's line, and what thinking and fast add */
+const wayTip = (way: string) => {
+  const w = way.split("-"), lv = w.find((x) => EFFORT_TIPS[x]);
+  return [lv ? EFFORT_TIPS[lv] : w.includes("thinking") ? "" : "The model as it comes", w.includes("thinking") ? "thinks before it answers" : "", w.includes("fast") ? "runs faster (it may use more of your plan)" : ""]
+    .filter(Boolean).join(", ").replace(/^./, (c) => c.toUpperCase());
+};
 
 /* typing "/" offers the commands */
 const COMMANDS = [
@@ -104,7 +110,7 @@ function PickerBody({ p }: { p: any }) {
             const { id, name, note } = r, on = r.levels ? Object.values(r.levels).includes(chosen) : id === chosen;
             const [g, rest] = modelParts(ai, name), head = g && g !== group ? ((group = g), <p class="mgroup">{g}</p>) : null;
             return <>{head}<button class="pk-m" role="option" aria-selected={on ? "true" : "false"} title={note && note !== id ? rest + " · " + note : rest}
-              onClick={() => Promise.resolve(pickRow(ai, r, effort)).then(() => tellPick(p))}>
+              onClick={() => Promise.resolve(pickRow(ai, r, effort, chosen)).then(() => tellPick(p))}>
               <AiLogo ai={ai} size={16} /><span class="pk-m-t"><b>{rest}</b>{TICK}{note && note !== id && <small>{note}</small>}</span></button></>;
           })}
         </div>
@@ -115,7 +121,7 @@ function PickerBody({ p }: { p: any }) {
     <div class="pk-effort" id="effort-wrap" hidden={!eff && !accountChoice(p, ai)}>
       {eff && <>
         <div class="pk-eh"><span>Effort</span><em>{effortWord(eff.on)}</em></div>
-        <div class="pk-er-list" id="effort" role="radiogroup" aria-label="Effort">{eff.levels.map(([id, name]) => <button class="pk-er" role="radio" aria-checked={id === eff.on ? "true" : "false"} title={EFFORT_TIPS[id]} onClick={() => Promise.resolve(eff.pick(id)).then(() => tellPick(p))}><span>{name}</span>{TICK}</button>)}</div>
+        <div class="pk-er-list" id="effort" role="radiogroup" aria-label="Effort">{eff.levels.map(([id, name]) => <button class="pk-er" role="radio" aria-checked={id === eff.on ? "true" : "false"} title={wayTip(id)} onClick={() => Promise.resolve(eff.pick(id)).then(() => tellPick(p))}><span>{name}</span>{TICK}</button>)}</div>
       </>}
       <AccountSection p={p} ai={ai} />
     </div>
@@ -218,8 +224,8 @@ export function Dock() {
           <MachineChip p={p} />
           <span class="pick">
             <button class="chip" id="model" aria-haspopup="dialog" aria-expanded={C.pop === "model" ? "true" : "false"} onClick={pop("model")}
-              title={[H.aiName(ai), cur ? cur.name : "", eff ? EFFORT_NAMES[eff.on] : ""].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
-              <AiLogo ai={ai} size={16} /><span id="model-name">{cur ? modelParts(ai, cur.name)[1] : H.aiName(ai)}</span>{eff && <span class="m-eff">{effortWord(eff.on)}</span>}{DOWN}</button>
+              title={[H.aiName(ai), cur ? cur.name : "", eff && eff.on ? EFFORT_NAMES[eff.on] || wayName(eff.on) : ""].filter(Boolean).join(" · ") + ". Press to change the AI, its model or the effort, from your next message."}>
+              <AiLogo ai={ai} size={16} /><span id="model-name">{cur ? modelParts(ai, cur.name)[1] : H.aiName(ai)}</span>{eff && eff.on && <span class="m-eff">{effortWord(eff.on)}</span>}{DOWN}</button>
             {/* the picker behind the button is only painted once it has been opened */}
             <div class={"menu picker" + (!eff && !accountChoice(p, ai) ? " own" : "") + (C.pop === "model" ? " on" : "")} id="settings-panel" role="dialog" aria-label="AI and model">{pickerOpened && <Picker p={p} />}</div>
           </span>

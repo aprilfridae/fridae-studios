@@ -8,12 +8,8 @@ import { openPair } from "../remote/Pair";
 import { store } from "../store";
 import { boxMachine } from "../remote/remote";
 
-export const MODELS: [string, string, string][] = [
-  ["fable", "Fable", "Most capable; best for big or tricky builds"],
-  ["opus", "Opus", "Strong all-rounder"],
-  ["sonnet", "Sonnet", "Fast and capable; good everyday choice"],
-  ["haiku", "Haiku", "Fastest and cheapest; small, simple jobs"],
-];
+/* Claude's models by name alone: people know them */
+export const MODELS: [string, string, string][] = [["fable", "Fable", ""], ["opus", "Opus", ""], ["sonnet", "Sonnet", ""], ["haiku", "Haiku", ""]];
 export const EFFORTS: [string, string][] = [["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra"], ["max", "Max"]];
 export const EFFORT_NAMES: Record<string, string> = { low: "low effort", medium: "medium effort", high: "high effort", xhigh: "extra-high effort", max: "max effort" };
 // one choice instead of overlapping switches: full (never asks, keeps going until done) or studio (a Lead and experts)
@@ -58,8 +54,38 @@ export function togglePop(name: string) { C.pop = C.pop === name ? "" : name; po
 /* Each AI has its own models: Claude's are fixed, Gemini's, ChatGPT's, Cursor's and OpenCode's are whatever their tools list on this computer. */
 export function modelsFor(ai: string): [string, string, string][] {
   if (ai === "claude") return MODELS;
-  const listed = (((H.status.ai || {}).models || {})[ai]) || [];
-  return listed.map(([id, name]: [string, string]) => [id, name.replace(/^Gemini /, ""), id]);
+  const listed: [string, string][] = (((H.status.ai || {}).models || {})[ai]) || [];
+  if (ai === "opencode") return openCodeModels(listed);
+  return listed.map(([id, name]) => [id, name.replace(/^Gemini /, ""), id]);
+}
+/* OpenCode's models: with an OpenCode Go plan only the plan's (OpenCode Zen's others are billed per use, or not open to
+   this account), and the one in use whatever it is. Each under who makes it ("GLM · GLM 5.3 Flash"), in OpenCode's
+   order, which is the alphabet's. Without the plan, all it lists, as it names them. */
+const MAKERS: Record<string, string> = { claude: "Claude", deepseek: "DeepSeek", gemini: "Gemini", glm: "GLM", gpt: "GPT", grok: "Grok", hy4: "Hunyuan", kimi: "Kimi", minimax: "MiniMax", qwen: "Qwen", qwen3: "Qwen", qwen4: "Qwen", mimo: "MiMo", nemotron: "Nemotron" };
+const UPPER = /^(glm|gpt|hy\d.*|[kmv]\d.*|vl)$/i;
+export function prettyModel(m: string): string {
+  const free = /-free$/.test(m), parts = m.replace(/-free$/, "").split("-"), out: string[] = [];
+  for (const w of parts) {
+    /* "5-5" is version 5.5 */
+    if (/^\d+$/.test(w) && out.length && /^\d+(\.\d+)?$/.test(out[out.length - 1])) out[out.length - 1] += "." + w;
+    else out.push(UPPER.test(w) ? w.toUpperCase() : w === "deepseek" ? "DeepSeek" : w === "minimax" ? "MiniMax" : w.charAt(0).toUpperCase() + w.slice(1));
+  }
+  return out.join(" ") + (free ? " (free)" : "");
+}
+function openCodeModels(listed: [string, string][]): [string, string, string][] {
+  const go = listed.some(([id]) => id.startsWith("opencode-go/")), using = ((H.status.ai || {}).default_models || {}).opencode;
+  if (!go) return listed.map(([id, name]) => [id, name, id]);
+  return listed
+    .filter(([id]) => !go || id.startsWith("opencode-go/") || id === using)
+    .map(([id, name]) => {
+      const m = id.slice(id.indexOf("/") + 1), first = m.split("-")[0].replace(/[\d.]+$/, ""), maker = MAKERS[m.split("-")[0]] || MAKERS[first];
+      /* a model on another provider than the plan keeps its provider's name, so it is not mistaken for the plan's */
+      return [id, !id.startsWith("opencode-go/") ? name : (maker || "Other") + " · " + prettyModel(m), id] as [string, string, string];
+    })
+    /* each maker's together (a heading comes once), by name; "Other" and another provider's model last */
+    .map((r, i) => ({ r, i, rank: !r[0].startsWith("opencode-go/") ? 2 : r[1].startsWith("Other · ") ? 1 : 0, k: r[1].split(" · ")[0] }))
+    .sort((a, b) => a.rank - b.rank || a.k.localeCompare(b.k) || a.i - b.i)
+    .map((x) => x.r);
 }
 /* The model the next message asks for: the one picked for this AI, else the AI's set default (Opus, Gemini 4 Carbon,
    the newest GPT Astra, Cursor's Auto). There is no "whatever the program is set to". */
@@ -101,48 +127,83 @@ export async function moveOpenCodePick() {
 /* the app is told the chat in front's model and effort when either is picked or its AI is switched, so the app's own
    messages to it (a run's wakes, board news) and its waiting messages use them at once (/api/chat-model) */
 export function tellPick(p?: any) { p = p || cur(); if (!p || !p.started) return; api("/api/chat-model", { agent: p.id, model: modelOf(p) || null, effort: effortOf(p) }).catch(() => {}); }
-/* A model whose id ends in its own level (Antigravity's "gemini-4-neon-high", "Gemini 4 Neon (High)") is one of a
-   family: the picker lists the family once, as "4 Neon", and its levels go under Effort, as Claude's do. Picking a
-   level picks that model. A model without a level is a row of its own. */
-const LEVEL = /-(low|medium|high|xhigh|max)$/;
-const LEVEL_WORDS = /\s*(?:\((?:low|medium|high|x-?high|extra[- ]high|max)\)|\b(?:low|medium|high|x-?high|max))$/i;
-export const levelOf = (model: string) => { const m = LEVEL.exec(model || ""); return m ? m[1] : ""; };
-/* a row of the picker: a model, or a family (`levels`: each level it has, to the model that is it) */
+/* A model offered as several, each its id plus how it works (Antigravity's "gemini-4-neon-high"; Cursor's
+   "gpt-5.3-codex-low-fast", "claude-opus-5-5-thinking", "composer-2.5" beside "composer-2.5-fast"), is one family: the
+   picker lists it once ("4 Neon", "Codex 5.3") and its ways go under Effort, as Claude's efforts do ("High",
+   "Low Fast", "Thinking"). Picking one picks that model. Only a name with a twin is a family (OpenCode's "qwen4-max"
+   alone is a model called that), save Gemini's, which always name their level. */
+const LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const WAY_WORDS = /(?:\s*\(?\b(?:low|medium|high|x-?high|extra(?:[- ]high)?|max|thinking|fast)\b\)?)+$/i;
+/* how a model works, from its id: [the model it is a way of, the way ("high-fast", "thinking", "" for the plain one)] */
+export function splitWay(id: string): [string, string] {
+  const parts = (id || "").split("-");
+  let lv = "", think = false, fast = false;
+  while (parts.length > 1) {
+    const w = parts[parts.length - 1];
+    if (w === "fast" && !fast) fast = true; else if (w === "thinking" && !think) think = true; else if (LEVELS.includes(w) && !lv) lv = w; else break;
+    parts.pop();
+  }
+  return [parts.join("-"), [lv, think ? "thinking" : "", fast ? "fast" : ""].filter(Boolean).join("-")];
+}
+export const levelOf = (model: string) => splitWay(model)[1];
+/* a way as its row says it: "High", "Low Fast", "Thinking", "Standard" */
+export function wayName(way: string): string {
+  if (!way) return "Standard";
+  return way.split("-").map((w) => (EFFORTS.find((e) => e[0] === w) || [w, w.charAt(0).toUpperCase() + w.slice(1)])[1]).join(" ");
+}
+/* the order of a family's ways: by effort (the plain one in the middle), thinking after, each before its fast one */
+const wayRank = (way: string) => {
+  const [lv] = way.split("-").filter((w) => LEVELS.includes(w)), i = lv ? LEVELS.indexOf(lv) : 1.5;
+  return i * 4 + (way.includes("thinking") ? 2 : 0) + (way.includes("fast") ? 1 : 0);
+};
+/* a row of the picker: a model, or a family (`levels`: each way it has, to the model that is it) */
 export type ModelRow = { id: string; name: string; note: string; levels: Record<string, string> | null };
 export function modelRows(ai: string): ModelRow[] {
+  const list = modelsFor(ai), count: Record<string, number> = {};
+  for (const [id] of list) { const b = splitWay(id)[0]; count[b] = (count[b] || 0) + 1; }
   const out: ModelRow[] = [], fam: Record<string, ModelRow> = {};
-  for (const [id, name, note] of modelsFor(ai)) {
-    const lv = levelOf(id);
-    if (!lv) { out.push({ id, name, note, levels: null }); continue; }
-    const base = id.slice(0, -lv.length - 1);
-    if (!fam[base]) out.push(fam[base] = { id: base, name: name.replace(LEVEL_WORDS, ""), note: base, levels: {} });
-    fam[base].levels![lv] = id;
+  for (const [id, name, note] of list) {
+    const [base, way] = splitWay(id);
+    if (count[base] < 2 && !(ai === "gemini" && way)) { out.push({ id, name, note, levels: null }); continue; }
+    if (!fam[base]) out.push(fam[base] = { id: base, name: name.replace(WAY_WORDS, "").trim() || name, note: base, levels: {} });
+    /* the plain one's name is the family's */
+    if (!way) fam[base].name = name;
+    fam[base].levels![way] = id;
   }
-  /* a model listed bare beside its own family is that family */
-  return out.filter((r) => r.levels || !fam[r.id]);
+  return out;
 }
 /* the row `model` is on */
 export function rowOf(ai: string, model: string): ModelRow | undefined {
   return modelRows(ai).find((r) => (r.levels ? Object.values(r.levels).includes(model) : r.id === model));
 }
-/* picks a model, and with `level` the effort it names (so the button and the next model keep it) */
-export function chooseModel(ai: string, id: string, level?: string): Promise<void> | void {
-  if (level) pickEffort(ai, level);
+/* picks a model, and with a way that names an effort, that effort (so the button and the next model keep it) */
+export function chooseModel(ai: string, id: string, way?: string): Promise<void> | void {
+  const lv = (way || "").split("-").find((w) => LEVELS.includes(w));
+  if (lv) pickEffort(ai, lv);
   if (ai === "opencode") return pickOpenCodeModel(id);
   pickModel(ai, id);
 }
-/* a family's row picks its model at the effort in use, else the nearest level it has (the higher on a tie) */
-export function pickRow(ai: string, r: ModelRow, effort: string): Promise<void> | void {
+/* a family's row picks its model the way the one in use works (its effort, thinking and speed), else the nearest way it
+   has: the same thinking and speed first, then the nearest effort, the higher on a tie */
+export function pickRow(ai: string, r: ModelRow, effort: string, model: string): Promise<void> | void {
   if (!r.levels) return chooseModel(ai, r.id);
-  const order = EFFORTS.map((e) => e[0]), want = Math.max(0, order.indexOf(effort));
-  const has = order.filter((l) => r.levels![l]).sort((a, b) => Math.abs(order.indexOf(a) - want) - Math.abs(order.indexOf(b) - want) || order.indexOf(b) - order.indexOf(a));
-  return chooseModel(ai, r.levels[has[0]], has[0]);
+  const now = splitWay(model)[1], lv = now.split("-").find((w) => LEVELS.includes(w)) || effort;
+  const want = LEVELS.indexOf(lv) < 0 ? 2 : LEVELS.indexOf(lv), think = now.includes("thinking"), fast = now.includes("fast");
+  const cost = (w: string) => {
+    const l = w.split("-").find((x) => LEVELS.includes(x)), i = l ? LEVELS.indexOf(l) : 1.5;
+    return (w.includes("thinking") !== think ? 20 : 0) + (w.includes("fast") !== fast ? 10 : 0) + Math.abs(i - want) - i / 100;
+  };
+  const best = Object.keys(r.levels).sort((a, b) => cost(a) - cost(b))[0];
+  return chooseModel(ai, r.levels[best], best);
 }
-/* the Effort column for this model: the family's own levels, else every effort where the AI takes one, else none (an
-   AI whose models carry their own, as Cursor's do) */
+/* the Effort column for this model: the family's own ways, else every effort where the AI takes one, else none (an
+   AI whose models carry their own) */
 export function effortChoice(ai: string, model: string, effort: string): { levels: [string, string][]; on: string; pick(id: string): Promise<void> | void } | null {
   const r = rowOf(ai, model);
-  if (r && r.levels) return { levels: EFFORTS.filter(([id]) => r.levels![id]), on: levelOf(model), pick: (id) => chooseModel(ai, r.levels![id], id) };
+  if (r && r.levels) {
+    const ways = Object.keys(r.levels).sort((a, b) => wayRank(a) - wayRank(b));
+    return { levels: ways.map((w) => [w, wayName(w)] as [string, string]), on: levelOf(model), pick: (id) => chooseModel(ai, r.levels![id], id) };
+  }
   if (H.caps(ai).effort === false) return null;
   return { levels: EFFORTS, on: effort, pick: (id) => pickEffort(ai, id) };
 }
