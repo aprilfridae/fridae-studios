@@ -29,7 +29,9 @@
 .cm-edge path { fill: none; stroke: var(--cm-line); stroke-width: 1; transition: stroke 160ms ease; }
 .to-latest.tl-tab { bottom: 100%; left: auto; right: 24px; width: 148px; height: 16px; padding: 1px 0 0; font-size: 11px; line-height: 1; justify-content: center; gap: 6px; border: 0; border-radius: 0;
   background: none; -webkit-backdrop-filter: none; backdrop-filter: none; isolation: isolate; z-index: 1;
-  opacity: 1; transform: none; transition: visibility 0s 260ms, color var(--t-fast) ease; }
+  opacity: 1; visibility: visible; transform: none; transition: color var(--t-fast) ease; }
+/* out of view once it has sunk flat (Timeline.tsx, in the same moment the box's line closes under it) */
+.to-latest.tl-tab.gone { visibility: hidden; }
 .to-latest.tl-tab.on { transform: none; transition: color var(--t-fast) ease; }
 /* it fades up out of the box's line: the box's line under it opens at once (.cm-edge, Timeline.tsx) but a flat piece of
    line (.b) stands in for it and fades out as the tab's outline (.s) rises from flat and fades in, in step with the glass

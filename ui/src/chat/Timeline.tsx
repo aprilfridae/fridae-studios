@@ -190,7 +190,7 @@ function boxAndTab(w: number, h: number, r: number, k: number) {
   return "path('" + box + tabPaths(TL_W, TL_H, true, { dx: n(w - 1 - TL_IN - TL_W), dy: 1, k }).fill + "')";
 }
 export function ToLatest({ tab }: { tab?: boolean }) {
-  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on), sinking = useRef(false), edge = useRef<SVGPathElement>(null);
+  const again = useAgain(), me = useRef<HTMLButtonElement>(null), was = useRef(away.on), sinking = useRef(false), timer = useRef(0), edge = useRef<SVGPathElement>(null);
   useEffect(() => { away.subs.add(again); return () => { away.subs.delete(again); }; }, []);
   /* the box's glass shape: kept to the box's size, and morphing (for as long as the tab grows or sinks) when it shows */
   useLayoutEffect(() => {
@@ -206,10 +206,14 @@ export function ToLatest({ tab }: { tab?: boolean }) {
       const q = 0.5, R = n(Math.max(0, r - q)), open = away.on || sinking.current;
       if (edge.current) edge.current.setAttribute("d", `M${open ? x0 : x1} ${q}H${n(q + R)}A${R} ${R} 0 0 0 ${q} ${n(q + R)}V${n(h - q - R)}A${R} ${R} 0 0 0 ${n(q + R)} ${n(h - q)}`
         + `H${n(w - q - R)}A${R} ${R} 0 0 0 ${n(w - q)} ${n(h - q - R)}V${n(q + R)}A${R} ${R} 0 0 0 ${n(w - q - R)} ${q}H${x1}${open ? "" : "Z"}`);
+      /* and the tab goes from view in the same moment the line closes, never before or after: the two lines are never
+         drawn over each other (which shows as a brighter piece of line), nor is there a gap with neither */
+      if (me.current) me.current.classList.toggle("gone", !open);
     };
     if (was.current !== away.on) {
-      was.current = away.on; sinking.current = !away.on; box.classList.add("tl-morph");
-      setTimeout(() => { box.classList.remove("tl-morph"); if (sinking.current) { sinking.current = false; put(); } }, 260);
+      /* one timer: scrolling to and fro quickly, an older one must not end this grow or sink early */
+      was.current = away.on; sinking.current = !away.on; box.classList.add("tl-morph"); clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => { box.classList.remove("tl-morph"); if (sinking.current) { sinking.current = false; put(); } }, 260);
     }
     put();
     const ro = new ResizeObserver(put); ro.observe(box);
