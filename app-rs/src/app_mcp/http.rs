@@ -121,9 +121,15 @@ fn listing(def: &ToolDef) -> Value {
 pub fn serve(mut req: tiny_http::Request) {
     let method = req.method().as_str().to_string();
     let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
-    let mut body = Vec::new();
-    let _ = req.as_reader().take(MAX_BODY as u64 + 1).read_to_end(&mut body);
-    let answer = handle_parts(&method, &headers, &body);
+    // what the headers alone refuse is answered before any body is read (a web page can POST here)
+    let answer = match early_refusal(&method, &headers) {
+        Some(refused) => refused,
+        None => {
+            let mut body = Vec::new();
+            let _ = req.as_reader().take(MAX_BODY as u64 + 1).read_to_end(&mut body);
+            handle_parts(&method, &headers, &body)
+        }
+    };
     let mut resp = tiny_http::Response::from_data(answer.body).with_status_code(answer.status);
     for (n, v) in answer.headers {
         if let Ok(h) = tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()) {
@@ -131,6 +137,34 @@ pub fn serve(mut req: tiny_http::Request) {
         }
     }
     let _ = req.respond(resp);
+}
+
+/// Admission's steps that need only the headers, in the same order as `handle_parts` (Origin 403, key 401, method 405,
+/// 415, 406, and a declared body over the limit 413); None when the request goes on to its body.
+pub(crate) fn early_refusal(method: &str, headers: &[(String, String)]) -> Option<Reply> {
+    let head = |name: &str| headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str());
+    if head("origin").is_some() {
+        return Some(empty(403));
+    }
+    if let Err(r) = keys::bearer(head("authorization").unwrap_or("")).and_then(|raw| keys::global().resolve(raw)) {
+        return Some(unauthorized(r));
+    }
+    match method {
+        "POST" => {}
+        "DELETE" => return None,
+        _ => return Some(reply(405, vec![("allow", "POST, DELETE".into())], vec![])),
+    }
+    if !lists(head("content-type").unwrap_or(""), "application/json") {
+        return Some(empty(415));
+    }
+    let accept = head("accept").unwrap_or("");
+    if !(lists(accept, "application/json") && lists(accept, "text/event-stream")) {
+        return Some(empty(406));
+    }
+    if head("content-length").and_then(|n| n.trim().parse::<usize>().ok()).is_some_and(|n| n > MAX_BODY) {
+        return Some(empty(413));
+    }
+    None
 }
 
 /// The whole of admission and dispatch, for one request.
@@ -504,6 +538,23 @@ mod tests {
             json!({"jsonrpc": "2.0", "id": "server-discover-probe-1", "error": {"code": -32022, "message": "Unsupported protocol version '2026-07-28'", "data": {"supported": ["2025-06-18"], "requested": "2026-07-28"}}})
         );
         assert_eq!(header(&r, "mcp-session-id"), None, "no session is opened by it");
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn refusals_come_before_the_body_is_read() {
+        // a web page can POST to 127.0.0.1: what the headers alone refuse is answered without reading any body
+        let a = test_chat("claude");
+        let key = key_of(&a);
+        let status = |h: Vec<(String, String)>| early_refusal("POST", &h).map(|r| r.status);
+        assert_eq!(status(heads(Some(&key), None, &[("Origin", "http://evil.example")])), Some(403));
+        assert_eq!(status(heads(None, None, &[])), Some(401));
+        assert_eq!(early_refusal("PUT", &heads(Some(&key), None, &[])).map(|r| r.status), Some(405));
+        assert_eq!(status(heads(Some(&key), None, &[("Content-Type", "text/plain")])), Some(415));
+        assert_eq!(status(heads(Some(&key), None, &[("Accept", "application/json")])), Some(406));
+        assert_eq!(status(heads(Some(&key), None, &[("Content-Length", "99999999")])), Some(413));
+        assert_eq!(status(heads(Some(&key), None, &[("Content-Length", "120")])), None, "a good request goes on to its body");
+        assert!(early_refusal("DELETE", &heads(Some(&key), Some("s"), &[])).is_none());
         drop_chat(&a);
     }
 
