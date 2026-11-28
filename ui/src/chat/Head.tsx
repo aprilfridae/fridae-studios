@@ -104,6 +104,35 @@ function metaOf(p: any): [string, boolean, string] {
   return [text, review, path || ""];
 }
 
+/* The run's state as one button at the top right of the Lead's chat: a pause icon while the run is paused, a play icon
+   while it goes. A press flips it, and the icon morphs at once: the two pause bars reshape into the two halves of the
+   play triangle, and back. A run with nothing to flip (finished) shows its state in words instead. */
+function RunPlay({ path }: { path: string }) {
+  const r = H.rvAll[path], run = r && r.run;
+  const [state, why, action, more] = run ? H.runState(r, run) : ["", "", "", ""];
+  const [want, setWant] = useState<{ going: boolean; at: number } | null>(null), [err, setErr] = useState("");
+  const going = action === "pause";
+  /* the morph shows the press at once; the run's own state takes over when it agrees, or after a few seconds */
+  const shown = want && want.going !== going && Date.now() - want.at < 6000 ? want.going : going;
+  useEffect(() => { if (want && want.going === going) setWant(null); }, [going]);
+  if (!action) return <span>{state}</span>;
+  const press = async () => {
+    setErr(""); setWant({ going: !going, at: Date.now() });
+    let res; try { res = await api("/api/studio-run", { path, action }); } catch (e) { res = { ok: false, error: "Could not reach the app." }; }
+    if (!res || !res.ok) { setWant(null); setErr((res && res.error) || "That did not work."); }
+    H.loadReview(path);
+  };
+  const tip = state + ". " + (more || why) + (going ? " Press to pause the run." : " Press to resume the run.") + (err ? " " + err : "");
+  /* while the run waits on the user, the way to Review stays beside the button */
+  return <>
+    {state === "Waiting for you" && <button class="linkish" title="Open Review" onClick={() => H.openInReview(path)}>{state}</button>}
+    <button class={"run-play" + (shown ? " going" : "") + (err ? " err" : "")} type="button" onClick={press} title={tip}
+      aria-label={(going ? "The run is going (" + state + "). Pause it" : "The run is paused. Resume it")} aria-pressed={shown ? "false" : "true"}>
+      <span class="rp-ico" aria-hidden="true"><i /><i /></span>
+    </button>
+  </>;
+}
+
 /* what the conversation's own menus do when another opens, or Escape is pressed */
 export const head = { closeConv: () => {}, closeRun: (_refocus?: boolean) => {} };
 
@@ -136,7 +165,7 @@ export function ChatHead() {
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } else if (e.key === "Escape") { e.stopPropagation(); finish(false); } }} />}
         <div class={"menu down" + (open ? " on" : "")} id="conv-menu" role="menu">{ever && <ConvMenu close={close} rename={rename} />}</div>
       </span>
-      <span class="meta" id="chat-meta">{!text ? null : review ? <button class="linkish" title="Open Review" onClick={() => H.openInReview(path)}>{text}</button> : text}</span>
+      <span class="meta" id="chat-meta">{p && H.leadsRun(p) && path ? <RunPlay path={path} /> : !text ? null : review ? <button class="linkish" title="Open Review" onClick={() => H.openInReview(path)}>{text}</button> : text}</span>
       <RunBar />
     </div>
   );
