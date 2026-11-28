@@ -1417,7 +1417,10 @@ pub fn own_store() -> PathBuf {
 
 /// Our tool servers as OpenCode takes them (`PUT /api/experimental/mcp/<name>`), under the chat's own names, with the
 /// user's XDG folders back in their environment. Code Mode is off for each, so every tool call is its own step.
-pub fn servers_config(agent_id: &str, servers: &Value, extra: &[(String, String)]) -> Vec<(String, Value)> {
+/// Fridae's toolbox (`app_mcp`) is a remote server under the chat's own name (`fr<8 hex>-fridae`, which the chat's
+/// permission rules allow and every other chat's deny), its key in the header, handed to the app's own OpenCode
+/// server only: never written to a file.
+pub fn servers_config(agent_id: &str, servers: &Value, extra: &[(String, String)], toolbox: Option<&crate::app_mcp::Wire>) -> Vec<(String, Value)> {
     let mut out = Vec::new();
     for (name, s) in servers.as_object().unwrap_or(&Map::new()) {
         let mut command: Vec<Value> = vec![s["command"].clone()];
@@ -1434,6 +1437,13 @@ pub fn servers_config(agent_id: &str, servers: &Value, extra: &[(String, String)
             server_name(agent_id, name),
             json!({"type": "local", "command": command, "environment": environment, "codemode": false,
                    "timeout": {"execution": 900_000}}), // a texture request may wait minutes for the user
+        ));
+    }
+    if let Some(w) = toolbox {
+        // an Allow/Don't card waits up to 10 minutes: T3's 65-minute limit
+        out.push((
+            server_name(agent_id, crate::app_mcp::SERVER_NAME),
+            json!({"type": "remote", "url": w.url, "headers": {"Authorization": w.authorization()}, "oauth": false, "timeout": {"execution": 3_900_000}}),
         ));
     }
     out
@@ -1953,6 +1963,8 @@ pub struct Spec {
     pub full: bool,
     pub instructions: String,
     pub text: String,
+    /// Fridae's toolbox for this chat (`servers_config`).
+    pub toolbox: Option<crate::app_mcp::Wire>,
 }
 
 /// How a turn ended, beyond what its events said: a reason it could not run, and whether Stop had to end the server.
@@ -2099,7 +2111,7 @@ fn turn_steps(conn: &Conn, spec: &Spec, me: &Active, put: &mut impl FnMut(Out), 
             extra.push((k.to_string(), v));
         }
     }
-    let mine = servers_config(&spec.agent_id, &spec.servers, &extra);
+    let mine = servers_config(&spec.agent_id, &spec.servers, &extra, spec.toolbox.as_ref());
     for (name, cfg) in &mine {
         added.push(name.clone());
         match call(&conn, "PUT", &format!("/api/experimental/mcp/{}{}", quote(name), at(&spec.location)), Some(&json!({"config": cfg}))) {
@@ -3987,7 +3999,7 @@ mod tests {
         assert!(a.starts_with("fr") && a.ends_with('-') && a[2..10].chars().all(|c| c.is_ascii_hexdigit()));
         // the longest tool name stays under the 64 characters model providers take
         assert!(server_name("c1", "Roblox_Studio").len() + 1 + "insert_from_creator_store".len() < 64);
-        let cfg = servers_config("c1", &crate::agents::test_servers(true), &[("XDG_DATA_HOME".into(), "/u/.local/share".into())]);
+        let cfg = servers_config("c1", &crate::agents::test_servers(true), &[("XDG_DATA_HOME".into(), "/u/.local/share".into())], None);
         assert_eq!(cfg.len(), 1, "no Studio server under FRIDAE_NO_STUDIO");
         let (name, rbx) = &cfg[0];
         assert_eq!(name, &format!("{a}rbxkit"));
@@ -4638,5 +4650,20 @@ mod tests {
         assert!(explain("OpenCode could not start a chat (401): ", false).unwrap().contains("refused its password"), "the app's own server, not a sign-in");
         let free = serde_json::from_str::<Value>(FREE_LIMIT).unwrap();
         assert!(failure_text(&free["data"]["error"], None).contains("It resets in about 12 hours."));
+    }
+
+    #[test]
+    fn opencode_remote_server_named_per_chat() {
+        let w = crate::app_mcp::Wire { url: "http://127.0.0.1:5/mcp".into(), raw: "k-oc".into(), deferred: false };
+        let cfg = servers_config("c1", &json!({}), &[], Some(&w));
+        assert_eq!(cfg.len(), 1);
+        assert_eq!(cfg[0].0, chat_prefix("c1") + "fridae");
+        assert!(cfg[0].0.len() < 64);
+        assert_eq!(cfg[0].1, json!({"type": "remote", "url": "http://127.0.0.1:5/mcp", "headers": {"Authorization": "Bearer k-oc"}, "oauth": false, "timeout": {"execution": 3_900_000}}));
+        assert!(servers_config("c1", &json!({}), &[], None).is_empty());
+        // listed after the app's other servers, under the same chat prefix the permission rules allow
+        let both = servers_config("c1", &json!({"rbxkit": {"command": "python3", "args": []}}), &[], Some(&w));
+        assert_eq!(both.len(), 2);
+        assert!(both.iter().all(|(n, _)| n.starts_with(&chat_prefix("c1"))));
     }
 }

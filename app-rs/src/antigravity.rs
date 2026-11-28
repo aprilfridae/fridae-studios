@@ -265,7 +265,8 @@ pub(crate) fn write_servers(workspace: &Path, servers: &Value) {
     if !cfg["mcpServers"].is_object() {
         cfg["mcpServers"] = json!({});
     }
-    for (name, server) in servers.as_object().unwrap_or(&Map::new()) {
+    // Fridae's toolbox never goes in a project's list: its key would be in a file in the project
+    for (name, server) in servers.as_object().unwrap_or(&Map::new()).iter().filter(|(n, _)| n.as_str() != crate::app_mcp::SERVER_NAME) {
         let mut server = server.clone();
         if let Some(o) = server.as_object_mut() {
             o.remove("type"); // Antigravity tells a local server by its `command`
@@ -811,5 +812,18 @@ mod tests {
         for bad in ["", "..", "../x", "a/b", "a\\b", "."] {
             assert!(conversation_dir(data, bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn gemini_project_list_never_gets_fridae() {
+        let ws = std::env::temp_dir().join(format!("fridae-agy-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&ws);
+        std::fs::create_dir_all(&ws).unwrap();
+        write_servers(&ws, &json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}, "fridae": {"command": "fridae", "args": ["--mcp-bridge"], "env": {"FRIDAE_MCP_AUTHORIZATION": "Bearer k"}}}));
+        let text = std::fs::read_to_string(ws.join(".agents").join("mcp_config.json")).unwrap();
+        let cfg: Value = serde_json::from_str(&text).unwrap();
+        assert!(cfg["mcpServers"]["rbxkit"].is_object());
+        assert!(cfg["mcpServers"].get("fridae").is_none() && !text.contains("Bearer k"), "{text}");
+        let _ = std::fs::remove_dir_all(&ws);
     }
 }

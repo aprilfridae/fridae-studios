@@ -894,6 +894,47 @@ pub struct Spec {
     pub rules: Rules,
     /// The file the app's tool server notes each result's pictures in for this chat (`Turn::new_pictures`).
     pub pictures: Option<PathBuf>,
+    /// Fridae's own toolbox for this chat (`app_mcp`): handed to `session/new` in memory only (`servers_param`), its
+    /// instructions on a new session's first prompt (`first_prompt`).
+    pub toolbox: Option<crate::app_mcp::Wire>,
+}
+
+/// Two launches with the same toolbox wiring (a Spec is compared whole; the key's Debug stays redacted).
+impl PartialEq for crate::app_mcp::Wire {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url && self.raw == other.raw && self.deferred == other.deferred
+    }
+}
+
+/// How long a toolbox call may take (an Allow/Don't card waits up to 10 minutes; T3's 65 minutes).
+const TOOLBOX_TIMEOUT_SECONDS: u64 = 3900;
+
+/// Fridae's toolbox as `session/new` takes it: over HTTP when the agent says it takes HTTP servers
+/// (`agentCapabilities.mcpCapabilities.http`), else through `Fridae --mcp-bridge` (stdio, which every ACP agent
+/// takes), the key in its environment. Gemini (`deferred`) lists only the deferred tools.
+fn toolbox_server(w: &crate::app_mcp::Wire, http_ok: bool) -> Value {
+    if http_ok {
+        let mut headers = vec![json!({"name": "Authorization", "value": w.authorization()})];
+        if w.deferred {
+            headers.push(json!({"name": "fridae-tool-exposure", "value": "deferred-proxy"}));
+        }
+        return json!({"type": "http", "name": crate::app_mcp::SERVER_NAME, "url": w.url, "headers": headers});
+    }
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    let mut env = vec![json!({"name": "FRIDAE_MCP_ENDPOINT", "value": w.url}), json!({"name": "FRIDAE_MCP_AUTHORIZATION", "value": w.authorization()})];
+    if w.deferred {
+        env.push(json!({"name": "FRIDAE_MCP_TOOL_EXPOSURE", "value": "deferred-proxy"}));
+    }
+    json!({"name": crate::app_mcp::SERVER_NAME, "command": exe, "args": ["--mcp-bridge"], "env": env, "timeoutSeconds": TOOLBOX_TIMEOUT_SECONDS})
+}
+
+/// The message as it goes in: on a session's first prompt, with the toolbox's instructions in front (ACP has no
+/// standing-instructions field: T3's `t3AcpPromptWithInstructions`).
+fn first_prompt(text: &str, toolbox: Option<&crate::app_mcp::Wire>, fresh: bool) -> String {
+    match toolbox {
+        Some(w) if fresh => crate::app_mcp::instructions::prompt_prefix_for(text, w.deferred),
+        _ => text.to_string(),
+    }
 }
 
 /// The tool servers as `session/new` takes them: {name, command, args, env: [{name, value}]}. Each asks for the
@@ -901,8 +942,8 @@ pub struct Spec {
 /// call to a server handed over this way is cut off after three minutes ("timed out after 3m0s"), also with
 /// `timeout_seconds`, `timeout_ms`, `timeoutMs`, `requestTimeout` and `timeout` set. This is why Gemini's kept
 /// process is not the default yet (`agents::KEPT_ON_REQUEST`).
-pub fn servers_param(servers: &Value) -> Value {
-    let list: Vec<Value> = servers
+pub fn servers_param(servers: &Value, toolbox: Option<&crate::app_mcp::Wire>, http_ok: bool) -> Value {
+    let mut list: Vec<Value> = servers
         .as_object()
         .into_iter()
         .flatten()
@@ -911,6 +952,9 @@ pub fn servers_param(servers: &Value) -> Value {
             json!({"name": name, "command": s["command"], "args": s["args"].as_array().cloned().unwrap_or_default(), "env": env, "timeoutSeconds": 900})
         })
         .collect();
+    if let Some(w) = toolbox {
+        list.push(toolbox_server(w, http_ok));
+    }
     Value::Array(list)
 }
 
@@ -1047,6 +1091,8 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, fre
         End { ended: true, unfit, background: false }
     };
     let known = live.state().and_then(|s| s.downcast::<Session>().ok());
+    // a session made by this turn gets the toolbox's instructions on its first prompt
+    let new_session = known.is_none();
     let session = match known {
         Some(s) => {
             c.host.heard(); // it has answered before
@@ -1055,12 +1101,12 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, fre
         None => {
             let hello = json!({"protocolVersion": PROTOCOL, "clientInfo": {"name": "fridae-studios", "version": paths::VERSION},
                                "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false}});
-            match c.call(&rx, "initialize", hello) {
-                Ok(r) if r["protocolVersion"] == json!(PROTOCOL) => {}
+            let http_ok = match c.call(&rx, "initialize", hello) {
+                Ok(r) if r["protocolVersion"] == json!(PROTOCOL) => r["agentCapabilities"]["mcpCapabilities"]["http"] == json!(true),
                 _ => return gone(&mut c, false),
-            }
+            };
             let place = |extra: Value| {
-                let mut p = json!({"cwd": spec.cwd, "mcpServers": servers_param(&spec.servers)});
+                let mut p = json!({"cwd": spec.cwd, "mcpServers": servers_param(&spec.servers, spec.toolbox.as_ref(), http_ok)});
                 for (k, v) in extra.as_object().into_iter().flatten() {
                     p[k] = v.clone();
                 }
@@ -1164,6 +1210,7 @@ pub fn turn(live: &Arc<Live>, spec: &Spec, resume: Option<&str>, text: &str, fre
         c.host.out(Out::Model(if cursor { crate::cursor::kept_model_name(m) } else { antigravity::model_name(m) }));
     }
     let prompt = live.next_request();
+    let text = first_prompt(text, spec.toolbox.as_ref(), new_session);
     if !c.send(&json!({"jsonrpc": "2.0", "id": prompt, "method": "session/prompt", "params": {"sessionId": session.id, "prompt": [{"type": "text", "text": text}]}})) {
         return gone(&mut c, false);
     }
@@ -1627,13 +1674,13 @@ mod tests {
 
     #[test]
     fn tool_servers_go_in_as_a_list_with_their_environment_as_pairs() {
-        let p = servers_param(&json!({"rbxkit": {"type": "stdio", "command": "python3", "args": ["mcp.py"], "env": {"RBXKIT_AGENT_ID": "c1", "FRIDAE_GEMINI_USE_API": "0"}}}));
+        let p = servers_param(&json!({"rbxkit": {"type": "stdio", "command": "python3", "args": ["mcp.py"], "env": {"RBXKIT_AGENT_ID": "c1", "FRIDAE_GEMINI_USE_API": "0"}}}), None, false);
         assert_eq!(p[0]["name"], "rbxkit");
         assert_eq!(p[0]["command"], "python3");
         assert_eq!(p[0]["args"], json!(["mcp.py"]));
         assert!(p[0]["env"].as_array().unwrap().contains(&json!({"name": "RBXKIT_AGENT_ID", "value": "c1"})));
         assert!(p[0].get("type").is_none());
-        assert_eq!(servers_param(&json!({})), json!([]));
+        assert_eq!(servers_param(&json!({}), None, true), json!([]));
     }
 
     #[test]
@@ -1850,5 +1897,43 @@ mod tests {
         // a line of the history played back by a load, with no turn on the process, would be work nobody asked for
         assert!(stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"replay-0-3","title":"Find","kind":"search","status":"pending"}}}"#));
         assert!(!stray(br#"{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"session_info_update","title":"Permissions Test Steps"}}}"#));
+    }
+
+    #[test]
+    fn acp_http_when_advertised_else_bridge() {
+        let gemini = crate::app_mcp::Wire { url: "http://127.0.0.1:5/mcp".into(), raw: "k-acp".into(), deferred: true };
+        assert_eq!(
+            servers_param(&json!({}), Some(&gemini), true),
+            json!([{"type": "http", "name": "fridae", "url": "http://127.0.0.1:5/mcp", "headers": [{"name": "Authorization", "value": "Bearer k-acp"}, {"name": "fridae-tool-exposure", "value": "deferred-proxy"}]}])
+        );
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        let bridge = servers_param(&json!({"rbxkit": {"command": "python3", "args": []}}), Some(&gemini), false);
+        assert_eq!(bridge[0]["name"], "rbxkit");
+        assert_eq!(
+            bridge[1],
+            json!({"name": "fridae", "command": exe, "args": ["--mcp-bridge"], "timeoutSeconds": 3900,
+                   "env": [{"name": "FRIDAE_MCP_ENDPOINT", "value": "http://127.0.0.1:5/mcp"}, {"name": "FRIDAE_MCP_AUTHORIZATION", "value": "Bearer k-acp"}, {"name": "FRIDAE_MCP_TOOL_EXPOSURE", "value": "deferred-proxy"}]})
+        );
+        // Cursor takes every tool: no exposure header, no exposure setting
+        let cursor = crate::app_mcp::Wire { deferred: false, ..gemini.clone() };
+        assert_eq!(servers_param(&json!({}), Some(&cursor), true)[0]["headers"], json!([{"name": "Authorization", "value": "Bearer k-acp"}]));
+        let env = servers_param(&json!({}), Some(&cursor), false)[0]["env"].clone();
+        assert_eq!(env.as_array().unwrap().len(), 2);
+        assert!(!env.to_string().contains("FRIDAE_MCP_TOOL_EXPOSURE"));
+        assert_eq!(servers_param(&json!({}), None, true), json!([]));
+        // the key never shows in how a Spec is printed
+        assert_eq!(format!("{:?}", Some(&gemini)), "Some([redacted])");
+    }
+
+    #[test]
+    fn the_first_prompt_of_a_session_carries_the_toolbox_instructions() {
+        let w = crate::app_mcp::Wire { url: "u".into(), raw: "k".into(), deferred: true };
+        let first = first_prompt("Rename it", Some(&w), true);
+        assert!(first.starts_with("<fridae_toolbox_instructions>") && first.contains("Deferred Fridae tools") && first.ends_with("<user_request>\nRename it\n</user_request>"), "{first}");
+        assert_eq!(first_prompt("Rename it", Some(&w), false), "Rename it", "a session that has them is not told again");
+        assert_eq!(first_prompt("Rename it", None, true), "Rename it", "no toolbox, nothing about it");
+        assert_eq!(first_prompt("/compact", Some(&w), true), "/compact");
+        let cursor = crate::app_mcp::Wire { deferred: false, ..w };
+        assert!(!first_prompt("x", Some(&cursor), true).contains("Deferred Fridae tools"));
     }
 }

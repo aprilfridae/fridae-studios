@@ -1449,6 +1449,8 @@ thread_local! {
     /// (the kept process's key, the environment of the process per message, and that of the kept process when the AI
     /// tells it, `Kept::kept_command_for_test`) instead of being started.
     static LAUNCHES_FOR_TEST: std::cell::RefCell<Option<Vec<LaunchForTest>>> = const { std::cell::RefCell::new(None) };
+    /// Tests, when Some: the toolbox's endpoint for `send` on this thread (`app_mcp::endpoint` is None in tests).
+    static TOOLBOX_FOR_TEST: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A launch as a test sees it: the kept process's key, the environment of the process per message, and that of the
@@ -1753,6 +1755,9 @@ struct ClaudeLaunch {
     /// the config folder of the account the turn runs on: None for the user's own, the app's folder for the second
     /// account (`accounts`). Who is signed in, and so who pays, goes by it.
     config_dir: Option<std::path::PathBuf>,
+    /// the chat's toolbox key (`app_mcp`), given to the process as `FRIDAE_MCP_KEY` (the `--mcp-config` file names
+    /// only `${FRIDAE_MCP_KEY}`). Not part of `key`: a key that rotates never replaces a kept process.
+    mcp_key: Option<String>,
 }
 
 /// Everything a Claude Code turn's start depends on, as `send` has it for a message.
@@ -1814,7 +1819,23 @@ impl ClaudeLaunch {
         }
         // the conversation lives in the project folder when there is one, so the agent works among the game's files
         let cwd = s.project.map(std::path::PathBuf::from).unwrap_or_else(|| s.work.to_path_buf());
-        ClaudeLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), args, cwd, servers: s.servers.to_string(), keys_on: s.keys_on, config_dir: s.config_dir.map(std::path::Path::to_path_buf) }
+        ClaudeLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), args, cwd, servers: s.servers.to_string(), keys_on: s.keys_on, config_dir: s.config_dir.map(std::path::Path::to_path_buf), mcp_key: None }
+    }
+
+    /// Fridae's toolbox for this launch: its tools pre-allowed (`mcp__fridae`, as `mcp__rbxkit`), its key for the
+    /// process's environment. (The server's entry, with the placeholder, is in the servers written to the file.)
+    fn toolbox(&mut self, wire: Option<&crate::app_mcp::Wire>) {
+        let Some(w) = wire else {
+            self.mcp_key = None;
+            return;
+        };
+        let own = format!("mcp__{}", crate::app_mcp::SERVER_NAME);
+        if !self.args.iter().any(|a| a.to_string_lossy() == own) {
+            if let Some(at) = self.args.iter().position(|a| a == "--allowedTools") {
+                self.args.insert(at + 1, own.into());
+            }
+        }
+        self.mcp_key = Some(w.raw.clone());
     }
 
     /// The command: `live` for a process kept open and sent messages as JSON lines (each played back, so a turn's
@@ -1842,6 +1863,10 @@ impl ClaudeLaunch {
         // (and the folder its sign-in is stored under: `accounts::point`)
         if let Some(dir) = &self.config_dir {
             crate::accounts::point(&mut cmd, dir);
+        }
+        // the toolbox's key, which Claude Code puts in the server's header (`${FRIDAE_MCP_KEY}` in the file)
+        if let Some(k) = &self.mcp_key {
+            cmd.env("FRIDAE_MCP_KEY", k);
         }
         cmd
     }
@@ -2020,7 +2045,7 @@ impl GeminiLaunch {
         // over ACP agy cuts a tool server's call off after three minutes (measured): the app's server is told to
         // answer inside that, and keeps longer work going as a job (`jobs`)
         crate::jobs::set(&mut servers, crate::caps::call_budget("gemini", true), s.jobs);
-        let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
+        let spec = crate::acp::Spec { agent: crate::acp::Agent::Agy, cwd: s.workspace.to_path_buf(), servers, model: s.model.map(str::to_string), effort: s.effort.map(str::to_string), rules, pictures: s.pictures.map(std::path::Path::to_path_buf), toolbox: None };
         let guarded = guarded_print(s.guarded);
         GeminiLaunch { exe: s.exe.to_path_buf(), first: Vec::new(), data_dir: s.data_dir.map(std::path::Path::to_path_buf), home: s.home_env.map(std::path::Path::to_path_buf), own_home: None, spec, keys_on: s.keys_on, allowed: s.allowed.to_vec(), guarded, jobs: s.jobs.map(std::path::Path::to_path_buf) }
     }
@@ -2050,6 +2075,13 @@ impl GeminiLaunch {
         cmd
     }
 
+    /// Fridae's toolbox for the kept process: handed to its session in memory (`acp::servers_param`), its calls
+    /// allowed as the app's other servers' are (`acp::decide`). Never on a process per message: agy reads those
+    /// servers from the project's own list, where a key must not be written.
+    fn toolbox(&mut self, wire: Option<&crate::app_mcp::Wire>) {
+        set_acp_toolbox(&mut self.spec, wire);
+    }
+
     /// agy's home on `cmd`, when it is not the app's: a second account's in full (`accounts::home`), the testing
     /// override's for the user's own account as HOME alone (as `signin::tool_env` gives it).
     fn homes(&self, cmd: &mut Command) {
@@ -2064,7 +2096,7 @@ impl GeminiLaunch {
     fn key(&self) -> String {
         let r = &self.spec.rules;
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.data_dir, self.home, self.own_home, self.spec.cwd, self.spec.servers.to_string(), self.spec.model, self.spec.effort,
-               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, r.images, self.spec.pictures, self.keys_on, self.allowed, self.guarded])
+               r.full, r.agent_id, r.servers, r.writes, r.reads, r.protected, r.hidden_in, r.agent_dir, r.images, self.spec.pictures, self.keys_on, self.allowed, self.guarded, toolbox_print(&self.spec)])
         .to_string()
     }
 }
@@ -2296,7 +2328,7 @@ impl CursorLaunch {
             agent_dir: std::path::PathBuf::new(),
             images: true,
         };
-        let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf) };
+        let spec = crate::acp::Spec { agent: crate::acp::Agent::Cursor, cwd: s.workspace.to_path_buf(), servers: handed, model: kept_model.map(str::to_string), effort: None, rules, pictures: s.pictures.map(std::path::Path::to_path_buf), toolbox: None };
         let guarded = guarded_print(s.guarded);
         CursorLaunch {
             exe: s.exe.to_path_buf(),
@@ -2335,8 +2367,14 @@ impl CursorLaunch {
     /// Everything a kept process was started with that a later message could need otherwise.
     fn key(&self) -> String {
         json!([self.exe, self.first.iter().map(|a| a.to_string_lossy()).collect::<Vec<_>>(), self.workspace, self.kit, self.project, self.servers.to_string(), self.spec.servers.to_string(),
-               self.model, self.spec.model, self.full, self.spec.rules.agent_id, self.spec.pictures, self.keys_on, self.rules, self.folders, self.guarded])
+               self.model, self.spec.model, self.full, self.spec.rules.agent_id, self.spec.pictures, self.keys_on, self.rules, self.folders, self.guarded, toolbox_print(&self.spec)])
         .to_string()
+    }
+
+    /// Fridae's toolbox for the kept process, as Gemini's (`GeminiLaunch::toolbox`). A process per message gets none
+    /// (Cursor reads those servers from a settings file).
+    fn toolbox(&mut self, wire: Option<&crate::app_mcp::Wire>) {
+        set_acp_toolbox(&mut self.spec, wire);
     }
 
     /// Whether a conversation is one a kept process made (`<settings folder>/acp-sessions/<id>`).
@@ -2442,6 +2480,40 @@ impl Kept for CursorLaunch {
         }
         Some(self.per_turn(None, &text))
     }
+}
+
+/// A kept ACP process's toolbox (`acp::Spec::toolbox`), and its server among the app's own, whose calls are allowed
+/// and shown as `mcp__fridae__<tool>`.
+fn set_acp_toolbox(spec: &mut crate::acp::Spec, wire: Option<&crate::app_mcp::Wire>) {
+    let own = crate::app_mcp::SERVER_NAME.to_string();
+    spec.rules.servers.retain(|s| *s != own);
+    if wire.is_some() {
+        spec.rules.servers.push(own);
+    }
+    spec.toolbox = wire.cloned();
+}
+
+/// What a kept ACP process's launch key holds of its toolbox: whether it has one, and where. Never the key: a key that
+/// rotates does not replace a kept process (the spec's rule), as with Claude Code.
+fn toolbox_print(spec: &crate::acp::Spec) -> Value {
+    spec.toolbox.as_ref().map(|w| json!([w.url, w.deferred])).unwrap_or(Value::Null)
+}
+
+/// Whether a tool call is one of Fridae's own toolbox's (`app_mcp`), by any name an AI gives it: `mcp__fridae__<tool>`
+/// (Claude Code, and Gemini's and Cursor's as the app names them), `mcp__fridae-direct__<tool>`, `fridae.<tool>`,
+/// `fridae__<tool>`, `fridae-direct.<tool>` (Codex), `fr<8 hex>-fridae_<tool>` (OpenCode). Its rows are the server's
+/// own (`apptool`), so the generic step label is not drawn.
+pub fn is_toolbox_call(name: &str) -> bool {
+    let tool = |t: &str| !t.is_empty();
+    if let Some(rest) = name.strip_prefix("mcp__") {
+        return rest.strip_prefix("fridae__").or_else(|| rest.strip_prefix("fridae-direct__")).is_some_and(tool);
+    }
+    if let Some(t) = name.strip_prefix("fridae.").or_else(|| name.strip_prefix("fridae__")).or_else(|| name.strip_prefix("fridae-direct.")) {
+        return tool(t);
+    }
+    // OpenCode: the chat's prefix, "fr" and 8 hex characters and "-", then the server's name and "_"
+    let b = name.as_bytes();
+    b.len() > 11 && name.starts_with("fr") && b[2..10].iter().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) && b[10] == b'-' && name[11..].strip_prefix("fridae_").is_some_and(tool)
 }
 
 /// Whether an agent on this AI is told what a "not finished yet" answer means (`text/long_calls.txt`): where a
@@ -2913,6 +2985,8 @@ impl Agent {
     /// A started chat carries on with another AI (`switch_ai`, and a run's Lead moved off a cheap model in `send`): a
     /// fresh session, handed the chat so far as text, and the old AI's model and effort forgotten.
     fn carry_on_with(&self, kind: &str) {
+        // the old AI's toolbox key stops working; the new AI's turn gets one of its own
+        crate::app_mcp::keys::global().revoke_chat(&self.id);
         let from = {
             let mut st = self.st.lock().unwrap();
             let from = st.ai.clone().unwrap_or_else(paths::default_ai);
@@ -3700,6 +3774,9 @@ impl Agent {
         prompt += &house_rules(&PATHS.home, project.as_deref());
         let _ = fs::create_dir_all(&PATHS.work);
         let servers = mcp_servers(&self.id, &self.name(), project.as_deref(), role.as_deref());
+        // Fridae's own toolbox (`app_mcp`): the chat's key, kept alive from every turn's start
+        let toolbox = self.toolbox_wire(&kind);
+        crate::app_mcp::keys::global().touch(&self.id);
         let session = self.st.lock().unwrap().session.clone();
         // every AI but Claude Code takes its standing instructions inside the conversation, and works in a folder
         // of its own (the project, or one made for this chat) because that is where it looks for its tool servers.
@@ -3749,8 +3826,9 @@ impl Agent {
                 session: session.clone(),
                 model: model.map(str::to_string),
                 full: ask.full,
-                instructions: prompt.clone(),
+                instructions: if toolbox.is_some() { format!("{prompt}{}", crate::app_mcp::instructions::system_text()) } else { prompt.clone() },
                 text: text.clone(),
+                toolbox: toolbox.clone(),
             };
             let me = self.clone();
             thread::spawn(move || me.read_opencode(spec));
@@ -3816,14 +3894,15 @@ impl Agent {
                     home_env: second_dir.as_deref(),
                 });
                 launch.own_home = agy_home.clone().filter(|_| second_dir.is_none());
+                launch.toolbox(toolbox.as_ref());
                 return self.kept_turn(&launch, &text);
             }
-            "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full),
+            "chatgpt" => codex::command(&exe, &workspace, &servers, session.as_deref(), model, effort, ask.full, toolbox.as_ref()),
             // its models carry their own effort in the id, so the effort setting is not passed
             "cursor" => {
                 let pictures = PATHS.work.join("tool-pictures").join(format!("{}.jsonl", paths::base_name(&self.id)));
                 let jobs = crate::jobs::file(&self.id);
-                let launch = CursorLaunch::new(&CursorSettings {
+                let mut launch = CursorLaunch::new(&CursorSettings {
                     exe: &exe,
                     agent_id: &self.id,
                     workspace: &workspace,
@@ -3841,6 +3920,7 @@ impl Agent {
                     prompt: &prompt,
                     body: &body,
                 });
+                launch.toolbox(toolbox.as_ref());
                 return self.kept_turn(&launch, &text);
             }
             _ => {
@@ -3848,7 +3928,15 @@ impl Agent {
                 if claude_home().is_some() {
                     servers["rbxkit"]["env"]["HOME"] = json!(paths::home_dir().display().to_string());
                 }
-                let launch = ClaudeLaunch::new(&ClaudeSettings {
+                // the toolbox over HTTP, its key named by a placeholder Claude Code fills from the process's
+                // environment: the file (in the app's own folder) never holds the key. 65 minutes a call: an
+                // Allow/Don't card waits up to 10
+                let mut prompt = prompt.clone();
+                if let Some(w) = &toolbox {
+                    servers[crate::app_mcp::SERVER_NAME] = json!({"type": "http", "url": w.url, "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000});
+                    prompt += &crate::app_mcp::instructions::system_text();
+                }
+                let mut launch = ClaudeLaunch::new(&ClaudeSettings {
                     exe: &exe,
                     mcp_config: &write_mcp_config(&self.id, &servers),
                     servers: &servers,
@@ -3865,6 +3953,7 @@ impl Agent {
                     config_dir: second_dir.as_deref(),
                     settings: crate::swarm::live::claude_settings(&self.id).as_deref(),
                 });
+                launch.toolbox(toolbox.as_ref());
                 return self.claude_turn(&launch, &text);
             }
         };
@@ -4206,6 +4295,26 @@ impl Agent {
         }
     }
 
+    /// A call to Fridae's own toolbox: counted as every tool call is, but drawn by the server's own rows (`apptool`),
+    /// so no step label. False for any other tool.
+    fn toolbox_step(&self, full: &str) -> bool {
+        if !is_toolbox_call(full) {
+            return false;
+        }
+        self.st.lock().unwrap().turn_tools += 1;
+        true
+    }
+
+    /// The chat's toolbox wiring for this turn (`app_mcp::wire_for`): None while the app's local server is not up.
+    fn toolbox_wire(&self, kind: &str) -> Option<crate::app_mcp::Wire> {
+        #[cfg(test)]
+        if let Some(url) = TOOLBOX_FOR_TEST.with(|t| t.borrow().clone()) {
+            let raw = crate::app_mcp::keys::global().prepare(&self.id, kind, self.is_subagent()).raw;
+            return Some(crate::app_mcp::Wire { url, raw, deferred: kind == "gemini" });
+        }
+        crate::app_mcp::wire_for(&self.id, kind, self.is_subagent())
+    }
+
     /// The label shown while a tool runs: a plain phrase for the tools we know, the tool's own name otherwise.
     /// A tool from Roblox Studio's connector is noted with its time, for a studio run's undo log (`run_log`).
     fn show_tool(&self, name: &str, studio: bool) {
@@ -4395,7 +4504,9 @@ impl Agent {
                                     if progress_call(full, &b["input"]) {
                                         self.st.lock().unwrap().turn_progress = true;
                                     }
-                                    self.show_tool(&short, studio_tool(full));
+                                    if !self.toolbox_step(full) {
+                                        self.show_tool(&short, studio_tool(full));
+                                    }
                                 }
                                 _ => {}
                             }
@@ -4569,6 +4680,9 @@ impl Agent {
                 if progress_call(&name, &Value::Null) {
                     self.st.lock().unwrap().turn_progress = true;
                 }
+                if self.toolbox_step(&name) {
+                    return;
+                }
                 // Cursor and OpenCode name a server's tool as mcp__<server>__<tool>, as Claude Code does
                 let short = name.rsplit("__").next().unwrap_or(&name).to_string();
                 self.show_tool(&short, studio_tool(&name))
@@ -4581,6 +4695,9 @@ impl Agent {
                 let loads = crate::skills::skill_loads(&name, &input);
                 if !loads.is_empty() {
                     note_loaded(&mut self.st.lock().unwrap(), loads);
+                }
+                if self.toolbox_step(&name) {
+                    return;
                 }
                 let short = name.rsplit("__").next().unwrap_or(&name).to_string();
                 self.show_tool(&short, studio_tool(&name))
@@ -5817,6 +5934,8 @@ pub fn remove_agent(agent_id: &str) {
         all.retain(|a| a.id != agent_id);
         hit
     };
+    // its toolbox key stops working (`app_mcp::keys`)
+    crate::app_mcp::keys::global().revoke_chat(agent_id);
     if let Some(agent) = found {
         agent.st.lock().unwrap().closed = true;
         agent.stop();
@@ -5868,6 +5987,7 @@ pub fn shut_down() {
         paths::end_trees(&groups);
     }
     end_kept(&agents(), &turns);
+    crate::app_mcp::keys::global().revoke_all(); // no toolbox key outlives the app
     opencode::shut_down(); // the app's OpenCode server, with every OpenCode turn
     crate::signin::shut_down(); // a sign-in that waits for the browser
     // each ended turn settles its chat ("Stopped.", then done) before the chats are saved, for a moment at most
@@ -9568,5 +9688,292 @@ mod tests {
         for word in ["design", "idea", "scout", "PROJECT.md", "the plan for this run"] {
             assert!(KICKOFF_STUDIO.contains(word), "kickoff_studio.txt should mention {word}");
         }
+    }
+
+    // ------------------------------------------------------------ Fridae's toolbox (app_mcp), as each AI is handed it
+
+    /// `send` with the toolbox's endpoint at `url` for this thread only (the global endpoint stays None for others).
+    fn with_toolbox<T>(url: &str, f: impl FnOnce() -> T) -> T {
+        TOOLBOX_FOR_TEST.with(|t| *t.borrow_mut() = Some(url.to_string()));
+        let out = f();
+        TOOLBOX_FOR_TEST.with(|t| *t.borrow_mut() = None);
+        out
+    }
+
+    fn toolbox_claude_launch() -> ClaudeLaunch {
+        let servers = json!({"rbxkit": {"command": "python", "args": ["mcp.py"]}});
+        ClaudeLaunch::new(&ClaudeSettings { config_dir: None, exe: std::path::Path::new("/bin/claude"), mcp_config: std::path::Path::new("/work/agent-tools/c1.json"), servers: &servers, allowed: &[], denied: &[], full: false, prompt: "p", kit: std::path::Path::new("/kit"), project: None, model: None, effort: None, work: std::path::Path::new("/work"), keys_on: false, settings: None })
+    }
+
+    fn wire(raw: &str, deferred: bool) -> crate::app_mcp::Wire {
+        crate::app_mcp::Wire { url: "http://127.0.0.1:4567/mcp".into(), raw: raw.into(), deferred }
+    }
+
+    #[test]
+    fn claude_config_has_the_placeholder_never_the_key() {
+        let a = chat_on_first("c-toolbox-claude-config");
+        a.st.lock().unwrap().ai = Some("claude".into());
+        let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "Rename my project"));
+        assert_eq!(l.len(), 1);
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "claude", false).raw;
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_KEY"), Some(Some(raw.clone())), "the key travels in the process's environment");
+        assert!(!l[0].0.contains(&raw), "never in what a kept process is matched by");
+        assert!(l[0].0.contains("mcp__fridae"), "pre-allowed as mcp__rbxkit is");
+        assert!(l[0].0.contains("Ordinary coding tasks need no Fridae tools."), "the instructions ride on --append-system-prompt");
+        let file = fs::read_to_string(PATHS.work.join("agent-tools").join(format!("{}.json", a.id))).unwrap();
+        assert!(file.contains("${FRIDAE_MCP_KEY}") && !file.contains(&raw), "{file}");
+        let cfg: Value = serde_json::from_str(&file).unwrap();
+        assert_eq!(
+            cfg["mcpServers"]["fridae"],
+            json!({"type": "http", "url": "http://127.0.0.1:4567/mcp", "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000})
+        );
+        // without the local server up, no toolbox at all
+        let l = launches(&a, "Again");
+        assert_eq!(env_of(&l[0], "FRIDAE_MCP_KEY"), None);
+        assert!(!l[0].0.contains("mcp__fridae"));
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    #[test]
+    fn rotating_the_key_keeps_a_kept_claude_process() {
+        let (mut one, mut two) = (toolbox_claude_launch(), toolbox_claude_launch());
+        one.toolbox(Some(&wire("key-one", false)));
+        two.toolbox(Some(&wire("key-two", false)));
+        assert_eq!(one.key(), two.key());
+        assert!(!one.key().contains("key-one"));
+        let mut none = toolbox_claude_launch();
+        none.toolbox(None);
+        assert_ne!(none.key(), one.key(), "having the toolbox or not is part of it (its allowed tools)");
+    }
+
+    #[test]
+    fn claude_process_gets_the_key_in_env() {
+        let mut l = toolbox_claude_launch();
+        l.toolbox(Some(&wire("key-env", false)));
+        for live in [false, true] {
+            let cmd = l.command(live, None);
+            let env: Vec<(String, Option<String>)> = cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect();
+            assert!(env.contains(&("FRIDAE_MCP_KEY".to_string(), Some("key-env".to_string()))), "{env:?}");
+            assert!(!cmd.get_args().any(|a| a.to_string_lossy().contains("key-env")), "never an argument");
+        }
+    }
+
+    #[test]
+    fn toolbox_tool_names_hide_the_generic_step() {
+        for name in ["mcp__fridae__chat_launch", "mcp__fridae-direct__chat_wait", "fridae.chat_launch", "fridae__theme_set", "fridae-direct.chat_wait", "fr1a2b3c4d-fridae_project_list"] {
+            assert!(is_toolbox_call(name), "{name}");
+        }
+        for name in ["mcp__rbxkit__rbx_team", "chat_launch", "fridae", "mcp__fridae__", "frzzzzzzzz-fridae_chat_list", "fr1a2b3c4d-rbxkit_rbx_team", "mcp__fridaes__x"] {
+            assert!(!is_toolbox_call(name), "{name}");
+        }
+        // the server's own rows (apptool) draw these steps: no generic label, but the call still counts
+        let a = Agent::detached_for_test("c-toolbox-steps", None);
+        let mut t = TurnEnd::default();
+        a.take(Out::ToolArgs("mcp__fridae__chat_launch".into(), json!({})), &mut t);
+        a.take(Out::Tool("fr1a2b3c4d-fridae_theme_set".into()), &mut t);
+        let st = a.st.lock().unwrap();
+        assert!(!st.log.iter().any(|e| e["kind"] == "tool"), "{:?}", st.log);
+        assert_eq!(st.turn_tools, 2);
+        drop(st);
+        a.take(Out::ToolArgs("mcp__rbxkit__rbx_team".into(), json!({})), &mut t);
+        assert!(a.st.lock().unwrap().log.iter().any(|e| e["kind"] == "tool"));
+    }
+
+    #[test]
+    fn turn_start_touches_the_key() {
+        let a = chat_on_first("c-toolbox-touch");
+        a.st.lock().unwrap().ai = Some("claude".into());
+        let first = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "One"));
+        let second = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "Two"));
+        let key = env_of(&first[0], "FRIDAE_MCP_KEY").flatten().unwrap();
+        assert_eq!(env_of(&second[0], "FRIDAE_MCP_KEY").flatten(), Some(key.clone()), "the same key while chat, AI and helper flag stay");
+        assert_eq!(crate::app_mcp::keys::global().resolve(&key).unwrap().chat, a.id, "alive");
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    #[test]
+    fn closing_a_chat_revokes_its_key() {
+        let a = crate::app_mcp::test_chat("claude");
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "claude", false).raw;
+        assert!(crate::app_mcp::keys::global().resolve(&raw).is_ok());
+        remove_agent(&a.id);
+        assert!(crate::app_mcp::keys::global().resolve(&raw).is_err(), "closed: its key stops working");
+        // moving a chat to another AI revokes its key too
+        let b = Agent::detached_for_test("c-toolbox-carry", None);
+        let raw = crate::app_mcp::keys::global().prepare(&b.id, "claude", false).raw;
+        b.carry_on_with("gemini");
+        assert!(crate::app_mcp::keys::global().resolve(&raw).is_err());
+    }
+
+    #[test]
+    fn gemini_kept_launch_carries_the_toolbox_in_memory_only() {
+        let a = chat_on_first("c-toolbox-gemini");
+        a.st.lock().unwrap().ai = Some("gemini".into());
+        let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "Rename my project"));
+        if l.is_empty() {
+            panic!("no launch noted for Gemini");
+        }
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "gemini", false).raw;
+        assert!(l[0].0.contains("http://127.0.0.1:4567/mcp"), "the toolbox is part of the kept process's launch");
+        assert!(!l[0].0.contains(&raw), "never its key");
+        assert!(l[0].1.iter().chain(l[0].2.iter().flatten()).all(|(_, v)| v.as_deref() != Some(raw.as_str()) && !v.as_deref().unwrap_or("").contains(&raw)), "nor in any process's environment");
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    /// A stand-in on 127.0.0.1 for the toolbox probes: notes the Authorization of every request to /mcp, answers
+    /// initialize, and refuses every model call, so no AI turn runs and nothing is paid for. (port, what /mcp saw)
+    fn probe_stub() -> (u16, Arc<Mutex<Vec<String>>>) {
+        let srv = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = srv.server_addr().to_ip().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let noted = seen.clone();
+        thread::spawn(move || {
+            for mut req in srv.incoming_requests() {
+                let mut body = String::new();
+                let _ = std::io::Read::read_to_string(req.as_reader(), &mut body);
+                if req.url().starts_with("/mcp") {
+                    let auth = req.headers().iter().find(|h| h.field.equiv("authorization")).map(|h| h.value.as_str().to_string()).unwrap_or_default();
+                    noted.lock().unwrap().push(auth);
+                    let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                    let answer = match v["method"].as_str() {
+                        Some("initialize") => json!({"jsonrpc": "2.0", "id": v["id"], "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "probe", "version": "1"}}}),
+                        Some("tools/list") => json!({"jsonrpc": "2.0", "id": v["id"], "result": {"tools": []}}),
+                        Some(_) if v.get("id").is_some() => json!({"jsonrpc": "2.0", "id": v["id"], "result": {}}),
+                        _ => {
+                            let _ = req.respond(tiny_http::Response::empty(202));
+                            continue;
+                        }
+                    };
+                    let resp = tiny_http::Response::from_string(answer.to_string())
+                        .with_header(tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap())
+                        .with_header(tiny_http::Header::from_bytes("Mcp-Session-Id", "probe-session").unwrap());
+                    let _ = req.respond(resp);
+                } else {
+                    let _ = req.respond(tiny_http::Response::from_string(r#"{"type":"error","error":{"type":"invalid_request_error","message":"probe stub: no model here"}}"#).with_status_code(400));
+                }
+            }
+        });
+        (port, seen)
+    }
+
+    /// Probe P1 (by hand, `--ignored`): Claude Code fills `${FRIDAE_MCP_KEY}` in an HTTP server's header from its
+    /// environment. Run in a config folder of its own (never the user's ~/.claude), with a made-up API key and the
+    /// model's address pointed at the stand-in, so nothing is signed in to and no turn is paid for.
+    #[test]
+    #[ignore]
+    fn probe_claude_expands_env_in_headers() {
+        let (port, seen) = probe_stub();
+        let dir = std::path::PathBuf::from(std::env::var("TMP").unwrap_or_else(|_| std::env::temp_dir().display().to_string())).join(format!("fridae-probe-claude-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("config")).unwrap();
+        let cfg = dir.join("mcp.json");
+        fs::write(&cfg, json!({"mcpServers": {"fridae": {"type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000}}}).to_string()).unwrap();
+        let mut cmd = Command::new(paths::find_ai("claude").expect("claude installed"));
+        cmd.args(["-p", "--strict-mcp-config", "--mcp-config"]).arg(&cfg).args(["--max-turns", "1", "reply ok"]);
+        cmd.current_dir(&dir).env("CLAUDE_CONFIG_DIR", dir.join("config")).env("ANTHROPIC_API_KEY", "probe-not-a-key").env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{port}")).env("FRIDAE_MCP_KEY", "probe123");
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut child = cmd.spawn().unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(200));
+        }
+        let _ = child.kill();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(seen.lock().unwrap().iter().any(|a| a == "Bearer probe123"), "{:?}", seen.lock().unwrap());
+    }
+
+    /// Probe P2 (by hand, `--ignored`): Codex takes the toolbox from `-c` overrides with `bearer_token_env_var`, and
+    /// accepts `omit_tools_from` (under `--strict-config`, which refuses fields it does not know). Its own home folder
+    /// (never the user's ~/.codex), a made-up key and a model provider pointed at the stand-in: no turn is paid for.
+    #[test]
+    #[ignore]
+    fn probe_codex_takes_the_overrides() {
+        let (port, seen) = probe_stub();
+        let dir = std::path::PathBuf::from(std::env::var("TMP").unwrap_or_else(|_| std::env::temp_dir().display().to_string())).join(format!("fridae-probe-codex-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("home")).unwrap();
+        let w = crate::app_mcp::Wire { url: format!("http://127.0.0.1:{port}/mcp"), raw: "probe123".into(), deferred: false };
+        let mut cmd = codex::command(&paths::find_codex().expect("codex installed"), &dir, &json!({}), None, None, None, false, Some(&w));
+        let mut args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
+        let at = args.iter().position(|a| a == "-").unwrap();
+        let provider = [
+            "model_provider=\"probe\"".to_string(),
+            "model_providers.probe.name=\"probe\"".to_string(),
+            format!("model_providers.probe.base_url=\"http://127.0.0.1:{port}/v1\""),
+            "model_providers.probe.env_key=\"OPENAI_API_KEY\"".to_string(),
+        ];
+        for p in provider.iter().rev() {
+            args.insert(at, p.into());
+            args.insert(at, "-c".into());
+        }
+        args.insert(1, "--strict-config".into());
+        let mut probe = Command::new(cmd.get_program());
+        probe.args(&args).current_dir(&dir).env("CODEX_HOME", dir.join("home")).env("OPENAI_API_KEY", "probe-not-a-key");
+        for (k, v) in cmd.get_envs() {
+            if let Some(v) = v {
+                probe.env(k, v);
+            }
+        }
+        probe.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = probe.spawn().unwrap();
+        let _ = std::io::Write::write_all(&mut child.stdin.take().unwrap(), b"reply ok");
+        let out = child.wait_with_output().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("unknown configuration field"), "{err}");
+        assert!(seen.lock().unwrap().iter().any(|a| a == "Bearer probe123"), "{:?}", seen.lock().unwrap());
+    }
+
+    /// Probe (by hand, `--ignored`): Claude Code against the real toolbox endpoint (`app_mcp::http`), with a real chat
+    /// key in its environment: it starts a session and lists the tools. Isolated as P1 (no sign-in, no paid turn).
+    #[test]
+    #[ignore]
+    fn probe_claude_against_the_real_toolbox() {
+        let chat = crate::app_mcp::test_chat("claude");
+        let raw = crate::app_mcp::keys::global().prepare(&chat.id, "claude", false).raw;
+        let srv = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = srv.server_addr().to_ip().unwrap().port();
+        let seen: Arc<Mutex<Vec<(String, u16)>>> = Arc::new(Mutex::new(Vec::new()));
+        let noted = seen.clone();
+        thread::spawn(move || {
+            for mut req in srv.incoming_requests() {
+                let mut body = Vec::new();
+                let _ = std::io::Read::read_to_end(req.as_reader(), &mut body);
+                if !req.url().starts_with("/mcp") {
+                    let _ = req.respond(tiny_http::Response::from_string(r#"{"type":"error","error":{"type":"invalid_request_error","message":"probe stub: no model here"}}"#).with_status_code(400));
+                    continue;
+                }
+                let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+                let reply = crate::app_mcp::http::handle_parts(req.method().as_str(), &headers, &body);
+                let method = serde_json::from_slice::<Value>(&body).ok().and_then(|v| v["method"].as_str().map(str::to_string)).unwrap_or_else(|| req.method().as_str().to_string());
+                noted.lock().unwrap().push((method, reply.status));
+                let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
+                for (n, v) in reply.headers {
+                    resp = resp.with_header(tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()).unwrap());
+                }
+                let _ = req.respond(resp);
+            }
+        });
+        let dir = std::path::PathBuf::from(std::env::var("TMP").unwrap_or_else(|_| std::env::temp_dir().display().to_string())).join(format!("fridae-probe-real-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("config")).unwrap();
+        let cfg = dir.join("mcp.json");
+        fs::write(&cfg, json!({"mcpServers": {"fridae": {"type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000}}}).to_string()).unwrap();
+        let mut cmd = Command::new(paths::find_ai("claude").expect("claude installed"));
+        cmd.args(["-p", "--strict-mcp-config", "--mcp-config"]).arg(&cfg).args(["--max-turns", "1", "reply ok"]);
+        cmd.current_dir(&dir).env("CLAUDE_CONFIG_DIR", dir.join("config")).env("ANTHROPIC_API_KEY", "probe-not-a-key").env("ANTHROPIC_BASE_URL", format!("http://127.0.0.1:{port}")).env("FRIDAE_MCP_KEY", &raw);
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut child = cmd.spawn().unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while child.try_wait().unwrap().is_none() && std::time::Instant::now() < until {
+            thread::sleep(Duration::from_millis(200));
+        }
+        let _ = child.kill();
+        let _ = fs::remove_dir_all(&dir);
+        crate::app_mcp::drop_chat(&chat);
+        let seen = seen.lock().unwrap().clone();
+        eprintln!("probe: {seen:?}");
+        assert!(seen.iter().any(|(m, s)| m == "initialize" && *s == 200), "{seen:?}");
+        assert!(seen.iter().any(|(m, s)| m == "tools/list" && *s == 200), "{seen:?}");
     }
 }
