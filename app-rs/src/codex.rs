@@ -60,8 +60,10 @@ pub fn default_model() -> Option<String> {
     list.iter().find(|(id, _)| id.contains("astra")).or(list.first()).map(|(id, _)| id.clone())
 }
 
-/// The command for one turn in `workspace`, with our tool servers written where Codex looks for them.
-pub fn command(exe: &Path, workspace: &Path, servers: &Value, thread: Option<&str>, model: Option<&str>, effort: Option<&str>, full: bool) -> Command {
+/// The command for one turn in `workspace`, with our tool servers written where Codex looks for them. Fridae's
+/// toolbox (`app_mcp`) is given on the command line only (`toolbox_overrides`), never in the workspace's file.
+#[allow(clippy::too_many_arguments)]
+pub fn command(exe: &Path, workspace: &Path, servers: &Value, thread: Option<&str>, model: Option<&str>, effort: Option<&str>, full: bool, toolbox: Option<&crate::app_mcp::Wire>) -> Command {
     write_servers(workspace, servers);
     let mut cmd = Command::new(exe);
     cmd.arg("exec");
@@ -81,9 +83,36 @@ pub fn command(exe: &Path, workspace: &Path, servers: &Value, thread: Option<&st
     if let Some(e) = effort {
         cmd.arg("-c").arg(format!("model_reasoning_effort={}", quoted(e)));
     }
+    if let Some(w) = toolbox {
+        for o in toolbox_overrides(&w.url) {
+            cmd.arg("-c").arg(o);
+        }
+        // the key: in the environment only, read by Codex through `bearer_token_env_var`
+        cmd.env("FRIDAE_MCP_KEY", &w.raw);
+    }
     cmd.arg("-"); // the message is read from stdin
     cmd.current_dir(workspace);
     cmd
+}
+
+/// Fridae's toolbox as Codex's config overrides (T3's per-thread overrides): `fridae` with every tool but the blocking
+/// `chat_wait`, and `fridae-direct` with only that one (Code Mode would turn a blocking wait into a polled nested
+/// call). Each is approved as the app's other servers are (`write_servers`: nobody is there to answer an approval
+/// question), may take 65 minutes a call (an Allow/Don't card waits up to 10), and reads its key from
+/// `FRIDAE_MCP_KEY`. The instructions go in as developer instructions.
+fn toolbox_overrides(url: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, tools) in [("fridae", "disabled_tools"), ("fridae-direct", "enabled_tools")] {
+        out.push(format!("mcp_servers.{name}.url={}", quoted(url)));
+        out.push(format!("mcp_servers.{name}.bearer_token_env_var=\"FRIDAE_MCP_KEY\""));
+        out.push(format!("mcp_servers.{name}.tool_timeout_sec=3900"));
+        out.push(format!("mcp_servers.{name}.{tools}=[\"chat_wait\"]"));
+        out.push(format!("mcp_servers.{name}.default_tools_approval_mode=\"approve\""));
+    }
+    // (probe P2, codex-cli 0.169.1: accepted under --strict-config, which refuses unknown fields)
+    out.push("mcp_servers.fridae-direct.omit_tools_from=[\"code_mode\",\"deferred\"]".to_string());
+    out.push(format!("developer_instructions={}", quoted(crate::app_mcp::instructions::system_text().trim())));
+    out
 }
 
 /// A string as TOML writes it. JSON's quoting is valid TOML for a basic string.
@@ -166,6 +195,13 @@ impl Turn {
                     "mcp_tool_call" => {
                         // its tool results arrive as text too: show the pictures our tools report making
                         let tool = item["tool"].as_str().or(item["name"].as_str()).unwrap_or("a tool");
+                        // Fridae's toolbox draws its own rows: named with its server so the chat knows it (`agents::is_toolbox_call`)
+                        if let Some(server) = item["server"].as_str().filter(|s| *s == "fridae" || *s == "fridae-direct") {
+                            if self.shown.insert(item["id"].as_str().unwrap_or("").to_string()) {
+                                out.push(Out::Tool(format!("{server}.{tool}")));
+                            }
+                            return out;
+                        }
                         if kind == "item.completed" && (tool.starts_with("rbx_") || tool.starts_with("screen_capture")) {
                             let pictures = pictures_in(&item["result"].to_string());
                             if !pictures.is_empty() {
@@ -203,5 +239,57 @@ pub fn explain(stderr: &str) -> Option<&'static str> {
         Some("ChatGPT's command-line tool is not signed in. Open a terminal, run `codex login`, sign in with your ChatGPT account, then send your message again.")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn codex_overrides_on_the_command_line_not_in_the_project() {
+        let ws = std::env::temp_dir().join(format!("fridae-codex-ws-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&ws);
+        fs::create_dir_all(&ws).unwrap();
+        let w = crate::app_mcp::Wire { url: "http://127.0.0.1:5/mcp".into(), raw: "k-codex-raw".into(), deferred: false };
+        let servers = json!({"rbxkit": {"command": "python3", "args": ["mcp.py"]}});
+        let cmd = command(Path::new("/bin/codex"), &ws, &servers, None, None, None, false, Some(&w));
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect();
+        for want in [
+            "mcp_servers.fridae.url=\"http://127.0.0.1:5/mcp\"",
+            "mcp_servers.fridae.bearer_token_env_var=\"FRIDAE_MCP_KEY\"",
+            "mcp_servers.fridae.tool_timeout_sec=3900",
+            "mcp_servers.fridae.disabled_tools=[\"chat_wait\"]",
+            "mcp_servers.fridae-direct.url=\"http://127.0.0.1:5/mcp\"",
+            "mcp_servers.fridae-direct.bearer_token_env_var=\"FRIDAE_MCP_KEY\"",
+            "mcp_servers.fridae-direct.tool_timeout_sec=3900",
+            "mcp_servers.fridae-direct.enabled_tools=[\"chat_wait\"]",
+            "mcp_servers.fridae-direct.omit_tools_from=[\"code_mode\",\"deferred\"]",
+            "mcp_servers.fridae.default_tools_approval_mode=\"approve\"",
+        ] {
+            let at = args.iter().position(|a| a == want).unwrap_or_else(|| panic!("{want} in {args:?}"));
+            assert_eq!(args[at - 1], "-c");
+        }
+        assert!(args.iter().any(|a| a.starts_with("developer_instructions=") && a.contains("Ordinary coding tasks need no Fridae tools.")));
+        assert!(!args.iter().any(|a| a.contains("k-codex-raw")), "the key is never an argument");
+        let env: Vec<(String, Option<String>)> = cmd.get_envs().map(|(k, v)| (k.to_string_lossy().to_string(), v.map(|v| v.to_string_lossy().to_string()))).collect();
+        assert!(env.contains(&("FRIDAE_MCP_KEY".to_string(), Some("k-codex-raw".to_string()))));
+        let toml = fs::read_to_string(ws.join(".codex").join("config.toml")).unwrap();
+        assert!(toml.contains("[mcp_servers.rbxkit]") && !toml.contains("mcp_servers.fridae") && !toml.contains("k-codex-raw"), "{toml}");
+        // without the toolbox: none of it
+        let cmd = command(Path::new("/bin/codex"), &ws, &servers, None, None, None, false, None);
+        assert!(!cmd.get_args().any(|a| a.to_string_lossy().contains("fridae")));
+        assert!(!cmd.get_envs().any(|(k, _)| k == "FRIDAE_MCP_KEY"));
+        let _ = fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn a_toolbox_call_is_named_by_its_server() {
+        let mut t = Turn::default();
+        let out = t.feed(&json!({"type": "item.started", "item": {"id": "i1", "type": "mcp_tool_call", "server": "fridae", "tool": "chat_launch"}}));
+        assert!(out.iter().any(|o| matches!(o, Out::Tool(n) if n == "fridae.chat_launch")), "{}", out.len());
+        let out = t.feed(&json!({"type": "item.started", "item": {"id": "i2", "type": "mcp_tool_call", "server": "rbxkit", "tool": "rbx_team"}}));
+        assert!(out.iter().any(|o| matches!(o, Out::Tool(n) if n == "rbx_team")));
     }
 }

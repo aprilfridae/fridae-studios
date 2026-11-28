@@ -591,4 +591,47 @@ mod tests {
         let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
         assert_eq!(text.lines().count(), 2, "{text}");
     }
+
+    #[test]
+    fn bridge_against_the_real_toolbox() {
+        // the bridge, the real transport and the real endpoint (`http::handle_parts`), with a chat's real key
+        let chat = crate::app_mcp::test_chat("gemini");
+        let raw = crate::app_mcp::keys::global().prepare(&chat.id, "gemini", false).raw;
+        let srv = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = srv.server_addr().to_ip().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            while let Ok(Some(mut req)) = srv.recv_timeout(Duration::from_secs(5)) {
+                let mut body = Vec::new();
+                let _ = req.as_reader().read_to_end(&mut body);
+                let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
+                let reply = crate::app_mcp::http::handle_parts(req.method().as_str(), &headers, &body);
+                let deleted = req.method().as_str() == "DELETE";
+                let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
+                for (n, v) in reply.headers {
+                    resp = resp.with_header(tiny_http::Header::from_bytes(n.as_bytes(), v.as_bytes()).unwrap());
+                }
+                let _ = req.respond(resp);
+                if deleted {
+                    return true;
+                }
+            }
+            false
+        });
+        let c = BridgeConfig { endpoint: format!("http://127.0.0.1:{port}/mcp"), authorization: format!("Bearer {raw}"), exposure: Some("deferred-proxy".into()) };
+        let out: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let input = format!("{INIT}
+{INITIALIZED}
+{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}}
+");
+        assert_eq!(run(std::io::Cursor::new(input.into_bytes()), out.clone(), &c, &http_send), 0);
+        assert!(handle.join().unwrap(), "the session was ended at the end of stdin");
+        let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
+        let lines: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(lines[0]["result"]["serverInfo"]["name"], "fridae");
+        let names: Vec<&str> = lines[1]["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"tool_search") && names.contains(&"tool_call"), "deferred tools listed: {names:?}");
+        assert!(!text.contains(&raw));
+        crate::app_mcp::drop_chat(&chat);
+    }
 }

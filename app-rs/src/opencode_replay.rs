@@ -126,6 +126,7 @@ fn replay_with(case: &str, resume: bool, twist: impl FnOnce(&str) -> Twist) -> (
         full: false,
         instructions: "be brief".into(),
         text: "hello".into(),
+        toolbox: None,
     };
     let me = Active::default();
     let mut outs = Vec::new();
@@ -286,6 +287,7 @@ fn tool_servers_are_removed_when_a_turn_ends_early() {
         full: false,
         instructions: "x".into(),
         text: "x".into(),
+        toolbox: None,
     };
     let me = Active::default();
     me.cancelled.store(true, std::sync::atomic::Ordering::SeqCst); // Stop before the message: an early end
