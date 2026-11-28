@@ -51,6 +51,25 @@ function swatchStyle(c: any, mode: string) {
 }
 const SUN = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2" /><path d="M6 1v1.2M6 9.8V11M1 6h1.2M9.8 6H11M2.5 2.5l.8.8M8.7 8.7l.8.8M2.5 9.5l.8-.8M8.7 3.3l.8-.8" /></svg>;
 const MOON = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 7.4A4 4 0 0 1 4.6 2.2a4 4 0 1 0 5.2 5.2Z" /></svg>;
+/* The ring round the circle in use, bent out round its sun or moon the way the bars' line runs round their tabs: the
+   circle's edge (68px button, the ring's middle 1px in from it) and a ring round the badge (20px, 2px in from the
+   corner, with a 2px gap), joined by two small round curves where the ring leaves the circle. Worked out once. */
+const RING = (() => {
+  const C1 = 34, R = 33, C2 = 56, rb = 13, f = 3;
+  const d = Math.SQRT2 * (C2 - C1), ux = Math.SQRT1_2, uy = Math.SQRT1_2;
+  const a = ((R + f) ** 2 - (rb + f) ** 2 + d * d) / (2 * d), h = Math.sqrt((R + f) ** 2 - a * a);
+  const at = (cx: number, cy: number, tx: number, ty: number, r: number) => { const L = Math.hypot(tx - cx, ty - cy); return [cx + (tx - cx) / L * r, cy + (ty - cy) / L * r]; };
+  /* the two curves' middles: one on the circle's right (A), one on its bottom (B) */
+  const Fa = [C1 + a * ux + h * uy, C1 + a * uy - h * ux], Fb = [C1 + a * ux - h * uy, C1 + a * uy + h * ux];
+  const T1a = at(C1, C1, Fa[0], Fa[1], R), T1b = at(C1, C1, Fb[0], Fb[1], R);
+  const T2a = at(C2, C2, Fa[0], Fa[1], rb), T2b = at(C2, C2, Fb[0], Fb[1], rb);
+  /* the badge's arc runs clockwise from A's side to B's, round its outside */
+  const ang = (x: number, y: number) => Math.atan2(y - C2, x - C2);
+  let sweep = ang(T2b[0], T2b[1]) - ang(T2a[0], T2a[1]); if (sweep < 0) sweep += 2 * Math.PI;
+  const p = (v: number[]) => v[0].toFixed(2) + " " + v[1].toFixed(2);
+  return `M${p(T1b)}A${R} ${R} 0 1 1 ${p(T1a)}A${f} ${f} 0 0 0 ${p(T2a)}A${rb} ${rb} 0 ${sweep > Math.PI ? 1 : 0} 1 ${p(T2b)}A${f} ${f} 0 0 0 ${p(T1b)}Z`;
+})();
+const Ring = () => <svg class="th-ring" viewBox="0 0 68 68" aria-hidden="true"><path d={RING} /></svg>;
 function Swatch({ c, mode }: { c: any; mode: string }) {
   return <span class={"th-sw " + (mode === "light" ? "sw-l" : "sw-d")} aria-hidden="true"><i style={swatchStyle(c, mode)} /></span>;
 }
@@ -80,7 +99,7 @@ export function Appearance() {
                 const picked = on && (theme.mode === mode || theme.mode === "system");
                 return <button class="th-swb" type="button" aria-pressed={picked ? "true" : "false"} aria-label={"Use " + name + " in " + mode + " mode" + (picked ? ", in use now" : "")} title={"Use " + name + " in " + mode + " mode only"}
                   onClick={(ev) => { ev.stopPropagation(); host.setTheme({ id, mode }); }}>
-                  <Swatch c={t.colors(id, mode)} mode={mode} />{picked && <span class="th-badge">{mode === "light" ? SUN : MOON}</span>}</button>;
+                  <Swatch c={t.colors(id, mode)} mode={mode} />{picked && <Ring />}{picked && <span class="th-badge">{mode === "light" ? SUN : MOON}</span>}</button>;
               })}</span>
               <span class="th-name"><button type="button" aria-pressed={on ? "true" : "false"} aria-label={"Use the " + name + " theme" + (on ? ", in use now" : "")} onClick={(ev) => { ev.stopPropagation(); host.setTheme({ id, mode: theme.mode }); }}>{name}</button>{id === "fridae" && <small>Fridae's own</small>}</span></div>;
           })}

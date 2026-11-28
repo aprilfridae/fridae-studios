@@ -145,16 +145,16 @@
 .th-swb:hover:not([aria-pressed="true"]) { transform: scale(1.05); }
 .th-swb:active { transform: scale(0.97); }
 .th-swb:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 60%, transparent); outline-offset: -5px; }
-.th-swb[aria-pressed="true"]::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px var(--accent); pointer-events: none; animation: th-ring 200ms var(--ease); }
+/* the ring round the circle in use, bent out round its badge (Appearance.tsx RING) */
+.th-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; animation: th-ring 200ms var(--ease); }
+.th-ring path { fill: none; stroke: var(--accent); stroke-width: 2; }
 @keyframes th-ring { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
 .th-sw { position: relative; display: block; width: 56px; height: 56px; overflow: hidden; border-radius: 50%; border: 2px solid var(--bg); }
 .th-sw.sw-d { box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.14), 0 1px 2px rgb(0 0 0 / 0.18); }
 .th-sw.sw-l { box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.10), 0 1px 2px rgb(0 0 0 / 0.08); }
 .th-sw i { position: absolute; inset: 0; border-radius: 50%; filter: blur(3px); transform: scale(1.1); }
-/* the sun or moon on the circle in use sits over its ring, parted from it by a sliver of the card's own colour (the
-   card is the chosen one's whenever a badge shows), so the ring stops short of it instead of running through it */
-.th-badge { position: absolute; z-index: 1; right: 2px; bottom: 2px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent); background: var(--bg); color: var(--text);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ctl-hover) 70%, var(--card)); }
+/* the sun or moon on the circle in use, inside the ring's bend round it */
+.th-badge { position: absolute; z-index: 1; right: 2px; bottom: 2px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent); background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 .th-name { display: flex; align-items: center; gap: 8px; padding: 8px 12px 12px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--text); }
 .th-name button { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 4px; font: inherit; color: inherit; text-align: left; }
 .th-name button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
