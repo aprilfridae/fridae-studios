@@ -50,7 +50,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "settings_update",
             title: "Change settings",
-            description: "Update app-wide preferences. Omitted fields are unchanged. Below Full auto, and always for some, the user is asked first with a card in this chat.",
+            description: "Update app-wide preferences. Omitted fields are unchanged. Below Full auto, and always for some, the user is asked first with a card in this chat. Its result confirms it.",
             schema: schema_update,
             hints: Hints::WRITE,
             access: writes_environment,

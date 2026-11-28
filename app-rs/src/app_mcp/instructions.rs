@@ -11,7 +11,8 @@ Ordinary coding tasks need no Fridae tools.
 - As a subagent or child, do the work yourself. Start no subagents unless your task says to.";
 
 const SECTION_TWO: &str = "- `chat_launch` makes a new top-level chat, only when the user asks for a new chat. \"Subagent\", \"delegate\", and \"parallel\" never mean one.
-- After `chat_launch` or `chat_send`, answer with its `link` right away: the chat's own work is that chat's. Wait for or read a chat you launched only when the user asks what it said or your task needs its result.
+- A Fridae tool's result confirms its action: never wait for or read a chat just to check that a send or launch worked. After `chat_launch` or `chat_send`, answer with its `link` right away: the chat's own work is that chat's. Wait for or read a chat only when the user asks what it said or your task needs its reply.
+- Each message starts with `<fridae_now>`: the projects and open chats with their ids and links. Use those ids directly; call `project_list` or `chat_list` only for more.
 - Given a chat id, `chat_read` it before you answer about it.
 - In your reply, mention a chat by its `link`, verbatim, never a plain title or bare id. The same for a project.
 - Restyle Fridae with `theme_set` only when the user asks.
@@ -99,8 +100,17 @@ mod tests {
         let all = sections(true).join("
 ");
         assert!(!all.contains("Follow it with"), "{all}");
-        assert!(all.contains("Wait for or read a chat you launched only when the user asks what it said or your task needs its result"), "{all}");
+        assert!(all.contains("Wait for or read a chat only when the user asks what it said or your task needs its reply"), "{all}");
         assert!(all.contains("answer with its `link` right away"), "{all}");
+    }
+
+    #[test]
+    fn results_confirm_and_ids_come_first() {
+        let all = sections(false).join("
+");
+        assert!(all.contains("A Fridae tool's result confirms its action"), "{all}");
+        assert!(all.contains("never wait for or read a chat just to check that a send or launch worked"), "{all}");
+        assert!(all.contains("`<fridae_now>`") && all.contains("call `project_list` or `chat_list` only for more"), "{all}");
     }
 
     #[test]

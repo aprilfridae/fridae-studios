@@ -71,8 +71,18 @@ fn toolbox_over_http_end_to_end() {
         assert!(names.contains(&n), "missing {n}");
     }
 
-    let launch = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"chat_launch","arguments":{"title":"From the toolbox","clientRequestId":"e2e-1"}}});
-    let (status, _, made) = rpc(&agent, &url, &key, Some(&sid), launch);
+    // the chats of all tests share the app's slots: a full app is retried (up to a minute), as `launch_ok` does
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let (status, made) = loop {
+        let launch = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"chat_launch","arguments":{"title":"From the toolbox","clientRequestId":"e2e-1"}}});
+        let (status, _, made) = rpc(&agent, &url, &key, Some(&sid), launch);
+        let full = made["result"]["isError"] == true && made.to_string().contains("capability_denied");
+        if full && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            continue;
+        }
+        break (status, made);
+    };
     assert_eq!(status, 200);
     assert_ne!(made["result"]["isError"], true, "{made}");
     let made = tool_json(&made);

@@ -27,7 +27,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "project_create",
             title: "Add a project",
-            description: "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a new folder from `title` in your projects folder, with git when `git` is true.",
+            description: "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a new folder from `title` in your projects folder, with git when `git` is true. Its result confirms it.",
             schema: schema_create,
             hints: Hints::WRITE,
             access: writes_environment,
@@ -38,7 +38,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "project_update",
             title: "Update a project",
-            description: "Update one project's settings. Omitted fields are unchanged.",
+            description: "Update one project's settings. Omitted fields are unchanged. Its result confirms it.",
             schema: schema_update,
             hints: Hints::WRITE,
             access: writes_environment,
@@ -49,7 +49,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "project_delete",
             title: "Remove a project",
-            description: "Delete one project. Nonempty needs `force: true`. Folder on disk stays.",
+            description: "Delete one project. Nonempty needs `force: true`. Folder on disk stays. Its result confirms it.",
             schema: schema_delete,
             hints: Hints::WRITE,
             access: writes_environment,
@@ -154,7 +154,7 @@ fn chats_in(path: &str) -> Vec<Value> {
     out
 }
 
-fn list(_call: &Call, args: &Map<String, Value>) -> Outcome {
+pub(super) fn list(_call: &Call, args: &Map<String, Value>) -> Outcome {
     let limit = opt_int(args, "limit", 1, 100)?.unwrap_or(25) as usize;
     let all: Vec<Value> = projects::list().iter().map(item).collect();
     let (projects, next) = page(&all, cursor_of(args)?, limit);

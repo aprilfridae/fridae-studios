@@ -269,6 +269,13 @@ impl Wire {
     }
 }
 
+/// The app's projects and open chats as this chat may see them, for the top of a turn's message
+/// (`tools::now_text`). None when the key is not (or no longer) the app's.
+pub fn now_for(w: &Wire) -> Option<String> {
+    let scope = keys::global().resolve(&w.raw).ok()?;
+    Some(tools::now_text(&scope))
+}
+
 /// Fridae's toolbox as an entry of a tool list on disk: this program run as the stdio bridge, with no endpoint and no
 /// key (the AI's process has them in its environment: `Wire::bridge_env`).
 pub fn bridge_entry() -> Value {

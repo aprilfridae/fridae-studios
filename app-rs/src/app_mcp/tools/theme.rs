@@ -23,7 +23,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "theme_set",
             title: "Set the theme",
-            description: "Restyle Fridae itself, only when the user asks. Switch to a built-in `themeId`. `appearance` sets light, dark, or system mode.",
+            description: "Restyle Fridae itself, only when the user asks. Switch to a built-in `themeId`. `appearance` sets light, dark, or system mode. Its result confirms it.",
             schema: schema_set,
             hints: Hints::WRITE,
             access: writes_environment,

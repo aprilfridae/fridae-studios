@@ -61,7 +61,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "chat_launch",
             title: "Start a chat",
-            description: "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Then answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its result.",
+            description: "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Its result confirms it: answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its reply.",
             schema: schema_launch,
             hints: write,
             access: starts_threads,
@@ -72,7 +72,7 @@ pub fn defs() -> Vec<ToolDef> {
         ToolDef {
             name: "chat_send",
             title: "Send to a chat",
-            description: "Send a message to any chat. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle chat or queues behind a running turn. `restart`: stop the running turn and start with this message. In your reply, name it as its `link` verbatim.",
+            description: "Send a message to any chat. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle chat or queues behind a running turn. `restart`: stop the running turn and start with this message. Its result confirms it: never wait for or read the chat just to check. In your reply, name it as its `link` verbatim.",
             schema: schema_send,
             hints: write,
             access: writes_threads,
@@ -398,7 +398,7 @@ fn in_scope(scope: &Option<Option<String>>, project: Option<&str>) -> bool {
 
 // ------------------------------------------------------------------------------------------------------- reads
 
-fn list(call: &Call, args: &Map<String, Value>) -> Outcome {
+pub(super) fn list(call: &Call, args: &Map<String, Value>) -> Outcome {
     let caller = access::read_caller(call.scope)?;
     let all = opt_bool(args, "allProjects")?.unwrap_or(false);
     let scope = project_scope(&caller, args, all)?;
@@ -966,6 +966,51 @@ mod tests {
         if let Some(c) = agents::get(id) {
             drop_chat(&c);
         }
+    }
+
+    #[test]
+    fn context_lists_projects_and_open_chats() {
+        let _serial = serial();
+        let dir = project_dir("context");
+        crate::projects::add(&dir, Some("plain")).unwrap();
+        let pid = crate::app_mcp::project_id(&dir);
+        let name = crate::projects::describe(&dir)["name"].as_str().unwrap().to_string();
+        // its chats are closed however the test ends: a failed test must not keep the app's slots from the others
+        struct Close(Vec<Arc<agents::Agent>>);
+        impl Drop for Close {
+            fn drop(&mut self) {
+                self.0.iter().for_each(|c| drop_chat(c));
+            }
+        }
+        let a = caller(false);
+        let b = test_chat("gemini");
+        let _close = Close(vec![a.clone(), b.clone()]);
+        assert!(b.set_project(&dir));
+        b.rename("Context chat");
+        let text = super::super::now_text(&scope(&a));
+        assert!(text.starts_with("<fridae_now>
+") && text.ends_with("
+</fridae_now>"), "{text}");
+        // (the test machine may have more projects registered than the list shows: then it says how many more)
+        let line = format!("{name} · {pid} · {}", crate::app_mcp::project_link(&pid, &name));
+        assert!(text.contains(&line) || text.contains("more: project_list"), "{text}");
+        assert!(text.contains(&format!("Context chat · {} · {pid} · gemini", b.id)), "{text}");
+        assert!(text.contains(&format!("(this chat) · {}", a.id)), "{text}");
+        assert!(text.len() <= 2_100, "{} bytes", text.len());
+        crate::projects::forget(&dir);
+    }
+
+    #[test]
+    fn context_is_capped() {
+        let projects: Vec<Value> = (0..100).map(|i| json!({"projectId": format!("p{i:012}"), "name": format!("Project number {i}"), "link": format!("[Project number {i}](fridae://project/p{i:012})")})).collect();
+        let chats: Vec<Value> = (0..100).map(|i| json!({"chatId": format!("c{i:015}"), "title": format!("A chat with a longish title {i}"), "projectId": "p000000000001", "ai": "claude"})).collect();
+        let text = super::super::now_block(&projects, &chats, "c000000000000005");
+        assert!(text.len() <= 2_100, "{} bytes", text.len());
+        assert!(text.lines().filter(|l| l.starts_with("- Project number")).count() <= 30);
+        assert!(text.lines().filter(|l| l.starts_with("- A chat")).count() <= 30);
+        assert!(text.contains("more: project_list") && text.contains("more: chat_list"), "{text}");
+        let none = super::super::now_block(&[], &[], "c1");
+        assert!(none.contains("Projects: none") && none.contains("Open chats: none"), "{none}");
     }
 
     #[test]

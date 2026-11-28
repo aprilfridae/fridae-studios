@@ -3844,6 +3844,12 @@ impl Agent {
                 Some(_) => text,
             };
         }
+        // the app's projects and open chats with their ids, at the top of every turn's message (it changes from turn
+        // to turn, so never in standing instructions; a kept process gets it too), so the AI can act without listing
+        // first. Not for a slash command, which must stay at the start.
+        if let Some(now) = toolbox.as_ref().filter(|_| !body.trim_start().starts_with('/')).and_then(crate::app_mcp::now_for) {
+            text = format!("{now}\n\n{text}");
+        }
         // OpenCode runs on the app's own OpenCode server, not as a program per turn
         if kind == "opencode" {
             {
@@ -9974,6 +9980,33 @@ FRIDAE_MCP_AUTHORIZATION=Bearer {raw}")}));
         // the kept process is handed the toolbox once, over its protocol
         assert!(l[0].0.contains("http://127.0.0.1:4567/mcp") && !l[0].0.contains(&raw));
         crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
+    #[test]
+    fn every_turn_starts_with_the_apps_current_lists() {
+        for ai in ["claude", "gemini", "cursor"] {
+            let a = chat_on_first(&format!("c-toolbox-now-{ai}"));
+            a.st.lock().unwrap().ai = Some(ai.into());
+            let raw = crate::app_mcp::keys::global().prepare(&a.id, ai, false).raw;
+            for msg in ["Rename my project", "And again"] {
+                let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, msg));
+                assert!(l[0].4.contains("<fridae_now>") && l[0].4.contains("Open chats"), "{ai}: {}", l[0].4);
+                assert!(!l[0].4.contains(&raw), "{ai}: never the key");
+            }
+            // a slash command stays at the start
+            let l = with_toolbox("http://127.0.0.1:4567/mcp", || launches(&a, "/compact"));
+            assert!(!l[0].4.contains("<fridae_now>"), "{ai}");
+            // without the toolbox, no list
+            let l = launches(&a, "No toolbox");
+            assert!(!l[0].4.contains("<fridae_now>"), "{ai}");
+            crate::app_mcp::keys::global().revoke_chat(&a.id);
+        }
+    }
+
+    #[test]
+    fn autopilot_takes_an_app_action_as_confirmed_by_its_result() {
+        assert!(AUTOPILOT_PROMPT.contains("Never call something done without having looked at it or run it."));
+        assert!(AUTOPILOT_PROMPT.contains("A Fridae app action (a chat started or messaged, a project or setting changed) is confirmed by its tool's result"), "{AUTOPILOT_PROMPT}");
     }
 
     fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {

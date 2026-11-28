@@ -8,6 +8,8 @@ AUTOPILOT IS ON. The user wants this finished with as little of their time as po
 - When parts of the job do not depend on each other, hand them to workers with rbx_team (load the `producer` guide),
   check each result yourself, and ask for a critic before calling a large piece finished.
 - Never call something done without having looked at it or run it. A fix that was not re-checked does not count.
+  A Fridae app action (a chat started or messaged, a project or setting changed) is confirmed by its tool's result:
+  that result is the check. This holds for app actions only, never for code or game work.
 - Stop for the user only when you truly must: spending money, publishing or uploading for the first time, signing in,
   deleting or overwriting their work, or a choice that cannot be undone.
 - End every reply with one last line, exactly one of these and nothing after it:

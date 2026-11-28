@@ -21,6 +21,75 @@ pub fn defs() -> Vec<ToolDef> {
     all
 }
 
+// ------------------------------------------------------------------------------------------- the lists up front
+
+/// How many projects and open chats the lists up front show, and their most bytes.
+const NOW_MOST: usize = 30;
+const NOW_BYTES: usize = 2_000;
+
+/// The app as it is now, for the top of a turn's message (`agents::send`): the projects and the open chats with their
+/// ids, so the AI can act without listing first. Read as `project_list` and `chat_list` read them for this chat (the
+/// same access), newest chats first. Names, ids, links and AIs only: no key, no path.
+pub fn now_text(scope: &super::keys::Scope) -> String {
+    let flag = std::sync::atomic::AtomicBool::new(false);
+    let call = super::Call::new(scope, &flag, super::exposure::Mode::Full);
+    let arg = |v: Value| v.as_object().cloned().unwrap_or_default();
+    let projects = projects::list(&call, &arg(json!({"limit": 100}))).ok().and_then(|v| v["projects"].as_array().cloned()).unwrap_or_default();
+    let chats = chats::list(&call, &arg(json!({"allProjects": true, "statuses": ["working", "idle"], "limit": 100}))).ok().and_then(|v| v["chats"].as_array().cloned()).unwrap_or_default();
+    now_block(&projects, &chats, &scope.chat)
+}
+
+/// The block itself: up to `NOW_MOST` of each, within `NOW_BYTES`, and how many more there are.
+pub fn now_block(projects: &[Value], chats: &[Value], current: &str) -> String {
+    let s = |v: &Value, k: &str| v[k].as_str().unwrap_or("").replace(['\n', '\r'], " ");
+    let project_lines: Vec<String> = projects.iter().map(|p| format!("- {} · {} · {}", s(p, "name"), s(p, "projectId"), s(p, "link"))).collect();
+    let chat_lines: Vec<String> = chats
+        .iter()
+        .map(|c| {
+            let id = s(c, "chatId");
+            let title = if id == current { "(this chat)".to_string() } else { s(c, "title") };
+            let project = c["projectId"].as_str().unwrap_or("no project");
+            format!("- {title} · {id} · {project} · {}", s(c, "ai"))
+        })
+        .collect();
+    // up to half the room for the projects, the chats taking what they leave
+    let take = |lines: &[String], room: usize| -> (Vec<String>, usize) {
+        let mut out = Vec::new();
+        let mut used = 0;
+        for l in lines.iter().take(NOW_MOST) {
+            if used + l.len() + 1 > room {
+                break;
+            }
+            used += l.len() + 1;
+            out.push(l.clone());
+        }
+        (out, used)
+    };
+    let (ps, used) = take(&project_lines, NOW_BYTES / 2);
+    let (cs, _) = take(&chat_lines, NOW_BYTES - used);
+    let mut out = vec!["<fridae_now>".to_string()];
+    if ps.is_empty() {
+        out.push("Projects: none".into());
+    } else {
+        out.push("Projects (name · id · link):".into());
+        out.extend(ps.iter().cloned());
+        if ps.len() < project_lines.len() {
+            out.push(format!("- {} more: project_list", project_lines.len() - ps.len()));
+        }
+    }
+    if cs.is_empty() {
+        out.push("Open chats: none".into());
+    } else {
+        out.push("Open chats, newest first (title · id · project id · AI):".into());
+        out.extend(cs.iter().cloned());
+        if cs.len() < chat_lines.len() {
+            out.push(format!("- {} more: chat_list", chat_lines.len() - cs.len()));
+        }
+    }
+    out.push("</fridae_now>".into());
+    out.join("\n")
+}
+
 // ------------------------------------------------------------------------------------------------ shared pieces
 
 pub(crate) fn reads(_: &Map<String, Value>) -> Access {
@@ -261,10 +330,14 @@ mod tests {
         assert_eq!(desc("chat_wait"), "Wait for a chat's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.");
         assert_eq!(desc("project_list"), "List projects. Pages can shift.");
         // a deliberate departure from T3's "Follow it with chat_read or chat_wait": waiting is for when it is needed
-        assert_eq!(desc("chat_launch"), "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Then answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its result.");
+        assert_eq!(desc("chat_launch"), "Create a top-level chat in its workspace before starting. Task in `message`. Omit `projectId`, model and modes to inherit yours (`scratch` for no project); modes cannot exceed yours. On error or lost reply, reuse `clientRequestId`. Its result confirms it: answer the user with its `link` at once; wait for or read it only when the user asks what it said or your task needs its reply.");
         assert!(defs().iter().all(|d| !d.description.contains("Follow it with")));
-        assert_eq!(desc("project_update"), "Update one project's settings. Omitted fields are unchanged.");
-        assert_eq!(desc("project_delete"), "Delete one project. Nonempty needs `force: true`. Folder on disk stays.");
+        // the result is the confirmation: nothing to read back after an action
+        for n in ["chat_launch", "chat_send", "project_create", "project_update", "project_delete", "settings_update", "theme_set"] {
+            assert!(desc(n).contains("Its result confirms it"), "{n}: {}", desc(n));
+        }
+        assert_eq!(desc("project_update"), "Update one project's settings. Omitted fields are unchanged. Its result confirms it.");
+        assert_eq!(desc("project_delete"), "Delete one project. Nonempty needs `force: true`. Folder on disk stays. Its result confirms it.");
         let caps = defs().into_iter().next().unwrap();
         assert!(caps.always_load && caps.hints.read_only && caps.hints.idempotent);
         for d in defs() {
