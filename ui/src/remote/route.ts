@@ -105,11 +105,11 @@ export function back(m: string, rest: string, r: any): any {
   return r;
 }
 
-/* An event from another computer, in the page's names. What only concerns this computer's own window (its setup
-   output, the promo engine, dropped files, its usage count) is left out. `live`: it happened after that computer's
-   first batch, so it is new to the page; the first batch is history (the page compares an event's id with the id of
-   this computer's first batch, `bootMark`). */
-const HERE_ONLY = new Set(["setup", "promo_engine", "rag_setup", "mode", "clips", "attached", "promo", "usage"]);
+/* An event from another computer, in the page's names. What only concerns that computer's own window (its setup
+   output, the promo engine, dropped files, its usage count, and its settings, accounts and theme changed by an AI) is
+   left out. `live`: it happened after that computer's first batch, so it is new to the page; the first batch is
+   history (the page compares an event's id with the id of this computer's first batch, `bootMark`). */
+const HERE_ONLY = new Set(["setup", "promo_engine", "rag_setup", "mode", "clips", "attached", "promo", "usage", "settings_changed", "accounts_changed", "theme_set"]);
 export function eventFrom(m: string, e: any, live: boolean): any {
   if (!e || HERE_ONLY.has(e.kind)) return null;
   const x = { ...e, id: live ? Number.MAX_SAFE_INTEGER : 0 }, pre = (v: string) => m + SEP + v;
