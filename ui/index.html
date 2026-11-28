@@ -870,7 +870,11 @@ body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headf
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation)); }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) { .hf-glass, .stage > .top::before { background: var(--bg); } }
 /* the line stays over the sliding bar (whose transform would otherwise paint it over the line until it stops) */
-.headfold::before { content: ""; position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; height: 1px; background: var(--fold-line); pointer-events: none; }
+/* in two pieces, either side of the tab (24px in, 148px wide), whose own outline carries the line round it: the tab's mouth
+   stays open, so the bar and the tab are one shape */
+.headfold::before, .headfold::after { content: ""; position: absolute; z-index: 1; bottom: 0; height: 1px; background: var(--fold-line); pointer-events: none; }
+.headfold::before { left: 0; width: 24px; }
+.headfold::after { left: 172px; right: 0; }
 .headfold.out { grid-template-rows: 1fr; }
 .hf-in { min-height: 0; }
 .headfold.clip .hf-in { overflow: hidden; }
