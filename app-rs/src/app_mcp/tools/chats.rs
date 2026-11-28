@@ -526,6 +526,10 @@ fn read_item(position: usize, e: &Value, offset: usize, max: usize) -> Value {
         None => {
             let mut rest = e.as_object().cloned().unwrap_or_default();
             rest.remove("kind");
+            // a card's id is the user's to answer with: no agent reads it
+            if matches!(e["kind"].as_str(), Some("appcard" | "appcard_done")) {
+                rest.remove("card");
+            }
             (!rest.is_empty()).then(|| Value::Object(rest).to_string())
         }
     };
@@ -1045,6 +1049,22 @@ mod tests {
             let _ = std::fs::remove_file(crate::paths::work("chats").join(format!("{id}.json")));
         }
         drop_chat(&a);
+    }
+
+    #[test]
+    fn chat_read_never_shows_a_card_id() {
+        // a card is answered only by the user, but its id stays out of what any agent can read
+        let _serial = serial();
+        let a = caller(false);
+        let t = test_chat("claude");
+        t.put("appcard", json!({"card": "cardsecret01", "title": "Rename project", "text": "Rename it.", "allow": "Rename it"}));
+        t.put("appcard_done", json!({"card": "cardsecret01", "title": "Rename project", "outcome": "declined"}));
+        let got = ok(&call(&a, "chat_read", json!({"chatId": t.id, "view": "activity"})));
+        assert_eq!(got["items"].as_array().unwrap().len(), 2, "{got}");
+        assert!(!got.to_string().contains("cardsecret01"), "{got}");
+        assert!(got.to_string().contains("declined"), "{got}");
+        crate::app_mcp::drop_chat(&t);
+        crate::app_mcp::drop_chat(&a);
     }
 
     #[test]
