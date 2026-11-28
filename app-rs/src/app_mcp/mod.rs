@@ -8,6 +8,7 @@
 pub mod access;
 pub mod bridge;
 pub mod card;
+pub mod events;
 pub mod exposure;
 pub mod instructions;
 pub mod keys;
@@ -274,6 +275,161 @@ pub fn wire_for(chat: &str, ai: &str, subagent: bool) -> Option<Wire> {
     Some(Wire { url, raw: cred.raw, deferred: ai == "gemini" })
 }
 
+/// Every tool a call can name: the tools, then the deferred ones (and, in tests, the test tools).
+pub fn registry() -> Vec<ToolDef> {
+    let mut all = tools::defs();
+    all.extend(exposure::defs());
+    #[cfg(test)]
+    all.extend(test_defs());
+    all
+}
+
+/// The tools tools/list may show (the test tools only where a test asks, on its own thread).
+pub(crate) fn listable() -> Vec<ToolDef> {
+    #[cfg(test)]
+    if !SHOW_TEST_TOOLS.with(|s| s.get()) {
+        return registry().into_iter().filter(|d| !d.name.starts_with("test_")).collect();
+    }
+    registry()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: tools/list on this thread shows the test tools too.
+    pub(crate) static SHOW_TEST_TOOLS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tools whose `clientRequestId` replays the first answer instead of acting twice (scoped to the key's namespace).
+pub const IDEMPOTENT: [&str; 4] = ["chat_launch", "chat_send", "chat_interrupt", "chat_update"];
+const REPLAY_FOR: std::time::Duration = std::time::Duration::from_secs(3600);
+const REPLAY_MAX: usize = 1024;
+
+/// (namespace, tool, clientRequestId) → when, and the answer (None while the first call still runs).
+type ReplayKey = (String, String, String);
+static REPLAYS: Mutex<Option<std::collections::HashMap<ReplayKey, (std::time::Instant, Option<Value>)>>> = Mutex::new(None);
+static REPLAY_DONE: std::sync::Condvar = std::sync::Condvar::new();
+
+fn is_idempotent(name: &str) -> bool {
+    IDEMPOTENT.contains(&name) || (cfg!(test) && name == "test_count")
+}
+
+/// The answer to replay, or None when this call is the first (it is then marked as running, and a second call with
+/// the same key waits for it).
+fn replay_begin(key: &ReplayKey) -> Option<Value> {
+    let mut guard = REPLAYS.lock().unwrap_or_else(|e| e.into_inner());
+    loop {
+        let map = guard.get_or_insert_with(Default::default);
+        map.retain(|_, (at, v)| v.is_none() || at.elapsed() < REPLAY_FOR);
+        match map.get(key) {
+            Some((_, Some(v))) => return Some(v.clone()),
+            Some((_, None)) => guard = REPLAY_DONE.wait_timeout(guard, std::time::Duration::from_secs(1)).unwrap_or_else(|e| e.into_inner()).0,
+            None => {
+                if map.len() >= REPLAY_MAX {
+                    let oldest = map.iter().filter(|(_, (_, v))| v.is_some()).min_by_key(|(_, (at, _))| *at).map(|(k, _)| k.clone());
+                    if let Some(k) = oldest {
+                        map.remove(&k);
+                    }
+                }
+                map.insert(key.clone(), (std::time::Instant::now(), None));
+                return None;
+            }
+        }
+    }
+}
+
+/// The first call is over: keep its answer for replays (None: it crashed, so a retry runs again).
+fn replay_end(key: &ReplayKey, answer: Option<Value>) {
+    let mut guard = REPLAYS.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(Default::default);
+    match answer {
+        Some(v) => {
+            map.insert(key.clone(), (std::time::Instant::now(), Some(v)));
+        }
+        None => {
+            map.remove(key);
+        }
+    }
+    REPLAY_DONE.notify_all();
+}
+
+/// "Read" → "read", for "Failed to read a chat".
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_lowercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// One tool call from a chat's AI: the tool found, its arguments checked, its caller checked for what it does, the
+/// handler run (a panic is an internal error), and the calling chat's tool row drawn (`apptool` events: running, then
+/// done, failed or declined). `Err` is a JSON-RPC error: -32601 unknown tool, -32602 bad arguments.
+pub fn call_tool(scope: &keys::Scope, name: &str, args: Value, cancelled: &AtomicBool, exposure: exposure::Mode) -> Result<Value, (i64, String)> {
+    let def = registry().into_iter().find(|d| d.name == name).ok_or_else(|| (-32601, format!("Unknown tool: {name}")))?;
+    let args = match args {
+        Value::Null => Map::new(),
+        Value::Object(m) => m,
+        _ => return Err((-32602, "arguments must be a JSON object.".to_string())),
+    };
+    let args = check_args(&def, &args).map_err(|m| (-32602, m))?;
+    let replay = match args.get("clientRequestId").and_then(Value::as_str) {
+        Some(id) if is_idempotent(name) => Some((scope.namespace.clone(), name.to_string(), id.to_string())),
+        _ => None,
+    };
+    if let Some(v) = replay.as_ref().and_then(replay_begin) {
+        return Ok(v);
+    }
+    let (result, crashed) = run_tool(&def, scope, &args, cancelled, exposure);
+    if let Some(key) = &replay {
+        replay_end(key, (!crashed).then(|| result.clone()));
+    }
+    Ok(result)
+}
+
+/// The call itself, with its tool row; (the MCP result, whether the handler panicked).
+fn run_tool(def: &ToolDef, scope: &keys::Scope, args: &Map<String, Value>, cancelled: &AtomicBool, exposure: exposure::Mode) -> (Value, bool) {
+    let call_id = crate::remote_common::random_hex(8);
+    let (labels, summary) = (def.labels)(args);
+    // tool_call's row is the called tool's own (its inner call_tool draws it)
+    let row_to = agents_get(&scope.chat).filter(|_| def.name != "tool_call");
+    let row = |status: &str, label: String, links: Vec<Value>| {
+        if let Some(agent) = &row_to {
+            agent.put(
+                "apptool",
+                json!({"call": call_id, "tool": def.name, "status": status, "label": label,
+                       "summary": {"verb": summary.verb, "one": summary.one, "many": summary.many}, "links": links}),
+            );
+        }
+    };
+    row("running", format!("{} {}", labels.running, labels.detail), vec![]);
+    let call = Call::new(scope, &call_id, cancelled, exposure);
+    let allowed = match (def.access)(args) {
+        Access::Reads | Access::ReadsAsCaller => access::read_caller(scope).map(|_| ()),
+        Access::WritesThreads | Access::StartsThreads | Access::WritesEnvironment => access::writing_caller(scope).map(|_| ()),
+    };
+    let outcome = match allowed {
+        Err(f) => Some(Err(f)),
+        Ok(()) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (def.handler)(&call, args))).ok(),
+    };
+    let links = call.taken_links();
+    match outcome {
+        Some(Ok(v)) => {
+            row("done", format!("{} {}", labels.done, labels.detail), links);
+            (ok_result(&v), false)
+        }
+        Some(Err(f)) => {
+            let (status, word) = if f.code == "declined" { ("declined", "Declined") } else { ("failed", "Failed") };
+            row(status, format!("{word} to {} {}", lower_first(labels.action), labels.detail), links);
+            (fail_result(&f), false)
+        }
+        None => {
+            row("failed", format!("Failed to {} {}", lower_first(labels.action), labels.detail), links);
+            (crash_result(), true)
+        }
+    }
+}
+
+fn agents_get(id: &str) -> Option<std::sync::Arc<crate::agents::Agent>> {
+    crate::agents::get(id)
+}
+
 /// Tests: a new open chat on `ai`. The open chats of all tests share `agents::MAX_AGENTS` slots, so this waits (up
 /// to a minute) for one to be free rather than fail.
 #[cfg(test)]
@@ -313,7 +469,43 @@ fn test_defs() -> Vec<ToolDef> {
         call.links(vec![json!({"kind": "chat", "id": id, "title": "Test"})]);
         Ok(json!({"chatId": id}))
     }
-    vec![ToolDef {
+    fn writes(_: &Map<String, Value>) -> Access {
+        Access::WritesThreads
+    }
+    fn starts(_: &Map<String, Value>) -> Access {
+        Access::StartsThreads
+    }
+    fn schema_fail() -> Value {
+        json!({"type": "object", "properties": {"code": {"type": "string"}}})
+    }
+    fn schema_count() -> Value {
+        json!({"type": "object", "properties": {"clientRequestId": {"type": "string"}, "tag": {"type": "string"}}})
+    }
+    fn schema_none() -> Value {
+        json!({"type": "object", "properties": {}})
+    }
+    fn failing(_: &Call, args: &Map<String, Value>) -> Outcome {
+        let code = CODES.iter().find(|c| args.get("code").and_then(Value::as_str) == Some(**c)).copied().unwrap_or("invalid_request");
+        Err(fail(code, "Test failure."))
+    }
+    fn panicking(_: &Call, _: &Map<String, Value>) -> Outcome {
+        panic!("test tool panics on purpose")
+    }
+    fn counting(_: &Call, _: &Map<String, Value>) -> Outcome {
+        Ok(json!({"n": COUNTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1}))
+    }
+    fn writing(_: &Call, _: &Map<String, Value>) -> Outcome {
+        WROTE.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(json!({"wrote": true}))
+    }
+    fn waiting(call: &Call, _: &Map<String, Value>) -> Outcome {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !call.cancelled.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(json!({"cancelled": call.cancelled.load(std::sync::atomic::Ordering::SeqCst)}))
+    }
+    let base = ToolDef {
         name: "test_read",
         title: "Read a chat (test)",
         description: "Test tool.",
@@ -323,8 +515,21 @@ fn test_defs() -> Vec<ToolDef> {
         labels: labels_read,
         always_load: false,
         handler: read,
-    }]
+    };
+    vec![
+        base,
+        ToolDef { name: "test_fail", schema: schema_fail, handler: failing, ..base },
+        ToolDef { name: "test_panic", schema: schema_none, handler: panicking, ..base },
+        ToolDef { name: "test_count", schema: schema_count, hints: Hints::WRITE, access: starts, handler: counting, ..base },
+        ToolDef { name: "test_write", schema: schema_none, hints: Hints::WRITE, access: writes, handler: writing, ..base },
+        ToolDef { name: "test_wait", schema: schema_none, always_load: true, handler: waiting, ..base },
+    ]
 }
+
+#[cfg(test)]
+static COUNTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+static WROTE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A random UUIDv4 (no `uuid` crate): 16 secure random bytes, version nibble 4, variant bits 10.
 pub fn uuid_v4() -> String {
@@ -425,6 +630,104 @@ mod tests {
         keys::global().revoke_chat("c-wire");
         keys::global().revoke_chat("c-wire2");
         set_endpoint_for_test(None);
+    }
+
+    fn scope_for(a: &crate::agents::Agent, namespace: &str) -> keys::Scope {
+        keys::Scope { chat: a.id.clone(), ai: a.ai(), subagent: false, namespace: namespace.into() }
+    }
+
+    fn apptools(a: &crate::agents::Agent) -> Vec<Value> {
+        a.log_snapshot().into_iter().filter(|e| e["kind"] == "apptool").collect()
+    }
+
+    fn run(scope: &keys::Scope, name: &str, args: Value) -> Result<Value, (i64, String)> {
+        call_tool(scope, name, args, &AtomicBool::new(false), exposure::Mode::Full)
+    }
+
+    #[test]
+    fn call_tool_puts_running_then_done_with_labels() {
+        let a = test_chat("claude");
+        let scope = scope_for(&a, "ns-1");
+        let got = run(&scope, "test_read", json!({"chatId": null})).unwrap();
+        assert_eq!(got, ok_result(&json!({"chatId": a.id})));
+        let ev = apptools(&a);
+        assert_eq!(ev.len(), 2, "{ev:?}");
+        assert_eq!((ev[0]["status"].as_str(), ev[0]["label"].as_str()), (Some("running"), Some("Reading a chat")));
+        assert_eq!((ev[1]["status"].as_str(), ev[1]["label"].as_str()), (Some("done"), Some("Read a chat")));
+        assert_eq!(ev[0]["call"], ev[1]["call"]);
+        assert!(ev[0]["call"].as_str().is_some_and(|c| !c.is_empty()));
+        assert_eq!(ev[1]["tool"], "test_read");
+        assert_eq!(ev[1]["summary"], json!({"verb": "Read", "one": "chat", "many": "chats"}));
+        assert_eq!(ev[1]["links"], json!([{"kind": "chat", "id": a.id, "title": "Test"}]));
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn failed_and_declined_forms() {
+        let a = test_chat("claude");
+        let scope = scope_for(&a, "ns-2");
+        let got = run(&scope, "test_fail", json!({"code": "invalid_request"})).unwrap();
+        assert_eq!(got, fail_result(&fail("invalid_request", "Test failure.")));
+        let got = run(&scope, "test_fail", json!({"code": "declined"})).unwrap();
+        assert_eq!(got["isError"], true);
+        let ev = apptools(&a);
+        let ends: Vec<(&str, &str)> = ev.iter().filter(|e| e["status"] != "running").map(|e| (e["status"].as_str().unwrap(), e["label"].as_str().unwrap())).collect();
+        assert_eq!(ends, vec![("failed", "Failed to read a chat"), ("declined", "Declined to read a chat")]);
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn a_panic_is_an_internal_error() {
+        let a = test_chat("claude");
+        let got = run(&scope_for(&a, "ns-3"), "test_panic", json!({})).unwrap();
+        assert_eq!(got, crash_result());
+        assert_eq!(apptools(&a).last().unwrap()["status"], "failed");
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn unknown_tool_is_method_not_found() {
+        let a = test_chat("claude");
+        assert_eq!(run(&scope_for(&a, "ns-4"), "nope", json!({})), Err((-32601, "Unknown tool: nope".to_string())));
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn bad_args_are_invalid_params() {
+        let a = test_chat("claude");
+        let scope = scope_for(&a, "ns-5");
+        assert_eq!(run(&scope, "test_read", json!({"zz": 1})), Err((-32602, "Unknown argument \"zz\". Accepted arguments: chatId.".to_string())));
+        assert_eq!(run(&scope, "test_read", json!([1])), Err((-32602, "arguments must be a JSON object.".to_string())));
+        assert_eq!(apptools(&a).len(), 0, "refused arguments draw no row");
+        assert!(run(&scope, "test_read", Value::Null).is_ok(), "no arguments at all is an empty object");
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn client_request_id_replays_within_the_namespace() {
+        let a = test_chat("claude");
+        a.set_running_for_test(true);
+        let before = COUNTED.load(std::sync::atomic::Ordering::SeqCst);
+        let first = run(&scope_for(&a, "ns-6"), "test_count", json!({"clientRequestId": "same", "tag": a.id})).unwrap();
+        let again = run(&scope_for(&a, "ns-6"), "test_count", json!({"clientRequestId": "same", "tag": a.id})).unwrap();
+        assert_eq!(first, again);
+        assert_eq!(COUNTED.load(std::sync::atomic::Ordering::SeqCst) - before, 1, "the handler ran once");
+        let other = run(&scope_for(&a, "ns-7"), "test_count", json!({"clientRequestId": "same", "tag": a.id})).unwrap();
+        assert_ne!(other, first, "another key's namespace runs it again");
+        assert!(IDEMPOTENT.contains(&"chat_launch") && IDEMPOTENT.contains(&"chat_send") && IDEMPOTENT.contains(&"chat_interrupt") && IDEMPOTENT.contains(&"chat_update"));
+        drop_chat(&a);
+    }
+
+    #[test]
+    fn writes_check_the_live_caller_before_the_handler() {
+        let a = test_chat("claude");
+        let before = WROTE.load(std::sync::atomic::Ordering::SeqCst);
+        let got = run(&scope_for(&a, "ns-8"), "test_write", json!({})).unwrap();
+        assert_eq!(got, fail_result(&fail("parent_not_active", "The calling AI no longer owns an active chat run.")));
+        assert_eq!(WROTE.load(std::sync::atomic::Ordering::SeqCst), before, "handler not run");
+        a.set_running_for_test(true);
+        assert_eq!(run(&scope_for(&a, "ns-8"), "test_write", json!({})).unwrap()["isError"], false);
+        drop_chat(&a);
     }
 
     #[test]
