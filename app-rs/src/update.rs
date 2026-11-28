@@ -134,10 +134,23 @@ struct Release {
     page: String,
 }
 
-/// Latest published release, or None if there is not one.
-fn check() -> Result<Option<Release>, String> {
+/// What the latest release holds for this copy.
+enum Found {
+    /// no release, or none that can be read
+    Nothing,
+    /// a release with this system's file
+    Release(Release),
+    /// a release without a file for this system (a Mac or Linux copy never takes the Windows zip): named, not offered
+    NotForThisSystem { version: String, page: String },
+}
+
+/// The status of a newer release with no file for this system: the window says so, and the app keeps checking.
+pub const UNAVAILABLE: &str = "unavailable";
+
+/// Latest published release.
+fn check() -> Result<Found, String> {
     if UPDATE_REPO.is_empty() {
-        return Ok(None);
+        return Ok(Found::Nothing);
     }
     let mut resp = http(20)
         .get(format!("https://api.github.com/repos/{UPDATE_REPO}/releases/latest"))
@@ -146,26 +159,35 @@ fn check() -> Result<Option<Release>, String> {
         .call()
         .map_err(|e| e.to_string())?;
     let rel: Value = serde_json::from_str(&resp.body_mut().read_to_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    let assets = rel["assets"].as_array().cloned().unwrap_or_default();
-    let Some(asset) = pick_asset(&assets, this_build(), std::env::consts::ARCH) else {
-        return Ok(None);
+    Ok(release_of(&rel, this_build(), std::env::consts::ARCH, &format!("https://github.com/{UPDATE_REPO}/")))
+}
+
+/// What a release (GitHub's latest-release answer) holds for a build on a processor. Only files and pages of the
+/// project's own releases (`ours`) count.
+fn release_of(rel: &Value, build: Build, arch: &str, ours: &str) -> Found {
+    let Some(tag) = rel["tag_name"].as_str() else {
+        return Found::Nothing;
     };
-    let ours = format!("https://github.com/{UPDATE_REPO}/");
+    let version = tag.trim_start_matches(['v', 'V']).to_string();
+    let page = rel["html_url"].as_str().filter(|p| p.starts_with(ours)).unwrap_or("").to_string();
+    let assets = rel["assets"].as_array().cloned().unwrap_or_default();
+    let Some(asset) = pick_asset(&assets, build, arch) else {
+        return Found::NotForThisSystem { version, page };
+    };
     let url = asset["browser_download_url"].as_str().unwrap_or("").to_string();
-    if !url.starts_with(&ours) {
-        return Ok(None); // only ever download from the project's own releases
+    if !url.starts_with(ours) {
+        return Found::Nothing; // only ever download from the project's own releases
     }
     let digest = asset["digest"].as_str().unwrap_or("");
-    let page = rel["html_url"].as_str().filter(|p| p.starts_with(&ours)).unwrap_or("").to_string();
-    Ok(Some(Release {
-        version: rel["tag_name"].as_str().unwrap_or("").trim_start_matches(['v', 'V']).to_string(),
+    Found::Release(Release {
+        version,
         url,
         name: asset["name"].as_str().unwrap_or("").to_string(),
         size: asset["size"].as_u64().unwrap_or(0),
         sha256: digest.strip_prefix("sha256:").unwrap_or("").to_string(),
         notes: rel["body"].as_str().unwrap_or("").trim().chars().take(1200).collect(),
         page,
-    }))
+    })
 }
 
 /// The version that is downloaded and waiting to be installed, if any.
@@ -426,7 +448,15 @@ pub fn run(download_too: Option<bool>) {
     set("status", json!("checking"));
     set("error", json!(""));
     let outcome: Result<&str, String> = (|| {
-        let info = check()?;
+        let info = match check()? {
+            Found::Release(r) => Some(r),
+            Found::NotForThisSystem { version, page } if newer(&version, VERSION) => {
+                set("latest", json!(version));
+                set("page", json!(page));
+                return Ok(UNAVAILABLE);
+            }
+            _ => None,
+        };
         let Some(info) = info.filter(|i| newer(&i.version, VERSION)) else {
             if staged_version().is_some_and(|v| !newer(&v, VERSION)) {
                 clear_stage();
@@ -519,6 +549,26 @@ mod tests {
         assert_eq!(picked(&all, Build::LinuxAppImage, "aarch64").as_deref(), Some("Fridae-linux-aarch64.AppImage"));
         assert_eq!(picked(&all, Build::LinuxTar, "x86_64").as_deref(), Some("Fridae-linux-x86_64.tar.gz"));
         assert_eq!(picked(&all, Build::LinuxTar, "aarch64"), None, "no .tar.gz for this processor: nothing, never another's");
+    }
+
+    #[test]
+    fn a_release_without_this_systems_file_is_named_not_offered() {
+        let ours = "https://github.com/me/app/";
+        let rel = json!({"tag_name": "v9.9.9", "html_url": "https://github.com/me/app/releases/tag/v9.9.9",
+                         "assets": [{"name": "Fridae.zip", "browser_download_url": "https://github.com/me/app/releases/download/v9.9.9/Fridae.zip", "size": 5}]});
+        for build in [Build::Mac, Build::LinuxAppImage, Build::LinuxTar] {
+            match release_of(&rel, build, "x86_64", ours) {
+                Found::NotForThisSystem { version, page } => {
+                    assert_eq!(version, "9.9.9");
+                    assert_eq!(page, "https://github.com/me/app/releases/tag/v9.9.9");
+                }
+                _ => panic!("{build:?}: the Windows zip is never offered"),
+            }
+        }
+        assert!(matches!(release_of(&rel, Build::Windows, "x86_64", ours), Found::Release(r) if r.name == "Fridae.zip" && r.version == "9.9.9"));
+        assert!(matches!(release_of(&json!({"tag_name": "v1", "assets": []}), Build::Windows, "x86_64", ours), Found::NotForThisSystem { .. }));
+        assert!(matches!(release_of(&json!({}), Build::Mac, "x86_64", ours), Found::Nothing), "no release at all");
+        assert_eq!(UNAVAILABLE, "unavailable");
     }
 
     #[test]

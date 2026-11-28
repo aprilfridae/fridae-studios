@@ -11,6 +11,8 @@ export function About() {
   const texts: Record<string, string> = {
     idle: "Version " + (status.version || ""), checking: "Checking for updates...", current: "Version " + (status.version || "") + " is the newest.",
     available: "Version " + u.latest + " is available." + (u.can_install ? " Press Check now to download it." : " Download it from the releases page" + (u.page ? ": press Open releases page." : ".")),
+    /* a newer release with no file for this system (a Mac or Linux copy never takes the Windows one) */
+    unavailable: "Version " + u.latest + " is out, but this update isn't available for your system yet. The app keeps checking.",
     downloading: "Downloading version " + u.latest + " (" + Math.round((u.progress || 0) * 100) + "%)",
     ready: "Version " + u.latest + " is downloaded. It installs the next time the app starts, or now if you press Restart to update.",
     error: "Could not check for updates: " + (u.error || "no connection"),
