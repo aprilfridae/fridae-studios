@@ -364,6 +364,11 @@ fn lower_first(s: &str) -> String {
 /// done, failed or declined). `Err` is a JSON-RPC error: -32601 unknown tool, -32602 bad arguments.
 pub fn call_tool(scope: &keys::Scope, name: &str, args: Value, cancelled: &AtomicBool, exposure: exposure::Mode) -> Result<Value, (i64, String)> {
     let def = registry().into_iter().find(|d| d.name == name).ok_or_else(|| (-32601, format!("Unknown tool: {name}")))?;
+    // tool_call is the named tool's call: its answer, row and errors are that tool's (Task 3's ruling: a handler's
+    // answer would be wrapped a second time)
+    if def.name == exposure::TOOL_CALL {
+        return exposure::call(scope, args, cancelled, exposure);
+    }
     let args = match args {
         Value::Null => Map::new(),
         Value::Object(m) => m,
