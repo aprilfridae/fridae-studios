@@ -6132,9 +6132,10 @@ fn sort_for(agent_id: &str, project: Option<&str>) -> &'static str {
 }
 
 fn mcp_servers(agent_id: &str, agent_name: &str, project: Option<&str>, role: Option<&str>) -> Value {
-    #[allow(unused_mut)]
     // Roblox Studio's server and the Roblox tools only for a Roblox project (`projects::is_game`)
     let roblox = roblox_for(agent_id, project);
+    // changed only by the debug-build stand-ins below
+    #[allow(unused_mut)]
     let mut servers = mcp_servers_with(agent_id, agent_name, project, role, no_studio(), roblox);
     // FRIDAE_STUDIO_STANDIN=<a Python script> (testing only, debug builds only): a stand-in tool server under the
     // name Roblox Studio's has, for a copy of the app that must not reach the user's Studio (FRIDAE_NO_STUDIO)
@@ -9945,7 +9946,7 @@ FRIDAE_MCP_AUTHORIZATION=Bearer {raw}")}));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("home")).unwrap();
         let w = crate::app_mcp::Wire { url: format!("http://127.0.0.1:{port}/mcp"), raw: "probe123".into(), deferred: false };
-        let mut cmd = codex::command(&paths::find_codex().expect("codex installed"), &dir, &json!({}), None, None, None, false, Some(&w));
+        let cmd = codex::command(&paths::find_codex().expect("codex installed"), &dir, &json!({}), None, None, None, false, Some(&w));
         let mut args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
         let at = args.iter().position(|a| a == "-").unwrap();
         let provider = [
