@@ -33,3 +33,10 @@ body.mac-frame .mark span { display: none; }
 .mac-ctl.off:not(:hover) .mac-b { background: #4a4a4d; box-shadow: none; }
 .mac-b:focus-visible { outline-offset: 2px; }
 body.win-full .mac-ctl { display: none; }
+/* Settings and Usage start below the window's buttons: at a large text size the window's own gap round them is
+   smaller than the buttons' row, and their corner ran under the buttons */
+body.mac-frame:not(.win-full) .modal, body.framed .modal { top: 48px; bottom: 24px; height: min(960px, calc(100% - 72px)); }
+/* where they fill the window (a narrow window, or large text), the same: from below the buttons to the bottom */
+@media (max-width: 760px) {
+  body.mac-frame:not(.win-full) .modal, body.framed .modal { top: 48px; bottom: 0; height: calc(100% - 48px); border-top: 1px solid var(--line); }
+}

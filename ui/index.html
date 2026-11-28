@@ -74,6 +74,17 @@ input, select, textarea { font: inherit; color: inherit; }
 .body > .main, .scroll > .col { animation: fade var(--t-mid) ease backwards; }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--text) 40%, transparent); } 50% { box-shadow: 0 0 0 5px transparent; } }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+/* small motion that says what changed: what a fold opens rises into place; a bar fills from its start; a pressed
+   square button gives a little; a picture shown large grows out of the dark. All of it is opacity and transform,
+   and less motion (the system setting) turns it off with the rest at the bottom of this sheet. */
+.moreinfo[open] > :not(summary), .pr-more[open] > :not(summary), .cv-gone[open] > :not(summary), .o-key[open] > p, .steps.done.open .step { animation: arrive var(--t-mid) var(--ease) backwards; }
+@keyframes grow-x { from { transform: scaleX(0); } }
+.lw-fill { transform-origin: left center; animation: grow-x 520ms var(--ease) backwards; }
+.icon { transition: background-color 140ms ease, color 140ms ease, transform var(--t-fast) var(--ease); }
+.icon:active { transform: scale(0.94); }
+.chip:active { background: var(--press); }
+.light img { transform: scale(0.97); transition: transform var(--t-slow) var(--ease); }
+.light.on img { transform: none; }
 
 /* ---------- shared controls ---------- */
 .pill { height: var(--h-m); padding: 0 16px; border-radius: 999px; font-size: 13px; background: var(--hover); border: 1px solid var(--line); white-space: nowrap; transition: background-color var(--t-fast) ease, border-color var(--t-fast) ease, transform var(--t-fast) var(--ease), opacity var(--t-mid) ease; }
@@ -1962,12 +1973,16 @@ async function refresh() { try { status = await api("/api/status");
   const offered = (status.ai || {}).offered; if (Array.isArray(offered)) AIS = ALL_AIS.filter((a) => offered.includes(a[0]));
   statusToStore(true);
   sideToStore(); paintSettingsNote(); paintNeeds(); fridaeDo((f) => f.chat.refreshed()); } catch (e) {} }
-/* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. */
+/* Text size: the whole window scales, so everything stays in proportion. Remembered on this computer. In the app the
+   window zooms its web view (like a browser's own zoom), so the page lays out for the narrower space it then has and
+   its width rules (@media, @container) apply; scaling the page with CSS zoom left them reading the window's full
+   width, so at 150% two columns stayed side by side in room for one. A browser (the remote page) keeps CSS zoom. */
 let scale = 100;
 try { scale = Math.max(70, Math.min(200, parseInt(localStorage.getItem("scale") || "100", 10) || 100)); } catch (e) {}
 function setScale(v) {
   scale = Math.max(70, Math.min(200, Math.round(v / 5) * 5));
-  document.documentElement.style.zoom = scale / 100;
+  if (window.__fridaeZoom && window.ipc && window.ipc.postMessage) { document.documentElement.style.zoom = ""; window.ipc.postMessage("win:zoom|" + scale / 100); }
+  else document.documentElement.style.zoom = scale / 100;
   try { localStorage.setItem("scale", String(scale)); } catch (e) {}
   fridaeDo((f) => f.store.set({ scale }));
 }

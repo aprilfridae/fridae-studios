@@ -73,7 +73,7 @@ export function Remote() {
         {h && h.error && <p class="sr-status rm-error">{h.error}</p>}
       </SettingsRow>
       {on && h && h.port !== null && (
-        <SettingsRow id="set-remote-pair" title="Pairing" desc={"This computer is " + h.name + ", on port " + h.port + "."}
+        <SettingsRow id="set-remote-pair" title="Pairing" desc={(h.name && h.name !== "This computer" ? "This computer is " + h.name + ", on port " : "Your other computers reach this one on port ") + h.port + "."}
           ctl={h.code ? undefined : <Press cls="pill" onPress={() => load({ action: "code" })}>Pair a computer</Press>}
           after={h.code ? <Code code={h.code} /> : undefined} />
       )}

@@ -1,6 +1,6 @@
 /* Usage: the pop-up that opens upwards from the sidebar's foot, and the window. */
 /* the usage panel opens upwards from the sidebar's foot */
-.pop { position: fixed; z-index: 40; left: 8px; bottom: 56px; width: 320px; max-height: calc(100vh - 72px); overflow-y: auto; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
+.pop { position: fixed; z-index: 40; left: 8px; bottom: 56px; width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 72px); overflow-y: auto; padding: 8px; border-radius: var(--r-l); background: var(--raised); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
   opacity: 0; transform: translateY(4px); pointer-events: none; visibility: hidden; transition: opacity 140ms ease, transform 160ms var(--ease), visibility 0s 160ms; }
 .pop.on { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition: opacity 140ms ease, transform 160ms var(--ease); }
 .pop h5 { margin: 8px 8px 4px; font: 400 12px/1.4 var(--mono); letter-spacing: 0.01em; color: var(--faint); }
@@ -40,7 +40,7 @@ button.pname:hover { background: var(--hover); }
 .us-acct .us-err { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 12px; line-height: 1.5; color: var(--dim); }
 .us-acct .us-err svg { flex: none; margin-top: 2px; color: var(--warn); }
 .lw { display: grid; grid-template-columns: 176px minmax(0, 1fr) 112px; gap: 4px 16px; align-items: center; }
-.lw.compact { grid-template-columns: minmax(0, 132px) minmax(48px, 1fr) auto; gap: 2px 12px; }
+.lw.compact { grid-template-columns: minmax(0, 148px) minmax(48px, 1fr) auto; gap: 2px 12px; }
 .lw-name { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; line-height: 16px; }
 .lw-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
 .lw-name > b { flex: none; margin-left: auto; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }

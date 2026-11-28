@@ -9,6 +9,7 @@
    about five more, so it always comes to rest instead of drifting for ever. */
 import { store } from "../store";
 import { host } from "../host";
+import { cssZoom } from "../util";
 import { XP_IDLE, pageStart, xpOld, xpWhen } from "../sidebar/fold";
 import { isChat } from "../sidebar/model";
 import { bornAt, memberOf, splitExpert } from "../sidebar/team";
@@ -152,14 +153,20 @@ function step() {
    already scaled when the text size is not 100% (its offsetWidth never is), so the rectangle is compared with the
    offset width and brought to window px either way. Everything the graph draws and every pointer place goes
    through this, so names grow with the text size and a press lands on the node under it. */
+/* canvas px per page px: the display's density, times the text size (engines differ on whether the density already
+   counts a web view's zoom, so it is counted again, up to 4: drawn finer than the screen at worst, never blurred) */
+function sharp(density: number) {
+  const scale = store.get().scale, z = (scale > 0 ? scale : 100) / 100;
+  return cssZoom() !== 1 ? density * z : Math.min(4, Math.max(density, density * z));
+}
 function space() {
-  const el = cv!.parentNode as HTMLElement, r = el.getBoundingClientRect(), scale = store.get().scale, z = (scale > 0 ? scale : 100) / 100;
+  const el = cv!.parentNode as HTMLElement, r = el.getBoundingClientRect(), z = cssZoom();
   const ratio = el.offsetWidth ? r.width / el.offsetWidth : 1, scaled = Math.abs(ratio - z) <= Math.abs(ratio - 1), up = scaled ? 1 : z;
   return { z, left: r.left * up, top: r.top * up, width: r.width * up / z, height: r.height * up / z };
 }
 /* draw it once; true while the zoom is still easing towards the fit */
 function draw(now: number) {
-  const box0 = space(), dpr = (og.dpr = window.devicePixelRatio || 1) * box0.z, INK = host.ink() || "236,236,238";
+  const box0 = space(), dpr = sharp(og.dpr = window.devicePixelRatio || 1), INK = host.ink() || "236,236,238";
   if (!cv || !box0.width || !box0.height) return false;
   if (cv.width !== Math.round(box0.width * dpr) || cv.height !== Math.round(box0.height * dpr)) { cv.width = Math.round(box0.width * dpr); cv.height = Math.round(box0.height * dpr); }
   const c = cv.getContext("2d")!; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box0.width, box0.height);
@@ -170,16 +177,17 @@ function draw(now: number) {
   if (!og.mine && og.nodes.size && !og.drag) {
     /* fit: the middle of what there is goes to the middle of the space, at the zoom that keeps every node, and
        every name that always shows, inside it with a margin (held still while a node is dragged, so the picture
-       does not slide under the pointer) */
+       does not slide under the pointer). The margin keeps clear of the line over the top, the "?" in the corner
+       and a name under its node */
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const n of og.nodes.values()) { x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x); y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y); }
     const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
     let fit = 1.8;
     for (const n of og.nodes.values()) {
       let half = 12;
-      if (named(n)) { c.font = (n.kind === "project" ? "500 " : "") + px(n) + FONT; half = c.measureText(short(n)).width / 2 + 8; }
+      if (named(n)) { c.font = (n.kind === "project" ? "500 " : "") + px(n) + FONT; half = c.measureText(short(n)).width / 2 + 16; }
       if (Math.abs(n.x - mx) > 1) fit = Math.min(fit, (box0.width / 2 - half) / Math.abs(n.x - mx));
-      if (Math.abs(n.y - my) > 1) fit = Math.min(fit, (box0.height / 2 - 40) / (Math.abs(n.y - my) + radius(n)));
+      if (Math.abs(n.y - my) > 1) fit = Math.min(fit, (box0.height / 2 - 60) / (Math.abs(n.y - my) + radius(n)));
     }
     fit = Math.max(ZOOM_MIN, fit);
     const near = Math.abs(fit - og.zoom) < 0.002 && Math.abs(mx - og.cx) < 0.5 && Math.abs(my - og.cy) < 0.5;

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { api } from "../api";
 import { cell, store } from "../store";
 import { host } from "../host";
+import { cssZoom } from "../util";
 import { askDelete } from "./DeleteProject";
 import { renameProject } from "./Rename";
 import { machineOf } from "../remote/route";
@@ -35,7 +36,7 @@ export function ProjectMenu() {
   /* where: the pointer, or under what opened it; kept inside the window */
   useLayoutEffect(() => {
     const el = ref.current; if (!el || !m.on) return;
-    const z = store.get().scale / 100, at = m.at as any, r = at.getBoundingClientRect ? at.getBoundingClientRect() : null;
+    const z = cssZoom(), at = m.at as any, r = at.getBoundingClientRect ? at.getBoundingClientRect() : null;
     const x = (r ? r.left : at.x) / z, y = (r ? r.bottom + 4 : at.y) / z, w = el.offsetWidth, h = el.offsetHeight;
     el.style.left = Math.max(8, Math.min(x, innerWidth / z - w - 8)) + "px";
     el.style.top = Math.max(8, Math.min(y, innerHeight / z - h - 8)) + "px";

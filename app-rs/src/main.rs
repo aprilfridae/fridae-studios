@@ -83,6 +83,15 @@ enum Ui {
     ResizeTop,
     /// the Mac's green button, which the page draws: full screen, or back
     Full,
+    /// the text-size setting (1.0 is 100%): the web view's own zoom, so the page lays out for the narrower window it
+    /// now has (its width rules apply) and lines stay sharp, where scaling the page itself did neither
+    Zoom(f64),
+}
+
+/// "win:zoom|1.3" -> 1.3, kept to the setting's own range (70% to 200%)
+fn zoom_of(msg: &str) -> Option<f64> {
+    let z: f64 = msg.strip_prefix("win:zoom|")?.parse().ok()?;
+    if z.is_finite() { Some(z.clamp(0.7, 2.0)) } else { None }
 }
 
 fn window_icon() -> Option<Icon> {
@@ -268,7 +277,8 @@ fn main() {
     #[cfg(any(windows, target_os = "macos"))]
     let builder = {
         let proxy = event_loop.create_proxy();
-        let frame = if cfg!(windows) { "window.__fridaeFrame = true;" } else { "window.__fridaeFrame = 'mac';" };
+        // __fridaeZoom: this window zooms the page for the text-size setting (ui/index.html, setScale)
+        let frame = if cfg!(windows) { "window.__fridaeFrame = true; window.__fridaeZoom = true;" } else { "window.__fridaeFrame = 'mac'; window.__fridaeZoom = true;" };
         builder
             .with_initialization_script(frame)
             .with_ipc_handler(move |req: wry::http::Request<String>| {
@@ -279,7 +289,10 @@ fn main() {
                     "win:close" => Ui::Close,
                     "win:resize-top" => Ui::ResizeTop,
                     "win:full" => Ui::Full,
-                    _ => return,
+                    other => match zoom_of(other) {
+                        Some(z) => Ui::Zoom(z),
+                        None => return,
+                    },
                 };
                 let _ = proxy.send_event(ui);
             })
@@ -345,6 +358,9 @@ fn main() {
             Event::UserEvent(Ui::Full) => {
                 let full = window.fullscreen().is_some();
                 window.set_fullscreen(if full { None } else { Some(tao::window::Fullscreen::Borderless(None)) });
+            }
+            Event::UserEvent(Ui::Zoom(z)) => {
+                let _ = _webview.zoom(z);
             }
             Event::UserEvent(Ui::Minimize) => window.set_minimized(true),
             Event::UserEvent(Ui::Maximize) => window.set_maximized(!window.is_maximized()),

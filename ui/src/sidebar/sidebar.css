@@ -27,7 +27,8 @@ body.side-drag, body.side-drag * { cursor: col-resize !important; -webkit-user-s
 .proj .p-more { display: none; width: 20px; height: 20px; border-radius: 4px; place-items: center; color: var(--dim); }
 .proj:hover .p-more, .proj:focus-visible .p-more, .proj .p-more[aria-expanded="true"] { display: grid; }
 .proj .p-more:hover, .proj .p-more[aria-expanded="true"] { background: var(--press); color: var(--text); }
-.menu.ctx { position: fixed; left: 0; top: 0; bottom: auto; z-index: 45; width: 208px; padding: 4px; border-radius: var(--r-m); transform: none; }
+.menu.ctx { position: fixed; left: 0; top: 0; bottom: auto; z-index: 45; width: 208px; padding: 4px; border-radius: var(--r-m); transform: scale(0.97); transform-origin: top left; }
+.menu.ctx.on { transform: none; }
 .menu.ctx button { display: flex; align-items: center; width: 100%; height: var(--h-m); padding: 0 8px; border-radius: var(--r-s); font-size: 13px; text-align: left; color: var(--text); }
 .menu.ctx button:hover, .menu.ctx button:focus-visible { background: var(--hover); outline: 0; }
 .menu.ctx button:active { background: var(--press); }

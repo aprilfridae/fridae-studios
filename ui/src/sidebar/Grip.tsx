@@ -2,7 +2,8 @@
    16px a press; Home and End go to the narrowest and the widest, Enter and a double press back to 232px. A narrow
    window sets its own width and hides the handle (sidebar.css). */
 import { useRef } from "preact/hooks";
-import { store, useStore } from "../store";
+import { useStore } from "../store";
+import { cssZoom } from "../util";
 import { BASE, MAX, MIN, setSideW, sideW } from "./width";
 
 export function Grip() {
@@ -11,7 +12,7 @@ export function Grip() {
     const grip = ref.current!;
     if (ev.button !== 0) return;
     ev.preventDefault(); grip.focus({ preventScroll: true });
-    const x0 = ev.clientX, w0 = sideW(), z = store.get().scale / 100;
+    const x0 = ev.clientX, w0 = sideW(), z = cssZoom();
     let moved = false;
     grip.classList.add("drag"); document.body.classList.add("side-drag");
     try { grip.setPointerCapture(ev.pointerId); } catch (e) {}

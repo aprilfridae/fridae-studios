@@ -2,7 +2,7 @@
    nothing while its rows fade, so the project's box and everything under it follow its lower edge as one, and
    nothing jumps when it ends. A list longer than what can be seen still eases over no more than what can be seen
    (the rest is under the sidebar's foot already). With less motion the list is simply there, or gone. */
-import { store } from "../store";
+import { cssZoom } from "../util";
 import { boxOf, grow, redraw, shrink } from "./fold";
 
 export const sideCalm = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -27,7 +27,7 @@ export function easeList(key: string, open: boolean, _addWas?: number | null) {
   if (sideCalm() || !box.animate || !inner) { gone(); return; }
   /* px of the page per px of the window (the text-size setting scales the page; engines differ on what a
      rectangle is measured in) */
-  const scale = store.get().scale, lr = list.getBoundingClientRect(), s = (scale > 0 ? scale : 100) / 100, ratio = list.offsetWidth ? lr.width / list.offsetWidth : 1, z = Math.abs(ratio - s) <= Math.abs(ratio - 1) ? s : 1;
+  const lr = list.getBoundingClientRect(), s = cssZoom(), ratio = list.offsetWidth ? lr.width / list.offsetWidth : 1, z = Math.abs(ratio - s) <= Math.abs(ratio - 1) ? s : 1;
   const br = box.getBoundingClientRect(), seen = (lr.bottom - br.top) / z;
   if (seen <= 0) { gone(); return; }   /* all of it is under the foot: nothing to see */
   const full = box.offsetHeight, tall = Math.min(full, Math.max(0, seen));

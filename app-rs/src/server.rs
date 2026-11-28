@@ -752,8 +752,14 @@ pub fn local() -> Option<(u16, String)> {
 }
 
 /// Start serving; returns the address of the page for the window to open.
+/// the page's own port, next to remote control's (47529, 47530); see start
+pub const PAGE_PORT: u16 = 47528;
+
 pub fn start(token: String) -> String {
-    let server = Arc::new(Server::http("127.0.0.1:0").expect("could not open a local port"));
+    // one fixed port when it is free, so the page keeps one address from launch to launch: what it remembers on this
+    // computer (text size, theme, the sidebar's width) is kept by the web view per address, and a new port each time
+    // forgot it all at every start. Any free port when that one is taken (a second copy, or another program).
+    let server = Arc::new(Server::http(("127.0.0.1", PAGE_PORT)).or_else(|_| Server::http("127.0.0.1:0")).expect("could not open a local port"));
     let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
     let _ = LOCAL.set((port, token.clone()));
     let url = format!("http://127.0.0.1:{port}/?t={token}");

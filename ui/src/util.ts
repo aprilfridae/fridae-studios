@@ -1,4 +1,8 @@
 /* Small things every screen words the same way. */
+/* How much CSS zoom scales the page: the text-size setting in a browser (the remote page). In the app the window
+   zooms its web view instead (ui/index.html, setScale), where every rectangle and pointer place is already in the
+   page's own px, so this is 1. */
+export function cssZoom() { return parseFloat(document.documentElement.style.zoom) || 1; }
 export function ago(ts: number) {
   const s = Date.now() / 1000 - ts;
   if (s < 90) return "just now";
