@@ -27,12 +27,13 @@ pub const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 pub const CODE_LEN: usize = 10;
 pub const PROOF_ROUNDS: u32 = 200_000;
 
-/// What the page is told where remote control cannot run (Linux, for now).
-pub const NOT_HERE: &str = "Only on Windows and Mac for now.";
+/// What the page is told where remote control cannot run (a system that is neither Windows nor Unix).
+pub const NOT_HERE: &str = "Only on Windows, Mac and Linux.";
 
 /// Whether this system can let other computers connect and pair with them: Windows (its key store, DPAPI and
 /// Schannel) and macOS (the Mac's own TLS, a key file only this user can read: see `remote_host::cert`).
-pub const SUPPORTED: bool = cfg!(any(windows, target_os = "macos"));
+/// Linux runs the Mac's code: native-tls is OpenSSL there, and the certificate is made by the system's openssl.
+pub const SUPPORTED: bool = cfg!(any(windows, unix));
 
 /// The folder for remote control's own files (identity, paired devices, saved computers): outside the work
 /// folder, the projects and the kit, so no AI is handed it. On a Mac or Linux only this user may open it.
