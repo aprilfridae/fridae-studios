@@ -1,6 +1,5 @@
-//! End-to-end checks of the toolbox: the real HTTP server, a caller chat with a key, and (once joined) the stdio
-//! bridge and each AI's launch pieces. Every test is `#[ignore]` because it needs Task 2's tools or Task 3's wiring;
-//! Task 6 removes the marks. Live per-AI checks cannot run under `cargo test` (test builds start no AI).
+//! End-to-end checks of the toolbox: the real HTTP server, a caller chat with a key, the stdio bridge and each AI's
+//! launch pieces. Live per-AI checks cannot run under `cargo test` (test builds start no AI).
 
 use super::{drop_chat, keys, test_chat};
 use serde_json::{Value, json};
@@ -50,9 +49,10 @@ fn tool_json(answer: &Value) -> Value {
 }
 
 #[test]
-#[ignore = "needs Task 2"]
 fn toolbox_over_http_end_to_end() {
-    let caller = test_chat("claude");
+    let _turn = super::tools::testing::serial();
+    // a caller running a turn in Full auto (a write needs a live caller; Full auto raises no card)
+    let caller = super::tools::testing::caller(true);
     let key = keys::global().prepare(&caller.id, &caller.ai(), false).raw;
     let (server, url) = local_server();
     let agent = client();
@@ -97,69 +97,89 @@ fn toolbox_over_http_end_to_end() {
 }
 
 #[test]
-#[ignore = "needs Task 3"]
 fn bridge_end_to_end() {
-    // Task 3's `bridge::run(input, output, &BridgeConfig, post)` takes an HTTP poster whose types do not exist before
-    // Task 3 lands, so the body is written in `bridge_end_to_end_body` below and compiled in at the join (Task 6).
-    panic!("Task 6: remove the cfg(any()) on bridge_end_to_end_body and call it from here");
-}
-
-#[cfg(any())] // Task 6: delete this line once Task 3's bridge is joined
-fn bridge_end_to_end_body() {
+    // the stdio bridge (`Fridae --mcp-bridge`, as Gemini's kept process starts it) over the real HTTP server
+    let _turn = super::tools::testing::serial();
     let caller = test_chat("claude");
     let key = keys::global().prepare(&caller.id, &caller.ai(), false).raw;
     let (server, url) = local_server();
-    let agent = client();
     let cfg = super::bridge::BridgeConfig { endpoint: url, authorization: format!("Bearer {key}"), exposure: None };
-    // Task 3's poster: forwards each line to the server over `agent`, returns the status, headers and body.
-    let post = |c: &super::bridge::BridgeConfig, h: &super::bridge::Headers, body: &str| -> Result<super::bridge::HttpAnswer, String> {
-        let _ = (c, h, body, &agent);
-        Err("adapt to Task 3's Headers and HttpAnswer".into())
-    };
     let input = [
         init_message().to_string(),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string(),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}).to_string(),
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"chat_list","arguments":{}}}).to_string(),
     ]
-    .join("\n");
+    .join("
+");
     let out: Arc<std::sync::Mutex<Vec<u8>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let code = super::bridge::run(std::io::Cursor::new(input), out.clone(), &cfg, &post);
+    let code = super::bridge::run(std::io::Cursor::new(input.into_bytes()), out.clone(), &cfg, &super::bridge::http_send);
     assert_eq!(code, 0);
     let text = String::from_utf8(out.lock().unwrap().clone()).unwrap();
-    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    // the bridge sends each line as it comes, so answers may arrive in any order: by id
+    let mut lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    lines.sort_by_key(|l| l["id"].as_i64());
+    assert_eq!(lines.len(), 3, "{text}");
     assert_eq!(lines[0]["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(lines[1]["result"]["tools"].as_array().unwrap().len(), 21);
-    assert_ne!(lines[2]["result"]["isError"], true);
+    assert_eq!(lines[1]["result"]["tools"].as_array().map(Vec::len), Some(21), "{text}");
+    assert_ne!(lines[2]["result"]["isError"], true, "{}", lines[2]);
+    assert!(tool_json(&lines[2]).to_string().contains(&caller.id), "chat_list names the caller");
+    assert!(!text.contains(&key), "the key never comes back");
     server.unblock();
     drop_chat(&caller);
 }
 
 #[test]
-#[ignore = "needs Task 3"]
 fn every_ai_gets_a_toolbox_entry() {
-    // For each of claude, chatgpt, opencode, gemini, cursor the launch pieces Task 3 builds (the Claude `--mcp-config`
-    // file, the Codex `-c` args, OpenCode's `servers_config`, ACP's `servers_param`) must name `fridae` and none may
-    // contain the raw key. Their builders are Task 3's and are not in this branch: enabled at the join (Task 6).
-    panic!("Task 6: remove the cfg(any()) on every_ai_gets_a_toolbox_entry_body and call it from here");
-}
-
-#[cfg(any())] // Task 6: delete this line once Task 3's wiring is joined
-fn every_ai_gets_a_toolbox_entry_body() {
+    // what each AI's launch is handed (the Claude `--mcp-config` file, the Codex `-c` args, OpenCode's
+    // servers_config, ACP's servers_param over HTTP and over the bridge) names `fridae` and never holds the raw key
+    let _turn = super::tools::testing::serial();
+    let work = std::path::PathBuf::from(std::env::var("TMP").unwrap_or_else(|_| std::env::temp_dir().display().to_string())).join(format!("fridae-e2e-wire-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::create_dir_all(&work).unwrap();
     for ai in ["claude", "chatgpt", "opencode", "gemini", "cursor"] {
         let chat = test_chat(ai);
-        let wire = super::wire_for(&chat.id, ai, false).expect("a wire");
+        let raw = keys::global().prepare(&chat.id, ai, false).raw;
+        let wire = super::Wire { url: "http://127.0.0.1:4567/mcp".into(), raw: raw.clone(), deferred: ai == "gemini" };
+        let none = json!({});
         let pieces: Vec<String> = match ai {
-            "claude" => vec![/* text of the written --mcp-config file, via Task 3's builder */],
-            "chatgpt" => vec![/* Codex `-c` args */],
-            "opencode" => vec![/* serde_json of servers_config(..) */],
-            _ => vec![/* serde_json of acp::servers_param(..) */],
+            "claude" => {
+                let mut servers = json!({});
+                servers[super::SERVER_NAME] = crate::agents::claude_toolbox_entry(&wire);
+                let file = crate::agents::write_mcp_config(&chat.id, &servers);
+                let text = std::fs::read_to_string(&file).unwrap();
+                let _ = std::fs::remove_file(&file);
+                assert!(text.contains("${FRIDAE_MCP_KEY}"), "{ai}: the placeholder");
+                vec![text]
+            }
+            "chatgpt" => {
+                let cmd = crate::codex::command(std::path::Path::new("codex"), &work, &none, None, None, None, false, Some(&wire));
+                let env: Vec<(String, String)> = cmd.get_envs().filter_map(|(k, v)| Some((k.to_string_lossy().to_string(), v?.to_string_lossy().to_string()))).collect();
+                assert!(env.contains(&("FRIDAE_MCP_KEY".to_string(), raw.clone())), "{ai}: the key travels in the environment");
+                let args = cmd.get_args().map(|a| a.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
+                let file = std::fs::read_to_string(work.join(".codex").join("config.toml")).unwrap_or_default();
+                assert!(!file.contains("mcp_servers.fridae") && !file.contains(&raw), "{ai}: nothing of the toolbox in the workspace's file");
+                vec![args]
+            }
+            "opencode" => vec![serde_json::to_string(&crate::opencode::servers_config(&chat.id, &none, &[], Some(&wire))).unwrap()],
+            _ => vec![
+                serde_json::to_string(&crate::acp::servers_param(&none, Some(&wire), true)).unwrap(),
+                serde_json::to_string(&crate::acp::servers_param(&none, Some(&wire), false)).unwrap(),
+            ],
         };
-        assert!(!pieces.is_empty(), "{ai}: fill in Task 3's builder");
         for p in &pieces {
-            assert!(p.contains(super::SERVER_NAME), "{ai}: no fridae entry");
-            assert!(!p.contains(&wire.raw), "{ai}: raw key leaked");
+            assert!(p.contains(super::SERVER_NAME), "{ai}: no fridae entry in {p}");
+            if matches!(ai, "claude" | "chatgpt") {
+                // a file in the app's folder and a command line: the key is only in the process's environment
+                assert!(!p.contains(&raw), "{ai}: raw key leaked");
+            } else {
+                // bodies handed over in memory (Fridae's own OpenCode server, the ACP pipe): the key only as the
+                // Authorization value
+                assert!(p.contains(&format!("Bearer {raw}")), "{ai}: the key is handed over");
+                assert!(!p.replace(&format!("Bearer {raw}"), "").contains(&raw), "{ai}: the key only as Authorization");
+            }
         }
         drop_chat(&chat);
     }
+    let _ = std::fs::remove_dir_all(&work);
 }

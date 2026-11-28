@@ -3935,7 +3935,7 @@ impl Agent {
                 // Allow/Don't card waits up to 10
                 let mut prompt = prompt.clone();
                 if let Some(w) = &toolbox {
-                    servers[crate::app_mcp::SERVER_NAME] = json!({"type": "http", "url": w.url, "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000});
+                    servers[crate::app_mcp::SERVER_NAME] = claude_toolbox_entry(w);
                     prompt += &crate::app_mcp::instructions::system_text();
                 }
                 let mut launch = ClaudeLaunch::new(&ClaudeSettings {
@@ -6241,7 +6241,12 @@ fn claude_rule(tool: &str, path: &str, dir: bool, windows: bool) -> String {
     format!("{tool}(/{posix}{})", if dir { "/**" } else { "" })
 }
 
-fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
+/// Claude Code's `--mcp-config` entry for the toolbox: its key is a placeholder Claude fills from `FRIDAE_MCP_KEY`.
+pub(crate) fn claude_toolbox_entry(w: &crate::app_mcp::Wire) -> Value {
+    json!({"type": "http", "url": w.url, "headers": {"Authorization": "Bearer ${FRIDAE_MCP_KEY}"}, "timeout": 3_900_000})
+}
+
+pub(crate) fn write_mcp_config(agent_id: &str, servers: &Value) -> std::path::PathBuf {
     // in a folder of its own, which no agent's file tools may write (paths::app_protected)
     let dir = PATHS.work.join("agent-tools");
     let _ = fs::create_dir_all(&dir);
