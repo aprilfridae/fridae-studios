@@ -10,6 +10,8 @@ import { copyText, sendApp } from "./compose";
 import { extOf, md } from "./md";
 import { keep } from "./keep";
 import { StartCard } from "./StartCard";
+import { AppCard } from "./AppCard";
+import { counted, known, openLink, wireChips, type Link } from "./appTools";
 
 const en = (x: { born: number }) => (fresh(x.born) ? " enter" : "");
 const FOLD = <svg width="9" height="9" viewBox="0 0 9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5l3 3-3 3" /></svg>;
@@ -24,11 +26,12 @@ function addCopy(node: Element, text: string) {
   node.appendChild(b);
 }
 /* the agent's words: markdown, made into markup when the words first come into view */
-function Prose({ pt }: { pt: Part }) {
+function Prose({ pt, from }: { pt: Part; from: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const b = ref.current!;
     b.innerHTML = pt.html || (pt.html = md(pt.text));
+    wireChips(b, from);
     addCopy(b, pt.text);
     b.querySelectorAll("pre").forEach((pre) => addCopy(pre, pre.textContent || ""));
   }, [pt]);
@@ -42,6 +45,35 @@ function Steps({ pt, row }: { pt: Part; row: Row }) {
     <div class={"steps" + (pt.done ? " done" : "") + (pt.open ? " open" : "")}>
       <button class="fold" onClick={() => { pt.open = !pt.open; partChanged(row, pt); }}>{FOLD}<span>{pt.done ? n + (n === 1 ? " step" : " steps") : ""}</span></button>
       {shown && pt.list.map((s: { t: string; born: number }, i: number) => <div class={"step" + (pt.live && i === n - 1 ? " live" : "") + en(s)}>{s.t}</div>)}
+    </div>
+  );
+}
+/* A chat or project an app toolbox call named: a chip that opens it, or its name in plain words when the page does
+   not know it (the same element md.ts makes for links in the agent's words) */
+function AppChip({ l, from }: { l: Link; from: string }) {
+  if (!known(l.kind, l.id, from)) return <span class="app-link plain">{l.title}</span>;
+  const data = l.kind === "chat" ? { "data-chat": l.id } : { "data-project": l.id };
+  return <a class="chip app-link" href="#" {...data} onClick={(ev) => { ev.preventDefault(); openLink(l.kind, l.id, from); }}>{l.title}</a>;
+}
+/* One call to the app toolbox: Fridae's mark, what it is doing or did (T3 Code's tool row words, made by the app),
+   and the chats and projects it named. One that failed or was declined says so in the error words' colour. */
+function AppTool({ pt, from }: { pt: Part; from: string }) {
+  return (
+    <div class={"app-tool " + pt.status + en(pt)}>
+      <img class="at-mark" src="/logo.png" alt="" width={12} height={12} />
+      <span class="at-label">{pt.label}</span>
+      {(pt.links || []).map((l: Link) => <AppChip l={l} from={from} />)}
+    </div>
+  );
+}
+/* a finished turn's run of the same calls: one counted line ("Renamed 2 projects") that opens to each */
+function AppGroup({ pt, row, from }: { pt: Part; row: Row; from: string }) {
+  return (
+    <div class={"app-tool group" + (pt.open ? " open" : "") + en(pt)}>
+      <button class="at-fold" aria-expanded={pt.open ? "true" : "false"} onClick={() => { pt.open = !pt.open; partChanged(row, pt); }}>
+        <img class="at-mark" src="/logo.png" alt="" width={12} height={12} /><span class="at-label">{counted(pt)}</span>{FOLD}
+      </button>
+      {pt.open && <div class="at-items">{pt.items.map((x: Part) => <AppTool pt={x} from={from} />)}</div>}
     </div>
   );
 }
@@ -143,7 +175,10 @@ const PartView = keep(function PartView({ pt, row }: { pt: Part; row: Row; v: nu
   const p = row.p;
   switch (pt.k) {
     case "steps": return <Steps pt={pt} row={row} />;
-    case "prose": return <Prose pt={pt} />;
+    case "prose": return <Prose pt={pt} from={p.id || ""} />;
+    case "appcard": return <AppCard pt={pt} row={row} p={p} />;
+    case "apptool": return <AppTool pt={pt} from={p.id || ""} />;
+    case "appgroup": return <AppGroup pt={pt} row={row} from={p.id || ""} />;
     case "tag": return <span class={"tag" + en(pt)}>{pt.text}</span>;
     case "xp": return <XpLink x={pt.x} />;
     case "tex": return <Texture pt={pt} row={row} />;

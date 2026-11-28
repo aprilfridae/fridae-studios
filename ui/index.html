@@ -1001,6 +1001,8 @@ function applyTheme() {
   root.style.colorScheme = dark ? "dark" : "light";
   root.dataset.appearance = dark ? "dark" : "light"; root.dataset.theme = themeChoice.id;
   window.dispatchEvent(new Event("themechange"));
+  /* the app is told which theme the window shows (the AI's theme_read reads it), at load and on every change */
+  try { fetch("/api/theme-now", { method: "POST", headers: { "X-Token": new URLSearchParams(location.search).get("t") || "", "Content-Type": "application/json" }, body: JSON.stringify({ id: themeChoice.id, mode: themeChoice.mode }) }).catch(() => {}); } catch (e) {}
 }
 function setTheme(next) {
   themeChoice = { id: THEMES[next.id] ? next.id : themeChoice.id, mode: next.mode || themeChoice.mode };
@@ -1453,6 +1455,17 @@ function onEvent(e) {
   if (e.kind === "review") { onReviewItem(e); return; }
   if (e.kind === "studio_run") { onStudioRun(e); return; }
   if (e.kind === "swarm") { swarmSoon(e.lead); return; }   /* a Lead's team board changed: its newer lines are asked for */
+  /* an AI changed something of the app's with the app toolbox: the page reads it again, as after a click of its own
+     (only for what happens now: the events read back at load are history) */
+  if (e.kind === "projects_changed") { if (e.id > bootMark) loadProjects(); return; }
+  if (e.kind === "settings_changed" || e.kind === "accounts_changed") { if (e.id > bootMark) refresh(); return; }
+  if (e.kind === "theme_set") {
+    if (e.id > bootMark) {
+      const id = THEMES[e.themeId] ? e.themeId : themeChoice.id, mode = ["light", "dark", "system"].includes(e.appearance) ? e.appearance : themeChoice.mode;
+      if (id !== themeChoice.id || mode !== themeChoice.mode) { setTheme({ id, mode }); fridaeDo((f) => f.store.set({ theme: Object.assign({}, themeChoice) })); }
+    }
+    return;
+  }
   if (!e.agent) return;
   if (e.kind === "agent_removed") {
     const p = agents.get(e.agent); if (!p) return;

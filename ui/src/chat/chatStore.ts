@@ -15,6 +15,7 @@ import { C, modelsFor } from "./compose";
 const ocName = (name: string) => { const [g, r] = name.split(" · "); return r && (r.startsWith(g) || g === "Other") ? r : name; };
 import { replyOver } from "../remote/move";
 import { accountWord } from "./AccountChip";
+import { foldAppTools, isAppTool } from "./appTools";
 
 export type Part = { id: number; k: string; v: number; born: number; [more: string]: any };
 export type Row = { id: number; k: string; v: number; born: number; on?: () => void; h?: number; [more: string]: any };
@@ -257,6 +258,28 @@ export function event(p: any, e: any): string | void {
     if (e.fallback) put(tl, mk("tag", { text: e.fallback }));
     /* which model ran and why, when that is not what was set (from the app: one line, two short sentences at most) */
     if (e.model_note) put(tl, mk("tag", { text: e.model_note }));
+  } else if (e.kind === "appcard") {
+    /* the app toolbox asks before an AI changes something of the app's (app-rs/src/app_mcp/card.rs): a card that
+       holds the AI's call until it is answered here. In a chat put back from its log nobody is waiting on it any more */
+    const pt = add(p, part("appcard", { card: e.card, title: e.title || "", text: e.text || "", allow: e.allow || "Allow", said: "", sent: false, shut: !!p.replay, last: p.last, now: p.now }));
+    pt.row = p.turn; p.asks = p.asks || {}; p.asks[e.card] = pt;
+    if (!pt.shut) { p.now = "Waiting for you"; p.last = "Needs you"; }
+  } else if (e.kind === "appcard_done") {
+    const pt = p.asks && p.asks[e.card];
+    if (pt) {
+      pt.said = e.outcome || "cancelled"; partChanged(pt.row, pt); delete p.asks[e.card];
+      if (p.last === "Needs you") p.last = pt.last;
+      if (p.now === "Waiting for you") p.now = pt.now;
+    }
+  } else if (e.kind === "apptool") {
+    /* a call to the app toolbox: one line, put where it began and changed in place as it goes on */
+    p.appCalls = p.appCalls || {};
+    const was = p.appCalls[e.call], more = { status: e.status, label: e.label || "", summary: e.summary || null, links: Array.isArray(e.links) ? e.links : [] };
+    if (was && was.row && was.row.parts.includes(was)) { Object.assign(was, more); partChanged(was.row, was); }
+    else { const pt = add(p, part("apptool", { call: e.call, ...more })); pt.row = p.turn; p.appCalls[e.call] = pt; }
+    if (e.status === "running") p.now = e.label || p.now;
+  } else if (e.kind === "tool" && isAppTool(e.label)) {
+    /* the AI's own step line for a call to the app toolbox: the call's row says it */
   } else if (e.kind === "tool") {
     const s = steps(p), t = p.turn as Row;
     s.list.push({ t: e.label, born: performance.now() }); s.live = true; s.v++; touch(t);
@@ -318,7 +341,8 @@ export function event(p: any, e: any): string | void {
       if (p.undoRow && p.undoRow.undo && !p.undoRow.undo.said) { p.undoRow.undo = null; touch(p.undoRow); }
       t.undo = { text: "Undo this turn in Studio", said: false }; p.undoRow = t;
     }
-    settle(p); p.busy = false; p.now = ""; p.turn = null;
+    if (t) { const folded = foldAppTools(t.parts, part); if (folded.length !== t.parts.length) { t.parts = folded; t.steps = null; } }
+    settle(p); p.busy = false; p.now = ""; p.turn = null; p.appCalls = {};
   }
   if (p.q && p.q.items.length && tl.rows[tl.rows.length - 1] !== p.q) toEnd(tl, p.q);   /* waiting messages stay last */
   /* an expert: the dot on its line in the chat that started it */
