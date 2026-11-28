@@ -28,6 +28,8 @@ Code's source at `H:/t3code-ref` (commit 9ceb8bfb, MIT, Copyright (c) 2026 T3 To
 notes: `.superpowers/handoff/part1-design.md` … `part4-tools-and-diffs.md`.
 
 ## Global Constraints
+- **Universal (user rule, 2026-11-27):** every piece works on Windows, macOS and Linux. Anything OS-specific gets a path for each (`cfg(windows)`, `cfg(target_os = "macos")`, Linux via `cfg(target_os = "linux")`/`cfg(unix)`), with no silent do-nothing stubs. Code that cannot be run here must at least compile for each target where the toolchain allows (`cargo check --offline --target x86_64-unknown-linux-gnu` if that target is installed) and be written to the same behaviour.
+
 
 - Build with `cargo --offline`. **No new crates.** Use what `app-rs/Cargo.toml` already lists: `serde_json`,
   `sha2`, `getrandom`, `base64`, `tiny_http`, `ureq`, `regex`. `serde` derive is in Cargo.lock only transitively: do
