@@ -889,19 +889,18 @@ body:not(.promos):not(.newproj):not(.review):not(.all) .stage:has(.main > .headf
 .hf-tab > svg:not(.tab-shape) { position: relative; transition: transform 280ms var(--ease); }
 .headfold.out .hf-tab > svg:not(.tab-shape) { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .headfold, .hf-in > *, .hf-tab, .hf-tab > svg { transition: none; } }
-/* projects in a pull-down bar (Overview's, Review's): pills side by side in one row that scrolls sideways when they do
-   not fit (no scroll bar shown), so the bar is one row high however many there are. The name and a few quiet words; the
-   chosen one, where there is one, in the selected colour. The first pill's words line up with the title over them (the
-   row is in by the pill's own padding less) */
-.fold-pills { display: flex; gap: 4px; margin: 0; padding: 0 12px; list-style: none; overflow-x: auto; scrollbar-width: none; }
+/* projects in a pull-down bar (Overview's, Review's): names side by side in one row that scrolls sideways when they do
+   not fit (no scroll bar shown), so the bar is one row high however many there are. Plain words, no boxes: each name
+   and a few quiet words, underlined while the pointer is on it; the chosen one, where there is one, in full white */
+.fold-pills { display: flex; gap: 20px; margin: 0; padding: 0 24px; list-style: none; overflow-x: auto; scrollbar-width: none; }
 .fold-pills::-webkit-scrollbar { display: none; }
 .fold-pills[hidden] { display: none; }
 .fold-pills li { flex: none; }
-.fp { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; margin: 0; border: 0; border-radius: var(--r-s);
-  background: none; font-size: 13px; font-weight: 400; white-space: nowrap; color: var(--dim); transition: background-color var(--t-fast) ease, color var(--t-fast) ease; }
-.fp:hover { color: var(--text); background: var(--hover); }
+.fp { display: inline-flex; align-items: baseline; gap: 8px; height: 28px; line-height: 28px; padding: 0; margin: 0; border: 0; border-radius: 0;
+  background: none; font-size: 13px; font-weight: 400; white-space: nowrap; color: var(--dim); text-underline-offset: 3px; transition: color var(--t-fast) ease; }
+.fp:hover { color: var(--text); background: none; text-decoration: underline; }
 .fp.live, .fp[aria-selected="true"] { color: var(--text); }
-.fp[aria-selected="true"] { font-weight: 500; background: var(--press); }
+.fp[aria-selected="true"] { font-weight: 500; }
 .fp small { font-size: 12px; font-weight: 400; color: var(--dim); }
 .main > .scroll { grid-row: 2 / 4; grid-column: 1; padding-bottom: calc(var(--dock-h, 112px) + 12px); scroll-padding-bottom: calc(var(--dock-h, 112px) + 12px); }
 .main > .dock { grid-row: 3; grid-column: 1; z-index: 2; align-self: end; pointer-events: none; }

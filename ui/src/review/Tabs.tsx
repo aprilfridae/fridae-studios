@@ -1,5 +1,5 @@
 /* The projects with something waiting, side by side in one row that scrolls sideways: each its name, the one in
-   front in the selected colour. Pressing one shows that project's things. The arrow keys, Home and End go from project to project. */
+   front brighter. Pressing one shows that project's things. The arrow keys, Home and End go from project to project. */
 import { useEffect, useRef } from "preact/hooks";
 
 type Tab = { path: string; name: string; n: number; things: unknown[] };
