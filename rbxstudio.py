@@ -36,12 +36,17 @@ class StudioError(KitError):
     pass
 
 
-STUDIO_OFF = "Studio is off for this run (FRIDAE_NO_STUDIO is set): nothing reads or changes a Roblox Studio place."
+from rbxpaths import NO_STUDIO_HERE, STUDIO_HERE
+
+# what every Studio tool answers when it may not or cannot reach Studio: on Linux, that Studio has no Linux version
+STUDIO_OFF = ("Studio is off for this run (FRIDAE_NO_STUDIO is set): nothing reads or changes a Roblox Studio place."
+              if STUDIO_HERE else NO_STUDIO_HERE)
 
 
 def studio_off():
-    """True when the app was started with FRIDAE_NO_STUDIO: no tool may reach an open Studio place."""
-    return bool(os.environ.get("FRIDAE_NO_STUDIO"))
+    """True when the app was started with FRIDAE_NO_STUDIO (no tool may reach an open Studio place), and always on
+    Linux, where Roblox Studio does not run."""
+    return bool(os.environ.get("FRIDAE_NO_STUDIO")) or not STUDIO_HERE
 
 
 def launcher():

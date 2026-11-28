@@ -31,7 +31,7 @@ def app_data_dir(plat=None, env=None, home=None):
         return os.path.join(home, "Library", "Application Support", "Fridae Studios")
     if plat == "win32":
         return os.path.join(env.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "Fridae Studios")
-    return os.path.join(env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "fridae-studios")
+    return os.path.join(env.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"), "Fridae Studios")
 
 
 def _tree_size(root):
@@ -106,7 +106,11 @@ def _platform_key(plat=None, machine=None):
         return "win-x64", "zip"
     if plat == "darwin" and arch in ("arm64", "x64"):
         return "darwin-" + arch, "tar.gz"
-    raise EngineError(f"The promo maker supports Windows 10/11 (64-bit) and macOS 12+, not {plat} on {machine}.")
+    # Linux: Node's linux tarballs; Remotion's compositor-linux-*-gnu package (in package-lock.json) brings ffmpeg, and
+    # its headless browser has a linux64 build
+    if plat.startswith("linux") and arch in ("arm64", "x64"):
+        return "linux-" + arch, "tar.gz"
+    raise EngineError(f"The promo maker supports Windows 10/11 (64-bit), macOS 12+ and 64-bit Linux, not {plat} on {machine}.")
 
 
 def node_url(plat=None, machine=None, version=None):
@@ -331,11 +335,13 @@ def _binary(name):
 
 
 def tool_env():
-    """Environment for running ffmpeg/ffprobe: on macOS they find their libav*.dylib files only via this path."""
+    """Environment for running ffmpeg/ffprobe: on macOS and Linux they find their libav* libraries (beside them in the
+    compositor package) only via the loader's path: DYLD_LIBRARY_PATH on a Mac, LD_LIBRARY_PATH on Linux."""
     env = dict(os.environ)
     folder = _compositor_dir()
-    if folder:
-        env["DYLD_LIBRARY_PATH"] = folder + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
+    if folder and os.name != "nt":  # Windows finds the DLLs beside the program
+        var = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+        env[var] = folder + (os.pathsep + env[var] if env.get(var) else "")
     return env
 
 

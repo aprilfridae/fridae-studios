@@ -72,14 +72,17 @@ def build_animation(data, out):
 def stage(path):
     """Copy a .rbxmx into this computer's Studio content folder so Studio can
     load it locally with game:GetObjects (no upload). Returns the rbxasset url."""
-    import glob, shutil
-    base = os.path.expandvars(r"%LOCALAPPDATA%\Roblox\Versions")
-    hits = [d for d in glob.glob(os.path.join(base, "*")) if os.path.exists(os.path.join(d, "RobloxStudioBeta.exe"))]
-    if not hits:
+    import shutil
+    import rbxpaths
+    content = rbxpaths.studio_content_dir()
+    if not content:
         return None
-    dest = os.path.join(max(hits, key=os.path.getmtime), "content", "rbxkit")
-    os.makedirs(dest, exist_ok=True)
-    shutil.copyfile(path, os.path.join(dest, os.path.basename(path)))
+    dest = os.path.join(content, "rbxkit")
+    try:
+        os.makedirs(dest, exist_ok=True)
+        shutil.copyfile(path, os.path.join(dest, os.path.basename(path)))
+    except OSError:
+        return None  # a Studio folder this user cannot write to (a Mac's app installed by another account)
     return "rbxasset://rbxkit/" + os.path.basename(path)
 
 
