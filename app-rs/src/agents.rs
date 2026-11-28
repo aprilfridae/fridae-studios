@@ -3101,7 +3101,9 @@ impl Agent {
         self.st.lock().unwrap().log.iter().any(is_user)
     }
 
-    pub fn put(&self, kind: &str, data: Value) {
+    pub fn put(&self, kind: &str, mut data: Value) {
+        // no toolbox key in anything a chat shows or keeps (an agent's shell can print its environment)
+        crate::app_mcp::keys::global().redact_value(&mut data);
         let mut ev = data.as_object().cloned().unwrap_or_default();
         let mut shown = ev.clone();
         shown.insert("agent".into(), json!(self.id));
@@ -8154,6 +8156,26 @@ mod tests {
     }
 
     /// A chat as the rollover tests begin: one exchange in a conversation on the user's own account.
+    #[test]
+    fn a_toolbox_key_never_reaches_chat_events() {
+        // an agent's shell tool can print its environment (FRIDAE_MCP_KEY): what the chat shows and keeps is redacted
+        let a = Agent::detached_for_test("c-key-in-text", None);
+        let raw = crate::app_mcp::keys::global().prepare(&a.id, "claude", false).raw;
+        let n = BUS.after(0, 0.0).len();
+        a.put("text", json!({"text": format!("Here is env:
+FRIDAE_MCP_KEY={raw}
+FRIDAE_MCP_AUTHORIZATION=Bearer {raw}")}));
+        a.put("tool", json!({"label": format!("Running env {raw}")}));
+        let shown: Vec<Value> = BUS.after(n, 0.0).into_iter().filter(|e| e["agent"] == a.id.as_str()).collect();
+        assert_eq!(shown.len(), 2);
+        let log = serde_json::to_string(&a.st.lock().unwrap().log).unwrap();
+        for text in [serde_json::to_string(&shown).unwrap(), log] {
+            assert!(!text.contains(&raw), "{text}");
+            assert!(text.contains("Bearer [redacted]"), "{text}");
+        }
+        crate::app_mcp::keys::global().revoke_chat(&a.id);
+    }
+
     fn chat_on_first(id: &str) -> Arc<Agent> {
         let a = Agent::detached_for_test(id, None);
         a.put("user", json!({"text": "Make a door"}));

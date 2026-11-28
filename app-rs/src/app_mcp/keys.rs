@@ -81,7 +81,16 @@ struct Inner {
     by_hash: HashMap<String, Record>,
     /// chat → its live credential's scope and raw key (memory only).
     live: HashMap<String, (Scope, String)>,
+    /// Raw keys revoked lately (memory only, the newest `RETIRED` of them): a kept AI process holds its key until it
+    /// is replaced, and anything it prints is still redacted.
+    retired: std::collections::VecDeque<String>,
 }
+
+/// How many revoked keys are still redacted.
+const RETIRED: usize = 64;
+
+/// What a key is shown as in anything a chat shows or keeps.
+pub const REDACTED: &str = "[redacted]";
 
 /// Every chat's toolbox key. One lock around the whole map, so `prepare` is serialised per chat (and across chats).
 pub struct Registry {
@@ -180,7 +189,30 @@ impl Registry {
     pub fn revoke_all(&self) {
         let mut inner = self.lock();
         inner.by_hash.clear();
-        inner.live.clear();
+        let raws: Vec<String> = inner.live.drain().map(|(_, (_, raw))| raw).collect();
+        for raw in raws {
+            retire(&mut inner, raw);
+        }
+    }
+
+    /// `text` with every live or lately revoked key replaced by `REDACTED` ("Bearer <key>" becomes
+    /// "Bearer [redacted]"); None when it holds none. An agent's shell tools inherit `FRIDAE_MCP_KEY`, so whatever it
+    /// prints passes through here before a chat shows or keeps it.
+    #[cfg(test)]
+    pub fn redact(&self, text: &str) -> Option<String> {
+        let raws = self.raws();
+        redact_with(&raws, text)
+    }
+
+    /// Every string in `v` redacted in place (see `redact`); true when anything changed.
+    pub fn redact_value(&self, v: &mut serde_json::Value) -> bool {
+        let raws = self.raws();
+        !raws.is_empty() && redact_value_with(&raws, v)
+    }
+
+    fn raws(&self) -> Vec<String> {
+        let inner = self.lock();
+        inner.live.values().map(|(_, raw)| raw.clone()).chain(inner.retired.iter().cloned()).filter(|r| !r.is_empty()).collect()
     }
 
     #[cfg(test)]
@@ -191,7 +223,43 @@ impl Registry {
 
 fn revoke_in(inner: &mut Inner, chat: &str) {
     inner.by_hash.retain(|_, r| r.scope.chat != chat);
-    inner.live.remove(chat);
+    if let Some((_, raw)) = inner.live.remove(chat) {
+        retire(inner, raw);
+    }
+}
+
+fn retire(inner: &mut Inner, raw: String) {
+    inner.retired.push_back(raw);
+    while inner.retired.len() > RETIRED {
+        inner.retired.pop_front();
+    }
+}
+
+fn redact_with(raws: &[String], text: &str) -> Option<String> {
+    let mut out: Option<String> = None;
+    for raw in raws {
+        let cur = out.as_deref().unwrap_or(text);
+        if cur.contains(raw.as_str()) {
+            out = Some(cur.replace(raw.as_str(), REDACTED));
+        }
+    }
+    out
+}
+
+fn redact_value_with(raws: &[String], v: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => match redact_with(raws, s) {
+            Some(r) => {
+                *s = r;
+                true
+            }
+            None => false,
+        },
+        Value::Array(items) => items.iter_mut().fold(false, |changed, x| redact_value_with(raws, x) | changed),
+        Value::Object(map) => map.values_mut().fold(false, |changed, x| redact_value_with(raws, x) | changed),
+        _ => false,
+    }
 }
 
 /// The app's registry, on the real clocks.
@@ -226,6 +294,31 @@ mod tests {
 
     fn test_now() -> (Instant, SystemTime) {
         CLOCK.lock().unwrap().expect("set by the test")
+    }
+
+    #[test]
+    fn live_and_lately_revoked_keys_are_redacted() {
+        let r = Registry::new(real_clock);
+        let raw = r.prepare("c-redact", "claude", false).raw;
+        let text = format!("FRIDAE_MCP_KEY={raw}
+FRIDAE_MCP_AUTHORIZATION=Bearer {raw}
+PATH=/bin");
+        let got = r.redact(&text).expect("changed");
+        assert!(!got.contains(&raw), "{got}");
+        assert_eq!(got, "FRIDAE_MCP_KEY=[redacted]
+FRIDAE_MCP_AUTHORIZATION=Bearer [redacted]
+PATH=/bin");
+        assert_eq!(r.redact("nothing secret here"), None);
+        let mut v = serde_json::json!({"text": format!("key {raw}"), "items": [{"output": raw.clone()}], "n": 3});
+        assert!(r.redact_value(&mut v));
+        assert!(!v.to_string().contains(&raw), "{v}");
+        assert_eq!(v["items"][0]["output"], REDACTED);
+        // a kept process may still show a key revoked a moment ago
+        r.revoke_chat("c-redact");
+        assert!(!r.redact(&format!("x {raw}")).unwrap().contains(&raw));
+        let raw2 = r.prepare("c-redact", "claude", false).raw;
+        r.revoke_all();
+        assert!(!r.redact(&format!("{raw} {raw2}")).unwrap().contains(&raw2));
     }
 
     fn fresh() -> (std::sync::MutexGuard<'static, ()>, Registry) {
