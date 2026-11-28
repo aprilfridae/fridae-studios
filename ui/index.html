@@ -845,17 +845,18 @@ body.pd-open #pd { transform: none; visibility: visible; transition: transform 3
 .main > .headfold { grid-row: 1; grid-column: 1; }
 /* the chat's bar folds away (Head.tsx ChatHead): its row closes to nothing and the bar rides up out of it, leaving a
    small tab hanging from the top edge; pressing the tab slides the bar back down, and the tab rides on its edge */
-.headfold { position: relative; z-index: 3; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms var(--ease); }
+.headfold { --fold-bg: color-mix(in oklab, var(--main) 18%, var(--raised)); --fold-line: var(--line);
+  position: relative; z-index: 3; display: grid; grid-template-rows: 0fr; transition: grid-template-rows 280ms var(--ease); }
 .headfold.out { grid-template-rows: 1fr; }
 .hf-in { min-height: 0; }
 .headfold.clip .hf-in { overflow: hidden; }
-.hf-in > .chathead { transform: translateY(-100%); opacity: 0; transition: transform 280ms var(--ease), opacity 200ms ease; }
+.hf-in > .chathead { background: var(--fold-bg); border-bottom-color: var(--fold-line); transform: translateY(-100%); opacity: 0; transition: transform 280ms var(--ease), opacity 200ms ease; }
 .headfold.out .hf-in > .chathead { transform: none; opacity: 1; }
-.hf-tab { position: absolute; top: 100%; left: 50%; translate: -50% 0; width: 44px; height: 16px; display: grid; place-items: center;
-  border: 1px solid color-mix(in oklab, var(--main) 30%, var(--line)); border-top: 0; border-radius: 0 0 10px 10px;
-  background: color-mix(in oklab, var(--main) 18%, var(--raised)); color: color-mix(in oklab, var(--main) 45%, var(--text));
+.hf-tab { position: absolute; top: calc(100% - 1px); left: 50%; translate: -50% 0; width: 96px; height: 18px; display: grid; place-items: center;
+  border: 1px solid var(--fold-line); border-top: 0; border-radius: 0 0 12px 12px;
+  background: var(--fold-bg); color: color-mix(in oklab, var(--main) 45%, var(--text));
   transition: color var(--t-fast) ease, height 160ms var(--ease), background-color var(--t-fast) ease; }
-.hf-tab:hover { color: var(--text); height: 20px; background: color-mix(in oklab, var(--main) 30%, var(--raised)); }
+.hf-tab:hover { color: var(--text); height: 22px; }
 .hf-tab svg { transition: transform 280ms var(--ease); }
 .headfold.out .hf-tab svg { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .headfold, .hf-in > .chathead, .hf-tab, .hf-tab svg { transition: none; } }
