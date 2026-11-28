@@ -449,6 +449,10 @@ fn post(path: &str, body: Value) -> Reply {
         p if p.starts_with("/api/github/") => send_json(crate::github::post(p, &body)),
         "/api/rename" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.rename(&text_of("name")))})),
         "/api/unqueue" => send_json(json!({"ok": target.as_ref().is_some_and(|a| a.unqueue(&text_of("qid")))})),
+        // the toolbox's Allow/Don't card, answered by the user's press (never by an agent), and the theme the
+        // window shows, for the toolbox's theme_read
+        "/api/app-card" => send_json(json!({"ok": crate::app_mcp::card::answer(&text_of("agent"), &text_of("card"), text_of("answer") == "allow")})),
+        "/api/theme-now" => send_json(crate::app_mcp::events::report_theme(&body)),
         "/api/board" => {
             // with an action, the user changes the board; without, it is read
             let project = text_of("path");
@@ -705,6 +709,15 @@ fn handle(mut req: Request, token: &str) {
             let _ = writeln!(f, "{} {} {}", req.method(), path, head(&req, "User-Agent").contains("Edg"));
         }
     }
+    // the AIs' toolbox: its own admission (a chat's key, never the page token; app_mcp::http)
+    if path == "/mcp" {
+        if !is_local(&req) {
+            let _ = req.respond(forbidden());
+            return;
+        }
+        crate::app_mcp::http::serve(req);
+        return;
+    }
     // only this app's own page may talk to the server
     let local = is_local(&req);
     // the page's own files hold no secrets, and a <script> or <link> cannot carry the token
@@ -784,4 +797,57 @@ pub fn start(token: String) -> String {
         }
     });
     url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A local server on 127.0.0.1 answering as the app's does, with this page token; (its port, the server).
+    fn local_server(token: &'static str) -> (u16, Arc<Server>) {
+        let server = Arc::new(Server::http("127.0.0.1:0").unwrap());
+        let port = server.server_addr().to_ip().unwrap().port();
+        let s = server.clone();
+        thread::spawn(move || {
+            while let Ok(req) = s.recv() {
+                thread::spawn(move || handle(req, token));
+            }
+        });
+        (port, server)
+    }
+
+    fn status_of(agent: &ureq::Agent, method: &str, url: &str, auth: Option<&str>) -> u16 {
+        let resp = match method {
+            "POST" => {
+                let mut r = agent.post(url).header("Content-Type", "application/json").header("Accept", "application/json, text/event-stream");
+                if let Some(a) = auth {
+                    r = r.header("Authorization", a);
+                }
+                r.send("{}")
+            }
+            _ => {
+                let mut r = agent.get(url);
+                if let Some(a) = auth {
+                    r = r.header("Authorization", a);
+                }
+                r.call()
+            }
+        };
+        resp.unwrap().status().as_u16()
+    }
+
+    #[test]
+    fn a_chat_key_never_opens_page_routes() {
+        let a = crate::app_mcp::test_chat("claude");
+        let key = crate::app_mcp::keys::global().prepare(&a.id, "claude", false).raw;
+        let (port, server) = local_server("page-token");
+        let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).proxy(None).build().into();
+        let bearer = format!("Bearer {key}");
+        assert_eq!(status_of(&agent, "GET", &format!("http://127.0.0.1:{port}/api/status"), Some(&bearer)), 403);
+        assert_eq!(status_of(&agent, "POST", &format!("http://127.0.0.1:{port}/api/rename"), Some(&bearer)), 403);
+        // /mcp is routed to the toolbox, where the page token opens nothing
+        assert_eq!(status_of(&agent, "POST", &format!("http://127.0.0.1:{port}/mcp?t=page-token"), None), 401);
+        server.unblock();
+        crate::app_mcp::drop_chat(&a);
+    }
 }

@@ -164,7 +164,9 @@ pub fn describe(path: &str) -> Value {
     // `type` too: an agent's "project" event puts its own `kind` over this one. `roblox`: the same as kind "game";
     // `kind_set`: the user chose it (else the folder decided)
     json!({"name": name, "path": path, "kind": kind, "type": kind, "roblox": kind == "game", "kind_set": set.is_some(),
-           "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some()})
+           "exists": dir.is_dir(), "git": dir.join(".git").exists(), "bible": bible_path(&dir).is_some(),
+           // the id the AIs' toolbox names it by (`fridae://project/<id>` links)
+           "id": crate::app_mcp::project_id(path)})
 }
 
 /// Known projects, most recently used first.
@@ -689,5 +691,12 @@ mod tests {
         let protected = [PathBuf::from("/Users/me")];
         let why = trash_refusal(Path::new("/Users/me/Desktop/Games"), &protected, &[PathBuf::from("/Users/me/Desktop/Games/Lake")]);
         assert!(why.is_some_and(|w| w.contains("another of your projects")));
+    }
+
+    #[test]
+    fn describe_has_an_id() {
+        let d = describe("C:/No/Such/Shop/");
+        assert_eq!(d["id"], json!(crate::app_mcp::project_id("c:\\no\\such\\shop")));
+        assert_eq!(d["id"].as_str().map(str::len), Some(13));
     }
 }

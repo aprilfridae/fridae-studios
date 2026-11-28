@@ -663,10 +663,10 @@ fn forward(ctx: &Ctx, head: &Head, body: &[u8]) -> io::Result<TcpStream> {
 }
 
 /// Whether a path is remote control's own, which a paired device may not use: managing this host's network access
-/// (`/api/remote/...`) and reaching the computers this one paired with (`/m/...`).
+/// (`/api/remote/...`) and reaching the computers this one paired with (`/m/...`); and the AIs' toolbox (`/mcp`).
 fn kept_from_devices(path: &str) -> bool {
     let p = path.to_ascii_lowercase();
-    p.starts_with("/api/remote") || p.starts_with("/remote/") || p == "/m" || p.starts_with("/m/")
+    p.starts_with("/api/remote") || p.starts_with("/remote/") || p == "/m" || p.starts_with("/m/") || p == "/mcp" || p.starts_with("/mcp?")
 }
 
 /// One request on a connection (which is then closed): the hello and pairing need no token; everything else needs a
@@ -1809,6 +1809,9 @@ mod tests {
         // remote control's own routes are not for a paired computer
         assert_eq!(ask(port, "GET", "/api/remote/host", Some(&token), "").0, 403);
         assert_eq!(ask(port, "POST", "/m/abc/api/history", Some(&token), "{}").0, 403);
+        // nor is the AIs' toolbox
+        assert_eq!(ask(port, "POST", "/mcp", Some(&token), "{}").0, 403);
+        assert_eq!(ask(port, "POST", "/MCP?t=x", Some(&token), "{}").0, 403);
 
         let (code, body, _) = ask(port, "GET", "/api/history", None, "");
         assert_eq!((code, body), (401, json!({"error": "not paired"})));

@@ -10,6 +10,7 @@ pub mod bridge;
 pub mod card;
 pub mod events;
 pub mod exposure;
+pub mod http;
 pub mod instructions;
 pub mod keys;
 pub mod tools;

@@ -5266,6 +5266,7 @@ pub fn pretty_model(model_id: &str) -> String {
 }
 
 /// What the app's toolbox (`app_mcp`) reads of a chat, and the one thing it sets.
+#[allow(dead_code)] // some are used only by the toolbox's tools (app_mcp::tools), which join later
 impl Agent {
     /// The switches and model of the chat's last message: its modes are read from it live on every toolbox call.
     pub fn last_ask(&self) -> Ask {
