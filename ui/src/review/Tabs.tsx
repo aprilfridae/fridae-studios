@@ -24,11 +24,11 @@ export function Tabs({ tabs, on, pick }: { tabs: Tab[]; on: string; pick: (path:
     buttons[to].focus();
   };
   return (
-    <ul class="rv-tabs" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden={!tabs.length} ref={bar}
+    <ul class="fold-pills" id="rv-tabs" role="tablist" aria-label="Projects with something waiting" hidden={!tabs.length} ref={bar}
       onKeyDown={onKey} onFocusIn={() => { held.current = true; }} onFocusOut={() => { held.current = false; }}>
       {tabs.map((t, i) => (
         <li key={t.path} role="presentation">
-          <button class="rv-row" id={"rv-tab-" + i} data-path={t.path} role="tab" aria-selected={t.path === on ? "true" : "false"} aria-controls="rv-items" tabIndex={t.path === on ? 0 : -1}
+          <button class="fp" id={"rv-tab-" + i} data-path={t.path} role="tab" aria-selected={t.path === on ? "true" : "false"} aria-controls="rv-items" tabIndex={t.path === on ? 0 : -1}
             title={plural(t.things.length, " thing to look over in ", " things to look over in ") + t.name} onClick={() => pick(t.path)}
             ref={(el) => { if (el && t.path === on) el.scrollIntoView({ block: "nearest", inline: "nearest" }); }}>
             <span class={"dot" + (t.path === on ? " on" : "")} />{t.name}

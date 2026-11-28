@@ -14,17 +14,8 @@
 /* the pull-down bar at the top (chat/PullBar.tsx; its look is in ui/index.html): over the graph, just under the top bar
    (the graph runs up under both) */
 .ov-fold { position: absolute; top: 48px; left: 0; right: 0; }
-.ovbar { display: grid; gap: 8px; padding: 12px 24px 14px; max-height: min(60vh, 420px); overflow-y: auto; }
-.ob-head { display: flex; align-items: center; gap: 12px; min-height: var(--h-s); }
+/* inside: a line saying how much is going (and the way to stop it all), then one row of project pills (ui/index.html) */
+.ovbar { display: grid; gap: 8px; padding: 10px 0; }
+.ob-head { display: flex; align-items: center; gap: 12px; min-height: var(--h-s); padding: 0 24px; }
 .ob-head .sub { margin: 0; flex: 1; font-size: 13px; }
-.ob-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.ob-list li { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); align-items: center; gap: 12px; min-height: 30px; }
-.ob-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 8px; margin-left: -8px; border-radius: var(--r-s); font-size: 13px; font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ob-name:hover { background: var(--hover); }
-.ob-name .dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); opacity: 0.5; }
-.ob-name .dot.on { background: var(--main); opacity: 1; box-shadow: 0 0 0 3px color-mix(in oklab, var(--main) 22%, transparent); }
-.ob-st { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--dim); min-width: 0; }
-.ob-st .linkish { font-size: inherit; color: var(--text); }
-.ob-st .quiet { color: var(--faint); }
-.ob-list li:not(.live) .ob-name { color: var(--dim); font-weight: 400; }
 #ap-sk-go { font-size: inherit; }

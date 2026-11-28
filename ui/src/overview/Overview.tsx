@@ -34,7 +34,7 @@ function projects(s: State) {
     return { path: x.path, name: x.name, busy, n: st.n, run: rs ? rs[0] : "", why: rs ? rs[1] : "", live: !!(busy || st.n || going) };
   }).sort((a, b) => +b.live - +a.live);
 }
-/* the bar behind the Overview's tab: how much is going, then each project, and the way to stop it all */
+/* the bar behind the Overview's tab: how much is going and the way to stop it all, then each project in one row */
 function OvBar() {
   const text = useStore(totals), working = useStore((s) => s.nav.view === "all" && s.chats.some((p) => p.busy)), n = skillsWaiting.use(), last = useRef("");
   /* read as one string, so the bar is painted again only when what it says changes */
@@ -47,18 +47,17 @@ function OvBar() {
         <p class="sub"><span id="ap-totals">{text || last.current}</span><span id="ap-sk" hidden={!n}> · <button class="linkish" id="ap-sk-go" title="Open Settings, Skills" onClick={() => openSetup("skills")}>{plural(n, " decision waits", " decisions wait")}</button></span></p>
         <button class="pill sm" id="ap-stop-all" hidden={!working} onClick={stop}>Stop everything</button>
       </div>
-      {list.length > 0 && <ul class="ob-list">
-        {list.map((x) => (
-          <li class={x.live ? "live" : ""}>
-            <button class="ob-name" title={"Open " + x.name} onClick={() => host.showProject(x.path)}><span class={"dot" + (x.busy ? " on" : "")} />{x.name}</button>
-            <span class="ob-st">
-              {x.busy > 0 && <span>{plural(x.busy, " agent working", " agents working")}</span>}
-              {x.run && <span title={x.why}>Studio run: {x.run.toLowerCase()}</span>}
-              {x.n > 0 && <button class="linkish" title="Open it in Review" onClick={() => host.openInReview(x.path)}>{plural(x.n, " thing waits for you", " things wait for you")}</button>}
-              {!x.live && <span class="quiet">Nothing going</span>}
-            </span>
-          </li>
-        ))}
+      {list.length > 0 && <ul class="fold-pills" aria-label="Every project">
+        {list.map((x) => {
+          const say = [x.busy ? plural(x.busy, " agent", " agents") : "", x.run ? "run " + x.run.toLowerCase() : "", x.n ? x.n + " waiting" : ""].filter(Boolean).join(" · ");
+          return (
+            <li key={x.path}>
+              <button class={"fp" + (x.live ? " live" : "")} title={"Open " + x.name + (x.why ? ". " + x.why : "")} onClick={() => host.showProject(x.path)}>
+                <span class={"dot" + (x.busy ? " on" : "")} />{x.name}{say && <small>{say}</small>}
+              </button>
+            </li>
+          );
+        })}
       </ul>}
     </PullBar>
   );
