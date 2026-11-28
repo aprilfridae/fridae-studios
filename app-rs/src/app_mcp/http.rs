@@ -488,6 +488,26 @@ mod tests {
     }
 
     #[test]
+    fn claudes_server_discover_gets_effects_version_rejection() {
+        // Claude Code 2.1.326 first tries the sessionless 2026-07-28 protocol. A server that speaks only 2025-06-18
+        // answers it as Effect's admission does (mcpRuntime.ts selectHttpProtocol: a version claim with no sessionless
+        // protocol configured is 400 + -32022 with the supported list), and Claude then initializes on 2025-06-18
+        // (seen in agents::tests::probe_claude_against_the_real_toolbox). T3 itself answers 200: it also configures
+        // v2026_07_28, which Fridae does not speak.
+        let a = test_chat("claude");
+        let key = key_of(&a);
+        let body = br#"{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"claude-code","version":"2.1.326"},"io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true}}}}}"#;
+        let r = handle_parts("POST", &heads(Some(&key), None, &[("MCP-Protocol-Version", "2026-07-28")]), body);
+        assert_eq!(r.status, 400);
+        assert_eq!(
+            json_of(&r),
+            json!({"jsonrpc": "2.0", "id": "server-discover-probe-1", "error": {"code": -32022, "message": "Unsupported protocol version '2026-07-28'", "data": {"supported": ["2025-06-18"], "requested": "2026-07-28"}}})
+        );
+        assert_eq!(header(&r, "mcp-session-id"), None, "no session is opened by it");
+        drop_chat(&a);
+    }
+
+    #[test]
     fn bad_protocol_header_400() {
         let a = test_chat("claude");
         let key = key_of(&a);

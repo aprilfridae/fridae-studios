@@ -9993,6 +9993,11 @@ FRIDAE_MCP_AUTHORIZATION=Bearer {raw}")}));
                 let headers: Vec<(String, String)> = req.headers().iter().map(|h| (h.field.as_str().as_str().to_string(), h.value.as_str().to_string())).collect();
                 let reply = crate::app_mcp::http::handle_parts(req.method().as_str(), &headers, &body);
                 let method = serde_json::from_slice::<Value>(&body).ok().and_then(|v| v["method"].as_str().map(str::to_string)).unwrap_or_else(|| req.method().as_str().to_string());
+                if method == "server/discover" {
+                    // what Claude sends first and what it got (no header but the protocol one: the key is never shown)
+                    let version = headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("mcp-protocol-version")).map(|(_, v)| v.clone());
+                    eprintln!("probe discover: version {version:?} body {} -> {} {}", String::from_utf8_lossy(&body), reply.status, String::from_utf8_lossy(&reply.body));
+                }
                 noted.lock().unwrap().push((method, reply.status));
                 let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
                 for (n, v) in reply.headers {
