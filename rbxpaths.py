@@ -62,6 +62,32 @@ def mcp_command():
     return [sys.executable, os.path.join(KIT, "rbxkit_mcp.py")]
 
 
+# Roblox Studio runs on Windows and macOS only: Roblox makes no Linux version (Vinegar runs it under Wine, which Fridae
+# does not set up). On Linux every Studio tool says so instead of looking for it.
+STUDIO_HERE = sys.platform == "win32" or sys.platform == "darwin"
+NO_STUDIO_HERE = ("Roblox Studio isn't available on Linux. Everything that doesn't need Studio (projects, chats, Rojo files, "
+                  "Blender, textures, promos) still works.")
+
+
+def studio_content_dir(platform=None, env=None):
+    r"""Studio's own content folder on this computer (what rbxasset:// ids point into), or None: on Windows the newest
+    `%LOCALAPPDATA%\Roblox\Versions\<version>\content`, on a Mac the app's `Contents/Resources/content`; never on
+    Linux. `platform` and `env` are for tests."""
+    import glob
+    platform = platform or sys.platform
+    env = os.environ if env is None else env
+    if platform == "darwin":
+        content = "/Applications/RobloxStudio.app/Contents/Resources/content"
+        return content if os.path.isdir(content) else None
+    if platform != "win32" or not env.get("LOCALAPPDATA"):
+        return None
+    base = os.path.join(env["LOCALAPPDATA"], "Roblox", "Versions")
+    hits = [d for d in glob.glob(os.path.join(base, "*")) if os.path.exists(os.path.join(d, "RobloxStudioBeta.exe"))]
+    if not hits:
+        return None
+    return os.path.join(max(hits, key=os.path.getmtime), "content")
+
+
 def no_window():
     """subprocess flags that stop console windows flashing up on Windows."""
     return 0x08000000 if os.name == "nt" else 0

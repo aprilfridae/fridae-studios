@@ -277,7 +277,7 @@ fn key_dir(book: &Path) -> PathBuf {
 /// pairing, readable only by this user). Sealing is HMAC-SHA256 used as a stream cipher (counter mode) with an
 /// HMAC-SHA256 tag over the nonce and the sealed bytes (encrypt-then-MAC), each with its own key drawn from the kept
 /// one. A sealed token is `nonce (16) | sealed bytes | tag (32)`; one whose tag does not check is treated as no token.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 mod sealed {
     use std::{fs, io, path::Path};
 
@@ -345,23 +345,23 @@ mod sealed {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn protect(plain: &[u8], dir: &Path) -> Option<Vec<u8>> {
     sealed::seal(plain, dir)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn unprotect(blob: &[u8], dir: &Path) -> Option<Vec<u8>> {
     sealed::open(blob, dir)
 }
 
 /// Elsewhere there is nothing to keep a token safe with, so none is kept (pairing says `remote_common::NOT_HERE`).
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, unix)))]
 fn protect(_plain: &[u8], _dir: &Path) -> Option<Vec<u8>> {
     None
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, unix)))]
 fn unprotect(_blob: &[u8], _dir: &Path) -> Option<Vec<u8>> {
     None
 }

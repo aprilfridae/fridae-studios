@@ -364,14 +364,14 @@ pub mod cert {
     }
 }
 
-/// The host's certificate on a Mac, made once and kept: an RSA key and a self-signed certificate (CN=Fridae, until the
+/// The host's certificate on a Mac or Linux, made once and kept: an RSA key and a self-signed certificate (CN=Fridae, until the
 /// end of 2049, as on Windows) made by the system's own `/usr/bin/openssl`. The key is `host-key.pem` (PKCS#8),
 /// readable only by this user, beside the certificate `host-cert.der`, in remote control's private folder. (Windows
 /// keeps its key where it can never be exported; a Mac keychain would ask for the key again after every update of an
 /// app signed as Fridae is, ad hoc, so the key is a private file instead.) For each listener the Mac's TLS (Secure
 /// Transport, through native-tls) is handed the two in a keychain of its own that lives only while it is read in: the
 /// user's own keychains are never touched.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 pub mod cert {
     use std::{
         fs, io,
@@ -385,7 +385,9 @@ pub mod cert {
 
     use crate::remote_common as rc;
 
-    const OPENSSL: &str = "/usr/bin/openssl";
+    /// The system's own openssl (never one found on PATH, which an AI's folder could come first on): macOS ships
+    /// LibreSSL's at /usr/bin; Linux distributions put the `openssl` package's there (some at /bin).
+    const OPENSSL: [&str; 2] = ["/usr/bin/openssl", "/bin/openssl"];
     const CERT_FILE: &str = "host-cert.der";
     const KEY_FILE: &str = "host-key.pem";
     /// 2050-01-01 00:00 UTC: the certificate lasts until the end of 2049
@@ -406,7 +408,11 @@ pub mod cert {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let days = (END.saturating_sub(now) / 86_400).max(1).to_string();
         let run = || -> io::Result<Vec<Vec<u8>>> {
-            let out = Command::new(OPENSSL)
+            let program = OPENSSL
+                .iter()
+                .find(|p| Path::new(p).is_file())
+                .ok_or_else(|| io::Error::other("this computer has no openssl program: install the openssl package, then turn this on again"))?;
+            let out = Command::new(program)
                 .arg("req")
                 .args(args)
                 .args(["-x509", "-sha256", "-days", &days, "-subj", "/CN=Fridae", "-batch", "-outform", "DER", "-out", CERT_FILE])
@@ -985,9 +991,21 @@ impl Listener {
     }
 }
 
+/// How messages name this system.
+#[cfg(any(windows, unix))]
+fn system_name() -> &'static str {
+    if cfg!(windows) {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "Your Mac"
+    } else {
+        "This computer"
+    }
+}
+
 /// The first port of `ports` that opens on `ip`. A port taken by another program, or one the system keeps back (it
 /// answers "access denied" for those), is passed over.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 fn bind_first(ip: &str, ports: std::ops::RangeInclusive<u16>) -> Result<TcpListener, String> {
     let (first, last) = (*ports.start(), *ports.end());
     let mut denied = false;
@@ -999,7 +1017,7 @@ fn bind_first(ip: &str, ports: std::ops::RangeInclusive<u16>) -> Result<TcpListe
         }
     }
     Err(if denied {
-        let system = if cfg!(windows) { "Windows" } else { "Your Mac" };
+        let system = system_name();
         format!("{system} blocked the ports Fridae needs ({first} to {last}). Check that no firewall or security program is stopping Fridae, then turn this on again.")
     } else {
         format!("Other programs are using the ports Fridae needs ({first} to {last}). Close them, then turn this on again.")
@@ -1008,7 +1026,7 @@ fn bind_first(ip: &str, ports: std::ops::RangeInclusive<u16>) -> Result<TcpListe
 
 /// Listen on `ip` (the first free port of `ports`) and answer "who is there" on UDP `discover`. The second value is a
 /// warning when only finding failed: pairing by address still works then.
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, unix))]
 pub fn listen(ctx: Arc<Ctx>, cert: &cert::Cert, ip: &str, ports: std::ops::RangeInclusive<u16>, discover: Option<u16>) -> Result<(Listener, Option<String>), String> {
     let cred = tls_for(cert)?;
     let tcp = bind_first(ip, ports)?;
@@ -1063,8 +1081,8 @@ pub fn listen(ctx: Arc<Ctx>, cert: &cert::Cert, ip: &str, ports: std::ops::Range
 #[cfg(windows)]
 type Tls = schannel::schannel_cred::SchannelCred;
 
-/// The Mac's TLS (Secure Transport) with this host's certificate.
-#[cfg(target_os = "macos")]
+/// native-tls with this host's certificate: the Mac's Secure Transport, OpenSSL on Linux.
+#[cfg(unix)]
 type Tls = native_tls::TlsAcceptor;
 
 #[cfg(windows)]
@@ -1073,9 +1091,9 @@ fn tls_for(cert: &cert::Cert) -> Result<Tls, String> {
     SchannelCred::builder().cert(cert.ctx.clone()).acquire(Direction::Inbound).map_err(|e| format!("Windows would not use Fridae's certificate ({e})."))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn tls_for(cert: &cert::Cert) -> Result<Tls, String> {
-    native_tls::TlsAcceptor::new(cert.identity.clone()).map_err(|e| format!("Your Mac would not use Fridae's certificate ({e})."))
+    native_tls::TlsAcceptor::new(cert.identity.clone()).map_err(|e| format!("{} would not use Fridae's certificate ({e}).", system_name()))
 }
 
 /// The TLS handshake on a connection, then its request served, then the connection closed.
@@ -1087,7 +1105,7 @@ fn serve_secure(cred: &Tls, ctx: &Ctx, slot: &Slot, conn: Watched) {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn serve_secure(acceptor: &Tls, ctx: &Ctx, slot: &Slot, conn: Watched) {
     if let Ok(mut tls) = acceptor.accept(conn) {
         serve(ctx, slot, &mut tls);
@@ -1135,7 +1153,7 @@ fn turn_on(st: &mut State) {
         return;
     }
     st.error = None;
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     {
         let cert = match cert::load_or_make(&rc::dir(), KEY_NAME) {
             Ok(c) => c,
@@ -1153,7 +1171,7 @@ fn turn_on(st: &mut State) {
             Err(e) => st.error = Some(e),
         }
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(any(windows, unix)))]
     {
         st.error = Some(rc::NOT_HERE.into());
     }
@@ -1468,22 +1486,22 @@ mod tests {
     // ---- the certificate and the listener, on 127.0.0.1 only
 
     /// A test's own key, deleted from Windows' key store when the test ends, passed or failed.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     struct TestKey(String);
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     impl Drop for TestKey {
         fn drop(&mut self) {
             let _ = cert::forget_key(&self.0);
         }
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn test_key() -> TestKey {
         TestKey(format!("Fridae remote control test {}", rc::random_hex(4)))
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     #[test]
     fn the_certificate_is_made_once_and_kept_with_a_key_only_this_user_may_read() {
         use std::os::unix::fs::PermissionsExt;
@@ -1529,7 +1547,7 @@ mod tests {
         assert_ne!(new.fp, first.fp);
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn a_certificate_that_cannot_be_read_for_a_moment_never_gets_a_new_key() {
         let (dir, key) = (fresh("remote-cert-transient"), test_key());
@@ -1550,7 +1568,7 @@ mod tests {
     }
 
     /// One request over its own TLS connection: the status and the body as JSON, and the certificate's fingerprint.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn ask(port: u16, method: &str, path: &str, token: Option<&str>, body: &str) -> (u16, Value, String) {
         use sha2::Digest;
         let mut s = tls_to(port);
@@ -1565,7 +1583,7 @@ mod tests {
         (status, serde_json::from_str(body).unwrap_or(Value::Null), fp)
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn tls_to(port: u16) -> native_tls::TlsStream<TcpStream> {
         let tls = native_tls::TlsConnector::builder().danger_accept_invalid_certs(true).danger_accept_invalid_hostnames(true).build().unwrap();
         tls.connect("fridae", TcpStream::connect(("127.0.0.1", port)).unwrap()).expect("TLS")
@@ -1598,7 +1616,7 @@ mod tests {
     }
 
     /// A host listening on 127.0.0.1 with a test key, and a device ("laptop1") paired with it: its token.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn paired_host(name: &str, read_limit: Duration) -> (Listener, String, Arc<Mutex<Pairing>>, TestKey) {
         let (dir, key) = (fresh(name), test_key());
         let cert = cert::load_or_make(&dir, &key.0).unwrap();
@@ -1612,14 +1630,14 @@ mod tests {
     }
 
     /// A connection the host has closed: reading ends at once (no answer), it does not wait.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn closed(s: &mut TcpStream) -> bool {
         s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         let mut b = [0u8; 64];
         !matches!(s.read(&mut b), Ok(n) if n > 0) && !matches!(s.read(&mut b), Err(e) if e.kind() == io::ErrorKind::TimedOut || e.kind() == io::ErrorKind::WouldBlock)
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn slow_requests_are_cut_off_and_one_machine_cannot_crowd_out_the_rest() {
         // (a deadline that a TLS handshake meets even while the other tests keep the processor busy)
@@ -1657,7 +1675,7 @@ mod tests {
 
     /// Send a request's head, then its body a little at a time (`pieces` of `size` bytes, 250 ms apart), and read the
     /// answer.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn trickle(port: u16, head: &str, pieces: usize, size: usize) -> String {
         let mut s = tls_to(port);
         let _ = write!(s, "{head}Content-Length: {}\r\n\r\n", pieces * size);
@@ -1672,7 +1690,7 @@ mod tests {
         String::from_utf8_lossy(&raw).to_string()
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn a_paired_computers_slow_upload_gets_through_but_a_strangers_slow_request_is_cut() {
         let (l, token, _pairing, _key) = paired_host("remote-upload", Duration::from_secs(2));
@@ -1685,7 +1703,7 @@ mod tests {
         l.close();
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn a_large_answer_comes_back_byte_for_byte_and_no_socket_read_ever_times_out() {
         let (l, token, _pairing, _key) = paired_host("remote-big", READ_LIMIT);
@@ -1726,7 +1744,7 @@ mod tests {
     }
 
     /// A paired device's long wait for events, on its own thread: how long it took to end, and its status.
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     fn long_wait(port: u16, token: &str) -> thread::JoinHandle<(Duration, u16)> {
         let token = token.to_string();
         thread::spawn(move || {
@@ -1736,7 +1754,7 @@ mod tests {
         })
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn turning_off_or_removing_a_computer_ends_what_it_has_open() {
         let (l, token, pairing, _key) = paired_host("remote-off", READ_LIMIT);
@@ -1766,7 +1784,7 @@ mod tests {
         assert!(!String::from_utf8_lossy(&raw).contains("207"), "a request after off is not passed on");
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(any(windows, unix))]
     #[test]
     fn a_paired_computer_is_served_as_the_page_would_be_and_nothing_else_is() {
         let (dir, key) = (fresh("remote-listen"), test_key());

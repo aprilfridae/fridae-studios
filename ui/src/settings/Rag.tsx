@@ -137,7 +137,8 @@ function Test() {
 const MODES: [string, string][] = [["off", "Off"], ["light", "Light"], ["heavy", "Heavy"]];
 export function Rag() {
   changed.use();
-  const mode: string = rag ? rag.mode : "", win = !!(rag && rag.windows);
+  /* `win`: Heavy cannot run on this system (Windows and Linux for now); an older app only sent `windows` */
+  const mode: string = rag ? rag.mode : "", win = !!(rag && (rag.heavy_supported === undefined ? rag.windows : !rag.heavy_supported));
   const choose = async (m: string) => {
     if (ragChoosing || (rag && rag.mode === m)) return;
     ragChoosing = true; paint();

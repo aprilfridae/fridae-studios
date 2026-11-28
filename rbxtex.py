@@ -389,12 +389,10 @@ def contact_sheet(paths, out, tile=384):
 
 # ------------------------------------------------------------------- preview
 def studio_content_dir():
-    base = os.path.expandvars(r"%LOCALAPPDATA%\Roblox\Versions")
-    hits = [d for d in glob.glob(os.path.join(base, "*")) if os.path.exists(os.path.join(d, "RobloxStudioBeta.exe"))]
-    if not hits:
-        return None
-    newest = max(hits, key=os.path.getmtime)
-    return os.path.join(newest, "content", "textures")
+    """Studio's textures folder on this computer (Windows or Mac), or None."""
+    import rbxpaths
+    content = rbxpaths.studio_content_dir()
+    return os.path.join(content, "textures") if content else None
 
 
 def stage_preview(path):

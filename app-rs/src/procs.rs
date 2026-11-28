@@ -251,16 +251,28 @@ pub fn orphans_under(prefix: &str) -> Vec<(u32, u32)> {
     under(&String::from_utf8_lossy(&out.stdout), prefix)
 }
 
+/// An orphan's parent is pid 1, or (Linux desktops) the user's `systemd --user`, which takes in the orphans of the
+/// session's programs instead of pid 1.
 fn under(text: &str, prefix: &str) -> Vec<(u32, u32)> {
-    text.lines()
+    let rows: Vec<(u32, u32, u32, String)> = text
+        .lines()
         .filter_map(|l| {
             let mut w = l.split_whitespace();
             let (pid, pgid, ppid): (u32, u32, u32) = (w.next()?.parse().ok()?, w.next()?.parse().ok()?, w.next()?.parse().ok()?);
-            let command = w.collect::<Vec<_>>().join(" ");
-            (ppid == 1 && command.starts_with(prefix)).then_some((pid, pgid))
+            Some((pid, pgid, ppid, w.collect::<Vec<_>>().join(" ")))
         })
-        .filter(|&(pid, _)| pid != std::process::id())
+        .collect();
+    let reapers: Vec<u32> = rows.iter().filter(|(_, _, _, c)| is_user_systemd(c)).map(|r| r.0).chain([1]).collect();
+    rows.iter()
+        .filter(|(pid, _, ppid, command)| reapers.contains(ppid) && command.starts_with(prefix) && *pid != std::process::id())
+        .map(|&(pid, pgid, _, _)| (pid, pgid))
         .collect()
+}
+
+/// `/usr/lib/systemd/systemd --user` (or `/lib/systemd/systemd --user`), as `ps` shows the user's service manager.
+fn is_user_systemd(command: &str) -> bool {
+    let mut w = command.split_whitespace();
+    w.next().is_some_and(|p| p.rsplit('/').next() == Some("systemd")) && w.any(|a| a == "--user")
 }
 
 #[cfg(test)]
@@ -336,5 +348,16 @@ mod tests {
         }
         forget_in(&dir, own.id());
         assert!(!mine_in(&dir).exists(), "an empty ledger leaves no file");
+    }
+
+    #[test]
+    fn an_orphan_taken_in_by_the_users_systemd_is_still_found() {
+        let ps = "  900   900     1 /usr/lib/systemd/systemd --user\n\
+                   4001  4001   900 /home/a/Documents/Fridae Studios/work/opencode serve\n\
+                   4002  4002     1 /home/a/Documents/Fridae Studios/work/opencode serve\n\
+                   4003  4003  3000 /home/a/Documents/Fridae Studios/work/opencode serve\n\
+                   4004  4004   900 /usr/bin/gnome-text-editor\n";
+        assert_eq!(under(ps, "/home/a/Documents/Fridae Studios/work/"), [(4001, 4001), (4002, 4002)], "a parent still running keeps its child");
+        assert!(is_user_systemd("/lib/systemd/systemd --user") && !is_user_systemd("/usr/lib/systemd/systemd-logind") && !is_user_systemd("/sbin/init splash"));
     }
 }

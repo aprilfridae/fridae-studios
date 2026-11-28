@@ -31,8 +31,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(engine.app_data_dir("win32", {"LOCALAPPDATA": r"C:\Users\Jos\u00e9\AppData\Local"}, home),
                          os.path.join(r"C:\Users\Jos\u00e9\AppData\Local", "Fridae Studios"))
         self.assertEqual(engine.app_data_dir("win32", {}, home), os.path.join(home, "AppData", "Local", "Fridae Studios"))
-        self.assertEqual(engine.app_data_dir("linux", {"XDG_DATA_HOME": "/x/data"}, home), os.path.join("/x/data", "fridae-studios"))
-        self.assertEqual(engine.app_data_dir("linux", {}, home), os.path.join(home, ".local", "share", "fridae-studios"))
+        self.assertEqual(engine.app_data_dir("linux", {"XDG_DATA_HOME": "/x/data"}, home), os.path.join("/x/data", "Fridae Studios"))
+        self.assertEqual(engine.app_data_dir("linux", {}, home), os.path.join(home, ".local", "share", "Fridae Studios"))
         for plat in ("darwin", "win32", "linux"):
             self.assertNotIn("Documents", engine.app_data_dir(plat, {}, home))
 
@@ -134,8 +134,12 @@ class EngineTests(unittest.TestCase):
         self.assertTrue(engine.node_url("darwin", "arm64").endswith("darwin-arm64.tar.gz"))
         self.assertTrue(engine.node_url("darwin", "x86_64").endswith("darwin-x64.tar.gz"))
         self.assertIn("v22.1.0", engine.node_url("darwin", "arm64", "v22.1.0"))
+        self.assertTrue(engine.node_url("linux", "x86_64").endswith("linux-x64.tar.gz"))
+        self.assertTrue(engine.node_url("linux", "aarch64").endswith("linux-arm64.tar.gz"))
         with self.assertRaises(EngineError):
-            engine.node_url("linux", "x86_64")
+            engine.node_url("linux", "i686")
+        with self.assertRaises(EngineError):
+            engine.node_url("freebsd", "x86_64")
 
     def test_checksum_mismatch_rejected(self):
         f = os.path.join(self.tmp, "a.bin")

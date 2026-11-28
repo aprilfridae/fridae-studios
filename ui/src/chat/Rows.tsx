@@ -98,16 +98,21 @@ function SignIn({ ai }: { ai: string }) {
   };
   return <button class="pill sm" disabled={off} onClick={press}>Sign in</button>;
 }
-/* Gemini textures: the prompt to run in Gemini, and the wait for the image */
+/* Gemini textures: the prompt to run in Gemini, and the wait for the image. Only Windows types the prompt into Gemini's
+   box for the user (textures.rs, paste_into_gemini); a Mac or Linux opens Gemini with the prompt copied, to paste. */
+const TYPES_PROMPT = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+const PASTE_KEY = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent) ? "Cmd+V" : "Ctrl+V";
 function Texture({ pt, row }: { pt: Part; row: Row }) {
   const act = (action: string) => api("/api/texture", { id: pt.req, action });
   const copy = async () => { await act("copy"); pt.copied = true; partChanged(row, pt); setTimeout(() => { pt.copied = false; partChanged(row, pt); }, 1500); };
   return (
     <div class={"ask" + en(pt) + (pt.said ? " done" : "")}>
       <h4>{pt.said || "Make this texture in Gemini: " + pt.name}</h4>
-      <p>The first button opens Gemini and pastes this prompt into its message box: press Enter there. Then copy the image it makes (right-click, Copy image). It is picked up here automatically. You can also paste or drop the image into this window. If the prompt does not appear in Gemini, press Ctrl+V.</p>
+      <p>{TYPES_PROMPT
+        ? "The first button opens Gemini and pastes this prompt into its message box: press Enter there. Then copy the image it makes (right-click, Copy image). It is picked up here automatically. You can also paste or drop the image into this window. If the prompt does not appear in Gemini, press Ctrl+V."
+        : "The first button opens Gemini with this prompt copied: click its message box, press " + PASTE_KEY + ", then Enter. Then copy the image it makes (right-click, Copy image). It is picked up here automatically. You can also paste or drop the image into this window."}</p>
       <pre>{pt.prompt}</pre>
-      <div class="act"><button class="pill main" onClick={() => act("open")}>Open Gemini and paste prompt</button><button class="pill" onClick={copy}>{pt.copied ? "Copied" : "Copy prompt"}</button><button class="pill" onClick={() => act("skip")}>Skip</button></div>
+      <div class="act"><button class="pill main" onClick={() => act("open")}>{TYPES_PROMPT ? "Open Gemini and paste prompt" : "Open Gemini and copy prompt"}</button><button class="pill" onClick={copy}>{pt.copied ? "Copied" : "Copy prompt"}</button><button class="pill" onClick={() => act("skip")}>Skip</button></div>
       <div class="wait">Waiting for the image</div>
     </div>
   );

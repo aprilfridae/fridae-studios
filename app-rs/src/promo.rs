@@ -78,25 +78,64 @@ pub fn card_route_target(wanted: &str, exists: impl Fn(&str) -> bool) -> String 
     if !wanted.is_empty() && exists(wanted) { wanted.to_string() } else { String::new() }
 }
 
-/// The command that shows a file selected in the system's file browser.
+/// The command that shows a file selected in the system's file browser. Linux: the file managers' shared D-Bus call
+/// (`org.freedesktop.FileManager1.ShowItems`, answered by Nautilus, Dolphin, Nemo, Thunar and others) through GLib's
+/// `gdbus`; `reveal_fallback` opens the folder when nothing answers it.
 pub fn reveal_cmd(path: &str) -> (String, Vec<String>) {
     if cfg!(target_os = "macos") {
         ("open".into(), vec!["-R".into(), path.into()])
     } else if cfg!(windows) {
         ("explorer".into(), vec![format!("/select,{path}")])
     } else {
-        let parent = Path::new(path).parent().map(|p| p.display().to_string()).unwrap_or_else(|| ".".into());
-        ("xdg-open".into(), vec![parent])
+        let items = format!("['{}']", file_uri(path));
+        let args = ["call", "--session", "--dest", "org.freedesktop.FileManager1", "--object-path", "/org/freedesktop/FileManager1", "--method", "org.freedesktop.FileManager1.ShowItems", &items, ""];
+        ("gdbus".into(), args.iter().map(|a| a.to_string()).collect())
     }
+}
+
+/// Linux, when no file manager answers the D-Bus call: the file's folder opened, with nothing selected.
+#[cfg_attr(not(any(test, all(unix, not(target_os = "macos")))), allow(dead_code))]
+fn reveal_fallback(path: &str) -> (String, Vec<String>) {
+    let parent = Path::new(path).parent().map(|p| p.display().to_string()).unwrap_or_else(|| ".".into());
+    ("xdg-open".into(), vec![parent])
+}
+
+/// `file://` and the path with every byte outside letters, digits, `/`, `-`, `.`, `_` and `~` percent-encoded (so a
+/// quote or backslash in a name can never end the D-Bus argument's string).
+fn file_uri(path: &str) -> String {
+    let mut out = String::from("file://");
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'.' | b'_' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// Show a file selected in the system's file browser (Finder, Explorer, or a Linux file manager).
+pub fn reveal_path(path: &str) -> bool {
+    let (cmd, args) = reveal_cmd(path);
+    let mut c = Command::new(cmd);
+    c.args(args);
+    paths::quiet(&mut c);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        if c.run_status().is_ok_and(|s| s.success()) {
+            return true;
+        }
+        let (cmd, args) = reveal_fallback(path);
+        return Command::new(cmd).args(args).start().is_ok();
+    }
+    #[allow(unreachable_code)]
+    c.start().is_ok()
 }
 
 fn reveal(card: &Value) -> bool {
     let Some(video) = path_of(card, "video").filter(|p| p.exists()) else { return false };
-    let (cmd, args) = reveal_cmd(&video.display().to_string());
-    let mut c = Command::new(cmd);
-    c.args(args);
-    paths::quiet(&mut c);
-    c.start().is_ok()
+    reveal_path(&video.display().to_string())
 }
 
 /// Copy the video to `dest`; with `extras`, the cover and caption beside it under the same base name.
@@ -119,11 +158,11 @@ fn copy_out(card: &Value, dest: &Path, extras: bool) -> Result<(), String> {
 
 fn save(card: &Value, extras: bool) -> Value {
     let name = path_of(card, "folder").and_then(|f| f.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_else(|| "promo".into());
-    let picked = rfd::FileDialog::new()
-        .set_title("Save the promo")
-        .set_directory(paths::home_dir().join("Downloads"))
-        .set_file_name(format!("{name}.mp4"))
-        .add_filter("MP4 video", &["mp4"])
+    let picked = paths::dialog::Dialog::new()
+        .title("Save the promo")
+        .directory(paths::home_dir().join("Downloads"))
+        .file_name(&format!("{name}.mp4"))
+        .filter("MP4 video", &["mp4"])
         .save_file();
     let Some(mut dest) = picked else { return json!({"ok": false, "cancelled": true}) };
     if dest.extension().is_none() {
@@ -192,11 +231,11 @@ pub fn act(body: &Value) -> Value {
 
 /// POST /api/pick-files {kind: "clips" | "music" | "reference"}: paths the user chose, never copied.
 pub fn pick_files(kind: &str) -> Vec<String> {
-    let dialog = rfd::FileDialog::new();
+    let dialog = paths::dialog::Dialog::new();
     let picked = match kind {
-        "clips" => dialog.set_title("Add clips").add_filter("Video", &VIDEO_EXT).pick_files(),
-        "music" => dialog.set_title("Choose music").add_filter("Audio", &AUDIO_EXT).pick_file().map(|p| vec![p]),
-        "reference" => dialog.set_title("Choose a reference video").add_filter("Video", &VIDEO_EXT).pick_file().map(|p| vec![p]),
+        "clips" => dialog.title("Add clips").filter("Video", &VIDEO_EXT).pick_files(),
+        "music" => dialog.title("Choose music").filter("Audio", &AUDIO_EXT).pick_file().map(|p| vec![p]),
+        "reference" => dialog.title("Choose a reference video").filter("Video", &VIDEO_EXT).pick_file().map(|p| vec![p]),
         _ => None,
     };
     picked.unwrap_or_default().into_iter().map(|p| p.display().to_string()).collect()
@@ -552,7 +591,17 @@ mod tests {
         #[cfg(windows)]
         assert_eq!((cmd.as_str(), args), ("explorer", vec!["/select,/x/y z/promo.mp4".to_string()]));
         #[cfg(all(unix, not(target_os = "macos")))]
-        assert_eq!((cmd.as_str(), args), ("xdg-open", vec!["/x/y z".to_string()]));
+        {
+            assert_eq!(cmd, "gdbus");
+            assert_eq!(args[args.len() - 2], "['file:///x/y%20z/promo.mp4']");
+        }
+        assert_eq!(reveal_fallback("/x/y z/promo.mp4"), ("xdg-open".to_string(), vec!["/x/y z".to_string()]), "Linux: the folder when no file manager answers");
+    }
+
+    #[test]
+    fn a_file_uri_cannot_end_the_dbus_string() {
+        assert_eq!(file_uri("/home/a/My 'odd' \\ name.mp4"), "file:///home/a/My%20%27odd%27%20%5C%20name.mp4");
+        assert_eq!(file_uri("/home/a/é.mp4"), "file:///home/a/%C3%A9.mp4");
     }
 
     #[test]

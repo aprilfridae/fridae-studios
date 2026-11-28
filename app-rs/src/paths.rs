@@ -13,6 +13,9 @@ use std::{
 
 use serde_json::{Map, Value};
 
+/// The system's file and folder dialogs (rfd, or zenity/kdialog on Linux).
+pub mod dialog;
+
 /// The app's name, as the user sees it (window title, notices, the program's file name).
 pub const APP: &str = "Fridae";
 /// The name of the app's data folders (`Documents\Fridae Studios`, `%APPDATA%\Fridae Studios`, the accounts and
@@ -23,10 +26,11 @@ pub const VERSION: &str = env!("FRIDAE_VERSION");
 pub const UPDATE_REPO: &str = env!("FRIDAE_REPO");
 /// The shared skill vault on GitHub.
 pub const VAULT_REPO: &str = "aprilfridae/fridae-vault";
-pub const EXE_NAME: &str = "Fridae.exe";
+/// The app's program: `Fridae.exe` on Windows, `Fridae` in the Linux folder (and inside the Mac's .app).
+pub const EXE_NAME: &str = if cfg!(windows) { "Fridae.exe" } else { "Fridae" };
 /// The program's file name before the rename. An update unpacked by an older copy, or an install folder that still
-/// holds the old program beside the new one, may only have this name.
-pub const OLD_EXE_NAME: &str = "Fridae Studios.exe";
+/// holds the old program beside the new one, may only have this name (Windows; no Linux build had it).
+pub const OLD_EXE_NAME: &str = if cfg!(windows) { "Fridae Studios.exe" } else { "Fridae Studios" };
 #[cfg(windows)]
 const NO_WINDOW: u32 = 0x0800_0000;
 
@@ -835,8 +839,8 @@ fn guard_locked(st: &Store) -> std::sync::MutexGuard<'static, Option<Guard>> {
 }
 
 /// The folder copies are kept in: outside the work folder, the games and the kit (macOS `~/Library/Application
-/// Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux `$XDG_CONFIG_HOME/fridae-studios` or
-/// `~/.config/fridae-studios`).
+/// Support/Fridae Studios`, Windows `%APPDATA%\Fridae Studios`, Linux `$XDG_CONFIG_HOME/Fridae Studios` or
+/// `~/.config/Fridae Studios`: the same name as the accounts and OpenCode stores in `~/.local/share/Fridae Studios`).
 /// The app's private folder (see `guard_dir`): remote control keeps its pairing files here.
 pub fn private_dir() -> PathBuf {
     guard_dir()
@@ -846,15 +850,16 @@ fn guard_dir() -> PathBuf {
     #[cfg(test)]
     return test_dir("guard-copy");
     #[allow(unreachable_code)]
-    {
-        let home = home_dir();
-        if cfg!(target_os = "macos") {
-            home.join("Library").join("Application Support").join(DATA_DIR)
-        } else if cfg!(windows) {
-            env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(DATA_DIR)
-        } else {
-            env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join(".config")).join("fridae-studios")
-        }
+    private_dir_for(&home_dir(), if cfg!(target_os = "macos") { "macos" } else if cfg!(windows) { "windows" } else { "linux" }, env::var_os("APPDATA"), env::var_os("XDG_CONFIG_HOME"))
+}
+
+/// `private_dir` for a system ("windows", "macos", anything else is Linux), from its home and variables.
+fn private_dir_for(home: &Path, os: &str, appdata: Option<std::ffi::OsString>, xdg_config: Option<std::ffi::OsString>) -> PathBuf {
+    let set = |v: Option<std::ffi::OsString>| v.filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        "macos" => home.join("Library").join("Application Support").join(DATA_DIR),
+        "windows" => set(appdata).unwrap_or_else(|| home.join("AppData").join("Roaming")).join(DATA_DIR),
+        _ => set(xdg_config).unwrap_or_else(|| home.join(".config")).join(DATA_DIR),
     }
 }
 
@@ -1374,6 +1379,47 @@ pub fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Chromium browsers that can show the page as an app window (`--app=`) when the system web view is missing, by the
+/// names they have on PATH: Windows' Edge and Chrome, and Linux's packages of Chrome, Chromium and Edge.
+pub const BROWSERS: [&str; 7] = ["msedge", "chrome", "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"];
+
+/// The PATH an app started from the Dock, Finder or a Linux desktop launcher should have: the folders installers put
+/// the AIs' programs in (Claude Code and Cursor in ~/.local/bin, OpenCode in ~/.opencode/bin), Homebrew's, and on
+/// Linux npm's user folder, Linuxbrew's and snaps', each once, ahead of what the app was given.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn gui_path(home: &Path, mac: bool, now: &[PathBuf]) -> Vec<PathBuf> {
+    let mut dirs = vec![home.join(".local").join("bin"), home.join(".opencode").join("bin")];
+    if mac {
+        dirs.extend(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
+    } else {
+        dirs.extend([home.join(".npm-global").join("bin"), "/home/linuxbrew/.linuxbrew/bin".into(), "/usr/local/bin".into(), "/snap/bin".into()]);
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    for d in dirs.into_iter().chain(now.iter().cloned()) {
+        if !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// The helper that keeps a Mac or Linux computer from sleeping while a chat is in overnight mode, for as long as it
+/// runs, and that ends by itself once the app (`app_pid`) has ended: a Mac's `caffeinate -i -w <pid>` (idle sleep
+/// blocked, waits on the app); Linux's `systemd-inhibit` blocking idle and sleep around a shell that waits on the app.
+/// None when the program is not there (`exists`), as on a Linux without systemd.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn awake_command(app_pid: u32, mac: bool, exists: impl Fn(&str) -> bool) -> Option<(String, Vec<String>)> {
+    let pid = app_pid.to_string();
+    if mac {
+        let program = "/usr/bin/caffeinate";
+        return exists(program).then(|| (program.to_string(), vec!["-i".into(), "-w".into(), pid]));
+    }
+    let program = ["/usr/bin/systemd-inhibit", "/bin/systemd-inhibit"].into_iter().find(|p| exists(p))?;
+    let wait = format!("while kill -0 {pid} 2>/dev/null; do sleep 20; done");
+    let args = ["--what=idle:sleep", "--who=Fridae", "--why=A chat is working overnight", "--mode=block", "/bin/sh", "-c", &wait];
+    Some((program.to_string(), args.iter().map(|a| a.to_string()).collect()))
+}
+
 /// The Claude Code program, if it is installed.
 pub fn find_agent() -> Option<PathBuf> {
     which("claude").or_else(|| Some(home_dir().join(".local").join("bin").join(if cfg!(windows) { "claude.exe" } else { "claude" })).filter(|p| p.exists()))
@@ -1381,17 +1427,31 @@ pub fn find_agent() -> Option<PathBuf> {
 
 /// Antigravity's command-line tool, if it is installed.
 pub fn find_antigravity() -> Option<PathBuf> {
-    env::var("FRIDAE_AGY").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("agy")).or_else(|| {
-        Some(PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("agy").join("bin").join("agy.exe")).filter(|p| p.exists())
-    })
+    let local = env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(PathBuf::from);
+    env::var("FRIDAE_AGY").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("agy")).or_else(|| agy_fallbacks(&home_dir(), local.as_deref(), cfg!(windows)).into_iter().find(|p| p.is_file()))
+}
+
+/// Where Antigravity's installer puts `agy` off PATH: `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows (only when that
+/// variable is set: never a path relative to the current folder); `~/.local/bin/agy` on a Mac or Linux.
+fn agy_fallbacks(home: &Path, local: Option<&Path>, windows: bool) -> Vec<PathBuf> {
+    if windows {
+        local.map(|l| vec![l.join("agy").join("bin").join("agy.exe")]).unwrap_or_default()
+    } else {
+        vec![home.join(".local").join("bin").join("agy")]
+    }
 }
 
 /// OpenAI's command-line tool (ChatGPT), if it is installed.
 pub fn find_codex() -> Option<PathBuf> {
     // OpenAI's standalone installer puts it under ~/.codex without adding it to PATH
     env::var("FRIDAE_CODEX").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("codex")).or_else(|| {
-        Some(home_dir().join(".codex").join("packages").join("standalone").join("current").join("bin").join("codex.exe")).filter(|p| p.is_file())
+        Some(codex_standalone(&home_dir(), cfg!(windows))).filter(|p| p.is_file())
     })
+}
+
+/// The program OpenAI's standalone installer leaves under ~/.codex: `codex.exe` on Windows, `codex` elsewhere.
+fn codex_standalone(home: &Path, windows: bool) -> PathBuf {
+    home.join(".codex").join("packages").join("standalone").join("current").join("bin").join(if windows { "codex.exe" } else { "codex" })
 }
 
 /// The Cursor Agent command-line tool, if it is installed. Its installer puts it in ~/.local/bin, which an app started
@@ -1402,10 +1462,7 @@ pub fn find_cursor() -> Option<PathBuf> {
         return None;
     }
     env::var("FRIDAE_CURSOR").ok().map(PathBuf::from).filter(|p| p.is_file()).or_else(|| which("cursor-agent")).or_else(|| {
-        let name = if cfg!(windows) { "cursor-agent.cmd" } else { "cursor-agent" };
-        [home_dir().join(".local").join("bin").join(name), PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("cursor-agent").join(name)]
-            .into_iter()
-            .find(|p| p.is_file())
+        Some(home_dir().join(".local").join("bin").join("cursor-agent")).filter(|p| p.is_file())
     })
 }
 
@@ -1471,11 +1528,25 @@ pub fn studio_mcp() -> Option<PathBuf> {
     {
         // on a Mac, Studio ships the server inside its app and writes this folder once it is turned on
         let exe = PathBuf::from("/Applications/RobloxStudio.app/Contents/MacOS/StudioMCP");
-        return Some(exe).filter(|p| p.exists() && home_dir().join("Library").join("Roblox").join("StudioMCP").exists());
+        Some(exe).filter(|p| p.exists() && home_dir().join("Library").join("Roblox").join("StudioMCP").exists())
     }
-    #[allow(unreachable_code)]
-    Some(PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("Roblox").join("mcp.bat")).filter(|p| p.exists())
+    #[cfg(windows)]
+    {
+        env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|l| PathBuf::from(l).join("Roblox").join("mcp.bat")).filter(|p| p.exists())
+    }
+    // Roblox Studio has no Linux version (`STUDIO_HERE`)
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        None
+    }
 }
+
+/// Whether Roblox Studio can run on this system at all: Windows and macOS. Roblox makes no Linux version (Vinegar runs
+/// it under Wine, which Fridae does not set up), so on Linux the window says so instead of offering Studio.
+pub const STUDIO_HERE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// What the window and the tools say about Roblox Studio on a system without it.
+pub const NO_STUDIO_HERE: &str = "Roblox Studio isn't available on Linux. Everything that doesn't need Studio (projects, chats, Rojo files, Blender, textures, promos) still works.";
 
 /// Whether a Blender path from the settings file may be run: never one inside a folder an AI's file tools are given
 /// (the work folder, the kit, the app's home with its games, a game), where a model could have put a script of its own.
@@ -1539,10 +1610,15 @@ pub fn find_blender() -> Option<PathBuf> {
             return Some(exe);
         }
     }
-    let roots = [
-        PathBuf::from(r"C:\Program Files\Blender Foundation"),
-        PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default()).join("Programs"),
-    ];
+    #[cfg(target_os = "linux")]
+    if let Some(p) = blender_on_linux(&home_dir(), Path::new("/")) {
+        return Some(p);
+    }
+    let mut roots = vec![];
+    if cfg!(windows) {
+        roots.push(PathBuf::from(r"C:\Program Files\Blender Foundation"));
+        roots.extend(env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|l| PathBuf::from(l).join("Programs")));
+    }
     for root in roots {
         let mut hits: Vec<PathBuf> = fs::read_dir(&root)
             .into_iter()
@@ -1558,6 +1634,26 @@ pub fn find_blender() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Blender on Linux off PATH (`root` is "/" but for tests): the snap's and the distribution's program, then the
+/// newest of the official download unpacked in /opt or ~/Applications (`blender-4.2.3-linux-x64/blender`). The Flatpak
+/// (`org.blender.Blender`) needs `flatpak run` and is not looked for: point Setup at a program instead.
+#[cfg_attr(not(any(test, target_os = "linux")), allow(dead_code))]
+fn blender_on_linux(home: &Path, root: &Path) -> Option<PathBuf> {
+    let fixed = ["snap/bin/blender", "usr/bin/blender", "usr/local/bin/blender"].map(|p| root.join(p));
+    if let Some(p) = fixed.into_iter().find(|p| p.is_file()) {
+        return Some(p);
+    }
+    let mut hits: Vec<PathBuf> = [root.join("opt"), home.join("Applications")]
+        .iter()
+        .flat_map(|dir| fs::read_dir(dir).into_iter().flatten().flatten())
+        .filter(|e| e.file_name().to_string_lossy().to_lowercase().starts_with("blender"))
+        .map(|e| e.path().join("blender"))
+        .filter(|p| p.is_file())
+        .collect();
+    hits.sort();
+    hits.pop()
 }
 
 pub fn gemini_key() -> String {
@@ -3365,5 +3461,77 @@ mod tests {
         assert_eq!(set, [("AGY_CLI_DISABLE_AUTO_UPDATE".to_string(), "1".to_string())]);
         assert!(removed("cursor").0.contains(&"CURSOR_API_KEY".to_string()));
         assert!(removed("opencode").0.contains(&"OPENAI_API_KEY".to_string()) && removed("opencode").0.contains(&"GEMINI_API_KEY".to_string()));
+    }
+
+    // ---- one behaviour on Windows, macOS and Linux (the pure parts; each system's own run is in CI)
+
+    #[test]
+    fn an_app_started_from_a_desktop_launcher_gets_the_ais_folders_on_path_once() {
+        let home = Path::new("/home/a");
+        let now = vec![PathBuf::from("/usr/bin"), PathBuf::from("/home/a/.local/bin")];
+        let linux = gui_path(home, false, &now);
+        assert_eq!(linux[0], home.join(".local").join("bin"));
+        for d in [home.join(".opencode").join("bin"), home.join(".npm-global").join("bin"), PathBuf::from("/snap/bin"), PathBuf::from("/home/linuxbrew/.linuxbrew/bin"), PathBuf::from("/usr/bin")] {
+            assert!(linux.contains(&d), "{d:?}");
+        }
+        assert_eq!(linux.iter().filter(|d| **d == home.join(".local").join("bin")).count(), 1, "a folder already there is not added twice");
+        let mac = gui_path(Path::new("/Users/a"), true, &[]);
+        assert!(mac.contains(&PathBuf::from("/opt/homebrew/bin")) && !mac.contains(&PathBuf::from("/snap/bin")));
+    }
+
+    #[test]
+    fn agy_and_codex_are_looked_for_under_each_systems_own_names() {
+        let home = Path::new("/home/a");
+        assert_eq!(agy_fallbacks(home, None, true), Vec::<PathBuf>::new(), "no LOCALAPPDATA: never a path relative to the current folder");
+        assert_eq!(agy_fallbacks(home, Some(Path::new("C:/L")), true), [Path::new("C:/L").join("agy").join("bin").join("agy.exe")]);
+        assert_eq!(agy_fallbacks(home, Some(Path::new("C:/L")), false), [home.join(".local").join("bin").join("agy")]);
+        assert!(codex_standalone(home, true).ends_with("codex.exe"));
+        assert!(codex_standalone(home, false).ends_with(Path::new("bin").join("codex")));
+    }
+
+    #[test]
+    fn blender_on_linux_is_the_system_one_or_the_newest_download() {
+        let root = test_dir("blender-linux");
+        let home = root.join("home");
+        for d in ["opt/blender-4.1.0-linux-x64", "opt/blender-4.2.3-linux-x64", "opt/other", "home/Applications/Blender-3.6"] {
+            fs::create_dir_all(root.join(d)).unwrap();
+        }
+        assert_eq!(blender_on_linux(&home, &root), None, "folders without the program");
+        for f in ["opt/blender-4.1.0-linux-x64/blender", "opt/blender-4.2.3-linux-x64/blender", "home/Applications/Blender-3.6/blender"] {
+            fs::write(root.join(f), b"").unwrap();
+        }
+        assert_eq!(blender_on_linux(&home, &root), Some(root.join("opt/blender-4.2.3-linux-x64/blender")));
+        fs::create_dir_all(root.join("usr/bin")).unwrap();
+        fs::write(root.join("usr/bin/blender"), b"").unwrap();
+        assert_eq!(blender_on_linux(&home, &root), Some(root.join("usr/bin/blender")), "the distribution's program first");
+    }
+
+    #[test]
+    fn the_private_folder_has_the_same_name_on_every_system() {
+        let home = Path::new("/h");
+        assert_eq!(private_dir_for(home, "macos", None, None), home.join("Library").join("Application Support").join("Fridae Studios"));
+        assert_eq!(private_dir_for(home, "windows", Some("C:/R".into()), None), Path::new("C:/R").join("Fridae Studios"));
+        assert_eq!(private_dir_for(home, "linux", None, Some("".into())), home.join(".config").join("Fridae Studios"));
+        assert_eq!(private_dir_for(home, "linux", None, Some("/x/cfg".into())), Path::new("/x/cfg").join("Fridae Studios"));
+    }
+
+    #[test]
+    fn a_missing_web_view_falls_back_to_linux_browsers_too() {
+        for name in ["google-chrome", "chromium", "chromium-browser", "microsoft-edge", "msedge"] {
+            assert!(BROWSERS.contains(&name), "{name}");
+        }
+    }
+
+    #[test]
+    fn overnight_mode_keeps_a_mac_or_linux_awake_with_a_helper_that_ends_with_the_app() {
+        let all = |_: &str| true;
+        let (program, args) = awake_command(42, true, all).unwrap();
+        assert_eq!((program.as_str(), args), ("/usr/bin/caffeinate", vec!["-i".to_string(), "-w".into(), "42".into()]));
+        let (program, args) = awake_command(42, false, all).unwrap();
+        assert_eq!(program, "/usr/bin/systemd-inhibit");
+        assert_eq!(args, ["--what=idle:sleep", "--who=Fridae", "--why=A chat is working overnight", "--mode=block", "/bin/sh", "-c", "while kill -0 42 2>/dev/null; do sleep 20; done"]);
+        assert_eq!(awake_command(42, false, |p| p == "/bin/systemd-inhibit").unwrap().0, "/bin/systemd-inhibit");
+        assert_eq!(awake_command(42, false, |_| false), None, "no systemd: nothing to start");
+        assert_eq!(awake_command(42, true, |_| false), None);
     }
 }

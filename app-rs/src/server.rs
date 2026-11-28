@@ -570,6 +570,10 @@ fn post(path: &str, body: Value) -> Reply {
                     thread::spawn(|| update::run(Some(true)));
                 }
                 "auto" => update::set_auto(body["value"].as_bool().unwrap_or(false)),
+                // a copy that cannot install the new version itself (a Mac): the release's page, to download it there
+                "page" => {
+                    update::open_page();
+                }
                 "install" if update::ready() => {
                     thread::spawn(restart_into_update);
                 }
