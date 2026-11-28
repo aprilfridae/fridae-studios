@@ -51,11 +51,12 @@ function swatchStyle(c: any, mode: string) {
 }
 const SUN = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2" /><path d="M6 1v1.2M6 9.8V11M1 6h1.2M9.8 6H11M2.5 2.5l.8.8M8.7 8.7l.8.8M2.5 9.5l.8-.8M8.7 3.3l.8-.8" /></svg>;
 const MOON = <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 7.4A4 4 0 0 1 4.6 2.2a4 4 0 1 0 5.2 5.2Z" /></svg>;
-/* The ring round the circle in use, bent out round its sun or moon the way the bars' line runs round their tabs: the
-   circle's edge (68px button, the ring's middle 1px in from it) and a ring round the badge (20px, 2px in from the
-   corner, with a 2px gap), joined by two small round curves where the ring leaves the circle. Worked out once. */
+/* The ring round the circle in use, bent out round its sun or moon the way the bars' line runs round their tabs: right on
+   the circle's edge (the swatch is 56px across in the middle of the 68px button; the 2px ring covers its outermost 2px)
+   and right round the badge (20px, 2px in from the button's corner), joined by two small round curves where the ring
+   leaves the circle. Worked out once. */
 const RING = (() => {
-  const C1 = 34, R = 33, C2 = 56, rb = 13, f = 3;
+  const C1 = 34, R = 27, C2 = 56, rb = 11, f = 3;
   const d = Math.SQRT2 * (C2 - C1), ux = Math.SQRT1_2, uy = Math.SQRT1_2;
   const a = ((R + f) ** 2 - (rb + f) ** 2 + d * d) / (2 * d), h = Math.sqrt((R + f) ** 2 - a * a);
   const at = (cx: number, cy: number, tx: number, ty: number, r: number) => { const L = Math.hypot(tx - cx, ty - cy); return [cx + (tx - cx) / L * r, cy + (ty - cy) / L * r]; };
